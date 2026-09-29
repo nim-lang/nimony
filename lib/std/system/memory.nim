@@ -127,6 +127,9 @@ else:
     reallyOsDealloc = false    # keep pages mapped (matches Nim's macosx/arm default)
     UseDestructors = true      # Nimony is always destructor-based; selects the
                                # gcDestructors code paths in the ported alloc.nim
+    usesRegionHandles = hasThreadSupport and UseDestructors
+      # Chunks are owned by a permanent `RegionHandle`, not by the thread's
+      # `MemRegion` (a threadvar that dies with its thread); see alloc.nim.
 
   template sysAssert(cond, msg: untyped) = discard
 
@@ -168,6 +171,20 @@ else:
 
   # --- user-facing API: `func` over a per-thread global MemRegion ----------
   var allocator {.threadvar.}: MemRegion
+
+  when usesRegionHandles:
+    proc nimAllocThreadInit*() =
+      ## A thread starts (`std/rawthreads`): check a region out of the pool,
+      ## or a fresh handle. Must precede the thread's first allocation, since
+      ## chunks are stamped with the region's handle.
+      acquireMemRegion(allocator)
+
+    proc nimAllocThreadTeardown*() =
+      ## A thread ends: its region returns to the pool, with the handle that
+      ## still owns every chunk it allocated and receives their foreign frees.
+      releaseMemRegion(allocator)
+
+    nimAllocThreadInit() # the main thread
 
   func alloc*(size: int): pointer =
     ## Allocates `size` bytes of uninitialized memory.
