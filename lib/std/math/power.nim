@@ -14,7 +14,7 @@ import std/math/exponential  # for exp, ln
 # ============================================================================
 # SQRT Implementation
 # ============================================================================
-# origin: musl src/math/sqrt.c. Ported to generic Rust algorithm in 2025.
+# origin: musl src/math/sqrt.c.
 #
 # Generic square root algorithm using Goldschmidt iterations at multiple widths.
 # This routine operates around `m_u2`, a U.2 (fixed point with two integral bits)
@@ -116,7 +116,6 @@ func cbrt*(x: float64): float64 =
   ## Cube root for f64
   ## origin: core-math/src/binary64/cbrt/cbrt.c
   ## Copyright (c) 2021-2022 Alexei Sibidanov.
-  ## Ported to Rust in 2025 by Trevor Gross.
   ##
   ## Compute the cube root of the argument using polynomial approximation
   ## and Newton-Raphson iterations.
