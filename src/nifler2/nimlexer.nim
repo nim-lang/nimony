@@ -7,7 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-## Nim's lexer for `nifler2`, built on `std/regex`'s `lex` construct.
+## Nim's lexer for `nifler2`, built on `std/rex`'s `lex` construct.
 ##
 ## The token type, the token kinds and their spellings are the ones
 ## `compiler/lexer.nim` uses, because the two are meant to be differentially
@@ -31,7 +31,7 @@
 ## is the keyword, `pRoC` and `p_roc` are identifiers. This is where the lexer
 ## deliberately parts ways with Nim's, whose keywords are style-insensitive.
 
-import std / regex
+import std / rex
 
 type
   TokKind* = enum ## Nim's `TokType`, minus the tokens only `renderer.nim` uses

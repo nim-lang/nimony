@@ -7,7 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-## Plugin backing `std/regex`'s `lex` construct — the lexer generator.
+## Plugin backing `std/rex`'s `lex` construct — the lexer generator.
 ##
 ## Input (`loadPluginInput`), for the two spellings of `lex`:
 ##

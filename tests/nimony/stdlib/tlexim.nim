@@ -1,9 +1,9 @@
-## `std/regex`'s compile-time constructs: `lex` (scan and advance) and
+## `std/rex`'s compile-time constructs: `lex` (scan and advance) and
 ## `rematch` (classify a whole string). Both are the `deps/regex` plugin
 ## turning a set of patterns into ONE automaton and emitting it as a `case`
 ## statement, so what runs here contains no regex engine at all.
 
-import std / [syncio, assertions, regex]
+import std / [syncio, assertions, rex]
 
 proc tokenize(input: string): seq[string] =
   ## The lexim README's example, as a lexer that returns what it saw.
