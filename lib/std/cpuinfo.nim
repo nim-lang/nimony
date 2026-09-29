@@ -30,14 +30,15 @@ else:
   when defined(posix) and not (defined(macosx) or defined(bsd)):
     import posix/posix
 
-  when defined(linux) and defined(nimNoLibc):
+  when defined(linux):
     type
       CpuAffinityMask = object  ## cpu_set_t (glibc: a 1024-bit mask)
         abi: array[16, uint64]
     proc schedGetaffinity(pid: cint; setsize: csize_t; mask: pointer): cint {.
       importc: "sched_getaffinity".}
-      ## Bare name, so arkham lowers it to the raw syscall. It returns the number
-      ## of BYTES written, not 0/-1 the way glibc's wrapper does.
+      ## Bare name: glibc's wrapper where libc is linked, and under `nimNoLibc`
+      ## arkham lowers it to the raw syscall. The wrapper returns 0 on success,
+      ## the syscall the number of BYTES written; both are negative on failure.
 
   when defined(windows):
     type
@@ -102,23 +103,25 @@ else:
         result = sysinfo.cpuCount.int
       else:
         result = 0
-    elif defined(linux) and defined(nimNoLibc):
-      # No libc, so no `sysconf`: ask the kernel which CPUs this thread may run
-      # on and count the bits. That is also the more useful number for a thread
-      # pool — it is what `nproc` reports, and it respects a cpuset or a
-      # `taskset`, which a count of installed CPUs does not.
+    elif defined(linux):
+      # Ask the kernel which CPUs this thread may run on and count the bits.
+      # It is what `nproc` reports, and it respects a cpuset or a `taskset`,
+      # which a count of installed CPUs (`sysconf`) does not: a thread pool
+      # sized from the latter oversubscribes every container that has a cpuset.
       var mask = default(CpuAffinityMask)
       let n = schedGetaffinity(0.cint, csize_t(sizeof(mask)), addr mask)
       result = 0
-      if n > 0:
-        # `n` is how many BYTES the kernel filled in; the rest of the mask is
-        # untouched, so only those are counted.
-        let words = min(int(n) div 8, mask.abi.len)
-        for i in 0 ..< words:
+      if n >= 0:
+        # The mask starts zeroed and the kernel writes only its own cpumask
+        # size, so every word can be counted.
+        for i in 0 ..< mask.abi.len:
           var w = mask.abi[i]
           while w != 0'u64:
             inc result
             w = w and (w - 1'u64)     # clear the lowest set bit
+      when not defined(nimNoLibc):
+        if result == 0:
+          result = sysconf(SC_NPROCESSORS_ONLN)
     else:
       result = sysconf(SC_NPROCESSORS_ONLN)
     if result < 0: result = 0
@@ -126,6 +129,7 @@ else:
 
 
 proc countProcessors*(): int =
-  ## Returns the number of the processors/cores the machine has.
-  ## Returns 0 if it cannot be detected.
+  ## Returns the number of processors this process may run on. On Linux that is
+  ## its CPU affinity, so a cpuset or `taskset` narrows it; elsewhere it is the
+  ## number the machine has. Returns 0 if it cannot be detected.
   countProcessorsImpl()
