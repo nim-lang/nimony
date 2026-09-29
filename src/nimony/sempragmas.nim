@@ -441,6 +441,17 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParLe(pk, n.info)
       dest.addParRi()
     toPragmaArgs()
+  of EnableTraceP:
+    # On a runtime's `nimTraceRef`: the runtime collects cycles. Seen here
+    # while system (which includes the runtime) is checked, so its own hooks
+    # follow; every later module reads it off the decl (`runtimeEnablesTrace`).
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, $pk & " pragma is only allowed on routines"
+    else:
+      c.enableTrace = true
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+    toPragmaArgs()
   of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP, AcyclicP:
     var hasErr = false
     if kind != TypeY:

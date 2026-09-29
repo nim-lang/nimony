@@ -3645,7 +3645,7 @@ proc storeTargetType(c: var FirContext, n: Cursor): Cursor {.inline.} =
     inc target
   result = getType(c.typeCache, target)
 
-const HookPrefixes = ["=destroy", "=wasMoved", "=trace", "=copy", "=sink", "=dup"]
+const HookPrefixes = ["=destroy", "=wasMoved", "=trace", "=copy", "=sink", "=dup", "=cellop"]
 
 proc isHookProc(symId: SymId): bool =
   ## A type-bound hook, hand-written (`=wasMoved.0.m`) or synthesized by the

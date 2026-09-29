@@ -14,7 +14,7 @@ to type `(T, T)`, etc.
 
 ]##
 
-import std/[assertions, tables, hashes, strutils, syncio]
+import std/[assertions, tables, hashes, strutils, syncio, os]
 
 when defined(nimony):
   {.feature: "lenientnils".}
@@ -42,6 +42,7 @@ type
     sym: SymId
     typ: TypeCursor
     op: AttachedOp
+    cellOp: bool ## `--mm:orc`: the cell operation of the ref type `typ`
 
   LiftingCtx* = object
     dest*: TokenBuf
@@ -70,6 +71,12 @@ type
     closureTuples: seq[TokenBuf]
       ## the lowered shapes handed to `requestLifting`, which keeps cursors
       ## into them: they must live as long as the context does
+    cycles*: bool
+      ## `--mm:orc`: refs carry the cycle collector's header word, hooks follow
+      ## the protocol of `lib/std/system/orc.nim` and `=trace` is lifted.
+    cyclicRefs: Table[string, bool] ## `canFormCycle` per ref type
+    tracedTypes: Table[SymId, bool]  ## `needsTrace` per nominal type
+    cellOps: Table[string, SymId]    ## the cell operation per ref type
 
 proc isClosureValue(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
   ## `closuretypes.isClosureProcType`, once lambdalifting has run.
@@ -185,6 +192,216 @@ proc siblingHookError(c: var LiftingCtx; typ: TypeCursor;
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.symId(name & ".0." & SystemModuleSuffix)
 
+proc runtimeEnablesTrace*(): bool =
+  ## Does the memory management runtime (`include "$MM"` in system) collect
+  ## cycles? It says so with `.enableTrace` on its `nimTraceRef`, and then gets
+  ## the protocol of `lib/std/system/orc.nim`: the cell's `rootIdx` word, cell
+  ## operations, `nimDecRefCyclic` and a lifted `=trace`.
+  if not fileExists(suffixToNif(SystemModuleSuffix)):
+    return false # `--noSystem`: no runtime to ask
+  let res = tryLoadSym(pool.symId("nimTraceRef.0." & SystemModuleSuffix))
+  result = res.status == LacksNothing and
+    hasPragma(asRoutine(res.decl).pragmas, EnableTraceP)
+
+# Cycle analysis (`--mm:orc`), after Nim's `types.canFormAcycle`.
+#
+# Two different questions, answered by one walk over the type graph:
+#
+# * `canFormCycle(ref T)`: can a cell of type `T` be part of a cycle, i.e. can
+#   `T` reach a `ref T` again? Then its `=destroy` registers candidate roots and
+#   its `=trace` pushes it for the collector. Conservative where the static type
+#   does not tell: an inheritable object (a subclass may add the edge back) and
+#   a closure (the environment may hold anything) count as cyclic.
+# * `needsTrace(T)`: does a VALUE of type `T` own a ref the collector must
+#   follow? That is: does it contain a `ref U` with `canFormCycle(ref U)`.
+#   A value that cannot itself be part of a cycle may still hold the only edge
+#   into one (a field of a cyclic object of type `seq[Node]`).
+#
+# What the walk follows is exactly what `=trace` visits, so the two cannot
+# disagree: owned fields, tuple and array elements, the base object -- never a
+# `.cursor` field (it owns nothing: tracing it would subtract an edge that is
+# not counted in `rc`, and the collector would free a live object) and never a
+# raw `ptr`, except below a type with a hand-written `=trace` (`seq`'s buffer):
+# such a hook says the pointer is owned and it traces the pointee itself.
+# `{.acyclic.}` on a type cuts the walk there.
+
+proc isUserTrace(hook: SymId): bool =
+  ## A hand-written `=trace` (`=trace.0.m`), not one the lifter synthesized
+  ## (`=trace_<key>.0.m`).
+  let name = pool.symBasename(hook)
+  result = name.startsWith("=trace") and (name.len == 6 or name[6] != '_')
+
+proc hasUserTrace(c: var LiftingCtx; s: SymId): bool =
+  let hook = lookupHookSym(c, attachedTrace, s)
+  result = hook != SymId(0) and isUserTrace(hook)
+
+proc resolveAliases(t: TypeCursor): TypeCursor =
+  ## Follows `type A = B` chains to the first symbol whose declaration is not
+  ## itself just another symbol.
+  result = t
+  var counter = 20
+  while counter > 0 and result.isSymbol:
+    dec counter
+    let res = tryLoadSym(result.symId)
+    if res.status != LacksNothing: break
+    let decl = asTypeDecl(res.decl)
+    if decl.kind != TypeY or not decl.body.isSymbol: break
+    result = decl.body
+
+proc refTarget(refType: TypeCursor): SymId =
+  ## The identity of what `refType` points to: the pointee's symbol
+  ## (`ref NodeObj`, `Node = ref NodeObj`), or for `Node = ref object ...` the
+  ## ref type's own symbol since its object has none. `NoSymId` for an
+  ## anonymous structural `ref (object ...)`, which cannot be recursive.
+  result = NoSymId
+  var t = resolveAliases(refType)
+  var owner = NoSymId
+  if t.isSymbol:
+    owner = t.symId
+    t = toTypeImpl(t)
+  if t.typeKind == RefT:
+    let elem = resolveAliases(t.childCursor)
+    result = if elem.isSymbol: elem.symId else: owner
+
+proc isAcyclicDecl(decl: TypeDecl): bool {.inline.} =
+  hasPragma(decl.pragmas, AcyclicP)
+
+type
+  CycleWalk = object
+    target: SymId    ## `canFormCycle`: the pointee identity to find again;
+                     ## `NoSymId` for `needsTrace`
+    visited: seq[SymId]
+
+proc canFormCycle(c: var LiftingCtx; refType: TypeCursor): bool
+
+proc walksToCycle(c: var LiftingCtx; w: var CycleWalk; t: TypeCursor; followPtr: bool): bool
+
+proc walksToCycleObj(c: var LiftingCtx; w: var CycleWalk; body: TypeCursor; followPtr: bool): bool =
+  ## `body` is an `(object ...)`.
+  result = false
+  var n = body
+  n = sub(n) # into the object; bounds the walk
+  let parent = n
+  if parent.kind != DotToken and walksToCycle(c, w, parent, followPtr):
+    return true
+  skip n
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    let field = takeLocal(n, SkipFinalParRi)
+    if field.kind in {FldY, GfldY} and not hasPragma(field.pragmas, CursorP):
+      if walksToCycle(c, w, field.typ, followPtr):
+        return true
+
+proc walksToCycleRef(c: var LiftingCtx; w: var CycleWalk; refType: TypeCursor; followPtr: bool): bool =
+  if w.target == NoSymId:
+    # `needsTrace`: this is an edge; it matters iff its target is cyclic
+    result = canFormCycle(c, refType)
+  elif refTarget(refType) == w.target:
+    result = true
+  else:
+    let impl = toTypeImpl(resolveAliases(refType))
+    result = walksToCycle(c, w, impl.childCursor, followPtr)
+
+proc walksToCycle(c: var LiftingCtx; w: var CycleWalk; t: TypeCursor; followPtr: bool): bool =
+  result = false
+  if t.isSymbol:
+    let s = t.symId
+    if s in w.visited: return false
+    w.visited.add s
+    let res = tryLoadSym(s)
+    if res.status != LacksNothing: return false
+    let decl = asTypeDecl(res.decl)
+    if decl.kind != TypeY or isAcyclicDecl(decl): return false
+    let body = decl.body
+    case body.typeKind
+    of RefT:
+      result = walksToCycleRef(c, w, t, followPtr)
+    of ObjectT:
+      # a subclass can add the edge back that this class lacks:
+      if hasRtti(s): return true
+      result = walksToCycleObj(c, w, body, followPtr or hasUserTrace(c, s))
+    else:
+      result = walksToCycle(c, w, body, followPtr)
+    return result
+
+  case t.typeKind
+  of RefT:
+    result = walksToCycleRef(c, w, t, followPtr)
+  of PtrT, UarrayT:
+    result = followPtr and walksToCycle(c, w, t.childCursor, followPtr)
+  of ObjectT:
+    result = walksToCycleObj(c, w, t, followPtr)
+  of SinkT, ArrayT, DistinctT:
+    result = walksToCycle(c, w, t.childCursor, followPtr)
+  of TupleT, ClosureTupleT:
+    var tup = t
+    tup = sub(tup)
+    while tup.hasMore:
+      if walksToCycle(c, w, getTupleFieldType(tup), followPtr):
+        return true
+      skip tup
+  of RoutineTypes:
+    # The environment of a closure is a `ref RootObj`: it may hold anything.
+    # Not `isClosureValue`: the answer must not depend on whether closures are
+    # lowered yet, or the frontend and hexer would hook one type differently.
+    result = isClosureValueType(t)
+  else:
+    result = false
+
+proc canFormCycle(c: var LiftingCtx; refType: TypeCursor): bool =
+  ## Can a cell of type `refType` be part of a cycle? See above.
+  if not c.cycles: return false
+  let key = mangle(refType, Frontend, c.bits)
+  if c.cyclicRefs.hasKey(key):
+    return c.cyclicRefs.getOrQuit(key)
+  # break recursion through `needsTrace` walks: assume acyclic while computing
+  c.cyclicRefs[key] = false
+  result = false
+  var t = resolveAliases(refType)
+  var acyclic = false
+  if t.isSymbol:
+    let res = tryLoadSym(t.symId)
+    if res.status == LacksNothing:
+      let decl = asTypeDecl(res.decl)
+      acyclic = decl.kind == TypeY and isAcyclicDecl(decl)
+    t = toTypeImpl(t)
+  if not acyclic and t.typeKind == RefT:
+    var w = CycleWalk(target: refTarget(refType))
+    if w.target != NoSymId:
+      result = walksToCycle(c, w, t.childCursor, false)
+  c.cyclicRefs[key] = result
+
+proc needsTrace(c: var LiftingCtx; typ: TypeCursor): bool =
+  ## Does a value of type `typ` own a ref the cycle collector must follow?
+  if not c.cycles: return false
+  if typ.isSymbol and c.tracedTypes.hasKey(typ.symId):
+    return c.tracedTypes.getOrQuit(typ.symId)
+  var w = CycleWalk(target: NoSymId)
+  result = walksToCycle(c, w, typ, false)
+  if typ.isSymbol:
+    c.tracedTypes[typ.symId] = result
+
+proc elemHasRtti(refType: TypeCursor): bool =
+  ## `ref T` with `T` in an inheritance hierarchy: its cells can be reached
+  ## through a static type other than this one.
+  let t = resolveAliases(refType)
+  if t.isSymbol:
+    let impl = toTypeImpl(t)
+    if impl.typeKind == RefT:
+      let elem = resolveAliases(impl.childCursor)
+      if elem.isSymbol:
+        result = hasRtti(elem.symId)
+      else:
+        # `Node = ref object of Base`
+        result = hasRtti(t.symId)
+    else:
+      result = false
+  elif t.typeKind == RefT:
+    let elem = resolveAliases(t.childCursor)
+    result = elem.isSymbol and hasRtti(elem.symId)
+  else:
+    result = false
+
 proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var n = n
   var iter = initObjFieldIter()
@@ -260,11 +477,15 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
     result = isTrivial(c, r.body.childCursor)
   of ProctypeT:
     # `type Cb = proc() {.closure.}`: the alias of a closure value owns an env
-    result = not isClosureValue(c, r.body)
+    result = not isClosureProcType(r.body)
   else:
     result = true
 
 proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
+  if c.op == attachedTrace:
+    # `=trace` visits the refs the cycle collector follows and nothing else: a
+    # `string` has a `=destroy` but nothing to trace.
+    return not needsTrace(c, typ)
   if typ.kind == Symbol:
     let res = tryLoadSym(typ.symId)
     if res.status == LacksNothing:
@@ -284,8 +505,9 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     # pointer (see nifcgen.trType), so trivial. When we promote
     # `Iterator[T]` to a managed ref envelope, ItertypeT needs to split out
     # of this branch and flip to `result = false` so destructor hooks run.
-    # An un-rewritten `.closure` proctype is the (fn, env) pair: not trivial.
-    result = not isClosureValue(c, typ)
+    # An un-rewritten `.closure` proctype is the (fn, env) pair: not trivial,
+    # also in the frontend, where it is not lowered yet (see `emitDeferredHook`).
+    result = not isClosureProcType(typ)
   of RefT:
     result = false
   of LentT:
@@ -355,8 +577,8 @@ proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
       copyTree c.dest, paramB
   of attachedTrace: discard
 
-proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
-  result = "=" & hookName(op) & "_" & key
+proc generateHookName(c: var LiftingCtx; prefix, key: string): string =
+  result = prefix & "_" & key
   var counter = addr c.hookNames.mgetOrPut(result, -1)
   counter[] += 1
   result.add '.'
@@ -373,7 +595,7 @@ proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
   let key = mangle(t, Frontend, c.bits)
   result = c.structuralTypeToHook[op].getOrDefault(key)
   if result == SymId(0):
-    let name = generateHookName(c, op, key)
+    let name = generateHookName(c, "=" & hookName(op), key)
     result = pool.symId(name)
     # Check if this hook already exists (e.g., generated by frontend)
     let existing = tryLoadSym(result)
@@ -762,14 +984,12 @@ proc unravelArray(c: var LiftingCtx;
       case c.op
       of attachedDestroy, attachedTrace, attachedWasMoved:
         let a = accessArrayAt(c, paramA, indexVar)
-        #unravel c, fieldType, fieldType, a, paramB
-        let fn = lift(c, baseType)
-        maybeCallHook c, fn, a, paramA
+        # `paramB` is `=trace`'s environment; the other two ignore it
+        unravel c, baseType, a, paramB
       of attachedCopy, attachedDup, attachedSink:
         let a = accessArrayAt(c, paramA, indexVar, 0)
         let b = accessArrayAt(c, paramB, indexVar, 1)
-        let fn = lift(c, baseType)
-        maybeCallHook c, fn, a, b
+        unravel c, baseType, a, b
 
       incIndexVar c, indexVar
 
@@ -788,6 +1008,50 @@ proc refcountOf(c: var LiftingCtx; x: TokenBuf) =
         copyTree c.dest, x
       copyIntoSymUse c.dest, pool.symId(RcField), c.info
       c.dest.addIntLit(0, c.info)
+
+proc cellOpFor(c: var LiftingCtx; refType: TypeCursor): SymId =
+  ## `--mm:orc`: the cell operation of `refType`, `proc (cell, env: pointer)`.
+  ## Traces the payload into `env`, or with `env == nil` destroys the payload
+  ## and frees the cell. It is the type descriptor the collector keeps with
+  ## every root and every traced edge (see `lib/std/system/orc.nim`).
+  let key = mangle(refType, Frontend, c.bits)
+  result = c.cellOps.getOrDefault(key)
+  if result == SymId(0):
+    result = pool.symId(generateHookName(c, "=cellop", key))
+    if tryLoadSym(result).status != LacksNothing:
+      c.requests.add GenHookRequest(sym: result, typ: refType, op: attachedDestroy, cellOp: true)
+    c.cellOps[key] = result
+
+proc castToPointer(c: var LiftingCtx; x: TokenBuf) =
+  copyIntoKind c.dest, CastX, c.info:
+    copyIntoKind c.dest, PointerT, c.info: discard
+    copyTree c.dest, x
+
+proc emitCyclicRefDestructor(c: var LiftingCtx; paramA: TokenBuf; refType: TypeCursor) =
+  # if x != nil and nimDecRefCyclic(x, cellop | nil): cellop(x, nil)
+  let op = cellOpFor(c, refType)
+  let cyclic = canFormCycle(c, refType)
+  c.dest.addParLe IfS, c.info
+  c.dest.addParLe ElifU, c.info
+  copyTree c.dest, paramA
+  copyIntoKinds c.dest, [StmtsS, IfS], c.info:
+    copyIntoKind c.dest, ElifU, c.info:
+      copyIntoKind c.dest, CallX, c.info:
+        copyIntoSymUse c.dest, getCompilerProc(c, "nimDecRefCyclic"), c.info
+        castToPointer c, paramA
+        if cyclic:
+          copyIntoSymUse c.dest, op, c.info
+        else:
+          # cannot form a cycle, but a cell of a class may have been registered
+          # through a static type that can: only unregister it when freed
+          copyIntoKind c.dest, NilX, c.info: discard
+      copyIntoKind c.dest, StmtsS, c.info:
+        copyIntoKind c.dest, CallS, c.info:
+          copyIntoSymUse c.dest, op, c.info
+          castToPointer c, paramA
+          copyIntoKind c.dest, NilX, c.info: discard
+  c.dest.addParRi()
+  c.dest.addParRi()
 
 proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
   c.dest.addParLe IfS, c.info
@@ -828,9 +1092,23 @@ proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
   let baseType = n.childCursor
   case c.op
   of attachedDestroy:
-    emitRefDestructor c, paramA, baseType
+    if c.cycles and (canFormCycle(c, n) or elemHasRtti(n)):
+      emitCyclicRefDestructor c, paramA, n
+    else:
+      emitRefDestructor c, paramA, baseType
   of attachedTrace:
-    discard "to implement"
+    # only lifted for a ref type that `canFormCycle` (see `needsTrace`):
+    # hand the field to the collector together with its cell operation
+    let op = cellOpFor(c, n)
+    copyIntoKind c.dest, CallS, c.info:
+      copyIntoSymUse c.dest, getCompilerProc(c, "nimTraceRef"), c.info
+      copyIntoKind c.dest, CastX, c.info:
+        copyIntoKind c.dest, PointerT, c.info: discard
+        copyIntoKind c.dest, HaddrX, c.info:
+          copyIntoKind c.dest, HderefX, c.info:
+            copyTree c.dest, paramA
+      copyIntoSymUse c.dest, op, c.info
+      copyTree c.dest, paramB
   of attachedWasMoved:
     copyIntoKind c.dest, AsgnS, c.info:
       copyIntoKind c.dest, DerefX, c.info:
@@ -855,10 +1133,41 @@ proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
       copyTree c.dest, paramA
       copyTree c.dest, paramB
 
+proc emitDeferredHook(c: var LiftingCtx; paramA, paramB: TokenBuf) =
+  ## The frontend's hook for a `.closure` value: it is the (fn, env) pair only
+  ## after lambdalifting, so the hook cannot be spelled here. Emit the magic
+  ## the user would have written instead (`=destroy(x)` is `(destroy x)`); the
+  ## duplifier resolves it against the lowered type.
+  case c.op
+  of attachedDestroy:
+    copyIntoKind c.dest, DestroyX, c.info:
+      copyTree c.dest, paramA
+  of attachedWasMoved:
+    copyIntoKind c.dest, WasmovedX, c.info:
+      copyIntoKind c.dest, HaddrX, c.info:
+        copyTree c.dest, paramA
+  of attachedTrace:
+    copyIntoKind c.dest, TraceX, c.info:
+      copyIntoKind c.dest, HaddrX, c.info:
+        copyTree c.dest, paramA
+      copyTree c.dest, paramB
+  of attachedDup:
+    copyIntoKind c.dest, AsgnS, c.info:
+      copyTree c.dest, paramA
+      copyIntoKind c.dest, DupX, c.info:
+        copyTree c.dest, paramB
+  of attachedCopy, attachedSink:
+    copyIntoKind c.dest, (if c.op == attachedCopy: CopyX else: SinkhX), c.info:
+      copyIntoKind c.dest, HaddrX, c.info:
+        copyTree c.dest, paramA
+      copyTree c.dest, paramB
+
 proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   # `unravel`'s job is to "expand" the object fields in contrast to `lift`.
   if isTrivial(c, typ):
     genTrivialOp c, paramA, paramB
+  elif not c.closureValuesLowered and isClosureProcType(toTypeImpl(typ)):
+    emitDeferredHook c, paramA, paramB
   else:
     let fn = lift(c, typ)
     maybeCallHook c, fn, paramA, paramB
@@ -915,22 +1224,27 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     #let fn = lift(c, typ)
     #maybeCallHook c, fn, paramA, paramB
 
-proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
+proc copyTypeSansNil(dest: var TokenBuf; typ: TypeCursor) =
+  ## `typ` without its nilability annotation: one hook serves both `ref T` and
+  ## `nil ref T`, and inside it the value is known to be there.
   var n = typ
   if n.isAtom:
-    copyTree c.dest, typ
+    copyTree dest, typ
   else:
     # `n.into` bounds the child walk: `typ` is a cursor into an enclosing
     # decl, so an unbounded `hasMore` loop would run past the type's
     # (elided) close and copy the decl's remaining children too.
-    c.dest.addParLe(n.cursorTagId, n.info)
+    dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         if isNilAnnotation(n):
           skip n
         else:
-          takeTree c.dest, n
-    c.dest.addParRi()
+          takeTree dest, n
+    dest.addParRi()
+
+proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
+  copyTypeSansNil c.dest, typ
 
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
   copyIntoKind(c.dest, ParamY, c.info):
@@ -1023,7 +1337,10 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       copyIntoKind(c.dest, ParamY, c.info):
         addSymDef c.dest, paramB, c.info
         c.dest.addEmpty2 c.info # export marker, pragmas
-        copyIntoKind(c.dest, PointerT, c.info): discard
+        # the collector's `GcEnv`, never nil: what a hand-written `=trace`
+        # in a strict module demands of its `env: pointer`
+        copyIntoKind(c.dest, PointerT, c.info):
+          copyIntoKind(c.dest, NotnilU, c.info): discard
         c.dest.addEmpty c.info # value
 
       c.dest.addParRi()
@@ -1082,6 +1399,52 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
 
   publishProc(sym, c.dest, procStart)
 
+proc genCellOpDecl(c: var LiftingCtx; sym: SymId; refType: TypeCursor) =
+  ## `proc =cellop_<key>(dest, src: pointer)`, see `cellOpFor`: exactly
+  ## `system/orc.CellOp`, the collector keeps it as that type.
+  let paramA = pool.symId("dest.0")
+  var paramTreeA = createTokenBuf(4)
+  copyIntoSymUse paramTreeA, paramA, c.info
+  var cell = createTokenBuf(8) # `dest` as the `ref T` it is
+  copyIntoKind cell, CastX, c.info:
+    copyTypeSansNil cell, refType
+    copyIntoSymUse cell, paramA, c.info
+  let paramB = pool.symId("src.0")
+  var paramTreeB = createTokenBuf(4)
+  copyIntoSymUse paramTreeB, paramB, c.info
+  let baseType = toTypeImpl(refType).childCursor
+
+  let procStart = c.dest.len
+  copyIntoKind(c.dest, ProcS, c.info):
+    addSymDef c.dest, sym, c.info
+    c.dest.addEmpty3 c.info # export marker, pattern, generics
+    copyIntoKind c.dest, ParamsU, c.info:
+      for param in [paramA, paramB]:
+        copyIntoKind(c.dest, ParamY, c.info):
+          addSymDef c.dest, param, c.info
+          c.dest.addEmpty2 c.info # export marker, pragmas
+          copyIntoKind(c.dest, PointerT, c.info): discard
+          c.dest.addEmpty c.info # value
+    c.dest.addEmpty() # void return type
+    copyIntoKind c.dest, PragmasS, c.info:
+      copyIntoKind c.dest, NodestroyP, c.info: discard
+    c.dest.addEmpty c.info # exc
+    copyIntoKind(c.dest, StmtsS, c.info):
+      copyIntoKind c.dest, IfS, c.info:
+        copyIntoKind c.dest, ElifU, c.info:
+          copyTree c.dest, paramTreeB
+          copyIntoKind c.dest, StmtsS, c.info:
+            c.op = attachedTrace
+            unravel c, baseType, c.derefInner(cell), paramTreeB
+        copyIntoKind c.dest, ElseU, c.info:
+          copyIntoKind c.dest, StmtsS, c.info:
+            c.op = attachedDestroy
+            unravel c, baseType, c.derefInner(cell), cell
+            copyIntoKind c.dest, CallS, c.info:
+              copyIntoSymUse c.dest, getCompilerProc(c, "deallocFixed"), c.info
+              copyTree c.dest, paramTreeA
+  publishProc(sym, c.dest, procStart)
+
 proc genMissingHooks*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
   while c.requests.len > 0:
@@ -1090,6 +1453,10 @@ proc genMissingHooks*(c: var LiftingCtx) =
       c.op = reqs[i].op
       c.calledErrorHook = NoLineInfo
       c.calledErrorHookSet = false
+      if reqs[i].cellOp:
+        c.routineKind = ProcY
+        genCellOpDecl(c, reqs[i].sym, reqs[i].typ)
+        continue
       # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
       let t = reqs[i].typ
       if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId) and reqs[i].op in {attachedDestroy, attachedTrace}:
@@ -1104,10 +1471,11 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
     dest.add c.dest
 
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil;
-                       closureValuesLowered = false): ref LiftingCtx =
+                       closureValuesLowered = false; cycles = false): ref LiftingCtx =
   (ref LiftingCtx)(dest: initTokenBuf(), op: attachedDestroy, info: NoLineInfo,
                    thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY,
-                   frontendHooks: frontendHooks, closureValuesLowered: closureValuesLowered)
+                   frontendHooks: frontendHooks, closureValuesLowered: closureValuesLowered,
+                   cycles: cycles)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: NifLineInfo): SymId =
   c.op = op

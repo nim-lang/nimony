@@ -30,6 +30,9 @@ const
   # disambiguator (#2457), so it stays distinct from `r.0`.
   RcField* = "r.00"
   DataField* = "d.00"
+  RootIdxField* = "ri.00"
+    ## `--mm:orc` only: the cycle collector's second header word, between
+    ## `RcField` and `DataField` (see `lib/std/system/orc.nim`).
   VTableField* = "vt.00"
   DisplayLenField* = "dl.0"
   DisplayField* = "dy.0"

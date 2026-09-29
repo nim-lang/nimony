@@ -18,6 +18,16 @@ func `=destroy`*[T](s: seq[T]) =
       inc i
     dealloc s.data
 
+func `=trace`*[T](s: var seq[T]; env: pointer) =
+  ## `--mm:orc`: the buffer is owned, so its elements are edges the cycle
+  ## collector follows. The compiler calls this only when `T` holds such an
+  ## edge (a ref that can form a cycle), so `seq[int]` costs nothing.
+  if s.data != nil:
+    var i = 0
+    while i < s.len:
+      `=trace`(s.data[i], env)
+      inc i
+
 func `=wasMoved`*[T](s: var seq[T]) {.inline.} =
   s.len = 0
   s.data = nil

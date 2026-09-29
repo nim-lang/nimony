@@ -506,7 +506,8 @@ proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
       endRead(r)
   var finalBuf = beginRead afterSem
-  result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+  result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
+                        runtimeDeclared = c.enableTrace)
   when defined(dumpPhases):
     block:
       var r = beginRead(result)

@@ -1220,6 +1220,10 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         let rcField = pool.symId(RcField)
         c.dest.addSymUse(rcField, info)
         c.dest.addIntLit(0, info)
+      if c.lifter.cycles:
+        copyIntoKind c.dest, KvU, info:
+          c.dest.addSymUse(pool.symId(RootIdxField), info)
+          c.dest.addIntLit(0, info)
       copyIntoKind c.dest, KvU, info:
         let dataField = pool.symId(DataField)
         c.dest.addSymUse(dataField, info)

@@ -419,6 +419,16 @@ proc trRefBody(c: var EContext; dest: var TokenBuf; n: var Cursor; key: string) 
   dest.addParRi() # "i"
   dest.addParRi() # "fld"
 
+  if c.liftingCtx.cycles:
+    # `--mm:orc`: the cycle collector's `rootIdx` word (`system/orc.OrcHeader`).
+    dest.addParLe("fld", info)
+    dest.addSymDef(pool.symId(RootIdxField), info)
+    dest.addDotToken() # pragmas
+    dest.addParLe("i", info)
+    dest.addIntLit(-1, info)
+    dest.addParRi() # "i"
+    dest.addParRi() # "fld"
+
   let dataField = pool.symId(DataField)
   dest.addParLe("fld", info)
   dest.addSymDef(dataField, info)
@@ -921,7 +931,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
              InlineP, NoinlineP, AlwaysInlineP, NoinitP, InjectP, GensymP, DirtyP,
              UntypedP, ViewP,
              InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP,
-             EstablishesBorrowP:
+             EstablishesBorrowP, EnableTraceP:
             result.flags.incl pk
             skip n
           of BorrowP:
@@ -2820,6 +2830,8 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   var owningBuf = createTokenBuf(300)
 
   var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", owningBuf, true)
+  # system is checked before everything else, so its runtime is there to ask
+  c.liftingCtx.cycles = runtimeEnablesTrace()
   let cBits = c.bits
   var dest = transform(c, c0, mp.name, cBits)
 

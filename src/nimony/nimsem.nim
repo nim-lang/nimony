@@ -35,7 +35,7 @@ Options:
   --noSystem                do not auto-import `system.nim`
   --mm:STRATEGY|PATH        select the memory management strategy; a name maps
                             to `system/<strategy>.nim` in the stdlib (possible
-                            values: atomicArc (default), arc), a path selects
+                            values: atomicArc (default), arc, orc), a path selects
                             a runtime of your own (e.g. `--mm:rt/mygc`)
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)

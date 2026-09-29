@@ -362,6 +362,7 @@
 | `(intdefine STR?)` | NimonyPragma | `intdefine` pragma (Nim-compatible): on a `const`, the command line may override the written initializer. The key is the constant's name, or the optional string literal when one is given; `-d:key=42` then supplies the value, which is parsed as an integer literal and re-semchecked against the constant's declared type, so a narrower type still range-checks |
 | `(booldefine STR?)` | NimonyPragma | `booldefine` pragma (Nim-compatible): like `intdefine`, but the value is a boolean. A bare `-d:key` means `true`; `on`/`off` and `1`/`0` are accepted alongside `true`/`false` |
 | `(strdefine STR?)` | NimonyPragma | `strdefine` pragma (Nim-compatible): like `intdefine`, but the value is taken verbatim as a string literal |
+| `(enableTrace)` | NimonyPragma | `enableTrace` pragma on a memory management runtime's `nimTraceRef`: the runtime collects cycles, so the compiler lifts `=trace` and hooks refs for it (see `lib/std/system/orc.nim`) |
 
 ### unpackflat, unpacktup, unpackdecl
 

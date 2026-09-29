@@ -105,10 +105,27 @@ under `lib/std/system/`; nothing in `system.nim` enumerates them.
 | --- | --- | --- |
 | `atomicArc` | `system/atomicarc.nim` | default; the reference count is updated atomically, so a `ref` may be shared between threads |
 | `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread |
+| `orc` | `system/orc.nim` | `arc` plus a cycle collector: cyclic garbage is freed too; a `ref` must stay on one thread |
 
 A strategy module defines exactly three primitives — `arcInc`, `arcDec` (true
 when the count reached zero) and `arcIsUnique`. What is built on top of them
 (`GC_ref` / `GC_unref`) is strategy independent and lives in `system/refops`.
+
+Cycle collection needs more than three primitives, so a strategy opts into it:
+`orc` marks its `nimTraceRef` with `{.enableTrace.}`, and a runtime of your own
+that does the same gets the same compiler support. A cell carries a second
+header word
+(`rootIdx`), and for a `ref T` whose `T` can form a cycle (it can reach a
+`ref T` again through owned fields, or is a class, or holds a closure) the
+compiler generates a *cell operation* — `proc (cell, env: pointer)` that traces
+the payload or, with `env == nil`, destroys it and frees the cell — and hands it
+to `nimDecRefCyclic` (`=destroy`) and `nimTraceRef` (`=trace`). `=trace` visits
+the owned refs that can be part of a cycle and nothing else: never a `.cursor`
+field, never a raw pointer — unless the type has a hand-written `=trace`, as
+`seq` has. `{.acyclic.}` on a type exempts it. The collector itself is Nim's
+(trial deletion after Bacon & Rajan); `GC_fullCollect`, `GC_runOrc`,
+`GC_enableOrc` and `GC_disableOrc` control it, and it also runs on its own once
+enough candidate roots piled up.
 
 `--mm:NAME` also defines `gcName`, so `--mm:arc` makes `defined(gcArc)` true and
 `--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes
