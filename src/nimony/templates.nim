@@ -65,8 +65,13 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           dest.addSubtree body # keep Symbol as it was
   of SymbolDef:
     let s = body.symId
-    let newDef = newSymId(c, s, forceGlobal = atToplevel)
-    e.newVars[s] = newDef
+    # One fresh symbol per template symbol and expansion. The same one can be
+    # declared more than once: in the branches of a `when` (see
+    # `semuntyped.WhenFrame`), of which only one survives.
+    var newDef = e.newVars.getOrDefault(s)
+    if newDef == SymId(0):
+      newDef = newSymId(c, s, forceGlobal = atToplevel)
+      e.newVars[s] = newDef
     dest.addSymDef(newDef, body.info)
   of StrLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.addSubtree body
@@ -82,7 +87,10 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
       inc fv
       let vid = fv.symId
       if arg.hasMore and not arg.isDotToken:
+        # every copy of the body declares its locals afresh
+        let outerVars = e.newVars
         while arg.hasMore:
+          e.newVars = outerVars
           e.formalParams[vid] = arg
           expandTemplateImpl c, dest, e, forStmt.body, atToplevel
           skip arg

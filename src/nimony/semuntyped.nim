@@ -78,6 +78,14 @@ type
     UntypedTemplate
     UntypedGeneric
     UntypedForwardGeneric
+  WhenFrame = object
+    ## A `when` inside the body. Its branches share the enclosing scope (only
+    ## one survives instantiation), so a name declared in several of them is
+    ## ONE symbol: whichever branch survives declares it, and code after the
+    ## `when` refers to it.
+    scope: Scope                   ## the scope the `when` sits in
+    decls: Table[StrId, SymId]     ## declared by any branch so far
+    inBranch: HashSet[StrId]       ## declared by the branch being walked
   UntypedCtx* = object
     c: ptr SemContext
     mode: UntypedMode
@@ -90,6 +98,13 @@ type
     inNestedRoutine: int
     noGenSym: int
     inTemplateHeader: int
+    whenFrames: seq[WhenFrame]
+      ## the `when` statements being walked, innermost last
+    redeclared: seq[DelayedSym]
+      ## gensym'd names that clash with one already in scope. Reported by
+      ## `flushRedeclared` once the declaring statement is complete: an error
+      ## node emitted while the declaration is being built would land inside
+      ## it (and crash its instantiation, which finds an extra child).
 
 proc createUntypedContext*(c: ptr SemContext; mode: UntypedMode; dirty = false): UntypedCtx =
   UntypedCtx(c: c, mode: mode, dirty: dirty)
@@ -174,6 +189,24 @@ proc symBinding(n: Cursor): TSymBinding =
       else: discard
       skip n
 
+proc siblingBranchSym(c: var UntypedCtx; lit: StrId): SymId =
+  ## The symbol a sibling branch of an enclosing `when` already declared
+  ## `lit` as, in the scope we are declaring in; `SymId(0)` if none.
+  result = SymId(0)
+  var i = c.whenFrames.len - 1
+  while i >= 0:
+    if c.whenFrames[i].scope == c.c[].currentScope and
+        lit notin c.whenFrames[i].inBranch:
+      result = c.whenFrames[i].decls.getOrDefault(lit, SymId(0))
+      if result != SymId(0): return
+    dec i
+
+proc recordWhenDecl(c: var UntypedCtx; lit: StrId; s: SymId) =
+  for f in mitems(c.whenFrames):
+    if f.scope == c.c[].currentScope:
+      f.decls[lit] = s
+      f.inBranch.incl lit
+
 proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: SymKind; nameStart, declStart: int) =
   var name = name
   if c.mode == UntypedTemplate:
@@ -198,18 +231,28 @@ proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: Sy
       var newName = cursorAt(newNameBuf, 0)
       if not hasParam:
         let info = newName.info
-        if newName.kind != Symbol and not (newName.isIdent and pool.strings[newName.strId] == "_"):
+        if newName.kind == SymbolDef:
+          # Already gensym'd: a template declared by the expansion of another
+          # one. Its uses are bound to this symbol already; renaming the
+          # declaration would orphan them.
+          c.gensyms.incl newName.symId
+        elif newName.kind != Symbol and not (newName.isIdent and pool.strings[newName.strId] == "_"):
           var ident = pool.strings[takeIdent(newName)]
+          let lit = pool.strings.getOrIncl(ident)
+          let sibling = siblingBranchSym(c, lit)
           var symName = ident
-          # Templates need cross-module-unique sym names; `makeLocalSym`
-          # only guarantees per-module uniqueness via `c.locals`, so a
-          # template's `var x` would collide with another module's local
-          # `x.0` once both end up in the global `pool.syms`.
-          makeTemplateSym(c.c[], symName, k)
-          let s = Sym(kind: k, name: pool.symId(symName),
+          if sibling == SymId(0):
+            # Templates need cross-module-unique sym names; `makeLocalSym`
+            # only guarantees per-module uniqueness via `c.locals`, so a
+            # template's `var x` would collide with another module's local
+            # `x.0` once both end up in the global `pool.syms`.
+            makeTemplateSym(c.c[], symName, k)
+          let s = Sym(kind: k, name: (if sibling != SymId(0): sibling else: pool.symId(symName)),
                       pos: nameStart)
-          let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
-          c.c[].addSym(dest, delayed)
+          let delayed = DelayedSym(status: OkNew, lit: lit, s: s, info: info)
+          if sibling == SymId(0) and c.c[].addSymForwardError(delayed):
+            c.redeclared.add delayed
+          recordWhenDecl(c, lit, s.name)
           newNameBuf = createTokenBuf(1)
           newNameBuf.addSymDef(s.name, info)
           dest.replace(cursorAt(newNameBuf, 0), nameStart)
@@ -231,14 +274,22 @@ proc addBareDecl(c: var UntypedCtx; dest: var TokenBuf, n: Cursor, k: SymKind, n
     var newName = cursorAt(newNameBuf, 0)
     if not hasParam:
       let info = newName.info
-      if newName.kind != Symbol and not (newName.isIdent and pool.strings[newName.strId] == "_"):
+      if newName.kind == SymbolDef:
+        # already gensym'd, see `addDecl`
+        c.gensyms.incl newName.symId
+      elif newName.kind != Symbol and not (newName.isIdent and pool.strings[newName.strId] == "_"):
         var ident = pool.strings[takeIdent(newName)]
-        # See addDecl above: templates need cross-module-unique sym names.
-        makeTemplateSym(c.c[], ident, k)
-        let s = Sym(kind: k, name: pool.symId(ident),
+        let lit = pool.strings.getOrIncl(ident)
+        let sibling = siblingBranchSym(c, lit)
+        if sibling == SymId(0):
+          # See addDecl above: templates need cross-module-unique sym names.
+          makeTemplateSym(c.c[], ident, k)
+        let s = Sym(kind: k, name: (if sibling != SymId(0): sibling else: pool.symId(ident)),
                     pos: dest.len)
-        let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
-        c.c[].addSym(dest, delayed)
+        let delayed = DelayedSym(status: OkNew, lit: lit, s: s, info: info)
+        if sibling == SymId(0) and c.c[].addSymForwardError(delayed):
+          c.redeclared.add delayed
+        recordWhenDecl(c, lit, s.name)
         newNameBuf = createTokenBuf(1)
         newNameBuf.addSymDef(s.name, info)
         dest.replace(cursorAt(newNameBuf, 0), nameStart)
@@ -249,6 +300,13 @@ proc addBareDecl(c: var UntypedCtx; dest: var TokenBuf, n: Cursor, k: SymKind, n
   else:
     let ident = getIdent(n)
     c.inject(ident)
+
+proc flushRedeclared(c: var UntypedCtx; dest: var TokenBuf) =
+  ## Report the clashes `addDecl`/`addBareDecl` recorded, as statements after
+  ## the declaration that caused them.
+  for d in c.redeclared:
+    c.c[].buildErr dest, d.info, "attempt to redeclare: " & pool.strings[d.lit]
+  c.redeclared.setLen 0
 
 proc semTemplSymbol(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; firstSym: SymId; count: int; start: int) =
   # handle symchoice that was produced
@@ -363,6 +421,7 @@ proc semTemplTypeDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
 proc semTemplLocal(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymKind) =
   let local = asLocal(n)
   let declStart = dest.len
+  let redeclaredBefore = c.redeclared.len
   copyInto dest, n:
     let nameStart = dest.len
     takeTree dest, n # name
@@ -378,7 +437,19 @@ proc semTemplLocal(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymK
       inc n
     else:
       semTemplType c, dest, n # type
+    let valueStart = dest.len
     semTemplBody c, dest, n # value
+    if c.redeclared.len > redeclaredBefore:
+      # Like `semLocal`: the error takes the value's place, so the declaration
+      # stays well-formed and still a statement.
+      let d = c.redeclared.pop()
+      var value = createTokenBuf(dest.len - valueStart)
+      var v = cursorAt(dest, valueStart)
+      value.addSubtree v
+      endRead v
+      dest.shrink valueStart
+      c.c[].buildErr dest, d.info, "attempt to redeclare: " & pool.strings[d.lit],
+                     beginRead(value)
 
 proc semTemplRoutineDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymKind) =
   let orig = n
@@ -506,6 +577,16 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
               error "illformed AST", n
               skip n  # avoid infinite loop on illformed
         dest.addParRi()
+      of WhenS:
+        # The branches share the enclosing scope (see `WhenFrame`).
+        c.whenFrames.add WhenFrame(scope: c.c[].currentScope)
+        dest.addParLe(n.cursorTagId, n.info)
+        n.into WhenS:
+          while n.hasMore:
+            c.whenFrames[^1].inBranch.clear()
+            semTemplBody c, dest, n
+        dest.addParRi()
+        discard c.whenFrames.pop()
       of WhileS:
         copyInto dest, n:
           semTemplBody c, dest, n
@@ -573,17 +654,30 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
             addBareDecl(c, dest, orig, BlockY, nameStart, declStart)
           semTemplBody c, dest, n
           closeScope c
-      of VarS: semTemplLocal(c, dest, n, VarY)
-      of LetS: semTemplLocal(c, dest, n, LetY)
-      of ConstS: semTemplLocal(c, dest, n, ConstY)
-      of TypeS: semTemplTypeDecl(c, dest, n)
-      of ProcS: semTemplRoutineDecl(c, dest, n, ProcY)
-      of FuncS: semTemplRoutineDecl(c, dest, n, FuncY)
-      of IteratorS: semTemplRoutineDecl(c, dest, n, IteratorY)
-      of ConverterS: semTemplRoutineDecl(c, dest, n, ConverterY)
-      of MethodS: semTemplRoutineDecl(c, dest, n, MethodY)
-      of TemplateS: semTemplRoutineDecl(c, dest, n, TemplateY)
-      of MacroS: semTemplRoutineDecl(c, dest, n, MacroY)
+        flushRedeclared c, dest
+      of VarS:
+        semTemplLocal(c, dest, n, VarY)
+        flushRedeclared c, dest
+      of LetS:
+        semTemplLocal(c, dest, n, LetY)
+        flushRedeclared c, dest
+      of ConstS:
+        semTemplLocal(c, dest, n, ConstY)
+        flushRedeclared c, dest
+      of TypeS:
+        semTemplTypeDecl(c, dest, n)
+        flushRedeclared c, dest
+      of ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS:
+        let k = case n.stmtKind
+                of ProcS: ProcY
+                of FuncS: FuncY
+                of IteratorS: IteratorY
+                of ConverterS: ConverterY
+                of MethodS: MethodY
+                of TemplateS: TemplateY
+                else: MacroY
+        semTemplRoutineDecl(c, dest, n, k)
+        flushRedeclared c, dest
       of AsgnS:
         # XXX generate `[]=`/`{}=` symchoices
         semTemplBodySons c, dest, n
