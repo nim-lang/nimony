@@ -140,6 +140,12 @@ func addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 func unsafeAddr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 func sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
+func needsTrace*[T](x: typedesc[T]): bool {.magic: "NeedsTrace", noSideEffect.}
+  ## Does the cycle collector trace through a value of type `T`, i.e. does it
+  ## own a ref that can be part of a cycle? Always false unless the memory
+  ## management runtime collects cycles. A container that owns its buffer
+  ## through a raw pointer and gives it a `=trace` uses this to fence
+  ## structural changes against a concurrent collector (see `seq`).
   ## Returns the size of type `T` in bytes.
 
 template sizeof*[T](_: T): int =
@@ -217,7 +223,11 @@ include "system/openarrays"
 
 # The memory management strategy, chosen by `--mm:NAME`: `$MM` expands to
 # `system/<name>`, so a strategy is a file and needs no `when` chain here.
+# After `seqimpl`/`stringimpl`: `derefs` refers to some of their procs by
+# declaration number. `seq`'s `when declared(nimSeqFenceEnter)` still sees a
+# fence the runtime declares: generic bodies are checked when instantiated.
 include "$MM"
+
 include "system/refops"
 
 func newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}

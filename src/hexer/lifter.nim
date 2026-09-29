@@ -381,6 +381,11 @@ proc needsTrace(c: var LiftingCtx; typ: TypeCursor): bool =
   if typ.isSymbol:
     c.tracedTypes[typ.symId] = result
 
+proc needsTraceOf*(c: var LiftingCtx; typ: TypeCursor): bool =
+  ## `needsTrace(T)` in the library (see `derefs`): the same answer the
+  ## lifted `=trace` hooks are built from.
+  needsTrace(c, typ)
+
 proc elemHasRtti(refType: TypeCursor): bool =
   ## `ref T` with `T` in an inheritance hierarchy: its cells can be reached
   ## through a static type other than this one.

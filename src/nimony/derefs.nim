@@ -1525,6 +1525,15 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
         trCall c, n, e, disallowDangerous
     of PragmaxX:
       trPragmaBlock c, n
+    of NeedsTraceX:
+      # `needsTrace(T)`: answered here, where the lifter can say it
+      let info = n.info
+      var t = n
+      inc t
+      let traced = needsTraceOf(c.lifter[], t)
+      skip n
+      c.dest.addParLe(if traced: TrueX else: FalseX, info)
+      c.dest.addParRi()
     of DotX, DdotX, AtX, ArratX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:

@@ -520,7 +520,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trSons(c, dest, n)
       of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
-        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        NotX, NegX, SizeofX, NeedsTraceX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
         SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
         BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
@@ -1934,7 +1934,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         treToClosure c, dest, n
       of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
-        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        NotX, NegX, SizeofX, NeedsTraceX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
         SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
         BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CchoiceX,

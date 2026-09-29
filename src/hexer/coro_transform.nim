@@ -2639,7 +2639,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if n.hasMore: takeTree dest, n # optional private-access token
       of ErrX, SufX, AtX, DerefX, PatX, ParX, HconvX, ConvX,
           AddrX, NilX, InfX, NeginfX, NanX, FalseX,
-          TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
+          TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, NeedsTraceX,
           AlignofX, OffsetofX, OconstrX, AconstrX,
           BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
           MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,

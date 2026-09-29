@@ -1,0 +1,6 @@
+pairs freed: 200
+tree nodes freed: 1100
+collected without being asked: true
+pairs freed eventually: 20000
+classes and closures leaked: 0
+reachable cycle intact

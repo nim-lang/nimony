@@ -1570,7 +1570,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcall(g, n)
 
     of HighX, LowX, TypeofX,
-       SizeofX, AlignofX, OffsetofX,
+       SizeofX, AlignofX, OffsetofX, NeedsTraceX,
        CardX, UnpackX, FieldsX, CompilesX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX:
       gcallsystem(g, n, $n.exprKind)

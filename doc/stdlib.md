@@ -106,6 +106,7 @@ under `lib/std/system/`; nothing in `system.nim` enumerates them.
 | `atomicArc` | `system/atomicarc.nim` | default; the reference count is updated atomically, so a `ref` may be shared between threads |
 | `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread |
 | `orc` | `system/orc.nim` | `arc` plus a cycle collector: cyclic garbage is freed too; a `ref` must stay on one thread |
+| `yrc` | `system/yrc.nim` | thread-safe `orc`: refs may be shared between threads, and threads collect cycles concurrently with each other and with the mutators |
 
 A strategy module defines exactly three primitives — `arcInc`, `arcDec` (true
 when the count reached zero) and `arcIsUnique`. What is built on top of them
@@ -126,6 +127,18 @@ field, never a raw pointer — unless the type has a hand-written `=trace`, as
 (trial deletion after Bacon & Rajan); `GC_fullCollect`, `GC_runOrc`,
 `GC_enableOrc` and `GC_disableOrc` control it, and it also runs on its own once
 enough candidate roots piled up.
+
+`yrc` is Nim's concurrent cycle collector on the same protocol. A decrement of
+a cell that can be part of a cycle is deferred into a lock-free queue, so such
+a cell is only ever freed by a collection -- its destructor runs then, not on
+the last decrement; cells that cannot be part of a cycle are freed promptly as
+with `arc`. Collections capture the graph without writing to it, decide what
+is dead on the captured data and validate against what mutators did in the
+meantime before freeing anything, so they run concurrently with the mutators
+and with each other. `seq` fences structural changes of buffers the collector
+traces (`needsTrace(T)`, answered by the compiler; a runtime that declares
+`nimSeqFenceEnter`/`nimSeqFenceExit` gets the fence), and a thread that exits
+hands its queued decrements and candidates over (`nimThreadTeardown`).
 
 `--mm:NAME` also defines `gcName`, so `--mm:arc` makes `defined(gcArc)` true and
 `--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes

@@ -1321,7 +1321,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       trShortCircuit(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, XorX,
-        NotX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        NotX, SizeofX, NeedsTraceX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, CastX,

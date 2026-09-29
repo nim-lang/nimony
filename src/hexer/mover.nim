@@ -90,7 +90,7 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
       else:
         break
     of NoExpr, ErrX, SufX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX,
-       AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+       AndX, OrX, XorX, NotX, NegX, SizeofX, NeedsTraceX, AlignofX, OffsetofX, OconstrX,
        AconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
        LeX, LtX, CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX, NewrefX,

@@ -420,12 +420,13 @@ proc trRefBody(c: var EContext; dest: var TokenBuf; n: var Cursor; key: string) 
   dest.addParRi() # "fld"
 
   if c.liftingCtx.cycles:
-    # `--mm:orc`: the cycle collector's `rootIdx` word (`system/orc.OrcHeader`).
+    # The cycle collector's `rootIdx` word (`system/orc.OrcHeader`). 64 bits on
+    # every target: `yrc` packs a claim tag or epoch stamp with an index into it.
     dest.addParLe("fld", info)
     dest.addSymDef(pool.symId(RootIdxField), info)
     dest.addDotToken() # pragmas
     dest.addParLe("i", info)
-    dest.addIntLit(-1, info)
+    dest.addIntLit(64, info)
     dest.addParRi() # "i"
     dest.addParRi() # "fld"
 
@@ -1506,7 +1507,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         while nb.hasMore:
           if not isSimpleLiteral(nb): return false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
-        XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX,
+        XorX, NotX, NegX, SizeofX, NeedsTraceX, AlignofX, OffsetofX,
         OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
         BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CallX,
@@ -1893,6 +1894,8 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trExpr c, dest, n
       dest.addParRi()
+    of NeedsTraceX:
+      bug "`needsTrace` is folded by derefs"
     of SizeofX, AlignofX, OffsetofX:
       dest.addParLe(n.cursorTagId, n.info)
       n.into:

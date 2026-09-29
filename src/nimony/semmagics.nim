@@ -817,6 +817,16 @@ proc semSizeof*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.intType
   commonType c, dest, it, beforeExpr, expected
 
+proc semNeedsTrace*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(needsTrace T)`: stays a node until `derefs` folds it, the lifter
+  ## being the one that knows what the cycle collector traces.
+  let beforeExpr = dest.len
+  let expected = it.typ
+  copyInto dest, it.n:
+    semLocalTypeImpl c, dest, it.n, InLocalDecl
+  it.typ = c.types.boolType
+  commonType c, dest, it, beforeExpr, expected
+
 proc semInclExcl*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   copyInto dest, it.n:

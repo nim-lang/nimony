@@ -64,8 +64,9 @@ type
     rc: int
       ## zero-based: 0 is one reference. The same counter `arc` keeps, so
       ## `arcInc`/`arcDec` and `assertRc` read it unchanged.
-    rootIdx: int
+    rootIdx: int64
       ## `(index in roots + 1) shl rootShift`, or'ed with the cell's color.
+      ## 64 bits on every target (the compiler's layout, which `yrc` needs).
       ## 0 = not a root and black: what a fresh cell starts with.
   OrcCell = ptr OrcHeader
 
@@ -87,15 +88,15 @@ type
     freed, touched, edges, rcSum: int
     keepThreshold: bool
 
-func color(c: OrcCell): int {.inline.} = c.rootIdx and colorMask
+func color(c: OrcCell): int {.inline.} = int(c.rootIdx and colorMask)
 
 func setColor(c: OrcCell; col: int) {.inline.} =
-  c.rootIdx = (c.rootIdx and not colorMask) or col
+  c.rootIdx = (c.rootIdx and not int64(colorMask)) or int64(col)
 
-func rootPos(c: OrcCell): int {.inline.} = c.rootIdx shr rootShift
+func rootPos(c: OrcCell): int {.inline.} = int(c.rootIdx shr rootShift)
 
 func setRootPos(c: OrcCell; pos: int) {.inline.} =
-  c.rootIdx = (pos shl rootShift) or (c.rootIdx and colorMask)
+  c.rootIdx = (int64(pos) shl rootShift) or (c.rootIdx and colorMask)
 
 proc orcOutOfMem() {.noinline.} =
   # The collector's own bookkeeping could not grow. A half-traced graph cannot

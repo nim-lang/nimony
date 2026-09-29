@@ -515,6 +515,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.autoType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
+  of NeedsTraceX:
+    result = c.builtins.boolType
   of DelayX, Delay0X, SuspendX:
     result = c.builtins.continuationType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX,

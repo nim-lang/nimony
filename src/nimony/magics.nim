@@ -51,6 +51,7 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "Not": res NotX
   of "Xor": res XorX
   of "SizeOf": res SizeofX
+  of "NeedsTrace": res NeedsTraceX
   of "Type", "TypeOf": res TypeofX
   of "Addr": res AddrX
   of "Deref": res DerefX
