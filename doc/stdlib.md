@@ -194,6 +194,9 @@ available.
 - `tryWriteFile` is a convenience that opens, writes, and closes
   in one call.
 - `quit(msg)` writes to stderr and exits — useful for fatal errors.
+- `FileMode`, `FileSeekPos` and `FilePermission` live in
+  [`std/commonio`](../lib/std/commonio.nim), which `syncio` and the ring-based
+  `std/asyncio` both export, so importing both is not ambiguous.
 
 [Examples: file I/O](../examples/io_basics.nim)
 

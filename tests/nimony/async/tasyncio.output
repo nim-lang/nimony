@@ -1,0 +1,9 @@
+starting
+l1=server = 127.0.0.1
+l2=port = 8080
+l3=# a comment line
+l4=timeout_ms = 5000
+readLine at eof empty=true
+re-read after setFilePos(0)=server = 127.0.0.1
+readFile round-trip matches=true
+opening a missing file raised

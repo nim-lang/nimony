@@ -84,7 +84,8 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
         if startConnect(buf[i].fd, idx):
           submitForPoll(buf[i].fd, alreadyRegistered)
       else:
-        submitForPoll(buf[i].fd, alreadyRegistered)
+        if not completeCommand(idx, buf[i]):
+          submitForPoll(buf[i].fd, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
   # Sleep no longer than the earliest deadline in this lane.
   let waitMs = waitMillis(lane, timeoutMs)

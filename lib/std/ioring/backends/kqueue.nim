@@ -62,7 +62,8 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
         if startConnect(buf[i].fd, idx):
           submitForPoll(buf[i].fd)
       else:
-        submitForPoll(buf[i].fd)
+        if not completeCommand(idx, buf[i]):
+          submitForPoll(buf[i].fd)
   var kevents {.noinit.}: array[64, KEvent]
   # Sleep no longer than the earliest deadline in this lane, so a timer fires
   # on time instead of on the next poll that happens for another reason.

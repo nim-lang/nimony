@@ -16,6 +16,9 @@
 
 import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
+import ./commonio   # FileMode, FilePermission — `submitOpen`'s arguments
+import ./nativesocket
+export nativesocket   # `submitSocket`'s argument types and their values
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
 export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
 export types.readyEvents, types.toIoEvents, types.toEventMask, types.ECancelled
@@ -155,7 +158,8 @@ proc submitRead*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
-  var op = OpContext(kind: opRead, fd: fd, seqnum: result, buf: buf, len: len,
+  var op = OpContext(kind: opRead, fd: fd, seqnum: result,
+    read: OpBuf(buf: buf, len: len),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
@@ -163,7 +167,91 @@ proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
-  var op = OpContext(kind: opWrite, fd: fd, seqnum: result, buf: buf, len: len,
+  var op = OpContext(kind: opWrite, fd: fd, seqnum: result,
+    write: OpBuf(buf: buf, len: len),
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitOpen*(path: cstring; mode: FileMode;
+                 permissions: set[FilePermission]; deadline: Deadline;
+                 cont = Continuation(fn: nil, env: nil);
+                 resPtr: nil ptr int = nil): SeqNum =
+  ## Open `path` and complete with the fd (or a negated errno). The work is
+  ## made by the backend, on the polling thread: opening here would block the
+  ## caller, and opening has no readiness for the ring to park on anywhere
+  ## else. On Windows the same op performs the backend's `CreateFileW` (see
+  ## backends/files.nim); each backend translates `mode` into its platform's
+  ## arguments, and `permissions` only matters on POSIX.
+  ##
+  ## `path` must stay valid until the op completes — it is read by the backend,
+  ## not copied. The ring copies `OpContext` by value, and a `string` inside it
+  ## would be shared across threads for no reason; the caller's frame is parked
+  ## for the duration, so a `cstring` out of it is safe (the same arrangement
+  ## as `submitRead`'s buffer).
+  result = nextSeqNum()
+  var op = OpContext(kind: opOpen, fd: -1, seqnum: result,
+    open: OpenArgs(path: path, mode: mode, permissions: permissions),
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitSocket*(domain: Domain; typ: SockType; proto: Protocol;
+                   deadline: Deadline;
+                   cont = Continuation(fn: nil, env: nil);
+                   resPtr: nil ptr int = nil): SeqNum =
+  ## Create a socket and complete with its fd, or a negated error. The call is
+  ## made by the backend: on the readiness backends the polling thread performs
+  ## socket(2) exactly like `submitOpen`; on io_uring it is a `IORING_OP_SOCKET`
+  ## SQE and the fd arrives in the CQE.
+  result = nextSeqNum()
+  var op = OpContext(kind: opSocket, fd: -1, seqnum: result,
+    sockDomain: domain, sockType: typ, sockProtocol: proto,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitSetSockOpt*(fd: cint; level, optName: cint; optVal: pointer;
+                       optLen: SockLen; deadline: Deadline;
+                       cont = Continuation(fn: nil, env: nil);
+                       resPtr: nil ptr int = nil): SeqNum =
+  ## Set a socket option (setsockopt(2)/Winsock setsockopt) and complete with
+  ## `0` or a negated error. Configuration, not I/O — and on io_uring a
+  ## `IORING_OP_URING_CMD` + `SOCKET_URING_OP_SETSOCKOPT` SQE (kernel 6.7+)
+  ## rather than a syscall. `optVal` is read while the op runs (during
+  ## submission on the readiness backends, at issue by the ring on io_uring),
+  ## so it must stay valid until the op completes — like a `submitRead` buffer;
+  ## the suspended `.passive` caller's frame is parked exactly that long.
+  result = nextSeqNum()
+  var op = OpContext(kind: opSetSockOpt, fd: fd, seqnum: result,
+    optLevel: level, optName: optName, optVal: optVal, optLen: optLen,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitBind*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
+                 deadline: Deadline;
+                 cont = Continuation(fn: nil, env: nil);
+                 resPtr: nil ptr int = nil): SeqNum =
+  ## Bind `fd` to `sa` and complete with `0` or the negated errno. The address
+  ## is copied into the op, so it does not need to outlive the call; the
+  ## backend performs bind(2) on its polling thread — one instant syscall,
+  ## nothing to wait on — making a fully passive socket creation possible.
+  result = nextSeqNum()
+  var op = OpContext(kind: opBind, fd: fd, seqnum: result,
+    bindTo: IoAddr(sockAddr: sa, sockAddrLen: saLen),
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitSetNonBlocking*(fd: cint; deadline: Deadline;
+                           cont = Continuation(fn: nil, env: nil);
+                           resPtr: nil ptr int = nil): SeqNum =
+  ## Make `fd` non-blocking (fcntl(F_SETFL, ... | O_NONBLOCK) / ioctlsocket
+  ## FIONBIO) and complete with `0` or a negated error. The non-blocking half
+  ## of socket creation, as its own op: the readiness backends set the flags on
+  ## the polling thread at issue time (a poller cannot watch for "not
+  ## blocking"); the io_uring backend needs no syscall for it at all — its
+  ## ring-created sockets are non-blocking from birth (`SOCK_NONBLOCK` in the
+  ## `IORING_OP_SOCKET` type, accepted sockets inherit it), so the op completes
+  ## `0` on arrival there.
+  result = nextSeqNum()
+  var op = OpContext(kind: opSetNonBlocking, fd: fd, seqnum: result,
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
@@ -184,10 +272,10 @@ proc submitAccept*(listenFd: cint; deadline: Deadline;
   ## reconstruct afterwards.
   result = nextSeqNum()
   var op = OpContext(kind: opAccept, fd: listenFd, seqnum: result,
+    accept: AcceptArgs(sockAddr: Sockaddr_storage(),
+                       sockAddrLen: SockLen(sizeof(Sockaddr_storage)),
+                       peer: peer),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
-  op.sockAddr = Sockaddr_storage()
-  op.sockAddrLen = SockLen(sizeof(op.sockAddr))
-  op.peer = peer
   enqueueOp(op)
 
 proc submitConnect*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
@@ -208,9 +296,41 @@ proc submitConnect*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
   ## default for it.
   result = nextSeqNum()
   var op = OpContext(kind: opConnect, fd: fd, seqnum: result,
+    connect: IoAddr(sockAddr: sa, sockAddrLen: saLen),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
-  op.sockAddr = sa
-  op.sockAddrLen = saLen
+  enqueueOp(op)
+
+proc submitRecvFrom*(fd: cint; buf: pointer; len: int; deadline: Deadline;
+                     cont = Continuation(fn: nil, env: nil);
+                     resPtr: nil ptr int = nil;
+                     peer: nil ptr Sockaddr_storage = nil): SeqNum =
+  ## Receive one datagram into `buf`. Completes with the number of bytes
+  ## received, or a negative result.
+  ##
+  ## `peer`, when given, receives the sender's address — the kernel fills it
+  ## as part of the recvfrom, so asking costs no syscall beyond the one that
+  ## receives the datagram. It is written only when the receive succeeds and
+  ## it must outlive the op, like `submitAccept`'s `peer`.
+  result = nextSeqNum()
+  var op = OpContext(kind: opRecvFrom, fd: fd, seqnum: result,
+    recvfrom: RecvFromArgs(buf: buf, len: len,
+                           sockAddr: Sockaddr_storage(),
+                           sockAddrLen: SockLen(sizeof(Sockaddr_storage)),
+                           peer: peer),
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitSendTo*(fd: cint; buf: pointer; len: int; sa: Sockaddr_storage;
+                   saLen: SockLen; deadline: Deadline;
+                   cont = Continuation(fn: nil, env: nil);
+                   resPtr: nil ptr int = nil): SeqNum =
+  ## Send `buf` as one datagram to `sa`. Completes with the number of bytes
+  ## sent, or a negative result. The address is copied into the op, so it does
+  ## not need to outlive the call the way `submitConnect`'s does.
+  result = nextSeqNum()
+  var op = OpContext(kind: opSendTo, fd: fd, seqnum: result,
+    sendto: SendToArgs(buf: buf, len: len, sockAddr: sa, sockAddrLen: saLen),
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
 proc submitPollAdd*(fd: cint; deadline: Deadline;
@@ -280,9 +400,9 @@ proc cancelPendingOps(fd: cint): int =
   ## per-lane and unlocked, so a fd must be closed from the same thread that
   ## submitted its ops; ops another lane still holds for `fd` are not
   ## cancelled here and would leak the way described above. Cancelling those
-  ## needs a cross-lane request the owning lane drains from its own `poll`
-  ## (and, on io_uring, an `IORING_OP_ASYNC_CANCEL` — the kernel still owns
-  ## the slot's buffers until it acknowledges), which this does not do yet.
+  ## needs a cross-lane request the owning lane drains from its own `poll`,
+  ## which this does not do yet. An op the kernel still owns (io_uring)
+  ## completes once the kernel gives it back (`cancelOp`).
   ##
   ## Returns how many ops were cancelled, which is what lets `submitPollRemove`
   ## tell its caller whether anything was actually in flight.
@@ -295,7 +415,7 @@ proc cancelPendingOps(fd: cint): int =
     # or — for an op without one — pushes a completion-queue entry, then frees
     # the slot. This used to resume continuations only, so a cancelled op that
     # had none (a `waitCompletions` driver) vanished and its waiter hung.
-    complete(idx, ECancelled)
+    cancelOp(lane, idx, ECancelled)
     inc result
 
 proc submitPollRemove*(fd: cint): int {.discardable.} =
@@ -372,9 +492,6 @@ when defined(posix):
 
 when defined(posix):
   const
-    AF_INET* = 2.cint
-    SOCK_STREAM* = 1.cint
-    IPPROTO_TCP* = 6.cint
     SOL_SOCKET* = (when defined(macosx): 0xFFFF.cint else: 1.cint)
     SO_REUSEADDR* = (when defined(macosx): 4.cint else: 2.cint)
     INADDR_ANY* = 0'u32
@@ -386,7 +503,7 @@ when defined(posix):
     ## A non-blocking TCP socket, which is what `submitConnect` requires: a
     ## blocking one would finish the connect inside the syscall and there
     ## would be nothing for the ring to wait on.
-    result = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    result = socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     if result >= 0: setNonBlocking(result)
 
   proc loopbackAddr*(sa: var Sockaddr_storage; saLen: var SockLen;
@@ -418,7 +535,7 @@ when defined(posix):
     result = (uint16(raw[2]) shl 8) or uint16(raw[3])
 
   proc listenTcp*(port: uint16; backlog = 128): cint =
-    let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let fd = socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     assert fd >= 0, "socket() failed"
     var yes: cint = 1
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
@@ -464,9 +581,6 @@ when defined(windows):
 
   const
     InvalidSocket = not 0'u
-    AF_INET* = 2.cint
-    SOCK_STREAM* = 1.cint
-    IPPROTO_TCP* = 6.cint
     SOL_SOCKET* = 0xFFFF.cint
     SO_REUSEADDR* = 4.cint
     INADDR_ANY* = 0'u32
@@ -513,7 +627,7 @@ when defined(windows):
     ## IPv4 wildcard listener. No SO_REUSEADDR: on Winsock that option allows a
     ## second bind to hijack a live listener, so the POSIX "restart without
     ## TIME_WAIT" semantics are not what it means here.
-    let s = wsSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let s = wsSocket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     assert s != InvalidSocket, "socket() failed"
     assert s <= SocketHandle(high(cint)), "SOCKET handle exceeds the ring's cint fd space"
     var addr4 = default(Sockaddr_in)
@@ -533,7 +647,7 @@ when defined(windows):
     ## A non-blocking TCP socket, which is what `submitConnect` requires: a
     ## blocking one would finish the connect inside the syscall and there
     ## would be nothing for the ring to wait on.
-    let s = wsSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let s = wsSocket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     if s == InvalidSocket or s > SocketHandle(high(cint)): return -1
     result = cint(cast[uint32](s))
     setNonBlocking(result)

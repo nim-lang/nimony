@@ -20,6 +20,12 @@
 # out of time is completed here even when nothing became ready — including on
 # the path where the poll set is empty and the lane holds only timers.
 #
+# Windows files are ring ops on this backend too (asyncio submits its
+# open/read/write on every Windows backend): WSAPoll cannot watch a HANDLE —
+# it fails WSAENOTSOCK — so a file fd is filtered out of the set at build time
+# and its transfers are made synchronously here, the "regular file is its own
+# readiness" rule the POSIX backends apply (backends/files.nim).
+#
 # Winsock is bound by `dynlib` (the winlean house style) rather than through
 # `<winsock2.h>`, so the generated C never has to order that header against
 # winlean's `<Windows.h>`. `WSAPOLLFD` is declared to its ABI (SOCKET + two
@@ -33,6 +39,7 @@ when defined(windows):
   import ../core/types
   import ../core/slots
   import ../core/backend
+  import ./files   # isFileHandle, fileTransfers
   import ./poll
 
   const
@@ -84,11 +91,18 @@ when defined(windows):
           # from the arena, so there is nothing to undo either way.
           discard startConnect(buf[i].fd, idx)
         else:
-          discard
+          discard completeCommand(idx, buf[i])
     # Build this lane's set from its arena. Collect before dispatching:
     # `processFd` frees slots, which mutates the fd index the set comes from.
+    # A FILE fd is its own readiness: WSAPoll cannot watch a HANDLE
+    # (WSAENOTSOCK), so it never enters the set and its transfers run after
+    # the collection loop (completing also frees slots — the same rule).
+    var fileFds: seq[cint] = @[]
     pollSets[lane].setLen(0)
     for fd in gSlots[lane].pendingFds:
+      if isFileHandle(fd):
+        fileFds.add fd
+        continue
       let events = armEventsForFd(fd)
       if events == {}: continue   # nothing to watch: the fd-less bucket (timers)
       var ev = 0
@@ -96,6 +110,8 @@ when defined(windows):
       if evWrite in events: ev = ev or POLLWRNORM
       pollSets[lane].add WsaPollFd(fd: SocketHandle(cast[uint32](fd)),
                                    events: cshort(ev), revents: cshort(0))
+    for f in fileFds:
+      fileTransfers(f)
     # Sleep no longer than the earliest deadline in this lane, so a timer
     # fires on time instead of on the next poll that happens for another
     # reason.
