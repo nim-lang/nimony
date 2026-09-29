@@ -39,6 +39,7 @@ when defined(nimony):
     hostOS =
       when defined(windows): "windows"
       elif defined(macosx): "macosx"
+      elif defined(android): "android"
       elif defined(linux): "linux"
       elif defined(freebsd): "freebsd"
       elif defined(netbsd): "netbsd"
@@ -47,7 +48,6 @@ when defined(nimony):
       elif defined(illumos): "illumos"
       elif defined(solaris): "solaris"
       elif defined(haiku): "haiku"
-      elif defined(android): "android"
       elif defined(ios): "ios"
       else: "linux"
 
