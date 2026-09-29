@@ -36,7 +36,7 @@
 ## Variable          Output
 ## ================  =======================================================
 ## `$date`           Current date in UTC (`2026-09-29`)
-## `$time`           Current time in UTC (`"09:14:03"`)
+## `$time`           Current time in UTC (`09:14:03`)
 ## `$datetime`       `$date` and `$time` in ISO 8601 (`2026-09-29T09:14:03Z`)
 ## `$app`            `os.getAppFilename()`
 ## `$appname`        Base name of `$app`
@@ -154,15 +154,15 @@ proc addNifStrLit(result: var string; s: string) =
 proc isAutoString(s: string): bool =
   ## Whether `s` can be written bare and a line-based NIF reader reads it
   ## back as the string `s`: a word starting like an identifier (or with
-  ## `/`) that contains a `/` or `-` and nothing that ends or escapes it.
-  const Special = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', ':',
+  ## `/`) that contains a `-`, `/` or `:` and nothing that ends or escapes it.
+  const Special = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"',
                    '@', '\\', ' ', '\x7F'}
   if s.len == 0 or s[0] notin {'a'..'z', 'A'..'Z', '_', '/', '\x80'..'\xFF'}:
     return false
   result = false
   for c in s:
     if c < '!' or c in Special: return false
-    if c == '/' or c == '-': result = true
+    if c in {'-', '/', ':'}: result = true
 
 proc addNifStr(result: var string; s: string) =
   if isAutoString(s): result.add s
@@ -190,13 +190,10 @@ proc addTime(result: var string; dt: DateTime) =
 proc addField(result: var string; v: string; level: Level) =
   case v
   of "date":
-    # a number followed by `-`: an auto string
+    # the date and the times are numbers followed by `-` or `:`: auto strings
     addDate(result, now())
   of "time":
-    # a bare time is not an auto string
-    var t = ""
-    addTime(t, now())
-    addNifStrLit(result, t)
+    addTime(result, now())
   of "datetime":
     let dt = now()
     addDate(result, dt)

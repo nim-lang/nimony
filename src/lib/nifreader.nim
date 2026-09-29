@@ -556,21 +556,25 @@ proc nextSymbolPart(r: var Reader; result: var ExpandedToken) =
 # ── Line-based syntax (optional NIF extension) ────────────────────────────
 #
 # A top-level line that does not start with `(` is read as `(tag arg1 ...)`,
-# and a number, identifier or symbol that runs into a `/` or `-` extends up to
-# the next whitespace, parenthesis or suffix and is a string literal instead. The
-# reader produces the very same tokens as for the parenthesized form: a
-# `ParLe` for the tag and a `ParRi` (with empty `data`) for the newline that
-# ends the node.
+# and a number, identifier or symbol that continues with `-`, `/` or `:`
+# extends up to the next whitespace, parenthesis or suffix and is a string
+# literal instead. The reader produces the very same tokens as for the
+# parenthesized form: a `ParLe` for the tag and a `ParRi` (with empty `data`)
+# for the newline that ends the node.
 
 const
   IdentStartChars = {'a'..'z', 'A'..'Z', '_', '\\', '\x80'..'\xFF'}
   IdentChars = IdentStartChars + Digits
+  LineStrStart = {'-', '/', ':'}
   LineStrEnd = {' ', '\t', '\n', '\r', '(', ')', '@', '~', '#'}
+  # where an identifier or symbol ends in line mode: `-` and `/` are no
+  # control characters, but they start a string
+  LineWordEnd = ControlCharsOrWhite + {'-', '/'}
 
-proc hasLineStrSep(data: StringView): bool =
-  for i in 0 ..< data.len:
-    if data[i] in {'/', '-'}: return true
-  result = false
+template continuesAsStr(r: Reader): bool =
+  ## Line mode: the number, identifier or symbol just read continues with
+  ## `-`, `/` or `:` and so is the start of a string literal.
+  r.lineBased and r.p < r.eof and ^r.p in LineStrStart
 
 proc lineStr(r: var Reader; result: var ExpandedToken) =
   ## Extend the token that starts at `result.data.p` up to the next whitespace,
@@ -632,15 +636,6 @@ proc linePrelude(r: var Reader; tok: var ExpandedToken): bool =
     if not r.inLineNode and r.depth == 0:
       lineHead(r, tok)
       result = true
-
-proc numberSuffix(r: var Reader; result: var ExpandedToken) {.inline.} =
-  if r.lineBased and (result.tk == UnknownToken or
-                      (r.p < r.eof and ^r.p in {'/', '-'})):
-    # `2024-08-12`, `1/2`; and a `-` without digits is an empty number
-    # followed by `-`: `-f`, `--flag`
-    lineStr(r, result)
-  else:
-    handleSuffix(r, result)
 
 proc next*(r: var Reader; result: var ExpandedToken) =
   if r.pendingLeft > 0:
@@ -742,7 +737,8 @@ proc next*(r: var Reader; result: var ExpandedToken) =
     inc r.p
     inc result.data.len
     handleNumber r, result
-    numberSuffix(r, result)
+    if continuesAsStr(r): lineStr(r, result)
+    else: handleSuffix(r, result)
 
   of '0'..'9':
     # bare-digit number (NIF27): no sign prefix on positives.
@@ -750,20 +746,24 @@ proc next*(r: var Reader; result: var ExpandedToken) =
       result.data.p = p
       result.data.len = 0
     handleNumber r, result
-    numberSuffix(r, result)
+    if continuesAsStr(r): lineStr(r, result)  # `2024-08-12`, `14:05`
+    else: handleSuffix(r, result)
 
   else:
-    useCpuRegisters:
-      result.data.p = p
-      var hasDot = false
-      while p < eof and ^p notin ControlCharsOrWhite:
-        if ^p == '\\': result.flags.incl TokenHasEscapes
-        elif ^p == '.': hasDot = true
-        inc result.data.len
-        inc p
+    var hasDot = false
+    template scanWord(wordEnd: set[char]) =
+      useCpuRegisters:
+        result.data.p = p
+        while p < eof and ^p notin wordEnd:
+          if ^p == '\\': result.flags.incl TokenHasEscapes
+          elif ^p == '.': hasDot = true
+          inc result.data.len
+          inc p
+    if r.lineBased: scanWord(LineWordEnd)
+    else: scanWord(ControlCharsOrWhite)
 
-    if r.lineBased and hasLineStrSep(result.data):
-      lineStr(r, result)  # `a/b.txt`, `x-y`, `/usr/bin`
+    if continuesAsStr(r):
+      lineStr(r, result)  # `a/b.txt`, `x-y`, `https://x`, `/usr/bin`
     elif result.data.len > 0:
       if hasDot:
         result.tk = Symbol
@@ -844,9 +844,10 @@ proc extractModuleSuffix*(filename: string): string =
 proc open*(filename: string; lineBased = false): Reader =
   ## With `lineBased`, the reader accepts NIF's optional line-based syntax:
   ## a top-level line not starting with `(` is a node `(tag args...)` that ends
-  ## at the newline, and inside it path words and ISO 8601 dates/times are
-  ## string literals. Such a module is a flat list of top-level nodes; `next`
-  ## returns them one after another until `EofToken`.
+  ## at the newline, and a number, identifier or symbol that continues with
+  ## `-`, `/` or `:` is a string literal (`a/b.txt`, `2024-08-12`, `14:05`).
+  ## Such a module is a flat list of top-level nodes; `next` returns them one
+  ## after another until `EofToken`.
   let f = try:
       vfsOpenMmap(filename)
     except:
@@ -1019,19 +1020,22 @@ when isMainModule and not defined(nimony):
     # the string rule applies at every nesting level of a line-based module
     assert lineTokens("a (b x/y)\n(c x/y)") ==
       @["(a", "(b", "\"x/y\"", ")", ")", "(c", "\"x/y\"", ")"]
-    # a number that runs into `/` or `-` extends to the whitespace
-    assert lineTokens("t 2024-08-12 2024-08-12T14:05:09.25+02:00 2024-08-12x 1/2") ==
+    # a number that continues with `-`, `/` or `:` extends to the whitespace
+    assert lineTokens("t 2024-08-12 2024-08-12T14:05:09.25+02:00 2024-08-12x 1/2 14:05 12:00Z") ==
       @["(t", "\"2024-08-12\"", "\"2024-08-12T14:05:09.25+02:00\"",
-        "\"2024-08-12x\"", "\"1/2\"", ")"]
-    # other numbers stay numbers; a bare time is not a string
-    assert lineTokens("t 42 -7 1.5 1.5E-3 x.1 14:05") ==
-      @["(t", "42", "-7", "1.5", "1.5E-3", "x.1", "14", "05", ")"]
-    # so do identifiers and symbols that do not contain `/` or `-`; once one
-    # does, control characters other than parentheses and suffix introducers
-    # are part of the string
+        "\"2024-08-12x\"", "\"1/2\"", "\"14:05\"", "\"12:00Z\"", ")"]
+    # other numbers stay numbers
+    assert lineTokens("t 42 -7 1.5 1.5E-3 x.1") ==
+      @["(t", "42", "-7", "1.5", "1.5E-3", "x.1", ")"]
+    # so do identifiers and symbols; once one continues with `-`, `/` or `:`,
+    # control characters other than parentheses and suffix introducers are
+    # part of the string
     assert lineTokens("get x-y /usr/bin a/b.txt my\\20dir/a.txt dest/x. a/b:c\"d#e# (p a/b)") ==
       @["(get", "\"x-y\"", "\"/usr/bin\"", "\"a/b.txt\"", "\"my dir/a.txt\"",
         "\"dest/x.\"", "\"a/b:c\"d\"", "(p", "\"a/b\"", ")", ")"]
+    assert lineTokens("get https://nim-lang.org C:/tmp/x.txt key: a.b:c") ==
+      @["(get", "\"https://nim-lang.org\"", "\"C:/tmp/x.txt\"", "\"key:\"",
+        "\"a.b:c\"", ")"]
     # an auto string carries a suffix like every other atom
     block:
       var r = openFromBuffer("t src/main.nim@0,3#c# 2024-08-12~2 12@3,4", "ThisMod", lineBased = true)
@@ -1045,9 +1049,8 @@ when isMainModule and not defined(nimony):
       r.next(tok)
       assert tok.tk == IntLit and tok.pos.col == 3 and tok.pos.line == 4
       close r
-    # a `-` that does not start a number starts a string: command line flags
-    assert lineTokens("ls -la --color - -3") ==
-      @["(ls", "\"-la\"", "\"--color\"", "\"-\"", "-3", ")"]
+    # `-` without digits is an empty number: `--color` continues with `-`
+    assert lineTokens("ls --color -3") == @["(ls", "\"--color\"", "-3", ")"]
     # `..` alone is still two empty nodes
     assert lineTokens("up ..") == @["(up", ".", ".", ")"]
     # the tag carries a suffix

@@ -9,8 +9,8 @@ assert substituteLog("$levelid $levelname", lvlError, "an ", "error", 3) ==
   "error E ERROR \"an error3\""
 assert substituteLog("", lvlWarn, "say \"hi\"\n\\") == "warn \"say \\^hi\\^\\n\\|\""
 # words of the format string are strings; bare where they read back as one
-assert substituteLog("a/b.txt key (x) x-y", lvlDebug, "") ==
-  "debug a/b.txt \"key\" \"(x)\" x-y \"\""
+assert substituteLog("a/b.txt key (x) x-y C:/x", lvlDebug, "") ==
+  "debug a/b.txt \"key\" \"(x)\" x-y C:/x \"\""
 
 let logFile = "tlogging_test.log"
 discard tryRemoveFile(path(logFile))
