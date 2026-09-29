@@ -2049,7 +2049,12 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
       inc c.usedTypevars
     let res = declToCursor(c, dest, s)
     if KeepMagics notin flags:
-      let info = readonlyCursorAt(dest, dest.len-1).info
+      # Released before `maybeInlineMagic` rewrites `dest`: a temporary cursor
+      # lives to the end of the scope, and a live one turns that rewrite into
+      # a copy of the whole buffer.
+      var last = readonlyCursorAt(dest, dest.len-1)
+      let info = last.info
+      endRead last
       if maybeInlineMagic(c, dest, res):
         c.expanded.addSymUse s.name, info
     if res.status == LacksNothing:
