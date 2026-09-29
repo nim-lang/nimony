@@ -321,6 +321,17 @@ proc emitUnwind(c: var Context; dest: var TokenBuf; code: TokenBuf;
   if target >= 0:
     copyIntoKind dest, JmpS, info:
       dest.addSymUse c.exits[target].label, info
+  elif not isVoidType(c.retType) and c.resultSym != SymId(0):
+    # `result` already IS the tuple: set its code half and hand it back
+    # whole. Rebuilding it as `(code, result[1])` reads the payload, which
+    # the duplifier must answer with a `=dup` — see `trRet`.
+    copyIntoKind dest, AsgnS, info:
+      copyIntoKind dest, TupatX, info:
+        dest.addSymUse c.resultSym, info
+        dest.addIntLit 0, info
+      dest.add code
+    copyIntoKind dest, RetS, info:
+      dest.addSymUse c.resultSym, info
   else:
     copyIntoKind dest, RetS, info:
       produceRaiseTuple c, dest, c.retType, info

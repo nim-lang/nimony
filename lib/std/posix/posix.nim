@@ -256,7 +256,13 @@ when defined(posix):
   # reports `-1` and sets libc's errno. Gating on `nimNativeIo` made every such
   # failure read a native variable libc never writes: not a wrong message but a
   # wrong branch, since the `0` it answered maps to `Success`.
-  when defined(nimNoLibc):
+  const rawSyscalls* = defined(nimNoLibc) and defined(linux)
+    ## Syscall bindings are raw kernel calls that report failure as `-errno`.
+    ## Only Linux: the freestanding backend on Darwin still links libSystem
+    ## (Darwin has no stable syscall ABI), whose wrappers return `-1` and set
+    ## libc's errno like everywhere else.
+
+  when rawSyscalls:
     var errnoVar: cint = 0
       ## Native errno for the truly freestanding build, maintained by this
       ## module's own syscall wrappers (currently the directory ops). Nothing
@@ -282,11 +288,11 @@ when defined(posix):
     ## Normalizes a syscall-style call to the Linux raw convention: returns the
     ## non-negative result on success, or `-errno` on failure. Hides whether the
     ## error is signalled by the raw syscall's negative return (freestanding /
-    ## arkham, `-d:nimNoLibc`) or by libc's `-1` + the `errno` global.
+    ## Linux arkham, see `rawSyscalls`) or by libc's `-1` + the `errno` global.
     ##
     ## Wrap every syscall-shaped call in this and read the error out of the
     ## result. Nothing above this module should touch an errno global.
-    when defined(nimNoLibc):
+    when rawSyscalls:
       clong(x)
     else:
       let r = clong(x)
@@ -300,7 +306,7 @@ when defined(posix):
 
   template mmapErrno*(p: pointer): cint =
     ## `errno` for a failed `mmap` (see `mmapFailed`).
-    when defined(nimNoLibc): cint(-cast[int](p))
+    when rawSyscalls: cint(-cast[int](p))
     else: errno()
 
   proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.importc: "clock_gettime", sideEffect.}
@@ -360,7 +366,7 @@ when defined(posix):
       ## The write matters even under libc — this module's own readdir must
       ## zero errno at end-of-directory, or consumers would misread a stale
       ## value as a failure.
-      when defined(nimNoLibc):
+      when rawSyscalls:
         errnoVar = e
       else:
         errnoLocation()[] = e
