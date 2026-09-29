@@ -314,6 +314,10 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     else:
       var s2 = createEntryScope(r.body.info)
       s2.isTopLevel = false
+      # The body's own labels too: the eraiser puts a `try`'s `exlab` at the
+      # top of the routine body when the `try` is, and a `jmp` there must run
+      # the destructors of the scopes it leaves like any other.
+      s2.labels = collectLabels(r.body)
       swap c.currentScope, s2
       # A nested routine's body is a path of its own: its divergence must not
       # leak into the enclosing statement list.
@@ -601,6 +605,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     anonBlock: pool.symId("`anonblock.0"),
     dest: move(pass.dest), flow: initTracker[SymId, bool]())
   assert n.stmtKind == StmtsS
+  c.currentScope.labels = collectLabels(n)   # a module-level `try`'s labels
   c.dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:

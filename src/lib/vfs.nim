@@ -99,6 +99,22 @@ proc atomicTempPath*(target: string): string =
   ## A sibling temp path for an atomic replacement of `target`
   result = target & ".tmp." & $int(osProcessId()) & "." & $nextTempSeq()
 
+when defined(windows):
+  proc vfsSleepMs*(ms: uint32) {.importc: "Sleep", stdcall, dynlib: "kernel32".}
+elif defined(nimony):
+  # `nanosleep`, not libc's `usleep`: the native backend links no libc and
+  # knows `nanosleep` as the syscall it is.
+  from std / posix / posix import Timespec, nanosleep
+  proc vfsSleepMs*(ms: uint32) =
+    var req = Timespec()
+    req.tv_sec = typeof(req.tv_sec)(clong(ms div 1000'u32))
+    req.tv_nsec = clong(ms mod 1000'u32) * 1_000_000
+    var rem = Timespec()
+    discard nanosleep(req, rem)
+else:
+  from std / os import sleep
+  proc vfsSleepMs*(ms: uint32) = sleep(int(ms))
+
 when defined(nimony):
   import std / [os, dirs, paths]
   import std / private / oscommons
@@ -124,6 +140,10 @@ when defined(nimony):
     except: discard
   proc readBytes(p: string): string =
     try: readFile(p) except: ""
+  proc createDirImpl(d: string): bool =
+    try: tryCreateFinalDir(path(d)) == Success except: false
+  proc removeDirImpl(d: string) =
+    try: discard tryRemoveFinalDir(path(d)) except: discard
 
   proc writeBytes(p, c: string) =
     let tmp = atomicTempPath(p)
@@ -155,6 +175,10 @@ else:
   proc removeTreeImpl(d: string) =
     try: removeDir(d) except CatchableError: discard
   proc readBytes(p: string): string = readFile(p)
+  proc createDirImpl(d: string): bool =
+    try: not existsOrCreateDir(d) except CatchableError: false
+  proc removeDirImpl(d: string) =
+    try: removeDir(d) except CatchableError: discard
   proc writeBytes(p, c: string) =
     let tmp = atomicTempPath(p)
     try:
@@ -178,6 +202,15 @@ proc vfsMoveInto*(src, dst: string): bool =
   ## written executable fails with ETXTBSY ("Text file busy"), and so does
   ## writing one that somebody else is executing.
   moveIntoImpl(src, dst)
+
+proc vfsTryLock*(lock: string): bool =
+  ## Take the cross-process lock `lock` (a path): true when this call took it,
+  ## false when another process holds it. The lock is a directory because
+  ## creating one either succeeds or finds it there, atomically, on every OS.
+  createDirImpl(lock)
+
+proc vfsUnlock*(lock: string) =
+  removeDirImpl(lock)
 
 proc vfsRemoveTree*(dir: string) =
   ## Remove `dir` and everything below it. Best effort: it exists to clean up
