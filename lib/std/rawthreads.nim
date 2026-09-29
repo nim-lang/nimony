@@ -241,8 +241,14 @@ type
 proc `=copy`(dest: var RawThread; src: RawThread) {.error.}
 
 template nimThreadProcWrapperBody(closure: pointer) =
+  # first: chunks this thread allocates are stamped with its region's handle
+  when declared(nimAllocThreadInit):
+    nimAllocThreadInit()
   let t = cast[ptr RawThread](closure)
   t.dataFn(t.data)
+  # last: the heap of this thread goes to the next thread that starts
+  when declared(nimAllocThreadTeardown):
+    nimAllocThreadTeardown()
 
 when defined(windows):
   proc threadProcWrapper(closure: pointer): uint32 {.stdcall.} =
