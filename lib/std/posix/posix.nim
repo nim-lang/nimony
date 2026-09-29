@@ -275,10 +275,12 @@ when defined(posix):
     # libc IO is in use, so libc's own calls (fopen, opendir, ...) report
     # failures through libc's errno. `errno` itself is a header macro; the
     # stable, header-free way to reach it is the address-returning accessor
-    # every modern libc exports: `__errno_location` on Linux (glibc and musl),
-    # `__error` on Darwin.
+    # every modern libc exports: `__errno_location` on Linux's glibc and musl,
+    # `__errno` on Bionic and `__error` on Darwin.
     when defined(osx):
       proc errnoLocation(): ptr cint {.importc: "__error", sideEffect.}
+    elif defined(android):
+      proc errnoLocation(): ptr cint {.importc: "__errno", sideEffect.}
     else:
       proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
     proc errno*(): cint {.inline.} = errnoLocation()[]
