@@ -72,6 +72,9 @@ type
       ## `inputs` once the whole file is parsed (see `expandInputsOf`)
     state*: NodeState
     depth*: int       # depth in the DAG for parallel execution
+    atomic*: bool
+      ## `(atomic)`: the command writes to temporary files that replace the
+      ## outputs only once it succeeded, see `runDag`
 
   Dag* = object
     nodes*: seq[Node]
@@ -195,7 +198,7 @@ proc registerCommand(dag: var Dag; cmdName: string; ext: string): int =
 
 proc addNode(dag: var Dag; cmdName: string;
              inputs, outputs, args: sink seq[string]; ext: string;
-             inputsOf: sink seq[string] = @[]): int =
+             inputsOf: sink seq[string] = @[]; atomic = false): int =
   ## Add a build node to the DAG and return its ID
   result = dag.nodes.len
   let cmdIdx = registerCommand(dag, cmdName, ext)
@@ -207,7 +210,8 @@ proc addNode(dag: var Dag; cmdName: string;
     deps: @[],
     inputsOf: inputsOf,
     state: nsUnvisited,
-    depth: 0
+    depth: 0,
+    atomic: atomic
   )
   dag.nodes.add(node)
 
@@ -462,6 +466,35 @@ type
     cmdName: string
     label: string
     start: MonoTime
+    tmpOutputs: seq[string]  # an `atomic` node's outputs, as written
+
+proc atomicTmpNames(node: Node; nodeId: int): seq[string] =
+  ## Where an `atomic` node's command writes its outputs instead. The names are
+  ## unique per nifmake process, so concurrent builds that share an output --
+  ## the objects of `.compile`d files in Nimony's cross-project
+  ## `nimcache_static/`, which every parallel test of a directory builds --
+  ## never write into the same file, and no reader ever sees a half-written
+  ## one: the output appears only by a rename, once complete.
+  result = @[]
+  let suffix = ".tmp" & $getCurrentProcessId() & "_" & $nodeId
+  for output in node.outputs:
+    result.add output & suffix
+
+proc commitAtomic(node: Node; tmpOutputs: seq[string]; success: bool) =
+  for i in 0 ..< tmpOutputs.len:
+    let tmp = tmpOutputs[i]
+    if success and fileExists(tmp):
+      try:
+        moveFile(tmp, node.outputs[i])
+      except OSError:
+        # Windows refuses to replace a file that is open, e.g. while another
+        # build links it. That build produced the same output the same way,
+        # so it is as good as ours.
+        if not fileExists(node.outputs[i]):
+          quit "nifmake: cannot move " & tmp & " to " & node.outputs[i]
+    if fileExists(tmp):
+      try: removeFile(tmp)
+      except OSError: discard
 
 proc initScheduler(dag: Dag; sortedNodes: seq[int]): Scheduler =
   result = Scheduler(
@@ -616,8 +649,11 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
       if Force in opt or Rerun in opt or needsRebuild(sc, node[]):
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
+        let tmpOutputs = if node.atomic: atomicTmpNames(node[], nodeId)
+                         else: @[]
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs,
-                                        node.outputs, node.args, dag.baseDir)
+                                        (if node.atomic: tmpOutputs else: node.outputs),
+                                        node.args, dag.baseDir)
         if Verbose in opt:
           echo "Command: ", expandedCmd
         pool.add RunningJob(
@@ -627,7 +663,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           command: expandedCmd,
           cmdName: dag.commands[node.cmdIdx].name,
           label: nodeLabel(dag, node[]),
-          start: (if profile != nil: getMonoTime() else: MonoTime()))
+          start: (if profile != nil: getMonoTime() else: MonoTime()),
+          tmpOutputs: tmpOutputs)
       else:
         if Verbose in opt:
           echo "Up to date: ", node.outputs.join(", ")
@@ -649,6 +686,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
                           peakKiB)
     inc prog.done
     prog.draw job.label
+    if job.tmpOutputs.len > 0:
+      commitAtomic(dag.nodes[job.nodeId], job.tmpOutputs, exitCode == 0)
     if exitCode == 0:
       if Force in opt: touchOutputs(dag.nodes[job.nodeId], opt)
       sc.invalidate dag.nodes[job.nodeId]
@@ -769,6 +808,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
   var outputs: seq[string] = @[]
   var args: seq[string] = @[]
   var inputsOf: seq[string] = @[]
+  var atomic = false
 
   # Parse imports and results
   while n.hasMore:
@@ -788,6 +828,8 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
             if n.kind == StrLit:
               args.add(n.strVal)
             inc n
+        elif tag == "atomic":
+          atomic = true
         elif tag == "inputsof":
           # "every output of every node running <cmd>" — the whole-program
           # dependency a codegen node has on a phase that precedes it, written
@@ -806,7 +848,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
     else:
       quit "expected `input` or `output` in `do` definition, but found: " & $n.kind
 
-  discard addNode(dag, cmdName, inputs, outputs, args, ".args", inputsOf)
+  discard addNode(dag, cmdName, inputs, outputs, args, ".args", inputsOf, atomic)
 
 proc parseNifFile(filename: string; baseDir: sink string): Dag =
   ## Parse a .nif file and build the DAG

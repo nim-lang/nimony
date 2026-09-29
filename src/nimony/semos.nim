@@ -794,30 +794,48 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
 const
   writeNifModuleSuffix* = "wriwhv7qv"
 
+proc buildWriteNifModule(c: var SemContext): string =
+  # Forward the outer compile's CLI args (notably `--cc`) so the inner nimony
+  # emits a build file whose `nimsem` cmd-line MATCHES what the outer build
+  # file uses. Otherwise nifmake's per-cmd staleness check sees a different
+  # argv for `nimsem ... m sysvq0asl.p.nif`, decides the existing
+  # `sysvq0asl.s.nif` is stale, and tries to overwrite it — which on Windows
+  # fails because the outer nimsem (currently paused waiting on this exec)
+  # still has it mmap'd. The outer's args live on `c.commandLineArgs`.
+  let nimonyExe = findTool("nimony")
+  let cmd = quoteShell(nimonyExe) & c.commandLineArgs &
+    " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
+    " c " & quoteShell(stdlibFile("std/writenif.nim"))
+  try:
+    let (output, exitCode) = execCmdEx(cmd)
+    result = if exitCode != 0: output else: ""
+  except:
+    result = "failed to run: " & cmd
+
+const StaleLockNs = 120'i64 * 1_000_000_000'i64
+  ## A writenif build takes seconds; a lock this old lost its holder.
+
 proc prepareEval*(c: var SemContext): string =
+  ## Precompile `std/writenif` into this nimcache, once. Every module of a
+  ## parallel build that evaluates something at compile time gets here, all
+  ## sharing the nimcache, so the build is done under a lock: two concurrent
+  ## builds of it race on the same outputs, and on Windows the loser cannot
+  ## replace a file the winner's C compiler still has open.
+  result = ""
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
-    if not os.fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
-      # precompile the module.
-      # Forward the outer compile's CLI args (notably `--cc`) so the
-      # inner nimony emits a build file whose `nimsem` cmd-line MATCHES
-      # what the outer build file uses. Otherwise nifmake's per-cmd
-      # staleness check sees a different argv for `nimsem ... m
-      # sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is
-      # stale, and tries to overwrite it — which on Windows fails because
-      # the outer nimsem (currently paused waiting on this exec) still
-      # has it mmap'd. The outer's args live on `c.commandLineArgs`.
-      let nimonyExe = findTool("nimony")
-      var cmd = quoteShell(nimonyExe) & c.commandLineArgs &
-        " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
-        " c " & quoteShell(stdlibFile("std/writenif.nim"))
-      try:
-        let (output, exitCode) = execCmdEx(cmd)
-        if exitCode != 0:
-          return ensureMove(output)
-      except:
-        return "failed to run: " & cmd
-  return ""
+    let target = c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"
+    let lock = c.g.config.nifcachePath / writeNifModuleSuffix & ".lock"
+    while not os.fileExists(target):
+      if vfsTryLock(lock):
+        if not os.fileExists(target):   # built while we waited
+          result = buildWriteNifModule(c)
+        vfsUnlock(lock)
+        break
+      if vfsNow() - vfsMtime(lock) > StaleLockNs:
+        vfsUnlock(lock)
+      else:
+        vfsSleepMs(20)
 
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
                usedModules: HashSet[string]; sourceDir = ""): string =

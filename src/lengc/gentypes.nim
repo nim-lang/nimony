@@ -199,7 +199,13 @@ proc traverseTypes(m: var MainModule; o: var TypeOrder) =
       o.ordered.add n, TypedefKeyword
     of EnumT:
       o.ordered.add n, TypedefKeyword
-    else: discard
+    else:
+      # An imported scalar such as `Handle {.importc: "HANDLE", header:
+      # "<windef.h>".} = distinct int` has no body to order, but its header
+      # still has to be included — a proc signature or a local may be its
+      # only use in this module.
+      if usesHeader(decl.pragmas):
+        o.forwardedDecls.add n, TypedefKeyword
     inc i
 
 proc integralBits(t: Cursor): string {.inline.} =

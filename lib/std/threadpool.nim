@@ -291,7 +291,11 @@ proc workerLoop(arg: pointer) {.nimcall.} =
 
 var poolState: int
 
-proc initPool*() =
+proc initPool*(count = 0) =
+  ## Start the worker pool: `count` threads, or one fewer than
+  ## `countProcessors()` when `count` is 0. Idempotent: once a pool is up,
+  ## later calls return at once and their `count` is ignored. Workers are not
+  ## pinned to CPUs; the scheduler places them within the process's affinity.
   # Only `poolState` gates this; `workerCount` must NOT, because the CAS winner
   # publishes it *before* allocating `workerMetrics`/`localQueues`/`injectQueue`.
   # A second caller that returned on `workerCount > 0` would race ahead and index
@@ -299,7 +303,7 @@ proc initPool*() =
   if atomicLoad(poolState, moAcquire) == 2: return
   var expected = 0
   if atomicCompareExchange(poolState, expected, 1):
-    workerCount = max(1, cpuinfo.countProcessors() - 1)
+    workerCount = if count > 0: count else: max(1, cpuinfo.countProcessors() - 1)
     setPassiveWaitHook passiveWait
     workerMetrics = newSeq[WorkerMetrics](workerCount)
     localQueues = newSeq[FifoStripe[Task]](workerCount)
@@ -309,9 +313,7 @@ proc initPool*() =
     workers.setLen(workerCount)
     for i in 0 ..< workerCount:
       try:
-        # 4th parameter is `stackSize` (0 = OS default); the affinity request
-        # is the 5th one.
-        create workers[i], workerLoop, cast[pointer](i), 0, i
+        create workers[i], workerLoop, cast[pointer](i)
       except:
         discard
     atomicStore(poolState, 2, moRelease)
