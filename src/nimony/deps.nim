@@ -1683,6 +1683,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                   b.addStrLit flag
               b.withTree "output":
                 b.addStrLit obj
+              # The object is shared by every build on the machine, parallel
+              # ones included; see `atomicTmpNames` in nifmake.
+              b.withTree "atomic":
+                discard
 
       for i, v in pairs c.nodes:
         if not native and not wholeProgram:
