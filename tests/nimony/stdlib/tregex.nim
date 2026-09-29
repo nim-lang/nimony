@@ -1,9 +1,9 @@
-## `std/regex`'s run-time surface: `re` (compiled while this test is compiled),
+## `std/rex`'s run-time surface: `re` (compiled while this test is compiled),
 ## `tryRe` (compiled while it runs) and everything that matches against them.
 ## The assertions marked "lexim" are that project's own test suite, kept
 ## verbatim so the port stays honest about what it does and does not match.
 
-import std / [syncio, assertions, regex]
+import std / [syncio, assertions, rex]
 
 proc basics =
   # lexim's tests.nim

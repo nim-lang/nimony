@@ -24,7 +24,7 @@
 ## **At runtime** — build a `Regex` from a string and match against it:
 ##
 ##   ```nim
-##   import std/regex
+##   import std/rex
 ##
 ##   let pattern = re"[a-z0-9]+\s*=\s*[a-z0-9]+"
 ##   echo matchLen("key1 =  cal9", pattern)   # 12
@@ -89,6 +89,42 @@
 ## By default patterns are parsed with `reExtended`, so unescaped spaces and
 ## tabs are ignored and a pattern may be laid out for reading. Match a literal
 ## space with `\ `, `[ ]` or `" "`.
+##
+## Differences from Nim's `std/re`
+## ===============================
+##
+## The name is different on purpose: this is not PCRE, and code ported from
+## Nim's `std/re` should be checked rather than assumed to work. What stays the
+## same is the basic shape — `matchLen`, `match`, `find`, `findBounds`,
+## `contains` and `startsWith` take a `start = 0`, and "no match" is `-1`, or
+## `(-1, 0)` for `findBounds`. `replace` inserts `by` literally, like Nim's
+## `replace`. The differences:
+##
+## * **Whitespace is ignored by default.** Patterns are parsed with
+##   `reExtended`, so `re"a b"` matches `"ab"`. In Nim only `rex` does that.
+## * **The longest match wins**, not the first alternative that works:
+##   `a|ab` matches all of `"ab"`; PCRE stops after `"a"`.
+## * `"..."` is a literal run, as in `std/pegs`. In PCRE `"` is an ordinary
+##   character.
+## * Outside a character class `\n` matches any of `\r\n`, `\n` and `\r`.
+## * `\123` is decimal: a back reference, or, with a leading zero (`\065`), a
+##   character code. It is not octal.
+## * `.` matches everything but `\0`, newlines included. `\s` is `\1..\32` and
+##   `\w` includes every byte `>= 128`.
+## * `re` takes only a string literal and compiles it with the program;
+##   `re(someVar)` is `tryRe` here, which reports an error instead of raising.
+## * Captures are positions (`seq[Capture]`, read with `capture`), not a
+##   `var openArray[string]`, and are subject to the limits described under
+##   *Captures*.
+## * `findAll` yields `(first, last)` bounds, not strings.
+## * Not provided: `=~`/`matches`, `replacef` with `$1`, `multiReplace`,
+##   `transformFile`, `endsWith`, `escapeRe`, `rex`, the `split` iterator and
+##   its `maxsplit`, and `RegexError`.
+## * Not supported in patterns: the flags `reIgnoreCase`, `reMultiLine` and
+##   `reDotAll`, inline options such as `(?i)`, lazy quantifiers (`x*?` is
+##   accepted but means `x*`), lookaround, named groups, `\x` escapes and
+##   Unicode classes. Most of these need backtracking, which is exactly what
+##   this engine rules out.
 
 {.feature: "staticContracts".}
 
