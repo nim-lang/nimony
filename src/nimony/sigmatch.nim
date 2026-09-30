@@ -328,7 +328,7 @@ proc isEnumType*(n: Cursor): bool =
 
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
-proc isConceptInvocation(f: Cursor): bool
+proc isConceptInvocation*(f: Cursor): bool
 proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool
 proc singleArg(m: var Match; f: var Cursor; arg: CallArg)
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
@@ -993,11 +993,12 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
     storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied, missing: missing))
   satisfied
 
-proc isConceptInvocation(f: Cursor): bool =
-  if f.typeKind != InvokeT: return false
-  var h = f
-  inc h
-  result = h.isSymbol and isConceptSym(h.symId)
+proc isConceptInvocation*(f: Cursor): bool =
+  result = false
+  if f.typeKind == InvokeT:
+    var h = f
+    inc h
+    result = h.isSymbol and isConceptSym(h.symId)
 
 proc conceptInvocationArgs*(inv: Cursor): (SymId, seq[(SymId, Cursor)]) =
   ## `inv` is `(at Concept A1 ... An)`: the concept and its type parameters
@@ -1025,26 +1026,28 @@ proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool =
   ## the first requirement that uses it). The verdict depends on the arguments,
   ## so the per-`(concept, type)` cache is bypassed.
   if a.isDotToken:
-    return false
-  if isOpenTypevar(a):
-    return true
-  let (conceptSym, args) = conceptInvocationArgs(f)
-  var saved: seq[(SymId, bool, Cursor)] = @[]
-  for (s, arg) in args:
-    saved.add (s, m.inferred.hasKey(s), m.inferred.getOrDefault(s))
-    if arg.isSymbol and m.inferred.hasKey(arg.symId):
-      m.inferred[s] = m.inferred.getOrDefault(arg.symId)
-    else:
-      m.inferred[s] = arg
-  let actualBody = if isConceptType(a): getTypeSection(a.symId).body else: default(Cursor)
-  result = true
-  for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, getTypeSection(conceptSym).body):
-    if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody):
-      addMissingConstraint(m, routine)
-      result = false
-  for (s, had, v) in saved:
-    if had: m.inferred[s] = v
-    else: m.inferred.del s
+    # an unconstrained typevar, see `matchConceptBody`
+    result = false
+  elif isOpenTypevar(a):
+    result = true
+  else:
+    let (conceptSym, args) = conceptInvocationArgs(f)
+    var saved: seq[(SymId, bool, Cursor)] = @[]
+    for (s, arg) in args:
+      saved.add (s, m.inferred.hasKey(s), m.inferred.getOrDefault(s))
+      if arg.isSymbol and m.inferred.hasKey(arg.symId):
+        m.inferred[s] = m.inferred.getOrDefault(arg.symId)
+      else:
+        m.inferred[s] = arg
+    let actualBody = if isConceptType(a): getTypeSection(a.symId).body else: default(Cursor)
+    result = true
+    for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, getTypeSection(conceptSym).body):
+      if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody):
+        addMissingConstraint(m, routine)
+        result = false
+    for (s, had, v) in saved:
+      if had: m.inferred[s] = v
+      else: m.inferred.del s
 
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)

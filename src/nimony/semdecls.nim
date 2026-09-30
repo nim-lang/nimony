@@ -1140,14 +1140,14 @@ proc collectConceptBounds(c: var SemContext; routineSym: SymId) =
   ## signature's typevars, as in `C: Findable[T]`, for lookups in the routine's
   ## body, see `addConceptBoundMethods`.
   let res = tryLoadSym(routineSym)
-  if res.status != LacksNothing: return
-  let r = asRoutine(res.decl)
-  if r.typevars.substructureKind == TypevarsU:
-    var tv = r.typevars
-    tv.into TypevarsU:
-      while tv.hasMore:
-        addConceptBound c, asLocal(tv).typ
-        skip tv
+  if res.status == LacksNothing:
+    let r = asRoutine(res.decl)
+    if r.typevars.substructureKind == TypevarsU:
+      var tv = r.typevars
+      tv.into TypevarsU:
+        while tv.hasMore:
+          addConceptBound c, asLocal(tv).typ
+          skip tv
 
 proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind; pass: PassKind; newName = NoSymId) =
   let info = it.n.info

@@ -353,18 +353,16 @@ proc conceptMethodsForInvocation(c: var SemContext; fn: StrId; typ: Cursor): seq
   ## `iterator items(x: Self): T` of `Findable[T]` yields the caller's `T` and
   ## `proc ==(a, b: T)` accepts it.
   result = @[]
-  var head = typ
-  inc head
-  if not (head.isSymbol and isConceptSym(head.symId)): return
-  let (conceptSym, args) = conceptInvocationArgs(typ)
-  var bindings = initTable[SymId, Cursor]()
-  for (s, arg) in args:
-    bindings[s] = arg
-  for cand in collectConceptMethodsFor(fn, conceptSym, getTypeSection(conceptSym).body):
-    var buf = createTokenBuf(32)
-    substituteTypevars(buf, cand.typ, bindings)
-    result.add FnCandidate(kind: cand.kind, sym: cand.sym,
-                           typ: typeToCursor(c, buf, 0), fromConcept: true)
+  if isConceptInvocation(typ):
+    let (conceptSym, args) = conceptInvocationArgs(typ)
+    var bindings = initTable[SymId, Cursor]()
+    for (s, arg) in args:
+      bindings[s] = arg
+    for cand in collectConceptMethodsFor(fn, conceptSym, getTypeSection(conceptSym).body):
+      var buf = createTokenBuf(32)
+      substituteTypevars(buf, cand.typ, bindings)
+      result.add FnCandidate(kind: cand.kind, sym: cand.sym,
+                             typ: typeToCursor(c, buf, 0), fromConcept: true)
 
 proc conceptMethodsForConstraint(c: var SemContext; fn: StrId; typ: Cursor): seq[FnCandidate] =
   ## Candidate routines named `fn` that are *guaranteed* to be available on a
