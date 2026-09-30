@@ -1,0 +1,28 @@
+default: 10
+after set: 20
+in block: 30
+in nested: 40
+back one: 30
+after block: 20
+after regular: 20
+callee sees: 99
+caller still sees: 50
+before call: -1
+inherited: 70
+inherited bare: -1
+inherited name: outer
+first: 1
+second: 2
+recursed to: 0
+recursed to: 1
+recursed to: 2
+recursed to: 3
+after recursion: 20
+outer name: a reasonably long string that will not sit in the short-string area
+nested name: another long string, also past the short-string limit
+outer name again: a reasonably long string that will not sit in the short-string area
+before park: 90
+parked on the main thread
+after resume, on the worker: 90
+after the block, on the worker: 80
+resumed and finished
