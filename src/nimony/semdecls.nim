@@ -1119,6 +1119,36 @@ proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     takeTree dest, it.n
   c.closeScope() # close parameter scope
 
+proc addConceptBound(c: var SemContext; t: Cursor) =
+  var t = t
+  if t.typeKind == InvokeT:
+    var head = t
+    inc head
+    if head.isSymbol and isConceptSym(head.symId):
+      var buf = createTokenBuf(8)
+      buf.addSubtree t
+      c.routine.conceptBounds.add typeToCursor(c, buf, 0)
+  elif t.typeKind == AndT:
+    # `or` only guarantees what all of its alternatives provide; not tracked.
+    t.into:
+      while t.hasMore:
+        addConceptBound c, t
+        skip t
+
+proc collectConceptBounds(c: var SemContext; routineSym: SymId) =
+  ## Remembers the concept invocations constraining the (just published)
+  ## signature's typevars, as in `C: Findable[T]`, for lookups in the routine's
+  ## body, see `addConceptBoundMethods`.
+  let res = tryLoadSym(routineSym)
+  if res.status != LacksNothing: return
+  let r = asRoutine(res.decl)
+  if r.typevars.substructureKind == TypevarsU:
+    var tv = r.typevars
+    tv.into TypevarsU:
+      while tv.hasMore:
+        addConceptBound c, asLocal(tv).typ
+        skip tv
+
 proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind; pass: PassKind; newName = NoSymId) =
   let info = it.n.info
   let declStart = dest.len
@@ -1238,6 +1268,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         handleForwardDeclarations(c, dest, declStart, symId, crucial, hasBody = not it.n.isDotToken)
 
       publishSignature dest, symId, declStart
+      if c.routine.inGeneric > 0:
+        collectConceptBounds c, symId
       let hookName = getHookName(symId)
       let hk = hookToKind(hookName)
       if status in {OkNew, OkExistingFresh}:
