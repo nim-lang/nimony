@@ -328,6 +328,8 @@ proc isEnumType*(n: Cursor): bool =
 
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
+proc isConceptInvocation*(f: Cursor): bool
+proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool
 proc singleArg(m: var Match; f: var Cursor; arg: CallArg)
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor)
@@ -425,6 +427,13 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     else:
       result = isOrdinalType(a)
     skip f
+  of InvokeT:
+    if isConceptInvocation(f):
+      result = matchConceptInvocation(m, f, a)
+      skip f
+    else:
+      var a = a
+      result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
   else:
     # match as a regular type:
     var a = a
@@ -908,6 +917,12 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
   if isConceptType(a):
     return conceptRequirementInBody(routine, actualBody)
   var bindings = m.inferred
+  for k, v in m.inferred:
+    # a container concept's parameter bound to a caller's typevar
+    # (`Findable[T]`, see `matchConceptInvocation`) that an earlier
+    # requirement has inferred by now
+    if v.isSymbol and v.symId != k and m.inferred.hasKey(v.symId):
+      bindings[k] = m.inferred.getOrDefault(v.symId)
   for selfSym in conceptSelfSyms(body, routine):
     bindings[selfSym] = a
   if not conceptRoutineUsesSelf(body, routine):
@@ -977,6 +992,62 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   if conceptVerdictIsFinal(m.context, hitsBefore):
     storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied, missing: missing))
   satisfied
+
+proc isConceptInvocation*(f: Cursor): bool =
+  result = false
+  if f.typeKind == InvokeT:
+    var h = f
+    inc h
+    result = h.isSymbol and isConceptSym(h.symId)
+
+proc conceptInvocationArgs*(inv: Cursor): (SymId, seq[(SymId, Cursor)]) =
+  ## `inv` is `(at Concept A1 ... An)`: the concept and its type parameters
+  ## paired with `A1 ... An`.
+  result = (SymId(0), @[])
+  var n = inv
+  n.into:
+    result[0] = n.symId
+    skip n
+    let section = getTypeSection(result[0])
+    if section.typevars.substructureKind == TypevarsU:
+      var tv = section.typevars
+      tv.into TypevarsU:
+        while tv.hasMore:
+          if n.hasMore:
+            result[1].add (asLocal(tv).name.symId, n)
+            skip n
+          skip tv
+    while n.hasMore: skip n
+
+proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool =
+  ## `f` is `(at Concept A1 ... An)`, as in `proc find[T; C: Findable[T]]`:
+  ## the concept's parameters stand for `A1 ... An` while its requirements are
+  ## checked against `a`, which is how a caller's open `T` gets inferred (by
+  ## the first requirement that uses it). The verdict depends on the arguments,
+  ## so the per-`(concept, type)` cache is bypassed.
+  if a.isDotToken:
+    # an unconstrained typevar, see `matchConceptBody`
+    result = false
+  elif isOpenTypevar(a):
+    result = true
+  else:
+    let (conceptSym, args) = conceptInvocationArgs(f)
+    var saved: seq[(SymId, bool, Cursor)] = @[]
+    for (s, arg) in args:
+      saved.add (s, m.inferred.hasKey(s), m.inferred.getOrDefault(s))
+      if arg.isSymbol and m.inferred.hasKey(arg.symId):
+        m.inferred[s] = m.inferred.getOrDefault(arg.symId)
+      else:
+        m.inferred[s] = arg
+    let actualBody = if isConceptType(a): getTypeSection(a.symId).body else: default(Cursor)
+    result = true
+    for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, getTypeSection(conceptSym).body):
+      if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody):
+        addMissingConstraint(m, routine)
+        result = false
+    for (s, had, v) in saved:
+      if had: m.inferred[s] = v
+      else: m.inferred.del s
 
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)

@@ -4000,7 +4000,7 @@ type
     iterator items(x: Self): T
     proc `==`(a, b: T): bool
 
-proc find[T](x: Findable[T]; elem: T): int =
+proc find[T; C: Findable[T]](x: C; elem: T): int =
   var i = 0
   for a in items(x):
     if a == elem: return i
@@ -4008,7 +4008,9 @@ proc find[T](x: Findable[T]; elem: T): int =
   return -1
 ```
 
-Thanks to the `x` being declared as `Findable[T]`, it is known that the element `a` of the collection is of type `T` and that `T` supports equality comparisons via `==`.
+Thanks to `C` being constrained by `Findable[T]`, it is known that the element `a` of the collection is of type `T` and that `T` supports equality comparisons via `==`. At the call site `T` is inferred from the concept's requirements: here `items` binds it to the element type of the collection.
+
+A concept can only be used as a constraint of a type parameter; `proc find[T](x: Findable[T]; elem: T)` is not a generic over the collection type.
 
 This find function can be used with any collection that fulfills the `Findable` concept, for example:
 
@@ -4017,8 +4019,8 @@ type
   MyCollection = object
     data: seq[int]
 
-proc items(x: MyCollection): int =
-  return x.data
+iterator items(x: MyCollection): int =
+  for d in x.data: yield d
 
 var myCollection = MyCollection(data: @[1, 2, 3, 4, 5])
 echo find(myCollection, 3) # 2
