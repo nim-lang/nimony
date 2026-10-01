@@ -1507,7 +1507,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         while nb.hasMore:
           if not isSimpleLiteral(nb): return false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
-        XorX, NotX, NegX, SizeofX, NeedsTraceX, AlignofX, OffsetofX,
+        XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX,
         OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
         BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CallX,
@@ -1894,8 +1894,8 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trExpr c, dest, n
       dest.addParRi()
-    of NeedsTraceX:
-      bug "`needsTrace` is folded by derefs"
+    of CanFormCyclesX:
+      bug "`canFormCycles` is folded by derefs"
     of SizeofX, AlignofX, OffsetofX:
       dest.addParLe(n.cursorTagId, n.info)
       n.into:

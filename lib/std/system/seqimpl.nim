@@ -20,7 +20,7 @@ func capInBytes[T](s: seq[T]): int {.inline.} =
 
 func seqFenceEnter[T](): bool {.inline.} =
   when declared(nimSeqFenceEnter):
-    result = needsTrace(T)
+    result = nimCanFormCycles(T)
     if result:
       {.cast(noSideEffect).}:
         nimSeqFenceEnter()

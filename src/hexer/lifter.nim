@@ -212,7 +212,7 @@ proc runtimeEnablesTrace*(): bool =
 #   its `=trace` pushes it for the collector. Conservative where the static type
 #   does not tell: an inheritable object (a subclass may add the edge back) and
 #   a closure (the environment may hold anything) count as cyclic.
-# * `needsTrace(T)`: does a VALUE of type `T` own a ref the collector must
+# * `needsTrace(T)` (the library's `canFormCycles(T)`): does a VALUE of type `T` own a ref the collector must
 #   follow? That is: does it contain a `ref U` with `canFormCycle(ref U)`.
 #   A value that cannot itself be part of a cycle may still hold the only edge
 #   into one (a field of a cyclic object of type `seq[Node]`).
@@ -382,7 +382,7 @@ proc needsTrace(c: var LiftingCtx; typ: TypeCursor): bool =
     c.tracedTypes[typ.symId] = result
 
 proc needsTraceOf*(c: var LiftingCtx; typ: TypeCursor): bool =
-  ## `needsTrace(T)` in the library (see `derefs`): the same answer the
+  ## `canFormCycles(T)` in the library (see `derefs`): the same answer the
   ## lifted `=trace` hooks are built from.
   needsTrace(c, typ)
 

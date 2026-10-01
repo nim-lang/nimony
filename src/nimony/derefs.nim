@@ -1525,8 +1525,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
         trCall c, n, e, disallowDangerous
     of PragmaxX:
       trPragmaBlock c, n
-    of NeedsTraceX:
-      # `needsTrace(T)`: answered here, where the lifter can say it
+    of CanFormCyclesX:
+      # `canFormCycles(T)`: answered here, where the lifter can say it
       let info = n.info
       var t = n
       inc t

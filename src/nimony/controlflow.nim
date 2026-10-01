@@ -338,7 +338,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     n.into:
       trIte c, n, tjmp, fjmp
   of ErrX, SufX, AtX, DerefX, DotX, PatX, AddrX, NilX, InfX, NeginfX,
-     NanX, FalseX, TrueX, XorX, NegX, SizeofX, NeedsTraceX, AlignofX, OffsetofX,
+     NanX, FalseX, TrueX, XorX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX,
      KvX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
      MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX,
      EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
@@ -631,7 +631,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
-    of CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, SizeofX, NeedsTraceX, AlignofX, OffsetofX, InternalTypeNameX:
+    of CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, InternalTypeNameX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       tar.t.addDotToken()
       skip n

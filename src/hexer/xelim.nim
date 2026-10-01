@@ -1471,7 +1471,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trAggregate c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
        InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, NeedsTraceX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
+       SizeofX, CanFormCyclesX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
        BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,

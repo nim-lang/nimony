@@ -4,7 +4,8 @@
 ## built-ins. Nimony implements them as ordinary **template plugins**: the
 ## compiler hands the plugin the argument type as NIF, the plugin transforms
 ## that tree, and the result is re-checked in type position. Nothing here is
-## known to the compiler.
+## known to the compiler, except `canFormCycles`, which only the compiler's
+## hook lifter can answer.
 ##
 ## A plugin runs in its own process and so cannot resolve a symbol on its own.
 ## It does not have to: it asks. When the plugin meets a nominal type it has not
@@ -39,6 +40,14 @@ template genericHead*[T](t: typedesc[T]): typedesc {.plugin: "deps/typetraits".}
   ## .. code-block:: nim
   ##   type Foo[T] = object
   ##   var x: genericHead(Foo[int])[float]   # Foo[float]
+
+template canFormCycles*[T](t: typedesc[T]): bool =
+  ## Does the cycle collector trace through a value of type `T`, i.e. does it
+  ## own a ref that can be part of a cycle? Always false unless the memory
+  ## management runtime collects cycles. A container that owns its buffer
+  ## through a raw pointer and gives it a `=trace` uses this to fence
+  ## structural changes against a concurrent collector (see `seq`).
+  nimCanFormCycles(T)
 
 template stripGenericParams*[T](t: typedesc[T]): typedesc {.plugin: "deps/typetraits".}
   ## Like `genericHead`, but returns non-generic types unmodified instead of

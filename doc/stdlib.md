@@ -136,7 +136,7 @@ with `arc`. Collections capture the graph without writing to it, decide what
 is dead on the captured data and validate against what mutators did in the
 meantime before freeing anything, so they run concurrently with the mutators
 and with each other. `seq` fences structural changes of buffers the collector
-traces (`needsTrace(T)`, answered by the compiler; a runtime that declares
+traces (`typetraits.canFormCycles(T)`, answered by the compiler; a runtime that declares
 `nimSeqFenceEnter`/`nimSeqFenceExit` gets the fence), and a thread that exits
 hands its queued decrements and candidates over (`nimThreadTeardown`).
 

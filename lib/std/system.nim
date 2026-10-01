@@ -140,13 +140,9 @@ func addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 func unsafeAddr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 func sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
-func needsTrace*[T](x: typedesc[T]): bool {.magic: "NeedsTrace", noSideEffect.}
-  ## Does the cycle collector trace through a value of type `T`, i.e. does it
-  ## own a ref that can be part of a cycle? Always false unless the memory
-  ## management runtime collects cycles. A container that owns its buffer
-  ## through a raw pointer and gives it a `=trace` uses this to fence
-  ## structural changes against a concurrent collector (see `seq`).
   ## Returns the size of type `T` in bytes.
+func nimCanFormCycles*[T](x: typedesc[T]): bool {.magic: "CanFormCycles", noSideEffect.}
+  ## Implementation of `typetraits.canFormCycles`.
 
 template sizeof*[T](_: T): int =
   ## Returns the size in bytes of the type of the given value.
