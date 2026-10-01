@@ -128,7 +128,7 @@ when defined(linux):
     of UnreachableHost: 113'i32
     of UnrecoverableState: 131'i32
     else: 1'i32
-
+  
 elif defined(macosx):
   proc posixToErrorCode*(err: int32): ErrorCode =
     if err == 0'i32:
@@ -254,7 +254,130 @@ elif defined(macosx):
     of UnreachableHost: 65'i32
     of UnrecoverableState: 104'i32
     else: 1'i32
-
+  
+elif defined(freebsd):
+  proc posixToErrorCode*(err: int32): ErrorCode =
+    if err == 0'i32:
+      Success
+    elif err == 84'i32:
+      OverflowError
+    elif err == 34'i32 or err == 33'i32:
+      RangeError
+    elif err == 12'i32:
+      OutOfMemError
+    elif err == 28'i32:
+      DiskFullError
+    elif err == 5'i32:
+      IOError
+    elif err == 22'i32 or err == 89'i32 or err == 86'i32 or err == 83'i32 or err == 39'i32:
+      ValueError
+    elif err == 7'i32 or err == 55'i32:
+      FullError
+    elif err == 16'i32 or err == 26'i32:
+      BusyError
+    elif err == 10'i32 or err == 96'i32:
+      DeadResource
+    elif err == 77'i32:
+      ResourceExhaustedError
+    elif err == 23'i32:
+      DescriptorExhaustedError
+    elif err == 13'i32 or err == 1'i32:
+      PermissionDenied
+    elif err == 35'i32:
+      RetryError
+    elif err == 60'i32:
+      TimeoutError
+    elif err == 4'i32:
+      InterruptedError
+    elif err == 11'i32:
+      DeadlockError
+    elif err == 48'i32 or err == 56'i32:
+      AlreadyConnected
+    elif err == 49'i32:
+      AddressNotAvailable
+    elif err == 47'i32:
+      AddressFamilyUnsupported
+    elif err == 45'i32 or err == 78'i32 or err == 43'i32 or err == 25'i32 or err == 29'i32 or err == 21'i32 or err == 66'i32:
+      BadOperation
+    elif err == 85'i32 or err == 53'i32 or err == 52'i32:
+      AbortedOperation
+    elif err == 37'i32 or err == 36'i32:
+      AlreadyInProgress
+    elif err == 63'i32:
+      NameTooLong
+    elif err == 17'i32:
+      NameExists
+    elif err == 2'i32 or err == 82'i32 or err == 19'i32 or err == 20'i32:
+      NameNotFound
+    elif err == 27'i32 or err == 40'i32:
+      ContentTooLong
+    elif err == 32'i32 or err == 9'i32 or err == 24'i32 or err == 38'i32 or err == 6'i32 or err == 3'i32:
+      BadDescriptor
+    elif err == 8'i32:
+      BadExecutable
+    elif err == 62'i32 or err == 31'i32 or err == 18'i32:
+      BadLink
+    elif err == 41'i32 or err == 42'i32:
+      BadProtocol
+    elif err == 92'i32:
+      ProtocolError
+    elif err == 30'i32:
+      ReadonlyProtection
+    elif err == 14'i32:
+      SegFault
+    elif err == 50'i32 or err == 51'i32 or err == 54'i32 or err == 57'i32:
+      Disconnected
+    elif err == 61'i32:
+      RefusedConnection
+    elif err == 65'i32:
+      UnreachableHost
+    elif err == 95'i32:
+      UnrecoverableState
+    else:
+      Failure
+  
+  proc errorCodeToPosix*(err: ErrorCode): int32 =
+    case err
+    of Success: 0'i32
+    of OverflowError: 84'i32
+    of RangeError: 34'i32
+    of OutOfMemError: 12'i32
+    of DiskFullError: 28'i32
+    of IOError: 5'i32
+    of ValueError: 22'i32
+    of FullError: 7'i32
+    of BusyError: 16'i32
+    of DeadResource: 10'i32
+    of ResourceExhaustedError: 77'i32
+    of DescriptorExhaustedError: 23'i32
+    of PermissionDenied: 13'i32
+    of RetryError: 35'i32
+    of TimeoutError: 60'i32
+    of InterruptedError: 4'i32
+    of DeadlockError: 11'i32
+    of AlreadyConnected: 48'i32
+    of AddressNotAvailable: 49'i32
+    of AddressFamilyUnsupported: 47'i32
+    of BadOperation: 45'i32
+    of AbortedOperation: 85'i32
+    of AlreadyInProgress: 37'i32
+    of NameTooLong: 63'i32
+    of NameExists: 17'i32
+    of NameNotFound: 2'i32
+    of ContentTooLong: 27'i32
+    of BadDescriptor: 32'i32
+    of BadExecutable: 8'i32
+    of BadLink: 62'i32
+    of BadProtocol: 41'i32
+    of ProtocolError: 92'i32
+    of ReadonlyProtection: 30'i32
+    of SegFault: 14'i32
+    of Disconnected: 50'i32
+    of RefusedConnection: 61'i32
+    of UnreachableHost: 65'i32
+    of UnrecoverableState: 95'i32
+    else: 1'i32
+  
 else:
   var EOVERFLOW {.importc: "EOVERFLOW", header: "<errno.h>".}: int32
   var ERANGE {.importc: "ERANGE", header: "<errno.h>".}: int32
@@ -458,4 +581,4 @@ else:
     of UnreachableHost: EHOSTUNREACH
     of UnrecoverableState: ENOTRECOVERABLE
     else: 1'i32
-
+  

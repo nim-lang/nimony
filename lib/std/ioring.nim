@@ -492,8 +492,8 @@ when defined(posix):
 
 when defined(posix):
   const
-    SOL_SOCKET* = (when defined(macosx): 0xFFFF.cint else: 1.cint)
-    SO_REUSEADDR* = (when defined(macosx): 4.cint else: 2.cint)
+    SOL_SOCKET* = (when defined(macosx) or defined(freebsd): 0xFFFF.cint else: 1.cint)
+    SO_REUSEADDR* = (when defined(macosx) or defined(freebsd): 4.cint else: 2.cint)
     INADDR_ANY* = 0'u32
   proc socket(domain, typ, protocol: cint): cint {.importc: "socket".}
   proc setsockopt(s: cint; level, optname: cint; val: pointer; vlen: SockLen): cint {.importc: "setsockopt".}
@@ -513,6 +513,8 @@ when defined(posix):
       when defined(bigEndian): 0x7F000001'u32 else: 0x0100007F'u32
     var a4 = default(Sockaddr_in)
     a4.sin_family = TSa_Family(AF_INET)
+    when not defined(linux):
+      a4.sin_len = uint8(sizeof(a4))  # the BSDs check it (FreeBSD: EINVAL)
     a4.sin_port = htons(port)
     a4.sin_addr.s_addr = Loopback
     sa = default(Sockaddr_storage)
@@ -541,6 +543,8 @@ when defined(posix):
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
     var addr4 = default(Sockaddr_in)
     addr4.sin_family = TSa_Family(AF_INET)
+    when not defined(linux):
+      addr4.sin_len = uint8(sizeof(addr4))  # the BSDs check it (FreeBSD: EINVAL)
     addr4.sin_port = htons(port)
     addr4.sin_addr.s_addr = INADDR_ANY
     assert bindAddr(fd, cast[ptr SockAddr](addr addr4),

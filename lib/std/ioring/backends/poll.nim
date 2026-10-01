@@ -225,8 +225,8 @@ when defined(posix):
       failPendingForFd(fd)
 
   const
-    SOL_SOCKET = (when defined(macosx): 0xFFFF.cint else: 1.cint)
-    SO_ERROR = (when defined(macosx): 0x1007.cint else: 4.cint)
+    SOL_SOCKET = (when defined(macosx) or defined(freebsd): 0xFFFF.cint else: 1.cint)
+    SO_ERROR = (when defined(macosx) or defined(freebsd): 0x1007.cint else: 4.cint)
 
   proc startConnect*(fd: cint; idx: int): bool =
     ## Kick off a non-blocking connect on the op in slot `idx`. True when the

@@ -163,6 +163,10 @@ when defined(macosx) or defined(freebsd) or defined(openbsd) or
       data*   : int      ## filter-specific data  (intptr_t)
       udata*  : nil pointer ## opaque user data identifier (nullable: a
                             ## zero-initialised KEvent must be constructible)
+      when defined(freebsd):
+        ext*  : array[4, uint64] ## FreeBSD 12+: extension words, making the
+                                 ## struct 64 bytes. Without them the kernel
+                                 ## writes every event list at twice our stride.
 
   proc kqueue*(): cint {.importc: "kqueue".}
     ## Creates new queue and returns its descriptor.
