@@ -31,6 +31,16 @@ else:
       (defined(bsd) and not defined(freebsd))):
     import posix/posix
 
+  when defined(freebsd) and defined(nimNoLibc):
+    type
+      CpuAffinityMask = object  ## cpuset_t (FreeBSD 14+: a 1024-bit mask)
+        abi: array[16, uint64]
+    proc cpusetGetaffinity(level, which: cint; id: int; setsize: csize_t;
+                           mask: pointer): cint {.importc: "cpuset_getaffinity".}
+      ## No libc, so no `sysconf`: ask the kernel for this process's CPU set
+      ## (`CPU_LEVEL_WHICH`, `CPU_WHICH_PID`, id -1 = the caller), which is
+      ## what libc's own `_SC_NPROCESSORS_ONLN` reports on FreeBSD too.
+
   when defined(linux):
     type
       CpuAffinityMask = object  ## cpu_set_t (glibc: a 1024-bit mask)
@@ -123,6 +133,15 @@ else:
       when not defined(nimNoLibc):
         if result == 0:
           result = sysconf(SC_NPROCESSORS_ONLN)
+    elif defined(freebsd) and defined(nimNoLibc):
+      var mask = default(CpuAffinityMask)
+      result = 0
+      if cpusetGetaffinity(3.cint, 2.cint, -1, csize_t(sizeof(mask)), addr mask) == 0:
+        for i in 0 ..< mask.abi.len:
+          var w = mask.abi[i]
+          while w != 0'u64:
+            inc result
+            w = w and (w - 1'u64)     # clear the lowest set bit
     else:
       result = sysconf(SC_NPROCESSORS_ONLN)
     if result < 0: result = 0
