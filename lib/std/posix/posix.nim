@@ -384,7 +384,7 @@ when defined(posix):
   when freebsdRaw:
     # The `__getcwd` trap answers 0 on success rather than the buffer.
     proc sysGetcwd(buf: cstring; size: int): cint {.importc: "__getcwd", sideEffect.}
-    proc getcwd*(a1: cstring, a2: int): cstring {.sideEffect.} =
+    proc getcwd*(a1: cstring, a2: int): nil cstring {.sideEffect.} =
       let r = pcall(sysGetcwd(a1, a2))
       if r < 0:
         setErrno cint(-r)
