@@ -26,3 +26,6 @@ parked on the main thread
 after resume, on the worker: 90
 after the block, on the worker: 80
 resumed and finished
+complete inherits: 60
+complete after set: 61
+after complete: 60

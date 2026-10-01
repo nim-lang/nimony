@@ -134,6 +134,28 @@ proc callerOfRecursion() {.passive.} =
   recursing(3)
   show("after recursion: ", plain, -1)
 
+# --- a coroutine started by `complete` ---
+
+var viaComplete = newContextVar(0)
+
+proc completeLeaf() {.passive.} =
+  show("complete inherits: ", viaComplete, -1)
+  viaComplete.set(61)
+  show("complete after set: ", viaComplete, -1)
+
+proc startedByComplete =
+  ## `complete` hands its continuation a `Join` as the caller rather than a real
+  ## frame, and a `Join` carries no chain of its own. So the chain has to be
+  ## found from further up than the immediate caller. `startedByComplete` is a
+  ## regular proc, so its `set` landed on the thread's chain, and it has to be
+  ## visible in the callee.
+  ##
+  ## A `Join` of its own gets a context var that no other test reads, so that
+  ## the `set` here cannot reach back into the cases above.
+  viaComplete.set(60)
+  complete(delay completeLeaf())
+  show("after complete: ", viaComplete, -1)
+
 proc main =
   regular()
   # `regular` is not part of any coroutine, so its `set` landed on the thread's
@@ -156,5 +178,6 @@ proc main =
   echo "after resume, on the worker: ", seenAfterResume
   echo "after the block, on the worker: ", seenAfterBlock
   echo "resumed and finished"
+  startedByComplete()
 
 main()

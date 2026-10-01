@@ -125,7 +125,9 @@ proc ctxSlot*(): ptr RootRef =
     result = addr rootCtx
   else:
     if coro.ctx == nil:
-      let up = coro.caller.env
+      var up = coro.caller.env
+      while up != nil and up.ctx == nil:
+        up = up.caller.env
       coro.ctx = if up == nil: rootCtx else: up.ctx
     result = addr coro.ctx
 
