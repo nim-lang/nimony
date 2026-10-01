@@ -13,6 +13,8 @@ when defined(posix):
   import std/posix/posix
   when defined(linux):
     from std/posix/epoll import EpollData, EpollEvent
+  when defined(osx) or defined(freebsd):
+    from std/posix/kqueue import KEvent
 
   var src = ""
 
@@ -53,6 +55,8 @@ when defined(posix):
     src.add "#include <netinet/in.h>\n"
     when defined(linux):
       src.add "#include <sys/epoll.h>\n"
+    when defined(osx) or defined(freebsd):
+      src.add "#include <sys/event.h>\n"
 
     # ---- errno ----
     ck("E2BIG", int64(E2BIG)); ck("EACCES", int64(EACCES))
@@ -211,6 +215,14 @@ when defined(posix):
       ck("offsetof(struct dirent, d_type)", off(de, addr de.d_type))
       ck("offsetof(struct dirent, d_name)", off(de, addr de.d_name))
       ck("sizeof(((struct dirent*)0)->d_name)", int64(sizeof(de.d_name)))
+
+    # ---- struct kevent (64 bytes on FreeBSD 12+, 32 on Darwin) ----
+    when defined(osx) or defined(freebsd):
+      let ke = cast[ptr KEvent](addr scratch[0])
+      ck("sizeof(struct kevent)", int64(sizeof(KEvent)))
+      ck("offsetof(struct kevent, filter)", off(ke, addr ke.filter))
+      ck("offsetof(struct kevent, data)", off(ke, addr ke.data))
+      ck("offsetof(struct kevent, udata)", off(ke, addr ke.udata))
 
     # ---- Linux struct epoll_event (packed on amd64 only) ----
     when defined(linux):
