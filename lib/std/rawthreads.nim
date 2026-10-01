@@ -309,7 +309,8 @@ elif nativeThreads and defined(freebsd):
     nimThreadProcWrapperBody(arg)
     # Never `return` (there is nothing to return to): `thr_exit` ends this
     # thread, and the word it is handed is what `join` waits on.
-    thrExit(addr cast[ptr RawThread](arg).sys)
+    let t = cast[ptr RawThread](arg)
+    thrExit(addr t.sys)
 
 elif nativeThreads:
   proc childEntry(arg: pointer) {.nimcall.} =
