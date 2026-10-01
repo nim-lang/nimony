@@ -200,8 +200,18 @@ proc runtimeEnablesTrace*(): bool =
   if not fileExists(suffixToNif(SystemModuleSuffix)):
     return false # `--noSystem`: no runtime to ask
   let res = tryLoadSym(pool.symId("nimTraceRef.0." & SystemModuleSuffix))
-  result = res.status == LacksNothing and
-    hasPragma(asRoutine(res.decl).pragmas, EnableTraceP)
+  result = false
+  if res.status == LacksNothing:
+    let r = asRoutine(res.decl, SkipInclBody)
+    if hasPragma(r.pragmas, EnableTraceP):
+      result = true
+    else:
+      # the statement form `{.enableTrace.}` of a runtime shared with Nim
+      var n = r.body
+      n.linearScan:
+        if n.pragmaKind == EnableTraceP:
+          result = true
+          break
 
 # Cycle analysis (`--mm:orc`), after Nim's `types.canFormAcycle`.
 #

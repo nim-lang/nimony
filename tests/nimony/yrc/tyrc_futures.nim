@@ -61,6 +61,9 @@ proc main =
     futures = @[]
   q.clear()
 
+main() # warm-up: the collector keeps its scratch buffers between collections
+GC_fullCollect()
+called = 0
 let before = getOccupiedMem()
 main()
 GC_fullCollect()

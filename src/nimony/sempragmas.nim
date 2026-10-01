@@ -1404,6 +1404,23 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     else:
       while it.n.hasMore: skip it.n
       buildErr c, dest, info, "`feature` pragma takes a string literal"
+  of EnableTraceP:
+    # The statement form, in the body of a runtime's `nimTraceRef`: lets a
+    # runtime shared with Nim say `when defined(nimony): {.enableTrace.}`
+    # (`runtimeEnablesTrace` looks into the body for it).
+    let info = it.n.info
+    if c.routine.kind == NoSym:
+      buildErr c, dest, info, "`enableTrace` must be in the body of `nimTraceRef`"
+      skip it.n
+    else:
+      c.enableTrace = true
+      toPragmaArgs()
+      dest.addParLe(PragmasS, info)
+      dest.addParLe(EnableTraceP, info)
+      dest.addParRi()
+      dest.addParRi()
+      closePragmaLine()
+      producesVoid c, dest, info, it.typ
   else:
     if (let psym = c.resolveCustomPragma(it.n); psym != NoSymId):
       # A custom pragma as a *statement*. It marks the region it stands in
