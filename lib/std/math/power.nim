@@ -14,12 +14,27 @@ import std/math/exponential  # for exp, ln
 # ============================================================================
 # SQRT Implementation
 # ============================================================================
-# origin: musl src/math/sqrt.c.
-#
-# Generic square root algorithm using Goldschmidt iterations at multiple widths.
-# This routine operates around `m_u2`, a U.2 (fixed point with two integral bits)
-# mantissa within the range [1, 4). A table lookup provides an initial estimate,
-# then goldschmidt iterations at various widths are used to approach the real values.
+# Exponent-scaled Newton iteration: frexp reduces the input to a compact
+# significand range, avoiding overflow and underflow in the iteration.
+
+func powerOfTwo64(exp: int): float64 {.inline.} =
+  ## Exact power of two for the bounded exponent ranges used by the roots.
+  cast[float64](uint64(exp + 1023) shl 52)
+
+func sqrtFinite64(x: float64): float64 =
+  # Reduce the significand to [0.5, 1) and make its exponent even, keeping
+  # every Newton step in a compact range regardless of the input magnitude.
+  var part = frexp(x)
+  if part.exp mod 2 != 0:
+    part.frac *= 2.0
+    dec part.exp
+
+  var guess = 1.0
+  for _ in 0..7:
+    guess = (guess + part.frac / guess) * 0.5
+  # Compensate the final rounded Newton step using its residual.
+  guess += (part.frac - guess * guess) / (2.0 * guess)
+  guess * powerOfTwo64(part.exp div 2)
 
 func sqrt*(x: float32): float32 =
   ## Square root for f32
@@ -310,12 +325,12 @@ func pow*(x, y: float32): float32 =
         z = -z  # (x<0)**odd = -(|x|**odd)
     return z
 
-  var sn: float32 = 1.0  # sign of result
+  var sn: float32 = 1.0'f32  # sign of result
   if hx < 0:
     if yisint == 0:
       return (x - x) / (x - x)  # (x<0)**(non-int) is NaN
     if yisint == 1:
-      sn = -1.0  # (x<0)**(odd int)
+      sn = -1.0'f32  # (x<0)**(odd int)
 
   # For simplicity and correctness, fall back to exp/ln for general case
   # Full FreeBSD implementation would require extensive bit manipulation
@@ -449,7 +464,7 @@ func hypot*(x, y: float32): float32 =
   if xi >= (0xff'u32 shl 23) or yi == 0 or xi - yi >= (25'u32 shl 23):
     return x_val + y_val
 
-  var z: float32 = 1.0
+  var z: float32 = 1.0'f32
   if xi >= ((0x7f'u32 + 60) shl 23):
     z = X1P90
     x_val *= X1P_90
