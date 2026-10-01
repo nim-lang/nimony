@@ -48,7 +48,8 @@ const
 
 const
   AfInet = 2
-  AfInet6 = when defined(macosx): 30 elif defined(windows): 23 else: 10
+  AfInet6 = when defined(macosx): 30 elif defined(windows): 23
+            elif defined(freebsd): 28 else: 10
 
 type
   PeerAddr* = object

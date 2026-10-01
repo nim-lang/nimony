@@ -77,7 +77,8 @@ else:
     TSa_Family* = uint8  ## sa_family_t
 
     Sockaddr_in* {.pure.} = object ## struct sockaddr_in (BSD layout with sin_len)
-      sin_len: uint8
+      sin_len*: uint8            ## sizeof(struct sockaddr_in); FreeBSD rejects
+                                 ## an address whose length byte disagrees
       sin_family*: TSa_Family
       sin_port*: cushort         ## network byte order
       sin_addr*: InAddr
