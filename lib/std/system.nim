@@ -141,8 +141,8 @@ func unsafeAddr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 func sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
   ## Returns the size of type `T` in bytes.
-func nimCanFormCycles*[T](x: typedesc[T]): bool {.magic: "CanFormCycles", noSideEffect.}
-  ## Implementation of `typetraits.canFormCycles`.
+func nimCanFormCycles[T](x: typedesc[T]): bool {.magic: "CanFormCycles", noSideEffect.}
+  ## For `seq`'s collector fence; the public one is `typetraits.canFormCycles`.
 
 template sizeof*[T](_: T): int =
   ## Returns the size in bytes of the type of the given value.
