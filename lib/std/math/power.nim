@@ -14,12 +14,27 @@ import std/math/exponential  # for exp, ln
 # ============================================================================
 # SQRT Implementation
 # ============================================================================
-# origin: musl src/math/sqrt.c.
-#
-# Generic square root algorithm using Goldschmidt iterations at multiple widths.
-# This routine operates around `m_u2`, a U.2 (fixed point with two integral bits)
-# mantissa within the range [1, 4). A table lookup provides an initial estimate,
-# then goldschmidt iterations at various widths are used to approach the real values.
+# Exponent-scaled Newton iteration: frexp reduces the input to a compact
+# significand range, avoiding overflow and underflow in the iteration.
+
+func powerOfTwo64(exp: int): float64 {.inline.} =
+  ## Exact power of two for the bounded exponent ranges used by the roots.
+  cast[float64](uint64(exp + 1023) shl 52)
+
+func sqrtFinite64(x: float64): float64 =
+  # Reduce the significand to [0.5, 1) and make its exponent even, keeping
+  # every Newton step in a compact range regardless of the input magnitude.
+  var part = frexp(x)
+  if part.exp mod 2 != 0:
+    part.frac *= 2.0
+    dec part.exp
+
+  var guess = 1.0
+  for _ in 0..7:
+    guess = (guess + part.frac / guess) * 0.5
+  # Compensate the final rounded Newton step using its residual.
+  guess += (part.frac - guess * guess) / (2.0 * guess)
+  guess * powerOfTwo64(part.exp div 2)
 
 func sqrt*(x: float32): float32 =
   ## Square root for f32
