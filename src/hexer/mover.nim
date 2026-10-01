@@ -43,7 +43,7 @@ of bug: the goto form could impose an evaluation order that a later pass then
 contradicted (see the `AndX`/`OrX` note in `xelim.isComplex`).
 ]##
 
-import std / [assertions, intsets]
+import std / [assertions, intsets, tables]
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -63,6 +63,14 @@ type
       ## after this subtree" answerable from any position in the middle of the
       ## tree, which is what a flat goto stream gave for free.
     built: bool
+    firstWrites: Table[SymId, FirstWriteInfo]
+      ## Per empty-declared local, the statements an occurrence of it reaches;
+      ## see `isFirstWrite`.
+
+  FirstWriteInfo = object
+    reached: IntSet  ## statements control reaches after an occurrence
+    known: bool      ## false: no empty declaration, or a transfer the
+                     ## walk could not resolve
 
 proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
   var n = n
@@ -600,6 +608,7 @@ proc build(m: var MoverContext; buf: TokenBuf) =
   ## materialises no closing token, so a tag's extent comes from `subtreeWidth`
   ## and is tracked on a stack of last-content indexes.
   m.parents = newSeq[int32](buf.len)
+  m.firstWrites = initTable[SymId, FirstWriteInfo]()
   # The stack of tags still open at `i`, as two parallel columns: where the tag
   # sits and the index of its last content token.
   var openAt: seq[int32] = @[]
@@ -617,6 +626,118 @@ proc build(m: var MoverContext; buf: TokenBuf) =
       openAt.add int32(i)
       openLast.add int32(i + subtreeWidth(c) - 1)
   m.built = true
+
+proc routineOf(m: MoverContext; base: Cursor; pos: int32): int32 =
+  ## The routine whose body contains `pos`, else the outermost tag around it.
+  result = pos
+  var child = pos
+  while true:
+    let par = m.parents[child]
+    if par < 0: return child
+    if at(base, par).stmtKind in RoutineKinds: return par
+    child = par
+
+proc isDefaultValue(n: Cursor): bool =
+  ## Whether `n` is a default value, as `default(T)` lowers to: a zero, `nil`
+  ## or `false`, or an object constructor all of whose fields are.
+  case n.kind
+  of IntLit: result = n.intVal == 0
+  of UIntLit: result = n.uintVal == 0'u64
+  of FloatLit: result = n.floatVal == 0.0
+  of TagLit:
+    let k = n.exprKind
+    if k == NilX or k == FalseX:
+      result = true
+    elif k == SufX:
+      result = isDefaultValue(n.childCursor)
+    elif k == OconstrX:
+      var it = n
+      it = sub(it)                    # throwaway copy; bounds the walk
+      skip it                         # the type
+      result = true
+      while it.hasMore:
+        if result:
+          if it.substructureKind == KvU:
+            var kv = sub(it)
+            skip kv                   # the field
+            result = isDefaultValue(kv)
+          else:
+            result = false
+        skip it
+    else:
+      result = false
+  else:
+    result = false
+
+proc emptyDecl(base: Cursor; routine: int32; sym: SymId): int32 =
+  ## The `var`/`result` declaring `sym` inside `routine` without a value or
+  ## with a default value, or -1.
+  result = -1
+  let fin = endOf(base, routine)
+  var p = firstChild(base, routine)
+  while p < fin:
+    let t = at(base, p)
+    if t.isTagLit and t.stmtKind in {VarS, ResultS}:
+      let name = at(base, firstChild(base, p))
+      if name.kind == SymbolDef and name.symId == sym:
+        let value = lastChild(base, p)
+        let v = if value >= 0: at(base, value) else: default(Cursor)
+        return (if value >= 0 and (v.isDotToken or isDefaultValue(v)): p else: -1'i32)
+    p = p + int32(tokenWidth(t))
+
+proc firstWriteInfo(m: MoverContext; base: Cursor; routine, decl: int32;
+                    sym: SymId): FirstWriteInfo =
+  ## Every statement control can reach after an occurrence of `sym` in
+  ## `routine`, without passing its declaration `decl` again. The walk tracks
+  ## no location (`none`), so it only follows successors.
+  var noneBuf = createTokenBuf(1)
+  noneBuf.addDotToken()
+  let none = beginRead(noneBuf)
+  var pcs: seq[int32] = @[]
+  var other = default Cursor
+  let fin = endOf(base, routine)
+  var p = firstChild(base, routine)
+  while p < fin:
+    let t = at(base, p)
+    if t.kind == Symbol and t.symId == sym:
+      discard afterNode(m, base, p, none, pcs, other)
+      pushEnclosingHandlers(m, base, p, pcs)
+    p = p + int32(tokenWidth(t))
+  result = FirstWriteInfo(reached: initIntSet(), known: true)
+  while pcs.len > 0:
+    let pc = pcs.pop()
+    if pc < 0 or pc == decl or result.reached.containsOrIncl(int pc): continue
+    if not execStmt(m, base, pc, none, NoSymId, pcs, other):
+      return FirstWriteInfo(reached: initIntSet(), known: false)
+
+proc isFirstWrite*(asgn: Cursor; buf: var TokenBuf; mover: var MoverContext): bool =
+  ## Whether the `(asgn x v)` at `asgn` writes a local `x` that holds nothing
+  ## yet: `x` is declared in the enclosing routine without a value or with a
+  ## default one, `v` does not read it, and no occurrence of `x` — this
+  ## assignment's own included, through a loop — reaches the assignment
+  ## without passing that declaration again. Such a write needs no `=destroy`
+  ## of the old value.
+  if not mover.built:
+    build(mover, buf)
+  let pos = cursorToPosition(buf, asgn)
+  if pos < 0 or pos >= buf.len: return false
+  let base = readonlyCursorAt(buf, 0)
+  let lhsPos = firstChild(base, int32(pos))
+  let lhs = at(base, lhsPos)
+  if lhs.kind != Symbol: return false
+  let rhsPos = endOf(base, lhsPos)
+  if rhsPos < endOf(base, int32(pos)):
+    var rhs = at(base, rhsPos)
+    if containsRoot(rhs, lhs): return false
+  let sym = lhs.symId
+  var info = mover.firstWrites.getOrDefault(sym)
+  if not mover.firstWrites.hasKey(sym):
+    let routine = routineOf(mover, base, int32(pos))
+    let decl = emptyDecl(base, routine, sym)
+    if decl >= 0:
+      info = firstWriteInfo(mover, base, routine, decl, sym)
+    mover.firstWrites[sym] = info
+  result = info.known and not info.reached.contains(pos)
 
 proc isLastUse*(n: Cursor; buf: var TokenBuf;
                 otherUsage: var NifLineInfo;
@@ -753,3 +874,70 @@ when isMainModule:
 
   )"""
   test CaseTest, false
+
+  # `isFirstWrite`: which `(asgn x v)`s write a value-less `x` that holds
+  # nothing yet. `expected` lists the answer for each `asgn`, in order.
+  proc testFirst(s: string; expected: seq[bool]) =
+    var input = parseFromBuffer(s, "")
+    var mover = MoverContext()
+    var got: seq[bool] = @[]
+    var n = beginRead(input)
+    linearScan n:
+      if n.stmtKind == AsgnS:
+        got.add isFirstWrite(n, input, mover)
+    if got != expected:
+      echo "FAILED first-write case: ", s, " got ", got, " expected ", expected
+
+  testFirst """(stmts
+    (var :x.0 . . (i +64) .)
+    (ite (true)
+      (scope (asgn x.0 +1))
+      (scope (asgn x.0 +2)))
+    (call use x.0))""", @[true, true]
+
+  testFirst """(stmts
+    (var :x.0 . . (i +64) .)
+    (asgn x.0 +1)
+    (asgn x.0 +2))""", @[true, false]
+
+  testFirst """(stmts
+    (var :x.0 . . (i +64) .)
+    (ite (true) (scope (asgn x.0 +1)) .)
+    (asgn x.0 +2))""", @[true, false]
+
+  testFirst """(stmts
+    (var :x.0 . . (i +64) .)
+    (loop (scope
+      (asgn x.0 +1)
+      (continue .))))""", @[false]
+
+  testFirst """(stmts
+    (loop (scope
+      (var :x.0 . . (i +64) .)
+      (asgn x.0 +1)
+      (continue .))))""", @[true]
+
+  testFirst """(stmts
+    (var :x.0 . . (i +64) .)
+    (asgn x.0 (add (i +64) x.0 +1)))""", @[false]
+
+  testFirst """(stmts
+    (var :x.0 . . (i +64) +0)
+    (asgn x.0 +1))""", @[false]
+
+  testFirst """(stmts
+    (var :x.0 . . (i +64) .)
+    (asgn x.0 +1)
+    (jmp L.0)
+    (lab :L.0)
+    (asgn x.0 +2))""", @[true, false]
+
+  # `default(T)` as the compiler spells it: an all-zero constructor.
+  testFirst """(stmts
+    (var :x.0 . . T.0 (oconstr T.0 (kv a.0 (suf 0 "i64"))
+      (kv s.0 (oconstr string.0 (kv bytes.0 0u) (kv more.0 (nil))))))
+    (ite (true) (scope (asgn x.0 y.0)) .))""", @[true]
+
+  testFirst """(stmts
+    (var :x.0 . . T.0 (oconstr T.0 (kv a.0 (suf 5 "i64"))))
+    (asgn x.0 y.0))""", @[false]
