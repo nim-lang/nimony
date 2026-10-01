@@ -191,7 +191,7 @@ proc isSet*[T](v: ContextVar[T]): bool =
   ## concerned.
   findNode(currentCtx(), v.id) != nil
 
-proc set*[T](v: var ContextVar[T]; val: T) =
+template set*[T](v: var ContextVar[T]; val: T) =
   ## Binds `v` to `val` for everything the running proc calls, directly or
   ## through a suspension.
   ##
@@ -200,9 +200,12 @@ proc set*[T](v: var ContextVar[T]; val: T) =
   ## in. A *regular* proc is not a coroutine and has no such boundary, so a
   ## `set` in one lasts to the end of the thread's chain -- mark it `{.passive.}`
   ## when the binding is meant to stay local.
+  let slot = ctxSlot()
+  let ctxBefore = cast[CtxNode](slot[])
   if v.id == 0:
     v.id = claimId() # a bare `var`, first write: give it an identity of its own
   push(v.id, val)
+  defer: slot[] = ctxBefore
 
 template withCtx*[T](v: var ContextVar[T]; val: T; body: untyped): untyped =
   ## Runs `body` with `v` bound to `val`, then puts the previous chain back.
@@ -212,8 +215,5 @@ template withCtx*[T](v: var ContextVar[T]; val: T; body: untyped): untyped =
   ## `body` may resume on another thread, and the restore still lands on the
   ## chain the push was made from.
   block:
-    let slot = ctxSlot()
-    let ctxBefore = cast[CtxNode](slot[])
     v.set(val)
-    defer: slot[] = ctxBefore
     body
