@@ -161,6 +161,37 @@ when defined(posix):
         st_gen: uint32            # 120
         st_lspare: int32          # 124
         st_qspare: array[2, int64]  # 128 .. 143
+  elif defined(freebsd):
+    # Hardcoded FreeBSD (12+, 64-bit inode) `struct stat` for LP64 targets;
+    # amd64 and arm64 share it (only i386 inserts `__STAT_TIME_T_EXT`
+    # padding). `struct stat` is 224 bytes.
+    type
+      Mode* = uint16   ## mode_t
+      Off* = int64     ## off_t
+      Dev* = uint64    ## dev_t
+      Ino* = uint64    ## ino_t
+
+      Stat* {.pure.} = object ## FreeBSD `struct stat`
+        st_dev*: Dev              # offset 0
+        st_ino*: Ino              # 8
+        st_nlink: uint64          # 16
+        st_mode*: Mode            # 24
+        st_bsdflags: int16        # 26
+        st_uid: uint32            # 28
+        st_gid: uint32            # 32
+        st_padding1: int32        # 36
+        st_rdev: Dev              # 40
+        st_atim: Timespec         # 48
+        st_mtim*: Timespec        # 64
+        st_ctim: Timespec         # 80
+        st_birthtim: Timespec     # 96
+        st_size*: Off             # 112
+        st_blocks: int64          # 120
+        st_blksize: int32         # 128
+        st_flags: uint32          # 132
+        st_gen: uint64            # 136
+        st_filerev: uint64        # 144
+        st_spare: array[9, uint64]  # 152 .. 223
 
   const StatHasNanoseconds* = true ## \
     ## Boolean flag that indicates if the system supports nanosecond time
@@ -276,8 +307,8 @@ when defined(posix):
     # failures through libc's errno. `errno` itself is a header macro; the
     # stable, header-free way to reach it is the address-returning accessor
     # every modern libc exports: `__errno_location` on Linux's glibc and musl,
-    # `__errno` on Bionic and `__error` on Darwin.
-    when defined(osx):
+    # `__errno` on Bionic and `__error` on Darwin and FreeBSD.
+    when defined(osx) or defined(freebsd):
       proc errnoLocation(): ptr cint {.importc: "__error", sideEffect.}
     elif defined(android):
       proc errnoLocation(): ptr cint {.importc: "__errno", sideEffect.}
@@ -420,6 +451,29 @@ when defined(posix):
           inc i
         dirp.ent.d_name[i] = '\0'
         return addr dirp.ent
+  elif defined(freebsd):
+    # FreeBSD's libc `opendir`/`readdir`/`closedir`, bound header-free like on
+    # macOS. Since FreeBSD 12 the plain symbols speak the 64-bit-inode
+    # `struct dirent` (280 bytes); `Dirent` mirrors it so `d_type`/`d_name`
+    # overlay the record libc hands back.
+    type
+      Dirent* {.pure.} = object ## FreeBSD `struct dirent`
+        d_fileno: uint64          # offset 0
+        d_off: int64              # 8
+        d_reclen: uint16          # 16
+        d_type*: uint8            # 18
+        d_pad0: uint8             # 19
+        d_namlen: uint16          # 20
+        d_pad1: uint16            # 22
+        d_name*: array[256, char] # 24
+
+      DIR* {.pure.} = object ## opaque libc directory stream; only ever
+                             ## handled by pointer, never dereferenced here
+        opaque: pointer
+
+    proc opendir*(name: cstring): nil ptr DIR {.importc: "opendir", sideEffect.}
+    proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.importc: "readdir", sideEffect.}
+    proc closedir*(dirp: nil ptr DIR): cint {.importc: "closedir", sideEffect.}
   else:
     # macOS provides no stable raw directory syscall: the `getdirentries(2)`
     # syscall returns the legacy 32-bit-inode record, while everything modern
@@ -503,6 +557,11 @@ when defined(posix):
     proc posix_fallocate*(a1: cint, a2, a3: Off): cint =
       let r = pcall(fallocateImpl(a1, 0, a2, a3))
       if r < 0: cint(-r) else: cint(0)
+  elif defined(freebsd):
+    # A real libc function on FreeBSD; like POSIX specifies, it returns the
+    # error number instead of setting errno.
+    proc posix_fallocate*(a1: cint, a2, a3: Off): cint {.
+      importc: "posix_fallocate", sideEffect.}
   else:
     # 2001 POSIX evidently does not concern Apple: no posix_fallocate on
     # macOS. Keep the traditional fcntl(F_PREALLOCATE) emulation, with the
@@ -531,9 +590,16 @@ when defined(posix):
   proc WTERMSIG*(s: cint): cint = s and 0x7f
   proc WSTOPSIG*(s: cint): cint = WEXITSTATUS(s)
   proc WIFEXITED*(s: cint): bool = WTERMSIG(s) == 0
-  proc WIFSIGNALED*(s: cint): bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
   proc WIFSTOPPED*(s: cint): bool = (s and 0xff) == 0x7f
-  proc WIFCONTINUED*(s: cint): bool = s == WCONTINUED
+  when defined(freebsd):
+    # A continued child reports the bare status `SIGCONT` (0x13), which the
+    # generic WIFSIGNALED test below would misread as "killed by SIGCONT".
+    proc WIFCONTINUED*(s: cint): bool = s == SIGCONT
+    proc WIFSIGNALED*(s: cint): bool =
+      WTERMSIG(s) != 0x7f and WTERMSIG(s) != 0 and s != SIGCONT
+  else:
+    proc WIFSIGNALED*(s: cint): bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
+    proc WIFCONTINUED*(s: cint): bool = s == WCONTINUED
 
   # -------- Process / pipe / exec bindings needed by std/osproc --------
   # Plain fork+exec on every configuration; the posix_spawn family is gone

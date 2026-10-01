@@ -10,13 +10,16 @@ when defined(linux):
     {.error: "std/posix has no transcribed ABI for this Linux architecture; supported: amd64, arm64, i386".}
 elif defined(osx):
   discard # one ABI for arm64 and x86_64 (64-bit-inode layouts)
+elif defined(freebsd):
+  when not (defined(amd64) or defined(arm64)):
+    {.error: "std/posix has no transcribed ABI for this FreeBSD architecture; supported: amd64, arm64".}
 else:
-  {.error: "std/posix has no transcribed ABI for this OS; supported: Linux (amd64/arm64/i386) and macOS".}
+  {.error: "std/posix has no transcribed ABI for this OS; supported: Linux (amd64/arm64/i386), macOS and FreeBSD (amd64/arm64)".}
 
 include posix_other_consts
 
 type
-  ClockId* = cint  ## clockid_t (int on Linux and Darwin)
+  ClockId* = cint  ## clockid_t (int on Linux, Darwin and FreeBSD)
 
   Time* = distinct clong   ## time_t
 
@@ -85,7 +88,8 @@ else:
       sa_family*: TSa_Family        ## Address family.
       sa_data*: array[0..255, char] ## Socket address (variable-length data).
 
-    Tmsghdr* {.pure} = object  ## struct msghdr (Darwin: msg_iovlen is int)
+    Tmsghdr* {.pure} = object  ## struct msghdr (Darwin and FreeBSD: msg_iovlen
+                               ## is int, msg_controllen is socklen_t)
       msg_name*: pointer     ## Optional address.
       msg_namelen*: SockLen  ## Size of address.
       msg_iov*: ptr IOVec    ## Scatter/gather array.

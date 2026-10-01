@@ -75,12 +75,11 @@ when defined(posix):
     ck("ENAMETOOLONG", int64(ENAMETOOLONG)); ck("ENETDOWN", int64(ENETDOWN))
     ck("ENETRESET", int64(ENETRESET)); ck("ENETUNREACH", int64(ENETUNREACH))
     ck("ENFILE", int64(ENFILE)); ck("ENOBUFS", int64(ENOBUFS))
-    ck("ENODATA", int64(ENODATA)); ck("ENODEV", int64(ENODEV))
+    ck("ENODEV", int64(ENODEV))
     ck("ENOENT", int64(ENOENT)); ck("ENOEXEC", int64(ENOEXEC))
     ck("ENOLCK", int64(ENOLCK)); ck("ENOMEM", int64(ENOMEM))
     ck("ENOMSG", int64(ENOMSG)); ck("ENOPROTOOPT", int64(ENOPROTOOPT))
-    ck("ENOSPC", int64(ENOSPC)); ck("ENOSR", int64(ENOSR))
-    ck("ENOSTR", int64(ENOSTR)); ck("ENOSYS", int64(ENOSYS))
+    ck("ENOSPC", int64(ENOSPC)); ck("ENOSYS", int64(ENOSYS))
     ck("ENOTCONN", int64(ENOTCONN)); ck("ENOTDIR", int64(ENOTDIR))
     ck("ENOTEMPTY", int64(ENOTEMPTY)); ck("ENOTSOCK", int64(ENOTSOCK))
     ck("ENOTSUP", int64(ENOTSUP)); ck("ENOTTY", int64(ENOTTY))
@@ -90,9 +89,14 @@ when defined(posix):
     ck("EPROTONOSUPPORT", int64(EPROTONOSUPPORT)); ck("EPROTOTYPE", int64(EPROTOTYPE))
     ck("ERANGE", int64(ERANGE)); ck("EROFS", int64(EROFS))
     ck("ESPIPE", int64(ESPIPE)); ck("ESRCH", int64(ESRCH))
-    ck("ETIME", int64(ETIME)); ck("ETIMEDOUT", int64(ETIMEDOUT))
+    ck("ETIMEDOUT", int64(ETIMEDOUT))
     ck("ETXTBSY", int64(ETXTBSY)); ck("EWOULDBLOCK", int64(EWOULDBLOCK))
     ck("EXDEV", int64(EXDEV))
+
+    when not defined(freebsd):
+      # STREAMS/xattr errnos FreeBSD does not have.
+      ck("ENODATA", int64(ENODATA)); ck("ENOSR", int64(ENOSR))
+      ck("ENOSTR", int64(ENOSTR)); ck("ETIME", int64(ETIME))
 
     # ---- fcntl / open flags ----
     ck("O_RDONLY", int64(O_RDONLY)); ck("O_WRONLY", int64(O_WRONLY))
@@ -201,8 +205,8 @@ when defined(posix):
     ck("offsetof(struct msghdr, msg_controllen)", off(mh, addr mh.msg_controllen))
     ck("offsetof(struct msghdr, msg_flags)", off(mh, addr mh.msg_flags))
 
-    # ---- macOS struct dirent (our Dirent overlays libSystem's records) ----
-    when defined(osx):
+    # ---- macOS/FreeBSD struct dirent (our Dirent overlays libc's records) ----
+    when defined(osx) or defined(freebsd):
       let de = cast[ptr Dirent](addr scratch[0])
       ck("offsetof(struct dirent, d_type)", off(de, addr de.d_type))
       ck("offsetof(struct dirent, d_name)", off(de, addr de.d_name))
