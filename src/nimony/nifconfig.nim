@@ -218,7 +218,9 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     bits: sizeof(int)*8,
     targetCPU: platform.nameToCPU(hostCPU),
     targetOS: platform.nameToOS(hostOS),
-    cc: "gcc",
+    # FreeBSD's base system ships clang as its only C compiler; elsewhere
+    # `gcc` is either GCC or (macOS) a clang alias.
+    cc: (when defined(freebsd): "clang" else: "gcc"),
     linker: "",
     appType: appConsole, # console is the default
     checkFlags: "br"     # = genFlags(DefaultSettings) (BoundCheck + RangeCheck);
