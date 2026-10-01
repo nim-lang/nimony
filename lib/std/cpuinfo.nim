@@ -27,7 +27,8 @@ when defined(js):
       let jsObj = navigator.hardwareConcurrency
     result = jsObj.to int
 else:
-  when defined(posix) and not (defined(macosx) or defined(bsd)):
+  when defined(posix) and not (defined(macosx) or
+      (defined(bsd) and not defined(freebsd))):
     import posix/posix
 
   when defined(linux):
