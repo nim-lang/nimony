@@ -40,6 +40,10 @@ template genericHead*[T](t: typedesc[T]): typedesc {.plugin: "deps/typetraits".}
   ##   type Foo[T] = object
   ##   var x: genericHead(Foo[int])[float]   # Foo[float]
 
+template name*[T](t: typedesc[T]): string {.plugin: "deps/typetraits".}
+  ## Returns a source-like name for ``T``.
+  ## For ``$`` on ``typedesc`` (e.g. ``$int``), use ``system`` — it is auto-imported.
+
 template stripGenericParams*[T](t: typedesc[T]): typedesc {.plugin: "deps/typetraits".}
   ## Like `genericHead`, but returns non-generic types unmodified instead of
   ## producing an error.
