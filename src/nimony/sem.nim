@@ -904,7 +904,14 @@ proc isCastableType(t: TypeCursor): bool =
     # operation that says "skip the range check". `system/setops`'s `items`
     # iterator needs this to walk a `set[range[…]]` at all.
     inc t # past the tag, to the base type
-  result = t.typeKind in IntegralTypes or isEnumType(t)
+  if t.typeKind == SetT:
+    # a set that fits a machine word is a bit field (`uintN` in the backend),
+    # so `cast[set[E]](someInt)` and back is the usual flags idiom:
+    var err = false
+    let size = asSigned(bitsetSizeInBytes(t.childCursor), err)
+    result = not err and size <= 8
+  else:
+    result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
