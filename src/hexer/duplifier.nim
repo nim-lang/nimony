@@ -77,6 +77,16 @@ type
       ## `trStmts` splices this in front of each statement it just translated,
       ## so the duplifier's output is already statement-based and needs no
       ## follow-up `xelim` run to flatten it (see `doc/final_ir.md`).
+    unassigned: HashSet[SymId]
+      ## Locals declared without a value that nothing translated so far
+      ## mentions: an assignment to one of them is its first, so it stores
+      ## into nothing and needs no `=destroy` of the old value. `trStmts`
+      ## forgets what each statement mentions once it is done; the arms of an
+      ## `ite`/`case` each start from the state after the condition; a `loop`
+      ## forgets what it mentions before its body is walked, as the back-edge
+      ## brings the previous iteration's values. A path that never assigns
+      ## still destroys the local at the scope's end, which is why its
+      ## declaration keeps its `=wasMoved`.
 
   Expects = enum
     DontCare,
@@ -300,6 +310,91 @@ proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   result = false
   if n.isSymbol:
     result = n.symId == c.resultSym
+
+proc forgetMentions(c: var Context; n: Cursor) =
+  ## Every local `n` mentions may hold a value from here on.
+  if c.unassigned.len > 0:
+    var n = n
+    case n.kind
+    of Symbol:
+      c.unassigned.excl n.symId
+    of TagLit:
+      # A field name is no mention: it can share its symbol with a local.
+      if n.exprKind in {DotX, DdotX}:
+        forgetMentions c, n.childCursor
+      else:
+        var fieldName = n.substructureKind == KvU
+        n.loopInto:
+          if not fieldName:
+            forgetMentions c, n
+          fieldName = false
+          skip n
+    else:
+      discard
+
+proc isEmptySeqCall(n: Cursor): bool =
+  ## `newSeqUninit[T](0)`, which `default(seq[T])` and `@[]` are: no payload.
+  var n = n
+  inc n # the call tag
+  if n.kind != Symbol: return false
+  let res = tryLoadSym(n.symId)
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind) or
+      not hasPragmaOfValue(asRoutine(res.decl).pragmas, SemanticsP, "newSeqUninit"):
+    return false
+  inc n
+  if n.exprKind == SufX: inc n
+  result = n.kind == IntLit and n.intVal == 0
+
+proc isDefaultValue(c: Context; n: Cursor): bool =
+  ## Whether `n` is a value whose `=destroy` is a no-op, as `default(T)` spells
+  ## it: a zero, `nil`, `false`, `""`, an empty seq, or a constructor all of
+  ## whose parts are such values.
+  case n.kind
+  of IntLit: result = n.intVal == 0
+  of UIntLit: result = n.uintVal == 0'u64
+  of FloatLit: result = n.floatVal == 0.0
+  of CharLit: result = n.charLit == '\0'
+  of StrLit: result = pool.strings[n.strId].len == 0
+  of Symbol:
+    # an `{.inline.}` temp stands for its call
+    result = n.symId in c.callTemps and isEmptySeqCall(c.callTemps.getOrQuit(n.symId))
+  of TagLit:
+    let k = n.exprKind
+    if k in {NilX, FalseX}:
+      result = true
+    elif k in {SufX} + ConvKinds:
+      var it = n
+      inc it
+      if k != SufX: skip it # the type
+      result = isDefaultValue(c, it)
+    elif k in {OconstrX, TupconstrX, AconstrX}:
+      var it = sub(n)
+      skip it # the type
+      result = true
+      while result and it.hasMore:
+        if it.substructureKind == KvU:
+          var kv = sub(it)
+          skip kv # the field
+          result = isDefaultValue(c, kv)
+        else:
+          result = isDefaultValue(c, it)
+        skip it
+    else:
+      result = k in CallKinds and isEmptySeqCall(n)
+  else:
+    result = false
+
+proc isFirstAsgn(c: Context; n: Cursor): bool =
+  ## Whether the `(asgn x v)` at `n` is the first store into the local `x`.
+  ## `x = f(x)` is not: it reads the old value.
+  var n = n
+  inc n # AsgnS
+  if n.kind == Symbol and n.symId in c.unassigned:
+    let x = n.symId
+    skip n
+    result = not containsSym(n, x)
+  else:
+    result = false
 
 proc isSimpleExpression(n: var Cursor): bool =
   ## expressions that can be returned safely
@@ -560,7 +655,7 @@ proc writesThroughCursorField(c: var Context; le: Cursor): bool =
   let decl = lookupFieldDecl(c.typeCache, objTyp, f.symId)
   result = not cursorIsNil(decl.typ) and hasPragma(decl.pragmas, CursorP)
 
-proc trAsgn(c: var Context; n: var Cursor) =
+proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
   #[
   `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp` #`f()` can read `x`
   `x = lastUse y` is turned into either
@@ -603,8 +698,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trSons c, n, DontCare
 
   else:
-    #let isNotFirstAsgn = not isResultUsage(c, le) # YYY Adapt this once we have "isFirstAsgn" analysis
-    const isNotFirstAsgn = true
+    let isNotFirstAsgn = not isFirstAsgn
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
     # Aliasing is judged by a place's root; for a call temp that is the call.
@@ -902,6 +996,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   let oldRetType = c.retType
   c.resultSym = NoSymId
   c.flags = {}
+  var oldUnassigned = move c.unassigned
   let decl = n
   var r = takeRoutine(n, SkipFinalParRi)
   let symId = r.name.symId
@@ -935,6 +1030,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.resultSym = oldResultSym
   c.flags = oldFlags
   c.retType = oldRetType
+  c.unassigned = move oldUnassigned
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   # `isTrivial(c.lifter[], typ)` consults `c.lifter[].op`, which floats
@@ -1349,11 +1445,15 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
     copyTree c.dest, r.val
     c.dest.addParRi()
     callWasMoved c, r.name.symId, r.name.info, r.typ
+    if k in {VarS, LetS, ResultS}:
+      c.unassigned.incl r.name.symId
   elif k == ConstS:
     # static data: nothing to own, dup or destroy
     copyTree c.dest, r.val
     c.dest.addParRi()
   else:
+    if k in {VarS, LetS, ResultS} and isDefaultValue(c, r.val):
+      c.unassigned.incl r.name.symId
     let destructor = getDestructor(c.lifter[], r.typ, n.endInfo)
     if destructor != NoSymId:
       if k == CursorS:
@@ -1376,12 +1476,16 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
 
 proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
+  # The rest of the enclosing statement has not been looked at yet: it may
+  # store into a local before this part runs.
+  var outerUnassigned = move c.unassigned
   takeInto c.dest, n:
     while n.hasMore:
       if isLastSon(n):
         tr(c, n, e)
       else:
         tr(c, n, WantNonOwner)
+  c.unassigned = move outerUnassigned
 
 proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
@@ -1462,6 +1566,7 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
 
 proc trCoroFor(c: var Context; n: var Cursor)
 proc trTry(c: var Context; n: var Cursor)
+proc trBranches(c: var Context; n: var Cursor)
 
 proc trStmts(c: var Context; n: var Cursor) {.ensuresNif: addedAny(c.dest).} =
   ## Statement position is where a deferred move goes when the expression it
@@ -1479,7 +1584,12 @@ proc trStmts(c: var Context; n: var Cursor) {.ensuresNif: addedAny(c.dest).} =
   takeInto c.dest, n:
     while n.hasMore:
       let stmtStart = c.dest.len
-      tr c, n, WantNonOwner
+      let stmt = n
+      if n.stmtKind == AsgnS:
+        trAsgn c, n, isFirstAsgn(c, n)
+      else:
+        tr c, n, WantNonOwner
+      forgetMentions c, stmt
       if c.hoisted.len > 0:
         # `stmtStart` is past every still-open tag, so the splice cannot
         # invalidate an enclosing scope's bookkeeping: `closeTag` recomputes
@@ -1651,22 +1761,47 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trCoroFor c, n
       of TryS:
         trTry c, n
+      of CaseS:
+        trBranches c, n
       else:
-        trSons c, n, WantNonOwner
+        case n.finalIrKind
+        of IteV, ItecV:
+          trBranches c, n
+        of LoopV:
+          forgetMentions c, n # the back-edge
+          trSons c, n, WantNonOwner
+        else:
+          trSons c, n, WantNonOwner
 
 proc trCoroFor(c: var Context; n: var Cursor) =
   ## The iter call is consumed by cps.nim's trCoroFor (rewritten to the
   ## init wrapper call). Don't =dup/extract it here. Just descend into the
   ## body.
+  forgetMentions c, n # the body runs once per iteration
   takeInto c.dest, n: # corofor tag
     takeTree c.dest, n # iter call verbatim
     tr c, n, WantNonOwner # body
+
+proc trBranches(c: var Context; n: var Cursor) =
+  ## `(ite cond then else)` and `(case sel (of ...)* (else ...)?)`: no arm
+  ## runs after another, so each starts from the state after `cond`/`sel`.
+  ## `trStmts` forgets what any arm mentions once the whole statement is done.
+  takeInto c.dest, n:
+    let cond = n
+    tr c, n, WantNonOwner
+    forgetMentions c, cond
+    let before = c.unassigned
+    while n.hasMore:
+      c.unassigned = before
+      tr c, n, WantNonOwner
 
 proc trTry(c: var Context; n: var Cursor) =
   # copy the `E as e` declaration verbatim: `trLocal` would append
   # `=wasMoved(e)` as a sibling, breaking `(except)`'s arity (#2099)
   takeInto c.dest, n:
+    let body = n
     tr c, n, WantNonOwner # try body
+    forgetMentions c, body # a handler runs after any part of it
     while n.substructureKind == ExceptU:
       takeInto c.dest, n:
         if n.stmtKind == LetS:
