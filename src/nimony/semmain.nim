@@ -507,7 +507,7 @@ proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
       endRead(r)
   var finalBuf = beginRead afterSem
   result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
-                        runtimeDeclared = c.enableTrace)
+                        cycles = c.g.config.cycles)
   when defined(dumpPhases):
     block:
       var r = beginRead(result)

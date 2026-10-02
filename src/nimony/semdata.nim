@@ -231,8 +231,6 @@ type
       ## and only resolve at the instantiation site). See issue #1988.
     moduleFlags*: set[ModuleFlag]
     features*: set[Feature]
-    enableTrace*: bool
-      ## this module declared the runtime's `nimTraceRef` with `{.enableTrace.}`
     processedModules*: Table[string, SymId] # suffix to sym
     usedTypevars*: int
     phase*: SemPhase

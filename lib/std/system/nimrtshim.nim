@@ -4,7 +4,8 @@
 # Included by both, never on its own.
 #
 # The compiler protocol (what a runtime whose `nimTraceRef` says
-# `{.enableTrace.}` gets, `hexer/lifter.runtimeEnablesTrace`):
+# `{.enableTrace.}` gets; the driver finds it in nifler's deps file and passes
+# `--cycles` to nimsem and hexer, see `deps.processDep`):
 #
 # * A cell carries a second header word after `rc`, `rootIdx` (`RefHeader`).
 # * `=destroy` of a `ref T` whose `T` can form a cycle calls `nimDecRefCyclic`

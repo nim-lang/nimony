@@ -1401,15 +1401,13 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
   of EnableTraceP:
     # In the body of a runtime's `nimTraceRef`: the runtime collects cycles.
     # A runtime shared with Nim says `when defined(nimony): {.enableTrace.}`.
-    # Seen here while system (which includes the runtime) is checked, so its
-    # own hooks follow; every later module finds it in the body
-    # (`runtimeEnablesTrace`).
+    # Nothing to do here: the driver finds it in nifler's deps file and
+    # passes `--cycles` on (`deps.processDep`).
     let info = it.n.info
     if c.routine.kind == NoSym:
       buildErr c, dest, info, "`enableTrace` must be in the body of `nimTraceRef`"
       skip it.n
     else:
-      c.enableTrace = true
       toPragmaArgs()
       dest.addParLe(PragmasS, info)
       dest.addParLe(EnableTraceP, info)

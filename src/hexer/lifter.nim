@@ -14,7 +14,7 @@ to type `(T, T)`, etc.
 
 ]##
 
-import std/[assertions, tables, hashes, strutils, syncio, os]
+import std/[assertions, tables, hashes, strutils, syncio]
 
 when defined(nimony):
   {.feature: "lenientnils".}
@@ -66,8 +66,9 @@ type
       ## the lowered shapes handed to `requestLifting`, which keeps cursors
       ## into them: they must live as long as the context does
     cycles*: bool
-      ## `--mm:orc`: refs carry the cycle collector's header word, hooks follow
-      ## the protocol of `lib/std/system/orc.nim` and `=trace` is lifted.
+      ## `--cycles`: the runtime collects cycles (it says `{.enableTrace.}`,
+      ## see `NifConfig.cycles`). Refs carry the collector's header word, hooks
+      ## follow the protocol of `lib/std/system/orc.nim` and `=trace` is lifted.
     cyclicRefs: Table[string, bool] ## `canFormCycle` per ref type
     tracedTypes: Table[SymId, bool]  ## `needsTrace` per nominal type
     cellOps: Table[string, SymId]    ## the cell operation per ref type
@@ -183,22 +184,6 @@ proc siblingHookError(c: var LiftingCtx; typ: TypeCursor;
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.symId(name & ".0." & SystemModuleSuffix)
-
-proc runtimeEnablesTrace*(): bool =
-  ## Does the memory management runtime (`include "$MM"` in system) collect
-  ## cycles? It says so with `{.enableTrace.}` in its `nimTraceRef`, and then gets
-  ## the protocol of `lib/std/system/orc.nim`: the cell's `rootIdx` word, cell
-  ## operations, `nimDecRefCyclic` and a lifted `=trace`.
-  if not fileExists(suffixToNif(SystemModuleSuffix)):
-    return false # `--noSystem`: no runtime to ask
-  let res = tryLoadSym(pool.symId("nimTraceRef.0." & SystemModuleSuffix))
-  result = false
-  if res.status == LacksNothing:
-    var n = asRoutine(res.decl, SkipInclBody).body
-    n.linearScan:
-      if n.pragmaKind == EnableTraceP:
-        result = true
-        break
 
 # Cycle analysis (`--mm:orc`), after Nim's `types.canFormAcycle`.
 #

@@ -2807,7 +2807,8 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n, TraverseAll
         swap dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows); crt = false) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows); crt = false;
+             cycles = false) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -2827,15 +2828,13 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     isWindows: isWindows,
     localDeclCounters: 1000,
     activeChecks: flags,
-    liftingCtx: createLiftingCtx(mp.name, bits)
+    liftingCtx: createLiftingCtx(mp.name, bits, cycles = cycles)
   )
   c.typeCache.openScope()
 
   var owningBuf = createTokenBuf(300)
 
   var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", owningBuf, true)
-  # system is checked before everything else, so its runtime is there to ask
-  c.liftingCtx.cycles = runtimeEnablesTrace()
   let cBits = c.bits
   var dest = transform(c, c0, mp.name, cBits)
 

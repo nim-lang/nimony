@@ -1671,9 +1671,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
-                   thisModuleSuffix: string; bits: int; runtimeDeclared = false): TokenBuf =
-  ## `runtimeDeclared`: this module (system) declared the `{.enableTrace.}`
-  ## runtime itself, before its own decls could be loaded from an index.
+                   thisModuleSuffix: string; bits: int; cycles = false): TokenBuf =
+  ## `cycles`: the runtime collects cycles (`NifConfig.cycles`).
   let inputWidth = subtreeWidth(n)
   var c = Context(typeCache: createTypeCache(bits),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId),
@@ -1683,7 +1682,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
     lifter: nil) # set below after hooks is moved
   # Pass address of hooks to lifter so it can look up hooks from current module
   c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks,
-                              cycles = runtimeDeclared or runtimeEnablesTrace())
+                              cycles = cycles)
   c.typeCache.openScope()
   var n2 = n
   var n3 = n

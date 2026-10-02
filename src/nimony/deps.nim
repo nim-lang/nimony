@@ -670,6 +670,13 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
           inc n
     elif n.cursorTagId == TagId(PluginP):
       processPlugin c, n, current
+    elif n.cursorTagId == TagId(EnableTraceP):
+      # `(enableTrace [(when COND...)])`: nifler's entry for `{.enableTrace.}`
+      # in the runtime's `nimTraceRef`
+      n.into:
+        if not n.hasMore or whenMarkerHolds(c, n):
+          c.config.cycles = true
+        while n.hasMore: skip n
     elif n.cursorTagId == TagId(PassLP):
       n.into:  # (passL …)
         while n.hasMore:
@@ -861,7 +868,7 @@ proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
     b.addKeyw "output"
 
 proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
-                     targetOS: TSystemOS; checkFlags: string; native: bool;
+                     targetOS: TSystemOS; checkFlags: string; native, cycles: bool;
                      crt = false) =
   let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
@@ -876,6 +883,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
     if native: b.addStrLit "--native"
     # A native program linked with libc: `main` returns to crt (see `linuxLibc`).
     if crt: b.addStrLit "--crt"
+    if cycles: b.addStrLit "--cycles"
     # Forward the active check modes so nifcgen injects only the requested
     # runtime checks (e.g. `--boundchecks:off` ⇒ no `nimUcheckB` in `(at …)`).
     # A bare `--flags` means "no checks" (e.g. `-d:danger`): with a trailing
@@ -1250,7 +1258,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # Command for hexer
     defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian,
                     c.config.targetOS, c.config.checkFlags, c.config.backend == backendNative,
-                    crt = linuxLibc)
+                    c.config.cycles, crt = linuxLibc)
 
     # Command for C/LLVM compiler (object files). The fixed part of its command
     # line is collected in `ccArgs` first: besides being emitted, it keys the
@@ -1888,6 +1896,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
       b.addSymbolDef "nimsem"
       b.addStrLit c.nimsem
       emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
+      if c.config.cycles: b.addStrLit "--cycles"
       b.addStrLit "m"
       b.addKeyw "args"
       # Module files are passed via (args) in each (do nimsem) block
@@ -1897,6 +1906,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         b.addSymbolDef "idetools"
         b.addStrLit c.nimsem
         emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
+        if c.config.cycles: b.addStrLit "--cycles"
         b.addStrLit "idetools"
         b.addKeyw "args"
         b.withTree "input":
@@ -2062,6 +2072,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       # file mmap'd via nifreader.
       if config.ccKey.len > 0:
         b.addStrLit "--cc:" & quoteShell(config.cc)
+      if config.cycles: b.addStrLit "--cycles"
       b.addStrLit "m"
       b.addKeyw "args"
       b.withTree "input":
@@ -2076,7 +2087,8 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addKeyw "input"
 
     defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian,
-                    config.targetOS, config.checkFlags, config.backend == backendNative)
+                    config.targetOS, config.checkFlags, config.backend == backendNative,
+                    config.cycles)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"
@@ -2255,6 +2267,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
     parseNifConfig cfgNif, config
 
   var c = initDepContext(config, project, false, forceRebuild, moduleFlags, cmd)
+  # found in the runtime's nifler deps, which the later phases do not read
+  config.cycles = c.config.cycles
   let configChanged = generateCachedConfigFile(c, passC, passL)
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
