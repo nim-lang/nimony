@@ -319,11 +319,70 @@ proc forgetMentions(c: var Context; n: Cursor) =
     of Symbol:
       c.unassigned.excl n.symId
     of TagLit:
-      n.loopInto:
-        forgetMentions c, n
-        skip n
+      # A field name is no mention: it can share its symbol with a local.
+      if n.exprKind in {DotX, DdotX}:
+        forgetMentions c, n.childCursor
+      else:
+        var fieldName = n.substructureKind == KvU
+        n.loopInto:
+          if not fieldName:
+            forgetMentions c, n
+          fieldName = false
+          skip n
     else:
       discard
+
+proc isEmptySeqCall(n: Cursor): bool =
+  ## `newSeqUninit[T](0)`, which `default(seq[T])` and `@[]` are: no payload.
+  var n = n
+  inc n # the call tag
+  if n.kind != Symbol: return false
+  let res = tryLoadSym(n.symId)
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind) or
+      not hasPragmaOfValue(asRoutine(res.decl).pragmas, SemanticsP, "newSeqUninit"):
+    return false
+  inc n
+  if n.exprKind == SufX: inc n
+  result = n.kind == IntLit and n.intVal == 0
+
+proc isDefaultValue(c: Context; n: Cursor): bool =
+  ## Whether `n` is a value whose `=destroy` is a no-op, as `default(T)` spells
+  ## it: a zero, `nil`, `false`, `""`, an empty seq, or a constructor all of
+  ## whose parts are such values.
+  case n.kind
+  of IntLit: result = n.intVal == 0
+  of UIntLit: result = n.uintVal == 0'u64
+  of FloatLit: result = n.floatVal == 0.0
+  of CharLit: result = n.charLit == '\0'
+  of StrLit: result = pool.strings[n.strId].len == 0
+  of Symbol:
+    # an `{.inline.}` temp stands for its call
+    result = n.symId in c.callTemps and isEmptySeqCall(c.callTemps.getOrQuit(n.symId))
+  of TagLit:
+    let k = n.exprKind
+    if k in {NilX, FalseX}:
+      result = true
+    elif k in {SufX} + ConvKinds:
+      var it = n
+      inc it
+      if k != SufX: skip it # the type
+      result = isDefaultValue(c, it)
+    elif k in {OconstrX, TupconstrX, AconstrX}:
+      var it = sub(n)
+      skip it # the type
+      result = true
+      while result and it.hasMore:
+        if it.substructureKind == KvU:
+          var kv = sub(it)
+          skip kv # the field
+          result = isDefaultValue(c, kv)
+        else:
+          result = isDefaultValue(c, it)
+        skip it
+    else:
+      result = k in CallKinds and isEmptySeqCall(n)
+  else:
+    result = false
 
 proc isFirstAsgn(c: Context; n: Cursor): bool =
   ## Whether the `(asgn x v)` at `n` is the first store into the local `x`.
@@ -1393,6 +1452,8 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
     copyTree c.dest, r.val
     c.dest.addParRi()
   else:
+    if k in {VarS, LetS, ResultS} and isDefaultValue(c, r.val):
+      c.unassigned.incl r.name.symId
     let destructor = getDestructor(c.lifter[], r.typ, n.endInfo)
     if destructor != NoSymId:
       if k == CursorS:
