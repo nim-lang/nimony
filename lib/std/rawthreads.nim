@@ -291,6 +291,11 @@ template nimThreadProcWrapperBody(closure: pointer) =
     nimAllocThreadInit()
   let t = cast[ptr RawThread](closure)
   t.dataFn(t.data)
+  # A memory management runtime with per-thread state that must outlive the
+  # thread (`system/yrc`: its queued decrements and candidate roots) hands it
+  # over here.
+  when declared(nimThreadTeardown):
+    nimThreadTeardown()
   # last: the heap of this thread goes to the next thread that starts
   when declared(nimAllocThreadTeardown):
     nimAllocThreadTeardown()

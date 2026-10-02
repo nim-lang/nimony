@@ -130,6 +130,9 @@ proc buildNimsem*(showProgress = false) =
   buildTool("nimsem", "src/nimony/nimsem.nim", showProgress, validatePassesFlag())
 
 proc buildNimony*(showProgress = false) =
+  ## Also puts Nim's cycle collectors, which `system/orc` and `system/yrc`
+  ## include, on their pinned commit (`syncNimRuntime`).
+  syncNimRuntime()
   buildTool("nimony", "src/nimony/nimony.nim", showProgress, validatePassesFlag())
 
 proc buildControlflow*(showProgress = false) =
@@ -250,6 +253,7 @@ proc buildAll*() =
   ## per project — and one at a time they were ~40s of every tree walk, most
   ## of it on one core. Each tool's output is printed in one piece as it ends.
   syncNimParser()
+  syncNimRuntime()
   var cmds = @[
     toolCmd("nifler", "src/nifler/nifler.nim"),
     toolCmd("nimsem", "src/nimony/nimsem.nim", validatePassesFlag()),

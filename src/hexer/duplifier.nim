@@ -153,7 +153,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
       while not isLastSon(n): skip n
     of ErrX, SufX, AtX, DotX, PatX, ParX, AddrX, NilX, InfX,
         NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX,
-        SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
+        SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
         CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
         ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
         LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
@@ -180,7 +180,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
       hdrefs = true
       inc n
     of ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX,
-        NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
+        NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX,
         AlignofX, OffsetofX, OconstrX, AconstrX, BracketX, CurlyX,
         CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
         BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
@@ -424,7 +424,7 @@ proc isSimpleExpression(n: var Cursor): bool =
       else:
         result = false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX, XorX,
-        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX,
+        NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX, AconstrX,
         BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX,
         NeqX, LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
@@ -968,7 +968,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           while n.hasMore: trOnlyEssentials c, n
     of ErrX, SufX, AtX, DerefX, HderefX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
-        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
         MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
@@ -1316,6 +1316,10 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         let rcField = pool.symId(RcField)
         c.dest.addSymUse(rcField, info)
         c.dest.addIntLit(0, info)
+      if c.lifter.cycles:
+        copyIntoKind c.dest, KvU, info:
+          c.dest.addSymUse(pool.symId(RootIdxField), info)
+          c.dest.addIntLit(0, info)
       copyIntoKind c.dest, KvU, info:
         let dataField = pool.symId(DataField)
         c.dest.addSymUse(dataField, info)
@@ -1697,7 +1701,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trEnsureMove c, n, e
     of AconstrX, TupconstrX:
       trConstructing c, n, e, n.exprKind
-    of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetconstrX,
+    of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, CanFormCyclesX, SetconstrX,
        OchoiceX, CchoiceX, XorX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,

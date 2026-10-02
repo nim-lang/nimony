@@ -84,6 +84,7 @@ proc handleCmdLine*() =
   var isMain = false
   var native = false
   var crt = false
+  var cycles = false
   var appType = appConsole
   var isWindows = defined(windows)
   for kind, key, val in getopt():
@@ -118,6 +119,8 @@ proc handleCmdLine*() =
         native = true
       of "crt":
         crt = true
+      of "cycles":
+        cycles = true
       of "app":
         case normalize(val)
         of "console": appType = appConsole
@@ -138,7 +141,8 @@ proc handleCmdLine*() =
   else:
     case action
     of "c":
-      expand files[0], bits, bigEndian, flags, isMain, outdir, appType, native, isWindows, crt
+      expand files[0], bits, bigEndian, flags, isMain, outdir, appType, native, isWindows, crt,
+             cycles
     of "d":
       deadCodeElimination(files, outdir)
     of "dl":

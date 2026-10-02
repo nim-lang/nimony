@@ -1917,7 +1917,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
             buildErr c, dest, vInfo, "value already handled"
           dest.takeTree value
   of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
@@ -2228,7 +2228,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   of DotX, DdotX:
     semDotAsgn c, dest, it, info, asgnStart
   of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
@@ -5899,6 +5899,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semAddr c, dest, it
     of SizeofX:
       semSizeof c, dest, it
+    of CanFormCyclesX:
+      semCanFormCycles c, dest, it
     of TypeofX:
       semTypeof c, dest, it
     of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:

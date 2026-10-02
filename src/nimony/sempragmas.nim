@@ -441,6 +441,11 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParLe(pk, n.info)
       dest.addParRi()
     toPragmaArgs()
+  of EnableTraceP:
+    buildErr c, dest, n.info, "`enableTrace` is a statement in the body of `nimTraceRef`"
+    toPragmaArgs()
+    if hasParRi:
+      while n.hasMore: skip n
   of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP, AcyclicP:
     var hasErr = false
     if kind != TypeY:
@@ -1393,6 +1398,23 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     else:
       while it.n.hasMore: skip it.n
       buildErr c, dest, info, "`feature` pragma takes a string literal"
+  of EnableTraceP:
+    # In the body of a runtime's `nimTraceRef`: the runtime collects cycles.
+    # A runtime shared with Nim says `when defined(nimony): {.enableTrace.}`.
+    # Nothing to do here: the driver finds it in nifler's deps file and
+    # passes `--cycles` on (`deps.processDep`).
+    let info = it.n.info
+    if c.routine.kind == NoSym:
+      buildErr c, dest, info, "`enableTrace` must be in the body of `nimTraceRef`"
+      skip it.n
+    else:
+      toPragmaArgs()
+      dest.addParLe(PragmasS, info)
+      dest.addParLe(EnableTraceP, info)
+      dest.addParRi()
+      dest.addParRi()
+      closePragmaLine()
+      producesVoid c, dest, info, it.typ
   else:
     if (let psym = c.resolveCustomPragma(it.n); psym != NoSymId):
       # A custom pragma as a *statement*. It marks the region it stands in

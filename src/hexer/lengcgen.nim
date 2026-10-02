@@ -419,6 +419,17 @@ proc trRefBody(c: var EContext; dest: var TokenBuf; n: var Cursor; key: string) 
   dest.addParRi() # "i"
   dest.addParRi() # "fld"
 
+  if c.liftingCtx.cycles:
+    # The cycle collector's `rootIdx` word (`system/orc.OrcHeader`). 64 bits on
+    # every target: `yrc` packs a claim tag or epoch stamp with an index into it.
+    dest.addParLe("fld", info)
+    dest.addSymDef(pool.symId(RootIdxField), info)
+    dest.addDotToken() # pragmas
+    dest.addParLe("i", info)
+    dest.addIntLit(64, info)
+    dest.addParRi() # "i"
+    dest.addParRi() # "fld"
+
   let dataField = pool.symId(DataField)
   dest.addParLe("fld", info)
   dest.addSymDef(dataField, info)
@@ -956,7 +967,8 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
              ProfilerP, StacktraceP, GcsafeP, UsedP,
              IntdefineP, BooldefineP, StrdefineP:
             skip n
-          of BuildP, BundleP, CompileP, LinkP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
+          of BuildP, BundleP, CompileP, LinkP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP,
+             EnableTraceP:
             bug "unreachable"
         else:
           error c, "unknown pragma: ", n
@@ -1496,7 +1508,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         while nb.hasMore:
           if not isSimpleLiteral(nb): return false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
-        XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX,
+        XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX,
         OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
         BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CallX,
@@ -1883,6 +1895,8 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trExpr c, dest, n
       dest.addParRi()
+    of CanFormCyclesX:
+      bug "`canFormCycles` is folded by derefs"
     of SizeofX, AlignofX, OffsetofX:
       dest.addParLe(n.cursorTagId, n.info)
       n.into:
@@ -2793,7 +2807,8 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n, TraverseAll
         swap dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows); crt = false) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows); crt = false;
+             cycles = false) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -2813,7 +2828,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     isWindows: isWindows,
     localDeclCounters: 1000,
     activeChecks: flags,
-    liftingCtx: createLiftingCtx(mp.name, bits, closureValuesLowered = true)
+    liftingCtx: createLiftingCtx(mp.name, bits, cycles = cycles)
   )
   c.typeCache.openScope()
 

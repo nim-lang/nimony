@@ -120,6 +120,9 @@ type
                  ## strategies under `MmDir`, or the path of a runtime of the
                  ## user's own, verbatim. `expandMM` turns it into the module
                  ## `system.nim` includes.
+    cycles*: bool  ## `--cycles`: the runtime collects cycles. The driver finds
+                   ## `{.enableTrace.}` in it (`deps.processDep`) and passes
+                   ## this on to nimsem and hexer, which then lift `=trace`.
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string

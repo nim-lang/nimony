@@ -568,7 +568,7 @@ proc needsTemp*(n: Cursor): bool =
   of TagLit:
     var n = n
     case n.exprKind
-    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
+    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX, CanFormCyclesX:
       result = false
     of ExprX:
       n = sub(n)  # throwaway copy; bounds the probe under vpr

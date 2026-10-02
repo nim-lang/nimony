@@ -141,6 +141,8 @@ func unsafeAddr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 func sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
   ## Returns the size of type `T` in bytes.
+func nimCanFormCycles[T](x: typedesc[T]): bool {.magic: "CanFormCycles", noSideEffect.}
+  ## For `seq`'s collector fence; the public one is `typetraits.canFormCycles`.
 
 template sizeof*[T](_: T): int =
   ## Returns the size in bytes of the type of the given value.
@@ -217,7 +219,11 @@ include "system/openarrays"
 
 # The memory management strategy, chosen by `--mm:NAME`: `$MM` expands to
 # `system/<name>`, so a strategy is a file and needs no `when` chain here.
+# After `seqimpl`/`stringimpl`: `derefs` refers to some of their procs by
+# declaration number. `seq`'s `when declared(nimSeqFenceEnter)` still sees a
+# fence the runtime declares: generic bodies are checked when instantiated.
 include "$MM"
+
 include "system/refops"
 
 func newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
