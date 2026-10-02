@@ -468,8 +468,11 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var target = -1
   if not n.hasMore or n.isDotToken:
     if n.isDotToken: inc n
-    # unnamed break: innermost enclosing loop *or* block
+    # unnamed break: the innermost enclosing loop. A `block` is only ever left
+    # by name; sem names it even for `.feature: "anonBlockBreaks"`.
     target = c.current.exits.len - 1
+    while target >= 0 and not c.current.exits[target].isLoop:
+      dec target
   elif n.isSymbol:
     let name = n.symId
     inc n

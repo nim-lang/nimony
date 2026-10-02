@@ -813,7 +813,7 @@ proc trBreak(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
   n.into:
     if n.isDotToken:
-      while it != nil and it.kind notin {IsLoop, IsBlock}:
+      while it != nil and it.kind != IsLoop: # blocks are only left by name
         if it.kind == IsRoutine:
           # we cannot cross routine boundaries!
           bug "break outside of loop"
