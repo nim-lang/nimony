@@ -62,12 +62,6 @@ type
     thisModuleSuffix: string
     bits*: int
     frontendHooks*: ptr Table[SymId, HooksPerType] # hooks from frontend, not yet in type pragmas
-    closureValuesLowered: bool
-      ## true in hexer, after lambdalifting: a `.closure` proctype that still
-      ## reads as one is a FOREIGN decl's type and stands for the (fn, env)
-      ## tuple (`closuretypes.isClosureProcType`). False in the frontend
-      ## (`derefs`), where nothing is lowered yet and closure proctypes are
-      ## opaque.
     closureTuples: seq[TokenBuf]
       ## the lowered shapes handed to `requestLifting`, which keeps cursors
       ## into them: they must live as long as the context does
@@ -78,13 +72,11 @@ type
     tracedTypes: Table[SymId, bool]  ## `needsTrace` per nominal type
     cellOps: Table[string, SymId]    ## the cell operation per ref type
 
-proc isClosureValue(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
-  ## `closuretypes.isClosureProcType`, once lambdalifting has run.
-  c.closureValuesLowered and isClosureProcType(typ)
-
-proc holdsClosureValues(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
-  ## `closuretypes.containsClosureProcType`, once lambdalifting has run.
-  c.closureValuesLowered and containsClosureProcType(typ)
+# A `.closure` proctype is hooked as the (fn, env) pair it is at runtime
+# (`closuretypes.loweredClosureType`): in the frontend, before lambdalifting,
+# just like in hexer for the type of a foreign decl. This is Nim's
+# `accessEnv`: the env is a `ref RootObj` whose `=destroy` and `=trace`
+# dispatch dynamically, so the hook never needs the env's real type.
 
 proc loweredOf(c: var LiftingCtx; typ: TypeCursor): TypeCursor =
   ## `closuretypes.loweredClosureType`, kept alive in `c.closureTuples`.
@@ -194,7 +186,7 @@ proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
 
 proc runtimeEnablesTrace*(): bool =
   ## Does the memory management runtime (`include "$MM"` in system) collect
-  ## cycles? It says so with `.enableTrace` on its `nimTraceRef`, and then gets
+  ## cycles? It says so with `{.enableTrace.}` in its `nimTraceRef`, and then gets
   ## the protocol of `lib/std/system/orc.nim`: the cell's `rootIdx` word, cell
   ## operations, `nimDecRefCyclic` and a lifted `=trace`.
   if not fileExists(suffixToNif(SystemModuleSuffix)):
@@ -202,16 +194,11 @@ proc runtimeEnablesTrace*(): bool =
   let res = tryLoadSym(pool.symId("nimTraceRef.0." & SystemModuleSuffix))
   result = false
   if res.status == LacksNothing:
-    let r = asRoutine(res.decl, SkipInclBody)
-    if hasPragma(r.pragmas, EnableTraceP):
-      result = true
-    else:
-      # the statement form `{.enableTrace.}` of a runtime shared with Nim
-      var n = r.body
-      n.linearScan:
-        if n.pragmaKind == EnableTraceP:
-          result = true
-          break
+    var n = asRoutine(res.decl, SkipInclBody).body
+    n.linearScan:
+      if n.pragmaKind == EnableTraceP:
+        result = true
+        break
 
 # Cycle analysis (`--mm:orc`), after Nim's `types.canFormAcycle`.
 #
@@ -352,8 +339,7 @@ proc walksToCycle(c: var LiftingCtx; w: var CycleWalk; t: TypeCursor; followPtr:
       skip tup
   of RoutineTypes:
     # The environment of a closure is a `ref RootObj`: it may hold anything.
-    # Not `isClosureValue`: the answer must not depend on whether closures are
-    # lowered yet, or the frontend and hexer would hook one type differently.
+    # Any spelling of it, lowered or not, so the frontend and hexer agree.
     result = isClosureValueType(t)
   else:
     result = false
@@ -520,8 +506,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     # pointer (see nifcgen.trType), so trivial. When we promote
     # `Iterator[T]` to a managed ref envelope, ItertypeT needs to split out
     # of this branch and flip to `result = false` so destructor hooks run.
-    # An un-rewritten `.closure` proctype is the (fn, env) pair: not trivial,
-    # also in the frontend, where it is not lowered yet (see `emitDeferredHook`).
+    # An un-rewritten `.closure` proctype is the (fn, env) pair: not trivial.
     result = not isClosureProcType(typ)
   of RefT:
     result = false
@@ -662,7 +647,7 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   of PtrT:
     bug "ptr T should have been a 'trivial' type"
   of ObjectT, DistinctT, TupleT, ClosureTupleT, ArrayT, RefT:
-    if not (orig.isSymbol or orig.isSymbolDef) and holdsClosureValues(c, typ):
+    if not (orig.isSymbol or orig.isSymbolDef) and containsClosureProcType(typ):
       # a structural type spelled with un-rewritten `.closure` proctypes
       # (a tuple of closures answered by typenav for a call's result): the
       # hook must take the lowered layout the value actually has
@@ -670,8 +655,8 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
     else:
       result = requestLifting(c, c.op, orig)
   of ProctypeT:
-    # a foreign `.closure` proctype: hook the tuple it is at runtime
-    if isClosureValue(c, typ):
+    # a `.closure` proctype: hook the tuple it is at runtime
+    if isClosureProcType(typ):
       result = requestLifting(c, c.op, loweredOf(c, typ))
     else:
       result = NoSymId
@@ -1148,41 +1133,10 @@ proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
       copyTree c.dest, paramA
       copyTree c.dest, paramB
 
-proc emitDeferredHook(c: var LiftingCtx; paramA, paramB: TokenBuf) =
-  ## The frontend's hook for a `.closure` value: it is the (fn, env) pair only
-  ## after lambdalifting, so the hook cannot be spelled here. Emit the magic
-  ## the user would have written instead (`=destroy(x)` is `(destroy x)`); the
-  ## duplifier resolves it against the lowered type.
-  case c.op
-  of attachedDestroy:
-    copyIntoKind c.dest, DestroyX, c.info:
-      copyTree c.dest, paramA
-  of attachedWasMoved:
-    copyIntoKind c.dest, WasmovedX, c.info:
-      copyIntoKind c.dest, HaddrX, c.info:
-        copyTree c.dest, paramA
-  of attachedTrace:
-    copyIntoKind c.dest, TraceX, c.info:
-      copyIntoKind c.dest, HaddrX, c.info:
-        copyTree c.dest, paramA
-      copyTree c.dest, paramB
-  of attachedDup:
-    copyIntoKind c.dest, AsgnS, c.info:
-      copyTree c.dest, paramA
-      copyIntoKind c.dest, DupX, c.info:
-        copyTree c.dest, paramB
-  of attachedCopy, attachedSink:
-    copyIntoKind c.dest, (if c.op == attachedCopy: CopyX else: SinkhX), c.info:
-      copyIntoKind c.dest, HaddrX, c.info:
-        copyTree c.dest, paramA
-      copyTree c.dest, paramB
-
 proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   # `unravel`'s job is to "expand" the object fields in contrast to `lift`.
   if isTrivial(c, typ):
     genTrivialOp c, paramA, paramB
-  elif not c.closureValuesLowered and isClosureProcType(toTypeImpl(typ)):
-    emitDeferredHook c, paramA, paramB
   else:
     let fn = lift(c, typ)
     maybeCallHook c, fn, paramA, paramB
@@ -1232,7 +1186,7 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
   of ArrayT:
     unravelArray c, typ, paramA, paramB
   of ProctypeT:
-    if isClosureValue(c, typ):
+    if isClosureProcType(typ):
       unravelTuple c, loweredOf(c, typ), paramA, paramB
   else:
     discard "nothing to do"
@@ -1486,11 +1440,10 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
     dest.add c.dest
 
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil;
-                       closureValuesLowered = false; cycles = false): ref LiftingCtx =
+                       cycles = false): ref LiftingCtx =
   (ref LiftingCtx)(dest: initTokenBuf(), op: attachedDestroy, info: NoLineInfo,
                    thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY,
-                   frontendHooks: frontendHooks, closureValuesLowered: closureValuesLowered,
-                   cycles: cycles)
+                   frontendHooks: frontendHooks, cycles: cycles)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: NifLineInfo): SymId =
   c.op = op

@@ -932,7 +932,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
              InlineP, NoinlineP, AlwaysInlineP, NoinitP, InjectP, GensymP, DirtyP,
              UntypedP, ViewP,
              InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP,
-             EstablishesBorrowP, EnableTraceP:
+             EstablishesBorrowP:
             result.flags.incl pk
             skip n
           of BorrowP:
