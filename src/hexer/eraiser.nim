@@ -743,19 +743,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = tryStart
   skip n
 
-proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Leaving a `block` or a loop runs the `finally` of every `try` between
-  ## here and it — but not of any `try` further out, which we are still in.
-  let lab = n.childCursor
-  var i = c.exits.len - 1
-  while i >= 0:
-    if c.exits[i].kind == BlockExit and
-       (lab.kind != Symbol or c.exits[i].label == lab.symId):
-      break
-    dec i
-  emitFinsDownTo c, dest, i + 1
-  takeTree dest, n
-
 proc trJmp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## A `jmp` is forward-only, so it leaves exactly the `try` regions that do
   ## not declare its label, and owes their `finally`.
@@ -853,7 +840,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of TryS:
         trTry c, dest, n
       of BreakS:
-        trBreak c, dest, n
+        bug "`break` reached Hexer: the Final IR lowers every `break` to a `jmp`", n
       of JmpS:
         trJmp c, dest, n
       of BlockS, WhileS, CoroforS:
