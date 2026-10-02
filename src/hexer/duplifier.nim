@@ -603,8 +603,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trSons c, n, DontCare
 
   else:
-    #let isNotFirstAsgn = not isResultUsage(c, le) # YYY Adapt this once we have "isFirstAsgn" analysis
-    const isNotFirstAsgn = true
+    let isNotFirstAsgn = not isFirstWrite(n, c.source[], c.mover)
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
     # Aliasing is judged by a place's root; for a call temp that is the call.
