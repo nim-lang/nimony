@@ -113,8 +113,8 @@ when the count reached zero) and `arcIsUnique`. What is built on top of them
 (`GC_ref` / `GC_unref`) is strategy independent and lives in `system/refops`.
 
 Cycle collection needs more than three primitives, so a strategy opts into it:
-`orc` marks its `nimTraceRef` with `{.enableTrace.}`, and a runtime of your own
-that does the same gets the same compiler support. A cell carries a second
+`orc`'s `nimTraceRef` says `{.enableTrace.}` in its body, and a runtime of your
+own that does the same gets the same compiler support. A cell carries a second
 header word
 (`rootIdx`), and for a `ref T` whose `T` can form a cycle (it can reach a
 `ref T` again through owned fields, or is a class, or holds a closure) the

@@ -1,5 +1,5 @@
 # A runtime of the user's own that collects cycles: the compiler does not know
-# it by name, it opts in through `.enableTrace` on its `nimTraceRef` -- here the
+# it by name, it opts in through `{.enableTrace.}` in its `nimTraceRef` -- here the
 # one `system/orc` declares, reused wholesale.
 
 const cyclesRuntimeMarker* = 7

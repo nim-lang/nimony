@@ -967,7 +967,8 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
              ProfilerP, StacktraceP, GcsafeP, UsedP,
              IntdefineP, BooldefineP, StrdefineP:
             skip n
-          of BuildP, BundleP, CompileP, LinkP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
+          of BuildP, BundleP, CompileP, LinkP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP,
+             EnableTraceP:
             bug "unreachable"
         else:
           error c, "unknown pragma: ", n
@@ -2826,7 +2827,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     isWindows: isWindows,
     localDeclCounters: 1000,
     activeChecks: flags,
-    liftingCtx: createLiftingCtx(mp.name, bits, closureValuesLowered = true)
+    liftingCtx: createLiftingCtx(mp.name, bits)
   )
   c.typeCache.openScope()
 

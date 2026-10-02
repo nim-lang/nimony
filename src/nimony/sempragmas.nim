@@ -442,16 +442,10 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParRi()
     toPragmaArgs()
   of EnableTraceP:
-    # On a runtime's `nimTraceRef`: the runtime collects cycles. Seen here
-    # while system (which includes the runtime) is checked, so its own hooks
-    # follow; every later module reads it off the decl (`runtimeEnablesTrace`).
-    if not kind.isRoutine:
-      buildErr c, dest, n.info, $pk & " pragma is only allowed on routines"
-    else:
-      c.enableTrace = true
-      dest.addParLe(pk, n.info)
-      dest.addParRi()
+    buildErr c, dest, n.info, "`enableTrace` is a statement in the body of `nimTraceRef`"
     toPragmaArgs()
+    if hasParRi:
+      while n.hasMore: skip n
   of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP, AcyclicP:
     var hasErr = false
     if kind != TypeY:
@@ -1405,9 +1399,11 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       while it.n.hasMore: skip it.n
       buildErr c, dest, info, "`feature` pragma takes a string literal"
   of EnableTraceP:
-    # The statement form, in the body of a runtime's `nimTraceRef`: lets a
-    # runtime shared with Nim say `when defined(nimony): {.enableTrace.}`
-    # (`runtimeEnablesTrace` looks into the body for it).
+    # In the body of a runtime's `nimTraceRef`: the runtime collects cycles.
+    # A runtime shared with Nim says `when defined(nimony): {.enableTrace.}`.
+    # Seen here while system (which includes the runtime) is checked, so its
+    # own hooks follow; every later module finds it in the body
+    # (`runtimeEnablesTrace`).
     let info = it.n.info
     if c.routine.kind == NoSym:
       buildErr c, dest, info, "`enableTrace` must be in the body of `nimTraceRef`"

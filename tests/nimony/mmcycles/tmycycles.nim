@@ -1,5 +1,5 @@
 # The directory is compiled with a runtime given by PATH (see `nimony.args`)
-# that is not named `orc` but marks its `nimTraceRef` `.enableTrace`: it must
+# that is not named `orc` but says `{.enableTrace.}` in its `nimTraceRef`: it must
 # get the same compiler support -- traced refs, cell operations, the collector's
 # header word -- or the cycle below is never freed.
 {.feature: "lenientnils".}
