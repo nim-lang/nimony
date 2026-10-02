@@ -1019,6 +1019,61 @@ proc conceptInvocationArgs*(inv: Cursor): (SymId, seq[(SymId, Cursor)]) =
           skip tv
     while n.hasMore: skip n
 
+proc sameInvocationArgs(m: var Match; f, a: Cursor): bool =
+  ## `f` and `a` invoke the same concept: are their arguments identical? An
+  ## argument of `f` may be a typevar the match has bound already.
+  result = true
+  var f = f
+  var a = a
+  f.into:
+    a.into:
+      skip f # the concept
+      skip a
+      while f.hasMore and a.hasMore:
+        let fa = if f.isSymbol and m.inferred.hasKey(f.symId): m.inferred.getOrDefault(f.symId) else: f
+        if not sameTrees(fa, a):
+          result = false
+        skip f
+        skip a
+      if f.hasMore or a.hasMore:
+        result = false
+      while f.hasMore: skip f
+      while a.hasMore: skip a
+
+proc conceptInvocationExtends(m: var Match; f: Cursor; a: Cursor; depth = 0): bool =
+  ## `a` is `(at Sub B1 ... Bm)`: does it provide `f` = `(at Concept A1 ... An)`
+  ## by inheritance? Sub's parents are phrased in terms of Sub's own type
+  ## parameters (`concept of Indexable[T]`), so they are instantiated with
+  ## `B1 ... Bm` before being compared with `f`.
+  result = false
+  if depth > 20 or not isConceptInvocation(a):
+    return false
+  var fh = f
+  inc fh
+  var ah = a
+  inc ah
+  if fh.symId == ah.symId:
+    return sameInvocationArgs(m, f, a)
+  let (subSym, args) = conceptInvocationArgs(a)
+  var bindings = initTable[SymId, Cursor]()
+  for (s, arg) in args:
+    bindings[s] = arg
+  var p = conceptParentsSlot(getTypeSection(subSym).body)
+  var parents: seq[Cursor] = @[]
+  if p.typeKind == AndT or p.exprKind == ParX:
+    p.into:
+      while p.hasMore:
+        parents.add p
+        skip p
+  elif not p.isDotToken:
+    parents.add p
+  for parent in parents:
+    if parent.typeKind == InvokeT or parent.exprKind == AtX:
+      var buf = createTokenBuf(16)
+      substituteTypevars(buf, parent, bindings)
+      if conceptInvocationExtends(m, f, beginRead(buf), depth+1):
+        return true
+
 proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool =
   ## `f` is `(at Concept A1 ... An)`, as in `proc find[T; C: Findable[T]]`:
   ## the concept's parameters stand for `A1 ... An` while its requirements are
@@ -1029,6 +1084,9 @@ proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool =
     # an unconstrained typevar, see `matchConceptBody`
     result = false
   elif isOpenTypevar(a):
+    result = true
+  elif conceptInvocationExtends(m, f, a):
+    # `A: MutableIndexable[T]` where `Indexable[T]` is expected
     result = true
   else:
     let (conceptSym, args) = conceptInvocationArgs(f)
