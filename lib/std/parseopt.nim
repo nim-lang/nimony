@@ -15,7 +15,7 @@ when defined(nimony):
   else:
     # Everywhere else the entry point receives a C-style `argv`, which the
     # generated `main` parks in the `cmdCount`/`cmdLine` globals.
-    var
+    let
       nifcArgc {.importc: "cmdCount".}: int32
       nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
 

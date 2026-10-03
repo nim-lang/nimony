@@ -43,3 +43,5 @@ checkRunning()
 drive(delay main())   # parks; a plain `main()` would wait for the resume below
 drive(resumeCont)
 echo "done"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

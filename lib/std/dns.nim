@@ -558,11 +558,13 @@ proc defaultResolver(dl: Deadline): Resolver {.passive, raises.} =
     acquire(gDefaultResolverLock)
     try:
       if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
-        gDefaultResolver = initResolver(dl)
+        {.cast(assumeSync).}: # written under `gDefaultResolverLock`
+          gDefaultResolver = initResolver(dl)
         atomicStore(gDefaultResolverInited, 1, moRelease)
     finally:
       release(gDefaultResolverLock)
-  result = gDefaultResolver
+  {.cast(assumeSync).}: # published by the release-store above, never written again
+    result = gDefaultResolver
 
 proc resolve*(name: string; dl = never): string {.passive, raises.} =
   ## Resolve `name` using the process-wide default resolver. The first call

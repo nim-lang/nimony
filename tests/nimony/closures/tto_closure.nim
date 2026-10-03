@@ -25,3 +25,5 @@ proc testNonClosurePassive(clsr: proc (x: int): int {.closure, passive.}) =
   assert clsr(123) == -369
 
 testNonClosurePassive(nonClosurePassive)
+
+{.feature: "assumeSync".}  # test program: globals shared freely

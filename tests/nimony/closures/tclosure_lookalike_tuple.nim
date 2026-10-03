@@ -30,3 +30,5 @@ runIt b
 runIt a
 assert trace == 16
 assert Payload(b[1]).tag == 10
+
+{.feature: "assumeSync".}  # test program: globals shared freely

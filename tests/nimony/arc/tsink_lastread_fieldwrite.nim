@@ -44,3 +44,5 @@ proc main() =
   echo "destroyed ", gDestroyed
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

@@ -30,6 +30,9 @@
 ## (`int28Token`/`getInt28`, `symId`/`strId`/`tagId` on `NifToken`), skip
 ## intents for the pass validator, and parse/render entry points.
 
+when defined(nimony):
+  {.feature: "assumeSync".}  # compiler-internal globals; single threaded
+
 import std / assertions
 import nifcore
 import comesfrom

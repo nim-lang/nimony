@@ -126,3 +126,5 @@ proc main() =
   echo "reachable cycle intact"
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

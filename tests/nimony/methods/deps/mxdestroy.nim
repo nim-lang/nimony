@@ -1,3 +1,4 @@
+{.feature: "assumeSync".}  # globals shared freely, also by importers
 ## Helper for txdestroy: an RTTI (method-carrying) ref-object hierarchy whose
 ## LabelObj embeds a canary field. The class itself defines NO user `=destroy` —
 ## the observable effect comes from the

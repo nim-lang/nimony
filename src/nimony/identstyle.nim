@@ -20,6 +20,9 @@
 ##   including the first character. Used for builtin pragma names (Nim has
 ##   always matched those case-insensitively all the way down).
 
+when defined(nimony):
+  {.feature: "assumeSync".}  # compiler-internal globals; single threaded
+
 import std / tables
 import ".." / lib / [bitabs, nifpools]
 import ".." / models / [tags, nimony_tags]

@@ -32,3 +32,5 @@ for i in 0..<10: tree()
 echo "before collect: ", destroyed
 GC_fullCollect()
 echo "after collect: ", destroyed
+
+{.feature: "assumeSync".}  # test program: globals shared freely

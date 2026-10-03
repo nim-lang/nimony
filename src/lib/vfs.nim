@@ -18,6 +18,9 @@
 
 when defined(nimony):
   {.feature: "lenientnils".}
+  # The `*Relay` hooks are installed once at startup; the compiler is
+  # single threaded.
+  {.feature: "assumeSync".}
 
 ##
 ## Mmap'd reads return a `VfsBlob` rather than a raw `MemFile`. The blob

@@ -21,3 +21,5 @@ proc explicit() =
 notTail()
 explicit()
 echo mk(5), " ", made
+
+{.feature: "assumeSync".}  # test program: globals shared freely

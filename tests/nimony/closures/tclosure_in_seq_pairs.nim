@@ -18,3 +18,5 @@ reactors.add((proc(timeoutMs: int): bool = timeoutMs < offset))
 reactors.add((proc(timeoutMs: int): bool = timeoutMs == offset))
 for i, reactor in reactors:
   echo i, " ", reactor(i)
+
+{.feature: "assumeSync".}  # test program: globals shared freely

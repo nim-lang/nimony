@@ -3,6 +3,10 @@
 # The global reArmEvent proc is set by each backend's init to dispatch to its
 # own platform-specific implementation.
 
+# `reArmEvent` is installed once by the backend's init; the ring state it
+# touches is guarded by the core's locks (see core/backend).
+{.feature: "assumeSync".}
+
 import ../core/types
 import ../core/slots
 import ../core/backend

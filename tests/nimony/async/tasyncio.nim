@@ -66,3 +66,5 @@ awaitFlag(done)
 assert not fileExists(configPath)
 stdout.write log
 stdout.flushFile()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

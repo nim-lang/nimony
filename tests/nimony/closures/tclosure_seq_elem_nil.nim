@@ -20,3 +20,5 @@ for i in 0 ..< o.hooks.len:
   if o.hooks[i] != nil: o.hooks[i](21)
 
 echo total
+
+{.feature: "assumeSync".}  # test program: globals shared freely

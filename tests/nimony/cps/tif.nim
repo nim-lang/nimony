@@ -47,3 +47,5 @@ proc main3() {.passive.}=
   for i in 0..3:
     echo "main3: ", i
 main3()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

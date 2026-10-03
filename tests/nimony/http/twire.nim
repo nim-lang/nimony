@@ -158,3 +158,5 @@ testOffset()
 testRoundTrip()
 testRecycle()
 echo "httpwire: ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

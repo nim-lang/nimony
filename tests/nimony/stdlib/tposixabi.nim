@@ -265,3 +265,5 @@ when defined(posix):
   main()
 
 echo "ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

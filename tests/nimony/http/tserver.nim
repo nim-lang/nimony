@@ -213,3 +213,5 @@ proc main =
   stdout.write log
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

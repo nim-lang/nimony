@@ -56,3 +56,5 @@ proc run() =
   echo "kept: ", t.x, " global: ", (if gThing == nil: -1 else: gThing.x)
 
 run()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

@@ -80,3 +80,5 @@ assert not replyMismatch
 stdout.write serverLog
 stdout.write clientLog
 stdout.flushFile()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

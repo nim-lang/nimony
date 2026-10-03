@@ -38,3 +38,5 @@ run()
 # Exactly one destroy: the cursor env field did not inflate node's rc, so the
 # sole owner (`n`) frees it once — no leak (would print 0) and no double free.
 echo "destroyed=", gDestroyed
+
+{.feature: "assumeSync".}  # test program: globals shared freely

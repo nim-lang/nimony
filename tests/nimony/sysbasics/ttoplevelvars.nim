@@ -15,3 +15,5 @@ proc foo =
   const s = a
 
 foo()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

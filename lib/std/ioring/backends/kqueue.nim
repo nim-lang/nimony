@@ -2,6 +2,10 @@
 # registerEvent/reArmEvent use kevent with EV_ONESHOT.
 # poll drives kevent → processFd per event.
 
+# Ring/backend state guarded by the core's locks and stripes, which the
+# shared-global check cannot see yet (no `.guard` support).
+{.feature: "assumeSync".}
+
 import std/threadpool
 
 import ../../posix/kqueue

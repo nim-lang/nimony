@@ -159,3 +159,5 @@ testWriteChunks()
 testRoundTripAChunkedBody()
 testFramingRejections()
 echo "chunked: ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

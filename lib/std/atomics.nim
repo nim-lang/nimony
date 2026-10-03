@@ -47,67 +47,67 @@ proc builtinCpuRelax() {.intrinsic: "CpuRelax".}
 # Access operations
 
 proc atomicLoad*[T: Trivial](location: var T;
-    order: MemoryOrder = moSequentiallyConsistent): T {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): T {.sync, inline.} =
   builtinLoadN(addr(location), toMem(order))
 
 proc atomicStore*[T: Trivial](location: var T; desired: T;
-    order: MemoryOrder = moSequentiallyConsistent) {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent) {.sync, inline.} =
   builtinStoreN(addr(location), desired, toMem(order))
 
 proc atomicExchange*[T: Trivial](location: var T; desired: T;
-    order: MemoryOrder = moSequentiallyConsistent): T {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): T {.sync, inline.} =
   builtinExchangeN(addr(location), desired, toMem(order))
 
 proc atomicCompareExchange*[T: Trivial](location: var T; expected: var T;
-    desired: T; success, failure: MemoryOrder): bool {.inline.} =
+    desired: T; success, failure: MemoryOrder): bool {.sync, inline.} =
   builtinCompareExchangeN(addr(location), addr(expected), desired, false,
     toMem(success), toMem(failure))
 
 proc atomicCompareExchange*[T: Trivial](location: var T; expected: var T;
     desired: T;
-    order: MemoryOrder = moSequentiallyConsistent): bool {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): bool {.sync, inline.} =
   atomicCompareExchange(location, expected, desired, order, order)
 
 proc atomicCompareExchangeWeak*[T: Trivial](location: var T; expected: var T;
-    desired: T; success, failure: MemoryOrder): bool {.inline.} =
+    desired: T; success, failure: MemoryOrder): bool {.sync, inline.} =
   builtinCompareExchangeN(addr(location), addr(expected), desired, true,
     toMem(success), toMem(failure))
 
 proc atomicCompareExchangeWeak*[T: Trivial](location: var T; expected: var T;
     desired: T;
-    order: MemoryOrder = moSequentiallyConsistent): bool {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): bool {.sync, inline.} =
   atomicCompareExchangeWeak(location, expected, desired, order, order)
 
 # Numerical operations
 
 proc atomicFetchAdd*[T: SomeInteger](location: var T; value: T;
-    order: MemoryOrder = moSequentiallyConsistent): T {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): T {.sync, inline.} =
   builtinFetchAdd(addr(location), value, toMem(order))
 
 proc atomicFetchSub*[T: SomeInteger](location: var T; value: T;
-    order: MemoryOrder = moSequentiallyConsistent): T {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): T {.sync, inline.} =
   builtinFetchSub(addr(location), value, toMem(order))
 
 proc atomicFetchAnd*[T: SomeInteger](location: var T; value: T;
-    order: MemoryOrder = moSequentiallyConsistent): T {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): T {.sync, inline.} =
   builtinFetchAnd(addr(location), value, toMem(order))
 
 proc atomicFetchOr*[T: SomeInteger](location: var T; value: T;
-    order: MemoryOrder = moSequentiallyConsistent): T {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): T {.sync, inline.} =
   builtinFetchOr(addr(location), value, toMem(order))
 
 proc atomicFetchXor*[T: SomeInteger](location: var T; value: T;
-    order: MemoryOrder = moSequentiallyConsistent): T {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): T {.sync, inline.} =
   builtinFetchXor(addr(location), value, toMem(order))
 
 # Flag operations
 
 proc testAndSet*(location: var AtomicFlag;
-    order: MemoryOrder = moSequentiallyConsistent): bool {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent): bool {.sync, inline.} =
   builtinTestAndSet(addr(location), toMem(order))
 
 proc clear*(location: var AtomicFlag;
-    order: MemoryOrder = moSequentiallyConsistent) {.inline.} =
+    order: MemoryOrder = moSequentiallyConsistent) {.sync, inline.} =
   builtinClear(addr(location), toMem(order))
 
 # Fences
@@ -132,8 +132,8 @@ proc cpuRelax*() {.inline.} =
 
 # Convenience
 
-proc atomicInc*[T: SomeInteger](location: var T; value: T = 1) {.inline.} =
+proc atomicInc*[T: SomeInteger](location: var T; value: T = 1) {.sync, inline.} =
   discard atomicFetchAdd(location, value)
 
-proc atomicDec*[T: SomeInteger](location: var T; value: T = 1) {.inline.} =
+proc atomicDec*[T: SomeInteger](location: var T; value: T = 1) {.sync, inline.} =
   discard atomicFetchSub(location, value)

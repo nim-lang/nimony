@@ -1,5 +1,8 @@
 # Helper routines for generating NIF code. Used by the `exprexec` module.
 
+# `outp` is the compile-time evaluator's output file; it runs single threaded.
+{.feature: "assumeSync".}
+
 import std/[syncio, math, formatfloat]
 
 var outp: File

@@ -165,3 +165,5 @@ testReasonIsDropped()
 testFindHeadEndOnResponses()
 testPipelinedAndRecycled()
 echo "response parsing: ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

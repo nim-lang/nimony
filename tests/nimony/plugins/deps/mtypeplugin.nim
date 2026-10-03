@@ -1,3 +1,4 @@
+{.feature: "assumeSync".}  # globals shared freely, also by importers
 
 import std / [assertions, strutils, tables]
 

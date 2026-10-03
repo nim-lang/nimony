@@ -26,6 +26,7 @@
 ## rebuild it.
 
 {.feature: "lenientnils".}
+{.feature: "assumeSync".}  # compiler-internal globals; single threaded
 
 import std / [tables, sets, strutils]
 import plugins

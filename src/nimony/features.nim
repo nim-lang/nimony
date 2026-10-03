@@ -50,6 +50,11 @@ type
       ## `block`. Without the feature an unlabeled `break` only ever leaves a
       ## loop; a `block` is left via `break <blockname>` (RFC #576), which is
       ## what makes a `block` usable as a plain scope inside a loop.
+    AssumeSyncFeature
+      ## Turn off the shared-global check for the whole module, as if every
+      ## routine body sat in `{.cast(assumeSync).}:`. Without it a mutable
+      ## global may only be passed to a `var`/`ptr` parameter of a `.sync`
+      ## routine (an atomic operation, `acquire` and the like).
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -75,8 +80,9 @@ proc parseFeatures*(s: string): set[Feature] =
   of "runtimecontracts": {RuntimeContractsFeature}
   of "staticcontracts": {StaticContractsFeature}
   of "anonblockbreaks": {AnonBlockBreaksFeature}
+  of "assumesync": {AssumeSyncFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,
-            RuntimeContractsFeature, AnonBlockBreaksFeature}
+            RuntimeContractsFeature, AnonBlockBreaksFeature, AssumeSyncFeature}
   else: {}

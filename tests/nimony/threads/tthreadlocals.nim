@@ -64,3 +64,5 @@ else:
   echo "children started fresh: true"
   echo "children kept their own: true"
   echo "parent unchanged: true"
+
+{.feature: "assumeSync".}  # test program: globals shared freely
