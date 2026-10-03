@@ -2,6 +2,7 @@
 
 {.feature: "lenientnils".}
 {.feature: "staticContracts".}
+{.feature: "assumeSync".}
 
 include "system/basic_types"
 

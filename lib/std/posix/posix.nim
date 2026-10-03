@@ -753,7 +753,7 @@ when defined(posix):
   # The environment block. The generated `main` captures its third parameter
   # (`char** envp`) into the `nimEnviron` global on every backend (see hexer's
   # genMainProc), so no libc `environ`/`_NSGetEnviron` binding is needed.
-  var posix_environ* {.importc: "nimEnviron".}: ptr UncheckedArray[cstring]
+  let posix_environ* {.importc: "nimEnviron".}: ptr UncheckedArray[cstring]
 
   proc strerror*(errnum: cint): cstring {.importc: "strerror", sideEffect.}
 

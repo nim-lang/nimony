@@ -9,6 +9,7 @@
 ## See `doc/plugins.md` for the full guide.
 
 {.feature: "untyped".}
+{.feature: "assumeSync".}  # compiler-internal globals; single threaded
 
 import std / [assertions, hashes, syncio, cmdline, os]
 import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse, addSymDef
