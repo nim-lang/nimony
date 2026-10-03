@@ -75,6 +75,9 @@
 
 when defined(windows):
   {.feature: "lenientnils".}   # nil proc values (the AcceptEx pointer)
+  # Ring/backend state guarded by the core's locks and stripes, which the
+  # shared-global check cannot see yet (no `.guard` support).
+  {.feature: "assumeSync".}
   import std/[threadpool, ticketlocks, tables, syncio, assertions, atomics]
   import std/windows/winlean   # Handle, DWORD, closeHandle, INVALID_HANDLE_VALUE
   import ../core/types
