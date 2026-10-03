@@ -1367,8 +1367,10 @@ proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
   takeInto dest, it.n:
     semBoolExpr c, dest, it.n
     inc c.routine.inLoop
+    c.routine.breakTargets.add SymId(0)
     withNewScope c:
       semStmt c, dest, it.n, true
+    discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   producesVoid c, dest, info, it.typ
 
@@ -1376,16 +1378,27 @@ proc semBlock(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   takeInto dest, it.n:
     inc c.routine.inBlock
+    let anonBreaks = AnonBlockBreaksFeature in c.features
     withNewScope c:
-      if it.n.isDotToken:
+      if it.n.isDotToken and not anonBreaks:
         takeTree dest, it.n
       else:
+        # Under `anonBlockBreaks` an unlabeled `break` can leave this block, so
+        # an anonymous one gets a label nobody can spell for it to name.
+        var anonLabel = createTokenBuf(1)
+        var label = it.n
+        if label.isDotToken:
+          anonLabel.addIdent "`blk", label.info
+          label = beginRead(anonLabel)
         let declStart = dest.len
-        let delayed = handleSymDef(c, dest, it.n, BlockY)
+        let delayed = handleSymDef(c, dest, label, BlockY)
         c.addSym dest, delayed
         publish c, dest, delayed.s.name, declStart
+        skip it.n # the label (or the dot it replaced)
+        if anonBreaks: c.routine.breakTargets.add delayed.s.name
 
       semStmtBranch c, dest, it, true
+      if anonBreaks: discard c.routine.breakTargets.pop()
     dec c.routine.inBlock
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
@@ -1394,11 +1407,23 @@ proc semBreak(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   takeInto dest, it.n:
     if c.routine.inLoop+c.routine.inBlock == 0:
-      buildErr c, dest, info, "`break` only possible within a `while` or `block` statement"
+      buildErr c, dest, info, "`break` only possible within a loop or a `block` statement"
       skip it.n
     else:
       if it.n.isDotToken:
-        wantDot c, dest, it.n
+        # An unlabeled `break` leaves the innermost loop; the Final IR reads
+        # `(break .)` that way. Under `anonBlockBreaks` the innermost `block`
+        # may come first and is then named explicitly.
+        let targets = addr c.routine.breakTargets
+        if targets[].len > 0 and targets[][^1] != SymId(0):
+          dest.addSymUse targets[][^1], it.n.info
+          inc it.n
+        elif c.routine.inLoop > 0:
+          wantDot c, dest, it.n
+        else:
+          buildErr c, dest, info,
+            "`break` without a label only leaves a loop; to leave a `block`, name it and use `break <name>`"
+          skip it.n
       else:
         let labelInfo = it.n.info
         var a = Item(n: it.n, typ: c.types.autoType)
@@ -3351,7 +3376,9 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       buildErr c, vb, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
     inc c.routine.inLoop
+    c.routine.breakTargets.add SymId(0)
     semStmt c, vb, it.n, true
+    discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   it.n = forStart; skip it.n # skip the for's closing ')'
 
@@ -3499,7 +3526,9 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
       takeTree dest, it.n # don't touch the body
     else:
       inc c.routine.inLoop
+      c.routine.breakTargets.add SymId(0)
       semStmt c, dest, it.n, true
+      discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
 
   dest.addParRi(it.n.endInfo)

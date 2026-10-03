@@ -45,6 +45,11 @@ type
       ## followed by `s[0]` is undecided and demanding proof everywhere still
       ## rejects a seventh of the test suite. Loops are no longer the obstacle.
       ## `runtimeContracts` wins over it if both are given.
+    AnonBlockBreaksFeature
+      ## Nim-2-style `break`: without a label it leaves the innermost loop *or*
+      ## `block`. Without the feature an unlabeled `break` only ever leaves a
+      ## loop; a `block` is left via `break <blockname>` (RFC #576), which is
+      ## what makes a `block` usable as a plain scope inside a loop.
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -69,8 +74,9 @@ proc parseFeatures*(s: string): set[Feature] =
   of "lenientaliasing": {LenientAliasingFeature}
   of "runtimecontracts": {RuntimeContractsFeature}
   of "staticcontracts": {StaticContractsFeature}
+  of "anonblockbreaks": {AnonBlockBreaksFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,
-            RuntimeContractsFeature}
+            RuntimeContractsFeature, AnonBlockBreaksFeature}
   else: {}

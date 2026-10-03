@@ -73,8 +73,7 @@ type
     labels: seq[SymId]
       ## The `(lab :L)`s declared directly in this scope's statement list. A
       ## `(jmp L)` nested inside must run the destructors of every scope it
-      ## leaves on the way out to the one that owns `L` — the same walk
-      ## `leaveNamedBlock` does for `break`, minus the final `leaveScope`
+      ## leaves on the way out to the one that owns `L`, but not that one's
       ## (the jump lands *inside* the owning scope, it does not exit it).
     kind: ScopeKind
     isTopLevel: bool
@@ -91,8 +90,8 @@ type
     flow: Tracker[SymId, bool]
       ## Path bookkeeping: **has control already left this statement list?**
       ##
-      ## `return`/`raise`/`break` run every enclosing scope's destructors on
-      ## their way out (`trReturn`/`trRaise`/`trBreak`), so `trScope` must not
+      ## `return`/`raise` run every enclosing scope's destructors on
+      ## their way out (`trReturn`/`trRaise`), so `trScope` must not
       ## append the scope's destructor sequence after one of them — it would be
       ## dead code, and the CPS pass makes dead tails reachable again (see
       ## `trScope`). The same holds for `jmp`.
@@ -175,45 +174,6 @@ proc leaveScope(c: var Context; sptr: ptr Scope) =
   for i in countdown(sptr.destroyOps.high, 0):
     callDestroy c, sptr.destroyOps[i].destroyProc, sptr.destroyOps[i].arg
 
-proc leaveNamedBlock(c: var Context; label: SymId) =
-  #[ Consider:
-
-  var x = f()
-  block:
-    break # do we want to destroy x here? No.
-
-  ]#
-  var it = addr(c.currentScope)
-  while it != nil and it.label != label:
-    leaveScope(c, it)
-    it = it.parent
-  if it != nil and it.label == label:
-    leaveScope(c, it)
-  else:
-    bug "do not know which block to leave"
-
-proc leaveAnonBlock(c: var Context) =
-  var it = addr(c.currentScope)
-  while it != nil and it.kind != WhileOrBlock:
-    leaveScope(c, it)
-    it = it.parent
-  if it != nil and it.kind == WhileOrBlock:
-    leaveScope(c, it)
-  else:
-    bug "do not know which block to leave"
-
-proc trBreak(c: var Context; n: var Cursor) =
-  if c.terminates:
-    # unreachable: an earlier jump already left these scopes
-    takeTree c.dest, n
-    return
-  let lab = n.childCursor
-  if lab.kind == Symbol:
-    leaveNamedBlock(c, lab.symId)
-  else:
-    leaveAnonBlock(c)
-  takeTree c.dest, n
-
 proc trReturn(c: var Context; n: var Cursor) =
   if c.terminates:
     #[ Unreachable: the statement list already ended in a jump, which ran
@@ -272,9 +232,9 @@ proc trScope(c: var Context; body: var Cursor) =
           tr c, body
     else:
       tr c, body
-    #[ A scope whose statement list ends in `return`/`raise`/`break` has
-       already had its destructors emitted by `trReturn`/`trRaise`/
-       `trBreak`, which walk the whole scope chain before the jump.
+    #[ A scope whose statement list ends in `return`/`raise` has
+       already had its destructors emitted by `trReturn`/`trRaise`,
+       which walk the whole scope chain before the jump.
        Appending the sequence again here used to be merely dead code in
        straight-line output — but the CPS pass runs `eliminateJumps` AFTER
        us, and that rewrites `return` into `(jtrue ´r)` plus fallthrough,
@@ -370,9 +330,9 @@ proc trBlock(c: var Context; n: var Cursor) =
   c.currentScope = createNestedScope(WhileOrBlock, oldScope, n.info, labelId)
   copyInto(c.dest, n):
     takeTree c.dest, n
-    # A `break` targeting this block makes its end a join, and `trBreak` has
-    # already marked that path diverged — so the block as a whole is modelled
-    # as one non-exhaustive branch: live afterwards.
+    # A `jmp` to a label after this block makes its end a join — so the
+    # block as a whole is modelled as one non-exhaustive branch: live
+    # afterwards.
     c.flow.openBranches()
     c.flow.openBranch()
     trScope c, n
@@ -496,8 +456,7 @@ proc tr(c: var Context; n: var Cursor) =
       trRaise(c, n)
       c.flow.markDiverged()
     of BreakS:
-      trBreak(c, n)
-      c.flow.markDiverged()
+      bug "`break` reached Hexer: the Final IR lowers every `break` to a `jmp`", n
     of IfS:
       trIf c, n
     of CaseS:

@@ -1244,7 +1244,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
           trProc c, dest, n
         else:
           takeTree dest, n
-      of MacroS, TemplateS, EmitS, BreakS, ContinueS,
+      of BreakS:
+        bug "`break` reached Hexer: the Final IR lowers every `break` to a `jmp`", n
+      of MacroS, TemplateS, EmitS, ContinueS,
         ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
         ExportS, CommentS,
         PragmasS, LabS, JmpS:

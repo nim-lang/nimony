@@ -1790,9 +1790,17 @@ Example:
   ```
 
 The block statement is a means to group statements to a (named) `block`.
-Inside the block, the `break` statement is allowed to leave the block
-immediately. A `break` statement can contain a name of a surrounding
-block to specify which block is to be left.
+Inside a named block, `break <name>` leaves the block immediately. An
+unlabeled `break` never leaves a block; it leaves the innermost loop, so a
+`block` inside a loop can be used as a plain scope:
+
+  ```nim
+  for i in 1..10:
+    block:
+      let x = compute(i)
+      if x < 0:
+        break # leaves the `for` loop, not the `block`
+  ```
 
 
 ### Break statement
@@ -1803,9 +1811,13 @@ Example:
   break
   ```
 
-The `break` statement is used to leave a block immediately. If `symbol`
-is given, it is the name of the enclosing block that is to be left. If it is
-absent, the innermost block is left.
+The `break` statement is used to leave a loop or a block immediately. If
+`symbol` is given, it is the name of the enclosing block that is to be left.
+If it is absent, the innermost loop is left; an unlabeled `break` outside of
+a loop is an error.
+
+With `{.feature: "anonBlockBreaks".}` (implied by `"v2"`) an unlabeled `break`
+leaves the innermost loop *or* block, as in Nim 2.
 
 
 ### While statement
