@@ -201,7 +201,7 @@ proc resolvedTypeKind(typ: Cursor): TypeKind =
     t = skipModifier(decl.body)
   result = t.typeKind
 
-proc typeForNil(typ: Cursor): Cursor =
+proc typeForNil*(typ: Cursor): Cursor =
   ## The type a bare `(nil)` sitting in a slot declared as `typ` should carry,
   ## or a nil cursor when `typ` is nothing a `nil` can be typed with (`.`, an
   ## unresolved typevar, `nilt` itself, a non-pointer).
