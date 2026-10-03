@@ -527,7 +527,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of ParX, EmoveX:
     result = getTypeImpl(c, n.childCursor, flags)
   of NilX:
-    result = c.builtins.nilType
+    let t = n.childCursor
+    result = if t.hasMore: t else: c.builtins.nilType
   of DotX, DdotX:
     var n = n
     inc n # skip "dot"

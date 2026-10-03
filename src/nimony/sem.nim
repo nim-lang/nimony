@@ -3679,7 +3679,23 @@ proc literalB(c: var SemContext; dest: var TokenBuf; it: var Item; literalType: 
   commonType c, dest, it, beforeExpr, expected
 
 proc semNil(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  let beforeExpr = dest.len
   literalB c, dest, it, c.types.nilType
+  # A `nil` that `commonType` resolved against a pointer-like type is emitted
+  # as `(nil T)`: later passes compute the type of an `if` or `case`
+  # expression from its branches and must not see `nilt` there (#2605).
+  let t = typeForNil(it.typ)
+  if not cursorIsNil(t) and beforeExpr < dest.len:
+    var lit = cursorAt(dest, beforeExpr)
+    if lit.exprKind == NilX and not lit.childCursor.hasMore:
+      var typed = createTokenBuf(8)
+      typed.addParLe(NilX, lit.info)
+      typed.addSubtree t
+      typed.addParRi()
+      endRead lit
+      dest.replace cursorAt(typed, 0), beforeExpr
+    else:
+      endRead lit
 
 proc semTypedUnaryArithmetic(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
