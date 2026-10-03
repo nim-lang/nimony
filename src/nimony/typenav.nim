@@ -415,12 +415,24 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
             break
           skip n
       of CaseS:
+        # Like `if`: the first non-void branch decides, a leading branch that
+        # ends in `return` must not type the whole `case` as void (#2612).
         var n = n
         inc n # skip `case`
         skip n # skip selector
-        inc n # skip `of`
-        skip n # skip set
-        result = typeofBranchBody(c, n, flags)
+        result = c.builtins.voidType
+        while n.isTagLit:
+          let sub = n.substructureKind
+          if sub notin {OfU, ElseU}: break
+          var br = n
+          inc br # `of` or `else`
+          if sub == OfU:
+            skip br # set
+          let brType = typeofBranchBody(c, br, flags)
+          if brType.typeKind != VoidT:
+            result = brType
+            break
+          skip n
       of TryS:
         var n = n
         inc n
