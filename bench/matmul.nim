@@ -397,3 +397,5 @@ proc main =
   printTable(csv)
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

@@ -167,3 +167,5 @@ proc start =
 fatherAsGlobal.t.data = @["ha", "lets", "stress", "it"]
 buildBTree(fatherAsGlobal)
 start()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

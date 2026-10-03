@@ -56,3 +56,5 @@ for _ in 0..<iterations:
   spawnJoin(drain)
 
 echo "ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

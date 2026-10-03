@@ -204,3 +204,5 @@ stdout.write serverLog
 stdout.write clientLog
 assert failures == 0
 stdout.flushFile()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

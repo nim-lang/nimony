@@ -320,8 +320,9 @@ when defined(posix):
     ## libc's errno like everywhere else.
 
   when rawSyscalls:
-    var errnoVar: cint = 0
-      ## Native errno for the truly freestanding build, maintained by this
+    var errnoVar {.threadvar.}: cint
+      ## Native errno for the truly freestanding build -- per thread, like
+      ## libc's -- maintained by this
       ## module's own syscall wrappers (currently the directory ops). Nothing
       ## else needs it: a raw syscall reports failure by returning `-errno`,
       ## which is what `pcall` hands back.

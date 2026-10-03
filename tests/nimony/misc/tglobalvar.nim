@@ -9,3 +9,5 @@ proc useGlobal =
   echo x
 
 useGlobal()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

@@ -6,6 +6,7 @@
 
 when defined(nimony):
   {.feature: "lenientnils".}
+  {.feature: "assumeSync".}  # compiler-internal globals; single threaded
 
 import std / [syncio, os, hashes, tables, sets]
 when not defined(nimony):

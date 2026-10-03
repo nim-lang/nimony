@@ -22,3 +22,5 @@ var d = Dispatcher(handlers: @[])
 register(d, proc (e: Event) {.closure.} = total = total + e.code)
 dispatch(d, Event(code: 3))
 echo total
+
+{.feature: "assumeSync".}  # test program: globals shared freely

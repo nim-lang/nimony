@@ -29,3 +29,5 @@ proc throughAPointer(p: ptr uint32): uint32 =
 
 roundTrip()
 echo throughAPointer(addr cell32)
+
+{.feature: "assumeSync".}  # test program: globals shared freely

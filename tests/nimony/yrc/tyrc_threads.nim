@@ -94,3 +94,5 @@ proc main =
   echo "created == destroyed: ", c == d, " (", c, " ", d, ")"
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

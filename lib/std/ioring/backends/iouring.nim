@@ -34,6 +34,10 @@
 # Every kernel >= the io_uring baseline satisfies the floors here (5.19/6.7);
 # older kernels instead get per-op -EOPNOTSUPP, never a prohibited syscall.
 
+# Ring/backend state guarded by the core's locks and stripes, which the
+# shared-global check cannot see yet (no `.guard` support).
+{.feature: "assumeSync".}
+
 import std/[assertions, atomics, posix/posix, tables, ticketlocks, threadpool]
 import std/syncio   # quit
 import ../../posix/io_uring

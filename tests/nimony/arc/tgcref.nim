@@ -52,3 +52,5 @@ leaks()
 assert destroyed == 0           # survived: still referenced
 
 echo "ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

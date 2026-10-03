@@ -138,3 +138,5 @@ proc testRebind =
   assert a.len == 3
 
 testRebind()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

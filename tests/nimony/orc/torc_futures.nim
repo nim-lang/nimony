@@ -66,3 +66,5 @@ main()
 GC_fullCollect()
 let leaked = getOccupiedMem() - before
 echo called, " ", leaked
+
+{.feature: "assumeSync".}  # test program: globals shared freely

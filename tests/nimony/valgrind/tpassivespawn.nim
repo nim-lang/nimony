@@ -18,3 +18,5 @@ proc driver(n: int) {.passive.} =
     i = i + 1
 
 driver(8)
+
+{.feature: "assumeSync".}  # test program: globals shared freely

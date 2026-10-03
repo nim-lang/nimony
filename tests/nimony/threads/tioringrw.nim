@@ -112,3 +112,5 @@ else:
     # `opRead` in the same batch as the probe it was actually waiting for.
     # Nothing here is waiting for it, so take it back.
     while pollCompletions(comps) > 0: discard
+
+{.feature: "assumeSync".}  # test program: globals shared freely

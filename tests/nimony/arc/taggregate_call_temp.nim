@@ -50,3 +50,5 @@ main(true)
 assert created == 1
 assert destroyed == 1
 echo "OK"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

@@ -84,3 +84,5 @@ proc escapeViaLoop =
   discard outer.len
 
 escapeViaLoop()
+
+{.feature: "assumeSync".}  # test program: globals shared freely
