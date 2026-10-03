@@ -4577,6 +4577,8 @@ The following features are available:
 | `"lenientAliasing"` | Allow for aliasing like `f(#[byvar]# x, x)` in function calls. For compatibility with Nim 2. |
 | `"runtimeContracts"` | Check `.requires` contracts at run time only: no call site in this module is judged statically. |
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
+| `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
+| `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
 
