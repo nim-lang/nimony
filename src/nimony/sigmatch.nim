@@ -1109,9 +1109,13 @@ proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool =
 
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  let typevar = asTypevar(res.decl)
-  result = isTypevarLike(typevar.kind)
+  if res.status != LacksNothing:
+    # not a global symbol, e.g. the field `n` of a static object value
+    # `(oconstr Tag (kv n 1))` inside `Box[...]`; typevars always load
+    result = false
+  else:
+    let typevar = asTypevar(res.decl)
+    result = isTypevarLike(typevar.kind)
 
 proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
   if (f.isIntLit or f.kind == InlineInt) and
