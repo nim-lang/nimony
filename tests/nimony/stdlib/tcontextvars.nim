@@ -2,9 +2,12 @@
 ## through a park and across a hop to a pool thread.
 ##
 ## The interesting part is not the push and pop, it is that a coroutine's
-## context lives on its frame. Every case below that goes through `withCtx` and
-## then parks, or is resumed on a different thread than it started on, fails if
-## the context is kept in a `.threadvar.` instead.
+## context lives on its frame, and only on the frames that need one: a `.passive`
+## proc that writes a context gets a slot of its own, and one that only reads
+## shares whatever encloses it. Nothing in this file says which is which. Every
+## case below that goes through `withCtx` and then parks, or is resumed on a
+## different thread than it started on, fails if the context is kept in a
+## `.threadvar.` instead.
 
 import std / [contextvars, syncio, threadpool, atomics]
 
@@ -100,6 +103,23 @@ proc drive(c: Continuation) =
   var c = c
   while not stopping(c): c = advance(c)
 
+# --- a coroutine that only reads shares the slot around it ---
+
+proc sharedReader() {.passive.} =
+  ## This proc only READS a context, so the compiler found no `ctxSlot` in its
+  ## body and gave it no slot of its own: what it sees is whatever encloses it.
+  ## That is the free half of the rule -- a coroutine that does not care about
+  ## its dynamic context pays nothing for one and writes nothing to say so -- and
+  ## the case below fails outright if the frame grew one anyway, because the
+  ## caller would then read back its own 40 through a slot it had adopted.
+  show("shared sees: ", plain, -1)
+  showName("shared name: ")
+
+proc callerOfShared() {.passive.} =
+  plain.set(40)
+  sharedReader()
+  show("caller after shared: ", plain, -1)
+
 # --- the two bare vars are two variables ---
 
 proc distinctVars() {.passive.} =
@@ -165,6 +185,7 @@ proc main =
 
   drive(delay callerOfSetter())
   drive(delay callerOfReader())
+  drive(delay callerOfShared())
   drive(delay distinctVars())
   drive(delay callerOfRecursion())
   drive(delay strings())

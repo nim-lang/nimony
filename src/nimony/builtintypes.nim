@@ -26,6 +26,14 @@ const
 
 const
   SystemModuleSuffix* = "sysvq0asl" # "sys9azlf"
+  ContextvarsModuleSuffix* = "conmvkymp"
+    ## `std/contextvars`, spelled the way `gear2/modnames.moduleSuffix` spells
+    ## it for `std/contextvars.nim` under the `lib` search path -- the first
+    ## three characters of the module name plus the base36 of the path's hash,
+    ## exactly as for `SystemModuleSuffix` above. Recompute both by running
+    ## that proc on the file rather than by editing the string: a suffix that
+    ## no longer matches the module leaves the symbols it names unresolvable,
+    ## and `ctxSlot` below is how a coroutine asks for a context slot.
   StringName* = "string.0." & SystemModuleSuffix
 
 when sso:

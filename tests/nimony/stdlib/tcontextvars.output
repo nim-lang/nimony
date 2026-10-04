@@ -11,6 +11,9 @@ before call: -1
 inherited: 70
 inherited bare: -1
 inherited name: outer
+shared sees: 40
+shared name: nobody
+caller after shared: 40
 first: 1
 second: 2
 recursed to: 0

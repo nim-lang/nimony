@@ -11,12 +11,14 @@
 # The chain is not a `{.threadvar.}`, and the difference is the point of the
 # module. A `.passive` proc can park mid-call and resume on a different
 # thread, so "the context of the code running here" is a property of the
-# coroutine, not of the thread. The chain head therefore lives in
-# `CoroutineBase.ctx`, and `currentCoroutine` -- the frame of the coroutine
-# this thread is running, which `runStep` installs around every continuation
-# step -- is how the running code reaches it. A coroutine that starts without a
-# chain of its own adopts its caller's, the way a task copies the context it
-# was spawned in. `doc/contextvars.md` has the whole story.
+# coroutine, not of the thread. The chain head therefore lives in an
+# `ExtSlot`, and `currentCoroutine` -- the frame of the coroutine this thread is
+# running, which `runStep` installs around every continuation step -- is how
+# the running code reaches the slot. Which slot is another matter, and nothing
+# in a program says: a `.passive` proc that WRITES a context gets a slot of its
+# own, which the compiler works out from this module's `ctxSlot` appearing in
+# the body, and one that only reads shares the nearest enclosing slot.
+# `doc/contextvars.md` has the whole story.
 
 {.feature: "lenientnils".}
 ## Load-bearing. A chain ends in a nil `parent`, and the nil checks that say so
@@ -92,52 +94,69 @@ proc newContextVar*[T](default: T): ContextVar[T] =
 
 # --- The chain ---
 
-var rootCtx {.threadvar.}: RootRef
-  ## The chain of code that is not part of any coroutine -- the top-level
-  ## statements, and a regular proc that nothing called from a `.passive` one.
-  ## A thread's own chain, because none of that can park.
-
-proc ctxSlot*(): ptr RootRef =
-  ## The address of the chain head belonging to the running code.
+proc ctxSlot*(): ptr ExtSlot =
+  ## The address of the slot holding the chain the running code reads and
+  ## extends. The seam between the module and the runtime: everything that
+  ## touches a chain goes through here, which is what lets the compiler decide
+  ## on its own that a `.passive` proc writes one (see `bodyWritesContext` in
+  ## `src/hexer/coro_transform.nim`).
   ##
-  ## A coroutine with no chain of its own adopts its caller's, which is the
-  ## equivalent of a task copying the context it was spawned in. Adopting on
-  ## first *use* rather than at the call keeps the whole of this out of the
-  ## call sequence -- `caller.env` is already sitting in the frame, and nothing
-  ## has to be written before the callee is entered. The rule that buys is that
-  ## a coroutine sees the chain its caller held when the coroutine first
-  ## touched a context, so a `set` in the caller after the call does not reach
-  ## back into the callee.
+  ## Three answers, in order. Inside a coroutine that writes a context -- whose
+  ## frame the compiler gave an `ext` field for exactly that reason -- its own
+  ## slot, adopted on first use from whatever its caller was holding. Else the
+  ## nearest enclosing slot, walking `caller`: a coroutine that only READS has
+  ## no slot of its own and shares the context around it, the way a helper that
+  ## does not care about its own state sees its caller's. Else the thread's own
+  ## slot, for the top-level statements and a regular proc no `.passive` one
+  ## called.
   ##
-  ## `caller` is nil for a coroutine that has not been given one, and names a
-  ## `Join` -- not a real coroutine -- for one started by `complete` or by an
-  ## iterator. A `Join` carries no chain and frames are zeroed, so both cases
-  ## read as nil and the coroutine falls back to its thread's chain.
+  ## Asking the frame rather than keeping a table means no bookkeeping: the
+  ## frame is reachable from the continuation that resumes it, so a chain
+  ## follows its coroutine across a park and across a hop to another thread
+  ## with nothing installed around the step but `runningCoro` itself.
   ##
   ## An address rather than a value, so that a `withCtx` can hold on to the one
   ## slot its block pushed onto and put the old head back into exactly that
-  ## slot, without resolving the owner a second time. `RootRef` for both the
-  ## thread's chain and the frame field, so the two addresses have one type:
-  ## `addr` of a `CtxNode` and `addr` of a `RootRef` are not the same type and
-  ## neither converts to the other.
+  ## slot, without resolving the owner a second time.
   let coro = currentCoroutine()
-  if coro == nil:
-    result = addr rootCtx
-  else:
-    if coro.ctx == nil:
-      var up = coro.caller.env
-      while up != nil and up.ctx == nil:
-        up = up.caller.env
-      coro.ctx = if up == nil: rootCtx else: up.ctx
-    result = addr coro.ctx
+  if coro != nil:
+    let own = coro.extSlot()
+    if own != nil:
+      # A slot of its own, but empty until asked for something. What to start
+      # from is the caller's context AT THIS MOMENT, which is why adoption
+      # happens here rather than at the call.
+      adoptExtSlot(own, coro.caller.env)
+      return own
+    # No slot of its own, so the nearest enclosing one: `caller` names a `Join`
+    # for a coroutine started by `complete` or an iterator, and a `Join` does
+    # have a slot, so the walk lands on the waiting side's own context rather
+    # than skipping past it to whatever called *that*. A holder that never
+    # adopted a context has no box to hand out, so the walk passes it by, and
+    # the one it lands on may still be empty -- `withCtx` puts an empty head
+    # back when it pops a block that had none -- so it adopts there too.
+    var up = coro.caller.env
+    while up != nil:
+      let slot = up.extSlot()
+      if slot != nil and slot[] != nil:
+        adoptExtSlot(slot, up.caller.env)
+        return slot
+      up = up.caller.env
+  currentSlot()
 
 proc currentCtx*(): CtxNode {.inline.} =
   ## The head of the chain the running code reads and extends.
-  cast[CtxNode](ctxSlot()[])
+  cast[CtxNode](ctxSlot()[].ctx)
 
-proc setCurrentCtx*(head: CtxNode) {.inline.} =
+template setCurrentCtx*(head: CtxNode) =
   ## Puts `head` at the front of the running code's chain.
-  ctxSlot()[] = head
+  ##
+  ## A template, not a proc, and that is the whole reason: this is a WRITE, and
+  ## the compiler grants a `.passive` frame a context slot of its own when its
+  ## body reaches `ctxSlot` (the only way this module touches a chain). Written
+  ## as a proc, a `setCurrentCtx` in a `.passive` proc would put a chain in
+  ## whatever slot happened to be around it -- the caller's -- and a `set` that
+  ## the caller can see is exactly what this module exists to prevent.
+  ctxSlot()[].ctx = head
 
 # --- Reading and writing ---
 
@@ -163,8 +182,8 @@ proc push[T](id: int; val: T) =
   new(n)
   n.id = id
   n.val = val
-  n.parent = cast[CtxNode](ctxSlot()[])
-  ctxSlot()[] = cast[RootRef](n)
+  n.parent = cast[CtxNode](ctxSlot()[].ctx)
+  ctxSlot()[].ctx = cast[RootRef](n)
 
 proc get*[T](v: ContextVar[T]): T {.raises.} =
   ## The value of `v` for the running code: the nearest binding outwards in its
@@ -197,17 +216,18 @@ template set*[T](v: var ContextVar[T]; val: T) =
   ## Binds `v` to `val` for everything the running proc calls, directly or
   ## through a suspension.
   ##
-  ## A `.passive` caller does not see the binding: it is a different coroutine
-  ## with a chain of its own, so the value cannot leak back out the way it came
-  ## in. A *regular* proc is not a coroutine and has no such boundary, so a
-  ## `set` in one lasts to the end of the thread's chain -- mark it `{.passive.}`
-  ## when the binding is meant to stay local.
+  ## A `.passive` caller does not see the binding: a `.passive` proc whose body
+  ## reaches this template is one that writes a context, so the compiler gave
+  ## its frame a slot of its own, and the value cannot leak back out the way it
+  ## came in. A *regular* proc is not a coroutine and has no such boundary, so a
+  ## `set` in one lasts to the end of the thread's chain -- mark the caller
+  ## `{.passive.}` when the binding is meant to stay local.
   let slot = ctxSlot()
-  let ctxBefore = cast[CtxNode](slot[])
+  let ctxBefore = cast[CtxNode](slot[].ctx)
   if v.id == 0:
     v.id = claimId() # a bare `var`, first write: give it an identity of its own
   push(v.id, val)
-  defer: slot[] = ctxBefore
+  defer: slot[].ctx = ctxBefore
 
 template withCtx*[T](v: var ContextVar[T]; val: T; body: untyped): untyped =
   ## Runs `body` with `v` bound to `val`, then puts the previous chain back.
@@ -216,6 +236,9 @@ template withCtx*[T](v: var ContextVar[T]; val: T; body: untyped): untyped =
   ## for a `.passive` proc means they live in its coroutine frame: a park inside
   ## `body` may resume on another thread, and the restore still lands on the
   ## chain the push was made from.
+  ##
+  ## A write, so it reaches `ctxSlot` through `set` above and the frame gets a
+  ## slot of its own for the same reason.
   block:
     v.set(val)
     body
