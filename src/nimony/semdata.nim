@@ -38,9 +38,11 @@ type
       ## as in `C: Findable[T]`: their requirements are available on the
       ## typevars passed to them.
     parent*: SemRoutine
+    outerScope*: Scope
+      ## the scope the routine is declared in; see `isToplevelLocalCapture`
 
-proc createSemRoutine*(kind: SymKind; parent: SemRoutine): SemRoutine =
-  result = SemRoutine(kind: kind, parent: parent, resId: SymId(0))
+proc createSemRoutine*(kind: SymKind; parent: SemRoutine; outerScope: Scope): SemRoutine =
+  result = SemRoutine(kind: kind, parent: parent, resId: SymId(0), outerScope: outerScope)
 
 const
   MaxNestedTemplates* = 100

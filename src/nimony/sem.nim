@@ -1982,6 +1982,29 @@ proc isParameterlessRoutine(s: SymId): bool =
                        # so a raw `inc` would read past an empty (params)
   result = not params.hasMore
 
+proc isToplevelLocalCapture(c: var SemContext; s: SymId): bool =
+  ## Is the local `s` declared in a top-level statement (a `block` at module
+  ## level, say) and used inside a routine? Such a local lives in the module's
+  ## init code, which has no closure environment, so it cannot be captured
+  ## (#2555). Templates and inline iterators are expanded where they are used
+  ## and may refer to it.
+  result = false
+  var r = c.routine
+  var outermost: SemRoutine = nil
+  var captures = false
+  while r != nil and r.kind != NoSym:
+    if r.kind == TemplateY: return false
+    if r.kind != IteratorY or ClosureP in r.pragmas: captures = true
+    outermost = r
+    r = r.parent
+  if captures:
+    var scope = outermost.outerScope
+    while scope != nil and scope.kind == NormalScope:
+      for syms in scope.tab.values:
+        for x in syms:
+          if x.name == s: return true
+      scope = scope.up
+
 proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int;
                 flags: set[SemFlag]; nearestIsUnique = false) =
   it.kind = s.kind
@@ -2041,6 +2064,17 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         c.buildErr dest, choice.info, "ambiguous identifier", choice
     it.typ = c.types.autoType
   elif s.kind == BlockY:
+    it.typ = c.types.autoType
+  elif s.kind in {VarY, LetY, CursorY, PatternvarY} and isToplevelLocalCapture(c, s.name):
+    var orig = createTokenBuf(2)
+    var use = readonlyCursorAt(dest, start)
+    let info = use.info
+    orig.addSubtree use
+    endRead use
+    dest.shrink start
+    let local = cursorAt(orig, 0)
+    c.buildErr dest, info, "illegal capture of '" & pool.strings[symToIdent(s.name)] &
+      "': locals of top-level statements cannot be captured; move the code into a proc", local
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
     let typeStart = dest.len

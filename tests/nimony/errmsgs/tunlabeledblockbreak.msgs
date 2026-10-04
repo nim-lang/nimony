@@ -1,1 +1,2 @@
 tests/nimony/errmsgs/tunlabeledblockbreak.nim(3, 5) Error: `break` without a label only leaves a loop; to leave a `block`, name it and use `break <name>`
+tests/nimony/errmsgs/tunlabeledblockbreak.nim(14, 1) Error: illegal capture of 'counter': locals of top-level statements cannot be captured; move the code into a proc

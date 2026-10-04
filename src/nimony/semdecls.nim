@@ -1174,7 +1174,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     else:
       buildErr c, dest, it.n.info, "TR pattern not implemented"
       skip it.n
-    c.routine = createSemRoutine(kind, c.routine)
+    c.routine = createSemRoutine(kind, c.routine, c.currentScope)
     # Save/restore rather than a matching `dec`: both the template case below
     # and `semGenericParams` bump `inGenericDefinition`, and an error path must
     # not leak either increment into the enclosing definition. Captured BEFORE
