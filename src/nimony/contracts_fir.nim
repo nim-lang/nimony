@@ -4766,7 +4766,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
           buildErr c, info, "cannot prove assertion: " & asNimCode(cond)
         assumeCond(c, cond, rd)
 
-proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
+proc traverseProc(c: var FirContext; n: var Cursor) =
   var call = freshCall()
   let decl = n
   # Fresh, journaling flow state (init-set + facts) for this proc; the enclosing
@@ -4780,10 +4780,9 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   # Seed with the enclosing init-set ONLY for genuinely nested procs (closures),
   # so a captured outer local stays initialized inside the closure body. A
   # top-level proc must NOT inherit the whole module-level init-set: those syms
-  # are globals/consts that are never init-checked. `nested` means "inside a
-  # statement": another proc's body, or a top-level statement such as a
-  # `block` whose locals an inline iterator may use (#2555).
-  if nested:
+  # are globals/consts that are never init-checked. `nestedProcs >= 2` means
+  # "inside another proc's body".
+  if c.nestedProcs >= 2:
     inheritInits(c.flow, oldFlow)
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
@@ -5013,7 +5012,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       # Nested routine - analyze and advance past it
       c.typeCache.openScope()
       inc c.nestedProcs
-      traverseProc c, n, true
+      traverseProc c, n
       dec c.nestedProcs
       c.typeCache.closeScope()
     of TemplateS, TypeS, CommentS, PragmasS:
@@ -5063,7 +5062,7 @@ proc traverseToplevel(c: var FirContext; n: var Cursor) =
         traverseToplevel c, n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     inc c.nestedProcs
-    traverseProc c, n, false
+    traverseProc c, n
     dec c.nestedProcs
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,
      ImportasS, ExportexceptS, BindS, MixinS, UsingS,

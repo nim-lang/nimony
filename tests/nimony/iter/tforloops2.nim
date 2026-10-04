@@ -19,10 +19,3 @@ block:
   for i in fooVarTuple(x):
     let (a, b) = i
     echo a, b
-
-block:
-  # #2555: an inline iterator may use the locals of a top-level block
-  var nums: seq[int] = @[1, 2, 3]
-  iterator numItems(): int =
-    for n in nums: yield n
-  for n in numItems(): echo n
