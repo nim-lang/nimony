@@ -20,6 +20,7 @@
 import std / [os, assertions, strutils, syncio, sets, envvars]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
+import ".." / ".." / "lib" / lengiface       # writeLengInterface (`.oc.idx.nif`)
 import induction_variables                     # runInductionVariables (live pass)
 import cse                                     # runCSE + collectFunctionSummaries
 import scalarizer                              # runScalarize (object → field scalars / SROA)
@@ -270,6 +271,7 @@ proc processFile*(input, output: string; verify = false;
   var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode)
   checkWellFormed(optimized)
   onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
+  onRaiseQuit writeLengInterface(optimized, output)
   if verify:
     var back = parseFromFile(output, 4000, sharedTags = createLengTagPool())
     checkWellFormed(back)

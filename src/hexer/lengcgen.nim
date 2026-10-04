@@ -192,14 +192,12 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     # reads it (it builds the import table itself); `lengc`'s C and LLVM code
     # generators skip the pragma, because their linker resolves the symbol.
     #
-    # Deliberately NOT `and c.nativeBackend`, which is what it used to say: a
-    # non-main module's `.x.nif` is cached ONCE per nimcache and shared by every
-    # project built there, and `nimony n` builds its compile-time plugins with
-    # `nimony c` in that same nimcache. Gating on the backend made the file's
-    # CONTENT depend on which of the two hexer runs got there first, and when the
-    # C one did, arkham refused `system`'s externs in a build that had been green
-    # a moment earlier ("`GetStdHandle` names no import library"). Whatever a
-    # shared artifact holds has to be the same for both backends.
+    # Not gated on `c.nativeBackend`: the pragma costs the C and LLVM back ends
+    # nothing. (It used to be gated, back when a non-main module's `.x.nif` was
+    # shared by all backends in a nimcache: then the file's CONTENT depended on
+    # which backend's hexer run got there first, and arkham refused `system`'s
+    # externs in a build that had been green a moment earlier. Every backend
+    # has its own directory now, see `modnames.BackendDirC`.)
     dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
@@ -2885,7 +2883,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   # and never touches the body, so the analysis costs no file of its own.
   var withDce = withDceSection(outputBuf)
   try:
-    writeFile withDce, destfileName, OnlyIfChanged
+    writeFile withDce, destfileName
   except:
     quit "could not write file: " & destfileName
   c.typeCache.closeScope()

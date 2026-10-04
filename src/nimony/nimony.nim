@@ -92,7 +92,8 @@ Options:
                             nativenif's doc/layout.md
   --nimcache:PATH           set the path used for generated files
   -o, --out:PATH            write the executable to PATH (overrides the
-                            default `<nimcache>/<modhash>/<basename>.exe`).
+                            default `<nimcache>/<backend>/<modhash>/<basename>.exe`,
+                            `<backend>` being the command letter).
                             Splits into directory + filename like Nim;
                             combine with --outdir if you want them set
                             independently.

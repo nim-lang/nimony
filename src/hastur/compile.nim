@@ -37,13 +37,13 @@ proc generatedFile*(orig, ext: string; backendTag = BackendDirC): string =
   ## the command the file was compiled with (`BackendDirNative` after
   ## `execNimonyNative`, and so on). See `deps.backendDirName`.
   let name = modnames.moduleSuffix(orig, pathsForFile(orig))
-  # Backend (DCE and after) is in nimcache/<mainmod><tag>/, see deps.nim; .s.nif is shared
+  # Backend (DCE and after) is in nimcache/<tag>/<mainmod>/, see deps.nim; .s.nif is shared
   result = if ext == ".s.nif": nimcacheDir / name.addFileExt(ext)
-           else: nimcacheDir / (name & backendTag) / name.addFileExt(ext)
+           else: nimcacheDir / backendTag / name / name.addFileExt(ext)
 
 proc generatedExeFile*(orig: string; backendTag = BackendDirC): string =
   let name = modnames.moduleSuffix(orig, pathsForFile(orig))
-  result = nimcacheDir / (name & backendTag) / orig.splitFile.name.addFileExt(ExeExt)
+  result = nimcacheDir / backendTag / name / orig.splitFile.name.addFileExt(ExeExt)
 
 proc removeMakeErrors*(output: string): string =
   result = output.strip

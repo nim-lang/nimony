@@ -20,7 +20,7 @@ when defined(nimony):
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
-import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs]
+import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs, lengiface]
 import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
@@ -73,32 +73,27 @@ proc docIdxFile(config: NifConfig; f: FilePair): string =
   ## HTML is redirected via `--outdir`. Not user-relevant; uses the modname
   ## hash so it can't collide regardless of source layout.
   config.nifcachePath / "docs" / f.modname & ".docidx"
-proc backendDirName(config: NifConfig; f: FilePair): string =
-  ## Name of the per-main-module directory that holds everything from DCE
-  ## onward. Those artifacts are main-specific (a different main means a
-  ## different live set) AND backend-specific: hexer runs with `--native` or
-  ## without, which changes the main module's `.x.nif` (the synthesized entry
-  ## point terminates through `cExit` only on the native backend), and the
-  ## generated code, objects and executable below it obviously differ too.
-  ##
-  ## nifmake decides whether to rerun a node from its declared input and
-  ## output FILES, not from the tool's flags, so two backends sharing this
-  ## directory do not merely overwrite each other -- whichever ran first wins
-  ## and the second reuses its artifacts, because from nifmake's side nothing
-  ## changed. Giving each backend its own directory is the same split that
-  ## keeps `nimony doc` from fighting `nimony c` over `.p.nif`/`.pc.nif`.
-  ##
-  ## The C backend keeps the bare module name so existing caches, and every
-  ## path a tool derives from one, stay valid.
-  result = f.modname
+proc backendTag(config: NifConfig): string =
+  ## The `<nimcache>/` subdirectory this build's backend owns. See
+  ## `modnames.BackendDirC` for why every backend needs one.
   case config.backend
-  of backendC: result.add BackendDirC
-  of backendLLVM: result.add BackendDirLLVM
-  of backendNative: result.add BackendDirNative
-  of backendWasm: result.add BackendDirWasm
-  of backendJs: result.add BackendDirJs
+  of backendC: BackendDirC
+  of backendLLVM: BackendDirLLVM
+  of backendNative: BackendDirNative
+  of backendWasm: BackendDirWasm
+  of backendJs: BackendDirJs
 
-proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
+proc backendDirName(config: NifConfig; f: FilePair): string =
+  ## Name (relative to the nimcache) of the per-main-module directory that
+  ## holds everything from DCE onward: `<tag>/<mainmod>`. Those artifacts are
+  ## main-specific (a different main means a different live set) and live
+  ## inside the backend's own directory like every other backend artifact.
+  config.backendTag / f.modname
+
+proc hexedFile(config: NifConfig; f: FilePair): string =
+  ## hexer's output for an imported module: shared by every main module built
+  ## with this backend, but not between backends.
+  config.nifcachePath / config.backendTag / f.modname & ".x.nif"
 proc lengcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".c.nif"
@@ -714,11 +709,12 @@ proc getLastModTime(path: string): int64 =
   ## to "rebuild needed" — returning -1 makes that automatic: `-1 > anything`
   ## is false (so we don't skip rebuilds), and `-1 == -1` (when both paths
   ## fail) is also not `>`, so we still rebuild.
+  ##
+  ## Nanoseconds, the resolution nifmake compares with: in whole seconds, a
+  ## source edited in the same second its `.p.nif` was written would look
+  ## older than it, and be parsed again on every build.
   try:
-    when defined(nimony):
-      result = getLastModificationTime(path)
-    else:
-      result = times.toUnix(getLastModificationTime(path))
+    result = vfsMtime(path)
   except:
     result = -1'i64
 
@@ -1045,10 +1041,10 @@ proc writeLinkManifest(path, exe, apptype, linker: string;
   ## The linker reads this and links/bundles/filters as it sees fit (e.g. link the
   ## `obj`s, embed or ignore the backend `artifact`s).
   ##
-  ## Written `OnlyIfChanged`: the manifest is an input of the link nifmake node,
-  ## so rewriting it with a fresh mtime on every `nimony c` would re-fire the
-  ## link even on a no-op build. Preserving the mtime when the bytes are
-  ## identical keeps the backend incremental.
+  ## Written only when it changed: the manifest is written by the driver before
+  ## the graph runs, not by a node, so to nifmake it is a SOURCE, an input of
+  ## the link node. Rewriting it with a fresh mtime on every `nimony c` would
+  ## re-fire the link even on a no-op build.
   var b = nifbuilder.open(path, writeMode = OnlyIfChanged)
   b.addHeader()
   b.withTree "link":
@@ -1076,13 +1072,12 @@ proc writeLinkManifest(path, exe, apptype, linker: string;
   result = path
 
 proc addInlineSourceInputs(b: var Builder; optimized: bool) =
-  ## Declare the Leng file of EVERY module in the program as an input of a
-  ## codegen node, written as the one phase reference `(inputsof <cmd>)`
-  ## rather than N filenames per node.
+  ## Declare the Leng INTERFACE of every module in the program as an input of
+  ## a `lengc` or `arkham` node, written as the one phase reference
+  ## `(inputsof <cmd> ".idx.nif")` rather than N filenames per node.
   ##
-  ## All three consumers -- `lengc`, `arkham` and Shoggoth's `optimize` --
-  ## resolve a foreign symbol by loading the module that *defines* it, on
-  ## demand, and splice imported `.inline` bodies out of it. The defining
+  ## Both resolve a foreign symbol by loading the module that *defines* it, on
+  ## demand, and `lengc` emits imported `.inline` bodies out of it. The defining
   ## module is NOT restricted to this module's imports. A long string literal
   ## is deduplicated across the whole program by content hash and emitted once,
   ## in whichever module got there first, so any module can carry a reference
@@ -1099,17 +1094,24 @@ proc addInlineSourceInputs(b: var Builder; optimized: bool) =
   ## node's output untouched and the splice inside it stale
   ## (nim-lang/nimony#1897).
   ##
+  ## The interface file (`lengiface`) next to each Leng file changes only when
+  ## something these tools read from another module changes, so a changed
+  ## non-inline proc body re-runs its own module's codegen and nothing else.
+  ##
   ## `optimized` picks WHICH phase produces that Leng file. Under the optimizer
   ## the whole module set switches to `.oc.nif` together -- exactly as
   ## `wholeProgInput` does for jorogumo -- so `lengc` and `arkham` wait on
   ## `optimize`.
-  ## Shoggoth's own node is the exception: it reads the pre-optimization
-  ## `.c.nif` that `dceEmit` writes, which is the default here.
   ##
   ## Only input[0] reaches the tool's command line, so the extra inputs cost
   ## nothing but the ordering and the freshness check.
   b.withTree "inputsof":
-    b.addIdent (if optimized: "optimize" else: "dceEmit")
+    if optimized:
+      b.addIdent "optimize"
+      b.addStrLit ".oc.idx.nif"
+    else:
+      b.addIdent "dceEmit"
+      b.addStrLit ".c.idx.nif"
 
 proc moduleLiveFile(backendDir: string; n: Node): string =
   ## Where `dceLive` writes one module's live set, and the input
@@ -1118,13 +1120,13 @@ proc moduleLiveFile(backendDir: string; n: Node): string =
 
 proc moduleHexedFile(c: DepContext; backendDir: string; i: int; n: Node): string =
   ## The `.x.nif` hexer wrote for this module. The root module's is
-  ## backend-specific (hexer runs it with `--isMain`), every other one is
-  ## shared at the cache root.
+  ## main-specific (hexer runs it with `--isMain`), every other one is shared
+  ## by all main modules built with this backend.
   if i == 0: backendDir / n.files[0].modname & ".x.nif"
   else: c.config.hexedFile(n.files[0])
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
-  result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
+  result = c.config.nifcachePath / c.config.backendTag / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
   defer: b.close()
 
@@ -1460,6 +1462,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         for i, n in pairs c.nodes:
           b.withTree "input":
             b.addStrLit moduleHexedFile(c, backendDir, i, n)
+        # The program's live summary first: written on every run, so the node
+        # is up to date after it ran even when no module's live set changed
+        # (those are interface files, see `writeLiveFile`).
+        b.withTree "output":
+          b.addStrLit backendDir / c.rootNode.files[0].modname & ".dce.nif"
         for n in items c.nodes:
           b.withTree "output":
             b.addStrLit moduleLiveFile(backendDir, n)
@@ -1478,6 +1485,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addStrLit moduleLiveFile(backendDir, n)
           b.withTree "output":
             b.addStrLit c.config.lengcFile(n.files[0], backend)
+          b.withTree "output":
+            b.addStrLit lengInterfaceFile(c.config.lengcFile(n.files[0], backend))
 
       # Custom-backend nodes: build each tool once (depth 0) — routing tools AND
       # the custom linker (every entry in `backendToolBuild`) — then route every
@@ -1717,15 +1726,20 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "optimize"
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
-            # Shoggoth's inter-module inliner also reads the imported modules'
-            # pre-optimization `.c.nif`, so those are this node's inputs: for
-            # ORDERING, since nifmake starts a node as soon as its own inputs
-            # are done, and for FRESHNESS, since without the edge a changed
-            # callee body leaves this node's output untouched and the splice
-            # inside it stale (nim-lang/nimony#1897).
-            addInlineSourceInputs(b, optimized = false)
+            # Shoggoth's inter-module inliner and its function summaries read
+            # the other modules' pre-optimization `.c.nif` -- any proc body,
+            # not just their interface -- so all of those are this node's
+            # inputs: for ORDERING, since nifmake starts a node as soon as its
+            # own inputs are done, and for FRESHNESS, since without the edge a
+            # changed callee body leaves this node's output untouched and the
+            # splice inside it stale (nim-lang/nimony#1897).
+            b.withTree "inputsof":
+              b.addIdent "dceEmit"
+              b.addStrLit ".c.nif"
             b.withTree "output":
               b.addStrLit optimized
+            b.withTree "output":
+              b.addStrLit lengInterfaceFile(optimized)
           lengcInput = optimized
         else:
           lengcInput = c.config.lengcFile(v.files[0], backend)
@@ -1767,7 +1781,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
               b.addStrLit c.config.genFile(v.files[0], backend)
 
         # Build .x.nif files from .s.nif files via hexer.
-        # For the root module (i==0) the output is backend-specific so that
+        # For the root module (i==0) the output is main-specific so that
         # its --isMain version does not overwrite the shared .x.nif that other
         # compilations produce when this module is a non-main dependency.
         b.withTree "do":
@@ -1779,6 +1793,9 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
               b.addStrLit "--app:" & $c.config.appType
             b.withTree "args":
               b.addStrLit "--outdir:" & backendDir
+          else:
+            b.withTree "args":
+              b.addStrLit "--outdir:" & c.config.nifcachePath / c.config.backendTag
           b.withTree "input":
             b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
           # Cross-module hexer dep: imports' `.s.idx.nif` carries both the
@@ -1797,9 +1814,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit idxFile
           b.withTree "output":
             b.addStrLit moduleHexedFile(c, backendDir, i, v)
-
-proc cachedConfigFile(config: NifConfig): string =
-  config.nifcachePath / "cachedconfigfile.txt"
 
 proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: bool) =
   b.withTree "do":
@@ -1986,41 +2000,116 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
           b.withTree "input":
             b.addStrLit s
 
-proc generateCachedConfigFile(c: DepContext; passC, passL: string): bool =
-  ## Returns true when the configuration differs from the one the nimcache was
-  ## last built with, i.e. when the sem results in it are for another set of
-  ## options and have to be produced again.
-  ##
-  ## This is a MEMO nimony keeps for itself, NOT an `(input)` of the sem nodes.
-  ## It used to be one, and that was the wrong model twice over: sem does not
-  ## read this file, and an mtime cannot express "already built against this".
-  ## Once the file was newer than outputs that a re-run had legitimately left
-  ## untouched (nimsem writes OnlyIfChanged, so identical results keep their old
-  ## mtime), every sem node stayed stale against it on every subsequent build —
-  ## for good. Flipping a `-d:` flag and flipping it back was enough. The answer
-  ## is not to fake a newer output; it is that "the options changed" means
-  ## RE-RUN THIS STAGE, which is what the caller now says outright.
-  let path = c.config.cachedConfigFile()
-  # The ROOT MODULE is deliberately NOT part of this string. Every sem node
-  # takes this file as an input (see `generateSemInstructions`), so anything in
-  # here that differs between two builds sharing a nimcache invalidates all of
-  # the other's sem results — and `executeExpr`'s const-eval sub-compile is
-  # exactly such a second build: same nimcache, same options, but a generated
-  # root (`nim<checksum>.p.nif`). With the root name in here the two overwrote
-  # each other's entry on every run, so each build re-semmed everything the
-  # other had just done, forever. The OPTIONS do belong here: two roots
-  # compiled with different options really must invalidate each other, because
-  # the `.s.nif` artifacts are keyed by module name and shared between them.
-  let configStr = c.config.getOptionsAsOneString() &
-                  " --passC:" & passC & " --passL:" & passL
+proc addFrontendKey(b: var Builder; config: NifConfig) =
+  ## Every option nimsem's results depend on: what `isDefined` answers from and
+  ## what reaches nimsem's command line. The ROOT MODULE is deliberately NOT
+  ## part of it: `executeExpr`'s const-eval sub-compile is a second build in the
+  ## same nimcache with the same options but a generated root
+  ## (`nim<checksum>.p.nif`). With the root in the key the two invalidated each
+  ## other on every run, so each re-semmed everything the other had just done.
+  ## The OPTIONS do belong here: the `.s.nif` artifacts are keyed by module
+  ## name and shared between all roots.
+  b.withTree "frontend":
+    # a later `-d:key` replaces an earlier one (`addDefine`), so the defines
+    # are a set and their order is noise
+    var defines = config.defines
+    sort defines
+    for d in defines:
+      b.withTree "define":
+        b.addStrLit d
+    b.withTree "mm":
+      b.addStrLit config.mm
+    if config.cycles: b.addKeyw "cycles"
+    b.withTree "bits":
+      b.addIntLit config.bits
+    b.withTree "cpu":
+      b.addStrLit platform.CPU[config.targetCPU].name
+    b.withTree "os":
+      b.addStrLit platform.OS[config.targetOS].name
+    b.withTree "app":
+      b.addStrLit $config.appType
+    b.withTree "cc":
+      b.addStrLit config.ccKey
+    b.withTree "checks":
+      b.addStrLit config.checkFlags
+    if config.inlineFrames: b.addKeyw "inlineframes"
 
-  let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
-                     configStr != onRaiseQuit(readFile(path))
-                   else:
-                     true
-  if needUpdate:
-    onRaiseQuit writeFile(path, configStr)
-  result = needUpdate
+proc addBackendKey(b: var Builder; c: DepContext; passC, passL: string) =
+  ## The options only the backend phase reads. Which backend it is needs no
+  ## entry: every backend has a directory of its own.
+  b.withTree "backend":
+    b.withTree "opt":
+      b.addStrLit $c.config.optLevel
+    b.withTree "cc":
+      b.addStrLit c.config.cc
+    b.withTree "linker":
+      b.addStrLit c.config.linker
+    b.withTree "passc":
+      b.addStrLit passC
+      for x in c.passC: b.addStrLit x
+    b.withTree "passl":
+      b.addStrLit passL
+    if c.config.layoutFile.len > 0:
+      b.withTree "layout":
+        b.addStrLit c.config.layoutFile
+    if c.config.jsBrowser: b.addKeyw "browser"
+
+proc frontendMemoFile(config: NifConfig): string =
+  config.nifcachePath / "config.nif"
+
+proc backendMemoFile(c: DepContext): string =
+  c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0]) / "config.nif"
+
+proc frontendMemo(config: NifConfig): string =
+  var b = nifbuilder.open(200)
+  b.addHeader()
+  b.withTree "config":
+    addFrontendKey b, config
+  result = b.extract()
+
+proc backendMemo(c: DepContext; passC, passL: string): string =
+  ## The frontend key is part of it: the sem results this main's backend
+  ## artifacts were made from may come from a build that ran under another
+  ## configuration, and no file's mtime records that.
+  var b = nifbuilder.open(400)
+  b.addHeader()
+  b.withTree "config":
+    addFrontendKey b, c.config
+    addBackendKey b, c, passC, passL
+  result = b.extract()
+
+proc memoDiffers(c: DepContext; path, memo: string): bool =
+  ## True when `path` does not record `memo`, i.e. when the artifacts of the
+  ## stage it describes were made under another configuration and have to be
+  ## produced again.
+  ##
+  ## A memo is something nimony keeps for itself, NOT an `(input)` of any
+  ## node. It used to be one, and that was the wrong model twice over: no tool
+  ## reads it, and an mtime cannot express "already built against this". Once
+  ## the file was newer than outputs that a re-run had legitimately left
+  ## untouched (interface files that come out the same keep their old mtime),
+  ## every node stayed stale against it on every later build — for good. "The options changed" means RE-RUN THE STAGE, which is what the
+  ## caller says to nifmake outright.
+  result = c.forceRebuild or not semos.fileExists(path) or
+           onRaiseQuit(readFile(path)) != memo
+
+proc execFrontend(cmd, memoPath, memo: string; changed: bool) =
+  ## Runs the frontend stage. Its memo is written BEFORE the run: the
+  ## sub-compiles sem spawns (`prepareEval`, `executeExpr`) share this nimcache
+  ## and must find the configuration the outer build is producing, or they
+  ## would rerun every sem node concurrently with it. A rerun that fails half
+  ## way empties the memo again, so that the next build still remakes what
+  ## this one did not get to.
+  if changed: onRaiseQuit writeFile(memoPath, memo)
+  if execShellCmd(cmd) != 0:
+    if changed: onRaiseQuit writeFile(memoPath, "")
+    quit("FAILURE: " & cmd)
+
+proc execBackend(cmd, memoPath, memo: string; changed: bool) =
+  ## Runs the backend stage. Nothing else builds into this main's directory,
+  ## so its memo is recorded only once the stage has gone through.
+  exec cmd
+  if changed: onRaiseQuit writeFile(memoPath, memo)
 
 proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
   # `--docs` is nifler's alone: it attaches `##` comments the way Nim's parser
@@ -2269,7 +2358,9 @@ proc buildGraph*(config: sink NifConfig; project: string;
   var c = initDepContext(config, project, false, forceRebuild, moduleFlags, cmd)
   # found in the runtime's nifler deps, which the later phases do not read
   config.cycles = c.config.cycles
-  let configChanged = generateCachedConfigFile(c, passC, passL)
+  let feMemoFile = frontendMemoFile(c.config)
+  let feMemo = frontendMemo(c.config)
+  let frontendChanged = memoDiffers(c, feMemoFile, feMemo)
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
   when defined(windows) and not defined(nimony):
@@ -2281,13 +2372,13 @@ proc buildGraph*(config: sink NifConfig; project: string;
     (if Report in flags: " --report" else: "") &
     (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "")
   let nifmakeCommand = nifmakeBase & jobsArg(config) & " run "
-  # A changed configuration invalidates every sem result, and now says so
-  # directly instead of through a file the sem nodes pretended to read.
-  # `--rerun`, not `--force`: the outputs must stay in place so nimsem's
-  # OnlyIfChanged writes can still find a result unchanged and spare the
-  # entire backend.
+  # A changed configuration invalidates every result of the stage it applies
+  # to, and says so directly instead of through a file the nodes pretended to
+  # read. `--rerun`, not `--force`: the outputs' mtimes stay the tools'
+  # business, so an interface file that comes out unchanged still spares
+  # whatever depends on it.
   let frontendCommand = nifmakeBase &
-    (if configChanged: " --rerun" else: "") & jobsArg(config) & " run "
+    (if frontendChanged: " --rerun" else: "") & jobsArg(config) & " run "
 
   # `nimony c` drives nifmake once for the frontend and once more for the
   # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
@@ -2295,7 +2386,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
   # indicator across the separate processes instead of restarting per phase.
   let twoPhase = cmd != DoCheck
 
-  exec frontendCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
+  execFrontend frontendCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename),
+    feMemoFile, feMemo, frontendChanged
 
   if cmd == DoDoc:
     c = initDepContext(config, project, true, forceRebuild, moduleFlags, cmd)
@@ -2338,7 +2430,12 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
-    exec nifmakeCommand & progArg(flags, 50, 100) & quoteShell(buildFinalFilename)
+    let beMemoFile = backendMemoFile(c)
+    let beMemo = backendMemo(c, passC, passL)
+    let backendChanged = memoDiffers(c, beMemoFile, beMemo)
+    execBackend nifmakeBase & (if backendChanged: " --rerun" else: "") &
+        jobsArg(config) & " run " & progArg(flags, 50, 100) & quoteShell(buildFinalFilename),
+      beMemoFile, beMemo, backendChanged
 
   if Stats in flags:
     # Walk every source module in the dep graph and sum line counts. Counting
