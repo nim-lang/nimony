@@ -15,6 +15,8 @@ import nimony_model, identstyle
 const
   InvalidPos* = -1
   ImportedPos* = -2
+  ToplevelStmtLocalKinds* = {VarY, LetY, CursorY, PatternvarY}
+    ## what a routine cannot access in a `ToplevelStmtScope`
 
 type
   Sym* = object
@@ -23,7 +25,10 @@ type
     pos*: int
 
   ScopeKind* = enum
-    NormalScope, ToplevelScope, ImportScope
+    NormalScope, ToplevelScope, ImportScope,
+    ToplevelStmtScope ## inside a top-level statement such as a module level
+                      ## `block`, but outside of every routine
+    RoutineScope      ## the parameter scope of a routine other than a template
   Scope* {.acyclic.} = ref object
     tab*: Table[StrId, seq[Sym]] # 'seq' because of overloading
     undo: seq[Table[StrId, int]] # len of 'key' to reset tab[key] to.

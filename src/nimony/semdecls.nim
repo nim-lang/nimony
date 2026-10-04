@@ -1174,7 +1174,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     else:
       buildErr c, dest, it.n.info, "TR pattern not implemented"
       skip it.n
-    c.routine = createSemRoutine(kind, c.routine, c.currentScope)
+    c.routine = createSemRoutine(kind, c.routine)
     # Save/restore rather than a matching `dec`: both the template case below
     # and `semGenericParams` bump `inGenericDefinition`, and an error path must
     # not leak either increment into the enclosing definition. Captured BEFORE
@@ -1191,7 +1191,9 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       inc c.inGenericDefinition
 
     try:
-      c.openScope() # open parameter scope
+      # open parameter scope; a template is expanded where it is used, so it
+      # is no boundary for what its body may access
+      c.openScope(if kind == TemplateY: NormalScope else: RoutineScope)
       let beforeGenericParams = dest.len
       semGenericParams c, dest, it.n
       if c.visOwner.len == outerVisOwner:

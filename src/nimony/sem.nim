@@ -1982,26 +1982,6 @@ proc isParameterlessRoutine(s: SymId): bool =
                        # so a raw `inc` would read past an empty (params)
   result = not params.hasMore
 
-proc isToplevelLocalCapture(c: var SemContext; s: SymId): bool =
-  ## Is the local `s` declared in a top-level statement (a `block` at module
-  ## level, say) and used inside a routine? Such a local lives in the module's
-  ## init code, so no routine may access it, not even an inline iterator
-  ## (#2555). A template is expanded where it is used and may refer to it.
-  result = false
-  var r = c.routine
-  var outermost: SemRoutine = nil
-  while r != nil and r.kind != NoSym:
-    if r.kind == TemplateY: return false
-    outermost = r
-    r = r.parent
-  if outermost != nil:
-    var scope = outermost.outerScope
-    while scope != nil and scope.kind == NormalScope:
-      for syms in scope.tab.values:
-        for x in syms:
-          if x.name == s: return true
-      scope = scope.up
-
 proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int;
                 flags: set[SemFlag]; nearestIsUnique = false) =
   it.kind = s.kind
@@ -2017,7 +1997,10 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         c.buildErr dest, ident.info, "undeclared identifier: " & pool.symString(s.name), ident
       else:
         let s = getIdent(ident)
-        if s != StrId(0):
+        if s != StrId(0) and isToplevelStmtLocal(c, s):
+          c.buildErr dest, ident.info, "'" & pool.strings[s] & "' is a local of a top-level " &
+            "statement; a routine cannot access it, move the code into a proc", ident
+        elif s != StrId(0):
           c.buildErr dest, ident.info, "undeclared identifier: " & pool.strings[s], ident
         else:
           c.buildErr dest, ident.info, "undeclared identifier", ident
@@ -2061,17 +2044,6 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         c.buildErr dest, choice.info, "ambiguous identifier", choice
     it.typ = c.types.autoType
   elif s.kind == BlockY:
-    it.typ = c.types.autoType
-  elif s.kind in {VarY, LetY, CursorY, PatternvarY} and isToplevelLocalCapture(c, s.name):
-    var orig = createTokenBuf(2)
-    var use = readonlyCursorAt(dest, start)
-    let info = use.info
-    orig.addSubtree use
-    endRead use
-    dest.shrink start
-    let local = cursorAt(orig, 0)
-    c.buildErr dest, info, "illegal access to '" & pool.strings[symToIdent(s.name)] &
-      "': routines cannot access locals of top-level statements; move the code into a proc", local
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
     let typeStart = dest.len

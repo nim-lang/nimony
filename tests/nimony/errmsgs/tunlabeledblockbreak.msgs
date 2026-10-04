@@ -1,3 +1,3 @@
 tests/nimony/errmsgs/tunlabeledblockbreak.nim(3, 5) Error: `break` without a label only leaves a loop; to leave a `block`, name it and use `break <name>`
-tests/nimony/errmsgs/tunlabeledblockbreak.nim(14, 1) Error: illegal access to 'counter': routines cannot access locals of top-level statements; move the code into a proc
-tests/nimony/errmsgs/tunlabeledblockbreak.nim(16, 11) Error: illegal access to 'counter': routines cannot access locals of top-level statements; move the code into a proc
+tests/nimony/errmsgs/tunlabeledblockbreak.nim(14, 1) Error: 'counter' is a local of a top-level statement; a routine cannot access it, move the code into a proc
+tests/nimony/errmsgs/tunlabeledblockbreak.nim(16, 11) Error: 'counter' is a local of a top-level statement; a routine cannot access it, move the code into a proc

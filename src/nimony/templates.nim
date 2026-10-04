@@ -484,7 +484,7 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
     # oldHead is now positioned at the body.
 
     let oldRoutine = c.routine
-    c.routine = createSemRoutine(TemplateY, c.routine, c.currentScope)
+    c.routine = createSemRoutine(TemplateY, c.routine)
     # Mirror `semProcImpl`'s template setup so the lazy body sem matches
     # what phase 3 would do.
     inc c.routine.inLoop
