@@ -12,3 +12,5 @@ block:
   var counter = 0
   let p = proc () {.closure.} =
     inc counter
+  iterator counted(): int =
+    yield counter

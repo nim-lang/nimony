@@ -1985,19 +1985,16 @@ proc isParameterlessRoutine(s: SymId): bool =
 proc isToplevelLocalCapture(c: var SemContext; s: SymId): bool =
   ## Is the local `s` declared in a top-level statement (a `block` at module
   ## level, say) and used inside a routine? Such a local lives in the module's
-  ## init code, which has no closure environment, so it cannot be captured
-  ## (#2555). Templates and inline iterators are expanded where they are used
-  ## and may refer to it.
+  ## init code, so no routine may access it, not even an inline iterator
+  ## (#2555). A template is expanded where it is used and may refer to it.
   result = false
   var r = c.routine
   var outermost: SemRoutine = nil
-  var captures = false
   while r != nil and r.kind != NoSym:
     if r.kind == TemplateY: return false
-    if r.kind != IteratorY or ClosureP in r.pragmas: captures = true
     outermost = r
     r = r.parent
-  if captures:
+  if outermost != nil:
     var scope = outermost.outerScope
     while scope != nil and scope.kind == NormalScope:
       for syms in scope.tab.values:
@@ -2073,8 +2070,8 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
     endRead use
     dest.shrink start
     let local = cursorAt(orig, 0)
-    c.buildErr dest, info, "illegal capture of '" & pool.strings[symToIdent(s.name)] &
-      "': locals of top-level statements cannot be captured; move the code into a proc", local
+    c.buildErr dest, info, "illegal access to '" & pool.strings[symToIdent(s.name)] &
+      "': routines cannot access locals of top-level statements; move the code into a proc", local
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
     let typeStart = dest.len
