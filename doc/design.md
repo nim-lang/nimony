@@ -38,8 +38,16 @@ The phases of compilation are:
 10. Map builtins like `new` and `+` to "compiler procs" (hexer).
 11. Translate exception handling (hexer).
 12. Generate Leng code (hexer).
+13. Whole-program dead code elimination (hexer).
+14. Optional: optimize the Leng code, including inlining across modules (shoggoth). Runs only for `--opt:speed` and `--opt:size`.
+15. Generate C or LLVM code (lengc), or native code (arkham + nifasm).
 
-These phases have been collected into different tools with dedicated names.
+These phases have been collected into different tools with dedicated names:
+`nifler` parses, `nimsem` does the semantic checking and `nimony` is the
+driver that schedules everything (via `nifmake`). Hexer and the optimizer
+ship together as one binary, `shoggoth`: `shoggoth c` runs the hexer
+lowering of one module, `shoggoth dl`/`shoggoth de` the dead code
+elimination and `shoggoth opt` the optimizer.
 
 
 ## NIF
@@ -57,7 +65,7 @@ While NIF is almost a classical Lisp, it innovates in these aspects:
 
 NIF is not only the format between compiler phases; it is the foundation for the compile-time evaluation engine and for compiler plugins. Both use the same idea: **compile code to machine code and run it with NIF as input/output**.
 
-- **Compile-time evaluation:** When the compiler needs to run code at compile time (e.g. constant folding, template expansion that runs code), it does not use a separate interpreter. It turns the snippet into NIF (e.g. a `.p.nif`), runs it through the full pipeline (nimsem, hexer, nifc, cc, link) to produce a native executable, runs that executable, and consumes the result. So CT eval is “real” compilation and execution; the only special part is that the “program” is a small snippet and its I/O can be NIF or the normal run’s stdout. The same pipeline and the same NIF representation are reused.
+- **Compile-time evaluation:** When the compiler needs to run code at compile time (e.g. constant folding, template expansion that runs code), it does not use a separate interpreter. It turns the snippet into NIF (e.g. a `.p.nif`), runs it through the full pipeline (nimsem, shoggoth, lengc, cc, link) to produce a native executable, runs that executable, and consumes the result. So CT eval is “real” compilation and execution; the only special part is that the “program” is a small snippet and its I/O can be NIF or the normal run’s stdout. The same pipeline and the same NIF representation are reused.
 
 - **Compiler plugins:** Plugins work the same way. A plugin is Nim source marked with `{.plugin.}`. The compiler compiles that source to a standalone executable (with `-d:nimonyPlugin`). When the plugin is invoked, the compiler writes the input to a `.in.nif` file, runs the plugin executable (with paths to the input and optional extra NIF files), and the plugin writes its result to a `.out.nif` file. The compiler then parses that NIF back into the main compilation. So plugins are first-class: they are compiled to native code and communicate purely via NIF. No separate plugin API or interpreter is required.
 

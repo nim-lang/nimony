@@ -12,7 +12,7 @@ needs a *second* implementation of that walk over the other world. That is
 `src/hexer/pointertypes.nim` (268 lines over Nimony declarations) plus
 `src/lengc/pointerbearing.nim` (281 lines over Leng types) plus two resolver
 callbacks threaded through every entry point of the latter — and it grew that way
-because `funcsummary` runs inside `hexer c`, which is the one pipeline stage that
+because `funcsummary` runs inside `shoggoth c` (hexer), which is the one pipeline stage that
 sees only its own module's Leng output. Borrow checking answers a question of the
 same shape with no type information at all, in about eighty lines.
 
