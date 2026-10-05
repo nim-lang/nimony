@@ -1329,11 +1329,12 @@ proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnv
     if doAddEnvParam:
       addClosureEnvParam dest, n.endInfo, envTyp
 
-proc genEnvLocal(c: var Context; dest: var TokenBuf; owner: SymId; needsHeap: bool) =
+proc genEnvLocal(c: var Context; dest: var TokenBuf; owner: SymId; needsHeap: bool;
+                 name = pool.symId(EnvLocalName)) =
   ## Declares the environment local of the lifting root `owner` and makes it
   ## the current environment.
   let envTyp = c.envTypeForProc(owner)
-  c.currentProc.env = CurrentEnv(s: pool.symId(EnvLocalName), mode: EnvIsLocal, typ: envTyp, needsHeap: needsHeap)
+  c.currentProc.env = CurrentEnv(s: name, mode: EnvIsLocal, typ: envTyp, needsHeap: needsHeap)
   dest.copyIntoKind VarS, NoLineInfo:
     dest.addSymDef c.currentProc.env.s, NoLineInfo
     dest.addDotToken() # no export marker
@@ -1438,9 +1439,14 @@ proc treToplevelStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.procStack.add root
   c.liftDepth = 1
   if c.createsEnv.contains(root):
-    # the scope keeps the environment local apart from other statements' ones
+    # all module level statements end up in the same init proc, so every
+    # statement's environment local needs a name of its own: backends that
+    # allocate locals per proc do not keep same-named locals of sibling
+    # scopes apart
+    let envLocal = pool.symId("`el." & $c.counter)
+    inc c.counter
     dest.copyIntoKind ScopeS, n.info:
-      genEnvLocal c, dest, root, c.escapes.contains(root)
+      genEnvLocal c, dest, root, c.escapes.contains(root), envLocal
       treStmt c, dest, n
   else:
     treStmt c, dest, n
