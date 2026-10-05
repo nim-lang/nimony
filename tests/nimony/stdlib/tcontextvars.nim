@@ -202,3 +202,5 @@ proc main =
   startedByComplete()
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely
