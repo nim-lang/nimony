@@ -108,6 +108,12 @@ type
       ## another routine of it — in call position or as a value. Feeds
       ## `propagateEnvNeed`.
     currentProc: ProcContext
+    liftDepth: int
+      ## the `procStack` depth of the routines that are not lifted: 1 inside
+      ## a module level statement that is a lifting root, 0 otherwise
+    toplevelStmts: int
+      ## counts the module level statements that are lifting roots, see
+      ## `toplevelRoot`
     procEnvs: Table[SymId, ProcContext]
       ## finished roots, keyed by root sym: pass 1 deposits each root's
       ## ProcContext here; pass 2 re-installs it while walking that root;
@@ -384,6 +390,27 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.hasMore: takeTree dest, n
       dest.addParRi(n.endInfo)
 
+const
+  ToplevelRootKinds = {BlockS, IfS, WhenS, WhileS, CaseS, TryS, ScopeS, CoroforS}
+    ## module level statements with locals of their own
+
+proc toplevelRoot(c: var Context): SymId =
+  ## A routine inside a module level statement such as a `block` may capture
+  ## the statement's locals (#2555). Such a statement owns the environment
+  ## like a proc owns the environment of its nested routines: it is a lifting
+  ## root of its own, named after its position so that both passes agree.
+  result = pool.symId("`tlstmt." & $c.toplevelStmts & "." & c.thisModuleSuffix)
+  inc c.toplevelStmts
+
+proc trToplevelStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let root = toplevelRoot(c)
+  c.currentProc = ProcContext()
+  c.procStack.add root
+  tr(c, dest, n)
+  discard c.procStack.pop()
+  propagateEnvNeed c
+  c.procEnvs[root] = move c.currentProc
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
@@ -443,6 +470,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeTree dest, n
   of TagLit:
+    if c.procStack.len == 0 and n.stmtKind in ToplevelRootKinds:
+      trToplevelStmt c, dest, n
+      return
     case n.stmtKind
     of LocalDecls:
       trLocal c, dest, n
@@ -1299,42 +1329,44 @@ proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnv
     if doAddEnvParam:
       addClosureEnvParam dest, n.endInfo, envTyp
 
+proc genEnvLocal(c: var Context; dest: var TokenBuf; owner: SymId; needsHeap: bool;
+                 name = pool.symId(EnvLocalName)) =
+  ## Declares the environment local of the lifting root `owner` and makes it
+  ## the current environment.
+  let envTyp = c.envTypeForProc(owner)
+  c.currentProc.env = CurrentEnv(s: name, mode: EnvIsLocal, typ: envTyp, needsHeap: needsHeap)
+  dest.copyIntoKind VarS, NoLineInfo:
+    dest.addSymDef c.currentProc.env.s, NoLineInfo
+    dest.addDotToken() # no export marker
+    dest.addDotToken() # no pragmas
+    if needsHeap:
+      dest.copyIntoKind RefT, NoLineInfo:
+        dest.addSymUse c.currentProc.env.typ, NoLineInfo
+      dest.copyIntoKind NewobjX, NoLineInfo:
+        dest.copyIntoKind RefT, NoLineInfo:
+          dest.addSymUse c.currentProc.env.typ, NoLineInfo
+    else:
+      dest.addSymUse c.currentProc.env.typ, NoLineInfo
+      dest.addDotToken() # no default value
+  if needsHeap:
+    # Note: If the environment is on the stack, a single `wasMoved`
+    # hook will be generated for it so we don't need to do anything here.
+    # Otherwise, we need to init the environment via the `=wasMoved` hooks:
+    for _, field in c.currentProc.localToEnv:
+      if field.objType == c.currentProc.env.typ:
+        dest.copyIntoKind WasmovedX, NoLineInfo:
+          dest.copyIntoKind HaddrX, NoLineInfo:
+            dest.copyIntoKind DotX, NoLineInfo:
+              dest.copyIntoKind DerefX, NoLineInfo:
+                dest.addSymUse c.currentProc.env.s, NoLineInfo
+              dest.addSymUse field.field, NoLineInfo
+
 proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: SymId; needsHeap: bool) =
   if n.stmtKind == StmtsS:
     copyInto dest, n:
       let oldEnv = c.currentProc.env
       if c.createsEnv.contains(sym):
-        let envTyp = c.envTypeForProc(sym)
-        c.currentProc.env = CurrentEnv(s: pool.symId(EnvLocalName), mode: EnvIsLocal, typ: envTyp, needsHeap: needsHeap)
-        dest.copyIntoKind VarS, NoLineInfo:
-          dest.addSymDef c.currentProc.env.s, NoLineInfo
-          dest.addDotToken() # no export marker
-          dest.addDotToken() # no pragmas
-          if needsHeap:
-            dest.copyIntoKind RefT, NoLineInfo:
-              dest.addSymUse c.currentProc.env.typ, NoLineInfo
-            dest.copyIntoKind NewobjX, NoLineInfo:
-              dest.copyIntoKind RefT, NoLineInfo:
-                dest.addSymUse c.currentProc.env.typ, NoLineInfo
-          else:
-            dest.addSymUse c.currentProc.env.typ, NoLineInfo
-            dest.addDotToken() # no default value
-        if needsHeap:
-          # Note: If the environment is on the stack, a single `wasMoved`
-          # hook will be generated for it so we don't need to do anything here.
-          # Otherwise, we need to init the environment via the `=wasMoved` hooks:
-          for _, field in c.currentProc.localToEnv:
-            if field.objType == c.currentProc.env.typ:
-              dest.copyIntoKind WasmovedX, NoLineInfo:
-                dest.copyIntoKind HaddrX, NoLineInfo:
-                  dest.copyIntoKind DotX, NoLineInfo:
-                    if needsHeap:
-                      dest.copyIntoKind DerefX, NoLineInfo:
-                        dest.addSymUse c.currentProc.env.s, NoLineInfo
-                    else:
-                      dest.addSymUse c.currentProc.env.s, NoLineInfo
-                    dest.addSymUse field.field, NoLineInfo
-
+        genEnvLocal c, dest, sym, needsHeap
       elif c.closureProcs.contains(sym):
         # The `ep.0 param carries the OUTERMOST proc's environment —
         # captures always target `procStack[0]`'s env (one shared env,
@@ -1389,13 +1421,38 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor): SymId =
   c.typeCache.closeScope()
 
 proc treProcLift(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if c.procStack.len == 0:
+  # a routine directly inside a module level statement stays where it is, in
+  # the scope of the statement's constants and types
+  let outermost = c.procStack.len == c.liftDepth
+  if outermost:
     swap c.dest, dest
   var lift = createTokenBuf(16)
   discard treProc(c, lift, n)
   c.dest.add lift
-  if c.procStack.len == 0:
+  if outermost:
     swap c.dest, dest
+
+proc treToplevelStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Pass 2 of `trToplevelStmt`: the statement gets the environment local.
+  let root = toplevelRoot(c)
+  c.currentProc = c.procEnvs.getOrDefault(root)
+  c.procStack.add root
+  c.liftDepth = 1
+  if c.createsEnv.contains(root):
+    # all module level statements end up in the same init proc, so every
+    # statement's environment local needs a name of its own: backends that
+    # allocate locals per proc do not keep same-named locals of sibling
+    # scopes apart
+    let envLocal = pool.symId("`el." & $c.counter)
+    inc c.counter
+    dest.copyIntoKind ScopeS, n.info:
+      genEnvLocal c, dest, root, c.escapes.contains(root), envLocal
+      treStmt c, dest, n
+  else:
+    treStmt c, dest, n
+  c.liftDepth = 0
+  c.currentProc = ProcContext()
+  discard c.procStack.pop()
 
 proc isStaticCall(c: var Context;s: SymId): bool =
   let res = tryLoadSym(s)
@@ -1833,6 +1890,9 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
      IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of TagLit:
+    if c.procStack.len == 0 and n.stmtKind in ToplevelRootKinds:
+      treToplevelStmt c, dest, n
+      return
     case n.stmtKind
     of LocalDecls:
       treLocal c, dest, n
@@ -2029,6 +2089,7 @@ proc elimLambdas*(pass: var Pass) =
   # closure-typed nil — and every detection scheme tried here missed one of
   # them. On a closure-free module the pass is a near-identity walk.
   if true:
+    c.toplevelStmts = 0
     c.typeCache.openScope()
     let cap = pass.dest.len
     var oldDest = move pass.dest
