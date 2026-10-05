@@ -27,27 +27,27 @@ Arguably a token stream enforces a principled approach to compiler development w
 The phases of compilation are:
 
 1. Pure parsing (nifler): Turn Nim code into a dialect of NIF.
-2. Semantic checking phase 1 (nimony): symbol lookups, type checking, template&macro expansions.
-3. Semantic checking phase 2 (nimony): Effect inference. **Not implemented yet.**
+2. Semantic checking phase 1 (nimsem): symbol lookups, type checking, template&macro expansions.
+3. Semantic checking phase 2 (nimsem): Effect inference. **Not implemented yet.**
 4. Inject derefs (and the corresponding mutation checking) (nimony).
-5. Iterator inlining (hexer).
-6. Lambda lifting (hexer).
-7. Inject dups (hexer).
-8. Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct) (hexer).
-9. Inject destructors (hexer).
-10. Map builtins like `new` and `+` to "compiler procs" (hexer).
-11. Translate exception handling (hexer).
-12. Generate Leng code (hexer).
-13. Whole-program dead code elimination (hexer).
+5. Iterator inlining (shoggoth).
+6. Lambda lifting (shoggoth).
+7. Inject dups (shoggoth).
+8. Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct) (shoggoth).
+9. Inject destructors (shoggoth).
+10. Map builtins like `new` and `+` to "compiler procs" (shoggoth).
+11. Translate exception handling (shoggoth).
+12. Generate Leng code (shoggoth).
+13. Whole-program dead code elimination (shoggoth).
 14. Optional: optimize the Leng code, including inlining across modules (shoggoth). Runs only for `--opt:speed` and `--opt:size`.
 15. Generate C or LLVM code (lengc), or native code (arkham + nifasm).
 
 These phases have been collected into different tools with dedicated names:
 `nifler` parses, `nimsem` does the semantic checking and `nimony` is the
-driver that schedules everything (via `nifmake`). Hexer and the optimizer
-ship together as one binary, `shoggoth`: `shoggoth c` runs the hexer
-lowering of one module, `shoggoth dl`/`shoggoth de` the dead code
-elimination and `shoggoth opt` the optimizer.
+driver that schedules everything (via `nifmake`). `shoggoth` does the lowering
+of one module (`shoggoth c`, its passes live in `src/hexer/`), the dead code
+elimination (`shoggoth dl`/`shoggoth de`) and the optional optimization
+(`shoggoth opt`, its passes live in `src/lengc/shoggoth/`).
 
 
 ## NIF

@@ -5,13 +5,13 @@ pipeline is split into tools and phases:
 
 - Nifler: parses Nim to NIF.
 - Nimony: semantic checking and front-end lowering.
-- Hexer: lowering passes and Leng generation. Ships in the `shoggoth` binary
-  (`src/lengc/shoggoth/shoggoth.nim`) together with the optional NIFC
-  optimizer (`shoggoth opt`, run only for `--opt:speed`/`--opt:size`).
+- Shoggoth: lowering passes, Leng generation and dead code elimination
+  (passes in `src/hexer/`), plus the optional Leng optimizer (`shoggoth opt`,
+  passes in `src/lengc/shoggoth/`, run only for `--opt:speed`/`--opt:size`).
 - Lengc: C/C++ backend based on NIF.
 
 When debugging compiler behavior, assume `nifler`, `nifmake`, and `lengc` are
-stable. Most problems tend to be in `Nimony` or `Hexer`.
+stable. Most problems tend to be in `Nimony` or `Shoggoth`.
 
 ## Quick Debug Workflow
 
@@ -27,7 +27,7 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 ## Where to Look
 
 - `src/nimony/` for semantic analysis and front-end phases.
-- `src/hexer/` for lowering passes and Leng generation steps.
+- `src/hexer/` for shoggoth's lowering passes and Leng generation steps.
 - `src/nifler/` and `src/lengc/` only when evidence points there.
 - `src/hastur/` for test/build tooling and command behavior (`hastur.nim` is the
   CLI; the logic lives in its sibling modules).
