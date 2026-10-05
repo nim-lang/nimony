@@ -1243,6 +1243,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         else:
           newArgs.add arg
         inc ai
+      # surplus arguments must still reach `sigmatch` so that it reports
+      # "too many arguments" (#2617)
+      while ai < cs.args.len:
+        newArgs.add cs.args[ai]
+        inc ai
       if anyConverters:
         sigmatch(newMatch, m[mi].fn, newArgs, genericArgs)
         m.add newMatch
