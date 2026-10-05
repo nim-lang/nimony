@@ -925,7 +925,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
   # `dceEmit` rewrites one .x.nif into .c.nif using that module's own .live.nif.
   # Independent across modules, so nifmake can run them in parallel.
   # Output path is derived from `--outdir` + input modname (mirrors how
-  # `hexer c` derives outputs), so no explicit output slot here.
+  # `shoggoth c` derives outputs), so no explicit output slot here.
   b.withTree "cmd":
     b.addSymbolDef "dceEmit"
     b.addStrLit hexer
@@ -1132,7 +1132,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
   b.withTree "stmts":
     # Command definitions
     let lengc = findTool("lengc")
-    let hexer = findTool("hexer")
+    # hexer and the optimizer are one binary: `shoggoth`.
+    let shoggoth = findTool("shoggoth")
     # The experimental Shoggoth optimizer runs only when optimization is
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
     # are byte-for-byte unaffected.
@@ -1175,10 +1176,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # compile `.m`/`.c`, pull in libobjc, resolve `-framework`, and supply the crt.
     var sysLinker = c.config.linker
     if sysLinker.len == 0: sysLinker = "clang"
-    var shoggoth = ""
-    if useOptimizer:
-      shoggoth = findTool("shoggoth")
-
     if wholeProgram:
       b.withTree "cmd":
         b.addSymbolDef wholeProgTool
@@ -1234,12 +1231,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
               b.addStrLit arg
         b.addKeyw "input"
 
-    # Command for the tree optimizer: `shoggoth c <input.c.nif> <output.oc.nif>`.
+    # Command for the tree optimizer: `shoggoth opt <input.c.nif> <output.oc.nif>`.
     if useOptimizer:
       b.withTree "cmd":
         b.addSymbolDef "optimize"
         b.addStrLit shoggoth
-        b.addStrLit "c"
+        b.addStrLit "opt"
         let cpuName = platform.CPU[c.config.targetCPU].name
         if native and cpuName in ["arm64", "amd64"]:
           # the 128-bit loop vectorizer: emits (instr ...) rows only the native
@@ -1256,7 +1253,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addKeyw "output"
 
     # Command for hexer
-    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian,
+    defineHexerCmds(b, shoggoth, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian,
                     c.config.targetOS, c.config.checkFlags, c.config.backend == backendNative,
                     c.config.cycles, crt = linuxLibc)
 
@@ -2086,7 +2083,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addKeyw "args"
       b.addKeyw "input"
 
-    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian,
+    defineHexerCmds(b, findTool("shoggoth"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian,
                     config.targetOS, config.checkFlags, config.backend == backendNative,
                     config.cycles)
 

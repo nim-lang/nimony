@@ -54,7 +54,6 @@ proc runFixtureProgram(cmd: string; secs: int): tuple[output: string, exitCode: 
 proc wasmdiffCmd*() =
   if not skipBuild:
     buildNimony()
-    buildHexer()
     buildShoggoth()
     buildArkham()
     buildNifasm()

@@ -5,7 +5,9 @@ pipeline is split into tools and phases:
 
 - Nifler: parses Nim to NIF.
 - Nimony: semantic checking and front-end lowering.
-- Hexer: lowering passes and Leng generation.
+- Hexer: lowering passes and Leng generation. Ships in the `shoggoth` binary
+  (`src/lengc/shoggoth/shoggoth.nim`) together with the optional NIFC
+  optimizer (`shoggoth opt`, run only for `--opt:speed`/`--opt:size`).
 - Lengc: C/C++ backend based on NIF.
 
 When debugging compiler behavior, assume `nifler`, `nifmake`, and `lengc` are
@@ -13,7 +15,7 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 
 ## Quick Debug Workflow
 
-1. Build the Nimony toolchain (Nimony + Hexer):
+1. Build the Nimony toolchain (Nimony + Shoggoth):
    - `nim c -r src/hastur/hastur build nimony`
 2. Produce `nimcache/` artifacts:
    - `bin/nimony c mybug.nim`
