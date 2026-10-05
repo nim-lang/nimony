@@ -13,6 +13,8 @@ when defined(posix):
   import std/posix/posix
   when defined(linux):
     from std/posix/epoll import EpollData, EpollEvent
+  when defined(osx) or defined(freebsd):
+    from std/posix/kqueue import KEvent
 
   var src = ""
 
@@ -53,6 +55,8 @@ when defined(posix):
     src.add "#include <netinet/in.h>\n"
     when defined(linux):
       src.add "#include <sys/epoll.h>\n"
+    when defined(osx) or defined(freebsd):
+      src.add "#include <sys/event.h>\n"
 
     # ---- errno ----
     ck("E2BIG", int64(E2BIG)); ck("EACCES", int64(EACCES))
@@ -75,12 +79,11 @@ when defined(posix):
     ck("ENAMETOOLONG", int64(ENAMETOOLONG)); ck("ENETDOWN", int64(ENETDOWN))
     ck("ENETRESET", int64(ENETRESET)); ck("ENETUNREACH", int64(ENETUNREACH))
     ck("ENFILE", int64(ENFILE)); ck("ENOBUFS", int64(ENOBUFS))
-    ck("ENODATA", int64(ENODATA)); ck("ENODEV", int64(ENODEV))
+    ck("ENODEV", int64(ENODEV))
     ck("ENOENT", int64(ENOENT)); ck("ENOEXEC", int64(ENOEXEC))
     ck("ENOLCK", int64(ENOLCK)); ck("ENOMEM", int64(ENOMEM))
     ck("ENOMSG", int64(ENOMSG)); ck("ENOPROTOOPT", int64(ENOPROTOOPT))
-    ck("ENOSPC", int64(ENOSPC)); ck("ENOSR", int64(ENOSR))
-    ck("ENOSTR", int64(ENOSTR)); ck("ENOSYS", int64(ENOSYS))
+    ck("ENOSPC", int64(ENOSPC)); ck("ENOSYS", int64(ENOSYS))
     ck("ENOTCONN", int64(ENOTCONN)); ck("ENOTDIR", int64(ENOTDIR))
     ck("ENOTEMPTY", int64(ENOTEMPTY)); ck("ENOTSOCK", int64(ENOTSOCK))
     ck("ENOTSUP", int64(ENOTSUP)); ck("ENOTTY", int64(ENOTTY))
@@ -90,9 +93,14 @@ when defined(posix):
     ck("EPROTONOSUPPORT", int64(EPROTONOSUPPORT)); ck("EPROTOTYPE", int64(EPROTOTYPE))
     ck("ERANGE", int64(ERANGE)); ck("EROFS", int64(EROFS))
     ck("ESPIPE", int64(ESPIPE)); ck("ESRCH", int64(ESRCH))
-    ck("ETIME", int64(ETIME)); ck("ETIMEDOUT", int64(ETIMEDOUT))
+    ck("ETIMEDOUT", int64(ETIMEDOUT))
     ck("ETXTBSY", int64(ETXTBSY)); ck("EWOULDBLOCK", int64(EWOULDBLOCK))
     ck("EXDEV", int64(EXDEV))
+
+    when not defined(freebsd):
+      # STREAMS/xattr errnos FreeBSD does not have.
+      ck("ENODATA", int64(ENODATA)); ck("ENOSR", int64(ENOSR))
+      ck("ENOSTR", int64(ENOSTR)); ck("ETIME", int64(ETIME))
 
     # ---- fcntl / open flags ----
     ck("O_RDONLY", int64(O_RDONLY)); ck("O_WRONLY", int64(O_WRONLY))
@@ -201,12 +209,20 @@ when defined(posix):
     ck("offsetof(struct msghdr, msg_controllen)", off(mh, addr mh.msg_controllen))
     ck("offsetof(struct msghdr, msg_flags)", off(mh, addr mh.msg_flags))
 
-    # ---- macOS struct dirent (our Dirent overlays libSystem's records) ----
-    when defined(osx):
+    # ---- macOS/FreeBSD struct dirent (our Dirent overlays libc's records) ----
+    when defined(osx) or defined(freebsd):
       let de = cast[ptr Dirent](addr scratch[0])
       ck("offsetof(struct dirent, d_type)", off(de, addr de.d_type))
       ck("offsetof(struct dirent, d_name)", off(de, addr de.d_name))
       ck("sizeof(((struct dirent*)0)->d_name)", int64(sizeof(de.d_name)))
+
+    # ---- struct kevent (64 bytes on FreeBSD 12+, 32 on Darwin) ----
+    when defined(osx) or defined(freebsd):
+      let ke = cast[ptr KEvent](addr scratch[0])
+      ck("sizeof(struct kevent)", int64(sizeof(KEvent)))
+      ck("offsetof(struct kevent, filter)", off(ke, addr ke.filter))
+      ck("offsetof(struct kevent, data)", off(ke, addr ke.data))
+      ck("offsetof(struct kevent, udata)", off(ke, addr ke.udata))
 
     # ---- Linux struct epoll_event (packed on amd64 only) ----
     when defined(linux):
@@ -249,3 +265,5 @@ when defined(posix):
   main()
 
 echo "ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

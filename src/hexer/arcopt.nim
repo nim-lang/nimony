@@ -38,7 +38,7 @@ type
   BasicBlock = object
     wasMovedLocs: seq[WasMovedLoc]
     kind: BasicBlockKind
-    hasReturn, hasBreak: bool
+    hasReturn: bool
     label: SymId
     parent: ptr BasicBlock
     symToDel: seq[Cursor]
@@ -103,26 +103,10 @@ proc nestedBlock(parent: var BasicBlock; kind = BbOther): BasicBlock =
     wasMovedLocs: @[],
     kind: kind,
     hasReturn: false,
-    hasBreak: false,
     label: NoLabel,
     parent: addr(parent),
     symToDel: @[]
   )
-
-proc breakStmt(b: var BasicBlock; n: Cursor) =
-  var it = addr(b)
-  while it != nil:
-    it.wasMovedLocs.setLen 0
-    it.hasBreak = true
-
-    if n.isSymbol:
-      if it.label == n.symId:
-        break
-    else:
-      if it.kind in {BbWhileStmt, BbBlockStmt}:
-        break
-
-    it = it.parent
 
 proc returnStmt(b: var BasicBlock) =
   b.hasReturn = true
@@ -278,7 +262,7 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
         skip n
         return
       of attachedDestroy:
-        if c.inFinally > 0 and (b.hasReturn or b.hasBreak):
+        if c.inFinally > 0 and b.hasReturn:
           discard
         else:
           c.wasMovedDestroyPair b, n, callArg
@@ -374,9 +358,7 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
           analyse(c, blockBody, n)
           mergeBasicBlockInfo(b, blockBody)
     of BreakS:
-      let label = n.childCursor
-      breakStmt(b, label)
-      skip n
+      raiseAssert "BUG: `break` in Leng output: lengcgen never emits one"
     of RetS, RaiseS:
       analyseChildren(c, b, n)
       returnStmt(b)
@@ -427,7 +409,6 @@ proc optimizeArc*(pass: var Pass) =
     wasMovedLocs: @[],
     kind: BbOther,
     hasReturn: false,
-    hasBreak: false,
     label: NoLabel,
     parent: nil,
     symToDel: @[]

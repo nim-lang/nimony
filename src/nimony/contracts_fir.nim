@@ -198,6 +198,10 @@ type
     ownOlds: Table[string, VarId]
       ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
+    assumeSync: bool                   # inside `{.cast(assumeSync).}:`; see
+                                       # "Shared globals" below
+    syncArgs: HashSet[int]             # positions of global symbols passed to a
+                                       # `.sync` routine's `var`/`ptr` parameter
     activeBorrows: seq[BorrowInfo]
     verbose: bool                      # --verbose: dump final IR on init/contract
                                        # failures for easier debugging
@@ -3311,9 +3315,72 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
         c.dischargedIndexes.incl nodePos
     while pc.hasMore: skip pc
 
+# --- Shared globals ---
+#
+# A mutable global (a `gvar`; a `threadvar` is per-thread and a global `let` is
+# immutable) is shared between threads, so a routine may touch it only in ways
+# that cannot race: by passing it, or a field or element of it, to a `var`/`ptr`
+# parameter of a `.sync` routine. That is what the atomic operations and the
+# lock operations are; a `Lock` is safe to share precisely because it exports
+# nothing but such operations. `.sync` itself is trusted, not checked: a lock
+# implementation touches its own fields non-atomically under the very lock it
+# implements. Module-level statements are exempt as module initialization is
+# single threaded; `{.cast(assumeSync).}:` and `{.feature: "assumeSync".}`
+# switch the check off for a block or a whole module.
+
+proc isTrustedGlobal(c: var FirContext; s: SymId): bool =
+  ## A global of a `{.feature: "assumeSync".}` module carries `(assumeSync)`.
+  let local = getLocalInfo(c.typeCache, s)
+  if local.kind != NoSym:
+    # declared in this module: its features are `c.features`
+    result = false
+  else:
+    let res = tryLoadSym(s)
+    result = res.status == LacksNothing and
+      hasPragma(asLocal(res.decl).pragmas, AssumeSyncP)
+
+proc checkSharedAccess(c: var FirContext; pc: Cursor) =
+  if c.nestedProcs > 0 and not c.assumeSync and
+      AssumeSyncFeature notin c.features and
+      fetchSymKind(c.typeCache, pc.symId) == GvarY and
+      cursorToPosition(c.root, pc) notin c.syncArgs and
+      not isTrustedGlobal(c, pc.symId):
+    buildErr c, pc.info, "unsynchronized access to global variable '" &
+      asNimCode(pc) & "'; pass it to a `.sync` routine or use " &
+      "`{.cast(assumeSync).}`"
+
+proc sharedRootPos(c: var FirContext; arg: Cursor): int =
+  ## The position of the global symbol `arg` designates as a location (`g`,
+  ## `g.f`, `g[i]`, `addr g`), or -1. A deref leaves the global: `p[]` READS
+  ## the pointer `p` before it reaches the shared storage.
+  result = -1
+  var n = arg
+  while n.kind == TagLit and n.exprKind in {HaddrX, AddrX, DotX, ArratX, TupatX}:
+    inc n
+  if n.kind == Symbol:
+    result = cursorToPosition(c.root, n)
+
+proc hasCastAssumeSync(pragmas: Cursor): bool =
+  ## Does the `(pragmas …)` of a pragma block hold `cast(assumeSync)`?
+  result = false
+  if not pragmas.isTagLit: return
+  var n = pragmas
+  n = sub(n)
+  while n.hasMore:
+    if n.pragmaKind == CastP:
+      var inner = n
+      inner = sub(inner) # past `cast`
+      if inner.substructureKind == PragmasU:
+        inner = sub(inner)
+        while inner.hasMore:
+          if inner.pragmaKind == AssumeSyncP: return true
+          skip inner
+    skip n
+
 proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
   case pc.kind
   of Symbol:
+    checkSharedAccess c, pc
     let symId = pc.symId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {VarY, LetY, CursorY, PatternvarY, ResultY}:
@@ -3439,6 +3506,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip fnPragmas # params
   skip fnPragmas # return type
   let effect = calleeEffect(tt, fnPragmas)
+  let isSync = hasPragma(fnPragmas, SyncP)
   traverseExpr c, n, call # the `fn` itself
   let paramsStart = fnType
   fnType = sub(fnType)
@@ -3506,7 +3574,11 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       else:
         mutatesUnknown = true
     checkNilMatch c, n, param.typ
+    let syncRoot = if isSync and pk in {MutT, OutT, PtrT, PointerT}: sharedRootPos(c, n)
+                   else: -1
+    if syncRoot >= 0: c.syncArgs.incl syncRoot
     traverseExpr c, n, call
+    if syncRoot >= 0: c.syncArgs.excl syncRoot
   if needsBorrowCheck and not c.features.contains(LenientAliasingFeature):
     borrowCheckForCall c, args
   while fnType.hasMore: skip fnType
@@ -3645,7 +3717,7 @@ proc storeTargetType(c: var FirContext, n: Cursor): Cursor {.inline.} =
     inc target
   result = getType(c.typeCache, target)
 
-const HookPrefixes = ["=destroy", "=wasMoved", "=trace", "=copy", "=sink", "=dup"]
+const HookPrefixes = ["=destroy", "=wasMoved", "=trace", "=copy", "=sink", "=dup", "=cellop"]
 
 proc isHookProc(symId: SymId): bool =
   ## A type-bound hook, hand-written (`=wasMoved.0.m`) or synthesized by the
@@ -3738,6 +3810,7 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
       c.activeBorrows.add b
   if destSymId != NoSymId:
     let symId = destSymId
+    if n.kind == Symbol: checkSharedAccess c, n
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY} and symId notin c.forBinders:
       # A `for` binder is marked initialized at the `for`, so its binding
@@ -4815,6 +4888,15 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   c.ownOlds = oldOwnOlds
   c.inHook = oldInHook
 
+proc traversePragmaBlock(c: var FirContext; n: var Cursor; call: var CallContext) =
+  let oldAssumeSync = c.assumeSync
+  n.into:
+    if hasCastAssumeSync(n): c.assumeSync = true
+    skip n # pragmas
+    while n.hasMore:
+      traverseStmt c, n, call
+  c.assumeSync = oldAssumeSync
+
 proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `call` holds what the calls of the preceding statement established; an
   ## `(unknown …)` reads it and leaves it for the next one, every other
@@ -4943,18 +5025,12 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     of EmitS, InclS, ExclS:
       skip n
     of PragmaxS:
-      n.into:
-        skip n # pragmas
-        while n.hasMore:
-          traverseStmt c, n, call
+      traversePragmaBlock c, n, call
     of NoStmt:
       if n.exprKind in CallKinds:
         analyseCall c, n, call
       elif n.exprKind == PragmaxX:
-        n.into:
-          skip n # pragmas
-          while n.hasMore:
-            traverseStmt c, n, call
+        traversePragmaBlock c, n, call
       elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
         n.into:
           traverseExpr c, n, call

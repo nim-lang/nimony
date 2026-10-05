@@ -328,6 +328,8 @@ proc isEnumType*(n: Cursor): bool =
 
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
+proc isConceptInvocation*(f: Cursor): bool
+proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool
 proc singleArg(m: var Match; f: var Cursor; arg: CallArg)
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor)
@@ -425,6 +427,13 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     else:
       result = isOrdinalType(a)
     skip f
+  of InvokeT:
+    if isConceptInvocation(f):
+      result = matchConceptInvocation(m, f, a)
+      skip f
+    else:
+      var a = a
+      result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
   else:
     # match as a regular type:
     var a = a
@@ -908,6 +917,12 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
   if isConceptType(a):
     return conceptRequirementInBody(routine, actualBody)
   var bindings = m.inferred
+  for k, v in m.inferred:
+    # a container concept's parameter bound to a caller's typevar
+    # (`Findable[T]`, see `matchConceptInvocation`) that an earlier
+    # requirement has inferred by now
+    if v.isSymbol and v.symId != k and m.inferred.hasKey(v.symId):
+      bindings[k] = m.inferred.getOrDefault(v.symId)
   for selfSym in conceptSelfSyms(body, routine):
     bindings[selfSym] = a
   if not conceptRoutineUsesSelf(body, routine):
@@ -978,11 +993,129 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
     storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied, missing: missing))
   satisfied
 
+proc isConceptInvocation*(f: Cursor): bool =
+  result = false
+  if f.typeKind == InvokeT:
+    var h = f
+    inc h
+    result = h.isSymbol and isConceptSym(h.symId)
+
+proc conceptInvocationArgs*(inv: Cursor): (SymId, seq[(SymId, Cursor)]) =
+  ## `inv` is `(at Concept A1 ... An)`: the concept and its type parameters
+  ## paired with `A1 ... An`.
+  result = (SymId(0), @[])
+  var n = inv
+  n.into:
+    result[0] = n.symId
+    skip n
+    let section = getTypeSection(result[0])
+    if section.typevars.substructureKind == TypevarsU:
+      var tv = section.typevars
+      tv.into TypevarsU:
+        while tv.hasMore:
+          if n.hasMore:
+            result[1].add (asLocal(tv).name.symId, n)
+            skip n
+          skip tv
+    while n.hasMore: skip n
+
+proc sameInvocationArgs(m: var Match; f, a: Cursor): bool =
+  ## `f` and `a` invoke the same concept: are their arguments identical? An
+  ## argument of `f` may be a typevar the match has bound already.
+  result = true
+  var f = f
+  var a = a
+  f.into:
+    a.into:
+      skip f # the concept
+      skip a
+      while f.hasMore and a.hasMore:
+        let fa = if f.isSymbol and m.inferred.hasKey(f.symId): m.inferred.getOrDefault(f.symId) else: f
+        if not sameTrees(fa, a):
+          result = false
+        skip f
+        skip a
+      if f.hasMore or a.hasMore:
+        result = false
+      while f.hasMore: skip f
+      while a.hasMore: skip a
+
+proc conceptInvocationExtends(m: var Match; f: Cursor; a: Cursor; depth = 0): bool =
+  ## `a` is `(at Sub B1 ... Bm)`: does it provide `f` = `(at Concept A1 ... An)`
+  ## by inheritance? Sub's parents are phrased in terms of Sub's own type
+  ## parameters (`concept of Indexable[T]`), so they are instantiated with
+  ## `B1 ... Bm` before being compared with `f`.
+  result = false
+  if depth > 20 or not isConceptInvocation(a):
+    return false
+  var fh = f
+  inc fh
+  var ah = a
+  inc ah
+  if fh.symId == ah.symId:
+    return sameInvocationArgs(m, f, a)
+  let (subSym, args) = conceptInvocationArgs(a)
+  var bindings = initTable[SymId, Cursor]()
+  for (s, arg) in args:
+    bindings[s] = arg
+  var p = conceptParentsSlot(getTypeSection(subSym).body)
+  var parents: seq[Cursor] = @[]
+  if p.typeKind == AndT or p.exprKind == ParX:
+    p.into:
+      while p.hasMore:
+        parents.add p
+        skip p
+  elif not p.isDotToken:
+    parents.add p
+  for parent in parents:
+    if parent.typeKind == InvokeT or parent.exprKind == AtX:
+      var buf = createTokenBuf(16)
+      substituteTypevars(buf, parent, bindings)
+      if conceptInvocationExtends(m, f, beginRead(buf), depth+1):
+        return true
+
+proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool =
+  ## `f` is `(at Concept A1 ... An)`, as in `proc find[T; C: Findable[T]]`:
+  ## the concept's parameters stand for `A1 ... An` while its requirements are
+  ## checked against `a`, which is how a caller's open `T` gets inferred (by
+  ## the first requirement that uses it). The verdict depends on the arguments,
+  ## so the per-`(concept, type)` cache is bypassed.
+  if a.isDotToken:
+    # an unconstrained typevar, see `matchConceptBody`
+    result = false
+  elif isOpenTypevar(a):
+    result = true
+  elif conceptInvocationExtends(m, f, a):
+    # `A: MutableIndexable[T]` where `Indexable[T]` is expected
+    result = true
+  else:
+    let (conceptSym, args) = conceptInvocationArgs(f)
+    var saved: seq[(SymId, bool, Cursor)] = @[]
+    for (s, arg) in args:
+      saved.add (s, m.inferred.hasKey(s), m.inferred.getOrDefault(s))
+      if arg.isSymbol and m.inferred.hasKey(arg.symId):
+        m.inferred[s] = m.inferred.getOrDefault(arg.symId)
+      else:
+        m.inferred[s] = arg
+    let actualBody = if isConceptType(a): getTypeSection(a.symId).body else: default(Cursor)
+    result = true
+    for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, getTypeSection(conceptSym).body):
+      if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody):
+        addMissingConstraint(m, routine)
+        result = false
+    for (s, had, v) in saved:
+      if had: m.inferred[s] = v
+      else: m.inferred.del s
+
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  let typevar = asTypevar(res.decl)
-  result = isTypevarLike(typevar.kind)
+  if res.status != LacksNothing:
+    # not a global symbol, e.g. the field `n` of a static object value
+    # `(oconstr Tag (kv n 1))` inside `Box[...]`; typevars always load
+    result = false
+  else:
+    let typevar = asTypevar(res.decl)
+    result = isTypevarLike(typevar.kind)
 
 proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
   if (f.isIntLit or f.kind == InlineInt) and

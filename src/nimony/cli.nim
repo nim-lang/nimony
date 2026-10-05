@@ -99,6 +99,11 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "ismain":
     moduleFlags.incl IsMain
     forwardArg = false
+  of "cycles":
+    # internal: the driver passes it to nimsem when the runtime says
+    # `{.enableTrace.}` (see `NifConfig.cycles`), so it is not forwarded
+    config.cycles = true
+    forwardArg = false
   of "bits":
     forwardArgHost = false
     case val

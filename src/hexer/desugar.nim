@@ -1244,7 +1244,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
           trProc c, dest, n
         else:
           takeTree dest, n
-      of MacroS, TemplateS, EmitS, BreakS, ContinueS,
+      of BreakS:
+        bug "`break` reached Hexer: the Final IR lowers every `break` to a `jmp`", n
+      of MacroS, TemplateS, EmitS, ContinueS,
         ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
         ExportS, CommentS,
         PragmasS, LabS, JmpS:
@@ -1321,7 +1323,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       trShortCircuit(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, XorX,
-        NotX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        NotX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, CastX,

@@ -424,7 +424,8 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP,
      AlwaysInlineP, NoinitP,
-     InjectP, GensymP, DirtyP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP, IncompleteStructP:
+     InjectP, GensymP, DirtyP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP, IncompleteStructP,
+     SyncP:
     crucial.flags.incl pk
     dest.addParLe(pk, n.info)
     dest.addParRi()
@@ -441,6 +442,11 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParLe(pk, n.info)
       dest.addParRi()
     toPragmaArgs()
+  of EnableTraceP:
+    buildErr c, dest, n.info, "`enableTrace` is a statement in the body of `nimTraceRef`"
+    toPragmaArgs()
+    if hasParRi:
+      while n.hasMore: skip n
   of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP, AcyclicP:
     var hasErr = false
     if kind != TypeY:
@@ -521,6 +527,18 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     toPragmaArgs()
     if hasParRi:
       while n.hasMore: skip n
+  of AssumeSyncP:
+    if kind == VarY:
+      # stamped onto a global by `{.feature: "assumeSync".}`, see `semPragmas`
+      crucial.flags.incl pk
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+      toPragmaArgs()
+    else:
+      buildErr c, dest, n.info, "`assumeSync` is only valid inside `{.cast(assumeSync).}:` pragma blocks"
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
   of RaisesP:
     crucial.flags.incl pk
     let oldLen = dest.len
@@ -706,6 +724,18 @@ proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: 
         pragmaOpen = true
       crucial.flags.incl UntypedP
       dest.addParLe UntypedP, info
+      dest.addParRi()
+    # `{.feature: "assumeSync".}` trusts the module's own globals, too: a generic
+    # of this module is instantiated -- and checked -- under the features of
+    # the instantiating module, so the trust has to travel with the global.
+    if AssumeSyncFeature in c.features and kind == VarY and
+        AssumeSyncP notin crucial.flags and ThreadvarP notin crucial.flags and
+        (GlobalP in crucial.flags or c.currentScope.kind == ToplevelScope):
+      if not pragmaOpen:
+        dest.addParLe PragmasU, info
+        pragmaOpen = true
+      crucial.flags.incl AssumeSyncP
+      dest.addParLe AssumeSyncP, info
       dest.addParRi()
     if pragmaOpen:
       dest.addParRi()
@@ -940,18 +970,19 @@ proc semAssumeAssert*(c: var SemContext; dest: var TokenBuf; it: var Item; kind:
 
 proc semCastInnerPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   ## Process a single pragma item inside a `(cast (pragmas ...))` list.
-  ## Only `noSideEffect` and `uncheckedAssign` are accepted; the result is
+  ## Only `noSideEffect`, `uncheckedAssign`, `uncheckedAccess` and
+  ## `assumeSync` are accepted; the result is
   ## emitted in canonical tag form so later passes can dispatch on the kind.
   let info = n.info
   let pk = n.pragmaKind
   case pk
-  of NoSideEffectP, UncheckedAssignP, UncheckedAccessP:
+  of NoSideEffectP, UncheckedAssignP, UncheckedAccessP, AssumeSyncP:
     dest.addParLe(pk, info)
     dest.addParRi()
     if n.isTagLit: skip n
     else: inc n
   else:
-    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect`, `uncheckedAssign` or `uncheckedAccess`"
+    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect`, `uncheckedAssign`, `uncheckedAccess` or `assumeSync`"
     if n.isTagLit: skip n
     else: inc n
 
@@ -1393,6 +1424,23 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     else:
       while it.n.hasMore: skip it.n
       buildErr c, dest, info, "`feature` pragma takes a string literal"
+  of EnableTraceP:
+    # In the body of a runtime's `nimTraceRef`: the runtime collects cycles.
+    # A runtime shared with Nim says `when defined(nimony): {.enableTrace.}`.
+    # Nothing to do here: the driver finds it in nifler's deps file and
+    # passes `--cycles` on (`deps.processDep`).
+    let info = it.n.info
+    if c.routine.kind == NoSym:
+      buildErr c, dest, info, "`enableTrace` must be in the body of `nimTraceRef`"
+      skip it.n
+    else:
+      toPragmaArgs()
+      dest.addParLe(PragmasS, info)
+      dest.addParLe(EnableTraceP, info)
+      dest.addParRi()
+      dest.addParRi()
+      closePragmaLine()
+      producesVoid c, dest, info, it.typ
   else:
     if (let psym = c.resolveCustomPragma(it.n); psym != NoSymId):
       # A custom pragma as a *statement*. It marks the region it stands in

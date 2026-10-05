@@ -32,11 +32,24 @@ when defined(posix):
     ## under that name (it is `fstatat`), and every C-backend link that touched
     ## `getFileSize` failed.
 
+  const freebsdRaw* = defined(freebsd) and defined(nimNoLibc)
+    ## FreeBSD on the truly freestanding backend (`nimony n`): bindings become
+    ## raw FreeBSD syscalls (arkham's `FreeBsdSyscalls`), and nifasm rewrites
+    ## FreeBSD's carry-flag error convention into Linux's `-errno` at every trap,
+    ## so `pcall`/`rawSyscalls` below hold unchanged. What differs is the SET of
+    ## calls: since FreeBSD 12 there is no `stat`/`lstat` trap (only `fstatat`),
+    ## no `pipe` (only `pipe2`), `__getcwd` returns 0 instead of the buffer, and
+    ## `DIR` is a libc struct — each is rebuilt here the way libc builds it.
+
   when linuxA64Raw:
     const
       AT_FDCWD* = cint(-100)          ## resolve a relative path against the cwd
       AT_SYMLINK_NOFOLLOW* = cint(0x100)
       AT_REMOVEDIR* = cint(0x200)     ## make `unlinkat` behave like `rmdir`
+  elif freebsdRaw:
+    const
+      AT_FDCWD* = cint(-100)          ## resolve a relative path against the cwd
+      AT_SYMLINK_NOFOLLOW* = cint(0x200)
 
   type
     InAddrScalar* = uint32
@@ -161,6 +174,37 @@ when defined(posix):
         st_gen: uint32            # 120
         st_lspare: int32          # 124
         st_qspare: array[2, int64]  # 128 .. 143
+  elif defined(freebsd):
+    # Hardcoded FreeBSD (12+, 64-bit inode) `struct stat` for LP64 targets;
+    # amd64 and arm64 share it (only i386 inserts `__STAT_TIME_T_EXT`
+    # padding). `struct stat` is 224 bytes.
+    type
+      Mode* = uint16   ## mode_t
+      Off* = int64     ## off_t
+      Dev* = uint64    ## dev_t
+      Ino* = uint64    ## ino_t
+
+      Stat* {.pure.} = object ## FreeBSD `struct stat`
+        st_dev*: Dev              # offset 0
+        st_ino*: Ino              # 8
+        st_nlink: uint64          # 16
+        st_mode*: Mode            # 24
+        st_bsdflags: int16        # 26
+        st_uid: uint32            # 28
+        st_gid: uint32            # 32
+        st_padding1: int32        # 36
+        st_rdev: Dev              # 40
+        st_atim: Timespec         # 48
+        st_mtim*: Timespec        # 64
+        st_ctim: Timespec         # 80
+        st_birthtim: Timespec     # 96
+        st_size*: Off             # 112
+        st_blocks: int64          # 120
+        st_blksize: int32         # 128
+        st_flags: uint32          # 132
+        st_gen: uint64            # 136
+        st_filerev: uint64        # 144
+        st_spare: array[9, uint64]  # 152 .. 223
 
   const StatHasNanoseconds* = true ## \
     ## Boolean flag that indicates if the system supports nanosecond time
@@ -218,6 +262,18 @@ when defined(posix):
       newfstatat(AT_FDCWD, a1, a2, AT_SYMLINK_NOFOLLOW)
     proc stat*(a1: cstring, a2: var Stat): cint {.inline, sideEffect.} =
       newfstatat(AT_FDCWD, a1, a2, cint(0))
+  elif freebsdRaw:
+    # See `freebsdRaw`: `stat`/`lstat` are `fstatat` relative to the cwd, as in
+    # FreeBSD's own libc.
+    proc fstatat(dirfd: cint; path: cstring; buf: var Stat; flags: cint): cint {.
+      importc: "fstatat", sideEffect.}
+    proc open*(a1: cstring; a2: cint; mode: Mode = 0): cint {.importc: "open", sideEffect.}
+    proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate".}
+    proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", sideEffect.}
+    proc lstat*(a1: cstring, a2: var Stat): cint {.inline, sideEffect.} =
+      fstatat(AT_FDCWD, a1, a2, AT_SYMLINK_NOFOLLOW)
+    proc stat*(a1: cstring, a2: var Stat): cint {.inline, sideEffect.} =
+      fstatat(AT_FDCWD, a1, a2, cint(0))
   else:
     proc open*(a1: cstring; a2: cint; mode: Mode = 0): cint {.importc: "open", sideEffect.}
     proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate".}
@@ -256,15 +312,17 @@ when defined(posix):
   # reports `-1` and sets libc's errno. Gating on `nimNativeIo` made every such
   # failure read a native variable libc never writes: not a wrong message but a
   # wrong branch, since the `0` it answered maps to `Success`.
-  const rawSyscalls* = defined(nimNoLibc) and defined(linux)
-    ## Syscall bindings are raw kernel calls that report failure as `-errno`.
-    ## Only Linux: the freestanding backend on Darwin still links libSystem
+  const rawSyscalls* = defined(nimNoLibc) and (defined(linux) or defined(freebsd))
+    ## Syscall bindings are raw kernel calls that report failure as `-errno`
+    ## (on FreeBSD after nifasm's per-trap rewrite, see `freebsdRaw`).
+    ## Not Darwin: the freestanding backend on Darwin still links libSystem
     ## (Darwin has no stable syscall ABI), whose wrappers return `-1` and set
     ## libc's errno like everywhere else.
 
   when rawSyscalls:
-    var errnoVar: cint = 0
-      ## Native errno for the truly freestanding build, maintained by this
+    var errnoVar {.threadvar.}: cint
+      ## Native errno for the truly freestanding build -- per thread, like
+      ## libc's -- maintained by this
       ## module's own syscall wrappers (currently the directory ops). Nothing
       ## else needs it: a raw syscall reports failure by returning `-errno`,
       ## which is what `pcall` hands back.
@@ -276,8 +334,8 @@ when defined(posix):
     # failures through libc's errno. `errno` itself is a header macro; the
     # stable, header-free way to reach it is the address-returning accessor
     # every modern libc exports: `__errno_location` on Linux's glibc and musl,
-    # `__errno` on Bionic and `__error` on Darwin.
-    when defined(osx):
+    # `__errno` on Bionic and `__error` on Darwin and FreeBSD.
+    when defined(osx) or defined(freebsd):
       proc errnoLocation(): ptr cint {.importc: "__error", sideEffect.}
     elif defined(android):
       proc errnoLocation(): ptr cint {.importc: "__errno", sideEffect.}
@@ -285,6 +343,17 @@ when defined(posix):
       proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
     proc errno*(): cint {.inline.} = errnoLocation()[]
       ## The last error code (libc's `errno`).
+
+  template setErrno(e: cint) =
+    ## Writes wherever `errno()` reads: the native global on the
+    ## freestanding build, libc's errno slot (via the accessor) otherwise.
+    ## The write matters even under libc — this module's own readdir must
+    ## zero errno at end-of-directory, or consumers would misread a stale
+    ## value as a failure.
+    when rawSyscalls:
+      errnoVar = e
+    else:
+      errnoLocation()[] = e
 
   template pcall*(x: untyped): clong {.untyped.} =
     ## Normalizes a syscall-style call to the Linux raw convention: returns the
@@ -313,7 +382,18 @@ when defined(posix):
 
   proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.importc: "clock_gettime", sideEffect.}
 
-  proc getcwd*(a1: cstring, a2: int): cstring {.importc: "getcwd", sideEffect.}
+  when freebsdRaw:
+    # The `__getcwd` trap answers 0 on success rather than the buffer.
+    proc sysGetcwd(buf: cstring; size: int): cint {.importc: "__getcwd", sideEffect.}
+    proc getcwd*(a1: cstring, a2: int): nil cstring {.sideEffect.} =
+      let r = pcall(sysGetcwd(a1, a2))
+      if r < 0:
+        setErrno cint(-r)
+        result = nil
+      else:
+        result = a1
+  else:
+    proc getcwd*(a1: cstring, a2: int): cstring {.importc: "getcwd", sideEffect.}
   proc chdir*(path: cstring): cint {.importc: "chdir", sideEffect.}
 
   proc realpath*(path, resolved: cstring): cstring {.importc: "realpath", sideEffect.}
@@ -362,17 +442,6 @@ when defined(posix):
     # the raw syscall by arkham.
     proc getdents64(fd: cint; dirp: pointer; count: int): clong {.importc: "getdents64", sideEffect.}
 
-    template setErrno(e: cint) =
-      ## Writes wherever `errno()` reads: the native global on the
-      ## freestanding build, libc's errno slot (via the accessor) otherwise.
-      ## The write matters even under libc — this module's own readdir must
-      ## zero errno at end-of-directory, or consumers would misread a stale
-      ## value as a failure.
-      when rawSyscalls:
-        errnoVar = e
-      else:
-        errnoLocation()[] = e
-
     proc opendir*(name: cstring): nil ptr DIR {.sideEffect.} =
       let fd = open(name, O_RDONLY or O_DIRECTORY or O_CLOEXEC)
       if fd < 0:
@@ -420,6 +489,89 @@ when defined(posix):
           inc i
         dirp.ent.d_name[i] = '\0'
         return addr dirp.ent
+  elif defined(freebsd):
+    # `Dirent` mirrors FreeBSD's 64-bit-inode `struct dirent` (FreeBSD 12+,
+    # 280 bytes) — the record both libc's `readdir` and the `getdirentries`
+    # trap produce.
+    type
+      Dirent* {.pure.} = object ## FreeBSD `struct dirent`
+        d_fileno: uint64          # offset 0
+        d_off: int64              # 8
+        d_reclen: uint16          # 16
+        d_type*: uint8            # 18
+        d_pad0: uint8             # 19
+        d_namlen: uint16          # 20
+        d_pad1: uint16            # 22
+        d_name*: array[256, char] # 24
+
+    when freebsdRaw:
+      # No libc: `DIR` is rebuilt over open(2) + getdirentries(2) + close(2),
+      # like the Linux `getdents64` version above. The kernel writes whole
+      # `struct dirent` records, so `readdir` hands out a pointer into the
+      # buffer directly.
+      const
+        O_DIRECTORY = cint(0x20000)
+        dentBufSize = 4096
+
+      type
+        DIR* {.pure.} = object
+          fd: cint
+          bpos: int32        ## read cursor into `buf`
+          nread: int32       ## valid bytes currently in `buf`
+          base: Off          ## getdirentries' seek cookie (unused, but required)
+          buf: array[dentBufSize, byte]
+
+      proc getdirentries(fd: cint; buf: pointer; nbytes: int;
+                         basep: ptr Off): clong {.importc: "getdirentries", sideEffect.}
+
+      proc opendir*(name: cstring): nil ptr DIR {.sideEffect.} =
+        let fd = pcall(open(name, O_RDONLY or O_DIRECTORY or O_CLOEXEC))
+        if fd < 0:
+          setErrno cint(-fd)
+          return nil
+        result = cast[ptr DIR](alloc0(sizeof(DIR)))
+        result.fd = cint(fd)
+
+      proc closedir*(dirp: nil ptr DIR): cint {.sideEffect.} =
+        if dirp == nil:
+          setErrno EBADF
+          return cint(-1)
+        let fd = dirp.fd
+        dealloc(dirp)
+        result = close(fd)
+
+      proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.sideEffect.} =
+        if dirp == nil:
+          setErrno EBADF
+          return nil
+        while true:
+          if dirp.bpos >= dirp.nread:
+            let n = pcall(getdirentries(dirp.fd, addr dirp.buf[0], dentBufSize,
+                                        addr dirp.base))
+            if n < 0:
+              setErrno cint(int(-n))
+              return nil
+            if n == 0:
+              setErrno cint(0)  # genuine end of directory
+              return nil
+            dirp.nread = int32(n)
+            dirp.bpos = 0
+          let ent = cast[ptr Dirent](addr dirp.buf[dirp.bpos])
+          dirp.bpos += int32(ent.d_reclen)
+          if ent.d_fileno != 0'u64:   # 0 marks a deleted entry's leftover slot
+            return ent
+    else:
+      # FreeBSD's libc `opendir`/`readdir`/`closedir`, bound header-free like
+      # on macOS. Since FreeBSD 12 the plain symbols speak the 64-bit-inode
+      # `struct dirent`.
+      type
+        DIR* {.pure.} = object ## opaque libc directory stream; only ever
+                               ## handled by pointer, never dereferenced here
+          opaque: pointer
+
+      proc opendir*(name: cstring): nil ptr DIR {.importc: "opendir", sideEffect.}
+      proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.importc: "readdir", sideEffect.}
+      proc closedir*(dirp: nil ptr DIR): cint {.importc: "closedir", sideEffect.}
   else:
     # macOS provides no stable raw directory syscall: the `getdirentries(2)`
     # syscall returns the legacy 32-bit-inode record, while everything modern
@@ -503,6 +655,11 @@ when defined(posix):
     proc posix_fallocate*(a1: cint, a2, a3: Off): cint =
       let r = pcall(fallocateImpl(a1, 0, a2, a3))
       if r < 0: cint(-r) else: cint(0)
+  elif defined(freebsd):
+    # A real libc function on FreeBSD; like POSIX specifies, it returns the
+    # error number instead of setting errno.
+    proc posix_fallocate*(a1: cint, a2, a3: Off): cint {.
+      importc: "posix_fallocate", sideEffect.}
   else:
     # 2001 POSIX evidently does not concern Apple: no posix_fallocate on
     # macOS. Keep the traditional fcntl(F_PREALLOCATE) emulation, with the
@@ -531,9 +688,16 @@ when defined(posix):
   proc WTERMSIG*(s: cint): cint = s and 0x7f
   proc WSTOPSIG*(s: cint): cint = WEXITSTATUS(s)
   proc WIFEXITED*(s: cint): bool = WTERMSIG(s) == 0
-  proc WIFSIGNALED*(s: cint): bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
   proc WIFSTOPPED*(s: cint): bool = (s and 0xff) == 0x7f
-  proc WIFCONTINUED*(s: cint): bool = s == WCONTINUED
+  when defined(freebsd):
+    # A continued child reports the bare status `SIGCONT` (0x13), which the
+    # generic WIFSIGNALED test below would misread as "killed by SIGCONT".
+    proc WIFCONTINUED*(s: cint): bool = s == SIGCONT
+    proc WIFSIGNALED*(s: cint): bool =
+      WTERMSIG(s) != 0x7f and WTERMSIG(s) != 0 and s != SIGCONT
+  else:
+    proc WIFSIGNALED*(s: cint): bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
+    proc WIFCONTINUED*(s: cint): bool = s == WCONTINUED
 
   # -------- Process / pipe / exec bindings needed by std/osproc --------
   # Plain fork+exec on every configuration; the posix_spawn family is gone
@@ -561,6 +725,12 @@ when defined(posix):
     proc fork*(): Pid {.inline, sideEffect.} =
       const SIGCHLD = culong(17)
       clone(SIGCHLD, nil, nil, nil, nil)
+  elif freebsdRaw:
+    # No `pipe` trap since FreeBSD 11 (libc's `pipe` is `pipe2(fds, 0)`).
+    proc pipe2(a: ptr cint; flags: cint): cint {.importc: "pipe2", sideEffect.}
+    proc pipe*(a: ptr cint): cint {.inline, sideEffect.} = pipe2(a, cint(0))
+    proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
+    proc fork*(): Pid {.importc: "fork", sideEffect.}
   else:
     proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
     proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
@@ -584,7 +754,7 @@ when defined(posix):
   # The environment block. The generated `main` captures its third parameter
   # (`char** envp`) into the `nimEnviron` global on every backend (see hexer's
   # genMainProc), so no libc `environ`/`_NSGetEnviron` binding is needed.
-  var posix_environ* {.importc: "nimEnviron".}: ptr UncheckedArray[cstring]
+  let posix_environ* {.importc: "nimEnviron".}: ptr UncheckedArray[cstring]
 
   proc strerror*(errnum: cint): cstring {.importc: "strerror", sideEffect.}
 

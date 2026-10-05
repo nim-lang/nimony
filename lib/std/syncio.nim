@@ -255,8 +255,9 @@ when defined(nimNativeIo):
     f = newFile(fd, fileFlags)
     result = true
 else:
+  # Bindings to C's stdio objects, which lock internally: read-only here.
   when defined(macos) or defined(macosx):
-    var
+    let
       stdin* {.importc: "__stdinp", header: "<stdio.h>".}: File
         ## Standard input file handle.
       stdout* {.importc: "__stdoutp", header: "<stdio.h>".}: File
@@ -264,7 +265,7 @@ else:
       stderr* {.importc: "__stderrp", header: "<stdio.h>".}: File
         ## Standard error file handle.
   else:
-    var
+    let
       stdin* {.importc: "stdin", header: "<stdio.h>".}: File
         ## Standard input file handle.
       stdout* {.importc: "stdout", header: "<stdio.h>".}: File

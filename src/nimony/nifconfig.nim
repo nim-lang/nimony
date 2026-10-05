@@ -120,6 +120,9 @@ type
                  ## strategies under `MmDir`, or the path of a runtime of the
                  ## user's own, verbatim. `expandMM` turns it into the module
                  ## `system.nim` includes.
+    cycles*: bool  ## `--cycles`: the runtime collects cycles. The driver finds
+                   ## `{.enableTrace.}` in it (`deps.processDep`) and passes
+                   ## this on to nimsem and hexer, which then lift `=trace`.
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
@@ -218,7 +221,9 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     bits: sizeof(int)*8,
     targetCPU: platform.nameToCPU(hostCPU),
     targetOS: platform.nameToOS(hostOS),
-    cc: "gcc",
+    # FreeBSD's base system ships clang as its only C compiler; elsewhere
+    # `gcc` is either GCC or (macOS) a clang alias.
+    cc: (when defined(freebsd): "clang" else: "gcc"),
     linker: "",
     appType: appConsole, # console is the default
     checkFlags: "br"     # = genFlags(DefaultSettings) (BoundCheck + RangeCheck);

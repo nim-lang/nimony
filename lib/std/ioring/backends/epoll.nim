@@ -8,6 +8,10 @@
 # submit/re-arm pick the right verb; an ADD that loses that race falls back
 # to MOD below.
 
+# Ring/backend state guarded by the core's locks and stripes, which the
+# shared-global check cannot see yet (no `.guard` support).
+{.feature: "assumeSync".}
+
 import ../../posix/epoll
 import ../../posix/posix
 

@@ -88,3 +88,5 @@ for _ in 0..<32:
     assert found
 
 echo "ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

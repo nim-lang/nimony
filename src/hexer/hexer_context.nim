@@ -18,7 +18,7 @@ include ".." / lib / compat2
 import lifter
 import ".." / nimony / [nimony_model, typenav, langmodes, sizeof]
 
-export RcField, DataField
+export RcField, DataField, RootIdxField
 
 type
   EContext* = object

@@ -30,6 +30,9 @@ const
   # disambiguator (#2457), so it stays distinct from `r.0`.
   RcField* = "r.00"
   DataField* = "d.00"
+  RootIdxField* = "ri.00"
+    ## `--mm:orc` only: the cycle collector's second header word, between
+    ## `RcField` and `DataField` (see `lib/std/system/orc.nim`).
   VTableField* = "vt.00"
   DisplayLenField* = "dl.0"
   DisplayField* = "dy.0"
@@ -412,12 +415,24 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
             break
           skip n
       of CaseS:
+        # Like `if`: the first non-void branch decides, a leading branch that
+        # ends in `return` must not type the whole `case` as void (#2612).
         var n = n
         inc n # skip `case`
         skip n # skip selector
-        inc n # skip `of`
-        skip n # skip set
-        result = typeofBranchBody(c, n, flags)
+        result = c.builtins.voidType
+        while n.isTagLit:
+          let sub = n.substructureKind
+          if sub notin {OfU, ElseU}: break
+          var br = n
+          inc br # `of` or `else`
+          if sub == OfU:
+            skip br # set
+          let brType = typeofBranchBody(c, br, flags)
+          if brType.typeKind != VoidT:
+            result = brType
+            break
+          skip n
       of TryS:
         var n = n
         inc n
@@ -512,6 +527,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.autoType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
+  of CanFormCyclesX:
+    result = c.builtins.boolType
   of DelayX, Delay0X, SuspendX:
     result = c.builtins.continuationType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX,
@@ -522,7 +539,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of ParX, EmoveX:
     result = getTypeImpl(c, n.childCursor, flags)
   of NilX:
-    result = c.builtins.nilType
+    let t = n.childCursor
+    result = if t.hasMore: t else: c.builtins.nilType
   of DotX, DdotX:
     var n = n
     inc n # skip "dot"

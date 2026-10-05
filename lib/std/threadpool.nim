@@ -7,6 +7,10 @@
 # A Task wraps a Continuation plus metadata. The pool schedules Tasks;
 # the worker trampolines the inner continuation.
 
+# The pool is a synchronization primitive itself: its globals are guarded by
+# its own stripe locks and atomics, which the shared-global check cannot see.
+{.feature: "assumeSync".}
+
 import std / [atomics, rawthreads, assertions, ticketlocks, private/syslocks, cpuinfo]
 
 when not defined(windows):

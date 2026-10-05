@@ -3,6 +3,10 @@
 # The global reArmEvent proc is set by each backend's init to dispatch to its
 # own platform-specific implementation.
 
+# `reArmEvent` is installed once by the backend's init; the ring state it
+# touches is guarded by the core's locks (see core/backend).
+{.feature: "assumeSync".}
+
 import ../core/types
 import ../core/slots
 import ../core/backend
@@ -225,8 +229,8 @@ when defined(posix):
       failPendingForFd(fd)
 
   const
-    SOL_SOCKET = (when defined(macosx): 0xFFFF.cint else: 1.cint)
-    SO_ERROR = (when defined(macosx): 0x1007.cint else: 4.cint)
+    SOL_SOCKET = (when defined(macosx) or defined(freebsd): 0xFFFF.cint else: 1.cint)
+    SO_ERROR = (when defined(macosx) or defined(freebsd): 0x1007.cint else: 4.cint)
 
   proc startConnect*(fd: cint; idx: int): bool =
     ## Kick off a non-blocking connect on the op in slot `idx`. True when the

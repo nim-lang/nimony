@@ -308,6 +308,11 @@ proc walkDeps(d: var DepsWalker; n: Node; inObject: bool) =
         d.whenMarker()
         d.w.b.addStrLit name
         d.w.b.endTree()
+      elif kind(k) == Ident and d.w.pool.strings[strId(k)] == "enableTrace":
+        # the memory management runtime collects cycles (`deps.processDep`)
+        d.w.b.addTree "enableTrace"
+        d.whenMarker()
+        d.w.b.endTree()
       k = k.next
     return
   if tg == WhenL and not inObject:

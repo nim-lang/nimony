@@ -201,7 +201,7 @@ proc resolvedTypeKind(typ: Cursor): TypeKind =
     t = skipModifier(decl.body)
   result = t.typeKind
 
-proc typeForNil(typ: Cursor): Cursor =
+proc typeForNil*(typ: Cursor): Cursor =
   ## The type a bare `(nil)` sitting in a slot declared as `typ` should carry,
   ## or a nil cursor when `typ` is nothing a `nil` can be typed with (`.`, an
   ## unresolved typevar, `nilt` itself, a non-pointer).
@@ -1317,11 +1317,9 @@ proc trType(c: var Context; n: var Cursor) =
       # symbol lets the consumer reuse it (via loadHook/tryLoadHook) so the
       # dispatched method IS in the vtable.
       #
-      # Only `=destroy` is handled here (not `=trace`): it is the hook the
-      # consumer materializes on scope-exit / reassignment / seq-clear. Forcing
-      # `=trace` generation for every class — even `{.acyclic.}` ones that never
-      # need it — bloats vtables and trips a latent nilability bug in the
-      # synthesized `=trace` body; leave it to the existing forged-hooks path.
+      # `=trace` joins it only under `--mm:orc`, where the cycle collector
+      # traces a cell through its static type's `=trace` and so needs the
+      # dynamic type's one in the vtable. Otherwise nothing calls it.
       if hasMethods and not isGeneric and hasRtti(s):
         var buf = createTokenBuf(1)
         buf.addSymUse s, info
@@ -1329,19 +1327,21 @@ proc trType(c: var Context; n: var Cursor) =
         c.typeSymBufs.add buf
         let existing = if c.hooks.hasKey(s): c.hooks.getOrQuit(s)
                        else: default(HooksPerType)
-        let hookProc = getHook(c.lifter[], attachedDestroy, typeCursor, info)
-        if hookProc != SymId(0):
-          if existing.a[attachedDestroy] == SymId(0):
-            # not already emitted from c.hooks above
-            c.dest.addParLe hookToTag(attachedDestroy), NoLineInfo
-            c.dest.addSymUse hookProc, NoLineInfo
-            c.dest.addParRi()
-          let key = destroyMethodKey()
-          var dup = false
-          for (k, _) in methodsToAdd:
-            if k == key: dup = true; break
-          if not dup:
-            methodsToAdd.add (key, hookProc)
+        for op in [attachedDestroy, attachedTrace]:
+          if op == attachedTrace and not c.lifter.cycles: continue
+          let hookProc = getHook(c.lifter[], op, typeCursor, info)
+          if hookProc != SymId(0):
+            if existing.a[op] == SymId(0):
+              # not already emitted from c.hooks above
+              c.dest.addParLe hookToTag(op), NoLineInfo
+              c.dest.addSymUse hookProc, NoLineInfo
+              c.dest.addParRi()
+            let key = if op == attachedDestroy: destroyMethodKey() else: traceMethodKey()
+            var dup = false
+            for (k, _) in methodsToAdd:
+              if k == key: dup = true; break
+            if not dup:
+              methodsToAdd.add (key, hookProc)
       if hasMethods:
         addMethodsDecl c.dest, methodsToAdd
       c.dest.addParRi()
@@ -1525,6 +1525,15 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
         trCall c, n, e, disallowDangerous
     of PragmaxX:
       trPragmaBlock c, n
+    of CanFormCyclesX:
+      # `canFormCycles(T)`: answered here, where the lifter can say it
+      let info = n.info
+      var t = n
+      inc t
+      let traced = needsTraceOf(c.lifter[], t)
+      skip n
+      c.dest.addParLe(if traced: TrueX else: FalseX, info)
+      c.dest.addParRi()
     of DotX, DdotX, AtX, ArratX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:
@@ -1662,7 +1671,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
-                   thisModuleSuffix: string; bits: int): TokenBuf =
+                   thisModuleSuffix: string; bits: int; cycles = false): TokenBuf =
+  ## `cycles`: the runtime collects cycles (`NifConfig.cycles`).
   let inputWidth = subtreeWidth(n)
   var c = Context(typeCache: createTypeCache(bits),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId),
@@ -1671,7 +1681,8 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
     classes: ensureMove(classes),
     lifter: nil) # set below after hooks is moved
   # Pass address of hooks to lifter so it can look up hooks from current module
-  c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks)
+  c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks,
+                              cycles = cycles)
   c.typeCache.openScope()
   var n2 = n
   var n3 = n

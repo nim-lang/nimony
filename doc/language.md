@@ -1790,9 +1790,17 @@ Example:
   ```
 
 The block statement is a means to group statements to a (named) `block`.
-Inside the block, the `break` statement is allowed to leave the block
-immediately. A `break` statement can contain a name of a surrounding
-block to specify which block is to be left.
+Inside a named block, `break <name>` leaves the block immediately. An
+unlabeled `break` never leaves a block; it leaves the innermost loop, so a
+`block` inside a loop can be used as a plain scope:
+
+  ```nim
+  for i in 1..10:
+    block:
+      let x = compute(i)
+      if x < 0:
+        break # leaves the `for` loop, not the `block`
+  ```
 
 
 ### Break statement
@@ -1803,9 +1811,13 @@ Example:
   break
   ```
 
-The `break` statement is used to leave a block immediately. If `symbol`
-is given, it is the name of the enclosing block that is to be left. If it is
-absent, the innermost block is left.
+The `break` statement is used to leave a loop or a block immediately. If
+`symbol` is given, it is the name of the enclosing block that is to be left.
+If it is absent, the innermost loop is left; an unlabeled `break` outside of
+a loop is an error.
+
+With `{.feature: "anonBlockBreaks".}` (implied by `"v2"`) an unlabeled `break`
+leaves the innermost loop *or* block, as in Nim 2.
 
 
 ### While statement
@@ -4000,7 +4012,7 @@ type
     iterator items(x: Self): T
     proc `==`(a, b: T): bool
 
-proc find[T](x: Findable[T]; elem: T): int =
+proc find[T; C: Findable[T]](x: C; elem: T): int =
   var i = 0
   for a in items(x):
     if a == elem: return i
@@ -4008,7 +4020,9 @@ proc find[T](x: Findable[T]; elem: T): int =
   return -1
 ```
 
-Thanks to the `x` being declared as `Findable[T]`, it is known that the element `a` of the collection is of type `T` and that `T` supports equality comparisons via `==`.
+Thanks to `C` being constrained by `Findable[T]`, it is known that the element `a` of the collection is of type `T` and that `T` supports equality comparisons via `==`. At the call site `T` is inferred from the concept's requirements: here `items` binds it to the element type of the collection.
+
+A concept can only be used as a constraint of a type parameter; `proc find[T](x: Findable[T]; elem: T)` is not a generic over the collection type.
 
 This find function can be used with any collection that fulfills the `Findable` concept, for example:
 
@@ -4017,8 +4031,8 @@ type
   MyCollection = object
     data: seq[int]
 
-proc items(x: MyCollection): int =
-  return x.data
+iterator items(x: MyCollection): int =
+  for d in x.data: yield d
 
 var myCollection = MyCollection(data: @[1, 2, 3, 4, 5])
 echo find(myCollection, 3) # 2
@@ -4563,6 +4577,8 @@ The following features are available:
 | `"lenientAliasing"` | Allow for aliasing like `f(#[byvar]# x, x)` in function calls. For compatibility with Nim 2. |
 | `"runtimeContracts"` | Check `.requires` contracts at run time only: no call site in this module is judged statically. |
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
+| `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
+| `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
 

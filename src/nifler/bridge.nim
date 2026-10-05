@@ -783,6 +783,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
             emitWhenMarker c
             c.b.addStrLit it[1].strVal
             c.b.endTree()
+        elif it.kind == nkIdent and it.ident.s == "enableTrace":
+          # `{.enableTrace.}` in a memory management runtime's `nimTraceRef`:
+          # the runtime collects cycles, which the build has to know before
+          # it can write the `nimsem`/`hexer` command lines (`deps.processDep`).
+          withDepsStream c:
+            c.b.addTree "enableTrace"
+            emitWhenMarker c
+            c.b.endTree()
   of nkCallKinds:
     let oldDepsEnabled = c.depsEnabled
     if n.len > 0 and n[0].kind == nkIdent and n[0].ident.s == "runnableExamples":

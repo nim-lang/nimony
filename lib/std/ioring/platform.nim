@@ -1,5 +1,9 @@
 # Platform detection — which I/O backends are available at compile time.
 
+# Ring/backend state guarded by the core's locks and stripes, which the
+# shared-global check cannot see yet (no `.guard` support).
+{.feature: "assumeSync".}
+
 import ./core/backend
 
 when defined(linux):

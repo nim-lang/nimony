@@ -147,6 +147,12 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
     # input is a standalone buffer (e.g. the hoisted RHS of `and`/`or`
     # short-circuit lowering) `n` lands at end-of-buffer and reading
     # `n.info` afterwards would assert in `nifcursors.load`.
+  if typ.typeKind == VoidT and n.stmtKind == StmtsS:
+    # A branch without a value (it ends in `return`/`raise`) is a statement
+    # list: lowering it as an expression would let a nested void `if` switch
+    # the shared target to `IsIgnored` for its successors (#2612).
+    trStmt c, dest, n
+    return
   trExpr c, dest, n, tar
 
   if typ.typeKind in {VoidT, AutoT}:
@@ -1471,7 +1477,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trAggregate c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
        InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
+       SizeofX, CanFormCyclesX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
        BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,

@@ -178,3 +178,5 @@ else:
     assert c.result < 0, "a refused connect must report the error"
     echo "connect refused neg=true"
     closeFd(s)
+
+{.feature: "assumeSync".}  # test program: globals shared freely

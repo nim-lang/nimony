@@ -1,6 +1,7 @@
 # Common types shared across all ioring layers.
 import ../../nativesocket   # Domain, SockType, Protocol — the opSocket payload
 import ../../commonio       # FileMode, FilePermission — the opOpen payload
+import std/atomics
 when defined(posix):
   import std/posix/posix
 else:
@@ -86,15 +87,15 @@ else:
 
   var gQpcFreq: int64 = 0
     ## Fixed for the boot session, so it is read once. Racing threads all write
-    ## the same value, which is why this needs no lock.
+    ## the same value, which is why relaxed atomics suffice and no lock is needed.
 
   proc monoNow*(): Deadline =
     ## The ring's clock. Never the wall clock — see the note above.
-    var freq = gQpcFreq
+    var freq = atomicLoad(gQpcFreq, moRelaxed)
     if freq == 0:
       discard queryPerformanceFrequency(addr freq)
       if freq <= 0: return Deadline(0)
-      gQpcFreq = freq
+      atomicStore(gQpcFreq, freq, moRelaxed)
     var c: int64 = 0
     discard queryPerformanceCounter(addr c)
     # Split rather than `c * 1_000_000_000 div freq`: the counter counts from

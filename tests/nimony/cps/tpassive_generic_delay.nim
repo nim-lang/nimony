@@ -13,3 +13,5 @@ proc driver() {.passive.} =
   complete(c)
 driver()
 echo log
+
+{.feature: "assumeSync".}  # test program: globals shared freely

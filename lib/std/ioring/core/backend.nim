@@ -2,6 +2,10 @@
 # Groups BackendRelays and global ring state so backends can access
 # the completion queue, slot arena, and pool.
 
+# The ring's globals are guarded by `gCqLock` and per-lane stripes, which the
+# shared-global check cannot see yet (no `.guard` support).
+{.feature: "assumeSync".}
+
 import ./types
 import ./slots
 import std/[threadpool, ticketlocks, stripes, syncio]

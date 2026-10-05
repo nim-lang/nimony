@@ -163,3 +163,5 @@ proc forCoro(): int {.passive.} =
       result = result + v
 
 echo forCoro()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

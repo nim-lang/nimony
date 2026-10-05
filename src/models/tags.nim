@@ -346,6 +346,8 @@ type
     CompileTagId
     BundleTagId
     ToClosureTagId
+    SyncTagId
+    AssumeSyncTagId
     InstructionTagId
     IntrinsicTagId
     InstrTagId
@@ -365,6 +367,8 @@ type
     IntdefineTagId
     BooldefineTagId
     StrdefineTagId
+    EnableTraceTagId
+    CanFormCyclesTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -711,23 +715,27 @@ const
     ("compile", 341),
     ("bundle", 342),
     ("toClosure", 343),
-    ("instruction", 344),
-    ("intrinsic", 345),
-    ("instr", 346),
-    ("register", 347),
-    ("stack", 348),
-    ("assembler", 349),
-    ("deferexpansion", 350),
-    ("needtypes", 351),
-    ("alwaysInline", 352),
-    ("naked", 353),
-    ("interrupt", 354),
-    ("constref", 355),
-    ("dependency", 356),
-    ("pluginCall", 357),
-    ("importjs", 358),
-    ("link", 359),
-    ("intdefine", 360),
-    ("booldefine", 361),
-    ("strdefine", 362)
+    ("sync", 344),
+    ("assumeSync", 345),
+    ("instruction", 346),
+    ("intrinsic", 347),
+    ("instr", 348),
+    ("register", 349),
+    ("stack", 350),
+    ("assembler", 351),
+    ("deferexpansion", 352),
+    ("needtypes", 353),
+    ("alwaysInline", 354),
+    ("naked", 355),
+    ("interrupt", 356),
+    ("constref", 357),
+    ("dependency", 358),
+    ("pluginCall", 359),
+    ("importjs", 360),
+    ("link", 361),
+    ("intdefine", 362),
+    ("booldefine", 363),
+    ("strdefine", 364),
+    ("enableTrace", 365),
+    ("canFormCycles", 366)
   ]

@@ -324,7 +324,7 @@ else:
   elif defined(haiku):
     const EILSEQ = -2147454938.cint
 
-  var errno {.importc, header: "<errno.h>".}: cint
+  var errno {.importc, header: "<errno.h>", threadvar.}: cint # per thread in C
 
   when defined(bsd):
     {.pragma: importIconv, cdecl, header: "<iconv.h>".}

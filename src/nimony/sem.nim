@@ -904,7 +904,14 @@ proc isCastableType(t: TypeCursor): bool =
     # operation that says "skip the range check". `system/setops`'s `items`
     # iterator needs this to walk a `set[range[…]]` at all.
     inc t # past the tag, to the base type
-  result = t.typeKind in IntegralTypes or isEnumType(t)
+  if t.typeKind == SetT:
+    # a set that fits a machine word is a bit field (`uintN` in the backend),
+    # so `cast[set[E]](someInt)` and back is the usual flags idiom:
+    var err = false
+    let size = asSigned(bitsetSizeInBytes(t.childCursor), err)
+    result = not err and size <= 8
+  else:
+    result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
@@ -1360,8 +1367,10 @@ proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
   takeInto dest, it.n:
     semBoolExpr c, dest, it.n
     inc c.routine.inLoop
+    c.routine.breakTargets.add SymId(0)
     withNewScope c:
       semStmt c, dest, it.n, true
+    discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   producesVoid c, dest, info, it.typ
 
@@ -1369,16 +1378,27 @@ proc semBlock(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   takeInto dest, it.n:
     inc c.routine.inBlock
+    let anonBreaks = AnonBlockBreaksFeature in c.features
     withNewScope c:
-      if it.n.isDotToken:
+      if it.n.isDotToken and not anonBreaks:
         takeTree dest, it.n
       else:
+        # Under `anonBlockBreaks` an unlabeled `break` can leave this block, so
+        # an anonymous one gets a label nobody can spell for it to name.
+        var anonLabel = createTokenBuf(1)
+        var label = it.n
+        if label.isDotToken:
+          anonLabel.addIdent "`blk", label.info
+          label = beginRead(anonLabel)
         let declStart = dest.len
-        let delayed = handleSymDef(c, dest, it.n, BlockY)
+        let delayed = handleSymDef(c, dest, label, BlockY)
         c.addSym dest, delayed
         publish c, dest, delayed.s.name, declStart
+        skip it.n # the label (or the dot it replaced)
+        if anonBreaks: c.routine.breakTargets.add delayed.s.name
 
       semStmtBranch c, dest, it, true
+      if anonBreaks: discard c.routine.breakTargets.pop()
     dec c.routine.inBlock
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
@@ -1387,11 +1407,23 @@ proc semBreak(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   takeInto dest, it.n:
     if c.routine.inLoop+c.routine.inBlock == 0:
-      buildErr c, dest, info, "`break` only possible within a `while` or `block` statement"
+      buildErr c, dest, info, "`break` only possible within a loop or a `block` statement"
       skip it.n
     else:
       if it.n.isDotToken:
-        wantDot c, dest, it.n
+        # An unlabeled `break` leaves the innermost loop; the Final IR reads
+        # `(break .)` that way. Under `anonBlockBreaks` the innermost `block`
+        # may come first and is then named explicitly.
+        let targets = addr c.routine.breakTargets
+        if targets[].len > 0 and targets[][^1] != SymId(0):
+          dest.addSymUse targets[][^1], it.n.info
+          inc it.n
+        elif c.routine.inLoop > 0:
+          wantDot c, dest, it.n
+        else:
+          buildErr c, dest, info,
+            "`break` without a label only leaves a loop; to leave a `block`, name it and use `break <name>`"
+          skip it.n
       else:
         let labelInfo = it.n.info
         var a = Item(n: it.n, typ: c.types.autoType)
@@ -1917,7 +1949,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
             buildErr c, dest, vInfo, "value already handled"
           dest.takeTree value
   of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
@@ -2228,7 +2260,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   of DotX, DdotX:
     semDotAsgn c, dest, it, info, asgnStart
   of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
@@ -3344,7 +3376,9 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       buildErr c, vb, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
     inc c.routine.inLoop
+    c.routine.breakTargets.add SymId(0)
     semStmt c, vb, it.n, true
+    discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   it.n = forStart; skip it.n # skip the for's closing ')'
 
@@ -3492,7 +3526,9 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
       takeTree dest, it.n # don't touch the body
     else:
       inc c.routine.inLoop
+      c.routine.breakTargets.add SymId(0)
       semStmt c, dest, it.n, true
+      discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
 
   dest.addParRi(it.n.endInfo)
@@ -3643,7 +3679,23 @@ proc literalB(c: var SemContext; dest: var TokenBuf; it: var Item; literalType: 
   commonType c, dest, it, beforeExpr, expected
 
 proc semNil(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  let beforeExpr = dest.len
   literalB c, dest, it, c.types.nilType
+  # A `nil` that `commonType` resolved against a pointer-like type is emitted
+  # as `(nil T)`: later passes compute the type of an `if` or `case`
+  # expression from its branches and must not see `nilt` there (#2605).
+  let t = typeForNil(it.typ)
+  if not cursorIsNil(t) and beforeExpr < dest.len:
+    var lit = cursorAt(dest, beforeExpr)
+    if lit.exprKind == NilX and not lit.childCursor.hasMore:
+      var typed = createTokenBuf(8)
+      typed.addParLe(NilX, lit.info)
+      typed.addSubtree t
+      typed.addParRi()
+      endRead lit
+      dest.replace cursorAt(typed, 0), beforeExpr
+    else:
+      endRead lit
 
 proc semTypedUnaryArithmetic(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
@@ -5899,6 +5951,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semAddr c, dest, it
     of SizeofX:
       semSizeof c, dest, it
+    of CanFormCyclesX:
+      semCanFormCycles c, dest, it
     of TypeofX:
       semTypeof c, dest, it
     of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:

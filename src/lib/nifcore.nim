@@ -49,6 +49,9 @@ when defined(nimony):
   # `ref` fields/returns are nilable here (e.g. `pool`/`tags` return nil for
   # an ownerless cursor); opt out of Nimony's strict not-nil analysis.
   {.feature: "lenientnils".}
+  # The `fallbackPool`/`fallbackTags` globals are shared by every ownerless
+  # `TokenBuf`; the compiler is single threaded.
+  {.feature: "assumeSync".}
 else:
   # Dual-compiled: nimony builds this for the compiler, host Nim for `nifler`.
   # `alwaysInline` is a nimony pragma; give host Nim the nearest thing it has.

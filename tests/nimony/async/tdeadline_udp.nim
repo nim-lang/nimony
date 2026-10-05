@@ -46,3 +46,5 @@ while atomicLoad(done, moAcquire) == 0:
   if millisUntil(monoNow(), start) > 30_000: quit "timed out"
 stdout.write log
 stdout.flushFile()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

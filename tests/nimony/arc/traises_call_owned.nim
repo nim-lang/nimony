@@ -42,3 +42,5 @@ try:
   run()
 except:
   echo "unexpected raise"
+
+{.feature: "assumeSync".}  # test program: globals shared freely
