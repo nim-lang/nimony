@@ -29,7 +29,7 @@ The phases of compilation are:
 1. Pure parsing (nifler): Turn Nim code into a dialect of NIF.
 2. Semantic checking phase 1 (nimsem): symbol lookups, type checking, template&macro expansions.
 3. Semantic checking phase 2 (nimsem): Effect inference. **Not implemented yet.**
-4. Inject derefs (and the corresponding mutation checking) (nimony).
+4. Inject derefs (and the corresponding mutation checking) (nimsem).
 5. Iterator inlining (shoggoth).
 6. Lambda lifting (shoggoth).
 7. Inject dups (shoggoth).
