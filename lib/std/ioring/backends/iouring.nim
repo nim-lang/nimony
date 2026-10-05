@@ -54,6 +54,8 @@ const
     ## behalf. Its low word is not a slot index any arena can hold, so the
     ## completion loop drops the CQE on the bounds check below and no slot is
     ## touched by it.
+  EIntr = -4
+  EAgain = -11
   AtFdCwd = cint(-100)  ## resolve an AT_* path against the cwd; `posix` only
     ## exposes its own `AT_FDCWD` under `linuxA64Raw`, so name it here.
 
@@ -80,6 +82,11 @@ var gMsgs: seq[Table[uint64, nil ptr MsgSlot]]
   ## time and freed on the op's CQE. (A `Tmsghdr` has non-nil pointers and so
   ## no default, which rules out keeping it in the slot's `OpContext`.)
 
+var gRearm: seq[Table[uint64, bool]]
+  ## Per lane: tags of ops parked on a readiness probe after the kernel
+  ## answered them with -EAGAIN. The probe carries the op's own tag; its CQE
+  ## means "retry the op", not "the op is done".
+
 proc newMsg(lane, idx: int; gen: uint32; name: pointer; nameLen: SockLen;
             buf: pointer; len: int): ptr Tmsghdr =
   let m = cast[ptr MsgSlot](alloc0(sizeof(MsgSlot)))
@@ -101,11 +108,13 @@ proc takeMsg(lane: int; tag: uint64): nil ptr MsgSlot =
 proc tryInitLocalQueues(): bool =
   localQueues = @[]
   gMsgs = @[]
+  gRearm = @[]
   gCancels = newSeq[seq[uint64]](ioLanes())
   try:
     for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
       gMsgs.add initTable[uint64, nil ptr MsgSlot]()
+      gRearm.add initTable[uint64, bool]()
   except ErrorCode:
     return false   # the caller falls back to the epoll backend
   return true
@@ -191,6 +200,30 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     # before an SQE is taken (bind has no ring form; non-blocking is already a
     # property of every ring-created socket, see there).
     discard
+
+proc rearm(lane, idx: int; gen: uint32; probe: bool): bool =
+  ## An op the kernel answered with -EAGAIN/-EINTR is not finished: with
+  ## `probe`, park it on a one-shot readiness probe in its direction, whose CQE
+  ## retries it; without, retry it now. Either way it keeps its slot, gen,
+  ## buffer, continuation and deadline, so a deadline or cancel still reaches
+  ## it by its tag. False if the ring has no SQE to spare (the caller then
+  ## completes the op with the kernel's answer).
+  var sqe: nil ptr Sqe = nil
+  try:
+    sqe = localQueues[lane].getSqe()
+  except ErrorCode:
+    discard
+  if sqe == nil: return false
+  let tag = tagFor(idx, gen)
+  let op = addr gSlots[lane].slots[idx].op
+  if probe:
+    discard sqe.poll_add(op.fd,
+      if op.kind in {opWrite, opSendTo}: {POLL_OUT} else: {POLL_IN})
+    gRearm[lane][tag] = true
+  else:
+    fillSqe(sqe, lane, idx)
+  sqe.userData = cast[pointer](tag)
+  result = true
 
 proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
   # Drain the shared deferred queue: for every pending slot, fill a fresh
@@ -296,6 +329,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
     except ErrorCode as e:
       quit "fatal: bug: copyCqes cannot fail: " & $e
     if n > 0:
+      var rearmed = false
       for i in 0..<n:
         if cqes[i].userData == CancelUserData: continue   # a cancel's own ack
         # A slot outlives its op's time in the kernel: a deadline or `closeFd`
@@ -320,6 +354,23 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # backends report, so the completion's `readyEvents` are consistent no
         # matter which backend is in use.
         var res = int(cqes[i].res)
+        # A data op must not complete with "not now". The kernel's own retry of
+        # a parked op ends in -EAGAIN on an O_NONBLOCK file when the wake-up
+        # (a peer's FIN, say) carries no readiness for the op's direction, so
+        # the op goes back to waiting rather than to its caller.
+        let tag = cqes[i].userData
+        if gRearm[lane].hasKey(tag):
+          gRearm[lane].del(tag)
+          # The probe fired: retry the op. A failed probe (cancelled) is the
+          # op's end.
+          if res >= 0 and rearm(lane, idx, gen, false):
+            rearmed = true
+            continue
+        elif (res == EAgain or res == EIntr) and slot.cancelRes == 0 and
+            op.kind in {opRead, opWrite, opAccept, opRecvFrom, opSendTo}:
+          if rearm(lane, idx, gen, res == EAgain):
+            rearmed = true
+            continue
         if op.kind == opPollAdd and res >= 0:
           var fired = toPollEvents(uint32(res))
           var ev: IoEvents = {}
@@ -327,6 +378,11 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
           if POLL_OUT in fired: ev.incl evWrite
           res = toEventMask(ev)
         completeFromKernel(idx, res)
+      if rearmed:
+        try:
+          discard localQueues[lane].submit()
+        except ErrorCode as e:
+          quit "fatal: bug: submit cannot fail: " & $e
       expireDeadlines(lane)
       return true
   expireDeadlines(lane)
@@ -376,6 +432,7 @@ proc iouringClose() {.nimcall.} =
     for m in gMsgs[i].values:
       if m != nil: dealloc(m)
   gMsgs = @[]
+  gRearm = @[]
 
 proc initIoUringBackendRelays*(sqE = 256): BackendRelays =
   sqEntries = sqE
