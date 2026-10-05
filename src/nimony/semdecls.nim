@@ -1191,9 +1191,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       inc c.inGenericDefinition
 
     try:
-      # open parameter scope; a template is expanded where it is used, so it
-      # is no boundary for what its body may access
-      c.openScope(if kind == TemplateY: NormalScope else: RoutineScope)
+      c.openScope() # open parameter scope
       let beforeGenericParams = dest.len
       semGenericParams c, dest, it.n
       if c.visOwner.len == outerVisOwner:

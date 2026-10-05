@@ -152,18 +152,11 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
   var marker = initHashSet[SymId]()
   let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
-  var inRoutine = false
   while it != nil:
     var nonOverloadable = 0
     let before = result
-    # The locals of a top-level statement live in the module's init code: a
-    # routine must not access them (#2555). They stay invisible but still
-    # shadow what is further out; `isToplevelStmtLocal` explains the error.
-    let hideLocals = inRoutine and it.kind == ToplevelStmtScope
     for k in stylesOfScope(it, identifier, ignoreStyle):
       for sym in it.tab.getOrDefault(k):
-        if hideLocals and sym.kind in ToplevelStmtLocalKinds:
-          return
         # An object field is only reachable through `obj.field`; it is added
         # to its object's scope purely so a duplicate field name is caught by
         # `addNonOverloadable`, and (unlike every other local) it is never
@@ -192,27 +185,11 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
     if result == 1 and nonOverloadable == 1 and option != FindAll:
       nearestIsUnique = true
       return
-    if it.kind == RoutineScope: inRoutine = true
     it = it.up
   let beforeImports = result
   inc result, considerImportedSymbols(c, dest, identifier, info, marker, option)
   if nearest < 0 and result > beforeImports: nearest = result - beforeImports
   nearestIsUnique = nearest == 1
-
-proc isToplevelStmtLocal*(c: var SemContext; identifier: StrId): bool =
-  ## Is `identifier` undeclared only because it names a local of a top-level
-  ## statement that `rawBuildSymChoice` hides from a routine? For the error.
-  let ignoreStyle = IgnoreStyleFeature in c.features
-  var it = c.currentScope
-  var inRoutine = false
-  while it != nil:
-    if inRoutine and it.kind == ToplevelStmtScope:
-      for k in stylesOfScope(it, identifier, ignoreStyle):
-        for sym in it.tab.getOrDefault(k):
-          if sym.kind in ToplevelStmtLocalKinds: return true
-    if it.kind == RoutineScope: inRoutine = true
-    it = it.up
-  result = false
 
 proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
                     option: ChoiceOption; nearestIsUnique: var bool): int =
@@ -260,14 +237,8 @@ proc isDeclared*(c: var SemContext; name: StrId): bool =
     if k in c.importTab: return true
   result = false
 
-proc openScope*(c: var SemContext; kind: ScopeKind) =
-  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: c.currentScope, kind: kind)
-
 proc openScope*(c: var SemContext) =
-  let kind =
-    if c.currentScope.kind in {ToplevelScope, ToplevelStmtScope}: ToplevelStmtScope
-    else: NormalScope
-  openScope c, kind
+  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: c.currentScope, kind: NormalScope)
 
 proc closeScope*(c: var SemContext) =
   c.currentScope = c.currentScope.up

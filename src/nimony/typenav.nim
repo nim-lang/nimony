@@ -126,17 +126,15 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
 
 proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
   ## `crossedProc` is the number of routine boundaries between the use and the
-  ## declaration; nonzero means a capture. A module-level declaration reports 0.
+  ## declaration; nonzero means a capture. That includes a local of a module
+  ## level statement such as a `block` (#2555); a global is never captured.
   var it {.cursor.} = c.current
   var crossedProc = 0
   while it != nil:
     var res = it.locals.getOrDefault(s)
     if res.kind != NoSym:
-      if crossedProc > 0:
-        var owner {.cursor.} = it
-        while owner != nil and owner.kind != ProcScope:
-          owner = owner.parent
-        if owner == nil: crossedProc = 0
+      if crossedProc > 0 and res.kind in {GvarY, GletY, TvarY, TletY, ConstY}:
+        crossedProc = 0
       res.crossedProc = int16(crossedProc)
       return res
     if it.kind == ProcScope:

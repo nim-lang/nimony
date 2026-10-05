@@ -1,2 +1,3 @@
 tests/nimony/errmsgs/ttupleviews.nim(3, 13) Error: cannot borrow from a
 tests/nimony/errmsgs/ttupleviews.nim(4, 16) Error: cannot borrow from a
+tests/nimony/errmsgs/ttupleviews.nim(10, 21) Error: cannot access local variable `counter` from another routine; mark the proc with `.closure`

@@ -1997,10 +1997,7 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         c.buildErr dest, ident.info, "undeclared identifier: " & pool.symString(s.name), ident
       else:
         let s = getIdent(ident)
-        if s != StrId(0) and isToplevelStmtLocal(c, s):
-          c.buildErr dest, ident.info, "'" & pool.strings[s] & "' is a local of a top-level " &
-            "statement; a routine cannot access it, move the code into a proc", ident
-        elif s != StrId(0):
+        if s != StrId(0):
           c.buildErr dest, ident.info, "undeclared identifier: " & pool.strings[s], ident
         else:
           c.buildErr dest, ident.info, "undeclared identifier", ident
