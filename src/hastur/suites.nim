@@ -168,7 +168,7 @@ proc execLengc*(cmd: string) =
   exec "lengc", cmd
 
 proc execHexer*(cmd: string) =
-  exec "hexer", cmd
+  exec "shoggoth", cmd
 
 proc hexertests*(overwrite: bool) =
   let mod1 = "tests/hexer/mod1"

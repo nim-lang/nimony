@@ -27,19 +27,27 @@ Arguably a token stream enforces a principled approach to compiler development w
 The phases of compilation are:
 
 1. Pure parsing (nifler): Turn Nim code into a dialect of NIF.
-2. Semantic checking phase 1 (nimony): symbol lookups, type checking, template&macro expansions.
-3. Semantic checking phase 2 (nimony): Effect inference. **Not implemented yet.**
-4. Inject derefs (and the corresponding mutation checking) (nimony).
-5. Iterator inlining (hexer).
-6. Lambda lifting (hexer).
-7. Inject dups (hexer).
-8. Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct) (hexer).
-9. Inject destructors (hexer).
-10. Map builtins like `new` and `+` to "compiler procs" (hexer).
-11. Translate exception handling (hexer).
-12. Generate Leng code (hexer).
+2. Semantic checking phase 1 (nimsem): symbol lookups, type checking, template&macro expansions.
+3. Semantic checking phase 2 (nimsem): Effect inference. **Not implemented yet.**
+4. Inject derefs (and the corresponding mutation checking) (nimsem).
+5. Iterator inlining (shoggoth).
+6. Lambda lifting (shoggoth).
+7. Inject dups (shoggoth).
+8. Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct) (shoggoth).
+9. Inject destructors (shoggoth).
+10. Map builtins like `new` and `+` to "compiler procs" (shoggoth).
+11. Translate exception handling (shoggoth).
+12. Generate Leng code (shoggoth).
+13. Whole-program dead code elimination (shoggoth).
+14. Optional: optimize the Leng code, including inlining across modules (shoggoth). Runs only for `--opt:speed` and `--opt:size`.
+15. Generate C or LLVM code (lengc), or native code (arkham + nifasm).
 
-These phases have been collected into different tools with dedicated names.
+These phases have been collected into different tools with dedicated names:
+`nifler` parses, `nimsem` does the semantic checking and `nimony` is the
+driver that schedules everything (via `nifmake`). `shoggoth` does the lowering
+of one module (`shoggoth c`, its passes live in `src/hexer/`), the dead code
+elimination (`shoggoth dl`/`shoggoth de`) and the optional optimization
+(`shoggoth opt`, its passes live in `src/lengc/shoggoth/`).
 
 
 ## NIF
@@ -57,7 +65,7 @@ While NIF is almost a classical Lisp, it innovates in these aspects:
 
 NIF is not only the format between compiler phases; it is the foundation for the compile-time evaluation engine and for compiler plugins. Both use the same idea: **compile code to machine code and run it with NIF as input/output**.
 
-- **Compile-time evaluation:** When the compiler needs to run code at compile time (e.g. constant folding, template expansion that runs code), it does not use a separate interpreter. It turns the snippet into NIF (e.g. a `.p.nif`), runs it through the full pipeline (nimsem, hexer, nifc, cc, link) to produce a native executable, runs that executable, and consumes the result. So CT eval is “real” compilation and execution; the only special part is that the “program” is a small snippet and its I/O can be NIF or the normal run’s stdout. The same pipeline and the same NIF representation are reused.
+- **Compile-time evaluation:** When the compiler needs to run code at compile time (e.g. constant folding, template expansion that runs code), it does not use a separate interpreter. It turns the snippet into NIF (e.g. a `.p.nif`), runs it through the full pipeline (nimsem, shoggoth, lengc, cc, link) to produce a native executable, runs that executable, and consumes the result. So CT eval is “real” compilation and execution; the only special part is that the “program” is a small snippet and its I/O can be NIF or the normal run’s stdout. The same pipeline and the same NIF representation are reused.
 
 - **Compiler plugins:** Plugins work the same way. A plugin is Nim source marked with `{.plugin.}`. The compiler compiles that source to a standalone executable (with `-d:nimonyPlugin`). When the plugin is invoked, the compiler writes the input to a `.in.nif` file, runs the plugin executable (with paths to the input and optional extra NIF files), and the plugin writes its result to a `.out.nif` file. The compiler then parses that NIF back into the main compilation. So plugins are first-class: they are compiled to native code and communicate purely via NIF. No separate plugin API or interpreter is required.
 

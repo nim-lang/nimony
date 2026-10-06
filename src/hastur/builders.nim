@@ -82,7 +82,7 @@ const
   Nifler2Cache = "nimcache_static" / "nifler2"
     ## nifler2's own `--nimcache`, out of `nimcache/`: `hastur build` wipes
     ## that one at the end, and a cold nifler2 compile is ~30s of every build.
-  Nifler2Toolchain = ["nimony", "nimsem", "hexer", "lengc", "shoggoth",
+  Nifler2Toolchain = ["nimony", "nimsem", "lengc", "shoggoth",
                       "nifmake", "niflink", "nifler", "nifler2"]
     ## Everything that shapes what lands in `Nifler2Cache`: the driver, the
     ## phases it runs and the parsers (nifler2 parses itself once it exists).
@@ -145,6 +145,7 @@ proc buildLengc*(showProgress = false) =
   buildTool("lengc", "src/lengc/lengc.nim", showProgress)
 
 proc buildShoggoth*(showProgress = false) =
+  ## hexer (NIF -> Leng lowering, DCE) and the optional NIFC optimizer, one binary.
   buildTool("shoggoth", "src/lengc/shoggoth/shoggoth.nim", showProgress)
 
 proc buildNiflink*(showProgress = false) =
@@ -209,9 +210,6 @@ proc hostGetsNativeTools(): bool =
     echo "[build] no native backend target for this host — skipping arkham + nifasm"
     result = false
 
-proc buildHexer*(showProgress = false) =
-  buildTool("hexer", "src/hexer/hexer.nim", showProgress)
-
 proc buildNifmake*(showProgress = false) =
   buildTool("nifmake", "src/nifmake/nifmake.nim", showProgress)
 
@@ -235,16 +233,15 @@ proc buildPnak*(showProgress = false) =
 proc buildNimonyToolchain*(showProgress = false) =
   ## Rebuild every host-Nim-compiled binary that shares `src/nimony/programs.nim`
   ## (or any other module reused across compiler stages). A change to a shared
-  ## helper like `suffixToNif` only takes effect once nimony, nimsem AND hexer
+  ## helper like `suffixToNif` only takes effect once nimony, nimsem AND shoggoth
   ## are all re-linked, so `hastur selfcheck` (and any caller that wants a
   ## fully-consistent toolchain) goes through this rather than `buildNimony`
   ## alone — which is what masked a hexer bug during the doc-generator work.
-  ## lengc and shoggoth are here because `boot` self-hosts them as well.
+  ## lengc is here because `boot` self-hosts it as well.
   buildNimsem(showProgress)
   buildNimony(showProgress)
-  buildHexer(showProgress)
-  buildLengc(showProgress)
   buildShoggoth(showProgress)
+  buildLengc(showProgress)
 
 proc buildAll*() =
   ## `build all`: every host-Nim tool at once, then nifler2, which is compiled
@@ -261,7 +258,6 @@ proc buildAll*() =
     toolCmd("lengc", "src/lengc/lengc.nim"),
     toolCmd("shoggoth", "src/lengc/shoggoth/shoggoth.nim"),
     toolCmd("niflink", "src/niflink/niflink.nim"),
-    toolCmd("hexer", "src/hexer/hexer.nim"),
     toolCmd("nifmake", "src/nifmake/nifmake.nim"),
     toolCmd("validator", "src/validator/validator.nim"),
     toolCmd("dagon", "src/dagon/dagon.nim"),
