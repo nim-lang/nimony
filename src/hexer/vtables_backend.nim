@@ -22,6 +22,7 @@ import passes
 import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, decls, programs, typenav, renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
+from coro_transform import coroHelperName, publishWrapperSignature
 
 type
   VTableState = enum
@@ -39,6 +40,7 @@ type
     cls: SymId
     name: SymId
     params: Cursor  # the routine's `(params …)` node
+    passive: bool   # `name` is a `.passive` method; its slot holds `init`
 
   Context* = object
     tmpCounter: int
@@ -139,6 +141,29 @@ proc isMethod(c: var Context; s: SymId): bool =
     let info = getLocalInfo(c.typeCache, s)
     result = info.kind == MethodY
 
+proc isPassiveMethod(fn: SymId): bool =
+  let res = tryLoadSym(fn)
+  result = res.status == LacksNothing and
+    res.decl.symKind in {MethodY, ProcY} and
+    hasPragma(asRoutine(res.decl).pragmas, PassiveP)
+
+proc slotTarget(fn: SymId): SymId =
+  ## What a vtable slot holds for the method `fn`. After `cps` a `.passive`
+  ## method is two routines: the state proc, which kept the method's name but
+  ## takes the frame as well, and its `init` wrapper, which takes the
+  ## method's own arguments plus the caller's continuation. Dispatch has to
+  ## reach the wrapper — every passive call site is lowered to call it — so
+  ## that is what the slot holds, in every module that builds this vtable.
+  ## The slot's KEY stays the method's frontend key, the one sem writes into
+  ## the class's `(methods)` pragma, so a foreign module that only sees the
+  ## pragma arrives at the same slot. A foreign wrapper is published here so
+  ## the vtable constant can name it.
+  if isPassiveMethod(fn):
+    publishWrapperSignature(fn, "")
+    result = coroHelperName(fn, "init", "")
+  else:
+    result = fn
+
 proc loadVTable(c: var Context; cls: SymId) =
   # Interface files only store the "diff" of the vtable so we need to
   # compute it properly here.
@@ -158,12 +183,13 @@ proc loadVTable(c: var Context; cls: SymId) =
 
   for entry in diff:
     let sig = pool.strings[entry.signature]
+    let fn = slotTarget(entry.fn)
     let idx = dest.signatureToIndex.getOrDefault(sig, -1)
     if idx == -1:
-      dest.methods.add entry.fn
+      dest.methods.add fn
       dest.signatureToIndex[sig] = dest.methods.len - 1
     else:
-      dest.methods[idx] = entry.fn
+      dest.methods[idx] = fn
 
   c.vtables[cls] = ensureMove dest
 
@@ -677,19 +703,34 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     raiseAssert "BUG: unexpected ParRi in vtables_backend.tr" # classic ParRi only
 
+proc frontendKey(cls, fn: SymId): string =
+  ## The key sem recorded for `fn` in `cls`'s `(methods)` pragma, or "".
+  result = ""
+  for entry in vtables_frontend.loadVTable(cls):
+    if entry.fn == fn:
+      return pool.strings[entry.signature]
+
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
-  let sig = methodKey(methodName, m.params)
+  var sig = ""
+  var target = m.name
+  if m.passive:
+    # `cps` rewrote this method's params into the state proc's, so they no
+    # longer spell the method's signature; sem's record of it still does.
+    sig = frontendKey(m.cls, m.name)
+    target = coroHelperName(m.name, "init", c.moduleSuffix)
+  if sig.len == 0:
+    sig = methodKey(methodName, m.params)
   # see if this is an override:
   for inh in inheritanceChain(m.cls):
     let methodIndex = c.vtables.getOrQuit(inh).signatureToIndex.getOrDefault(sig, -1)
     if methodIndex != -1:
       # register as override:
-      c.vtables.getOrQuit(m.cls).methods[methodIndex] = m.name
+      c.vtables.getOrQuit(m.cls).methods[methodIndex] = target
       return
   # not an override, register as a new base method:
   let myVt = addr c.vtables.getOrQuit(m.cls)
   let idx = myVt[].methods.len
-  myVt[].methods.add m.name
+  myVt[].methods.add target
   myVt[].signatureToIndex[sig] = idx
 
 proc processMethods(c: var Context) =
@@ -731,13 +772,14 @@ proc processMethods(c: var Context) =
       let diff = vtables_frontend.loadVTable(cls)
       for entry in diff:
         let sig = pool.strings[entry.signature]
+        let fn = slotTarget(entry.fn)
         let vt = addr c.vtables.getOrQuit(cls)
         let idx = vt[].signatureToIndex.getOrDefault(sig, -1)
         if idx == -1:
-          vt[].methods.add entry.fn
+          vt[].methods.add fn
           vt[].signatureToIndex[sig] = vt[].methods.len - 1
         else:
-          vt[].methods[idx] = entry.fn
+          vt[].methods[idx] = fn
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:
@@ -796,8 +838,15 @@ proc collectMethods(c: var Context; n: var Cursor) =
         if cls == SymId(0):
           error "cannot attach method to type " & typeToString(param.typ)
         else:
-          # we might not have registered the class yet, so we use a single flat `methodDecls` list:
-          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, params: r.params)
+          let name = r.name.symId
+          let passive = hasPragma(r.pragmas, PassiveP)
+          # A passive method's `init` wrapper is a `method` too, but it is
+          # the slot's target, not a slot of its own; see `slotTarget`.
+          # Only the wrapper's name carries the backtick `derivedName` adds.
+          if not (passive and '`' in pool.symBasename(name)):
+            # we might not have registered the class yet, so we use a single flat `methodDecls` list:
+            c.methodDecls.add MethodDecl(cls: cls, name: name, params: r.params,
+                                         passive: passive)
       else:
         error "method needs a first parameter of the class type: " & toString(orig, false)
   of TypeS:
