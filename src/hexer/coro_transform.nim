@@ -309,7 +309,9 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
   let info = NoLineInfo
 
   var buf = createTokenBuf(40)
-  buf.addParLe ProcS, info
+  # A method's wrapper is what its vtable slot holds (`vtables_backend`), so
+  # it stays a `method`: that is how a call to it is recognized as dispatch.
+  buf.addParLe (if res.decl.symKind == MethodY: MethodS else: ProcS), info
   buf.addSymDef wrapperSym, info
   buf.addDotToken() # exported
   buf.addDotToken() # pattern
@@ -767,6 +769,8 @@ proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor): SymId =
   var upstreamEnvArg = false
   if n.kind == Symbol and isClosureIter(n.symId):
     # Direct `.passive` iter DECL call — route through the iter's init wrapper.
+    # A foreign iter's wrapper exists only in its own module's hexer run.
+    publishWrapperSignature(n.symId, c.thisModuleSuffix)
     targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
     inc n
   elif n.kind == Symbol:
@@ -2486,8 +2490,10 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
         # `proc`. Generic templates pass through unchanged — only
         # their instances are coroutine-transformed.
         if isConcrete:
-          if kind == IteratorY:
-            # retag in place: `parLeToken` would reset an already-set jump
+          if kind == IteratorY or iter.stmtKind == MethodS:
+            # retag in place: `parLeToken` would reset an already-set jump.
+            # A method's state proc is never dispatched to — its `init`
+            # wrapper is what the vtable slot holds — so it stops being one.
             setTagAt(dest, procStart, cast[TagId](ProcS))
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
       if isCoroutine and isConcrete:
