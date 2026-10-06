@@ -692,7 +692,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
       of NoStmt, CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS,
-         ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
+         ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, AlwaysS, PragmasS, PragmaxS,
          InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
          ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
@@ -822,7 +822,7 @@ proc collectClass(c: var Context; n: var Cursor) =
 proc collectMethods(c: var Context; n: var Cursor) =
   # we only care about top level methods
   case n.stmtKind
-  of StmtsS:
+  of StmtsS, AlwaysS:
     n.into:
       while n.hasMore:
         collectMethods c, n

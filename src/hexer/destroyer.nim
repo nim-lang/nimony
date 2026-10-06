@@ -120,7 +120,7 @@ proc collectLabelsInto(result: var seq[SymId]; body: Cursor) =
       let sym = b.childCursor
       if sym.kind in {Symbol, SymbolDef}:
         result.add sym.symId
-    elif b.stmtKind == StmtsS:
+    elif b.stmtKind in {StmtsS, AlwaysS}:
       # transparent: its labels are this scope's
       collectLabelsInto result, b
     skip b
@@ -535,7 +535,7 @@ proc tr(c: var Context; n: var Cursor) =
       # bodies don't participate in lowering.
       takeTree c.dest, n
     of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
-        WhenS, ForS, YldS, StmtsS, PragmasS,
+        WhenS, ForS, YldS, StmtsS, AlwaysS, PragmasS,
         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,

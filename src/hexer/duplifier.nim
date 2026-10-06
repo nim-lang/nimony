@@ -920,7 +920,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         c.typeCache.closeScope()
       of CallS, CmdS, IteratorS, TemplateS, TypeS, BlockS,
           EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS, ForS,
-          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, PragmasS,
+          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
           PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
           FromimportS, ImportexceptS, ExportS, ExportexceptS,
           CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,

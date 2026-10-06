@@ -1400,7 +1400,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         c.typeCache.openScope()
         trStmtList(c, dest, n)
         c.typeCache.closeScope()
-      of StmtsS:
+      of StmtsS, AlwaysS:
         trStmtList(c, dest, n, isTopScope = isTopScope)
       of AsgnS:
         # Tuple-LHS assignments need to be split into per-field stores;

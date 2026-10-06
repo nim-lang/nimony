@@ -369,6 +369,7 @@ type
     StrdefineTagId
     EnableTraceTagId
     CanFormCyclesTagId
+    AlwaysTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -737,5 +738,6 @@ const
     ("booldefine", 363),
     ("strdefine", 364),
     ("enableTrace", 365),
-    ("canFormCycles", 366)
+    ("canFormCycles", 366),
+    ("always", 367)
   ]

@@ -262,7 +262,7 @@ const
 
 proc classify(n: Cursor): NodeClass =
   case n.stmtKind
-  of BlockLikeKinds: result = ncStmtList
+  of BlockLikeKinds, AlwaysS: result = ncStmtList
   of RoutineKinds: result = ncRoutine
   of CaseS: result = ncCase
   of TryS: result = ncTry
@@ -475,7 +475,7 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
   ## the last read and the whole query is answered.
   let n = at(base, pc)
   case n.stmtKind
-  of StmtListKinds:
+  of StmtListKinds, AlwaysS:
     let fc = firstChild(base, pc)
     if fc < endOf(base, pc):
       pcs.add fc

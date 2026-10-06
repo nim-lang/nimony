@@ -494,7 +494,7 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
       inc n
     else:
       error c.m, "expected statement but got: ", n
-  of StmtsS:
+  of StmtsS, AlwaysS:
     n.loopInto:
       genStmtLLVM(c, n)
       if c.currentProc.needsTerminator:

@@ -197,7 +197,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
         ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
         TemplateS, TypeS, BlockS, EmitS, AsgnS, ScopeS, IfS,
         WhenS, BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS,
-        RetS, YldS, StmtsS, PragmaxS, InclS, ExclS,
+        RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS,
         IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
         ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
@@ -621,7 +621,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
     inc c
   of TagLit:
     case c.stmtKind
-    of StmtsS:
+    of StmtsS, AlwaysS:
       takeInto dest, c:
         while c.hasMore:
           transformStmt(e, dest, c)
