@@ -3543,8 +3543,9 @@ proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
     if it.n.isDotToken:
       # Templates have no `result` symbol — the `return` is text-substituted
       # into the caller, so the meaning depends on the caller's signature.
-      # Preserve the dot and let template expansion resolve it.
-      if c.routine.kind != TemplateY and c.routine.returnType.typeKind != VoidT:
+      # Preserve the dot and let template expansion resolve it. An iterator's
+      # return type is what it yields: it has no `result` to return either.
+      if c.routine.kind notin {TemplateY, IteratorY} and c.routine.returnType.typeKind != VoidT:
         dest.addSymUse c.routine.resId, info
         inc it.n # skips the dot
       else:

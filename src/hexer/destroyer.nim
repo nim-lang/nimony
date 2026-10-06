@@ -520,13 +520,13 @@ proc tr(c: var Context; n: var Cursor) =
     of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
     of IteratorS:
-      # iterinliner passes only `.closure` iterators through to here. Their
-      # bodies need destroyer treatment (scope tracking, =destroy injection
-      # on locals) when the closure flag is actually set; non-closure iters
-      # would have been stripped by iterinliner.
+      # iterinliner passes only `.closure` and `.passive` iterators through
+      # to here. Their bodies need destroyer treatment (scope tracking,
+      # =destroy injection on locals); non-coroutine iters would have been
+      # stripped by iterinliner.
       var probe = n
       let routine = asRoutine(probe, SkipExclBody)
-      if hasPragma(routine.pragmas, ClosureP):
+      if hasPragma(routine.pragmas, ClosureP) or hasPragma(routine.pragmas, PassiveP):
         trProcDecl c, n
       else:
         takeTree c.dest, n

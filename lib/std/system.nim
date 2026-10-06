@@ -332,6 +332,10 @@ type
     ## nothing for a regular proc, the loop's next state in a `.passive` one.
     done: int
     resume: Continuation
+    cancelling: bool
+      ## Set while `=destroy` runs an abandoned iterator to its end: every
+      ## `yield` of a `.passive` iterator is followed by an `iterCancelled`
+      ## check that returns, so the iterator's own exit path destroys its locals.
 
 proc joined(coro: ptr CoroutineBase): Continuation {.nimcall.} =
   let j = cast[ptr Join](coro)
@@ -345,6 +349,7 @@ proc attach(j: ptr Join; c: Continuation) =
   j.caller = Continuation(fn: nil, env: nil)
   j.done = 0
   j.resume = c
+  j.cancelling = false
   if c.env != nil:
     c.env.caller = Continuation(fn: joined, env: cast[ptr CoroutineBase](j))
 
@@ -410,13 +415,23 @@ proc iterFinished(j: ptr Join): bool {.inline.} =
   ## Used by the compiler: did the step just taken end the iterator?
   result = j.resume.fn == nil
 
+proc iterCancelled(coro: ptr CoroutineBase): bool {.inline.} =
+  ## Used by the compiler: right after a `.passive` iterator's `yield`, is the
+  ## loop gone? The iterator's `caller` is its loop's `Join` (`attach`).
+  result = cast[ptr Join](coro.caller.env).cancelling
+
 proc `=destroy`(j: Join) =
   ## A `for` loop left before its iterator finished, by whatever way out of
-  ## the loop's scope: cancel and free the iterator's frame, which is parked
-  ## at a `yield`.
+  ## the loop's scope. The iterator is parked at a `yield`: resume it with
+  ## `cancelling` set, and it returns from there, destroying its locals and
+  ## freeing its frame like any other return.
   if j.resume.env != nil:
-    cancel(j.resume.env)
-    deallocFrame(j.resume.env)
+    # the frame's `caller` is `j` itself, addressable unlike the parameter
+    let jp = cast[ptr Join](j.resume.env.caller.env)
+    jp.cancelling = true
+    jp.caller = Continuation(fn: nil, env: nil) # not the loop's next state
+    while jp.resume.env != nil: # a `yield` on the way out parks it again
+      run(jp)
 
 proc `=copy`(dest: var Join; src: Join) {.error.}
 

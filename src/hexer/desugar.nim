@@ -2,14 +2,15 @@
 
 when defined(nimony):
   {.feature: "untyped".}
+  {.feature: "lenientnils".}
 else:
   {.pragma: untyped.}
 
 import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
-import hexer_context, passes, closuretypes
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
+import hexer_context, passes, closuretypes, lifter
 import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
 
@@ -29,6 +30,12 @@ type
       ## Statements to run before the current statement; `trStmt` splices
       ## them in. Nothing lowers this pass's output again, so expansions
       ## use this instead of `(expr …)` and spell control flow as Final IR.
+    inPassiveIter: bool
+      ## inside a `.passive` iterator's body: a `yield` gets a cancel check
+    lifter: ref LiftingCtx
+      ## only asked whether a type has a `=destroy` (`delayWrapper`)
+    delayWrappers: Table[SymId, SymId]
+      ## callee -> its `delay` wrapper, one per callee and module
 
 proc freshLabel(c: var Context): SymId =
   result = pool.symId("`desugarL." & $c.counter)
@@ -207,6 +214,9 @@ proc isCoroutine(n: Cursor): bool =
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   let decl = n
+  let wasPassiveIter = c.inPassiveIter
+  c.inPassiveIter = decl.stmtKind == IteratorS and
+                    hasPragma(asRoutine(decl).pragmas, PassiveP)
   copyInto dest, n:
     var pragmas = default(Cursor)
     let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
@@ -225,7 +235,29 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
     else:
       takeTree dest, n
+  c.inPassiveIter = wasPassiveIter
   c.typeCache.closeScope()
+
+proc emitCancelCheck(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+  ## After a `.passive` iterator's `yield`: `if iterCancelled(): return`. A
+  ## loop that is left early resumes its iterator this way (`=destroy(Join)`),
+  ## and the `return` destroys what the iterator still holds. `cps` passes the
+  ## frame to `iterCancelled`.
+  let cancelled = pool.symId("`desugarC." & $c.counter)
+  inc c.counter
+  copyIntoKind dest, LetS, info:
+    dest.addSymDef cancelled, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addParPair BoolT, info
+    copyIntoKind dest, CallX, info:
+      dest.addSymUse pool.symId("iterCancelled.0." & SystemModuleSuffix), info
+  copyIntoKind dest, IteV, info:
+    dest.addSymUse cancelled, info
+    copyIntoKind dest, StmtsS, info:
+      copyIntoKind dest, RetS, info:
+        dest.addDotToken()
+    dest.addDotToken() # no else
 
 proc addUIntType(buf: var TokenBuf; bits: int; info: NifLineInfo) =
   buf.addParLe("u", info)
@@ -984,6 +1016,114 @@ proc trFloatArith(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trSons(c, dest, n)
   tryFoldFloatExpr(dest, start, c.bits)
 
+# ---------------------------------------------------------------------
+# `delay(f(args))` hands `f`'s frame to a scheduler: it outlives the
+# statement that created it. A borrowed parameter of an owning type would
+# then point at the caller's location without holding a reference, so the
+# caller's destructor frees what the frame still reads. Like Malebolgia's
+# `spawn`, the call goes through a wrapper that takes these parameters as
+# `sink` and passes them on to `f`:
+#
+#   proc f`dw(a: sink A; b: B) {.passive.} = f(a, b)
+#
+# The wrapper's frame owns its arguments until `f` completes; an ordinary
+# passive call keeps borrowing.
+# ---------------------------------------------------------------------
+
+proc ownsDelayedArg(c: var Context; typ: Cursor): bool =
+  ## Does a parameter of type `typ` have to be owned by a delayed frame?
+  ## `var`/`out`/`lent` are rejected by sem, `sink` already is owned.
+  result = typ.typeKind notin TypeModifiers + {VarargsT} and
+           hasDestroyHook(c.lifter[], typ)
+
+proc delayWrapper(c: var Context; fn: SymId; info: NifLineInfo): SymId =
+  ## The wrapper `delay(fn(...))` calls, or `NoSymId` when `fn` borrows nothing
+  ## that needs owning.
+  result = c.delayWrappers.getOrDefault(fn, NoSymId)
+  if result != NoSymId: return
+  let res = tryLoadSym(fn)
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
+  let r = asRoutine(res.decl)
+  if r.params.substructureKind != ParamsU: return
+  var needed = false
+  var p = sub(r.params)
+  while p.hasMore:
+    if ownsDelayedArg(c, asLocal(p).typ): needed = true
+    skip p
+  if not needed: return
+
+  result = pool.symId("`dw." & $c.counter & "." & c.thisModuleSuffix)
+  inc c.counter
+  c.delayWrappers[fn] = result
+  let hasResult = not isVoidType(r.retType)
+  var args: seq[SymId] = @[]
+  let start = c.pending.len
+  copyIntoKind c.pending, ProcS, info:
+    c.pending.addSymDef result, info
+    c.pending.addDotToken() # exported
+    c.pending.addDotToken() # pattern
+    c.pending.addDotToken() # typevars
+    copyIntoKind c.pending, ParamsU, info:
+      p = sub(r.params)
+      while p.hasMore:
+        let param = asLocal(p)
+        let a = pool.symId("`dwp." & $c.counter)
+        inc c.counter
+        args.add a
+        copyIntoKind c.pending, ParamU, info:
+          c.pending.addSymDef a, info
+          c.pending.addDotToken() # exported
+          c.pending.addDotToken() # pragmas
+          if ownsDelayedArg(c, param.typ):
+            copyIntoKind c.pending, SinkT, info:
+              c.pending.copyTree param.typ
+          else:
+            c.pending.copyTree param.typ
+          c.pending.addDotToken() # default value
+        skip p
+    c.pending.copyTree r.retType
+    copyIntoKind c.pending, PragmasU, info:
+      c.pending.addParPair PassiveP, info
+      # `f`'s error travels through the wrapper's frame
+      if not r.pragmas.isDotToken:
+        var pr = sub(r.pragmas)
+        while pr.hasMore:
+          if pragmaKind(pr) == RaisesP: c.pending.copyTree pr
+          skip pr
+    c.pending.addDotToken() # effects
+    copyIntoKind c.pending, StmtsS, info:
+      let resSym = pool.symId("`dwr." & $c.counter)
+      inc c.counter
+      if hasResult:
+        copyIntoKind c.pending, ResultS, info:
+          c.pending.addSymDef resSym, info
+          c.pending.addDotToken() # exported
+          c.pending.addDotToken() # pragmas
+          c.pending.copyTree r.retType
+          c.pending.addDotToken() # value
+        c.pending.addParLe AsgnS, info
+        c.pending.addSymUse resSym, info
+      copyIntoKind c.pending, CallX, info:
+        c.pending.addSymUse fn, info
+        for a in args: c.pending.addSymUse a, info
+      if hasResult:
+        c.pending.addParRi() # asgn
+        copyIntoKind c.pending, RetS, info:
+          c.pending.addSymUse resSym, info
+  programs.publish result, c.pending, start
+
+proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let fn = n.childCursor
+  let wrapper = if fn.kind == Symbol: delayWrapper(c, fn.symId, n.info) else: NoSymId
+  if wrapper == NoSymId:
+    trSons c, dest, n
+  else:
+    copyInto dest, n:
+      dest.addSymUse wrapper, n.info
+      inc n # the callee, now called by the wrapper
+      while n.hasMore:
+        tr c, dest, n
+
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
@@ -1271,8 +1411,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
           trTupleAsgn(c, dest, n)
         else:
           trSons(c, dest, n)
+      of YldS:
+        let info = n.info
+        trSons(c, dest, n)
+        if c.inPassiveIter: emitCancelCheck(c, dest, info)
       of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CoroforS, RetS,
-          YldS, PragmaxS, ImportasS, ExportexceptS, DiscardS,
+          PragmaxS, ImportasS, ExportexceptS, DiscardS,
           TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
           BindS, MixinS, UsingS, AsmS, DeferS:
@@ -1321,6 +1465,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       trFloatArith(c, dest, n)
     of AndX, OrX:
       trShortCircuit(c, dest, n)
+    of DelayX:
+      trDelay(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, XorX,
         NotX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX,
@@ -1330,7 +1476,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
         AshrX, BaseobjX, DconvX, HconvX, ConvX,
-        CompilesX, DeclaredX, DefinedX, ProccallX, DelayX,
+        CompilesX, DeclaredX, DefinedX, ProccallX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX,
@@ -1342,10 +1488,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   else:
     bug "unexpected ')' inside"
 
-proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
+proc desugar*(pass: var Pass; activeChecks: set[CheckMode]; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
   var c = Context(counter: 0, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), constDecls: createTokenBuf(), bits: pass.bits,
-                  pre: createTokenBuf())
+                  pre: createTokenBuf(), lifter: lifter)
   c.typeCache.openScope()
   # Process the root `(stmts` manually (mirroring trSons' copyInto) but
   # keep it OPEN until `pending` has been appended: an emitted close

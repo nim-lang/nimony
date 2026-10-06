@@ -436,21 +436,36 @@ proc emitForBody(e: var EContext; dest: var TokenBuf; body: Cursor;
     inlineForBody(e, dest, b, mapping)
   dest.addParRi()
 
+type
+  IterExit = object
+    lab: SymId   ## where the iterator's `return` goes: past the expansion
+    used: bool
+
 proc inlineIteratorBodyFir(e: var EContext; dest: var TokenBuf;
-                           c: var Cursor; forStmt: ForStmt; yieldType: Cursor) =
+                           c: var Cursor; forStmt: ForStmt; yieldType: Cursor;
+                           exit: var IterExit) =
   if c.isTagLit:
     if c.stmtKind == YldS:
       c.into: # skips yield
         var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
         collectDefs(e, forStmt.body, mapping)
         emitForBody(e, dest, forStmt.body, mapping, createTokenBuf(0))
+    elif c.stmtKind == RetS:
+      # The iterator's own `return` ends the loop; one in the loop body is
+      # the caller's and was copied by `emitForBody`, not walked here.
+      if exit.lab == SymId(0):
+        exit.lab = pool.symId("`ii." & $e.getTmpId)
+      exit.used = true
+      dest.copyIntoKind JmpS, c.info:
+        dest.addSymUse exit.lab, c.info
+      skip c, SkipFull # replaced by the `jmp`
     elif c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
                         TemplateS, TypeS}:
       dest.takeTree c
     else:
       takeInto dest, c:
         while c.hasMore:
-          inlineIteratorBodyFir(e, dest, c, forStmt, yieldType)
+          inlineIteratorBodyFir(e, dest, c, forStmt, yieldType, exit)
   else:
     takeTree(dest, c)
 
@@ -564,9 +579,13 @@ proc expandInlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
   var fc = beginRead(freshBuf)
   transformStmt(e, inner, fc) # the iterator's own `for`s
   var ic = beginRead(inner)
+  var exit = IterExit()
   ic.into: # the wrapper's `stmts`: its children go straight into the scope
     while ic.hasMore:
-      inlineIteratorBodyFir(e, dest, ic, forStmt, routine.retType)
+      inlineIteratorBodyFir(e, dest, ic, forStmt, routine.retType, exit)
+  if exit.used:
+    dest.copyIntoKind LabS, forStmt.iter.info:
+      dest.addSymDef exit.lab, forStmt.iter.info
 
 proc inlineIteratorFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   var iter = forStmt.iter

@@ -874,8 +874,23 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # when the call/asgn rhs is a passive call.
 # ---------------------------------------------------------------------
 
+proc trIterCancelled(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `desugar`'s check after a `.passive` iterator's `yield` asks about the
+  ## frame, which exists only from here on.
+  let info = n.info
+  copyIntoKind dest, CallX, info:
+    dest.addSymUse n.childCursor.symId, info
+    dest.copyIntoKind CastX, info:
+      dest.copyIntoKind PtrT, info:
+        dest.addSymUse pool.symId(RootObjName), info
+      dest.addSymUse pool.symId(EnvParamName), info
+  skip n, SkipFull # the argument-less call, replaced
+
 proc trCall*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.childCursor
+  if fn.kind == Symbol and fn.symId == sysCall("iterCancelled"):
+    trIterCancelled c, dest, n
+    return
   let typ = c.typeCache.getType(fn, {SkipAliases})
   if procHasPragma(typ, PassiveP):
     var retType = getType(c.typeCache, n)
