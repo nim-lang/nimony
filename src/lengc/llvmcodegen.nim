@@ -965,9 +965,7 @@ proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag])
 
   let llText = serializeModule(c.module)
 
-  if vfsExists(outp) and vfsRead(outp) == llText:
-    discard "unchanged, keep mtime for incremental builds"
-  else:
-    vfsWrite outp, llText
+  # Always written, as the C backend's `.c` (doc/internals/ic.md).
+  vfsWrite outp, llText
 
   c.m.closeScope()

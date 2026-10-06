@@ -776,7 +776,7 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
   if result.exitCode != 0: return
 
   let modname = extractModuleSuffix(file)
-  let exe = nimcachePath / modname / splitFile(file).name.addFileExt(ExeExt)
+  let exe = nimcachePath / BackendDirC / modname / splitFile(file).name.addFileExt(ExeExt)
   # The child may start in `sourceDir`; keep the exe path absolute so it
   # still resolves against the outer compile's cwd, not the module dir.
   var exeToRun = exe

@@ -7,3 +7,13 @@
 
 proc bump*(x: int): int {.inline.} =
   x + 1
+
+proc scaled*(x: int): int =
+  ## NOT inline, and big enough that no inliner takes it: the `body-dep` phase
+  ## edits the factor and expects only this module's code to be regenerated.
+  var acc = 0
+  var i = 0
+  while i < x:
+    acc = acc + x * 3
+    inc i
+  result = acc div x
