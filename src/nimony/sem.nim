@@ -159,7 +159,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     result = true
   of NoStmt, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS, CursorS, PatternvarS,
      ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
-     AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, PragmasS,
+     AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, AlwaysS, PragmasS,
      PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
      ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, StaticstmtS,
      BindS, MixinS, UsingS, AsmS, DeferS:
@@ -3543,8 +3543,9 @@ proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
     if it.n.isDotToken:
       # Templates have no `result` symbol — the `return` is text-substituted
       # into the caller, so the meaning depends on the caller's signature.
-      # Preserve the dot and let template expansion resolve it.
-      if c.routine.kind != TemplateY and c.routine.returnType.typeKind != VoidT:
+      # Preserve the dot and let template expansion resolve it. An iterator's
+      # return type is what it yields: it has no `result` to return either.
+      if c.routine.kind notin {TemplateY, IteratorY} and c.routine.returnType.typeKind != VoidT:
         dest.addSymUse c.routine.resId, info
         inc it.n # skips the dot
       else:
@@ -3730,6 +3731,27 @@ proc escapingDelayParam(c: var SemContext; dest: var TokenBuf; fn: Cursor): Loca
       return p
     skip params
 
+proc undelayableResult(c: var SemContext; dest: var TokenBuf; fn: Cursor): string =
+  ## What `f` hands back that a delayed call has nowhere to put: the
+  ## continuation runs later, often on a worker, after the expression that
+  ## built it is gone. A result or an error must be handled inside the task.
+  ## Answers "" when there is none.
+  result = ""
+  if not fn.isSymbol: return
+  let res = declToCursor(c, dest, fetchSym(c, fn.symId))
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
+  let r = asRoutine(res.decl, SkipExclBody)
+  if not isVoidType(r.retType):
+    result = "returns `" & typeToString(r.retType) & "`, but nothing can receive the value"
+  elif hasPragma(r.pragmas, RaisesP):
+    result = "is `.raises`, but nothing can receive the error"
+
+proc delayResultErr(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
+                    fn: Cursor; what: string) =
+  buildErr c, dest, info,
+    "`delay` hands `" & asNimCode(fn.symId) & "` to a scheduler, which runs it after this expression is gone; `" &
+      asNimCode(fn.symId) & "` " & what & " there. Handle it inside the task instead"
+
 proc delayEscapeErr(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                     fn: Cursor; p: Local) =
   buildErr c, dest, info,
@@ -3755,8 +3777,12 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # delay(call): the call is delay's sole child, the shape before flattening.
     let fn = childCursor(it.n)
     let escaping = escapingDelayParam(c, dest, fn)
+    let unreceived = undelayableResult(c, dest, fn)
     if not cursorIsNil(escaping.name):
       delayEscapeErr c, dest, info, fn, escaping
+      it.n = delayStart; skip it.n
+    elif unreceived.len > 0:
+      delayResultErr c, dest, info, fn, unreceived
       it.n = delayStart; skip it.n
     else:
       dest.addParLe(DelayX, info)
@@ -3782,8 +3808,11 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     var semmed = cursorAt(callDest, 0)
     let fn = childCursor(semmed)
     let escaping = escapingDelayParam(c, dest, fn)
+    let unreceived = undelayableResult(c, dest, fn)
     if not cursorIsNil(escaping.name):
       delayEscapeErr c, dest, info, fn, escaping
+    elif unreceived.len > 0:
+      delayResultErr c, dest, info, fn, unreceived
     else:
       dest.addParLe(DelayX, info)
       semmed.into:                     # strip the (call …) wrapper
@@ -5674,7 +5703,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of CoroforS:
         buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
         skip it.n
-      of LabS, JmpS:
+      of LabS, JmpS, AlwaysS:
         buildErr c, dest, it.n.info, "`" & $stmtKind(it.n) &
           "` is a hexer-internal shape and must not appear in source"
         skip it.n

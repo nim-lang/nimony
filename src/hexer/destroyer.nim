@@ -120,7 +120,7 @@ proc collectLabelsInto(result: var seq[SymId]; body: Cursor) =
       let sym = b.childCursor
       if sym.kind in {Symbol, SymbolDef}:
         result.add sym.symId
-    elif b.stmtKind == StmtsS:
+    elif b.stmtKind in {StmtsS, AlwaysS}:
       # transparent: its labels are this scope's
       collectLabelsInto result, b
     skip b
@@ -520,13 +520,13 @@ proc tr(c: var Context; n: var Cursor) =
     of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
     of IteratorS:
-      # iterinliner passes only `.closure` iterators through to here. Their
-      # bodies need destroyer treatment (scope tracking, =destroy injection
-      # on locals) when the closure flag is actually set; non-closure iters
-      # would have been stripped by iterinliner.
+      # iterinliner passes only `.closure` and `.passive` iterators through
+      # to here. Their bodies need destroyer treatment (scope tracking,
+      # =destroy injection on locals); non-coroutine iters would have been
+      # stripped by iterinliner.
       var probe = n
       let routine = asRoutine(probe, SkipExclBody)
-      if hasPragma(routine.pragmas, ClosureP):
+      if hasPragma(routine.pragmas, ClosureP) or hasPragma(routine.pragmas, PassiveP):
         trProcDecl c, n
       else:
         takeTree c.dest, n
@@ -535,7 +535,7 @@ proc tr(c: var Context; n: var Cursor) =
       # bodies don't participate in lowering.
       takeTree c.dest, n
     of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
-        WhenS, ForS, YldS, StmtsS, PragmasS,
+        WhenS, ForS, YldS, StmtsS, AlwaysS, PragmasS,
         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,

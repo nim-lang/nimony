@@ -1,0 +1,31 @@
+  destroy rb.tmp
+  destroy rb.item0
+  destroy rb.item1
+  destroy rb.stack
+regularBreak done
+  destroy rr.tmp
+  destroy rr.item0
+  destroy rr.item1
+  destroy rr.item2
+  destroy rr.stack
+regularReturn 2
+  destroy pb.tmp
+  destroy pb.item0
+  destroy pb.item1
+  destroy pb.stack
+passiveBreak done
+  destroy pf.tmp
+  destroy pf.item0
+  destroy pf.item1
+  destroy pf.stack
+passiveFull done
+  destroy inner.tmp
+  destroy inner.item0
+  destroy inner.item1
+  destroy inner.stack
+  destroy outer
+nestedBreak done
+  inl 0
+  inl 1
+  destroy inl
+inlineReturn done

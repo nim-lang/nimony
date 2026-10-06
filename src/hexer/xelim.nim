@@ -1342,7 +1342,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.hasMore:
         trStmt c, dest, n
     c.typeCache.closeScope()
-  of StmtsS, UnpackdeclS:
+  of StmtsS, AlwaysS, UnpackdeclS:
     copyInto(dest, n):
       while n.hasMore:
         trStmt c, dest, n
@@ -1515,7 +1515,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
          IteratorS, ConverterS, MethodS, MacroS, TemplateS,
          TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
-         ForS, WhileS, CoroforS, RetS, YldS, StmtsS, PragmasS,
+         ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
          PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,

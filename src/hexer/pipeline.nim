@@ -57,7 +57,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   # Pass 2: Desugar
   pass.prepareForNext("desugar")
-  desugar(pass, c.activeChecks)
+  desugar(pass, c.activeChecks, c.liftingCtx)
 
   # Pass 3: Lambda Lifting
   pass.prepareForNext("lambdalift")

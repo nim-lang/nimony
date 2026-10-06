@@ -106,7 +106,7 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
 
   let info = n.info
   var takeAddr = not constructsValue(n) and n.exprKind notin {AddrX, HaddrX}
-  let argType = getType(c.typeCache, n)
+  let argType = skipModifier getType(c.typeCache, n)
   if argType.typeKind in {RefT, PtrT}:
     takeAddr = false
   c.needsXelim = true
@@ -229,7 +229,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert fnType.typeKind != AutoT
   let fn = n.symId
   inc n # skip fn
-  let typ = getType(c.typeCache, n)
+  let typ = skipModifier getType(c.typeCache, n)
   # We assume "object slicing" here:
   let canUseStaticCall = (typ.typeKind notin {RefT, PtrT} and isLocalVar(c, n)) or typ.isFinal
   let cls = getClass(typ)
@@ -249,7 +249,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     assert paramList.substructureKind == ParamsU
     inc paramList
     let param = takeLocal(paramList, SkipFinalParRi)
-    if param.typ.typeKind in {RefT, PtrT}:
+    if param.typ.skipModifier.typeKind in {RefT, PtrT}:
       # nil check
       if not temp.needsParRi:
         c.needsXelim = true
@@ -451,7 +451,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
   let vtabTempSym = pool.symId("`vtableTemp." & $c.tmpCounter)
   inc c.tmpCounter
 
-  var xt = getType(c.typeCache, x)
+  var xt = skipModifier getType(c.typeCache, x)
   let xk = xt.typeKind
   if xk in {RefT, PtrT}:
     inc xt
@@ -571,7 +571,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
         of UsesSelf:
           discard "nothing to do"
         of UsesTempVal:
-          let xt = getType(c.typeCache, x)
+          let xt = skipModifier getType(c.typeCache, x)
           copyIntoKind dest, VarS, info:
             dest.addSymDef tmp.sym, info
             dest.addEmpty2 info # export marker, pragma
@@ -581,7 +581,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
           # register so trInstanceofImpl's getType on the temp resolves
           c.typeCache.registerLocal(tmp.sym, VarY, xt)
         of UsesTempPtr:
-          let xt = getType(c.typeCache, x)
+          let xt = skipModifier getType(c.typeCache, x)
           copyIntoKind dest, VarS, info:
             dest.addSymDef tmp.sym, info
             dest.addEmpty2 info # export marker, pragma
@@ -692,7 +692,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
       of NoStmt, CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS,
-         ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
+         ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, AlwaysS, PragmasS, PragmaxS,
          InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
          ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
@@ -822,7 +822,7 @@ proc collectClass(c: var Context; n: var Cursor) =
 proc collectMethods(c: var Context; n: var Cursor) =
   # we only care about top level methods
   case n.stmtKind
-  of StmtsS:
+  of StmtsS, AlwaysS:
     n.into:
       while n.hasMore:
         collectMethods c, n

@@ -2147,6 +2147,12 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         skip n
         while n.hasMore:
           trStmt c, dest, n, mode
+    of AlwaysS:
+      # A replicated `finally`: meta information for now, so `lengc` and
+      # `arkham` get its statements without the wrapper.
+      n.into:
+        while n.hasMore:
+          trStmt c, dest, n, mode
     of StmtsS:
       if mode == TraverseTopLevel:
         n.into:

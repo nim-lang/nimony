@@ -920,7 +920,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         c.typeCache.closeScope()
       of CallS, CmdS, IteratorS, TemplateS, TypeS, BlockS,
           EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS, ForS,
-          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, PragmasS,
+          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
           PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
           FromimportS, ImportexceptS, ExportS, ExportexceptS,
           CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
@@ -1750,14 +1750,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         # pass the decl through verbatim.
         takeTree c.dest, n
       of IteratorS:
-        # iterinliner passes only `.closure` iterators through to hexer.
-        # When the closure flag is set, their bodies need duplifier's hook
-        # injection on every asgn (especially the synthesized `result = v`
-        # at each yield). Non-closure iters that slip through should be
-        # passed verbatim.
+        # iterinliner passes only `.closure` and `.passive` iterators through
+        # to hexer. Their bodies need duplifier's hook injection on every
+        # asgn (especially the synthesized `result = v` at each yield).
+        # Inline iters that slip through should be passed verbatim.
         var probe = n
         let routine = asRoutine(probe, SkipExclBody)
-        if hasPragma(routine.pragmas, ClosureP):
+        if hasPragma(routine.pragmas, ClosureP) or hasPragma(routine.pragmas, PassiveP):
           trProcDecl c, n
         else:
           takeTree c.dest, n

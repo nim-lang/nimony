@@ -366,6 +366,7 @@
 | `(strdefine STR?)` | NimonyPragma | `strdefine` pragma (Nim-compatible): like `intdefine`, but the value is taken verbatim as a string literal |
 | `(enableTrace)` | NimonyPragma | `{.enableTrace.}` statement in the body of a memory management runtime's `nimTraceRef`: the runtime collects cycles, so the compiler lifts `=trace` and hooks refs for it (see `lib/std/system/orc.nim`) |
 | `(canFormCycles T)` | NimonyExpr | `canFormCycles(T)`: does the cycle collector trace through a value of type `T` (it owns a ref that can be part of a cycle)? Folded to `(true)`/`(false)` by `derefs`, with the lifter's own `needsTrace`; always false unless the runtime says `{.enableTrace.}`. Containers that own their buffer through a raw pointer use it to fence structural changes against a concurrent collector (`seq`, `--mm:yrc`) |
+| `(always S*)` | LengStmt, NimonyStmt | the statements of one replicated `finally` section: the eraiser emits one `(always …)` per way out of a `try`, so each copy stays recognizable as "runs on every path" after the `try` itself is gone. Like `stmts`, it opens no scope. Currently pure meta information: `lengcgen` emits its statements unwrapped, so `lengc`/`arkham` never see it. It is meant for checking that every path destroys a value and, later, for precise stack unwinding that runs custom logic |
 
 ### unpackflat, unpacktup, unpackdecl
 

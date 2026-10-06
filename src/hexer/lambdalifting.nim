@@ -523,7 +523,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trSons(c, dest, n)
       c.typeCache.closeScope()
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CoroforS,
-      CaseS, RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+      CaseS, RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
@@ -1946,7 +1946,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       treStmts(c, dest, n)
       c.typeCache.closeScope()
-    of StmtsS:
+    of StmtsS, AlwaysS:
       treStmts(c, dest, n)
     of CoroforS:
       # `.closure` iter corofors are owned by lambdalifting — we expand
