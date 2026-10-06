@@ -470,6 +470,9 @@ proc finalizeCoroutine*(c: var Continuation) =
   if c.env != nil:
     cancel(c.env)
     if c.env.caller.env == nil:
+      # the iterator's locals are fields of its frame; `=destroy` dispatches
+      # to the frame type's hook, as for a value-owned frame's `ref`
+      `=destroy`(c.env[])
       deallocFrame(c.env)
     c.fn = nil
     c.env = nil

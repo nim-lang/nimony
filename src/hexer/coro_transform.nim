@@ -623,6 +623,11 @@ proc emitFinalReturn*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
           dest.addIntLit 0, info # EnvFieldName is direct field of Continuation
         dest.addParPair NilX, info
       dest.copyIntoKind StmtsS, info:
+        # The body's locals live in the frame since lambdalifting, before
+        # the destroyer ran: nothing in it destroys them, so this does.
+        dest.copyIntoKind DestroyX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse envSym, info
         emitDeallocFrame(c, dest, info)
       dest.addDotToken()
     dest.copyIntoKind RetS, info:
