@@ -9,7 +9,7 @@ else:
 import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes, closuretypes, lifter
 import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
@@ -1055,7 +1055,6 @@ proc delayWrapper(c: var Context; fn: SymId; info: NifLineInfo): SymId =
   result = pool.symId("`dw." & $c.counter & "." & c.thisModuleSuffix)
   inc c.counter
   c.delayWrappers[fn] = result
-  let hasResult = not isVoidType(r.retType)
   var args: seq[SymId] = @[]
   let start = c.pending.len
   copyIntoKind c.pending, ProcS, info:
@@ -1081,35 +1080,15 @@ proc delayWrapper(c: var Context; fn: SymId; info: NifLineInfo): SymId =
             c.pending.copyTree param.typ
           c.pending.addDotToken() # default value
         skip p
-    c.pending.copyTree r.retType
+    # sem lets `delay` through only for a callee without a result or errors
+    c.pending.addDotToken() # return type
     copyIntoKind c.pending, PragmasU, info:
       c.pending.addParPair PassiveP, info
-      # `f`'s error travels through the wrapper's frame
-      if not r.pragmas.isDotToken:
-        var pr = sub(r.pragmas)
-        while pr.hasMore:
-          if pragmaKind(pr) == RaisesP: c.pending.copyTree pr
-          skip pr
     c.pending.addDotToken() # effects
     copyIntoKind c.pending, StmtsS, info:
-      let resSym = pool.symId("`dwr." & $c.counter)
-      inc c.counter
-      if hasResult:
-        copyIntoKind c.pending, ResultS, info:
-          c.pending.addSymDef resSym, info
-          c.pending.addDotToken() # exported
-          c.pending.addDotToken() # pragmas
-          c.pending.copyTree r.retType
-          c.pending.addDotToken() # value
-        c.pending.addParLe AsgnS, info
-        c.pending.addSymUse resSym, info
       copyIntoKind c.pending, CallX, info:
         c.pending.addSymUse fn, info
         for a in args: c.pending.addSymUse a, info
-      if hasResult:
-        c.pending.addParRi() # asgn
-        copyIntoKind c.pending, RetS, info:
-          c.pending.addSymUse resSym, info
   programs.publish result, c.pending, start
 
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =

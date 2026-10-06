@@ -3731,6 +3731,27 @@ proc escapingDelayParam(c: var SemContext; dest: var TokenBuf; fn: Cursor): Loca
       return p
     skip params
 
+proc undelayableResult(c: var SemContext; dest: var TokenBuf; fn: Cursor): string =
+  ## What `f` hands back that a delayed call has nowhere to put: the
+  ## continuation runs later, often on a worker, after the expression that
+  ## built it is gone. A result or an error must be handled inside the task.
+  ## Answers "" when there is none.
+  result = ""
+  if not fn.isSymbol: return
+  let res = declToCursor(c, dest, fetchSym(c, fn.symId))
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
+  let r = asRoutine(res.decl, SkipExclBody)
+  if not isVoidType(r.retType):
+    result = "returns `" & typeToString(r.retType) & "`, but nothing can receive the value"
+  elif hasPragma(r.pragmas, RaisesP):
+    result = "is `.raises`, but nothing can receive the error"
+
+proc delayResultErr(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
+                    fn: Cursor; what: string) =
+  buildErr c, dest, info,
+    "`delay` hands `" & asNimCode(fn.symId) & "` to a scheduler, which runs it after this expression is gone; `" &
+      asNimCode(fn.symId) & "` " & what & " there. Handle it inside the task instead"
+
 proc delayEscapeErr(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                     fn: Cursor; p: Local) =
   buildErr c, dest, info,
@@ -3756,8 +3777,12 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # delay(call): the call is delay's sole child, the shape before flattening.
     let fn = childCursor(it.n)
     let escaping = escapingDelayParam(c, dest, fn)
+    let unreceived = undelayableResult(c, dest, fn)
     if not cursorIsNil(escaping.name):
       delayEscapeErr c, dest, info, fn, escaping
+      it.n = delayStart; skip it.n
+    elif unreceived.len > 0:
+      delayResultErr c, dest, info, fn, unreceived
       it.n = delayStart; skip it.n
     else:
       dest.addParLe(DelayX, info)
@@ -3783,8 +3808,11 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     var semmed = cursorAt(callDest, 0)
     let fn = childCursor(semmed)
     let escaping = escapingDelayParam(c, dest, fn)
+    let unreceived = undelayableResult(c, dest, fn)
     if not cursorIsNil(escaping.name):
       delayEscapeErr c, dest, info, fn, escaping
+    elif unreceived.len > 0:
+      delayResultErr c, dest, info, fn, unreceived
     else:
       dest.addParLe(DelayX, info)
       semmed.into:                     # strip the (call …) wrapper
