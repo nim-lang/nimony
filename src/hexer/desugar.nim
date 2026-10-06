@@ -1036,25 +1036,20 @@ proc ownsDelayedArg(c: var Context; typ: Cursor): bool =
   result = typ.typeKind notin TypeModifiers + {VarargsT} and
            hasDestroyHook(c.lifter[], typ)
 
-proc delayWrapper(c: var Context; fn: SymId; info: NifLineInfo): SymId =
-  ## The wrapper `delay(fn(...))` calls, or `NoSymId` when `fn` borrows nothing
-  ## that needs owning.
-  result = c.delayWrappers.getOrDefault(fn, NoSymId)
-  if result != NoSymId: return
-  let res = tryLoadSym(fn)
-  if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
-  let r = asRoutine(res.decl)
-  if r.params.substructureKind != ParamsU: return
-  var needed = false
-  var p = sub(r.params)
-  while p.hasMore:
-    if ownsDelayedArg(c, asLocal(p).typ): needed = true
-    skip p
-  if not needed: return
+proc borrowsOwnedArg(c: var Context; r: Routine): bool =
+  ## Does a delayed call of `r` need a wrapper: does `r` borrow a parameter
+  ## the delayed frame has to own?
+  result = false
+  if r.params.substructureKind == ParamsU:
+    var p = sub(r.params)
+    while p.hasMore and not result:
+      result = ownsDelayedArg(c, asLocal(p).typ)
+      skip p
 
+proc emitDelayWrapper(c: var Context; fn: SymId; r: Routine; info: NifLineInfo): SymId =
+  ## `proc f`dw(a: sink A; b: B) {.passive.} = f(a, b)` into `c.pending`.
   result = pool.symId("`dw." & $c.counter & "." & c.thisModuleSuffix)
   inc c.counter
-  c.delayWrappers[fn] = result
   var args: seq[SymId] = @[]
   let start = c.pending.len
   copyIntoKind c.pending, ProcS, info:
@@ -1063,7 +1058,7 @@ proc delayWrapper(c: var Context; fn: SymId; info: NifLineInfo): SymId =
     c.pending.addDotToken() # pattern
     c.pending.addDotToken() # typevars
     copyIntoKind c.pending, ParamsU, info:
-      p = sub(r.params)
+      var p = sub(r.params)
       while p.hasMore:
         let param = asLocal(p)
         let a = pool.symId("`dwp." & $c.counter)
@@ -1090,6 +1085,18 @@ proc delayWrapper(c: var Context; fn: SymId; info: NifLineInfo): SymId =
         c.pending.addSymUse fn, info
         for a in args: c.pending.addSymUse a, info
   programs.publish result, c.pending, start
+
+proc delayWrapper(c: var Context; fn: SymId; info: NifLineInfo): SymId =
+  ## The wrapper `delay(fn(...))` calls, or `NoSymId` when `fn` borrows nothing
+  ## that needs owning. One wrapper per callee and module.
+  result = c.delayWrappers.getOrDefault(fn, NoSymId)
+  if result == NoSymId:
+    let res = tryLoadSym(fn)
+    if res.status == LacksNothing and isRoutine(res.decl.symKind):
+      let r = asRoutine(res.decl)
+      if borrowsOwnedArg(c, r):
+        result = emitDelayWrapper(c, fn, r, info)
+        c.delayWrappers[fn] = result
 
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.childCursor

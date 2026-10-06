@@ -331,11 +331,11 @@ type
     ## `resume`. Running it marks it `done` and continues at its own `caller`:
     ## nothing for a regular proc, the loop's next state in a `.passive` one.
     done: int
-    resume: Continuation
-    cancelling: bool
-      ## Set while `=destroy` runs an abandoned iterator to its end: every
+      ## 0 while the coroutine runs, 1 once it ran `j`. -1 while it runs
+      ## cancelled: `=destroy` runs an abandoned iterator to its end, and every
       ## `yield` of a `.passive` iterator is followed by an `iterCancelled`
       ## check that returns, so the iterator's own exit path destroys its locals.
+    resume: Continuation
 
 proc joined(coro: ptr CoroutineBase): Continuation {.nimcall.} =
   let j = cast[ptr Join](coro)
@@ -349,7 +349,6 @@ proc attach(j: ptr Join; c: Continuation) =
   j.caller = Continuation(fn: nil, env: nil)
   j.done = 0
   j.resume = c
-  j.cancelling = false
   if c.env != nil:
     c.env.caller = Continuation(fn: joined, env: cast[ptr CoroutineBase](j))
 
@@ -368,10 +367,10 @@ proc run(j: ptr Join) =
   ## thread, and if it parked, wait for whoever resumes it.
   var c = j.resume
   j.resume = Continuation(fn: nil, env: nil)
-  j.done = 0
+  if j.done != -1: j.done = 0 # a cancelled run stays cancelled
   while not stopping(c):
     c = scheduler(c)
-  while atomicLoadN(addr j.done, ATOMIC_ACQUIRE) == 0:
+  while atomicLoadN(addr j.done, ATOMIC_ACQUIRE) <= 0:
     if passiveWaitHook != nil: passiveWaitHook()
     else: builtinCpuRelax()
 
@@ -418,19 +417,19 @@ proc iterFinished(j: ptr Join): bool {.inline.} =
 proc iterCancelled(coro: ptr CoroutineBase): bool {.inline.} =
   ## Used by the compiler: right after a `.passive` iterator's `yield`, is the
   ## loop gone? The iterator's `caller` is its loop's `Join` (`attach`).
-  result = cast[ptr Join](coro.caller.env).cancelling
+  result = cast[ptr Join](coro.caller.env).done == -1
 
 proc `=destroy`(j: Join) =
   ## A `for` loop left before its iterator finished, by whatever way out of
   ## the loop's scope. The iterator is parked at a `yield`: resume it with
-  ## `cancelling` set, and it returns from there, destroying its locals and
+  ## `done = -1`, and it returns from there, destroying its locals and
   ## freeing its frame like any other return.
   if j.resume.env != nil:
     # the frame's `caller` is `j` itself, addressable unlike the parameter
     let jp = cast[ptr Join](j.resume.env.caller.env)
-    jp.cancelling = true
     jp.caller = Continuation(fn: nil, env: nil) # not the loop's next state
     while jp.resume.env != nil: # a `yield` on the way out parks it again
+      jp.done = -1 # `joined` set it to 1 at that `yield`
       run(jp)
 
 proc `=copy`(dest: var Join; src: Join) {.error.}
