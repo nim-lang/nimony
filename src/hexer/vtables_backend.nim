@@ -40,7 +40,7 @@ type
     cls: SymId
     name: SymId
     params: Cursor  # the routine's `(params …)` node
-    passive: bool   # `name` is a `.passive` method; its slot holds `init`
+    passive: bool   # `name` is a `.passive` method's `init` wrapper
 
   Context* = object
     tmpCounter: int
@@ -703,21 +703,21 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     raiseAssert "BUG: unexpected ParRi in vtables_backend.tr" # classic ParRi only
 
-proc frontendKey(cls, fn: SymId): string =
-  ## The key sem recorded for `fn` in `cls`'s `(methods)` pragma, or "".
+proc wrapperKey(c: Context; cls, wrapper: SymId): string =
+  ## The key sem recorded in `cls`'s `(methods)` pragma for the passive method
+  ## whose `init` wrapper is `wrapper`, or "". Sem names the method, `cps`
+  ## named the wrapper after it, so the entry is found by the same rule.
   result = ""
   for entry in vtables_frontend.loadVTable(cls):
-    if entry.fn == fn:
+    if coroHelperName(entry.fn, "init", c.moduleSuffix) == wrapper:
       return pool.strings[entry.signature]
 
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
   var sig = ""
-  var target = m.name
   if m.passive:
-    # `cps` rewrote this method's params into the state proc's, so they no
-    # longer spell the method's signature; sem's record of it still does.
-    sig = frontendKey(m.cls, m.name)
-    target = coroHelperName(m.name, "init", c.moduleSuffix)
+    # The wrapper's params are not the method's — they end in the caller's
+    # continuation — but sem's record of the method's signature still is.
+    sig = wrapperKey(c, m.cls, m.name)
   if sig.len == 0:
     sig = methodKey(methodName, m.params)
   # see if this is an override:
@@ -725,12 +725,12 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
     let methodIndex = c.vtables.getOrQuit(inh).signatureToIndex.getOrDefault(sig, -1)
     if methodIndex != -1:
       # register as override:
-      c.vtables.getOrQuit(m.cls).methods[methodIndex] = target
+      c.vtables.getOrQuit(m.cls).methods[methodIndex] = m.name
       return
   # not an override, register as a new base method:
   let myVt = addr c.vtables.getOrQuit(m.cls)
   let idx = myVt[].methods.len
-  myVt[].methods.add target
+  myVt[].methods.add m.name
   myVt[].signatureToIndex[sig] = idx
 
 proc processMethods(c: var Context) =
@@ -838,15 +838,11 @@ proc collectMethods(c: var Context; n: var Cursor) =
         if cls == SymId(0):
           error "cannot attach method to type " & typeToString(param.typ)
         else:
-          let name = r.name.symId
-          let passive = hasPragma(r.pragmas, PassiveP)
-          # A passive method's `init` wrapper is a `method` too, but it is
-          # the slot's target, not a slot of its own; see `slotTarget`.
-          # Only the wrapper's name carries the backtick `derivedName` adds.
-          if not (passive and '`' in pool.symBasename(name)):
-            # we might not have registered the class yet, so we use a single flat `methodDecls` list:
-            c.methodDecls.add MethodDecl(cls: cls, name: name, params: r.params,
-                                         passive: passive)
+          # we might not have registered the class yet, so we use a single flat `methodDecls` list.
+          # A `.passive` method reaches here as its `init` wrapper: `cps`
+          # turned the state proc into a plain `proc`; see `slotTarget`.
+          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, params: r.params,
+                                       passive: hasPragma(r.pragmas, PassiveP))
       else:
         error "method needs a first parameter of the class type: " & toString(orig, false)
   of TypeS:

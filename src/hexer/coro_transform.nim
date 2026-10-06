@@ -2490,8 +2490,10 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
         # `proc`. Generic templates pass through unchanged — only
         # their instances are coroutine-transformed.
         if isConcrete:
-          if kind == IteratorY:
-            # retag in place: `parLeToken` would reset an already-set jump
+          if kind == IteratorY or iter.stmtKind == MethodS:
+            # retag in place: `parLeToken` would reset an already-set jump.
+            # A method's state proc is never dispatched to — its `init`
+            # wrapper is what the vtable slot holds — so it stops being one.
             setTagAt(dest, procStart, cast[TagId](ProcS))
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
       if isCoroutine and isConcrete:
