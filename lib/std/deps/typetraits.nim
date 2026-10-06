@@ -151,7 +151,7 @@ proc tr(n: NifCursor; defs: NifCursor): NifBuilder =
     var ty = arg
     let s = renderTypeName(defs, ty)
     result = createTree()
-    result.addStrLit s, arg.info
+    result.addStrLit s
   else:
     result = errorTree("unknown type trait: '" & trait & "'", n)
 
