@@ -677,36 +677,16 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     raiseAssert "BUG: unexpected ParRi in vtables_backend.tr" # classic ParRi only
 
-proc inheritedSlot(c: var Context, cls: SymId; m: MethodDecl; methodName: string): int =
-  # The slot `methodName` occupies in the class chain of `cls`, or -1 when no
-  # ancestor declares it.
-  result = -1
-  let sig = methodKey(methodName, m.params)
-  for inh in inheritanceChain(cls):
-    result = c.vtables.getOrQuit(inh).signatureToIndex.getOrDefault(sig, -1)
-    if result != -1: return
-
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
-  var methodIndex = inheritedSlot(c, m.cls, m, methodName)
-  # A generated method name: hexer mints a per-frame `extSlot` override as
-  # `<routine>`extSlot`, since one module may hold a frame per `.passive` proc
-  # and each needs its own symbol. The vtable key is the bare `extSlot` --
-  # `methodKey` is built from `symBasename`, receiver type left out -- so the
-  # routine prefix has to come off before the class chain is consulted, or the
-  # override lands in a slot of its own that nothing dispatches through. Same
-  # case as the `=destroy_`/`=trace_` normalization below, and only when the
-  # name behind the backtick really is an inherited method: a helper that is no
-  # virtual keeps the name it was minted with.
-  if methodIndex == -1:
-    let tick = methodName.rfind('`')
-    if tick >= 0:
-      methodIndex = inheritedSlot(c, m.cls, m, methodName[tick + 1 .. ^1])
-  if methodIndex != -1:
-    # register as override:
-    c.vtables.getOrQuit(m.cls).methods[methodIndex] = m.name
-    return
-  # not an override, register as a new base method:
   let sig = methodKey(methodName, m.params)
+  # see if this is an override:
+  for inh in inheritanceChain(m.cls):
+    let methodIndex = c.vtables.getOrQuit(inh).signatureToIndex.getOrDefault(sig, -1)
+    if methodIndex != -1:
+      # register as override:
+      c.vtables.getOrQuit(m.cls).methods[methodIndex] = m.name
+      return
+  # not an override, register as a new base method:
   let myVt = addr c.vtables.getOrQuit(m.cls)
   let idx = myVt[].methods.len
   myVt[].methods.add m.name

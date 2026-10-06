@@ -73,30 +73,6 @@ const
   CallerParamName* = "`caller.0"
   AllocFrameProcName* = "allocFrame.0." & SystemModuleSuffix
   DeallocFrameProcName* = "deallocFrame.0." & SystemModuleSuffix
-  NewExtSlotProcName* = "newExtSlot.0." & SystemModuleSuffix
-    ## `system.newExtSlot`: what a generated frame constructor calls to put a
-    ## box in the frame's `ext` field. Not inline, which is the half of that
-    ## this side has to know — see `completeFrameConstr`.
-  CtxSlotProcName* = "ctxSlot.0." & ContextvarsModuleSuffix
-    ## `std/contextvars`' `ctxSlot`: the one function through which that module
-    ## touches a chain, and so how a `.passive` proc says it WRITES a dynamic
-    ## context. Nothing in a program asks for a context slot -- the write
-    ## templates (`set`, `withCtx`) reach this proc and the answer is found in
-    ## the body here. See `bodyWritesContext`.
-    ##
-    ## Watching the library's seam rather than a marker the caller had to write
-    ## is what keeps the rule honest: a `set` that a template did not expand
-    ## into the frame (a proc in some other module doing the write) cannot be
-    ## seen from here, and a marker in the user's own code could be forgotten
-    ## without anything failing.
-  ExtSlotObjName* = "ExtSlot.Obj.0." & SystemModuleSuffix
-    ## The OBJECT behind `system.ExtSlot`, which is what a NIF `(ref ...)` type
-    ## node names: `type ExtSlot = ref object` compiles to
-    ## `type ExtSlot = (ref ExtSlot.Obj)`, and the alias `ExtSlot` names the
-    ## ref type as a whole. A `(ref ExtSlot)` spelled with the alias is a
-    ## `ptr ExtSlot` by the time the C back end renders it -- a type nothing
-    ## else in the compiler emits -- so the Obj goes in the node and the alias
-    ## stays a Nim-source-level spelling.
 
 type
   EnvField* = object
@@ -154,14 +130,6 @@ type
       ## point where the iter VALUE is built) fills it in; every
       ## `(envp EnvType field)` in the body reads the capture back
       ## through it. `SymId(0)` = this iter captures nothing.
-    extSlotField*: SymId
-      ## Set for a routine whose body WRITES a dynamic context — see
-      ## `bodyWritesContext`, which is what sets it: the coro frame grows one
-      ## extra field holding the `ExtSlot` box that is THIS coroutine's context,
-      ## and an `extSlot` override that hands out its address, so
-      ## `std/contextvars` reaches the box by asking the frame. `SymId(0)` =
-      ## this routine writes no context (or is not a coroutine at all), and
-      ## shares the nearest enclosing slot.
 
   TrHook* = proc (c: var Context; dest: var TokenBuf; n: var Cursor) {.nimcall.}
   TrPassiveCallHook* = proc (c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) {.nimcall.}
@@ -303,13 +271,6 @@ proc coroEnvFieldForIter*(iterSym: SymId): SymId =
   ## frame-READING sites (the state machine, generated here) arrive at
   ## the same name without having to agree on an order.
   coroHelperName(iterSym, "cenv", "")
-
-proc coroExtSlotField*(c: Context; routineSym: SymId): SymId =
-  ## The frame field holding a coroutine's own `ExtSlot`, for a routine whose
-  ## body writes a dynamic context. Derived like every other frame field, so the
-  ## type, its constructor, the state procs and the generated `extSlot`
-  ## override all name it without passing it around.
-  coroHelperName(routineSym, "ext", c.thisModuleSuffix)
 
 proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
   ## Publish a placeholder signature for a coroutine's `init` wrapper so
@@ -1964,37 +1925,6 @@ proc repairCrossStateJumps(c: var Context) =
 # coroutine routine
 # ---------------------------------------------------------------------
 
-proc bodyWritesContext(n: Cursor): bool =
-  ## Whether this coroutine's body WRITES a dynamic context, which is what earns
-  ## its frame a slot of its own.
-  ##
-  ## The answer is a call to `std/contextvars`' `ctxSlot` in the body — the one
-  ## function that module touches a chain through, reached from a `.passive`
-  ## proc by the `set` and `withCtx` templates the frontend has already expanded
-  ## into it. Nothing in the program's own source says so: a proc reads or
-  ## writes a context by calling `get`/`set` like any other code, and a proc
-  ## that only reads gets no slot and shares the one around it.
-  ##
-  ## Asked BEFORE the body is walked, because the answer decides whether the
-  ## frame TYPE has an `ext` field and the frame CONSTRUCTOR initializes it —
-  ## and the constructor is closed and spliced into the output before the first
-  ## statement is lowered. A whole-tree scan is the price of not emitting a
-  ## constructor that a later pass has to reopen.
-  var n = n
-  if n.isDotToken: return false
-  result = false
-  let wanted = pool.symId(CtxSlotProcName)
-  linearScan n:
-    # `kind` is not the payload here: `linearScan` hands out the generic tag,
-    # and it is the node's KIND — the statement/expression case these passes
-    # switch on — that says what the node is. The callee of a call carries the
-    # symbol in its first slot, when it is a symbol at all: a call whose callee
-    # is a computed value has a non-symbol there.
-    if n.stmtKind == CallS and n.childCursor.kind == Symbol and
-        n.childCursor.symId == wanted:
-      result = true
-      break
-
 proc completeFrameConstr(c: var Context; init: var TokenBuf) =
   ## Close the frame constructor `patchParamList` left open, defaulting
   ## every field it did not mention.
@@ -2038,24 +1968,6 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
               init.addSubtree fieldType
         else:
           addDefaultValue(init, fieldType, info, c.ptrSize)
-  if c.currentProc.extSlotField != SymId(0):
-    # The context slot, spelled out rather than left to `addDefaultValue`:
-    # this one field is the compiler's own, not a lifted local, so the type
-    # comes from `ExtSlotObjName` and not from anything `escapingLocals`
-    # recorded.
-    #
-    # `newExtSlot`, not nil: what the frame hands out through its `extSlot`
-    # override is the ADDRESS of this field, and reading through such an
-    # address is a dereference of the ref sitting in it. A frame that started
-    # out with nil would hand out an address that crashes the first time
-    # `std/contextvars` reads `slot[].ctx`. One box per coroutine START — a
-    # coroutine entered a second time is a new frame and a new box — is the
-    # price of the field being optional at all, paid only by the routines that
-    # write a context.
-    init.copyIntoKind KvU, info:
-      init.addSymUse c.currentProc.extSlotField, info
-      init.copyIntoKind CallX, info:
-        init.addSymUse pool.symId(NewExtSlotProcName), info
   init.addParRi() # object constructor
   init.addParRi() # assignment
 
@@ -2091,8 +2003,6 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
 
   var n = beginRead(c.currentProc.cf)
   escapingLocals(c, n)
-  if bodyWritesContext(beginRead(c.currentProc.cf)):
-    c.currentProc.extSlotField = coroExtSlotField(c, c.procStack[^1])
   completeFrameConstr(c, init)
 
   assert n.stmtKind in {StmtsS, ScopeS}
@@ -2173,76 +2083,7 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
             dest.addSymUse pool.symId(BareRootObjName), info
           dest.addDotToken() # default value
         programs.publish(c.currentProc.capturedEnvField, dest, beforeField)
-      if c.currentProc.extSlotField != SymId(0):
-        # The context slot, only in the frames whose body writes a context. Like
-        # every other frame field it is an ordinary owning ref: the box is
-        # rooted by the frame for as long as the frame lives, which is exactly
-        # as long as anything can reach that context.
-        let beforeField = dest.len
-        copyIntoKind dest, FldU, info:
-          dest.addSymDef c.currentProc.extSlotField, info
-          dest.addDotToken() # exported
-          dest.addDotToken() # pragmas
-          copyIntoKind dest, RefT, info:
-            dest.addSymUse pool.symId(ExtSlotObjName), info
-          dest.addDotToken() # default value
-        programs.publish(c.currentProc.extSlotField, dest, beforeField)
   programs.publish(objType, dest, beforeType)
-
-proc addExtSlotPtrType(dest: var TokenBuf; info: NifLineInfo) =
-  ## Emit `(ptr ref ExtSlot)`: what `ptr ExtSlot` means in `system.nim`, and
-  ## what the address of a `ref ExtSlot` field is.
-  ##
-  ## The `unchecked` on both levels is not decoration — it is what the front
-  ## end puts there, and leaving it out makes the C back end resolve
-  ## `(ptr (ref X))` to a pointer to X's OBJECT. That is a different type from
-  ## the pointer to the FIELD that `addr` of a ref produces, so an override
-  ## written this way would declare `ExtSlot_Obj*` and return `&frame.ext`, and
-  ## every call to it would be a C warning about an incompatible pointer.
-  dest.addParLe PtrT, info
-  dest.addParLe RefT, info
-  dest.addSymUse pool.symId(ExtSlotObjName), info
-  dest.addParPair UncheckedU, info
-  dest.addParRi()
-  dest.addParPair UncheckedU, info
-  dest.addParRi()
-
-proc generateExtSlotMethod(c: var Context; dest: var TokenBuf; sym: SymId) =
-  ## `extSlot` override for a frame that asked for a context slot: its answer is
-  ## the address of its own `ext` field.
-  ##
-  ## Emitted as an ordinary top-level method, which is all the vtable machinery
-  ## needs — it overrides `CoroutineBase.extSlot` by SIGNATURE (`methodKey`
-  ## ignores the receiver type), so it takes over the base's slot and a frame
-  ## that generated none keeps answering nil. That is what makes the field
-  ## optional: `std/contextvars` asks any frame through this method and only the
-  ## frames that wanted a slot have anything to hand back.
-  const info = NoLineInfo
-  if c.currentProc.extSlotField == SymId(0): return
-  let selfSym = coroHelperName(sym, "extSlotself", c.thisModuleSuffix)
-  dest.addParLe MethodS, info
-  dest.addSymDef coroHelperName(sym, "extSlot", c.thisModuleSuffix), info
-  for i in 0..<3:
-    dest.addDotToken() # exported, pattern, typevars
-  dest.copyIntoKind ParamsU, info:
-    dest.copyIntoKind ParamU, info:
-      dest.addSymDef selfSym, info
-      dest.addDotToken() # export
-      dest.addDotToken() # pragmas
-      dest.copyIntoKind PtrT, info:
-        dest.addSymUse coroTypeForProc(c, sym), info
-      dest.addDotToken() # default value
-  addExtSlotPtrType dest, info # return type
-  dest.addDotToken() # pragmas
-  dest.addDotToken() # effects
-  dest.copyIntoKind StmtsS, info:
-    dest.copyIntoKind RetS, info:
-      dest.copyIntoKind AddrX, info:
-        dest.copyIntoKind DotX, info:
-          dest.copyIntoKind DerefX, info:
-            dest.addSymUse selfSym, info
-          dest.addSymUse c.currentProc.extSlotField, info
-  dest.addParRi() # method
 
 proc emitFreshFrameCall(c: var Context; d: var TokenBuf; sym: SymId; params: Cursor; hasResult: bool; info: NifLineInfo) =
   ## Identical to the original single-branch wrapper body: alloc a
@@ -2684,10 +2525,6 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
   if isCoroutine and isConcrete:
     var coroTypes = move c.coroTypes
     generateCoroutineType(c, coroTypes, sym)
-    # Right after the type it overrides, and into the same buffer: both are
-    # compiler-invented declarations, so both belong in front of the module's
-    # own.
-    generateExtSlotMethod(c, coroTypes, sym)
     c.coroTypes = move coroTypes
     generateCoroutineHelpers(c, dest, sym, iter)
   swap(c.currentProc, currentProc)

@@ -72,6 +72,7 @@ func compiles*(x: untyped): bool {.magic: Compiles.}
   ##     echo "'+' for integers is available"
   ##   ```
 
+
 const
   # Use string literals for one digit numbers to avoid the allocations as they are so common.
   NegTen = [
@@ -284,119 +285,22 @@ type
   CoroutineBase* = object of RootObj
     caller*: Continuation
     callee*: ptr CoroutineBase
-      ## No context field here, and that is the point of `extSlot`: a dynamic
-      ## context is OPTIONAL, so paying for one on every coroutine -- and
-      ## forcing every one of them to know it exists -- buys nothing. A
-      ## coroutine that only reads a context shares the nearest enclosing one
-      ## instead, which is the same answer it would have given a fresh chain
-      ## that nobody had pushed to yet.
-      ##
-      ## What the frame still is: the one thing that identifies a coroutine for
-      ## its whole life, allocated with it, reached through the `env` field of
-      ## every continuation that resumes it, and freed with it. A context needs
-      ## no table and no bookkeeping to follow its coroutine around, and
-      ## nothing outlives the coroutine that set it -- it hangs off the frame
-      ## the caller asks for by symbol.
-
-type
-  ExtSlot* = ref object
-    ## The address of one of these is a context: a stable place to hold a
-    ## dynamic context that can be handed down a call chain. What it holds is
-    ## opaque here -- the `RootRef` is `std/contextvars`' business -- because
-    ## the runtime only has to own, thread and release the box.
-    ##
-    ## A `ref` rather than a `var`: the slot is reachable from an address the
-    ## caller passed around, which a GC has no way to see. A real reference
-    ## says "this chain is alive" -- storing the head as a `pointer` would
-    ## leave the whole chain unrooted, and ORC would free a node the moment
-    ## the `push` that made it went out of scope.
     ctx*: RootRef
-
-method extSlot*(coro: ptr CoroutineBase): ptr ExtSlot =
-  ## The address of the coroutine's own context slot, or nil when it has none.
-  ##
-  ## A method rather than a field, because the slot only exists on the frames
-  ## that need one: a `.passive` proc whose body WRITES a context -- whose body
-  ## reaches `std/contextvars`' `ctxSlot`, which the compiler sees and answers
-  ## by adding the field AND this override -- gets both, pointing at one box, so
-  ## the address a caller holds and the address the frame releases are the same
-  ## value. A frame that only READS a context gets neither, and shares the
-  ## nearest enclosing slot instead.
-  ##
-  ## Nil here is not a failure, it is the answer "no slot of its own" -- and
-  ## the question that comes next, "whose slot then", is `caller.env`'s to
-  ## answer.
-  nil
-
-proc newExtSlot*(): ExtSlot =
-  ## A fresh, empty slot. What fills it is the holder's business.
-  ##
-  ## Not inline, and not for tidiness: the compiler's generated frame
-  ## constructors call it to give a frame that writes a context a box before the
-  ## first statement runs, and a `{.inline.}` proc is not a call the back ends
-  ## can be asked to emit.
-  new result
-
-var threadExt {.threadvar.}: ExtSlot
-  ## This thread's own context, for code outside every coroutine. The bottom of
-  ## the chain a fresh slot inherits from, and the only slot that outlives the
-  ## code holding it.
-
-proc currentSlot*(): ptr ExtSlot =
-  ## The address of this thread's own context slot.
-  ##
-  ## Outlives whatever ran on the thread -- a context set in a thread's main
-  ## proc has to still be there in the next one -- which is why the slot is a
-  ## `{.threadvar.}` box rather than a local of the proc that got it.
-  if threadExt == nil:
-    threadExt = newExtSlot()
-  addr threadExt
-
-proc inheritedCtx(caller: ptr CoroutineBase): RootRef =
-  ## The context the coroutine `caller` is running under: its own slot's, or --
-  ## because a coroutine that only reads a context shares the context around it
-  ## -- the nearest enclosing one that holds a chain, ending at the thread's.
-  ##
-  ## A slot with no box in it holds no chain, so it is not an answer here: that
-  ## is what lets a holder leave its box unmade until something is adopted into
-  ## it. The thread's own slot is read without being asked for, so that a thread
-  ## which never sets a context never pays for one.
-  var up = caller
-  while up != nil:
-    let slot = up.extSlot()
-    if slot != nil and slot[] != nil and slot[].ctx != nil:
-      return slot[].ctx
-    up = up.caller.env
-  if threadExt == nil: return nil
-  threadExt.ctx
-
-proc adoptExtSlot*(slot: ptr ExtSlot; caller: ptr CoroutineBase) =
-  ## Gives a slot the context its holder was called under, so that code which
-  ## asked for a context of its own reads what its caller read instead of an
-  ## empty chain -- the way a task copies the context it was spawned in.
-  ##
-  ## On first use rather than at the call, which keeps all of this out of the
-  ## call sequence: `caller.env` is already sitting in the frame and nothing has
-  ## to be written before the callee is entered. The rule that buys is that a
-  ## coroutine sees the context its caller held when the coroutine first touched
-  ## a context, so a `set` in the caller afterwards does not reach back into it.
-  ##
-  ## A slot that already holds a chain is left alone, which is what makes this
-  ## safe to call from anywhere that cannot tell whether this is the first use.
-  ##
-  ## With nothing to adopt, the box stays unmade: an empty chain is not worth a
-  ## box, and a `Join` on the way to every `.passive` call is not a context
-  ## holder until something is set in it. Reading such a slot is safe because
-  ## `slot[]` of an unmade slot is simply nil -- a load of the ref the slot
-  ## holds -- and every reader tests it before it uses; see
-  ## `std/contextvars`.
-  if slot == nil: return
-  let ctx = inheritedCtx(caller)
-  if slot[] == nil:
-    if ctx == nil: return
-    slot[] = newExtSlot()
-  if slot[].ctx == nil:
-    slot[].ctx = ctx
+      ## Slot for a dynamic context, private to `std/contextvars`.
+      ##
+      ## It lives on the frame because the frame is the only thing that
+      ## identifies a coroutine for its whole life: allocated with the
+      ## coroutine, reached through the `env` field of every continuation that
+      ## resumes it, carried to whichever thread resumes it, freed with it.
+      ## A context therefore needs no table and no bookkeeping to follow its
+      ## coroutine around, and nothing outlives the coroutine that set it.
+      ##
+      ## A `RootRef`, not a `pointer`: the chain is a tree of nodes that must
+      ## stay alive for as long as anything can reach it, and only a real
+      ## reference says so. Storing the head as a `pointer` would leave the
+      ## whole chain unrooted -- ORC would free a node the moment the `push`
+      ## that made it went out of scope, and hand the same memory to the next
+      ## one.
 
 var runningCoro {.threadvar.}: ptr CoroutineBase
   ## The frame of the coroutine whose state function this thread is running, or
@@ -475,16 +379,6 @@ type
     ## nothing for a regular proc, the loop's next state in a `.passive` one.
     done: int
     resume: Continuation
-    ext: ExtSlot
-      ## Its own slot, unlike `CoroutineBase` carrying one: the waiting side is
-      ## a frame the compiler did not generate, so there is no body for it to
-      ## have found `std/contextvars` in, and a context set in the waiter would
-      ## otherwise be set in whichever coroutine happens to be running right now.
-
-method extSlot*(j: ptr Join): ptr ExtSlot =
-  ## A `Join` is a frame with a slot of its own, so context set while it runs
-  ## is set here.
-  j.ext.addr
 
 proc joined(coro: ptr CoroutineBase): Continuation {.nimcall.} =
   let j = cast[ptr Join](coro)
@@ -498,11 +392,6 @@ proc attach(j: ptr Join; c: Continuation) =
   j.caller = Continuation(fn: nil, env: nil)
   j.done = 0
   j.resume = c
-  # Copied here, not at the `yield`: `attach` runs on the caller's thread with
-  # the caller's coroutine still current, which is the only moment at which we
-  # know what to copy. A waiter that parks and is resumed elsewhere keeps the
-  # context its call site had, which is the point.
-  adoptExtSlot(j.ext.addr, currentCoroutine())
   if c.env != nil:
     c.env.caller = Continuation(fn: joined, env: cast[ptr CoroutineBase](j))
 
@@ -568,16 +457,13 @@ proc iterFinished(j: ptr Join): bool {.inline.} =
   ## Used by the compiler: did the step just taken end the iterator?
   result = j.resume.fn == nil
 
-proc `=destroy`(j: var Join) =
+proc `=destroy`(j: Join) =
   ## A `for` loop left before its iterator finished, by whatever way out of
   ## the loop's scope: cancel and free the iterator's frame, which is parked
   ## at a `yield`.
   if j.resume.env != nil:
     cancel(j.resume.env)
     deallocFrame(j.resume.env)
-  # `Join` has managed fields of its own and this destructor is hand written,
-  # so nothing releases them behind our back.
-  j.ext = nil
 
 proc `=copy`(dest: var Join; src: Join) {.error.}
 
@@ -866,15 +752,12 @@ proc deallocFrame*(frame: ptr CoroutineBase) =
   if frame.callee != nil:
     # A stack-allocated frame is an ordinary local of its caller and the
     # compiler destroys it like any other object, but a heap frame is freed
-    # here and nothing else ever runs its destructor. So whatever managed state
-    # the frame holds itself -- its context slot, see `extSlot` -- is released
-    # on the way out. Frames the front end allocated for closure iterators are
-    # the ref's business, and that destructor does destroy the fields.
-    #
-    # Through the virtual rather than a field, because whether there is a slot
-    # is per frame type and only the override knows.
-    let slot = frame.extSlot()
-    if slot != nil: slot[] = nil
+    # here and nothing else ever runs its destructor. So the one managed field
+    # `CoroutineBase` has -- the coroutine's context chain, see
+    # `currentCoroutine` -- is released on the way out. Frames the front end
+    # allocated for closure iterators are the ref's business, and that
+    # destructor does destroy the fields.
+    frame.ctx = nil
     dealloc(frame)
 
 type

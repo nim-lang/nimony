@@ -41,54 +41,20 @@ proc worker() {.passive.} =
     echo counter.get()        # 2, on a thread that never ran the `set`
 ```
 
-So the chain head lives in an `ExtSlot` — a box holding the head of the chain —
-and `currentCoroutine` — the frame the running thread is executing, which
+So the chain head lives in the coroutine frame (`CoroutineBase.ctx`), and
+`currentCoroutine` — the frame the running thread is executing, which
 `runStep` installs around every continuation step — is how running code reaches
-the frame's slot. Code that is not part of a coroutine (top-level statements,
-and a regular proc that nothing called from a `.passive` one) uses a per-thread
-slot instead, which is exactly right for it: none of that can park.
-
-## A slot is earned by writing
-
-A frame only has a slot of its own if its body **writes** a context. That is not
-something the program says: it is what the compiler works out, by finding
-`std/contextvars`' `ctxSlot` in the body — the one function that module touches
-a chain through, reached from the `set` and `withCtx` templates.
-
-```nim
-proc setter() {.passive.} =
-  v.set(99)                # writes: into the setter's own slot
-
-proc reader() {.passive.} =
-  echo v.get()             # only reads: no slot, shares the caller's
-```
-
-A coroutine that only reads shares the slot it was called under — a `Join`'s, or
-the thread's — and sees its caller's chain. A coroutine that writes gets a
-boundary, and the caller's `v.get()` still reads what it read before the call.
-
-The rule follows from what a `set` means rather than from what a proc wants. A
-`set` is a promise that the binding is private to the call: something it calls
-cannot see it, and neither can its caller. That only holds if the chain the push
-went onto is not the caller's own — so a write has to have somewhere private to
-go, and the compiler gives the frame its own slot rather than leaving the promise
-to a marker the author might leave out. A proc that reads has made no such
-promise and needs nothing for itself.
-
-The cost argument is the same either way. A frame field the compiler has to
-emit, a constructor to initialize and a box to allocate are paid by every
-`.passive` proc in the program, including the many that never touch a context at
-all — so they are paid only by the ones that write one. And because the box is
-made lazily, at the first context use, even those would not allocate if a write
-were to be undone before anything adopted.
+it. Code that is not part of a coroutine (top-level statements, and a regular
+proc that nothing called from a `.passive` one) uses a per-thread chain
+instead, which is exactly right for it: none of that can park.
 
 ## Inheritance
 
-A coroutine that starts with an empty slot adopts its caller's — the equivalent
-of a task copying the context it was spawned in. Adoption happens on the
-coroutine's *first* context use, not at the call, which is what keeps the whole
-of it out of the call sequence: `caller.env` is already sitting in the frame and
-nothing has to be written before the callee is entered.
+A coroutine that starts without a chain of its own adopts its caller's — the
+equivalent of a task copying the context it was spawned in. Adoption happens on
+the coroutine's *first* context use, not at the call, which is what keeps the
+whole of it out of the call sequence: `caller.env` is already sitting in the
+frame and nothing has to be written before the callee is entered.
 
 The rule that buys is: a coroutine sees the chain its caller held when the
 coroutine first touched a context. A `set` in the caller *after* the call does
@@ -107,7 +73,7 @@ proc caller() {.passive.} =
 ## Scope of a `set`
 
 A `set` is invisible to whoever called the proc that did it: the caller is a
-different coroutine, with a slot of its own, that still points at the node it
+different coroutine, with a chain of its own, that still points at the node it
 had before the push.
 
 ```nim
@@ -122,8 +88,7 @@ proc caller() {.passive.} =
 
 A *regular* proc is not a coroutine and has no such boundary, so a `set` in one
 lasts to the end of the thread's chain. Mark it `{.passive.}` when the binding
-is meant to stay local to the call — the frame earns the boundary by writing, so
-there is nothing else to add.
+is meant to stay local to the call.
 
 ## `get` raises
 
