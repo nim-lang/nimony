@@ -15,3 +15,13 @@ nested 2 2
 evens 2
 evens 4
 evens 6
+pair 0 a
+pair 1 b
+then 1
+then 2
+sunk 'z'
+sunk 'z'
+sunk 'z'
+sunk 't'
+sunk 't'
+sunk 'u'
