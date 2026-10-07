@@ -3,6 +3,8 @@
 
 import std / [syncio, os, osproc, strutils, times, algorithm, sequtils]
 
+import context
+
 # ---- Incremental-build regression test ------------------------------------
 # `nifmake --report` prints a machine-readable summary of which commands
 # actually executed during one nifmake invocation. We drive `bin/nimony c
@@ -45,10 +47,11 @@ proc mainHexedPerBackend(cache: string): seq[(string, string)] =
   ## `(backend directory name, content of the main module's .x.nif)` for every
   ## backend that has built under `cache`. `deps.backendDirName` puts each
   ## backend's main-specific artifacts into `<tag>/<mainmod>/`, so this is one
-  ## entry per backend that has built here.
+  ## entry per backend that has built here. A plugin's sub-compile caches sit
+  ## in `cache` too and have backend directories of their own: skip them.
   result = @[]
   for kind, tagDir in walkDir(cache):
-    if kind != pcDir: continue
+    if kind != pcDir or isPluginScratchDir(cache, tagDir.lastPathPart): continue
     for kind2, mainDir in walkDir(tagDir):
       if kind2 != pcDir: continue
       for f in walkFiles(mainDir / "*.x.nif"):
