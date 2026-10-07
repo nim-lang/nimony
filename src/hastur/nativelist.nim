@@ -245,6 +245,11 @@ const
     "tests/nimony/threads/tioringrw",
     "tests/nimony/threads/tpolladd",
     "tests/nimony/threads/ttimers",
+    # Positioned transfers: default io_uring and an explicitly selected epoll
+    # program. The latter reaches pread/pwrite in the libc-free backend
+    # (nativenif #195); Linux runtime validation is still pending.
+    "tests/nimony/threads/tpositioned",
+    "tests/nimony/ioringepoll/tpositionedepoll",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",

@@ -32,6 +32,9 @@
 # SHORTs, natural alignment). Known caveat: before Windows 10 2004, WSAPoll
 # does not report a failed connect() (no POLLERR is raised).
 
+# Per-lane state is driven only by its owning polling thread.
+{.feature: "assumeSync".}
+
 when defined(windows):
   import std/threadpool
   import std/windows/winlean   # sleep
@@ -84,6 +87,8 @@ when defined(windows):
           discard            # nothing to arm on: the deadline heap is the wait
         of opNop:
           complete(idx, 0)   # nothing to wait for either
+        of opRead, opWrite:
+          if buf[i].positioned: submitPositionedFile(idx)
         of opConnect:
           # Start the attempt here, on the polling thread, so the socket is
           # already connecting by the time the set below watches it. A connect

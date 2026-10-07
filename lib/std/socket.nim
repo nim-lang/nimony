@@ -49,7 +49,7 @@ const
 const
   AfInet = 2
   AfInet6 = when defined(macosx): 30 elif defined(windows): 23
-            elif defined(freebsd): 28 else: 10
+            elif defined(freebsd): 28 elif defined(illumos): 26 else: 10
 
 type
   PeerAddr* = object
@@ -84,7 +84,7 @@ proc peerLen*(p: PeerAddr): SockLen {.inline.} =
   ## compare it against `sin_len`.
   case p.family
   of AfInet: result = SockLen(16)
-  of AfInet6: result = SockLen(28)
+  of AfInet6: result = SockLen(when defined(illumos): 32 else: 28)
   else: result = SockLen(0)
 
 proc port*(p: PeerAddr): int =
@@ -287,11 +287,11 @@ proc setV4(sa: var Sockaddr_storage; ip: array[4, uint8]; port: uint16) =
   ## BSDs (macOS included) with a 1-byte `sa_len` and a 1-byte family.
   sa = default(Sockaddr_storage)
   let raw = cast[ptr UncheckedArray[uint8]](addr sa)
-  when defined(linux) or defined(windows):
-    raw[0] = 2'u8    # AF_INET, little-endian
-  else:
+  when defined(macosx) or defined(freebsd) or defined(openbsd) or defined(netbsd) or defined(dragonfly):
     raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
     raw[1] = 2'u8    # AF_INET
+  else:
+    cast[ptr uint16](addr raw[0])[] = 2'u16 # native-endian sa_family_t
   raw[2] = byte(port shr 8)
   raw[3] = byte(port and 0xFF)
   for i in 0..3: raw[4 + i] = ip[i]

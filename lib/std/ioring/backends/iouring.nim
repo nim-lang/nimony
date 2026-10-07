@@ -120,10 +120,12 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
       # and advance it. The default (0) would make this a pread at offset 0
       # forever — invisible on a socket (the kernel ignores `off` there), but
       # a regular-file read that always returns the file's first bytes.
-      discard sqe.read(op.fd, cast[pointer](op.read.buf), op.read.len, -1)
+      discard sqe.read(op.fd, cast[pointer](op.read.buf), op.read.len,
+                       if op.positioned: op.offset else: -1'i64)
   of opWrite:
     if op.write.buf != nil:
-      discard sqe.write(op.fd, cast[pointer](op.write.buf), op.write.len, -1)
+      discard sqe.write(op.fd, cast[pointer](op.write.buf), op.write.len,
+                        if op.positioned: op.offset else: -1'i64)
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.accept.sockAddr), addr op.accept.sockAddrLen, 0)
   of opPollAdd:
@@ -212,6 +214,16 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         let idx = gSlots[lane].allocSlot(buf[i])
         armDeadline(lane, idx)
         continue
+      if buf[i].positioned:
+        let transfer = if buf[i].kind == opRead: buf[i].read else: buf[i].write
+        if buf[i].offset < 0 or transfer.len < 0:
+          let idx = gSlots[lane].allocSlot(buf[i])
+          complete(idx, -int(EINVAL))
+          continue
+        if buf[i].deadline != never and buf[i].deadline <= monoNow():
+          let idx = gSlots[lane].allocSlot(buf[i])
+          complete(idx, IoTimedOut)
+          continue
       if buf[i].kind in {opBind, opSetNonBlocking}:
         # The two config ops that have NO ring form, completed here before any
         # SQE is taken. bind(2) is this backend's ONE allowed syscall (there is
