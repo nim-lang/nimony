@@ -820,6 +820,13 @@ proc argOf(n: Cursor; subst: Table[SymId, Cursor]): Cursor =
   if result.isSymbol and subst.hasKey(result.symId):
     result = peelExpr(subst.getOrQuit(result.symId))
 
+proc substitutes(n: Cursor; subst: Table[SymId, Cursor]): bool =
+  ## Whether `argOf(n, subst)` replaces `n`. The replacement is an expression of
+  ## the caller: it must be read with no substitution, because a caller's local
+  ## can carry the same symbol id as a callee's parameter.
+  let p = peelExpr(n)
+  result = p.isSymbol and subst.hasKey(p.symId)
+
 proc derivedIdOf(c: var FirContext; key: string; root: SymId): VarId =
   if c.derivedIds.hasKey(key):
     result = c.derivedIds.getOrQuit(key)
@@ -2746,7 +2753,9 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     if rs != NoSymId and rd.results.hasKey(rs):
       v = rd.results.getOrQuit(rs)
       return true
-  let m = argOf(n, rd.args)
+  if substitutes(n, rd.args):
+    return pureOperand(c, rd.args.getOrQuit(peelExpr(n).symId), default(Reading), v, cnst)
+  let m = peelExpr(n)
   case m.kind
   of IntLit:
     cnst = createXint(m.intVal)
@@ -2898,21 +2907,23 @@ proc proveMasked(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   var r = n
   r = sub(r)
   skip r # the type operand
+  let leftRd = if substitutes(r, rd.args): default(Reading) else: rd
   let left = argOf(r, rd.args)
   skip r
+  let rightRd = if substitutes(r, rd.args): default(Reading) else: rd
   let right = argOf(r, rd.args)
   let strict = if k == LtX: createXint(1'i64) else: zero()
   if left.exprKind == BitandX:
     var rv = VarId(0)
     var rk = zero()
-    if not pureOperand(c, right, rd, rv, rk): return
+    if not pureOperand(c, right, rightRd, rv, rk): return
     var d = left
     d = sub(d)
     skip d # the type operand
     for _ in 0 ..< 2:
       var mv = VarId(0)
       var mk = zero()
-      if pureOperand(c, d, rd, mv, mk) and
+      if pureOperand(c, d, leftRd, mv, mk) and
           impliesHere(c, query(VarId(0), mv, mk)):
         # `m <= b - strict` is `mv + mk <= rv + rk - strict`
         if impliesHere(c, query(mv, rv, rk - mk - strict)): return Proven
@@ -2920,7 +2931,7 @@ proc proveMasked(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   elif right.exprKind == BitandX:
     var lv = VarId(0)
     var lk = zero()
-    if not pureOperand(c, left, rd, lv, lk) or lv != VarId(0): return
+    if not pureOperand(c, left, leftRd, lv, lk) or lv != VarId(0): return
     # `k <= x and m` holds for `k <= 0` once `m` is not negative
     if lk + strict <= zero():
       var d = right
@@ -2929,7 +2940,7 @@ proc proveMasked(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
       for _ in 0 ..< 2:
         var mv = VarId(0)
         var mk = zero()
-        if pureOperand(c, d, rd, mv, mk) and
+        if pureOperand(c, d, rightRd, mv, mk) and
             impliesHere(c, query(VarId(0), mv, mk)):
           return Proven
         skip d

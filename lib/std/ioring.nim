@@ -31,7 +31,12 @@ import ./ioring/platform
 when defined(windows):
   when not defined(nimIoringWsaPoll):
     import ./ioring/backends/iocp   # iocpOwnerLane / iocpWake — lane routing
+when defined(illumos):
+  import ./ioring/backends/event_port
 when defined(posix):
+  from std/posix/posix import F_GETFL, F_SETFL, O_NONBLOCK,
+                              SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
+  export F_GETFL, F_SETFL, O_NONBLOCK, SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
   from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
                               SockAddr, InAddr, TSa_Family
   # `submitAccept`'s `peer` names these, so a caller has to be able to name
@@ -116,7 +121,7 @@ proc enqueueOp(op: OpContext) =
     # out of its completion wait. The first op for a socket claims it for the
     # submitting lane.
     var lane = ioLane()
-    if op.fd >= 0:
+    if op.fd >= 0 and not op.positioned:
       let owner = iocpOwnerLane(op.fd)
       if owner >= 0: lane = owner
     let foreign = lane != ioLane()
@@ -132,6 +137,8 @@ proc enqueueOp(op: OpContext) =
   else:
     while not gOpQueues[ioLane()].tryEnqueue(op):
       discard backendRelays.poll(0)
+    when defined(illumos):
+      eventPortWake(ioLane())
 
 proc submitNop*(deadline: Deadline; cont = Continuation(fn: nil, env: nil);
                 resPtr: nil ptr int = nil): SeqNum =
@@ -254,6 +261,30 @@ proc submitSetNonBlocking*(fd: cint; deadline: Deadline;
   var op = OpContext(kind: opSetNonBlocking, fd: fd, seqnum: result,
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
+
+proc submitReadAt*(fd: cint; buf: pointer; len: int; offset: int64;
+                   deadline: Deadline; cont = Continuation(fn: nil, env: nil);
+                   resPtr: nil ptr int = nil): SeqNum =
+  ## Read at an explicit byte offset without changing the file cursor.
+  ## Keep the buffer live until completion. Short reads and EOF are legal;
+  ## offsets and lengths must be nonnegative. Synchronous fallbacks occupy
+  ## the polling lane and cannot be interrupted once the transfer starts.
+  ## On Windows fd is a CRT descriptor (_open/_fileno), not a ring HANDLE
+  ## or socket; close it with the CRT, not closeFd.
+  result = nextSeqNum()
+  enqueueOp(OpContext(kind: opRead, fd: fd, seqnum: result,
+    read: OpBuf(buf: buf, len: len), positioned: true, offset: offset,
+    cont: cont, res: cast[int](resPtr), deadline: deadline))
+
+proc submitWriteAt*(fd: cint; buf: pointer; len: int; offset: int64;
+                    deadline: Deadline; cont = Continuation(fn: nil, env: nil);
+                    resPtr: nil ptr int = nil): SeqNum =
+  ## Positioned counterpart of submitWrite; does not move the file cursor.
+  ## On Windows fd is a CRT descriptor, as for submitReadAt.
+  result = nextSeqNum()
+  enqueueOp(OpContext(kind: opWrite, fd: fd, seqnum: result,
+    write: OpBuf(buf: buf, len: len), positioned: true, offset: offset,
+    cont: cont, res: cast[int](resPtr), deadline: deadline))
 
 proc submitAccept*(listenFd: cint; deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
@@ -472,12 +503,6 @@ when defined(posix):
     ## two-argument call would leave a declared argument unbound.
     ##
     ## `F_GETFL` ignores the third argument, so passing `0` costs nothing.
-  const F_GETFL* = 3.cint
-  const F_SETFL* = 4.cint
-  when defined(linux):
-    const O_NONBLOCK* = 0x0800.cint
-  else:
-    const O_NONBLOCK* = 0x0004.cint
   proc setNonBlocking*(fd: cint) =
     var flags = fcntl(fd, F_GETFL)
     discard fcntl(fd, F_SETFL, flags or O_NONBLOCK)
@@ -487,18 +512,24 @@ when defined(posix):
   proc closeFd*(fd: cint) =
     ## Close `fd`: cancel this lane's in-flight ops on it (see
     ## `cancelPendingOps`), deregister it from the backend, then close(2).
+    when defined(illumos):
+      # Materialize queued ops before closing a descriptor they still name.
+      discard backendRelays.poll(0)
     discard cancelPendingOps(fd)
     discard posixClose(fd)
 
 when defined(posix):
-  const
-    SOL_SOCKET* = (when defined(macosx) or defined(freebsd): 0xFFFF.cint else: 1.cint)
-    SO_REUSEADDR* = (when defined(macosx) or defined(freebsd): 4.cint else: 2.cint)
-    INADDR_ANY* = 0'u32
-  proc socket(domain, typ, protocol: cint): cint {.importc: "socket".}
+  when defined(illumos):
+    proc socket(domain, typ, protocol: cint): cint {.importc: "__xnet_socket".}
+  else:
+    proc socket(domain, typ, protocol: cint): cint {.importc: "socket".}
   proc setsockopt(s: cint; level, optname: cint; val: pointer; vlen: SockLen): cint {.importc: "setsockopt".}
-  proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "bind".}
-  proc listen(s: cint; backlog: cint): cint {.importc: "listen".}
+  when defined(illumos):
+    proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "__xnet_bind".}
+    proc listen(s: cint; backlog: cint): cint {.importc: "__xnet_listen".}
+  else:
+    proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "bind".}
+    proc listen(s: cint; backlog: cint): cint {.importc: "listen".}
   proc socketNonBlocking*(): cint =
     ## A non-blocking TCP socket, which is what `submitConnect` requires: a
     ## blocking one would finish the connect inside the syscall and there
@@ -513,7 +544,7 @@ when defined(posix):
       when defined(bigEndian): 0x7F000001'u32 else: 0x0100007F'u32
     var a4 = default(Sockaddr_in)
     a4.sin_family = TSa_Family(AF_INET)
-    when not defined(linux):
+    when defined(macosx) or defined(freebsd):
       a4.sin_len = uint8(sizeof(a4))  # the BSDs check it (FreeBSD: EINVAL)
     a4.sin_port = htons(port)
     a4.sin_addr.s_addr = Loopback
@@ -543,7 +574,7 @@ when defined(posix):
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
     var addr4 = default(Sockaddr_in)
     addr4.sin_family = TSa_Family(AF_INET)
-    when not defined(linux):
+    when defined(macosx) or defined(freebsd):
       addr4.sin_len = uint8(sizeof(addr4))  # the BSDs check it (FreeBSD: EINVAL)
     addr4.sin_port = htons(port)
     addr4.sin_addr.s_addr = INADDR_ANY

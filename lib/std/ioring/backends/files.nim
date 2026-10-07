@@ -116,3 +116,64 @@ when defined(windows):
         completeFileWrite(j, fd, cast[pointer](s.op.write.buf), s.op.write.len)
       else:
         discard
+
+  type PositionedOverlapped {.pure.} = object
+    internal, internalHigh: uint
+    offset, offsetHigh: uint32
+    event: Handle
+
+  proc osHandle(fd: cint): int {.cdecl, importc: "_get_osfhandle", dynlib: "msvcrt.dll".}
+  proc reopenFile(h: Handle; access, share, flags: uint32): Handle {.
+    stdcall, importc: "ReOpenFile", dynlib: "kernel32".}
+  proc getOverlappedResult(h: Handle; ov: ptr PositionedOverlapped;
+                           done: ptr int32; wait: WINBOOL): WINBOOL {.
+    stdcall, importc: "GetOverlappedResult", dynlib: "kernel32".}
+
+  proc submitPositionedFile*(idx: int) =
+    ## The positioned API takes a CRT descriptor. Reopen its file with an
+    ## independent file position and OVERLAPPED semantics: specifying an
+    ## offset on the original synchronous handle would still move its cursor.
+    ## Wait for physical completion before releasing the buffer/OVERLAPPED.
+    let op = addr gSlots[ioLane()].slots[idx].op
+    let transfer = if op.kind == opRead: op.read else: op.write
+    const ErrorInvalidParameter = 87'i32
+    const ErrorIoPending = 997'i32
+    const ErrorHandleEof = 38'i32
+    if op.deadline != never and op.deadline <= monoNow():
+      complete(idx, IoTimedOut)
+    elif op.fd < 0 or op.offset < 0 or transfer.len < 0:
+      complete(idx, -int(ErrorInvalidParameter))
+    else:
+      let native = osHandle(op.fd)
+      if native == -1:
+        complete(idx, -int(ErrorInvalidParameter))
+      else:
+        let access = if op.kind == opRead: GENERIC_READ else: GENERIC_WRITE
+        let h = reopenFile(cast[Handle](native), access,
+                           FILE_SHARE_READ or FILE_SHARE_WRITE or FILE_SHARE_DELETE,
+                           FILE_FLAG_OVERLAPPED)
+        if h == INVALID_HANDLE_VALUE:
+          complete(idx, -int(getLastError()))
+        else:
+          var ov = PositionedOverlapped(
+            offset: uint32(uint64(op.offset) and 0xffff_ffff'u64),
+            offsetHigh: uint32(uint64(op.offset) shr 32))
+          var count = 0'i32
+          let size = int32(min(transfer.len, int(high(int32))))
+          let ok = if op.kind == opRead:
+            readFile(h, transfer.buf, size, addr count, addr ov)
+          else:
+            writeFile(h, transfer.buf, size, addr count, addr ov)
+          var value = int(count)
+          if ok == WINBOOL(0):
+            let err = getLastError()
+            if err == ErrorIoPending:
+              if getOverlappedResult(h, addr ov, addr count, WINBOOL(1)) != WINBOOL(0):
+                value = int(count)
+              else:
+                let doneErr = getLastError()
+                value = if doneErr == ErrorHandleEof: 0 else: -int(doneErr)
+            else:
+              value = if err == ErrorHandleEof: 0 else: -int(err)
+          discard closeHandle(h)
+          complete(idx, value)

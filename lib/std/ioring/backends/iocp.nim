@@ -572,7 +572,9 @@ when defined(windows):
         # timer and readiness probe have no socket to associate (a probe is
         # served by the WSAPoll pass, not by the port).
         let kind = buf[i].kind
-        if completeCommand(slotIdx, buf[i]):
+        if buf[i].positioned:
+          submitPositionedFile(slotIdx)
+        elif completeCommand(slotIdx, buf[i]):
           discard
         elif kind in {opRead, opWrite} and isFileHandle(buf[i].fd):
           fileTransfers(buf[i].fd)
