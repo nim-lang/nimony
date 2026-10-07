@@ -26,19 +26,21 @@ proc uhashBase36*(s: string): string =
     id = id div 36'u32
 
 const
-  ## Tag appended to a main module's suffix to name the `<nimcache>/` directory
-  ## that holds everything from DCE onward (`deps.backendDirName`). Those
-  ## artifacts differ per backend -- hexer alone runs with or without
-  ## `--native` -- while nifmake reruns a node only when its input or output
-  ## FILES changed, never when a tool's flags did. Sharing one directory
-  ## therefore does not overwrite, it makes whichever backend ran first win.
-  ## Kept here so `hastur`, which shells out to the compiler, can name the same
-  ## directory without duplicating the mapping.
-  BackendDirC* = ""        ## `nimony c`: the bare suffix, so existing caches stay valid
-  BackendDirLLVM* = ".ll"  ## `nimony l`
-  BackendDirNative* = ".n" ## `nimony n`
-  BackendDirWasm* = ".wasm" ## `nimony w`
-  BackendDirJs* = ".js"     ## `nimony j`
+  ## Name of the `<nimcache>/` subdirectory that holds everything a backend
+  ## produces from hexer onward: every module's `.x.nif` and, one level down
+  ## in `<tag>/<mainmod>/`, the main-specific DCE output, code, objects and
+  ## executable (`deps.backendDirName`). Those artifacts differ per backend --
+  ## hexer alone runs with or without `--native` -- while nifmake reruns a node
+  ## only when its input or output FILES changed, never when a tool's flags
+  ## did, so two backends sharing a directory would reuse each other's
+  ## artifacts. The names are the commands' letters. Kept here so `hastur`,
+  ## which shells out to the compiler, can name the same directory without
+  ## duplicating the mapping.
+  BackendDirC* = "c"       ## `nimony c`
+  BackendDirLLVM* = "l"    ## `nimony l`
+  BackendDirNative* = "n"  ## `nimony n`
+  BackendDirWasm* = "w"    ## `nimony w`
+  BackendDirJs* = "j"      ## `nimony j`
 
 proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
   # `getCurrentDir`/`relativePath` are `.raises`, but the only reason they can

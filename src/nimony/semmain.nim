@@ -113,7 +113,7 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
         for f in c.fileDeps:
           deps.addStrLit f
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
-  onRaiseQuit writeFile(deps, depsFile, OnlyIfChanged)
+  onRaiseQuit writeFile(deps, depsFile)
 
 proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
   ## Overwrite `(proc :sym ...)` subtrees with DotTokens for every symbol
@@ -180,7 +180,7 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
           else:
             echo "  [", k, "] ", tk.kind
         break
-  onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)
+  onRaiseQuit writeFile(dest, outfile)
   let root = readonlyCursorAt(dest, 0).info
   onRaiseQuit createIndex(outfile, root, true,
     IndexSections(
@@ -465,7 +465,7 @@ proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
   ## contracts and publish the lowered tree without the prover's facts.
   if c.g.config.keepSemTree:
     # The structured tree, for the sem validator; the compiler never reads it.
-    onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif", OnlyIfChanged)
+    onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif")
   var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
   when true: #defined(enableContracts):
     var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,

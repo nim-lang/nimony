@@ -35,18 +35,6 @@ import std / [syncio, assertions]
 import ".." / lib / [nifbuilder, nifpools]
 import parserrt
 
-proc writeIfChanged(path, content: string) {.raises.} =
-  ## nifler's `OnlyIfChanged`: an output that would come out the same is left
-  ## alone, so its modification time does not change and nimony does not
-  ## re-run `nimsem` after a `touch` or a comment-only edit.
-  var old = ""
-  try:
-    old = readFile(path)
-  except:
-    old = ""                 # no previous output
-  if old != content or old.len == 0:
-    writeFile(path, content)
-
 type
   Writer = object
     b: Builder
@@ -219,7 +207,7 @@ proc writeNifler*(first: Node; pool: Pool; tags: TagPool; sizeHint: int;
   while n != nil:
     emit(w, n, NoLineInfo, NiflerKind.None, false, false)
     n = n.next
-  writeIfChanged(outfile, w.b.extract())
+  writeFile(outfile, w.b.extract())
 
 # --------------------------------------------------------------- deps file
 #
@@ -356,4 +344,4 @@ proc writeDeps*(first: Node; pool: Pool; tags: TagPool;
     walkDeps(d, n, false)
     n = n.next
   d.w.b.endTree()
-  writeIfChanged(outfile, d.w.b.extract())
+  writeFile(outfile, d.w.b.extract())

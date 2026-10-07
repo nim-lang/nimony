@@ -20,14 +20,15 @@
 ## is fixed they move back up into the sweep.
 
 import std / [syncio, os, osproc, strutils, times, algorithm]
+import ".." / gear2 / modnames
 import context, builders
 
 proc soleNimcacheSubdir(nimcache: string): string =
   ## A single `nimony` build drops exactly one module-hash directory inside the
-  ## `--nimcache` it was given. Return it (empty if none / more than one, which
-  ## the caller treats as a failed compile). Each leg gets its own `--nimcache`
-  ## dir precisely so this stays unambiguous — the subdir name is the module
-  ## suffix we also use to locate the native exe.
+  ## backend's directory of the `--nimcache` it was given. Return it (empty if
+  ## none / more than one, which the caller treats as a failed compile). Each
+  ## leg gets its own `--nimcache` dir precisely so this stays unambiguous —
+  ## the subdir name is the module suffix we also use to locate the native exe.
   result = ""
   if not dirExists(nimcache): return
   var count = 0
@@ -54,7 +55,6 @@ proc runFixtureProgram(cmd: string; secs: int): tuple[output: string, exitCode: 
 proc wasmdiffCmd*() =
   if not skipBuild:
     buildNimony()
-    buildHexer()
     buildShoggoth()
     buildArkham()
     buildNifasm()
@@ -100,7 +100,7 @@ proc wasmdiffCmd*() =
     if nCompEc != 0:
       failMsg = "native compile failed (exit " & $nCompEc & "):\n" & nCompOut
     else:
-      let sub = soleNimcacheSubdir(nativeNc)
+      let sub = soleNimcacheSubdir(nativeNc / BackendDirNative)
       let exe = sub / stem.addFileExt(ExeExt)
       if sub.len == 0 or not fileExists(exe):
         failMsg = "native exe not found under " & nativeNc

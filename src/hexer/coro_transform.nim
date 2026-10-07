@@ -409,7 +409,9 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
   let info = NoLineInfo
 
   var buf = createTokenBuf(40)
-  buf.addParLe ProcS, info
+  # A method's wrapper is what its vtable slot holds (`vtables_backend`), so
+  # it stays a `method`: that is how a call to it is recognized as dispatch.
+  buf.addParLe (if res.decl.symKind == MethodY: MethodS else: ProcS), info
   buf.addSymDef wrapperSym, info
   buf.addDotToken() # exported
   buf.addDotToken() # pattern
@@ -723,6 +725,11 @@ proc emitFinalReturn*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
           dest.addIntLit 0, info # EnvFieldName is direct field of Continuation
         dest.addParPair NilX, info
       dest.copyIntoKind StmtsS, info:
+        # The body's locals live in the frame since lambdalifting, before
+        # the destroyer ran: nothing in it destroys them, so this does.
+        dest.copyIntoKind DestroyX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse envSym, info
         emitDeallocFrame(c, dest, info)
       dest.addDotToken()
     dest.copyIntoKind RetS, info:
@@ -869,6 +876,8 @@ proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor): SymId =
   var upstreamEnvArg = false
   if n.kind == Symbol and isClosureIter(n.symId):
     # Direct `.passive` iter DECL call — route through the iter's init wrapper.
+    # A foreign iter's wrapper exists only in its own module's hexer run.
+    publishWrapperSignature(n.symId, c.thisModuleSuffix)
     targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
     inc n
   elif n.kind == Symbol:
@@ -973,8 +982,23 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # when the call/asgn rhs is a passive call.
 # ---------------------------------------------------------------------
 
+proc trIterCancelled(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `desugar`'s check after a `.passive` iterator's `yield` asks about the
+  ## frame, which exists only from here on.
+  let info = n.info
+  copyIntoKind dest, CallX, info:
+    dest.addSymUse n.childCursor.symId, info
+    dest.copyIntoKind CastX, info:
+      dest.copyIntoKind PtrT, info:
+        dest.addSymUse pool.symId(RootObjName), info
+      dest.addSymUse pool.symId(EnvParamName), info
+  skip n, SkipFull # the argument-less call, replaced
+
 proc trCall*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.childCursor
+  if fn.kind == Symbol and fn.symId == sysCall("iterCancelled"):
+    trIterCancelled c, dest, n
+    return
   let typ = c.typeCache.getType(fn, {SkipAliases})
   if procHasPragma(typ, PassiveP):
     var retType = getType(c.typeCache, n)
@@ -1866,6 +1890,19 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             while n.hasMore:
               emitErrorCodeOf c, dest, n
           dest.addParRi()
+        of AlwaysS:
+          # A replicated `finally` stays one node unless it suspends: then it
+          # spans several state procs and is flattened like any list below.
+          if containsSuspensionPoint(c, n):
+            n.into:
+              while n.hasMore:
+                trGoto c, dest, n
+          else:
+            dest.addParLe(n.cursorTagId, n.info)
+            n.into:
+              while n.hasMore:
+                trGoto c, dest, n
+            dest.addParRi()
         of StmtsS, ScopeS:
           # FLATTEN. The Final IR wraps every body — an `ite` arm, a loop body,
           # a `block` — in its own `(stmts ...)`, and the scope ends are already
@@ -2613,8 +2650,10 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
         # `proc`. Generic templates pass through unchanged — only
         # their instances are coroutine-transformed.
         if isConcrete:
-          if kind == IteratorY:
-            # retag in place: `parLeToken` would reset an already-set jump
+          if kind == IteratorY or iter.stmtKind == MethodS:
+            # retag in place: `parLeToken` would reset an already-set jump.
+            # A method's state proc is never dispatched to — its `init`
+            # wrapper is what the vtable slot holds — so it stops being one.
             setTagAt(dest, procStart, cast[TagId](ProcS))
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
       if isCoroutine and isConcrete:
@@ -2738,7 +2777,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of CoroforS:
       trCoroFor c, dest, n
     of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS,
-        StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+        StmtsS, AlwaysS, PragmaxS, InclS, ExclS, ImportasS,
         ExportexceptS, DiscardS, TryS, UnpackdeclS,
         AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
         HcallS, StaticstmtS, BindS, MixinS, UsingS,

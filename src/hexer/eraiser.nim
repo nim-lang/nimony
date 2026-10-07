@@ -275,7 +275,10 @@ proc emitFinCopy(c: var Context; dest: var TokenBuf; fin: Cursor) =
   var n = beginRead(copied)
   c.exits.add ExitScope(kind: LabelScope, label: NoSymId, exceptVar: NoSymId,
                         fin: default(Cursor), labels: ensureMove copyLabels)
-  tr c, dest, n
+  # `(always …)` marks the copy as "runs on this path whatever happened"
+  # once the `try` it came from is gone; see `doc/tags.md`.
+  copyIntoKind dest, AlwaysS, fin.info:
+    tr c, dest, n
   discard c.exits.pop()
   endRead n
 
@@ -831,7 +834,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trResultDecl c, dest, n
       of ScopeS:
         trScope c, dest, n
-      of StmtsS:
+      of StmtsS, AlwaysS:
         trStmtList c, dest, n
       of RetS:
         trRet c, dest, n

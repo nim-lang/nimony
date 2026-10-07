@@ -61,14 +61,18 @@ type
     tokens*: TokenBuf
     ext*: string
 
+  InputsOf* = object
+    cmd*: string      ## the command whose nodes' outputs are meant
+    suffix*: string   ## only the outputs ending in this; "" = all of them
+
   Node* = object
     cmdIdx*: int      # index into Dag.commands
     inputs*: seq[string]
     outputs*: seq[string]
     args*: seq[string]
     deps*: seq[int]   # node IDs this depends on
-    inputsOf*: seq[string]
-      ## commands whose every output is an input of this node; expanded into
+    inputsOf*: seq[InputsOf]
+      ## commands whose outputs are inputs of this node; expanded into
       ## `inputs` once the whole file is parsed (see `expandInputsOf`)
     state*: NodeState
     depth*: int       # depth in the DAG for parallel execution
@@ -198,7 +202,7 @@ proc registerCommand(dag: var Dag; cmdName: string; ext: string): int =
 
 proc addNode(dag: var Dag; cmdName: string;
              inputs, outputs, args: sink seq[string]; ext: string;
-             inputsOf: sink seq[string] = @[]; atomic = false): int =
+             inputsOf: sink seq[InputsOf] = @[]; atomic = false): int =
   ## Add a build node to the DAG and return its ID
   result = dag.nodes.len
   let cmdIdx = registerCommand(dag, cmdName, ext)
@@ -220,9 +224,10 @@ proc addNode(dag: var Dag; cmdName: string;
     dag.nameToId[output] = result
 
 proc expandInputsOf(dag: var Dag) =
-  ## Turn each node's `(inputsof <cmd>)` entries into ordinary inputs: every
-  ## output of every node that runs `<cmd>`. Done as a post-pass because a
-  ## `do` rule may name a command whose nodes appear later in the file.
+  ## Turn each node's `(inputsof <cmd> ["suffix"])` entries into ordinary
+  ## inputs: every output of every node that runs `<cmd>`, or those of them
+  ## that end in `suffix`. Done as a post-pass because a `do` rule may name a
+  ## command whose nodes appear later in the file.
   var byCommand = initTable[string, seq[string]]()
   for node in dag.nodes:
     let name = dag.commands[node.cmdIdx].name
@@ -233,11 +238,11 @@ proc expandInputsOf(dag: var Dag) =
     if dag.nodes[nodeId].inputsOf.len == 0: continue
     var seen = initHashSet[string]()
     for input in dag.nodes[nodeId].inputs: seen.incl input
-    for cmdName in dag.nodes[nodeId].inputsOf:
-      if cmdName notin byCommand:
-        quit "`inputsof` names a command with no nodes: " & cmdName
-      for output in byCommand[cmdName]:
-        if not seen.containsOrIncl(output):
+    for x in dag.nodes[nodeId].inputsOf:
+      if x.cmd notin byCommand:
+        quit "`inputsof` names a command with no nodes: " & x.cmd
+      for output in byCommand[x.cmd]:
+        if output.endsWith(x.suffix) and not seen.containsOrIncl(output):
           dag.nodes[nodeId].inputs.add output
 
 proc findDependencies(dag: var Dag; nodeId: int) =
@@ -297,11 +302,10 @@ proc needsRebuild(sc: var StatCache; node: Node): bool =
     return true
 
   # Use the *freshest* output as the staleness reference (max instead of
-  # min). Tools may write some outputs OnlyIfChanged — when the content
-  # didn't change those preserve their old mtime. Using min would treat
-  # "preserved old" as the floor and re-fire the node forever even though
-  # some other output (always written) is fresh enough to prove "we ran
-  # since the inputs last changed".
+  # min). A node's interface files (Nimony's `doc/internals/ic.md`) are
+  # written only when they change and keep their old mtime otherwise; the
+  # node's main output is written on every run and proves "we ran since the
+  # inputs last changed". Using min would re-fire the node forever.
   var freshestOutput = low(int64)
   for output in node.outputs:
     let o = sc.stat(output)
@@ -413,9 +417,9 @@ proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption];
   ## Estimate how many nodes will run, propagating staleness along the DAG:
   ## a node rebuilds if it is stale itself or any dependency will rebuild.
   ## `sortedNodes` is depth-ordered (deps first), so a single forward pass
-  ## suffices. This is an upper bound — a dependency written `OnlyIfChanged`
-  ## may not actually re-trigger its dependents — so the bar can finish a hair
-  ## early; the caller forces the final reading to `hi`.
+  ## suffices. This is an upper bound — an unchanged interface file does not
+  ## re-trigger its dependents — so the bar can finish a hair early; the
+  ## caller forces the final reading to `hi`.
   result = 0
   var willBuild = newSeq[bool](dag.nodes.len)
   for nodeId in sortedNodes:
@@ -630,7 +634,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
   # below it — measured on a cold `nimsem` build, ~40 stdlib modules each
   # waited 0.96s behind a single `nimversion` const-eval sub-compile they do
   # not import. Staleness is still evaluated at dispatch time, after the
-  # dependencies have actually been written, so `OnlyIfChanged` outputs keep
+  # dependencies have actually been written, so unchanged interface files keep
   # pruning their dependents exactly as before. A sequential run is this with
   # a single slot: `rank` dispatches in topological order.
   let jobs = if Parallel notin opt: 1
@@ -807,7 +811,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
   var inputs: seq[string] = @[]
   var outputs: seq[string] = @[]
   var args: seq[string] = @[]
-  var inputsOf: seq[string] = @[]
+  var inputsOf: seq[InputsOf] = @[]
   var atomic = false
 
   # Parse imports and results
@@ -834,13 +838,20 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
           # "every output of every node running <cmd>" — the whole-program
           # dependency a codegen node has on a phase that precedes it, written
           # once instead of naming N files per node (which is N*N strings for
-          # N modules and dominated the .build.nif).
+          # N modules and dominated the .build.nif). A string after the
+          # command keeps only the outputs with that suffix.
+          var x = InputsOf(cmd: "", suffix: "")
           while n.hasMore:
             if n.kind == Ident:
-              inputsOf.add(n.strVal)
+              x.cmd = n.strVal
             elif n.kind == Symbol:
-              inputsOf.add(pool.symString(n.symId))
+              x.cmd = pool.symString(n.symId)
+            elif n.kind == StrLit:
+              x.suffix = n.strVal
             inc n
+          if x.cmd.len == 0:
+            quit "`inputsof` without a command"
+          inputsOf.add x
         else:
           quit "unsupported tag in `do` definition: " & tag
         # Body must consume all children — mop up anything we didn't recognise.
@@ -902,12 +913,12 @@ Options:
   -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
   --makefile:<name>     Output Makefile name (default: Makefile)
   --force               Force rebuild of all targets
-  --rerun               Run every command regardless of staleness, but KEEP the
-                        existing outputs, so a tool writing OnlyIfChanged can
-                        still report "unchanged" and spare everything
-                        downstream. For a caller that knows the results are
-                        stale for a reason no input mtime can express — e.g.
-                        nimony when the compilation options changed.
+  --rerun               Run every command regardless of staleness, but leave
+                        the outputs' mtimes to the tools, so an interface file
+                        that comes out unchanged still spares its dependents.
+                        For a caller that knows the results are stale for a
+                        reason no input mtime can express — e.g. nimony when
+                        the compilation options changed.
   --verbose             Show verbose output
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.

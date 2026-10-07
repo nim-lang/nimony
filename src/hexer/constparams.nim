@@ -296,7 +296,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       of CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS,
          ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, RaiseS, TryS,
-         YldS, StmtsS,
+         YldS, StmtsS, AlwaysS,
          PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS,
          ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,

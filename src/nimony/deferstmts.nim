@@ -199,7 +199,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trStmt c, dest, n
     of CallS, CmdS, GvarS, TvarS, VarS, ConstS, GletS, TletS, LetS, CursorS,
        PatternvarS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS, YldS,
-       StmtsS, PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+       StmtsS, AlwaysS, PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
        FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
        RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
        HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS, LabS, JmpS, NoStmt:

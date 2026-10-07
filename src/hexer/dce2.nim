@@ -13,7 +13,7 @@ import std / [os, tables, hashes, sets, assertions, syncio, algorithm]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
-import ".." / lib / symparser
+import ".." / lib / [symparser, lengiface]
 import dce1
 import ".." / lengc / [leng_model]
 
@@ -183,7 +183,8 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; o
     else:
       file.changeModuleExt ".c.nif"
   try:
-    writeFile(dest, outPath, OnlyIfChanged)
+    writeFile(dest, outPath)
+    writeLengInterface(dest, outPath)
   except:
     quit "could not write file: " & outPath
 
@@ -223,6 +224,10 @@ proc writeLiveFile*(outfile: string; resolved: ResolveTable;
   ## we pay the file-size cost rather than mis-expand.
   ##
   ## In name order, for the reason `dce1.sortedSymNames` gives.
+  ##
+  ## Written only when it changed: it is the module's interface to its
+  ## `dceEmit`, and a program-wide liveness pass that leaves this module's
+  ## share alone must not re-run that module's emit and everything after it.
   var b = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
   b.withTree "stmts":
     b.withTree resolveTag:
@@ -236,6 +241,22 @@ proc writeLiveFile*(outfile: string; resolved: ResolveTable;
         b.addStrLit modName
         for s in sortedSymNames(live):
           b.addSymbol s, ""
+  b.close()
+
+proc writeSummaryFile(outfile: string; live: Table[string, HashSet[SymId]]) =
+  ## The program's DCE result in numbers: how many symbols of each module
+  ## survived. Unlike the `.live.nif` files, which are each module's interface
+  ## to its `dceEmit` and written only on change, this is written on every
+  ## run: it is what tells the build that `dceLive` is done with its inputs.
+  var mods = newSeqOfCap[string](live.len)
+  for m in live.keys: mods.add m
+  sort mods
+  var b = nifbuilder.open(outfile)
+  b.withTree "stmts":
+    for m in mods:
+      b.withTree modTag:
+        b.addStrLit m
+        b.addIntLit live.getOrQuit(m).len
   b.close()
 
 type
@@ -337,6 +358,12 @@ proc computeLiveSet*(xnifFiles: openArray[string]; outdir: string) =
     # `markLive` seeds every module, so its live set is there.
     writeLiveFile(outfile, resolvedFor(graphs.getOrQuit(modName), resolved),
                   modName, live.getOrQuit(modName))
+  if xnifFiles.len > 0:
+    let mainFile = xnifFiles[0]
+    let summary =
+      if outdir.len > 0: outdir / splitModulePath(mainFile).name & ".dce.nif"
+      else: mainFile.changeModuleExt ".dce.nif"
+    writeSummaryFile(summary, live)
 
 proc dceEmit*(xnif, liveFile, outdir: string) =
   ## Per-module emit: read `M.x.nif` plus its own `liveFile`, write

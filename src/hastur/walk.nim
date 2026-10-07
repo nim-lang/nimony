@@ -23,7 +23,7 @@ var walkBuiltAll = false
   ## whole toolchain in `bin/` is current, so a nested `build nimony` has
   ## nothing left to do and a `setup.nim` suite need not build its tool either.
 
-const CoveredByBuildAll = ["nimony", "nifler", "nifler2", "hexer", "lengc",
+const CoveredByBuildAll = ["nimony", "nifler", "nifler2", "lengc",
                            "shoggoth", "niflink", "nifmake", "validator",
                            "dagon", "pnak"]
   ## `build <x>` targets that `build all` always builds (arkham and nifasm only

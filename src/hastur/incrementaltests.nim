@@ -42,16 +42,17 @@ proc filesBySuffix(cache, suffix: string): seq[string] =
   sort result
 
 proc mainHexedPerBackend(cache: string): seq[(string, string)] =
-  ## `(directory name, content of the main module's .x.nif)` for every backend
-  ## directory under `cache`. `deps.backendDirName` gives each backend its own
-  ## `<mainmod><tag>/`, and only the main module's `.x.nif` lives in one (the
-  ## imported modules' copies are shared, at the cache root), so this is one
+  ## `(backend directory name, content of the main module's .x.nif)` for every
+  ## backend that has built under `cache`. `deps.backendDirName` puts each
+  ## backend's main-specific artifacts into `<tag>/<mainmod>/`, so this is one
   ## entry per backend that has built here.
   result = @[]
-  for kind, dir in walkDir(cache):
+  for kind, tagDir in walkDir(cache):
     if kind != pcDir: continue
-    for f in walkFiles(dir / "*.x.nif"):
-      result.add (dir.lastPathPart, readFile(f))
+    for kind2, mainDir in walkDir(tagDir):
+      if kind2 != pcDir: continue
+      for f in walkFiles(mainDir / "*.x.nif"):
+        result.add (tagDir.lastPathPart, readFile(f))
   sort result
 
 proc incrementalTests*() =
@@ -114,19 +115,27 @@ proc incrementalTests*() =
       expect reportField(r[1], "total") == 0,
              "noop: backend re-ran " & $reportField(r[1], "total") & " commands"
 
-  # Phase 3: touch (no content change). nifler reruns to find content
-  # unchanged — its OnlyIfChanged write preserves `.p.nif`'s mtime, so
-  # nimsem and the backend must stay idle.
+  # Phase 3: touch (no content change). Only interface files are written
+  # unchanged-is-untouched (doc/internals/ic.md), so the touched module's own
+  # chain runs once — sem, hexer, emit, codegen, C compiler, link — and its
+  # `.s.idx.nif`/`.c.idx.nif` spare every other module. A second build has
+  # nothing to do: a node that ran is up to date even when its output came
+  # out the same.
   block:
     setLastModificationTime(src, getTime())
-    let r = run("touch")
+    var r = run("touch")
     if r.len == 2:
-      expect reportField(r[0], "nifler") >= 1,
-             "touch: nifler did not re-run"
-      expect reportField(r[0], "nimsem") == 0,
-             "touch: nimsem ran " & $reportField(r[0], "nimsem") & " times (expected 0)"
-      expect reportField(r[1], "total") == 0,
-             "touch: backend ran " & $reportField(r[1], "total") & " commands (expected 0)"
+      expect reportField(r[0], "nimsem") == 1,
+             "touch: nimsem ran " & $reportField(r[0], "nimsem") & " times (expected 1)"
+      expect reportField(r[1], "lengc") == 1,
+             "touch: lengc ran " & $reportField(r[1], "lengc") & " times (expected 1)"
+      expect reportField(r[1], "cc") == 1,
+             "touch: cc ran " & $reportField(r[1], "cc") & " times (expected 1)"
+    r = run("touch-settle")
+    if r.len == 2:
+      expect reportField(r[0], "total") == 0 and reportField(r[1], "total") == 0,
+             "touch-settle: re-ran " & $(reportField(r[0], "total") + reportField(r[1], "total")) &
+             " commands (expected 0)"
 
   # Phase 4: real content edit — full cascade.
   block:
@@ -163,6 +172,64 @@ proc incrementalTests*() =
            "inline-dep: ran a stale inlined body; expected the program to print 1010"
 
   restoreSources()
+  discard run("inline-dep-settle")
+
+  # Phase 5b: edit the body of an imported proc that is NOT `.inline`. No
+  # other module reads it — the importer's code only calls it — so the
+  # callee's `.c.idx.nif` stays as it was and exactly one translation unit is
+  # regenerated and compiled (doc/internals/ic.md).
+  block:
+    writeFile(dep, originalDep.replace("x * 3", "x * 5"))
+    let r = run("body-dep")
+    if r.len == 2:
+      expect reportField(r[0], "nimsem") == 1,
+             "body-dep: nimsem ran " & $reportField(r[0], "nimsem") & " times (expected 1)"
+      expect reportField(r[1], "lengc") == 1,
+             "body-dep: lengc ran " & $reportField(r[1], "lengc") & " times (expected 1)"
+      expect reportField(r[1], "cc") == 1,
+             "body-dep: cc ran " & $reportField(r[1], "cc") & " times (expected 1)"
+    expect lastOutput.contains("35"),
+           "body-dep: ran a stale body; expected the program to print 35"
+
+  restoreSources()
+  discard run("body-dep-settle")
+
+  # Phase 5c: options. nifmake sees files, not flags, so the driver records
+  # the options a stage's artifacts were made with (`<nimcache>/config.nif`
+  # for the frontend, `<nimcache>/<backend>/<main>/config.nif` for the
+  # backend) and reruns the stage when they differ. A define reaches sem, so
+  # both stages rerun; `--opt` only the backend. Repeating a build changes
+  # nothing, and neither does going back to the options it started with
+  # but once.
+  block:
+    proc withOptions(opts: string): string =
+      nimony.quoteShell & " c -r " & opts & " --silentMake --report --nimcache:" &
+        cache.quoteShell & " " & src.quoteShell
+    var r = run("define", withOptions("-d:incrementalProbe"))
+    if r.len == 2:
+      expect reportField(r[0], "nimsem") >= 1, "define: nimsem did not re-run"
+      expect reportField(r[1], "cc") >= 1, "define: the backend did not re-run"
+    r = run("define-settle", withOptions("-d:incrementalProbe"))
+    if r.len == 2:
+      expect reportField(r[0], "total") == 0 and reportField(r[1], "total") == 0,
+             "define-settle: re-ran commands"
+    r = run("opt", withOptions("-d:incrementalProbe --opt:size"))
+    if r.len == 2:
+      expect reportField(r[0], "total") == 0,
+             "opt: the frontend re-ran " & $reportField(r[0], "total") & " commands"
+      expect reportField(r[1], "cc") >= 1, "opt: the C compiler did not re-run"
+    r = run("opt-settle", withOptions("-d:incrementalProbe --opt:size"))
+    if r.len == 2:
+      expect reportField(r[0], "total") == 0 and reportField(r[1], "total") == 0,
+             "opt-settle: re-ran commands"
+    r = run("options-back")
+    if r.len == 2:
+      expect reportField(r[0], "nimsem") >= 1, "options-back: nimsem did not re-run"
+      expect reportField(r[1], "cc") >= 1, "options-back: the backend did not re-run"
+    r = run("options-back-settle")
+    if r.len == 2:
+      expect reportField(r[0], "total") == 0 and reportField(r[1], "total") == 0,
+             "options-back-settle: re-ran commands"
 
   # The DCE files, on a cache of their own: the edits above keep the backend
   # from settling. A local shifts every `SymId` after it, and no live file may
@@ -180,9 +247,12 @@ proc incrementalTests*() =
     if r.len == 2:
       # `dceLive` does rerun: its inputs are the `.x.nif`s that carry the
       # analysis, and the edited module's did change. What must not happen is
-      # that it moves a live file — so only the edited module re-emits.
-      expect reportField(r[1], "dceEmit") <= 1,
-             "dce-local: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected at most 1)"
+      # that it moves a live file — so only the modules whose `.x.nif` was
+      # remade re-emit: the edited one, and `sample`, whose hexer re-ran
+      # because `bump` is `.inline` and so part of the edited module's
+      # interface.
+      expect reportField(r[1], "dceEmit") <= 2,
+             "dce-local: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected at most 2)"
     r = run("dce-local-settle", dceCmd)
     if r.len == 2:
       expect reportField(r[1], "dceEmit") == 0,
@@ -223,7 +293,7 @@ proc incrementalTests*() =
   # `deps.backendDirName` keeps the two populations apart; assert that both
   # exist afterwards, that they disagree, and that the C build the native one
   # ran on top of came through untouched.
-  var phases = 7
+  var phases = 9  # cold, noop, touch, edit, inline-dep, body-dep, options, dce-local, live-edit
   let arkham = "bin" / "arkham".addFileExt(ExeExt)
   let nifasm = "bin" / "nifasm".addFileExt(ExeExt)
   if fileExists(arkham) and fileExists(nifasm):

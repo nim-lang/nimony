@@ -47,7 +47,7 @@ const Version* = firstField(VersionFile)
   ## and its own inner build is incremental, so it costs ~0.1 s — it is not the
   ## thing to avoid. What used to make it expensive was a build-graph bug it
   ## walked into, since fixed: the sub-compile is a second nimony driving the
-  ## same nimcache, and `cachedconfigfile.txt` — an input of EVERY sem node —
+  ## same nimcache, and the configuration memo — then an input of EVERY sem node —
   ## carried the root module name, so the two builds overwrote each other's
   ## entry on every run and each re-semmed everything the other had just done.
-  ## See `deps.nim`'s `generateCachedConfigFile`.
+  ## See `deps.nim`'s `addFrontendKey`.

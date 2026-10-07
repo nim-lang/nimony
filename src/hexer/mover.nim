@@ -37,6 +37,9 @@ once per module:
 - `(case sel (of …)* (else …)?)` — the selector forks into the branches
 - `(try body (except …)* (fin …)?)` — body and handlers are all successors
 - `(ret v)` / `(raise v)`    — read `v`, then the path ends
+- `(corofor call body…)`     — `call` once, then `body` zero or more times;
+                               `cps` lowers it, so it is still here for the
+                               duplifier and the destroyer
 
 Reasoning about the same tree the duplifier rewrites also removes a whole class
 of bug: the goto form could impose an evaluation order that a later pass then
@@ -235,6 +238,8 @@ type
     ncStmtList   ## `stmts`/`scope`: children are consecutive statements
     ncRoutine    ## a routine: its body is a control-flow boundary
     ncLoop       ## `(loop body)`: falling off `body` is the back-edge
+    ncCorofor    ## `(corofor call body…)`: after `call` and after the body,
+                 ## the body may run (again) or the loop may end
     ncIte        ## `(ite cond then else)` / `(itec …)`
     ncCase       ## `(case sel (of …)* (else …)?)`
     ncTry        ## `(try body (except …)* (fin …)?)`
@@ -257,7 +262,7 @@ const
 
 proc classify(n: Cursor): NodeClass =
   case n.stmtKind
-  of BlockLikeKinds: result = ncStmtList
+  of BlockLikeKinds, AlwaysS: result = ncStmtList
   of RoutineKinds: result = ncRoutine
   of CaseS: result = ncCase
   of TryS: result = ncTry
@@ -278,7 +283,8 @@ proc classify(n: Cursor): NodeClass =
     # statement. `jmp`/`lab`/`continue` are transfers `execStmt` resolves by
     # name, not by where they sit, so they need no class of their own.
     result = ncOther
-  of IfS, WhenS, WhileS, ForS, CoroforS, BlockS, BreakS, AsmS, DeferS:
+  of CoroforS: result = ncCorofor
+  of IfS, WhenS, WhileS, ForS, BlockS, BreakS, AsmS, DeferS:
     # `finalir.nim` lowered all of these; `execStmt` `bug`s on one, and until
     # then it is a node like any other.
     result = ncOther
@@ -302,14 +308,15 @@ proc lastChild(base: Cursor; pos: int32): int32 =
     p = endOf(base, p)
 
 proc enclosingLoop(m: MoverContext; base: Cursor; pos: int32): int32 =
-  ## The `(loop …)` a `(continue .)` at `pos` belongs to, or -1.
+  ## The `(loop …)` or `(corofor …)` a `(continue .)` at `pos` belongs to,
+  ## or -1.
   result = -1
   var child = pos
   while true:
     let par = m.parents[child]
     if par < 0: break
     let p = at(base, par)
-    if p.finalIrKind == LoopV:
+    if p.finalIrKind == LoopV or p.stmtKind == CoroforS:
       result = par
       break
     if p.stmtKind in RoutineKinds: break
@@ -391,6 +398,15 @@ proc afterNode(m: MoverContext; base: Cursor; pos: int32; x: Cursor;
     of ncLoop:
       pcs.add firstChild(base, par)   # the back-edge
       return
+    of ncCorofor:
+      let bodyPos = endOf(base, firstChild(base, par))
+      if child != firstChild(base, par) and childEnd < parEnd:
+        pcs.add childEnd              # the next statement of the body
+        return
+      # the iterator call or a pass through the body is over: the iterator
+      # may yield again (run the body) or finish (continue after the loop)
+      if bodyPos < parEnd: pcs.add bodyPos
+      child = par
     of ncIte:
       if childEnd >= parEnd:
         child = par                   # nothing follows the arm
@@ -459,7 +475,7 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
   ## the last read and the whole query is answered.
   let n = at(base, pc)
   case n.stmtKind
-  of StmtListKinds:
+  of StmtListKinds, AlwaysS:
     let fc = firstChild(base, pc)
     if fc < endOf(base, pc):
       pcs.add fc
@@ -494,8 +510,16 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
     result = afterNode(m, base, pc, x, pcs, otherUsage)
   of ContinueS:
     let loop = enclosingLoop(m, base, pc)
-    if loop >= 0: pcs.add firstChild(base, loop)
-    result = true
+    if loop < 0:
+      result = true
+    elif at(base, loop).stmtKind == CoroforS:
+      # the iterator steps: the body runs again, or the loop ends
+      let bodyPos = endOf(base, firstChild(base, loop))
+      if bodyPos < endOf(base, loop): pcs.add bodyPos
+      result = afterNode(m, base, loop, x, pcs, otherUsage)
+    else:
+      pcs.add firstChild(base, loop)
+      result = true
   of AsgnS:
     let lhsPos = firstChild(base, pc)
     let lhs = at(base, lhsPos)
@@ -574,7 +598,14 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
      MixinS, UsingS}:
     # declarative junk we don't care about: it evaluates nothing
     result = afterNode(m, base, pc, x, pcs, otherUsage)
-  of IfS, WhenS, WhileS, ForS, CoroforS, BlockS, BreakS, AsmS, DeferS:
+  of CoroforS:
+    # The iterator call runs first; `afterNode` schedules the body from there.
+    let callPos = firstChild(base, pc)
+    if scanAt(base, callPos, x, otherUsage):
+      result = false
+    else:
+      result = afterNode(m, base, callPos, x, pcs, otherUsage)
+  of IfS, WhenS, WhileS, ForS, BlockS, BreakS, AsmS, DeferS:
     # `finalir.nim` lowered all of these; seeing one means a pass regressed the
     # normal form (see `doc/final_ir.md`).
     bug "statement not eliminated: " & $n.stmtKind

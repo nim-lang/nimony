@@ -5,3 +5,43 @@ inner b
 pong
 sum: 5
 driver end
+a shape
+a shape
+area: 0
+a shape
+shape area: 0
+hello from shape
+a shape
+a square
+with four sides
+a square
+with four sides
+area: 9
+a square
+with four sides
+square area: 9
+hello from square
+a square
+with four sides
+inner a
+inner b
+regular countTo: 1
+inner a
+inner b
+regular countTo: 2
+regular pair: 0 10
+regular pair: 1 20
+value: 3
+value: 4
+value: 5
+inner a
+inner b
+passive countTo: 1
+inner a
+inner b
+passive countTo: 2
+word: hello
+word: passive
+word: world
+pair: 0 a
+pair: 1 b

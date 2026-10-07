@@ -310,14 +310,22 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = sub(n)
   if n.kind == Symbol:
     let sym = n.symId
+    # A method has to be dispatched, and its vtable slot holds the `init`
+    # wrapper, not the state proc; the wrapper allocates the frame itself.
+    let isMethod = c.typeCache.getType(n, {SkipAliases}).typeKind == MethodT
     inc n, SkipName    # the fn symbol, re-emitted below
     # Create a child coroutine and return it as a Continuation without
     # yielding. The callee's frame is heap-allocated via allocFrame.
     copyIntoKind dest, CallS, info:
-      dest.addSymUse sym, info
+      if isMethod:
+        publishWrapperSignature(sym, c.thisModuleSuffix)
+        dest.addSymUse coroWrapperProc(c, sym), info
+      else:
+        dest.addSymUse sym, info
       while n.hasMore:
         coroTr(c, dest, n)
-      emitAllocFrame(c, dest, sym, info)
+      if not isMethod:
+        emitAllocFrame(c, dest, sym, info)
       # Pass StopContinuation as the caller so the child doesn't
       # resume anyone on finish.
       dest.copyIntoKind OconstrX, info:

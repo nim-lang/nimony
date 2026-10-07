@@ -502,7 +502,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       inc n
     else:
       error c.m, "expected statement but got: ", n
-  of StmtsS:
+  of StmtsS, AlwaysS:
     n.loopInto:
       genStmt(c, n)
   of ScopeS:
