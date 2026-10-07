@@ -12,11 +12,14 @@
 # module. A `.passive` proc can park mid-call and resume on a different
 # thread, so "the context of the code running here" is a property of the
 # coroutine, not of the thread. The chain head therefore lives in
-# `CoroutineBase.ctx`, and `currentCoroutine` -- the frame of the coroutine
+# `CoroutineBase.ctx`, and every spawn hands it over: the compiler chooses
+# statically — the caller's own frame chain head when the caller is a
+# coroutine, `system.threadCtx` when it is not — and passes it as the
+# coroutine's hidden `ctx` argument, so a coroutine holds the chain it was
+# spawned in from the start. `currentCoroutine` -- the frame of the coroutine
 # this thread is running, which `runStep` installs around every continuation
-# step -- is how the running code reaches it. A coroutine that starts without a
-# chain of its own adopts its caller's, the way a task copies the context it
-# was spawned in. `doc/contextvars.md` has the whole story.
+# step -- is how the running code reaches it. `doc/contextvars.md` has the
+# whole story.
 
 {.feature: "lenientnils".}
 ## Load-bearing. A chain ends in a nil `parent`, and the nil checks that say so
@@ -92,27 +95,24 @@ proc newContextVar*[T](default: T): ContextVar[T] =
 
 # --- The chain ---
 
-var rootCtx {.threadvar.}: RootRef
-  ## The chain of code that is not part of any coroutine -- the top-level
-  ## statements, and a regular proc that nothing called from a `.passive` one.
-  ## A thread's own chain, because none of that can park.
-
 proc ctxSlot*(): ptr RootRef =
   ## The address of the chain head belonging to the running code.
   ##
-  ## A coroutine with no chain of its own adopts its caller's, which is the
-  ## equivalent of a task copying the context it was spawned in. Adopting on
-  ## first *use* rather than at the call keeps the whole of this out of the
-  ## call sequence -- `caller.env` is already sitting in the frame, and nothing
-  ## has to be written before the callee is entered. The rule that buys is that
-  ## a coroutine sees the chain its caller held when the coroutine first
-  ## touched a context, so a `set` in the caller after the call does not reach
-  ## back into the callee.
+  ## Outside a coroutine that is `system.threadCtx` — the thread's own chain,
+  ## because active code cannot park. Inside one it is the frame's `ctx`
+  ## slot: the spawn handed it the caller's chain head when the frame was
+  ## built, so the chain follows the coroutine from creation, across parks,
+  ## and across hops to other threads. Nothing is discovered here; the
+  ## compiler picked the answer at the call site, which is also why a `set`
+  ## in the caller after the call does not reach back into the callee.
   ##
-  ## `caller` is nil for a coroutine that has not been given one, and names a
-  ## `Join` -- not a real coroutine -- for one started by `complete` or by an
-  ## iterator. A `Join` carries no chain and frames are zeroed, so both cases
-  ## read as nil and the coroutine falls back to its thread's chain.
+  ## A frame with no chain of its own — a `Join`, which is a trampoline
+  ## marker rather than a coroutine — adopts the thread's, which is what a
+  ## caller-walk used to find for it: both read as "the thread's chain" at
+  ## run time. Adopting into the frame rather than reading through to
+  ## `threadCtx` each time is what keeps a later `set` inside that frame off
+  ## the thread's chain — two coroutines sharing a slot must not be able to
+  ## see each other's bindings.
   ##
   ## An address rather than a value, so that a `withCtx` can hold on to the one
   ## slot its block pushed onto and put the old head back into exactly that
@@ -122,13 +122,11 @@ proc ctxSlot*(): ptr RootRef =
   ## neither converts to the other.
   let coro = currentCoroutine()
   if coro == nil:
-    result = addr rootCtx
+    result = addr threadCtx
+  elif coro.ctx != nil:
+    result = addr coro.ctx
   else:
-    if coro.ctx == nil:
-      var up = coro.caller.env
-      while up != nil and up.ctx == nil:
-        up = up.caller.env
-      coro.ctx = if up == nil: rootCtx else: up.ctx
+    coro.ctx = threadCtx
     result = addr coro.ctx
 
 proc currentCtx*(): CtxNode {.inline.} =

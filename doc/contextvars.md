@@ -50,15 +50,17 @@ instead, which is exactly right for it: none of that can park.
 
 ## Inheritance
 
-A coroutine that starts without a chain of its own adopts its caller's — the
-equivalent of a task copying the context it was spawned in. Adoption happens on
-the coroutine's *first* context use, not at the call, which is what keeps the
-whole of it out of the call sequence: `caller.env` is already sitting in the
-frame and nothing has to be written before the callee is entered.
+A coroutine's chain is handed over at the *call*, not discovered later: the
+spawn passes the callee the chain head of whatever spawned it. The compiler
+chooses that head statically — the spawning coroutine's own frame chain head
+when the caller is a coroutine, the thread's chain (`system.threadCtx`) when it
+is not — and passes it as the callee's hidden `ctx` argument. The frame stores
+it beside `caller`, so the chain follows the coroutine from creation, across
+parks, and across hops to other threads.
 
-The rule that buys is: a coroutine sees the chain its caller held when the
-coroutine first touched a context. A `set` in the caller *after* the call does
-not reach back into the callee.
+The rule that buys is: a coroutine sees the chain its caller held at the moment
+of the call. A `set` in the caller *after* the call does not reach back into
+the callee — the callee holds the head as it was when it was spawned.
 
 ```nim
 proc callee() {.passive.} =
@@ -69,6 +71,11 @@ proc caller() {.passive.} =
   callee()            # sees 1
   v.set(2)            # too late for `callee`
 ```
+
+Every coroutine construct takes that same argument from the code it appears
+in: a `for` loop over a `.closure` iterator, a `delay`, an iter value built in
+a proc — inside a coroutine they all inherit the frame's chain head, and in
+active code they all inherit the thread's.
 
 ## Scope of a `set`
 

@@ -150,6 +150,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
             dest.copyIntoKind KvU, info:
               dest.addSymUse pool.symId(EnvFieldName), info
               dest.addParPair NilX, info
+          emitCtxArg(c, dest, info)
       emitCompleteFromNormal(c, dest, contVar, info)
     else:
       # Stack-allocate the callee's frame (statically known callee).
@@ -194,6 +195,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
             dest.copyIntoKind KvU, info:
               dest.addSymUse pool.symId(EnvFieldName), info
               dest.addParPair NilX, info
+          emitCtxArg(c, dest, info)
       # Tag as stack-allocated:
       emitStackFrameTag(c, dest, coroVar, info)
       emitCompleteFromNormal(c, dest, contVar, info)
@@ -254,6 +256,10 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         dest.copyIntoKind AddrX, info:
           dest.copyTree target
       contNextState c, dest, state, info
+      # hidden ctx, last — the value-call shape takes it after the
+      # next-state continuation arg. The iterAdvance/iterSwitch branch
+      # above does NOT: it is a step, not a coroutine spawn.
+      emitCtxArg(c, dest, info)
 
     dest.addParRi() # VarS
 
@@ -322,6 +328,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.copyIntoKind KvU, info:
           dest.addSymUse pool.symId(EnvFieldName), info
           dest.addParPair NilX, info
+      emitCtxArg(c, dest, info)
     n = delayStart; skip n, SkipFull # the delay, already translated
   else:
     dest.copyIntoKind ErrT, info:
@@ -331,9 +338,9 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 # ---------------------------------------------------------------------
 # Proctype / itertype shape rewrite — coroutine-shaped types get the
-# wrapper signature `(args..., result: ptr T, caller: Continuation):
-# Continuation`. Itertype lowers to a `(tuple <proctype> (ref RootObj))`
-# matching closure procs.
+# wrapper signature `(args..., result: ptr T, caller: Continuation,
+# ctx: RootRef): Continuation`. Itertype lowers to a
+# `(tuple <proctype> (ref RootObj))` matching closure procs.
 # ---------------------------------------------------------------------
 
 proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -381,13 +388,14 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addDotToken() # default value
       else:
         skip n, SkipType
-      # here we add caller param
+      # here we add caller param, then the hidden ctx param
       dest.copyIntoKind ParamU, info:
         dest.addSymDef pool.symId(CallerParamName), info
         dest.addDotToken() # export
         dest.addDotToken() # pragmas
         dest.addSymUse pool.symId(ContinuationName), info
         dest.addDotToken() # default value
+      addCtxParam dest, info
       dest.addParRi()
       dest.addSymUse pool.symId(ContinuationName), info
       while n.hasMore:

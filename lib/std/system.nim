@@ -302,6 +302,13 @@ type
       ## that made it went out of scope, and hand the same memory to the next
       ## one.
 
+var threadCtx* {.threadvar.}: RootRef
+  ## The chain of code that is not part of any coroutine: top-level statements
+  ## and a regular proc that nothing coroutine called. The compiler hands this
+  ## as the hidden `ctx` argument at every spawn from such code, and
+  ## `std/contextvars` reads it through `ctxSlot` when no frame is running.
+  ## A thread's own chain, because none of that can park.
+
 var runningCoro {.threadvar.}: ptr CoroutineBase
   ## The frame of the coroutine whose state function this thread is running, or
   ## nil when none is. Maintained by `runStep` alone and read by
