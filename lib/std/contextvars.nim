@@ -26,7 +26,7 @@
 ## are the whole algorithm, so the module's own node types have to be allowed
 ## nil.
 
-import std/atomics
+import std/[atomics, ticketlocks]
 
 type
   CtxNode* = ref object of RootObj
@@ -66,7 +66,10 @@ type
     ## `ContextVar` written as a bare `var` claims none and keeps `id == 0`,
     ## which works as an identity of its own -- enough while exactly one such
     ## variable exists, which is why a bare `var` runs. The first `set` gives
-    ## it a real one. Prefer `newContextVar` unless the bare form reads better.
+    ## it a real one, under `claimLock`, so two threads racing to `set` the
+    ## same bare `var` settle on one identity rather than claiming two and
+    ## stranding one thread's binding under an id the variable no longer
+    ## answers to. Prefer `newContextVar` unless the bare form reads better.
     id*: int
     hasDefault*: bool
       ## Whether `get` answers `defVal` instead of raising.
@@ -75,6 +78,12 @@ type
 var ctxVarSeq: int
   ## Backs `claimId`. Process-wide and increasing, so two variables built on
   ## two threads at once can never claim the same `id`.
+
+var claimLock: TicketLock
+  ## Serialises the check-and-claim of a bare `var`'s `id` in `ensureId`.
+  ## The critical section is a handful of instructions and is never held
+  ## across a call, so a ticket lock -- no init, no deinit -- is the right
+  ## shape for it.
 
 proc claimId*(): int {.inline.} =
   ## Claim an identity for a `ContextVar`. Atomic because a `ContextVar` may be
@@ -92,6 +101,23 @@ proc newContextVar*[T](default: T): ContextVar[T] =
   ## Distinct from `getOrDefault`, whose answer belongs to the call rather than
   ## to the variable.
   ContextVar[T](id: claimId(), hasDefault: true, defVal: default)
+
+proc ensureId[T](v: var ContextVar[T]): int {.inline.} =
+  ## `v`'s identity, claiming one for a bare `var` on first write.
+  ##
+  ## The lock covers the whole check-and-claim, not just the `claimId` call:
+  ## two threads that both find `id == 0` outside it would both claim, and the
+  ## second write would strand the first thread's binding under an identity
+  ## the variable no longer answers to. The id is read back inside the lock
+  ## and returned by value, so the `push` that follows binds the identity the
+  ## variable settled on rather than re-reading a field another thread may
+  ## still be writing.
+  if v.id == 0:
+    acquire(claimLock)
+    if v.id == 0:
+      v.id = claimId()
+    release(claimLock)
+  result = v.id
 
 # --- The chain ---
 
@@ -202,9 +228,7 @@ template set*[T](v: var ContextVar[T]; val: T) =
   ## when the binding is meant to stay local.
   let slot = ctxSlot()
   let ctxBefore = cast[CtxNode](slot[])
-  if v.id == 0:
-    v.id = claimId() # a bare `var`, first write: give it an identity of its own
-  push(v.id, val)
+  push(ensureId(v), val)
   defer: slot[] = ctxBefore
 
 template withCtx*[T](v: var ContextVar[T]; val: T; body: untyped): untyped =
