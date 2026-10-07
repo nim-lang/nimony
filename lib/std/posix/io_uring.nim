@@ -1155,7 +1155,7 @@ proc accept_multishot*(sqe: ptr Sqe; sock: SocketHandle, `addr`: ptr SockAddr, a
   sqe.accept(sock, `addr`, addrLen, flags)
 
 proc connect*(sqe: ptr Sqe; sock: SocketHandle, `addr`: ptr SockAddr, addrLen: SockLen): ptr Sqe =
-  sqe.prepRw(OP_CONNECT, sock, cast[pointer](`addr`), 0, cast[pointer](addrLen))
+  sqe.prepRw(OP_CONNECT, sock, cast[pointer](`addr`), 0, addrLen)
 
 proc epoll_ctl*(sqe: ptr Sqe; epfd: FileHandle; fd: FileHandle; op: uint32; ev: ptr EpollEvent): ptr Sqe =
   sqe.prepRw(OP_EPOLL_CTL, epfd, cast[pointer](ev), op, fd)
