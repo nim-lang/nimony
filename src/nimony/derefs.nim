@@ -1630,6 +1630,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
           tr c, n, WantT, elemType
 
     else:
+      if e.wantMutable and n.stmtKind in {IfS, CaseS, TryS, BlockS}:
+        # An `if`/`case`/`try`/`block` expression yields a value, not a
+        # location: passing it to a `var`/`out` parameter would mutate a
+        # temporary.
+        cannotPassToVar c.dest, n.info, n
+        skip n
+        return
       case n.stmtKind
       of RetS:
         trReturn(c, n)
