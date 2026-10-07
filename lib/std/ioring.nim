@@ -31,8 +31,6 @@ import ./ioring/platform
 when defined(windows):
   when not defined(nimIoringWsaPoll):
     import ./ioring/backends/iocp   # iocpOwnerLane / iocpWake — lane routing
-when defined(illumos):
-  import ./ioring/backends/event_port
 when defined(posix):
   from std/posix/posix import F_GETFL, F_SETFL, O_NONBLOCK,
                               SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
@@ -137,8 +135,6 @@ proc enqueueOp(op: OpContext) =
   else:
     while not gOpQueues[ioLane()].tryEnqueue(op):
       discard backendRelays.poll(0)
-    when defined(illumos):
-      eventPortWake(ioLane())
 
 proc submitNop*(deadline: Deadline; cont = Continuation(fn: nil, env: nil);
                 resPtr: nil ptr int = nil): SeqNum =
@@ -269,8 +265,9 @@ proc submitReadAt*(fd: cint; buf: pointer; len: int; offset: int64;
   ## Keep the buffer live until completion. Short reads and EOF are legal;
   ## offsets and lengths must be nonnegative. Synchronous fallbacks occupy
   ## the polling lane and cannot be interrupted once the transfer starts.
-  ## On Windows fd is a CRT descriptor (_open/_fileno), not a ring HANDLE
-  ## or socket; close it with the CRT, not closeFd.
+  ## `fd` must be a regular file; on Windows that is a file from `submitOpen`.
+  ## illumos runs these as POSIX AIO: a non-regular `fd` fails with ENOTSUP,
+  ## and more than 64 MiB in flight per lane with EAGAIN.
   result = nextSeqNum()
   enqueueOp(OpContext(kind: opRead, fd: fd, seqnum: result,
     read: OpBuf(buf: buf, len: len), positioned: true, offset: offset,
@@ -280,7 +277,9 @@ proc submitWriteAt*(fd: cint; buf: pointer; len: int; offset: int64;
                     deadline: Deadline; cont = Continuation(fn: nil, env: nil);
                     resPtr: nil ptr int = nil): SeqNum =
   ## Positioned counterpart of submitWrite; does not move the file cursor.
-  ## On Windows fd is a CRT descriptor, as for submitReadAt.
+  ## Same `fd` rules as submitReadAt. A write that times out or is cancelled
+  ## after it started completes with what really happened, which can be
+  ## success: the deadline stops the waiting, not a write already issued.
   result = nextSeqNum()
   enqueueOp(OpContext(kind: opWrite, fd: fd, seqnum: result,
     write: OpBuf(buf: buf, len: len), positioned: true, offset: offset,
@@ -472,7 +471,7 @@ proc submitPollRemove*(fd: cint): int {.discardable.} =
   ## drain an op submitted moments ago has no slot yet: this reports `0`, the op
   ## is armed immediately afterwards, and the slot leaks — the exact bug the
   ## proc exists to fix. `pollCompletions` drains for the same reason.
-  ## (`closeFd` still does not, and keeps that narrow gap.)
+  ## (`closeFd` drains only on illumos; elsewhere it keeps that narrow gap.)
   when hasIocp:
     # No safe cancel-without-close here: the kernel owns each op's OVERLAPPED
     # until it acknowledges, and `closesocket` — what aborts them — is what this
