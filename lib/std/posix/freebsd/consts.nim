@@ -87,6 +87,7 @@ const
   O_NONBLOCK* = cint(0x4)
   O_APPEND* = cint(0x8)
   O_CREAT* = cint(0x200)
+  O_EXCL* = cint(0x800)
   O_TRUNC* = cint(0x400)
   O_CLOEXEC* = cint(0x100000)
   F_GETFL* = cint(3)
