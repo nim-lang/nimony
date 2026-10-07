@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tvar_ifexpr.nim(10, 8) Error: cannot pass if c: a
+else: b to var/out T parameter
+tests/nimony/errmsgs/tvar_ifexpr.nim(11, 8) Error: cannot pass case k
+of 0: a
+else: b to var/out T parameter
