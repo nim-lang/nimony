@@ -93,6 +93,7 @@ const
   O_WRONLY* = cint(1)
   O_RDWR* = cint(2)
   O_CREAT* = cint(0o100)
+  O_EXCL* = cint(0o200)
   O_TRUNC* = cint(0o1000)
   O_APPEND* = cint(0o2000)
   O_NONBLOCK* = cint(0o4000)

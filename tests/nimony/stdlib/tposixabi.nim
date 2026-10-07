@@ -113,6 +113,7 @@ when defined(posix):
     # ---- fcntl / open flags ----
     ck("O_RDONLY", int64(O_RDONLY)); ck("O_WRONLY", int64(O_WRONLY))
     ck("O_RDWR", int64(O_RDWR)); ck("O_CREAT", int64(O_CREAT))
+    when defined(linux): ck("O_EXCL", int64(O_EXCL))
     ck("O_TRUNC", int64(O_TRUNC)); ck("O_APPEND", int64(O_APPEND))
     ck("O_NONBLOCK", int64(O_NONBLOCK)); ck("O_CLOEXEC", int64(O_CLOEXEC))
     ck("F_GETFL", int64(F_GETFL)); ck("F_SETFL", int64(F_SETFL))

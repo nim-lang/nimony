@@ -5,11 +5,22 @@ when defined(posix):
   from std/posix/posix import unlink, SEEK_SET, SEEK_CUR, EINVAL, EBADF, Off
 
   proc lseek(fd: cint; offset: Off; whence: cint): Off {.importc: "lseek".}
-  proc mkstemp(path: cstring): cint {.importc: "mkstemp".}
-  var name = "/tmp/nimony-positioned-XXXXXX"
-  let fd = mkstemp(name.toCString)
-  assert fd >= 0
-  assert unlink(name.toCString) == 0
+  when defined(linux) and defined(nimNoLibc):
+    import std/posix/posix as posix
+    proc getpid(): cint {.importc: "getpid".}
+    # No mkstemp in a libc-free executable. O_EXCL protects an existing
+    # file; unlink immediately so even a later assertion leaves no artifact.
+    var name = "/tmp/nimony-positioned-" & $getpid()
+    let fd = posix.open(name.toCString,
+      posix.O_RDWR or posix.O_CREAT or posix.O_EXCL, posix.Mode(0o600))
+    assert fd >= 0
+    assert posix.pcall(unlink(name.toCString)) == 0
+  else:
+    proc mkstemp(path: cstring): cint {.importc: "mkstemp".}
+    var name = "/tmp/nimony-positioned-XXXXXX"
+    let fd = mkstemp(name.toCString)
+    assert fd >= 0
+    assert unlink(name.toCString) == 0
 
   proc receive(id: SeqNum; expected: int) =
     var comps = default(array[8, IoCompletion])
