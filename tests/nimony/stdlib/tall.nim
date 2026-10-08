@@ -28,6 +28,9 @@ import std/cmdline
 import std/commonio
 import std/compilation
 import std/complex
+import std/compress/checksums
+import std/compress/deflate
+import std/compress/gzip
 import std/cpuinfo
 import std/deques
 import std/dirs
@@ -39,6 +42,7 @@ import std/fenv
 import std/formatfloat
 import std/hashes
 import std/heapqueue
+import std/http/httpcoding
 import std/http/httpconn
 import std/http/httpdate
 import std/http/httpmsg
