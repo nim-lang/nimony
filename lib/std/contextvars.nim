@@ -183,11 +183,7 @@ proc push[T](id: int; val: T) =
   ## sharing that chain still read what they read before -- which is why a
   ## `set` in a `.passive` proc is invisible to whoever called it, with no
   ## unwinding to arrange.
-  var n: CtxBinding[T]
-  new(n)
-  n.id = id
-  n.val = val
-  n.parent = cast[CtxNode](ctxSlot()[])
+  let n = CtxBinding[T](id: id, val: val, parent: cast[CtxNode](ctxSlot()[]))
   ctxSlot()[] = cast[RootRef](n)
 
 proc get*[T](v: ContextVar[T]): T {.raises.} =
@@ -197,10 +193,11 @@ proc get*[T](v: ContextVar[T]): T {.raises.} =
   ## default.
   let n = findNode(currentCtx(), v.id)
   if n != nil:
-    return cast[CtxBinding[T]](n).val
-  if v.hasDefault:
-    return v.defVal
-  raise KeyError
+    result = cast[CtxBinding[T]](n).val
+  elif v.hasDefault:
+    result = v.defVal
+  else:
+    raise KeyError
 
 proc getOrDefault*[T](v: ContextVar[T]; dflt: T): T =
   ## The value of `v` for the running code, or `dflt` when it is bound nowhere.
@@ -208,8 +205,9 @@ proc getOrDefault*[T](v: ContextVar[T]; dflt: T): T =
   ## asked for.
   let n = findNode(currentCtx(), v.id)
   if n != nil:
-    return cast[CtxBinding[T]](n).val
-  dflt
+    result = cast[CtxBinding[T]](n).val
+  else:
+    result = dflt
 
 proc isSet*[T](v: ContextVar[T]): bool =
   ## Whether `v` is bound in the running code's chain. Says nothing about a
@@ -229,7 +227,7 @@ template set*[T](v: var ContextVar[T]; val: T) =
   let slot = ctxSlot()
   let ctxBefore = cast[CtxNode](slot[])
   push(ensureId(v), val)
-  defer: slot[] = ctxBefore
+  slot[] = ctxBefore
 
 template withCtx*[T](v: var ContextVar[T]; val: T; body: untyped): untyped =
   ## Runs `body` with `v` bound to `val`, then puts the previous chain back.
