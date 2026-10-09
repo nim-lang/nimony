@@ -239,6 +239,7 @@ type
     OutT = (ord(OutTagId), "out")  ## `out` type
     LentT = (ord(LentTagId), "lent")  ## `lent` type
     SinkT = (ord(SinkTagId), "sink")  ## `sink` type
+    OwnedT = (ord(OwnedTagId), "owned")  ## `owned` type: the unique owning edge of a `ref` or closure (RFC #575)
     NiltT = (ord(NiltTagId), "nilt")  ## `nilt` type
     ConceptT = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar `D`, and the concept body statements `S*` (body may be empty when parents are present)
     DistinctT = (ord(DistinctTagId), "distinct")  ## `distinct` type
@@ -258,7 +259,7 @@ type
     PluginCallT = (ord(PluginCallTagId), "pluginCall")  ## the parked form of a **deferred plugin call**: a `.plugin` template invocation that answered `(deferexpansion)` because its arguments still mention type variables. `Y` is the template symbol, the rest are its sem-checked arguments. Having its own tag is what keeps it apart from the three other meanings of `(at …)` — subscript, explicit generic instantiation, generic type invocation — none of which a pass has to probe for any more. Whether it stands for a TYPE or a VALUE is deliberately NOT in the node: the template's declared return type says, `typedesc` meaning a type and anything else (`untyped` included) meaning a value
 
 proc rawTagIsNimonyType*(raw: TagEnum): bool {.inline.} =
-  raw in {ErrTagId, AtTagId, AndTagId, OrTagId, NotTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, VarargsTagId, StaticTagId, TupleTagId, ClosureTupleTagId, OnumTagId, AnumTagId, RefTagId, MutTagId, OutTagId, LentTagId, SinkTagId, NiltTagId, ConceptTagId, DistinctTagId, ItertypeTagId, RangetypeTagId, UarrayTagId, SetTagId, AutoTagId, SymkindTagId, TypekindTagId, TypedescTagId, UntypedTagId, TypedTagId, CstringTagId, PointerTagId, OrdinalTagId, PluginCallTagId}
+  raw in {ErrTagId, AtTagId, AndTagId, OrTagId, NotTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, VarargsTagId, StaticTagId, TupleTagId, ClosureTupleTagId, OnumTagId, AnumTagId, RefTagId, MutTagId, OutTagId, LentTagId, SinkTagId, OwnedTagId, NiltTagId, ConceptTagId, DistinctTagId, ItertypeTagId, RangetypeTagId, UarrayTagId, SetTagId, AutoTagId, SymkindTagId, TypekindTagId, TypedescTagId, UntypedTagId, TypedTagId, CstringTagId, PointerTagId, OrdinalTagId, PluginCallTagId}
 
 type
   NimonyOther* = enum

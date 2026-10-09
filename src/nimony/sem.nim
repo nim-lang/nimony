@@ -1219,7 +1219,7 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
         return FailedDot
       semExprSym c, dest, it, s, exprStart, flags
       return
-    let t = skipModifier(lhs.typ)
+    let t = skipModifierAndOwned(lhs.typ)
     var root = t
     var doDeref = false # maybe arbitrary number of derefs for compat mode
     if root.typeKind in {RefT, PtrT}:
@@ -1633,7 +1633,7 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
     discard
   of NoType, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT, TemplateT,
      ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, UntypedT, TypedT,
      CstringT, PointerT, OrdinalT, PluginCallT:
     # otherwise, is a static value
@@ -3912,7 +3912,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
       it.n = bracketStart; skip it.n
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       # unknown expected type, give empty literal auto type, then match it
@@ -3936,7 +3936,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   of AutoT: discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     discard
@@ -3979,7 +3979,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     var convMatch = createMatch(addr c)
@@ -4018,7 +4018,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
       it.n = curlyStart; skip it.n
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       # unknown expected type, give empty literal auto type, then match it
@@ -4042,7 +4042,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
   of AutoT: discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     buildErr c, dest, info, "invalid expected type for set constructor: " & typeToString(it.typ)
@@ -4812,7 +4812,7 @@ proc asksForNil(typ: TypeCursor): bool =
   ## not change a value's nilability, only how it is passed, and `system.new`
   ## reaches here as `out T`.
   var t = typ
-  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+  while t.typeKind in {SinkT, MutT, LentT, OutT, OwnedT}:
     inc t
   if t.typeKind != RefT: return false
   var marker = t.childCursor
@@ -4851,6 +4851,17 @@ proc nilableAllocResult(c: var SemContext; typ, expected: TypeCursor;
     if ch.substructureKind in {NotnilU, NilU, UncheckedU}: skip ch
     else: takeTree buf, ch
   buf.addParPair(NilU, info)
+  buf.addParRi()
+  result = typeToCursor(c, buf, 0)
+
+proc ownedAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): TypeCursor =
+  ## RFC #575: under `.feature: "ownedRefs"` an object construction yields the
+  ## owning edge to the new cell.
+  result = typ
+  if OwnedRefsFeature notin c.features or typ.typeKind != RefT: return
+  var buf = createTokenBuf(8)
+  buf.addParLe(OwnedT, info)
+  buf.addSubtree typ
   buf.addParRi()
   result = typeToCursor(c, buf, 0)
 
@@ -4991,6 +5002,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   # `oconstr` either way.
   it.typ = nilableAllocResult(c, it.typ, expected, info)
   buildDefaultObjConstr(c, dest, it.typ, setFields, info, bindings)
+  it.typ = ownedAllocResult(c, it.typ, info)
   commonType c, dest, it, exprStart, expected
 
 proc semObjDefault(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -5012,6 +5024,9 @@ proc semNewref(c: var SemContext; dest: var TokenBuf; it: var Item) =
     it.typ = semLocalType(c, dest, it.n)
     dest.shrink beforeTypeArg
     if it.typ.typeKind == TypedescT:
+      inc it.typ
+    if it.typ.typeKind == OwnedT:
+      # fresh, so it may initialize the owned location (RFC #575):
       inc it.typ
     it.typ = nilableAllocResult(c, it.typ, expected, info)
     dest.addSubtree it.typ
@@ -5363,7 +5378,7 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
       it.typ = c.types.uint8Type
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT,
        PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
@@ -5654,7 +5669,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
           buildErr c, dest, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymkindT,
-            PtrT, RefT, MutT, OutT, LentT, SinkT, UarrayT, SetT, StaticT, TypedescT,
+            PtrT, RefT, MutT, OutT, LentT, SinkT, OwnedT, UarrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangetypeT, VarargsT, UntypedT, TypedT,
             CstringT, PointerT, TypekindT, OrdinalT, RoutineTypes:
           # every valid local type expression

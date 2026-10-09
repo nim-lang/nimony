@@ -628,7 +628,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
     unravelSet c, typ, param
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT, TemplateT,
      ProctypeT,  VoidT, PtrT, VarargsT, StaticT,
-     RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT, ItertypeT, UarrayT, AutoT,
+     RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT, ItertypeT, UarrayT, AutoT,
      SymkindT, TypekindT, TypedescT, UntypedT, TypedT, CstringT, PointerT, OrdinalT,
      ClosureTupleT, PluginCallT:
     c.errorMsg = "unsupported type for compile-time evaluation: " & asNimCode(orig)

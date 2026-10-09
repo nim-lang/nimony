@@ -550,15 +550,19 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
   let info = cs.callNodeInfo
   var destType = cs.fn.typ
   if destType.typeKind == TypedescT: inc destType
-  if destType.typeKind in {SinkT, LentT} and cs.args[0].typ.typeKind == TypedescT:
+  if destType.typeKind in {SinkT, LentT, OwnedT} and cs.args[0].typ.typeKind == TypedescT:
     var nullary = destType
     inc nullary
     if not nullary.hasMore:
-      # sink T/lent T call
+      # sink T/lent T/owned T call
       var typeBuf = createTokenBuf(16)
-      typeBuf.addParLe(destType.cursorTagId, destType.info)
-      typeBuf.addSubtree cs.args[0].n
-      typeBuf.addParRi()
+      if destType.typeKind == OwnedT and OwnedRefsFeature notin c.features:
+        # `owned` is erased when the feature is off:
+        typeBuf.addSubtree cs.args[0].n
+      else:
+        typeBuf.addParLe(destType.cursorTagId, destType.info)
+        typeBuf.addSubtree cs.args[0].n
+        typeBuf.addParRi()
       var item = Item(n: beginRead(typeBuf), typ: it.typ)
       semLocalTypeExpr(c, dest, item)
       # No call tree was opened in `dest` here, so unlike the ConvX path
@@ -1110,7 +1114,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         let sym = f.symId
         let s = fetchSym(c, sym)
         let typ = fetchCallableType(c, dest, f, s)
-        let maybeProc = typ.skipModifier
+        let maybeProc = typ.skipModifierAndOwned
         if maybeProc.typeKind in RoutineTypes:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: maybeProc)
           m.add createMatch(addr c, it.typ)
@@ -1145,7 +1149,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     # Keep in mind that proc vars are a thing:
     let sym = if cs.fn.n.isSymbol: cs.fn.n.symId else: SymId(0)
     let typ = cs.fn.typ
-    let maybeProc = typ.skipModifier
+    let maybeProc = typ.skipModifierAndOwned
     if maybeProc.typeKind in RoutineTypes:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: maybeProc)
       m.add createMatch(addr c, it.typ)
@@ -1610,7 +1614,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       return
     elif dotState == FailedDot or
         # also ignore non-proc fields:
-        (dotState == MatchedDotField and cs.fn.typ.typeKind notin RoutineTypes):
+        (dotState == MatchedDotField and skipOwned(cs.fn.typ).typeKind notin RoutineTypes):
       cs.source = MethodCall
       # turn a.b(...) into b(a, ...)
       # first, delete the output of `tryBuiltinDot`:

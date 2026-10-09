@@ -1,0 +1,1 @@
+tests/nimony/ownedrefs/townedrefs_closure_cycle.nim(14, 17) Error: cannot produce an 'owned' closure: its environment can be part of a cycle via the captured 'w'

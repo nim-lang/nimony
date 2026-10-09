@@ -192,6 +192,7 @@
 | `(out T)` | NimonyType, NiflerKind | `out` type |
 | `(lent T)` | NimonyType | `lent` type |
 | `(sink T)` | NimonyType | `sink` type |
+| `(owned T)` | NimonyType | `owned` type: the unique owning edge of a `ref` or closure (RFC #575) |
 | `(nilt)` | NimonyType | `nilt` type |
 | `(concept .X .X .T? D S*)` | NimonyType, NiflerKind | `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar `D`, and the concept body statements `S*` (body may be empty when parents are present) |
 | `(distinct T)` | NimonyType, NiflerKind | `distinct` type |

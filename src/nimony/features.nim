@@ -55,6 +55,12 @@ type
       ## routine body sat in `{.cast(assumeSync).}:`. Without it a mutable
       ## global may only be passed to a `var`/`ptr` parameter of a `.sync`
       ## routine (an atomic operation, `acquire` and the like).
+    OwnedRefsFeature
+      ## RFC #575: `owned ref T` / `owned proc` are a statically checked
+      ## unique ownership annotation. The owning edge is an ordinary counted
+      ## reference; converting it to an unowned one yields another counted
+      ## reference. Object constructors yield `owned`. Without the feature
+      ## `owned` written in the module is erased.
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -81,6 +87,7 @@ proc parseFeatures*(s: string): set[Feature] =
   of "staticcontracts": {StaticContractsFeature}
   of "anonblockbreaks": {AnonBlockBreaksFeature}
   of "assumesync": {AssumeSyncFeature}
+  of "ownedrefs": {OwnedRefsFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,

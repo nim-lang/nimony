@@ -757,7 +757,7 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): boo
           # ... and in whatever its type holds: a `uint8` is `0..255`, and so
           # is a `lent uint8` a loop variable is bound as
           var t = getType(c.typeCache, n)
-          while t.typeKind in {LentT, SinkT, MutT, OutT}:
+          while t.typeKind in {LentT, SinkT, MutT, OutT, OwnedT}:
             t = sub(t)
           result = integerTypeBounds(c.bits, t, lo, hi)
       if not result and n.exprKind in {DotX, DdotX}:
@@ -2391,7 +2391,7 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   # this, a `sink (ref T notnil)` parameter looked nilable, and NJ asked
   # for a non-nil proof on a value the type system already guarantees.
   var t = t
-  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+  while t.typeKind in {SinkT, MutT, LentT, OutT, OwnedT}:
     inc t
   result = false
   case t.typeKind
@@ -2458,7 +2458,7 @@ proc lacksDefaultValue(c: var FirContext; typ: Cursor; depth = 0): bool =
   ## REPORT a violation, and a type we could not read is not evidence of one.
   if depth > 20: return false
   var t = typ
-  while t.typeKind in {MutT, LentT, SinkT, OutT}:
+  while t.typeKind in {MutT, LentT, SinkT, OutT, OwnedT}:
     inc t
   var guard = 0
   while t.isSymbol and guard < 8:

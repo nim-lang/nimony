@@ -447,7 +447,49 @@ proc semRangeTypeFromExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; 
 
 const InvocableTypeMagics = {ArrayT, RangetypeT, VarargsT,
   PtrT, RefT, UarrayT, SetT, StaticT, TypedescT,
-  SinkT, LentT}
+  SinkT, LentT, OwnedT}
+
+proc checkOwnedBase(c: var SemContext; dest: var TokenBuf; ownedStart: int; info: NifLineInfo) =
+  ## `owned` applies to the two reference counted shared handles only:
+  ## `ref T` and closures (RFC #575). `seq` and `string` are already unique,
+  ## so `owned` on them is rejected rather than erased.
+  var base = readonlyCursorAt(dest, ownedStart)
+  inc base
+  let written = base # for the message: `seq[int]`, not its object
+  var errMsg = ""
+  var counter = 20
+  while counter > 0 and base.isSymbol:
+    dec counter
+    let s = base.symId
+    if prog.mem.hasKey(s) and prog.mem[s].phase < SemcheckSignaturesInProgress:
+      # forward declared, e.g. `next: owned Node` inside `Node`'s own
+      # declaration; checked again once the declaration is resolved
+      return
+    let res = tryLoadSym(s)
+    if res.status != LacksNothing: break
+    let decl = asTypeDecl(res.decl)
+    if decl.kind != TypeY: break
+    if decl.typevars.substructureKind == TypevarsU:
+      break # generic type: checked at instantiation
+    base = decl.body
+  if base.isSymbol or base.kind == DotToken:
+    discard "generic parameter or unresolved: checked after instantiation"
+  else:
+    case base.typeKind
+    of RefT, OwnedT, AtT, OrT, AndT, NotT, ConceptT, TypedescT, UntypedT,
+       TypedT, AutoT:
+      discard
+    of ProctypeT, ItertypeT:
+      if not procHasPragma(base, ClosureP):
+        errMsg = "'owned' requires a closure, but '" & typeToString(written) &
+          "' is not a closure type"
+    of DistinctT:
+      discard "a distinct ref is still a ref"
+    else:
+      errMsg = "'owned' is only valid for 'ref' and closure types, but got '" &
+        typeToString(written) & "'"
+  if errMsg.len > 0:
+    c.buildErrAt dest, ownedStart, errMsg
 
 proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: TypeKind; info: NifLineInfo; invokeStart: Cursor) =
   # `n` is at first arg, inside the invoke scope owned by `semInvoke`;
@@ -474,6 +516,15 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
       while n.hasMore: skip n
     n = invokeStart; skip n
     return
+  of OwnedT:
+    if OwnedRefsFeature notin c.features:
+      # `owned` is erased when the feature is off:
+      semLocalTypeImpl c, dest, n, InLocalDecl
+      n = invokeStart; skip n
+      return
+    takeTree typeBuf, n
+    typeBuf.addParRi(n.endInfo)
+    n = invokeStart; skip n
   of PtrT, RefT, UarrayT, SetT, StaticT, TypedescT, SinkT, LentT:
     # unary invocations
     takeTree typeBuf, n
@@ -813,6 +864,35 @@ proc isPointerTypeClass(n: Cursor): bool {.inline.} =
   result = n.typeKind == TypekindT and
     n.childCursor.typeKind in {RefT, PtrT, PointerT, CstringT, ProctypeT}
 
+proc handleOwnedType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
+  ## `owned T` in a type position (RFC #575). Without `.feature: "ownedRefs"`
+  ## it is erased.
+  result = false
+  if nn.exprKind in {CmdX, PrefixX, CallX}:
+    let start = nn
+    var n = nn
+    let info = n.info
+    n = sub(n)
+    let u = getIdent(n)
+    if u != StrId(0) and pool.strings[u] == "owned":
+      skip n
+      if n.hasMore:
+        var arg = n
+        skip n
+        if not n.hasMore:
+          result = true
+          if OwnedRefsFeature notin c.features:
+            semLocalTypeImpl c, dest, arg, context
+          else:
+            var buf = createTokenBuf(16)
+            buf.addParLe(OwnedT, info)
+            buf.addSubtree arg
+            buf.addParRi()
+            var m = beginRead(buf)
+            semLocalTypeImpl c, dest, m, context
+          nn = start
+          skip nn
+
 proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
   result = false
   if nn.exprKind == InfixX:
@@ -942,6 +1022,8 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         n = parStart; skip n
       elif xkind == TupX:
         semTupleType c, dest, n
+      elif handleOwnedType(c, dest, n, context):
+        discard "handled"
       elif handleNilableType(c, dest, n, context):
         discard "handled"
       elif isOrExpr(n):
@@ -1039,6 +1121,20 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         return
       dest.takeInto n:
         semLocalTypeImpl c, dest, n, InLocalDecl
+    of OwnedT:
+      if tryTypeClass(c, dest, n):
+        return
+      var inner = createTokenBuf(16)
+      n.into:
+        semLocalTypeImpl c, inner, n, InLocalDecl
+      if beginRead(inner).typeKind == OwnedT:
+        dest.add inner # `owned owned T` is `owned T`
+      else:
+        let ownedStart = dest.len
+        dest.addParLe(OwnedT, info)
+        dest.add inner
+        dest.addParRi()
+        checkOwnedBase c, dest, ownedStart, info
     of SetT:
       if tryTypeClass(c, dest, n):
         return
@@ -1252,7 +1348,9 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       c.buildErr dest, info, "not a type", n
       inc n
   else:
-    if handleNilableType(c, dest, n, context):
+    if handleOwnedType(c, dest, n, context):
+      discard "handled"
+    elif handleNilableType(c, dest, n, context):
       discard "handled"
     else:
       semTypeExpr c, dest, n, context, info

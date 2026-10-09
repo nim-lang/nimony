@@ -549,7 +549,10 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
   if f.isDotToken:
     inc f
     return a.typeKind != AutoT
-  let a = errArgForConstraintCheck(a)
+  var a = errArgForConstraintCheck(a)
+  if a.typeKind == OwnedT:
+    # `owned X` satisfies what `X` satisfies (RFC #575)
+    inc a
   if a.isSymbol:
     let res = tryLoadSym(a.symId)
     assert res.status == LacksNothing
@@ -1743,9 +1746,13 @@ proc tryNarrowChoice*(context: ptr SemContext; choice, expected: Cursor): SymId 
     result = tryMatchProcChoice(context, choice, t)
 
 proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
-  let a = skipModifier(arg.typ)
+  var a = skipModifier(arg.typ)
   let fs = f.symId
   if isTypevar(fs):
+    # a typevar binds `owned X` as it is, so that `move` and friends keep
+    # the ownership (RFC #575):
+    a = arg.typ
+    if a.isTagLit and a.typeKind in TypeModifiers: inc a
     if isStaticTypevar(fs):
       # a value parameter is not a type; it cannot be a parameter's type
       m.error InvalidMatch, f, a
@@ -2122,6 +2129,33 @@ proc inferableArgTypevar(m: Match; f: Cursor; arg: CallArg): SymId =
         not (f.isSymbol and isTypevar(f.symId)):
       result = a.symId
 
+proc isFreshOwnable(n: Cursor): bool =
+  ## Expressions that produce a reference nobody else holds yet. These may
+  ## initialize an `owned` location even where the expression itself is not
+  ## typed as `owned` (modules without `.feature: "ownedRefs"`, lambdas).
+  var n = n
+  while n.exprKind in {HconvX, ExprX, ParX}:
+    let start = n
+    n = sub(n) # bound the last-son scan
+    if start.exprKind == HconvX: skip n # the type
+    var next = n
+    while next.hasMore:
+      n = next
+      skip next
+  case n.kind
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    result = res.status == LacksNothing and isRoutine(res.decl.symKind)
+  of SymbolDef:
+    result = false
+  of TagLit:
+    case n.exprKind
+    of OconstrX, NewobjX, NewrefX, NilX: result = true
+    else:
+      result = n.stmtKind in {ProcS, FuncS, IteratorS}
+  else:
+    result = false
+
 proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg)
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
@@ -2147,6 +2181,27 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
   of TagLit:
     let fk = f.typeKind
     case fk
+    of OwnedT:
+      # RFC #575: shared cannot be upgraded to unique, except for a fresh
+      # value which has no other owner yet.
+      var a = arg.typ
+      if a.typeKind in {MutT, OutT, SinkT, LentT}:
+        inc a
+      if a.typeKind == OwnedT:
+        inc a
+      elif not isFreshOwnable(arg.n) and a.typeKind != NiltT:
+        m.error InvalidMatch, f, a
+      elif a.typeKind in RoutineTypes and not containsGenericParams(f):
+        # keep the `owned` target visible as a conversion: once lambda lifting
+        # has produced the environment, the duplifier checks that it is
+        # acyclic, which `owned` closures promise:
+        m.args.addParLe HconvX, m.argInfo
+        m.args.addSubtree f
+        inc m.opened
+      let fStart = f
+      f = sub(f)
+      singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig)
+      expectParRi m, f, fStart
     of MutT, OutT, SinkT, LentT:
       var a = arg.typ
       if a.typeKind in {MutT, OutT, SinkT, LentT}:
@@ -2590,10 +2645,45 @@ proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
     var elemMut = elem
     singleArg(m, elemMut, arg)
 
+proc ownedFormal(m: Match; f: Cursor): bool =
+  ## Does the formal take the `owned` argument as it is? A typevar binds it
+  ## as it is, unless it is already bound to something unowned.
+  var f = f
+  if f.typeKind in {SinkT, LentT, MutT, OutT}: inc f
+  if f.isSymbol and isTypevar(f.symId):
+    if m.inferred.contains(f.symId):
+      f = m.inferred.getOrQuit(f.symId)
+      if f.typeKind in {SinkT, LentT}: inc f
+    else:
+      return true
+  if f.isSymbol:
+    # `type Cb = owned proc ...`
+    let decl = getTypeSection(f.symId)
+    if decl.kind == TypeY: f = decl.body
+  result = f.typeKind == OwnedT
+
 proc singleArgCore(m: var Match; f: var Cursor; arg: CallArg) =
   let fOrig = f
+  var arg = arg
+  var toUnowned = false
+  var a = arg.typ
+  if a.typeKind in {MutT, LentT, SinkT}: inc a
+  if a.typeKind == OwnedT and not ownedFormal(m, f):
+    # RFC #575: `owned X` converts to `X`, producing a counted reference.
+    # A `var X` would allow storing an unowned reference into the owner:
+    if f.typeKind in {MutT, OutT}:
+      m.error InvalidMatch, f, arg.typ
+      return
+    inc a
+    arg.typ = a
+    toUnowned = true
   singleArgImpl(m, f, arg)
   if not m.err:
+    if toUnowned:
+      # visible to the duplifier, which then copies the unowned reference:
+      m.args.addParLe HconvX, m.argInfo
+      m.args.addSubtree arg.typ
+      inc m.opened
     m.useArg arg, fOrig # since it was a match, copy it
     while m.opened > 0:
       m.args.addParRi()

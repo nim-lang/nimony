@@ -30,6 +30,7 @@ It follows that we're only interested in Call expressions here, or similar
 ]##
 
 import std / [assertions, tables, hashes, sets, syncio]
+from std / strutils import find
 when defined(nimony):
   {.feature: "lenientnils".}
 include ".." / lib / nifprelude
@@ -113,7 +114,8 @@ proc isLastRead(c: var Context; n: Cursor): bool =
     var canAnalyse = false
     let v = c.typeCache.getLocalInfo(r)
     if v.kind == ParamY:
-      canAnalyse = v.typ.typeKind == SinkT
+      # an `owned` parameter is a sink parameter (RFC #575)
+      canAnalyse = v.typ.typeKind in {SinkT, OwnedT}
     elif v.kind in {VarY, LetY}:
       # CursorY omitted here on purpose as we cannot steal ownership from a cursor
       # as it doesn't have any.
@@ -521,7 +523,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor) =
   let info = readonlyCursorAt(arg, 0).info
-  let staticCall = typ.typeKind notin {RefT, PtrT}
+  let staticCall = skipOwned(typ).typeKind notin {RefT, PtrT}
   template emitArgs(dest: var TokenBuf) =
     copyIntoSymUse dest, destroyProc, info
     if isMutFirstParam(destroyProc):
@@ -535,7 +537,7 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor)
     copyIntoKind c.dest, CallS, info: emitArgs(c.dest)
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: NifLineInfo; typ: Cursor) =
-  let staticCall = typ.typeKind notin {RefT, PtrT}
+  let staticCall = skipOwned(typ).typeKind notin {RefT, PtrT}
   template emitArgs(dest: var TokenBuf) =
     copyIntoSymUse dest, destroyProc, info
     if isMutFirstParam(destroyProc):
@@ -561,8 +563,17 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     tr c, n, WillBeOwned
   c.typeCache.registerLocal(result, CursorY, typ)
 
-proc callDup(c: var Context; arg: var Cursor)
+proc ownedBase(t: Cursor): Cursor =
+  ## The `X` of an `owned X`, also when spelled via an alias; nil otherwise.
+  var t = t
+  if t.typeKind == SinkT: inc t
+  let impl = skipTypeAliases(t)
+  result = if impl.typeKind == OwnedT: impl.childCursor else: default(Cursor)
+
+proc callDup(c: var Context; arg: var Cursor; destType = default(Cursor))
     {.ensuresNif: addedAny(c.dest).} =
+  ## `destType`: when it is known and unowned, an `owned` argument is copied
+  ## as the unowned reference it is converted to (RFC #575).
   if arg.exprKind == EmoveX:
     # `=dup` on an `ensureMove(x)` is always wrong: the user has asserted
     # this is a move, so calling `=dup` on top would emit a bogus
@@ -572,7 +583,10 @@ proc callDup(c: var Context; arg: var Cursor)
     # a provable last-read, it produces an `(err …)` node here.
     tr c, arg, WillBeOwned
     return
-  let typ = getType(c.typeCache, arg)
+  var typ = getType(c.typeCache, arg)
+  if not cursorIsNil(destType) and cursorIsNil(ownedBase(destType)):
+    let b = ownedBase(typ)
+    if not cursorIsNil(b): typ = b
   if typ.typeKind == NiltT:
     tr c, arg, DontCare
   else:
@@ -762,7 +776,7 @@ proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
           skip n # over `le`
-          callDup c, n
+          callDup c, n, leType
         callDestroy(c, destructor, tmp, le.info, leType)
       else:
         if isNotFirstAsgn:
@@ -771,7 +785,7 @@ proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
           skip n # over `le`
-          callDup c, n
+          callDup c, n, leType
 
 proc getHookType(c: var Context; n: Cursor): Cursor =
   var n = n
@@ -871,6 +885,7 @@ proc derefsBoxedRef(c: var Context; ptrOperand: Cursor): bool =
   var typ = getType(c.typeCache, ptrOperand, {SkipAliases})
   if typ.isTagLit and typ.typeKind == SinkT:
     inc typ
+  typ = skipTypeAliases(skipOwned(typ))
   result = not cursorIsNil(typ) and typ.typeKind == RefT
 
 proc addDataFieldHop(c: var Context; info: NifLineInfo) =
@@ -1098,7 +1113,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects)
       else:
         let param = takeLocal(fnType, SkipFinalParRi)
         let pk = param.typ.typeKind
-        if pk == SinkT:
+        if pk in {SinkT, OwnedT}:
           e2 = WantOwner
         elif pk == VarargsT:
           # do not advance formal parameter:
@@ -1114,7 +1129,67 @@ proc trRawConstructor(c: var Context; n: var Cursor; e: Expects)
     while n.hasMore:
       tr c, n, e2
 
+proc trLocation(c: var Context; n: var Cursor; e: Expects; unowned = false)
+
+proc isOwnedToUnowned(c: var Context; n: Cursor): bool =
+  ## `(hconv T x)` that sigmatch put around an `owned T` location `x` that is
+  ## passed where an unowned `T` is wanted.
+  result = false
+  if n.exprKind == HconvX:
+    var x = n
+    inc x
+    if x.typeKind != OwnedT:
+      skip x
+      if x.isSymbol or x.exprKind in {DotX, AtX, ArratX, PatX, TupatX}:
+        result = getType(c.typeCache, x).typeKind == OwnedT
+
+proc ownedClosureError(c: var Context; n: Cursor): string =
+  ## `(hconv (owned T) closure)`: sigmatch keeps the `owned` target of a fresh
+  ## closure visible so that its environment, known now that lambda lifting
+  ## has run, can be checked to be acyclic (RFC #575).
+  result = ""
+  var x = n
+  inc x
+  if skipTypeAliases(x).typeKind != OwnedT: return
+  skip x
+  if x.exprKind != TupconstrX: return
+  var env = x
+  inc env
+  if not isLiftedClosureTuple(env): return
+  skip env # the type
+  skip env # the fn
+  # the environment is passed as `(cast (ref RootObj) env)`:
+  while env.exprKind in {CastX, HconvX, ConvX}:
+    inc env
+    skip env # the type
+  if env.exprKind == NilX: return
+  let culprit = ownedClosureEnvCulprit(c.lifter[], getType(c.typeCache, env))
+  if not cursorIsNil(culprit):
+    var name = pool.symBasename(culprit.symId)
+    # lambdalifting names the field `<captured>`f`:
+    let suffix = name.find("`f")
+    if suffix > 0: name.setLen suffix
+    result = "cannot produce an 'owned' closure: its environment can be part " &
+      "of a cycle via the captured '" & name & "'"
+
+proc trConvExprImpl(c: var Context; n: var Cursor; e: Expects)
+
 proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
+  let err = if n.exprKind == HconvX: ownedClosureError(c, n) else: ""
+  if err.len > 0:
+    let info = n.info
+    c.dest.buildTree nifpools.ErrT, info:
+      trConvExprImpl c, n, e
+      c.dest.addStrLit(pool.strings.getOrIncl(err), info)
+  else:
+    trConvExprImpl c, n, e
+
+proc trConvExprImpl(c: var Context; n: var Cursor; e: Expects) =
+  if e in {WantOwner, WillBeOwned} and isOwnedToUnowned(c, n):
+    copyInto c.dest, n:
+      takeTree c.dest, n # type
+      trLocation c, n, WantOwner, unowned = true
+    return
   copyInto c.dest, n:
     takeTree c.dest, n # type
     while n.hasMore:
@@ -1251,7 +1326,7 @@ proc asksForNil(typ: Cursor): bool =
   ## `contracts_fir.markedAs`, which is the reader of the same marker on the other
   ## side of the pass boundary.
   var t = typ
-  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+  while t.typeKind in {SinkT, MutT, LentT, OutT, OwnedT}:
     inc t
   if t.typeKind != RefT: return false
   var marker = t.childCursor
@@ -1400,10 +1475,13 @@ proc trLocationNonOwner(c: var Context; n: var Cursor) =
       while n.hasMore:
         tr(c, n, DontCare)
 
-proc trLocation(c: var Context; n: var Cursor; e: Expects)
+proc trLocation(c: var Context; n: var Cursor; e: Expects; unowned = false)
     {.ensuresNif: addedAny(c.dest).} =
   # `x` does not own its value as it can be read multiple times.
-  let typ = getType(c.typeCache, n)
+  # `unowned`: `x` is `owned`, but is converted to an unowned reference, so
+  # its copy is a counted copy of that, not one of the owner (RFC #575).
+  let typ = if unowned: skipOwned(getType(c.typeCache, n))
+            else: getType(c.typeCache, n)
   if e == WantOwner and hasDestructor(c, typ):
     if isLastRead(c, n):
       genLastRead(c, n, typ)
@@ -1472,7 +1550,7 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
         callWasMoved c, r.val, r.typ
       else:
         var rval = r.val
-        callDup c, rval
+        callDup c, rval, r.typ
         c.dest.addParRi()
     else:
       trValue c, r.val, WillBeOwned
@@ -1895,7 +1973,7 @@ proc checkForMoveTypes(c: var Context; n: Cursor): int =
 
 proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(lifter: lifter, typeCache: createTypeCache(pass.bits),
+  var c = Context(lifter: lifter, typeCache: createTypeCache(pass.bits, keepOwned = true),
     dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix,
     hoisted: createTokenBuf(16), mover: MoverContext(),
     callTemps: initTable[SymId, Cursor]())
