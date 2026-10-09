@@ -227,7 +227,7 @@ template set*[T](v: var ContextVar[T]; val: T) =
   let slot = ctxSlot()
   let ctxBefore = cast[CtxNode](slot[])
   push(ensureId(v), val)
-  slot[] = ctxBefore
+  defer: slot[] = ctxBefore
 
 template withCtx*[T](v: var ContextVar[T]; val: T; body: untyped): untyped =
   ## Runs `body` with `v` bound to `val`, then puts the previous chain back.
