@@ -3585,7 +3585,7 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
         # `makeLocalSym` only guarantees per-module uniqueness, so naming
         # this `expectedType` would share its `pool.syms` ID with that
         # parameter and the borrow check would resolve to the wrong decl.
-        var raisedRefT = skipModifier(a.typ)
+        var raisedRefT = skipModifierAndOwned(a.typ)
         var raisesRefT = skipModifier(c.routine.raisesType)
         if raisedRefT.typeKind == RefT and raisesRefT.typeKind == RefT:
           inc raisedRefT

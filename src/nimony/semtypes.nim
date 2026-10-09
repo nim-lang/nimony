@@ -516,16 +516,7 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
       while n.hasMore: skip n
     n = invokeStart; skip n
     return
-  of OwnedT:
-    if OwnedRefsFeature notin c.features:
-      # `owned` is erased when the feature is off:
-      semLocalTypeImpl c, dest, n, InLocalDecl
-      n = invokeStart; skip n
-      return
-    takeTree typeBuf, n
-    typeBuf.addParRi(n.endInfo)
-    n = invokeStart; skip n
-  of PtrT, RefT, UarrayT, SetT, StaticT, TypedescT, SinkT, LentT:
+  of PtrT, RefT, UarrayT, SetT, StaticT, TypedescT, SinkT, LentT, OwnedT:
     # unary invocations
     takeTree typeBuf, n
     typeBuf.addParRi(n.endInfo)
@@ -865,8 +856,7 @@ proc isPointerTypeClass(n: Cursor): bool {.inline.} =
     n.childCursor.typeKind in {RefT, PtrT, PointerT, CstringT, ProctypeT}
 
 proc handleOwnedType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
-  ## `owned T` in a type position (RFC #575). Without `.feature: "ownedRefs"`
-  ## it is erased.
+  ## `owned T` in a type position (RFC #575).
   result = false
   if nn.exprKind in {CmdX, PrefixX, CallX}:
     let start = nn
@@ -881,15 +871,12 @@ proc handleOwnedType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; cont
         skip n
         if not n.hasMore:
           result = true
-          if OwnedRefsFeature notin c.features:
-            semLocalTypeImpl c, dest, arg, context
-          else:
-            var buf = createTokenBuf(16)
-            buf.addParLe(OwnedT, info)
-            buf.addSubtree arg
-            buf.addParRi()
-            var m = beginRead(buf)
-            semLocalTypeImpl c, dest, m, context
+          var buf = createTokenBuf(16)
+          buf.addParLe(OwnedT, info)
+          buf.addSubtree arg
+          buf.addParRi()
+          var m = beginRead(buf)
+          semLocalTypeImpl c, dest, m, context
           nn = start
           skip nn
 

@@ -556,13 +556,9 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
     if not nullary.hasMore:
       # sink T/lent T/owned T call
       var typeBuf = createTokenBuf(16)
-      if destType.typeKind == OwnedT and OwnedRefsFeature notin c.features:
-        # `owned` is erased when the feature is off:
-        typeBuf.addSubtree cs.args[0].n
-      else:
-        typeBuf.addParLe(destType.cursorTagId, destType.info)
-        typeBuf.addSubtree cs.args[0].n
-        typeBuf.addParRi()
+      typeBuf.addParLe(destType.cursorTagId, destType.info)
+      typeBuf.addSubtree cs.args[0].n
+      typeBuf.addParRi()
       var item = Item(n: beginRead(typeBuf), typ: it.typ)
       semLocalTypeExpr(c, dest, item)
       # No call tree was opened in `dest` here, so unlike the ConvX path

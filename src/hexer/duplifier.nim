@@ -1185,7 +1185,8 @@ proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
     trConvExprImpl c, n, e
 
 proc trConvExprImpl(c: var Context; n: var Cursor; e: Expects) =
-  if e in {WantOwner, WillBeOwned} and isOwnedToUnowned(c, n):
+  # `WillBeOwned`: the caller already copies the converted value, see `callDup`
+  if e == WantOwner and isOwnedToUnowned(c, n):
     copyInto c.dest, n:
       takeTree c.dest, n # type
       trLocation c, n, WantOwner, unowned = true

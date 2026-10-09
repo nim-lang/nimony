@@ -563,7 +563,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       elif pool.symString(fld) == DataField and
             obj.exprKind in {DerefX, HderefX}:
         inc obj
-        var t = getTypeImpl(c, obj, flags)
+        var t = skipOwned getTypeImpl(c, obj, flags)
         if t.isSymbol:
           var counter = 20
           while counter > 0 and t.isSymbol:
@@ -571,7 +571,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
             let res = tryLoadSym(t.symId)
             if res.status == LacksNothing and res.decl.stmtKind == TypeS:
               let decl = asTypeDecl(res.decl)
-              t = decl.body
+              t = skipOwned decl.body
             else:
               break
         if t.typeKind == RefT:

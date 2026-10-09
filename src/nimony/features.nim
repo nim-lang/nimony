@@ -56,11 +56,11 @@ type
       ## global may only be passed to a `var`/`ptr` parameter of a `.sync`
       ## routine (an atomic operation, `acquire` and the like).
     OwnedRefsFeature
-      ## RFC #575: `owned ref T` / `owned proc` are a statically checked
-      ## unique ownership annotation. The owning edge is an ordinary counted
-      ## reference; converting it to an unowned one yields another counted
-      ## reference. Object constructors yield `owned`. Without the feature
-      ## `owned` written in the module is erased.
+      ## RFC #575: object constructors yield `owned`, so that the creator of
+      ## a cell is its owner. `owned ref T` / `owned proc` themselves are
+      ## always a statically checked unique ownership annotation; this only
+      ## opts a module into the discipline for values it never wrote `owned`
+      ## for.
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)

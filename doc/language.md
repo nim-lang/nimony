@@ -860,10 +860,9 @@ matching classic Nim behavior:
 
 ## Owned references
 
-With `{.feature: "ownedRefs".}` the `owned` type constructor becomes a
-statically checked *unique ownership* annotation for the two reference counted
-handles, `ref T` and closures (RFC #575). Without the feature `owned` written
-in the module is erased.
+The `owned` type constructor is a statically checked *unique ownership*
+annotation for the two reference counted handles, `ref T` and closures
+(RFC #575). Code that never writes `owned` is unaffected by it.
 
 `owned X` means: this location holds the unique *owning* edge to the cell.
 Any number of ordinary (counted) references to the same cell may exist; they
@@ -875,16 +874,18 @@ the same as that of `X`, so modules with and without the feature interoperate.
 | `owned X` to `X`                   | implicit, produces a counted reference   |
 | `X` to `owned X`                   | error, unless the value is fresh         |
 | copy of an `owned` location        | error: move it, or convert to unowned    |
-| object construction, `new`         | yields `owned ref T`                     |
+| object construction                | yields `owned ref T` under `ownedRefs`   |
 | value type with an `owned` field   | move-only                                |
 | `owned` parameter                  | a `sink` parameter                       |
 
 Fresh values (object constructions, `new`, lambdas, `nil`) have no other
-owner yet and so may initialize an `owned` location, also in modules that do
-not enable the feature.
+owner yet and so may initialize an `owned` location. With
+`{.feature: "ownedRefs".}` an object construction is moreover *typed* `owned`,
+so `let a = Node()` makes `a` the owner and `let b = a` is a copy error unless
+it is the last read of `a`. Without the feature `a` is an ordinary counted
+reference, and so is the element type inferred for `@[Node()]`.
 
   ```nim
-  {.feature: "ownedRefs".}
   type
     Node = ref object
       next: owned nil Node
@@ -907,7 +908,6 @@ one edge that is not `owned`. Hence a type whose references are all `owned` or
 acyclic; this is checked where the closure is formed:
 
   ```nim
-  {.feature: "ownedRefs".}
   type
     Widget = ref object
       onChange: owned proc () {.closure.}  # does not make `Widget` cyclic
@@ -4645,7 +4645,7 @@ The following features are available:
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
 | `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
 | `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
-| `"ownedRefs"` | `owned ref T` / `owned proc` become a statically checked unique ownership annotation and object constructors yield `owned`. Without it `owned` written in the module is erased. See [Owned references](#owned-references). |
+| `"ownedRefs"` | Object constructors yield `owned`, so the creator of a cell is its owner. See [Owned references](#owned-references). |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
 
