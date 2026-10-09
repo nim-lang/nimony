@@ -367,6 +367,11 @@ proc next*(c: var HttpConnection): bool {.passive.} =
     return false
   if c.phase == phDone:
     if not c.keepAlive:
+      # Drained even though nothing follows: closing a socket with unread
+      # bytes in its receive buffer makes the kernel answer with a RST,
+      # which can destroy the response before the peer has read it (Windows
+      # does this reliably, for a 415 to an upload the handler refused).
+      discard drainBody(c)
       c.close()
       return false
     if not drainBody(c):
