@@ -285,6 +285,60 @@ type
   CoroutineBase* = object of RootObj
     caller*: Continuation
     callee*: ptr CoroutineBase
+    ctx*: RootRef
+      ## Slot for a dynamic context, private to `std/contextvars`.
+      ##
+      ## It lives on the frame because the frame is the only thing that
+      ## identifies a coroutine for its whole life: allocated with the
+      ## coroutine, reached through the `env` field of every continuation that
+      ## resumes it, carried to whichever thread resumes it, freed with it.
+      ## A context therefore needs no table and no bookkeeping to follow its
+      ## coroutine around, and nothing outlives the coroutine that set it.
+      ##
+      ## A `RootRef`, not a `pointer`: the chain is a tree of nodes that must
+      ## stay alive for as long as anything can reach it, and only a real
+      ## reference says so. Storing the head as a `pointer` would leave the
+      ## whole chain unrooted -- ORC would free a node the moment the `push`
+      ## that made it went out of scope, and hand the same memory to the next
+      ## one.
+
+var threadCtx* {.threadvar.}: RootRef
+  ## The chain of code that is not part of any coroutine: top-level statements
+  ## and a regular proc that nothing coroutine called. The compiler hands this
+  ## as the hidden `ctx` argument at every spawn from such code, and
+  ## `std/contextvars` reads it through `ctxSlot` when no frame is running.
+  ## A thread's own chain, because none of that can park.
+
+var runningCoro {.threadvar.}: ptr CoroutineBase
+  ## The frame of the coroutine whose state function this thread is running, or
+  ## nil when none is. Maintained by `runStep` alone and read by
+  ## `currentCoroutine`: stepping a continuation is the only thing that can put
+  ## a coroutine on a thread, so the handful of places that do it cannot miss
+  ## one.
+
+proc currentCoroutine*(): ptr CoroutineBase {.inline.} =
+  ## The frame of the coroutine running on this thread, or nil outside one.
+  ##
+  ## This is the runtime's answer to "which `.passive` proc am I in", and it is
+  ## what `delay` would hand over if `delay` were free: the frame `c.env` of
+  ## the continuation being stepped. Unlike `delay` it splits no state and
+  ## suspends nothing, so it costs nothing and may be called as often as you
+  ## like -- and, unlike a frame-pointer magic, it also answers for a *regular*
+  ## proc, which runs inside the state function of whichever coroutine called
+  ## it.
+  runningCoro
+
+proc runStep*(c: Continuation): Continuation {.inline.} =
+  ## Steps `c` with `currentCoroutine` naming the frame `c` resumes.
+  ##
+  ## Every continuation runs through here, and this is the whole of what a
+  ## coroutine-local context needs on the runtime side: `c.env` *is* the frame,
+  ## so installing it around the step is what makes a context follow its
+  ## coroutine across a park and across a hop to another thread.
+  let up = runningCoro
+  runningCoro = c.env
+  result = c.fn(c.env)
+  runningCoro = up
 
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
@@ -303,7 +357,7 @@ proc suspend*() {.magic: "Suspend".}
   ## `return Continuation(fn: nil, env: this)`.
 
 proc trivialTick(c: Continuation): Continuation =
-  result = c.fn(c.env)
+  runStep(c)
 
 
 
@@ -720,6 +774,14 @@ proc allocFrame*(size: int): ptr CoroutineBase =
 proc deallocFrame*(frame: ptr CoroutineBase) =
   ## Frees a coroutine frame previously allocated by `allocFrame`.
   if frame.callee != nil:
+    # A stack-allocated frame is an ordinary local of its caller and the
+    # compiler destroys it like any other object, but a heap frame is freed
+    # here and nothing else ever runs its destructor. So the one managed field
+    # `CoroutineBase` has -- the coroutine's context chain, see
+    # `currentCoroutine` -- is released on the way out. Frames the front end
+    # allocated for closure iterators are the ref's business, and that
+    # destructor does destroy the fields.
+    frame.ctx = nil
     dealloc(frame)
 
 type

@@ -73,6 +73,26 @@ const
   CallerParamName* = "`caller.0"
   AllocFrameProcName* = "allocFrame.0." & SystemModuleSuffix
   DeallocFrameProcName* = "deallocFrame.0." & SystemModuleSuffix
+  CtxFieldName* = "ctx.0"
+    ## `CoroutineBase.ctx`: where a coroutine frame keeps the dynamic context of
+    ## the code running in it. On the base class, so `std/contextvars` reaches
+    ## it through the `ptr CoroutineBase` every reader already has, and no
+    ## frame type has to grow a field of its own. See `CtxParamName`.
+  CtxParamName* = "`ctx.0"
+    ## The hidden `.passive` ABI parameter: the context to start this coroutine
+    ## in, stored into the frame by its constructor. This is how a context
+    ## crosses a call boundary, and there are exactly two forms of crossing —
+    ## `emitCtxArg` spells both.
+  ThreadCtxName* = "threadCtx.0." & SystemModuleSuffix
+    ## `system.threadCtx`: the active world's context. Active code passes
+    ## this, because there is no frame between the two to take it from; code
+    ## inside a coroutine passes its own `ctx` field instead, and never has to
+    ## look further up.
+  ArcIncProcName* = "arcInc.0." & SystemModuleSuffix
+    ## `system.arcInc`, the `=dup` for a `(ref RootObj)`. The frame's `ctx`
+    ## field owns a reference and the entry arcInc is the one +1 that pays
+    ## for it (closure-iterator frames get theirs from the constructor's
+    ## `=dup` instead — see `patchParamList`).
 
 type
   EnvField* = object
@@ -272,6 +292,86 @@ proc coroEnvFieldForIter*(iterSym: SymId): SymId =
   ## the same name without having to agree on an order.
   coroHelperName(iterSym, "cenv", "")
 
+proc addCtxParam*(dest: var TokenBuf; info: NifLineInfo) =
+  ## Emit the hidden `(param `ctx (ref RootObj))` that every coroutine entry
+  ## takes after its `caller`: the context to start in, which the callee's
+  ## frame constructor stores into `CoroutineBase.ctx`.
+  ##
+  ## `RootRef` rather than anything of `std/contextvars`' own: the runtime moves
+  ## this value around and owns it, but what it *is* — a chain head — is that
+  ## module's business, and a `RootRef` field is one the collector traces
+  ## without knowing anything else about it.
+  ##
+  ## The parameter is a BORROW: every call site passes a plain read of a value
+  ## somebody else owns, so the frame constructor takes a reference of its own
+  ## (`entryArcInc` / the constructor's `=dup`). Passing ownership instead would
+  ## mean the callee released the thread's context or the caller's frame on the
+  ## way out.
+  dest.copyIntoKind ParamU, info:
+    dest.addSymDef pool.symId(CtxParamName), info
+    dest.addDotToken() # export
+    dest.addDotToken() # pragmas
+    dest.addRootRef info
+    dest.addDotToken() # default value
+
+proc emitThreadCtx*(dest: var TokenBuf; info: NifLineInfo) =
+  ## `system.threadCtx` — the context of active code: there is no frame to
+  ## take it from, and the thread's variable is what the active world holds.
+  dest.addSymUse pool.symId(ThreadCtxName), info
+
+proc emitFrameCtx*(dest: var TokenBuf; info: NifLineInfo) =
+  ## `(*this).ctx` — the chain head sitting in the caller's own frame. Only
+  ## emitted where `this.0` exists: inside an already-transformed coroutine
+  ## body (state procs keep the parent's `this`), never in a routine whose
+  ## params are still unwrapped.
+  dest.copyIntoKind DotX, info:
+    dest.copyIntoKind DerefX, info:
+      dest.addSymUse pool.symId(EnvParamName), info
+    dest.addSymUse pool.symId(CtxFieldName), info
+    dest.addIntLit 1, info # field is in the CoroutineBase superclass
+
+proc emitCtxArg*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+  ## Emit the value a coroutine call hands to the callee's `ctx` — the whole
+  ## of how a dynamic context crosses a call boundary.
+  ##
+  ## Inside a coroutine, `(*this).ctx`: the caller IS its own frame, so there
+  ## is nothing to look up and nothing to walk. From active code,
+  ## `system.threadCtx`.
+  ##
+  ## The two answers are a compile-time fact about the call site, not a runtime
+  ## question, which is the point: the callee is handed the context it is to
+  ## work in and never has to discover it. See `CtxParamName`.
+  if c.currentProc.kind == IsNormal:
+    emitThreadCtx dest, info
+  else:
+    emitFrameCtx dest, info
+
+proc emitEntryArcInc*(c: var Context; init: var TokenBuf; info: NifLineInfo) =
+  ## The +1 that pays for the `ctx` reference a passive frame's constructor
+  ## stores: `if \`ctx.0 != nil: arcInc(addr (deref \`ctx.0).r.00 0)`, emitted
+  ## at the head of `init`, before the constructor opens.
+  ##
+  ## Only for routines transformed AFTER the duplifier (`.passive` procs and
+  ## `.passive` iters, at pass 7): their constructor's `(kv ctx.0 \`ctx.0)`
+  ## never meets `trObjConstr`'s `WantOwner`, so nothing else takes the
+  ## reference. A `.closure` iter's constructor is built at pass 3 and IS
+  ## duplified at pass 6 — an arcInc there would double it.
+  init.copyIntoKind IteV, info:
+    init.copyIntoKind NeqX, info:
+      init.addParPair PointerT, info
+      init.addSymUse pool.symId(CtxParamName), info
+      init.addParPair NilX, info
+    init.copyIntoKind StmtsS, info:
+      init.copyIntoKind CallS, info:
+        init.addSymUse pool.symId(ArcIncProcName), info
+        init.copyIntoKind AddrX, info:
+          init.copyIntoKind DotX, info:
+            init.copyIntoKind DerefX, info:
+              init.addSymUse pool.symId(CtxParamName), info
+            init.addSymUse pool.symId(RcField), info
+            init.addIntLit 0, info # rc field is at depth 0 of its own object
+    init.addDotToken()
+
 proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
   ## Publish a placeholder signature for a coroutine's `init` wrapper so
   ## downstream passes (eraiser / duplifier / destroyer / constparams) can
@@ -347,6 +447,7 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
       buf.addDotToken() # pragmas
       buf.addSymUse pool.symId(ContinuationName), info
       buf.addDotToken() # default value
+    addCtxParam buf, info
   buf.addSymUse pool.symId(ContinuationName), info
   addPragmasWithoutRaises(buf, fn.pragmas)
   buf.addDotToken() # effects
@@ -403,13 +504,14 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType: Cursor; info: NifLin
               var r = retType
               dest.takeTree r
             dest.addDotToken() # default value
-        # caller parameter is always last:
+        # caller parameter, then the hidden ctx:
         dest.copyIntoKind ParamU, info:
           dest.addSymDef pool.symId(CallerParamName), info
           dest.addDotToken() # export
           dest.addDotToken() # pragmas
           dest.addSymUse pool.symId(ContinuationName), info
           dest.addDotToken() # default value
+        addCtxParam dest, info
       dest.addSymUse pool.symId(ContinuationName), info
       # Pragmas: ALWAYS emit `(pragmas (closure))` regardless of whether
       # the source itertype was `.closure` or `.passive`. Two reasons:
@@ -818,6 +920,7 @@ proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor): SymId =
         coroTr(c, dest, w)
       coroTr(c, dest, loopVarArg)
       emitStopContinuation(dest, info)
+      emitCtxArg(c, dest, info)
 
 proc emitRegularFor(c: var Context; dest: var TokenBuf; n: var Cursor;
                     info: NifLineInfo) =
@@ -2144,6 +2247,9 @@ proc emitFreshFrameCall(c: var Context; d: var TokenBuf; sym: SymId; params: Cur
       if hasResult:
         d.addSymUse pool.symId(ResultParamName), info
       d.addSymUse pool.symId(CallerParamName), info
+      # the wrapper's own `ctx` param, forwarded verbatim into the frame:
+      # the spawn site gave it the context, the frame stores it.
+      d.addSymUse pool.symId(CtxParamName), info
 
 proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; iter: Cursor) =
   let newSym = coroWrapperProc(c, sym)
@@ -2201,6 +2307,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
       dest.addDotToken() # pragmas
       dest.addSymUse pool.symId(ContinuationName), info
       dest.addDotToken() # default value
+    addCtxParam dest, info
   dest.addSymUse pool.symId(ContinuationName), info
   addPragmasWithoutRaises(dest, n)
   skip n          # the routine's pragmas, filtered above
@@ -2245,6 +2352,16 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
                 dest.addSymUse callerParam, info
                 dest.addSymUse envFld, info
                 dest.addIntLit 0, info
+          # Reuse: the adopted frame's chain head becomes this wrapper's ctx.
+          # Written as an assignment so the pass-6 duplifier puts the +1 on
+          # it — same owner-count the fresh constructor's `(kv ctx.0 …)` gets.
+          dest.copyIntoKind AsgnS, info:
+            dest.copyIntoKind DotX, info:
+              dest.copyIntoKind DerefX, info:
+                dest.addSymUse thisLocal, info
+              dest.addSymUse pool.symId(CtxFieldName), info
+              dest.addIntLit 1, info # field is in the CoroutineBase superclass
+            dest.addSymUse pool.symId(CtxParamName), info
           var p = params
           if p.isTagLit:
             p = sub(p)  # throwaway copy; bounds the walk under vpr
@@ -2379,6 +2496,11 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
 
   dest.shrink paramsBegin
   let thisParam = pool.symId(EnvParamName)
+  # The constructor about to open stores `ctx`; for a routine whose ctor the
+  # duplifier will never see (transformed at pass 7), the +1 for that stored
+  # reference is taken here instead. See `emitEntryArcInc`.
+  if not c.currentProc.isClosureIter:
+    emitEntryArcInc(c, init, info)
   dest.copyIntoKind ParamsU, info:
     init.addParLe AsgnS, info
     init.copyIntoKind DerefX, info:
@@ -2442,9 +2564,14 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
       dest.addDotToken() # pragmas
       dest.addSymUse pool.symId(ContinuationName), info
       dest.addDotToken() # default value
+    addCtxParam dest, info
     init.copyIntoKind KvU, info:
       init.addSymUse pool.symId(CallerFieldName), info
       init.addSymUse pool.symId(CallerParamName), info
+      init.addIntLit 1, info # field is in superclass
+    init.copyIntoKind KvU, info:
+      init.addSymUse pool.symId(CtxFieldName), info
+      init.addSymUse pool.symId(CtxParamName), info
       init.addIntLit 1, info # field is in superclass
     init.copyIntoKind KvU, info:
       init.addSymUse pool.symId(CalleeFieldName), info

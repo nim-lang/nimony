@@ -645,6 +645,18 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc capturedBaseType(c: var Context; o: Cursor): Cursor
 
+proc emitCtxForCurrentRoutine(c: Context; dest: var TokenBuf; info: NifLineInfo) =
+  ## The ctx value this pass-3 emission point hands to a fresh frame or a
+  ## callee: the enclosing `.closure` iter's own frame chain head when we are
+  ## inside one (its `this.0` exists, the params are already patched), else
+  ## `system.threadCtx`. Also the guard for `\`this.0`: a `.passive` proc's
+  ## body looks unwrapped at this pass — its frame arrives only at pass 7 —
+  ## and active code has no frame at all.
+  if c.procStack.len > 0 and coro_transform.isClosureIterSym(c.procStack[^1]):
+    coro_transform.emitFrameCtx(dest, info)
+  else:
+    coro_transform.emitThreadCtx(dest, info)
+
 proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: NifLineInfo)
     {.ensuresNif: addedExpr(dest).} =
   ## Emit the VALUE of a `.closure` iter: the `(wrapper, frame)` tuple.
@@ -683,6 +695,13 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
       setup.copyIntoKind NewobjX, info:
         setup.copyIntoKind RefT, info:
           setup.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
+        # the frame's chain head: the value outlives its creation site, so
+        # the reference is taken here and owned by the frame (trNewobj's
+        # dup on the kv pays the +1; the ref destructor pays the -1).
+        setup.copyIntoKind KvU, info:
+          setup.addSymUse pool.symId(coro_transform.CtxFieldName), info
+          emitCtxForCurrentRoutine(c, setup, info)
+          setup.addIntLit 1, info # field is in the CoroutineBase superclass
     c.typeCache.registerLocal(frameSym, VarY, default(Cursor))
     setup.copyIntoKind AsgnS, info:
       setup.copyIntoKind DotX, info:
@@ -703,6 +722,12 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
         dest.copyIntoKind NewobjX, info:
           dest.copyIntoKind RefT, info:
             dest.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
+          # non-capturing frame: same owned ctx reference as above, just
+          # with no environment to bind after the fact.
+          dest.copyIntoKind KvU, info:
+            dest.addSymUse pool.symId(coro_transform.CtxFieldName), info
+            emitCtxForCurrentRoutine(c, dest, info)
+            dest.addIntLit 1, info # field is in the CoroutineBase superclass
 
 # ---------------------------------------------------------------------
 # Hooks installed on `coroCtx`. Lambdalifting drives the coro-transform
@@ -1082,6 +1107,10 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
                         dest.addIntLit 1, valInfoForEnv
         else:
           coro_transform.emitStopContinuation(dest, info)
+        # The hidden ctx argument, last: where the frame is right here
+        # (`(*this).ctx` from inside a `.closure` iter body), where it is
+        # not, the thread's context. See `emitCtxForCurrentRoutine`.
+        emitCtxForCurrentRoutine(c, dest, info)
 
     # `myEnv` snapshot + try/while/finally — shared with cps's
     # `.passive` expansion via `coro_transform.emitWhileBegin`/

@@ -28,6 +28,7 @@ import std/cmdline
 import std/commonio
 import std/compilation
 import std/complex
+import std/contextvars
 import std/cpuinfo
 import std/deques
 import std/dirs

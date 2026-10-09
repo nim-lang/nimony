@@ -106,7 +106,7 @@ proc submit*(t: Task; h = 0) =
   # `fn` is nil when the task completes or parks (I/O will resume a parked one).
   var c = t.con
   while true:
-    let next = c.fn(c.env)
+    let next = runStep(c)
     if next.fn == nil: break
     if tryEnqueue(h, toTask(next)): break
     c = next
@@ -205,7 +205,7 @@ proc drainOnce(startStripe: int): bool =
     if n > 0:
       for i in 0 ..< n:
         let c = buf[i].con
-        let next = c.fn(c.env)
+        let next = runStep(c)
         if next.fn != nil:
           submit(next, startStripe)
       workerMetrics[threadIdx].tasksHandled += n.uint
