@@ -1,4 +1,4 @@
-## Type-to-string rendering for the `typetraits` plugin (`name`, `system.$`).
+## Type-to-string rendering for the `typetraits` plugin (`$`).
 ## Mirrors the type-position subset of `src/nimony/renderer.nim` (`gtype`).
 
 import plugins

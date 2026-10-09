@@ -24,5 +24,5 @@ WINBOOL(0) == 0
 [1] WINBOOL does not match constraint T (declared in lib/std/system/comparisons.nim(217, 1))
 [1] expected: string but got: WINBOOL (declared in lib/std/system/stringimpl.nim(862, 1))
 [1] expected: openArray[T] but got: WINBOOL (declared in lib/std/system/openarrays.nim(74, 1))
-[1] WINBOOL does not match constraint T (declared in lib/std/system.nim(482, 1))
-[1] expected: seq[T] but got: WINBOOL (declared in lib/std/system.nim(488, 1))
+[1] WINBOOL does not match constraint T (declared in lib/std/system.nim(479, 1))
+[1] expected: seq[T] but got: WINBOOL (declared in lib/std/system.nim(485, 1))

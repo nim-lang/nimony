@@ -68,15 +68,15 @@ block deferredInsideGeneric:
   echo unwrap(7)
 
 block nameBuiltinAndCompositeTypes:
-  echo name(int)
-  echo name(int32)
-  echo name(bool)
-  echo name(float)
-  echo name(float32)
-  echo name(array[3, int64])
-  echo name(seq[float64])
-  echo name(Foo[int])
-  echo name(StaticFoo[3, float32])
+  echo $int
+  echo $int32
+  echo $bool
+  echo $float
+  echo $float32
+  echo $array[3, int64]
+  echo $seq[float64]
+  echo $Foo[int]
+  echo $StaticFoo[3, float32]
 
 block nameTypeParameters:
   proc echoNAndT[N: static[int]; T](x: StaticFoo[N, T]) =

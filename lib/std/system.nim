@@ -130,9 +130,6 @@ func `$`*(b: bool): string =
 func `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
-template `$`*[T](t: typedesc[T]): string {.plugin: "deps/typetraits".}
-  ## Stringify a type. See also ``typetraits.name``.
-
 type Stringable* = concept
   ## A type that can be rendered as a `string` via the `$` operator. Generic
   ## code that stringifies an abstract type parameter `T` should constrain it
