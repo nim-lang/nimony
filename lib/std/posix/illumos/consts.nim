@@ -80,6 +80,7 @@ const
   O_WRONLY* = cint(1)
   O_RDWR* = cint(2)
   O_CREAT* = cint(256)
+  O_EXCL* = cint(1024)
   O_TRUNC* = cint(512)
   O_APPEND* = cint(8)
   O_NONBLOCK* = cint(128)
@@ -132,4 +133,5 @@ const
   F_GETFD* = cint(1)
   F_SETFD* = cint(2)
   FD_CLOEXEC* = cint(1)
+  F_DUPFD_CLOEXEC* = cint(37)
   MAP_POPULATE* = cint(0) # Linux-only hint; no-op here.

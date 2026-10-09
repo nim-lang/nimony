@@ -2,9 +2,15 @@
 
 proc open*(a1: cstring; a2: cint; mode: Mode = 0): cint {.importc: "open", sideEffect.}
 proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate".}
-proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", sideEffect.}
-proc lstat*(a1: cstring, a2: var Stat): cint {.importc: "lstat", sideEffect.}
-proc stat*(a1: cstring, a2: var Stat): cint {.importc: "stat".}
+# `Stat` is the 64-bit-inode layout. On x86_64 the PLAIN stat symbols are the
+# legacy 32-bit-inode ABI (see dirs.nim); arm64 has only the 64-bit one.
+const
+  FstatName = when defined(amd64): "fstat$INODE64" else: "fstat"
+  LstatName = when defined(amd64): "lstat$INODE64" else: "lstat"
+  StatName = when defined(amd64): "stat$INODE64" else: "stat"
+proc fstat*(a1: cint, a2: var Stat): cint {.importc: FstatName, sideEffect.}
+proc lstat*(a1: cstring, a2: var Stat): cint {.importc: LstatName, sideEffect.}
+proc stat*(a1: cstring, a2: var Stat): cint {.importc: StatName.}
 
 proc mmap*(a1: nil pointer, a2: csize_t, a3, a4, a5: cint, a6: Off): pointer {.
   importc: "mmap".}

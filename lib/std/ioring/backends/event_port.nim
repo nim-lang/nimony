@@ -1,7 +1,11 @@
 # illumos event ports: one-shot FD readiness plus SIGEV_PORT AIO completion.
 # Positioned regular-file operations use private staging buffers and duplicated
-# descriptors. A deadline may therefore release the CALLER'S buffer immediately
-# while libc finishes/cancels against storage owned solely by this backend.
+# descriptors, so the CALLER'S buffer is never touched by libc. A cancelled or
+# timed-out READ therefore completes at once: its late data lands in staging
+# and is dropped. A WRITE does not: it may still reach the file after the
+# caller was told it failed, and a retry at the same offset could then be
+# overwritten by the stale one. A write is completed only by its port event,
+# with what really happened (`completeFromKernel`), exactly like io_uring.
 # The aiocb/notification/staging allocation survives until its port event, even
 # when aio_cancel says ALLDONE or CANCELED (both still deliver notification).
 # Sequential file transfers use the shared synchronous file path; submit*At
@@ -18,7 +22,6 @@ import ./poll
 const
   DrainBatch = 128
   MaxAioBytes = 64 * 1024 * 1024 # per lane, including logically cancelled I/O
-  F_DUPFD_CLOEXEC = cint(37)
 
 type
   AioRequest = object
@@ -26,6 +29,7 @@ type
     notify: PortNotify
     slot: int
     gen: uint32
+    write: bool
     suppressed: bool
     next: nil ptr AioRequest
   PortLane = object
@@ -37,10 +41,6 @@ type
     requests: int
 
 var lanes: seq[PortLane]
-
-proc eventPortWake*(lane: int) =
-  # EAGAIN means the port is full and already has something to wake it.
-  discard port_send(lanes[lane].fd, 0, nil)
 
 proc portReArm(fd: cint; events: IoEvents; alreadyRegistered: bool): bool {.nimcall.} =
   let lane = ioLane()
@@ -63,20 +63,20 @@ proc cancelAio(slot: int; gen: uint32): bool {.nimcall.} =
   var req = lanes[ioLane()].head
   while req != nil:
     if req.slot == slot and req.gen == gen:
-      req.suppressed = true
       discard aio_cancel(req.cb.aio_fildes, addr req.cb)
-      break
+      # A read may be published now (see the header); a write is ours until
+      # its port event says whether it reached the file.
+      if req.write: return true
+      req.suppressed = true
+      return false
     req = req.next
-  # libc owns only our staging allocation, not the slot or caller's buffer.
-  # The core can publish cancellation now; reap retains physical ownership.
   result = false
 
 proc forgetFd(fd: cint) {.nimcall.} =
+  # In-flight AIO is taken back by `cancelPendingOps`, which always follows.
   let lane = ioLane()
   discard port_dissociate(lanes[lane].fd, PORT_SOURCE_FD, uint(fd))
   lanes[lane].registrations.del(fd)
-  for slot in gSlots[lane].slotsForFd(fd):
-    discard cancelAio(slot, gSlots[lane].slots[slot].gen)
 
 proc releaseRequest(lane: int; req: ptr AioRequest) =
   var prev: nil ptr AioRequest = nil
@@ -108,13 +108,12 @@ proc reap(lane: int; event: PortEvent; publish: bool) =
   let live = publish and not req.suppressed and
     gSlots[lane].slots[idx].inUse and gSlots[lane].slots[idx].gen == req.gen
   if live:
+    # A transfer that happened is reported even past its deadline: the
+    # deadline only stops the waiting (`expireDeadlines`), never the I/O.
     let op = addr gSlots[lane].slots[idx].op
-    if op.deadline != never and op.deadline <= monoNow():
-      complete(idx, IoTimedOut)
-    else:
-      if err == 0 and value > 0 and op.kind == opRead:
-        copyMem(op.read.buf, req.cb.aio_buf, value)
-      complete(idx, if err != 0: -int(err) else: value)
+    if err == 0 and value > 0 and op.kind == opRead:
+      copyMem(op.read.buf, req.cb.aio_buf, value)
+    completeFromKernel(idx, if err != 0: -int(err) else: value)
   releaseRequest(lane, req)
 
 proc submitAio(lane, idx: int) =
@@ -140,6 +139,7 @@ proc submitAio(lane, idx: int) =
   let req = cast[ptr AioRequest](alloc0(sizeof(AioRequest)))
   req.slot = idx
   req.gen = gSlots[lane].slots[idx].gen
+  req.write = op.kind == opWrite
   req.cb.aio_fildes = ownedFd
   req.cb.aio_nbytes = csize_t(transfer.len)
   req.cb.aio_offset = Off(op.offset)
@@ -250,8 +250,8 @@ proc eventPortClose() {.nimcall.} =
       var ev = default(PortEvent)
       if port_get(lanes[lane].fd, addr ev, nil) == 0:
         if ev.portev_source == uint16(PORT_SOURCE_AIO): reap(lane, ev, false)
-      else:
-        assert errno() == EINTR, "event port failed while draining AIO"
+      elif errno() != EINTR:
+        quit "illumos event port failed while draining AIO"
     discard close(lanes[lane].fd)
   gCancelInFlight = nil
 
