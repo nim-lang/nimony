@@ -113,7 +113,7 @@ proc transferIfRegularFile(fd: cint): bool {.inline.} =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen, FileHandle, Off, EINVAL, EINPROGRESS, EAGAIN, EWOULDBLOCK,
+  from std/posix/posix import SockLen, FileHandle, Off, EINVAL, EINPROGRESS, EINTR, EAGAIN, EWOULDBLOCK,
                               SOL_SOCKET, F_GETFL, F_SETFL, O_NONBLOCK,
                               pcall, Mode, Stat, fstat, S_ISREG, close
 
@@ -263,10 +263,12 @@ when defined(posix):
     SO_ERROR = (when defined(macosx) or defined(freebsd) or defined(illumos): 0x1007.cint else: 4.cint)
 
   proc transferDone(r: int): bool =
-    when defined(illumos):
-      r != -int(EAGAIN) and r != -int(EWOULDBLOCK)
-    else:
-      true
+    ## False when a transfer answered "nothing right now": `EAGAIN` (a wake
+    ## that found nothing, or the ready state was already taken by another op
+    ## on the fd) or `EINTR`. The op then stays pending, and the re-arm at the
+    ## end of `processFd` keeps waiting, so a read, write or accept completes
+    ## only with progress, end of file, a real error, its deadline or a cancel.
+    r != -int(EAGAIN) and r != -int(EWOULDBLOCK) and r != -int(EINTR)
 
   proc startConnect*(fd: cint; idx: int): bool =
     ## Kick off a non-blocking connect on the op in slot `idx`. True when the
@@ -298,6 +300,9 @@ when defined(posix):
     ## both directions at once (e.g. a socket with an in-flight read and an
     ## in-flight write), and only the direction that actually fired has data
     ## ready / a free send buffer.
+    ##
+    ## The descriptors must be O_NONBLOCK (see `submitSetNonBlocking`): a
+    ## transfer that would block answers `EAGAIN`, which leaves the op pending.
     # O(k) in the number of ops on this fd, via the intrusive per-fd list,
     # instead of an O(MaxOps) scan of the whole arena.
     let lane = ioLane()
