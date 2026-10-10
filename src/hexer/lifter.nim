@@ -165,6 +165,11 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     # through assignment.
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
     result = isErrorHook(lookupHookSym(c, siblingOp, s))
+  if not result and c.op == attachedWasMoved:
+    # A user `=destroy` runs on the moved-from value, so `=wasMoved` must reset
+    # it to binary zero, plain fields included: to that hook an `fd: cint` is a
+    # resource.
+    result = lookupHookSym(c, attachedDestroy, s) != SymId(0)
 
 proc siblingHookError(c: var LiftingCtx; typ: TypeCursor;
                       siblingOp: AttachedOp): (bool, NifLineInfo) =
@@ -1314,6 +1319,16 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       let beforeUnravel = c.dest.len
       if a.typeKind == RefT:
         unravelRef(c, a, paramTreeA, paramTreeB)
+      elif c.op == attachedWasMoved and (typ.isSymbol or typ.isSymbolDef) and
+          not hasRtti(typ.symId) and
+          lookupHookSym(c, attachedDestroy, typ.symId) != SymId(0):
+        # The built-in `=wasMoved` resets to binary zero, the state the type's
+        # own `=destroy` must treat as empty; that hook sees every field.
+        copyIntoKind c.dest, CallS, c.info:
+          c.dest.addSymUse(pool.symId("zeroMem.0." & SystemModuleSuffix), c.info)
+          copyTree c.dest, paramTreeA
+          copyIntoKind c.dest, SizeofX, c.info:
+            copyTree c.dest, typ
       else:
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
         if c.dest.len == beforeUnravel:
