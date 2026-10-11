@@ -48,6 +48,9 @@ func canFormCycles*[T](t: typedesc[T]): bool {.magic: "CanFormCycles", noSideEff
   ## through a raw pointer and gives it a `=trace` uses this to fence
   ## structural changes against a concurrent collector (see `seq`).
 
+template `$`*[T](t: typedesc[T]): string {.plugin: "deps/typetraits".}
+  ## Stringify a type.
+
 template stripGenericParams*[T](t: typedesc[T]): typedesc {.plugin: "deps/typetraits".}
   ## Like `genericHead`, but returns non-generic types unmodified instead of
   ## producing an error.

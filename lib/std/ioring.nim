@@ -14,6 +14,28 @@
 #   echo "client fd=", comps[0].result
 #   shutdown()
 
+## ## Descriptors and `-EAGAIN`
+##
+## - **Readiness backends (epoll, kqueue):** the descriptors of reads, writes,
+##   accepts, `recvfrom` and `sendto` must be `O_NONBLOCK` (see
+##   `submitSetNonBlocking`; accepted sockets do not inherit it everywhere).
+##   The transfer is a plain `read`/`write`/`accept`/`recvfrom`/`sendto`, and a
+##   blocking descriptor would block the polling thread. A wake that finds
+##   nothing to transfer (`EAGAIN`, or `EINTR`) leaves the operation pending
+##   and re-armed, so these operations never complete with `-EAGAIN`.
+## - **io_uring:** the kernel honours the descriptor's own mode.
+##   - On an `O_NONBLOCK` descriptor a read or write can complete with
+##     `-EAGAIN` after a wake that carries no readiness, such as the peer's
+##     half-close (`POLLRDHUP`); callers must handle it. A `submitPollAdd` for
+##     `POLLOUT` also completes at once with only `POLLRDHUP` after a
+##     half-close, so a poll-then-retry needs a back-off.
+##   - On a blocking descriptor the operation parks until it can progress, but
+##     it may occupy an io-wq kernel worker while it does, so a peer that never
+##     reads can pin one worker per connection.
+## - IOCP and WSAPoll sockets are unaffected: Winsock completes asynchronously
+##   or reports `WSAEWOULDBLOCK`, which the WSAPoll backend already treats as
+##   "still pending".
+
 import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
 import ./commonio   # FileMode, FilePermission — `submitOpen`'s arguments
@@ -160,6 +182,10 @@ proc submitTimeout*(deadline: Deadline;
 proc submitRead*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
+  ## Read up to `len` bytes into `buf`. Completes with the byte count (`0` is
+  ## end of file) or a negated error. On the readiness backends `fd` must be
+  ## `O_NONBLOCK` (`submitSetNonBlocking`); on io_uring an `O_NONBLOCK` `fd`
+  ## can complete with `-EAGAIN` (see the module docs).
   result = nextSeqNum()
   var op = OpContext(kind: opRead, fd: fd, seqnum: result,
     read: OpBuf(buf: buf, len: len),
@@ -169,6 +195,10 @@ proc submitRead*(fd: cint; buf: pointer; len: int; deadline: Deadline;
 proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
+  ## Write up to `len` bytes from `buf`. Completes with the byte count, which
+  ## may be less than `len`, or a negated error. On the readiness backends
+  ## `fd` must be `O_NONBLOCK` (`submitSetNonBlocking`); on io_uring an
+  ## `O_NONBLOCK` `fd` can complete with `-EAGAIN` (see the module docs).
   result = nextSeqNum()
   var op = OpContext(kind: opWrite, fd: fd, seqnum: result,
     write: OpBuf(buf: buf, len: len),
@@ -292,6 +322,9 @@ proc submitAccept*(listenFd: cint; deadline: Deadline;
   ## Accept one connection. Completes with the accepted fd, or a negative
   ## result.
   ##
+  ## On the readiness backends (epoll, kqueue) `listenFd` must be
+  ## `O_NONBLOCK`; a wake that finds no connection leaves the accept pending.
+  ##
   ## `peer`, when given, receives the address that connected — the kernel
   ## fills it as part of the accept, so asking costs no syscall. It is written
   ## only when the accept succeeds, and it must outlive the op: the completion
@@ -335,7 +368,8 @@ proc submitRecvFrom*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                      resPtr: nil ptr int = nil;
                      peer: nil ptr Sockaddr_storage = nil): SeqNum =
   ## Receive one datagram into `buf`. Completes with the number of bytes
-  ## received, or a negative result.
+  ## received, or a negative result. On the readiness backends `fd` must be
+  ## `O_NONBLOCK`.
   ##
   ## `peer`, when given, receives the sender's address — the kernel fills it
   ## as part of the recvfrom, so asking costs no syscall beyond the one that
@@ -355,7 +389,8 @@ proc submitSendTo*(fd: cint; buf: pointer; len: int; sa: Sockaddr_storage;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
   ## Send `buf` as one datagram to `sa`. Completes with the number of bytes
-  ## sent, or a negative result. The address is copied into the op, so it does
+  ## sent, or a negative result. On the readiness backends `fd` must be
+  ## `O_NONBLOCK`. The address is copied into the op, so it does
   ## not need to outlive the call the way `submitConnect`'s does.
   result = nextSeqNum()
   var op = OpContext(kind: opSendTo, fd: fd, seqnum: result,

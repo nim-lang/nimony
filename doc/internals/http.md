@@ -531,10 +531,34 @@ Two injection seams, both invisible to the code in §2:
 | `std/http/httpwire` | `TokenBuf` → wire bytes. **Done** for request and response heads. |
 | `std/http/httpdate` | IMF-fixdate out, all three formats in. **Done**. |
 | `std/http/httpconn` | HTTP framing and keep-alive on a `Socket`. **Done**. |
+| `std/http/httpcoding` | content codings: `Accept-Encoding` negotiation, `readContent`. **Done** for gzip and deflate. |
+| `std/compress/*` | DEFLATE, gzip/zlib containers, CRC-32/Adler-32. Pure Nim, streaming both ways. No HTTP. **Done**. |
 | `std/httpserver` | the loop of §2, and the protocol rules above framing. **Done**. |
 | `std/httpclient` | the other direction. |
 
 Mirrors `std/ioring.nim` plus `std/ioring/`.
+
+### Content codings
+
+`Content-Encoding` is undone *after* the framing is: `Content-Length` and
+chunking describe the encoded bytes. So decoding is a layer over
+`readChunked`/`readBody` rather than a change to them, and it is
+`httpcoding.ContentDecoder` for both directions — `readContent` on an
+`HttpConn` for a client, on an `HttpConnection` for a server reading a
+compressed upload. It counts *decoded* bytes against the caller's limit (a
+10 MiB gzip body can be 10 GiB of zeros) and caps the encoded side a little
+above that, since empty stored blocks decode to nothing forever.
+
+On the way out, `HttpServer.compression` (off by default — CPU per response,
+and BREACH, which only the application can rule out) makes `respond`
+negotiate from the request's `Accept-Encoding`, compress bodies of text-like
+media types above `compressMinLen`, keep the identity body when the coding
+would not shrink it, and add `Vary: accept-encoding` whenever the response
+*could* have been encoded. A handler that sets `Content-Encoding` or
+`Content-Length` itself is left alone, and 206 is never encoded (its range is
+a range of the encoded representation). A streamed response is encoded too,
+with a sync flush per `write`, so "on the wire when `write` returns" still
+means "decodable by the peer when `write` returns".
 
 ### Failure is raised, not returned
 
@@ -872,8 +896,12 @@ processes again.
   client that sends it waits for a 100 before the body, and today it waits out
   its own timeout instead. It belongs in `next`, which is the only place that
   knows a body is coming and has not been read yet.
-- Compression. `vGzip`/`vDeflate` are tags, so `Accept-Encoding` can be read
-  and not honoured; there is no deflate implementation to honour it with.
+- Compression beyond gzip/deflate. `br` and `zstd` need their own codecs;
+  `chooseCoding` already ignores codings it cannot produce. The encoder's
+  quarter-megabyte of match tables is allocated per compressed response; a
+  per-connection encoder that is reset rather than rebuilt would avoid that
+  (stale hash entries are harmless — every candidate is checked against the
+  buffer).
 - Static file serving needs two things this does not have: `std/mimetypes`,
   and a `sendfile`/`writev` op so a file is not read into memory and a head
   and its body are not two `write(2)`s.
