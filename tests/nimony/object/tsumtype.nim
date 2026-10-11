@@ -58,4 +58,34 @@ assert depth(v) == 0
 assert depth(add) == 1
 assert depth(nested) == 2
 
+# A constructor used directly as an argument has no expected type to guide it
+# (#2480). The branch belongs to `Node`, which is a `ref object`, so the
+# constructor must produce the `ref` -- not the split-off `Node.Obj`:
+assert eval(AddOpr(a: Value(val: 10), b: Value(val: 32))) == 42
+assert eval(v2) == 42
+assert depth(SubOpr(a: Value(val: 1), b: AddOpr(a: v, b: v))) == 2
+
+# A ref sum type declared in a proc body: there the split into `L`/`L.Obj` and
+# the semcheck of the object body happen in one go, not one phase apart.
+proc localSumType(): int =
+  type
+    L = ref object
+      case
+      of Nil:
+        discard
+      of Cons:
+        head: int
+        tail: L
+
+  proc total(n: L): int =
+    case n
+    of Nil():
+      result = 0
+    of Cons(head, tail):
+      result = head + total(tail)
+
+  result = total(Cons(head: 1, tail: Cons(head: 2, tail: Nil())))
+
+assert localSumType() == 3
+
 echo "tsumtype: OK"

@@ -108,11 +108,16 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
             writeFile(output, testProgramOutput)
           failure c, file, outputSpec, testProgramOutput
       elif overwrite and testProgramExitCode == 0 and
-           testProgramOutput.strip.len > 0 and joinable(file, cat):
+           testProgramOutput.strip.len > 0 and
+           (joinable(file, cat) or cat == Bench):
         # A joined member's share of the group's output IS its `.output` file,
         # so a member that prints without one would leave text nothing accounts
         # for. `--overwrite` is where that gap gets closed: record what the
         # test prints (which also gives it an output check it never had).
+        #
+        # A `bench` test is the same bargain reached from the other side: its
+        # smoke run prints checksums and nothing else, so what it prints is
+        # exactly the golden — `hastur --overwrite bench` is how one is made.
         writeFile(output, testProgramOutput)
 
       when defined(linux):
@@ -206,7 +211,8 @@ proc testDir*(c: var TestCounters; dir: string; overwrite: bool; cat: Category; 
   if parallelJobs > 1 and canRunParallel(cat):
     if files.len > 0:
       var work: seq[WorkItem] = @[]
-      for f in items files: work.add WorkItem(path: f, weight: 1)
+      for f in items files:
+        work.add WorkItem(path: f, weight: 1, noPrefill: not prefillable(cat))
       parallelTestDir(c, work, overwrite, cat, forward, parallelJobs)
   else:
     for f in items files:

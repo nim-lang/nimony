@@ -9,7 +9,7 @@ type
     func `mod`(x, y: Self): Self
     func `==`(x, y: Self): bool
     func `<`(x, y: Self): bool
-    func `>`(x, y: Self): bool
+    func `<=`(x, y: Self): bool
 
   IntegerArithmetic* = concept of Arithmetic ## `Arithmetic` plus the integer-only operations.
     func `div`(x, y: Self): Self

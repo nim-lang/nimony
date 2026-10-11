@@ -13,16 +13,23 @@
 ## filename-safe alphabet (`-`/`_` instead of `+`/`/`) when `safe = true`.
 ## `decode` accepts either alphabet and ignores `=` padding and whitespace.
 
-const
-  cb64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-  cb64safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+{.feature: "staticContracts".}
 
-func encode*[T: byte|char](s: openArray[T]; safe = false): string =
-  ## Encodes `s` (a sequence of `char`s or `byte`s) to a base64 string.
-  runnableExamples:
-    assert encode("foo") == "Zm9v"
-    assert encode("foob") == "Zm9vYg=="
-  let alphabet = if safe: cb64safe else: cb64
+const
+  cb64: array[64, char] = [
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/']
+  cb64safe: array[64, char] = [
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_']
+
+func encode[T: byte|char](s: openArray[T]; alphabet: array[64, char]): string =
   result = ""
   let n = s.len
   var i = 0
@@ -35,20 +42,26 @@ func encode*[T: byte|char](s: openArray[T]; safe = false): string =
     result.add alphabet[((b shl 2) or (c shr 6)) and 63]
     result.add alphabet[c and 63]
     i += 3
-  let rem = n - i
-  if rem == 1:
+  if i + 1 == n:
     let a = ord(s[i])
     result.add alphabet[(a shr 2) and 63]
     result.add alphabet[(a shl 4) and 63]
     result.add '='
     result.add '='
-  elif rem == 2:
+  elif i + 2 == n:
     let a = ord(s[i])
     let b = ord(s[i + 1])
     result.add alphabet[(a shr 2) and 63]
     result.add alphabet[((a shl 4) or (b shr 4)) and 63]
     result.add alphabet[(b shl 2) and 63]
     result.add '='
+
+func encode*[T: byte|char](s: openArray[T]; safe = false): string =
+  ## Encodes `s` (a sequence of `char`s or `byte`s) to a base64 string.
+  runnableExamples:
+    assert encode("foo") == "Zm9v"
+    assert encode("foob") == "Zm9vYg=="
+  result = if safe: encode(s, cb64safe) else: encode(s, cb64)
 
 func encodeMime*(s: string; lineLen = 75; newLine = "\r\n"; safe = false): string =
   ## Encodes `s` to base64 (RFC 2045 MIME): the output is wrapped into lines of

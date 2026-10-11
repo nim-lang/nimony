@@ -96,6 +96,17 @@ proc normalizeDirKey*(p: string): string =
   ## command line is written portably (`tests/boot`).
   result = p.replace('\\', '/').strip(chars = {'/'})
 
+proc isPluginScratchDir*(cache, name: string): bool =
+  ## Whether the entry `name` directly under the nimcache `cache` is one of the
+  ## sub-compile caches `semos.buildPlugin` keeps beside a plugin executable:
+  ## `<exe>_d` (the build) and `<exe>_v` (the validator's sem-only run). They
+  ## are nimcaches of their own, not part of the compile that owns `cache`.
+  result = false
+  for suffix in ["_d", "_v"]:
+    if name.endsWith(suffix) and
+        fileExists(cache / name.substr(0, name.len - suffix.len - 1)):
+      result = true
+
 var skipDirs*: seq[string] = @[]
   ## Directories the tree walk leaves out, from `--skip:<dir>` (repeatable).
   ## Unlike `hastur.mode = skip`, this is a property of *this run*, not of the

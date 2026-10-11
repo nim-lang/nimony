@@ -9,6 +9,11 @@
 
 ## A type navigator can recompute the type of an expression.
 
+when defined(nimony):
+  # The scope chain is a nilable linked list: `TypeCache.current` is nil until
+  # the first `openScope`, and `closeScope` pops the outermost one back to nil.
+  {.feature: "lenientnils".}
+
 import std/assertions
 include ".." / lib / nifprelude
 
@@ -18,8 +23,16 @@ import ".." / finalir / finalir_model
 import nimony_model, builtintypes, decls, programs, typeprops
 
 const
+  # `.00`, not `.0`: a disambiguator is a NUMBER and a number has no leading
+  # zero, so `r.00` is a name no user symbol can collide with -- which is the
+  # point, since these three are injected into types the user also writes
+  # fields into. The pool keeps such a name whole rather than reading `00` as a
+  # disambiguator (#2457), so it stays distinct from `r.0`.
   RcField* = "r.00"
   DataField* = "d.00"
+  RootIdxField* = "ri.00"
+    ## `--mm:orc` only: the cycle collector's second header word, between
+    ## `RcField` and `DataField` (see `lib/std/system/orc.nim`).
   VTableField* = "vt.00"
   DisplayLenField* = "dl.0"
   DisplayField* = "dy.0"
@@ -45,6 +58,14 @@ type
 
 proc createTypeCache*(bits: int): TypeCache =
   TypeCache(builtins: createBuiltinTypes(bits))
+
+proc keepAlive*(c: var TypeCache; buf: sink TokenBuf): Cursor =
+  ## Hand out a cursor into a type that had to be synthesized, transferring the
+  ## buffer to the cache so the cursor stays valid for as long as the cache
+  ## does. Every invented type goes through here -- including hexer's
+  ## `closuretypes.closureValueType`, which is why this is exported.
+  c.mem.add ensureMove(buf)
+  result = cursorAt(c.mem[c.mem.len-1], 0)
 
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;
                     val: Cursor = default(Cursor)) =
@@ -104,18 +125,20 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
   return default(Cursor)
 
 proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
+  ## `crossedProc` is the number of routine boundaries between the use and the
+  ## declaration; nonzero means a capture. That includes a local of a module
+  ## level statement such as a `block` (#2555); a global is never captured.
   var it {.cursor.} = c.current
   var crossedProc = 0
-  var compareTo = UnusedScope
   while it != nil:
     var res = it.locals.getOrDefault(s)
-    if it.kind == compareTo:
-      inc crossedProc
-    elif it.kind == ProcScope:
-      compareTo = ProcScope
     if res.kind != NoSym:
+      if crossedProc > 0 and res.kind in {GvarY, GletY, TvarY, TletY, ConstY}:
+        crossedProc = 0
       res.crossedProc = int16(crossedProc)
       return res
+    if it.kind == ProcScope:
+      inc crossedProc
     it = it.parent
   return default(LocalInfo)
 
@@ -322,10 +345,9 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       elif n.intVal == 1:
         var buf = createTokenBuf(4)
         buf.addParLe(RefT, n.info)
-        buf.addSymUse pool.syms.getOrIncl("RootObj.0." & SystemModuleSuffix), n.info
+        buf.addSymUse pool.symId(BareRootObjName), n.info
         buf.addParRi()
-        c.mem.add buf
-        result = cursorAt(c.mem[c.mem.len-1], 0)
+        result = c.keepAlive(buf)
   elif BeStrict in flags:
     assert false, "wanted tuple type but got: " & toString(tupType, false)
 
@@ -354,7 +376,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     of Symbol:
       result = lookupSymbol(c, n.symId)
       if cursorIsNil(result):
-        bug "could not find symbol: " & pool.syms[n.symId]
+        bug "could not find symbol: " & pool.symString(n.symId)
     of IntLit:
       result = c.builtins.intType
     of UIntLit:
@@ -391,12 +413,24 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
             break
           skip n
       of CaseS:
+        # Like `if`: the first non-void branch decides, a leading branch that
+        # ends in `return` must not type the whole `case` as void (#2612).
         var n = n
         inc n # skip `case`
         skip n # skip selector
-        inc n # skip `of`
-        skip n # skip set
-        result = typeofBranchBody(c, n, flags)
+        result = c.builtins.voidType
+        while n.isTagLit:
+          let sub = n.substructureKind
+          if sub notin {OfU, ElseU}: break
+          var br = n
+          inc br # `of` or `else`
+          if sub == OfU:
+            skip br # set
+          let brType = typeofBranchBody(c, br, flags)
+          if brType.typeKind != VoidT:
+            result = brType
+            break
+          skip n
       of TryS:
         var n = n
         inc n
@@ -435,6 +469,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       result = c.builtins.charType
     else:
       result = c.builtins.autoType # still an error
+  of PluginCallX:
+    # A deferred plugin call only ever survives inside an unresolved generic
+    # body; every instantiation drives the plugin and replaces it. Its type is
+    # the template's declared return type, which is not reachable from here,
+    # and nothing typed enough for `typenav` to navigate ever holds one.
+    result = c.builtins.autoType
   of PatX:
     result = getTypeImpl(c, n.childCursor, flags)
     case typeKind(result)
@@ -475,7 +515,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.boolType
   of NeginfX, NanX, InfX:
     result = c.builtins.floatType
-  of EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX,
+  of EnumtostrX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX,
      AstToStrX, BindSymNameX:
     result = c.builtins.stringType
   of BindSymX:
@@ -485,6 +525,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.autoType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
+  of CanFormCyclesX:
+    result = c.builtins.boolType
   of DelayX, Delay0X, SuspendX:
     result = c.builtins.continuationType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX,
@@ -495,7 +537,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of ParX, EmoveX:
     result = getTypeImpl(c, n.childCursor, flags)
   of NilX:
-    result = c.builtins.nilType
+    let t = n.childCursor
+    result = if t.hasMore: t else: c.builtins.nilType
   of DotX, DdotX:
     var n = n
     inc n # skip "dot"
@@ -507,10 +550,10 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
 
     result = typeOfField(c, objType, fld)
     if cursorIsNil(result):
-      if pool.syms[fld] == VTableField:
+      if pool.symString(fld) == VTableField:
         # VTableField is a magic internal field for RTTI
         result = c.builtins.vtableType
-      elif pool.syms[fld] == DataField and
+      elif pool.symString(fld) == DataField and
             obj.exprKind in {DerefX, HderefX}:
         inc obj
         var t = getTypeImpl(c, obj, flags)
@@ -561,8 +604,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.addParLe(PtrT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
   of CurlyX:
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.childCursor, flags)
@@ -570,8 +612,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.addParLe(SetT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
   of TupX:
     # should not be encountered but keep this code for now
     var buf = createTokenBuf(4)
@@ -586,8 +627,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         buf.addSubtree getTypeImpl(c, val, flags)
         skip n
     buf.addParRi()
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
   of TupatX:
     result = tupatType(c, n, flags)
   of BracketX:
@@ -605,8 +645,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc arrayLen
     buf.addIntLit(arrayLen, info)
     buf.addParRi()
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
   of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:
     result = c.builtins.voidType
   of DupX:
@@ -668,8 +707,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
           loopInto t:
             buf.takeTree t
         buf.addParPair(ClosureP)
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
 
   assert result.hasMore, "ParRi for expression: " & toString(n, false)
 
@@ -714,5 +752,4 @@ proc registerLocalPtrOf*(c: var TypeCache; name: SymId; kind: SymKind; elemType:
   buf.addParLe(PtrT, elemType.info)
   buf.addSubtree elemType
   buf.addParRi()
-  c.mem.add buf
-  c.registerLocal(name, kind, cursorAt(c.mem[c.mem.len-1], 0))
+  c.registerLocal(name, kind, c.keepAlive(buf))

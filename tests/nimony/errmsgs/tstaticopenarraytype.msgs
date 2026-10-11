@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tstaticopenarraytype.nim(7, 12) Error: "not an array" does not match constraint openArray

@@ -25,12 +25,12 @@
     (of~I,1
      (ranges
       (false~8))
-     (stmts
+     (scope
       (ret "false")))
     (of~8,1
      (ranges
       (true~7))
-     (stmts
+     (scope
       (ret "true"))))
    (ret@F,1 result.0)))
  (glet@4,3 :x.0. . .

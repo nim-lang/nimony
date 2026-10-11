@@ -56,8 +56,8 @@ type
     button: int
 
 proc run(data: Control) =
-  var evt = MouseEvent(button: 1)
-  evt.control = data
+  # `control` is a not-nil ref: it gets its value here, not one statement later.
+  var evt = MouseEvent(control: data, button: 1)
   if evt.button == 1:
     discard
   else:

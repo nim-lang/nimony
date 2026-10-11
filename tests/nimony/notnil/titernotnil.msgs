@@ -1,0 +1,3 @@
+tests/nimony/notnil/titernotnil.nim(8, 20) Error: expected non-nil value [pass --verbose for the Final IR]
+tests/nimony/notnil/titernotnil.nim(9, 5) Error: 'uninit' is of type 'iterator (): int64', which has no default value (it contains a not-nil pointer): give it an initial value [pass --verbose for the Final IR]
+tests/nimony/notnil/titernotnil.nim(12, 6) Error: expected non-nil value [pass --verbose for the Final IR]

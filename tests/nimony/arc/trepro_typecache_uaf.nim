@@ -1,3 +1,9 @@
+# `lenientnils`, exactly as `typenav.nim` itself carries: the scope chain this
+# mirrors is nilable (`current` is nil until the first `openScope` and again
+# once `closeScope` pops the outermost one), and modelling that is not what the
+# repro is about.
+{.feature: "lenientnils".}
+
 ## Nimony-compiled repro for the stage-2 boot UAF
 ## (`bug_stage2_typecache_destroy_uaf.md`). Mirrors `typenav.nim`'s
 ## TypeCache → TypeScope → Table[SymId, LocalInfo] → Cursor shape and

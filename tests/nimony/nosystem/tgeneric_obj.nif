@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 6300             )
+(.indexat 6307             )
 (stmts@,2,tests/nimony/nosystem/tgeneric_obj.nim
  (type@2,1 :int.0.
   (i 64).
@@ -55,11 +55,11 @@
    (case@E e.0
     (of~C,1
      (ranges typeOfProc.0.)
-     (stmts
+     (scope
       (ret "typeOfProc")))
     (of~C,2
      (ranges typeOfIter.0.)
-     (stmts
+     (scope
       (ret "typeOfIter"))))
    (ret@2,2 result.0)))
  (proc@,G :typeof.0.@5
@@ -84,7 +84,7 @@
  (glet@4,N :u8.0. . .
   (u 8)
   (suf@5 3u "u8"))
- (asgn@6,O myset.0.~6
+ (asgn@6,O myset.0.
   (setconstr@2
    (set@6,~3
     (u@1 8))
@@ -93,7 +93,7 @@
    (range@H
     (suf 7u "u8")
     (suf@6 9u "u8"))))
- (asgn@6,P myarr.0.~6
+ (asgn@6,P myarr.0.
   (aconstr@2
    (array@8,~3
     (i@4 64)
@@ -134,8 +134,8 @@
    (result@4 :result.1 . .
     (i@A,~6 64).@A,~6)
    (var@4 :x.5 . . string.0.sysvq0asl "abc"@4)
-   (asgn@7,1 result.1~7 4@2)
-   (asgn@2,2 x.5~2 "34"@2)
+   (asgn@7,1 result.1 4@2)
+   (asgn@2,2 x.5 "34"@2)
    (ret@4,2 result.1)))
  (proc@,m :overloaded.0.@5 . . .
   (params@F). . .
@@ -144,8 +144,9 @@
     (i@A,~B 64)
     (add@D
      (i~3,~B 64)23@1 90@5))
-   (discard@,1
-    (call@8 foo.0.
+   (let@M :`x.0 . .
+    (i~3,~6 64)
+    (call~E,1 foo.0.
      (add@6
       (i@,~C 64)34~2 56@1)"xyz"@B))))
  (type@G,r :HSlice.0.~E x
@@ -177,7 +178,7 @@
    (i@4 64)
    (rangetype
     (i 64)0 2))myarr.0.@R)
- (asgn@7,10 myarr2.0.~7
+ (asgn@7,10 myarr2.0.
   (aconstr@2
    (array@7,~e
     (i@4 64)
@@ -198,7 +199,7 @@
    (i@7 64)
    (rangetype
     (i 64)4@1 7@4))m3.0.@N)
- (asgn@3,14 x3.0.~3
+ (asgn@3,14 x3.0.
   (aconstr@2
    (array@8,~2
     (i@4 64)
@@ -227,7 +228,7 @@
     (array@J,~1 T.8.@4 I.1.@1).@K,~1)
    (asgn@7 result.3~7 x.4@2)
    (ret@9 result.3)))
- (asgn@7,1B myarr2.0.~7
+ (asgn@7,1B myarr2.0.
   (call@2 identity.0.Ippgo8y. myarr2.0.@9))
  (comment@F,G untyped.0. typedesc.0.@I int.0.@1,M int.0.@1,M int.0.~2,M int.0.~3,R int.0.@6,R array.0.@3,q array.0.@8,t array.0.@3,t set.0.~4,5 uint8.0.@,5 array.0.~4,6 int.0.@5,6 int.0.@5,G float.0.@4,H array.0.~3,j int.0.@9,j array.0.~7,m int.0.@2,m array.0.~7,n int.0.@5,n)
  (proc@3,17 :foo.1.I1asdq91. . .~3,~1
@@ -264,7 +265,7 @@
      (i~8,~n 64)
      (rangetype~C,~n
       (i 64)0 2)).@7,~o)
-   (asgn@7 result.4~7 x.9@2)
+   (asgn@7 result.4 x.9@2)
    (ret@9 result.4)))
  (type@J,W :MyGeneric.0.I7tqnb11. .
   (at MyGeneric.0.
@@ -301,15 +302,15 @@
  (h myset.0. 50)
  (h myarr.0. 48)
  (h u8.0. 80)
- (h MyGeneric.0. 318)
+ (h MyGeneric.0. 314)
  (h@B,S T.3. 43)
  (h myglob.0. 80)
  (h other.0. 53)
  (x \2B.0. 166)
  (h foobar.0. 170)
  (h foo.0. 79)
- (h overloaded.0. 324)
- (x HSlice.0. 228)
+ (h overloaded.0. 320)
+ (x HSlice.0. 251)
  (h@9,r T.4. 40)
  (h@9,r U.0. 29)
  (x Slice.0. 111)
@@ -318,15 +319,15 @@
  (h@A,w T.6. 39)
  (h@A,w U.1. 29)
  (h myarr2.0. 257)
- (h m3.0. 203)
+ (h m3.0. 201)
  (h x3.0. 164)
- (h foo.1. 198)
+ (h foo.1. 196)
  (h@8,16 I.0. 39)
  (h@8,16 T.7. 29)
  (h identity.0. 167)
  (h@D,19 I.1. 44)
  (h@D,19 T.8. 29)
- (h foo.1.I1asdq91. 599)
+ (h foo.1.I1asdq91. 597)
  (h identity.0.Ippgo8y. 260)
- (h MyGeneric.0.I7tqnb11. 466)
+ (h MyGeneric.0.I7tqnb11. 464)
  (h MyGeneric.0.Ieuzwfh. 137))

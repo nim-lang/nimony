@@ -94,7 +94,7 @@ proc genIte(c: var GeneratedCode; n: var Cursor) =
       c.genStmt n # then-part is always taken
       # emit the label:
       if isLast:
-        c.add mangleToC(c.m.pool.syms[vflag])
+        c.add mangleToC(c.m.pool.symString(vflag))
         c.add Colon
         c.add Semicolon
       skip n      # else-part is always ignored
@@ -118,6 +118,7 @@ proc genIte(c: var GeneratedCode; n: var Cursor) =
   c.add Semicolon
 
 proc genLoop(c: var GeneratedCode; n: var Cursor) =
+  ## `(loop body)`: infinite, left only by a `break`/`jmp` inside the body.
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
   n.into:
@@ -128,17 +129,6 @@ proc genLoop(c: var GeneratedCode; n: var Cursor) =
     c.add ParRi
     c.add Space
     c.add CurlyLe
-    c.genStmt n # pre condition statements
-    c.add IfKeyword
-    c.add Space
-    c.add ParLe
-    c.add "!"
-    c.add ParLe
-    c.genx n # loop condition
-    c.add ParRi
-    c.add ParRi
-    c.add BreakKeyword
-    c.add Semicolon
     c.genStmt n # loop body
     c.add CurlyRi
     while n.hasMore: skip n
@@ -290,7 +280,7 @@ proc genCaseCond(c: var GeneratedCode; n: var Cursor) =
 proc genLabel(c: var GeneratedCode; n: var Cursor) =
   n.into:
     if n.kind == SymbolDef:
-      let name = mangleToC(c.m.pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.symString(n.symId))
       c.add name
       c.add Colon
       c.add Semicolon
@@ -302,7 +292,7 @@ proc genLabel(c: var GeneratedCode; n: var Cursor) =
 proc genGoto(c: var GeneratedCode; n: var Cursor) =
   n.into:
     if n.kind == Symbol:
-      let name = mangleToC(c.m.pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.symString(n.symId))
       c.add GotoKeyword
       c.add name
       c.add Semicolon
@@ -368,7 +358,7 @@ proc genMflagDecl(c: var GeneratedCode; n: var Cursor) =
       c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
       c.add "NB8"
       c.add Space
-      c.add mangleToC(c.m.pool.syms[s])
+      c.add mangleToC(c.m.pool.symString(s))
       c.add Semicolon
       inc n
     else:
@@ -398,7 +388,7 @@ proc genJtrue(c: var GeneratedCode; n: var Cursor) =
         if not n.hasMore:
           # last symbol becomes a target goto:
           c.add GotoKeyword
-          c.add mangleToC(c.m.pool.syms[s])
+          c.add mangleToC(c.m.pool.symString(s))
           c.add Semicolon
       else:
         error c.m, "expected Symbol but got: ", n
@@ -505,16 +495,6 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
       c.add CurlyRi
     while n.hasMore: skip n
 
-proc genStore(c: var GeneratedCode; n: var Cursor) =
-  n.into:
-    var rhs = n
-    skip n
-    genLvalue c, n
-    c.add AsgnOpr
-    genx c, rhs
-    c.add Semicolon
-    while n.hasMore: skip n
-
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
@@ -522,7 +502,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       inc n
     else:
       error c.m, "expected statement but got: ", n
-  of StmtsS:
+  of StmtsS, AlwaysS:
     n.loopInto:
       genStmt(c, n)
   of ScopeS:
@@ -558,7 +538,6 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       genx c, n
       c.add Semicolon
       while n.hasMore: skip n
-  of StoreS: genStore c, n
   of IfS: genIf c, n
   of IteS, ItecS: genIte c, n
   of WhileS: genWhile c, n

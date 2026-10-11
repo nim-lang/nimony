@@ -208,7 +208,7 @@ proc ruleTok(e: Engine; c: Cursor): RuleTok =
 # ---- compiling LHS patterns ----------------------------------------------
 
 proc allocReg(e: Engine; rule: var Rule; name: string): int =
-  let s = e.pool.syms.getOrIncl(name)
+  let s = e.pool.symId(name)
   if s in rule.capIndex: return getOrQuit(rule.capIndex, s)
   result = e.numRegs
   inc e.numRegs
@@ -238,7 +238,7 @@ proc compilePat(e: Engine; rule: var Rule; c: var Cursor; pat: var TokenBuf) =
     of rtPure: emitMeta(pat, e.metaPure,   allocReg(e, rule, metaChildName(c))); skip c
     of rtSame:
       let childName = metaChildName(c)
-      let s = e.pool.syms.getOrIncl(childName)
+      let s = e.pool.symId(childName)
       assert s in rule.capIndex, "(same " & childName & "): not bound"
       emitMeta(pat, e.metaSame, getOrQuit(rule.capIndex, s))
       skip c
@@ -250,7 +250,7 @@ proc compilePat(e: Engine; rule: var Rule; c: var Cursor; pat: var TokenBuf) =
       pat.closeTag()
   of Ident:
     let nm = strVal(c)
-    let s = e.pool.syms.getOrIncl(nm)
+    let s = e.pool.symId(nm)
     if s in rule.capIndex: emitMeta(pat, e.metaSame, getOrQuit(rule.capIndex, s))
     else:                  emitMeta(pat, e.metaWild, allocReg(e, rule, nm))
     inc c
@@ -527,7 +527,7 @@ proc parseRule(e: Engine; c: Cursor) =
               while call.hasMore:
                 assert call.kind == Ident, "(WHEN …) args must be captured names"
                 let argName = strVal(call)
-                let s = e.pool.syms.getOrIncl(argName)
+                let s = e.pool.symId(argName)
                 assert s in rule.capIndex,
                   "(WHEN …) references unbound name: " & argName
                 slots.add getOrQuit(rule.capIndex, s)
@@ -677,7 +677,7 @@ proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
   ## stamped with `info`; spliced captures keep their own info via `addSubtree`.
   case t.kind
   of Ident:
-    let s = t.pool.syms.getOrIncl(strVal(t))
+    let s = t.pool.symId(strVal(t))
     assert s in capIndex, "DO references unbound name: " & strVal(t)
     dest.addSubtree caps[getOrQuit(capIndex, s)]
     inc t
@@ -691,7 +691,7 @@ proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
   of TagLit:
     if ruleTok(e, t) in MetaToks:
       let childName = metaChildName(t)
-      let s = t.pool.syms.getOrIncl(childName)
+      let s = t.pool.symId(childName)
       assert s in capIndex, "DO meta references unbound name: " & childName
       dest.addSubtree caps[getOrQuit(capIndex, s)]
       skip t
@@ -790,7 +790,7 @@ proc collectLocals(e: Engine; c: Cursor;
     var nm = c
     inc nm                                   # first child = the name
     if nm.kind == SymbolDef:
-      let s = e.pool.syms.getOrIncl(symName(nm))
+      let s = e.pool.symId(symName(nm))
       if s notin map:
         map[s] = "_canon." & $counter
         inc counter
@@ -810,13 +810,13 @@ proc rebuildCanon(e: Engine; src: var Cursor; dest: var TokenBuf;
       while src.hasMore: rebuildCanon(e, src, dest, map)
     dest.closeTag()
   of Symbol:
-    let s = e.pool.syms.getOrIncl(symName(src))
+    let s = e.pool.symId(symName(src))
     if s in map:
       dest.addSymUse getOrQuit(map, s); dest.appendLineInfo rawLineInfo(src); inc src
     else:
       dest.addSubtree src; skip src
   of SymbolDef:
-    let s = e.pool.syms.getOrIncl(symName(src))
+    let s = e.pool.symId(symName(src))
     if s in map:
       dest.addSymDef getOrQuit(map, s); dest.appendLineInfo rawLineInfo(src); inc src
     else:

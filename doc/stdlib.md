@@ -71,8 +71,28 @@ are copy-on-write internally.
 - `swap` exchanges bits directly. It does **not** call `=sink`,
   `=copy`, or `=dup` hooks. This is by design — it's faster this way and Nim's lifetime tracking hooks do not support "self-pointers" (pointers inside the same object, `obj.field = addr(obj)`).
 - `allocFixed` / `deallocFixed`: Low-level fixed-size allocation.
-- `setOomHandler`: By default the runtime tries to continue after
-  out-of-memory. For many applications, just quitting is the more robust solution — set a handler that calls `quit`.
+- `setOomHandler`: governs `alloc`, which reports failure by returning `nil`. By
+  default the runtime tries to continue after out-of-memory, accumulating the
+  missing bytes for `threadOutOfMem()` to report. For many applications, just
+  quitting is the more robust solution — set a handler that calls `quit`.
+- `new` is not covered by that policy and cannot be: `ref T` is not-nil, so
+  there is no value to hand back. A failed allocation raises `OutOfMemError`
+  inside a `{.raises.}` routine and panics anywhere else — unless the destination
+  asks for the `nil` by declaring itself `nil T`, which is then narrowed like any
+  other nilable reference. See `doc/internals/failure_modes.md` for why the two
+  allocators differ.
+- `-d:nimMaxHeap=N` caps the heap at `N` megabytes, with Nim's name, unit and
+  default, and Nim's consequence: exceeding it is **unrecoverable**, and
+  `raiseOutOfMem` aborts.
+- `-d:nimHardenOutOfMem` turns that cap into a refusal instead: allocation
+  answers `nil` and the out-of-memory paths in seqs, strings, tables and `new`
+  run for real. It is how those paths are reached on purpose rather than only
+  under genuine memory pressure -- see `doc/internals/failure_modes.md` and
+  `tests/nimony/oom`. Without `nimMaxHeap` it does nothing.
+- Both live in the ported allocator, so they apply to the default
+  (`nimNativeAlloc`) configuration and a `-d:useMimalloc` build ignores them.
+  That keeps them free: the check rides on occupancy the allocator already
+  tracks, with no second layer of accounting per allocation.
 
 #### Strategies (`--mm:`)
 
@@ -85,14 +105,69 @@ under `lib/std/system/`; nothing in `system.nim` enumerates them.
 | --- | --- | --- |
 | `atomicArc` | `system/atomicarc.nim` | default; the reference count is updated atomically, so a `ref` may be shared between threads |
 | `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread |
+| `orc` | `system/orc.nim` | `arc` plus a cycle collector: cyclic garbage is freed too; a `ref` must stay on one thread |
+| `yrc` | `system/yrc.nim` | thread-safe `orc`: refs may be shared between threads, and threads collect cycles concurrently with each other and with the mutators |
 
 A strategy module defines exactly three primitives — `arcInc`, `arcDec` (true
 when the count reached zero) and `arcIsUnique`. What is built on top of them
 (`GC_ref` / `GC_unref`) is strategy independent and lives in `system/refops`.
 
+Cycle collection needs more than three primitives, so a strategy opts into it:
+`orc`'s `nimTraceRef` says `{.enableTrace.}` in its body, and a runtime of your
+own that does the same gets the same compiler support. A cell carries a second
+header word
+(`rootIdx`), and for a `ref T` whose `T` can form a cycle (it can reach a
+`ref T` again through owned fields, or is a class, or holds a closure) the
+compiler generates a *cell operation* — `proc (cell, env: pointer)` that traces
+the payload or, with `env == nil`, destroys it and frees the cell — and hands it
+to `nimDecRefCyclic` (`=destroy`) and `nimTraceRef` (`=trace`). `=trace` visits
+the owned refs that can be part of a cycle and nothing else: never a `.cursor`
+field, never a raw pointer — unless the type has a hand-written `=trace`, as
+`seq` has. `{.acyclic.}` on a type exempts it. The collector itself is Nim's
+(trial deletion after Bacon & Rajan); `GC_fullCollect`, `GC_runOrc`,
+`GC_enableOrc` and `GC_disableOrc` control it, and it also runs on its own once
+enough candidate roots piled up.
+
+`yrc` is Nim's concurrent cycle collector on the same protocol. A decrement of
+a cell that can be part of a cycle is deferred into a lock-free queue, so such
+a cell is only ever freed by a collection -- its destructor runs then, not on
+the last decrement; cells that cannot be part of a cycle are freed promptly as
+with `arc`. Collections capture the graph without writing to it, decide what
+is dead on the captured data and validate against what mutators did in the
+meantime before freeing anything, so they run concurrently with the mutators
+and with each other. `seq` fences structural changes of buffers the collector
+traces (`typetraits.canFormCycles(T)`, answered by the compiler; a runtime that declares
+`nimSeqFenceEnter`/`nimSeqFenceExit` gets the fence), and a thread that exits
+hands its queued decrements and candidates over (`nimThreadTeardown`).
+
 `--mm:NAME` also defines `gcName`, so `--mm:arc` makes `defined(gcArc)` true and
 `--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes
 the cached build configuration and therefore forces a rebuild.
+
+#### A runtime of your own
+
+The file does not have to be one of ours: `--mm` also takes a **path**, and then
+`$MM` expands to exactly what was passed. That is the whole mechanism — write
+the three primitives into a file and point `--mm` at it:
+
+```
+nimony c --mm:rt/mygc myprogram.nim       # relative to the current directory
+nimony c --mm:/opt/rt/mygc.nim myprogram.nim
+nimony c '--mm:$MYRT/mygc' myprogram.nim  # $VAR: the compiler reads the
+                                          # environment, hence the quotes
+```
+
+A value is a path as soon as it is not a bare name (letters, digits and `_`):
+`--mm:mygc` is a *strategy* and looks for `lib/std/system/mygc.nim`, while
+`--mm:./mygc` and `--mm:mygc.nim` are paths. A relative path is read against the
+current directory; one that is not there is looked up on the `--path` search
+path, like any other `include`. Whitespace is the one thing the path may not
+contain, because the switch is forwarded to the other tools through a single
+string that is split on spaces again. Naming a file that is not there stops the
+compiler with one error instead of a wall of `undeclared identifier: arcInc`.
+
+`defined(gc<Name>)` works for these too: the name of a runtime given by path is
+its file's basename, so `--mm:rt/myGc.nim` makes `defined(gcMyGc)` true.
 
 #### The uniquely-referenced fast path
 
@@ -149,6 +224,9 @@ available.
 - `tryWriteFile` is a convenience that opens, writes, and closes
   in one call.
 - `quit(msg)` writes to stderr and exits — useful for fatal errors.
+- `FileMode`, `FileSeekPos` and `FilePermission` live in
+  [`std/commonio`](../lib/std/commonio.nim), which `syncio` and the ring-based
+  `std/asyncio` both export, so importing both is not ambiguous.
 
 [Examples: file I/O](../examples/io_basics.nim)
 
@@ -231,7 +309,9 @@ a rune index to a byte index.
 Hash values are prerequisites for `Table` and `HashSet` keys.
 
 - Combine hashes with `!&`, finalize with `!$`.
-- The `Hashable` concept describes what a type needs to be hashable.
+- The `Hashable` concept describes what a type needs to be hashable. The
+  `hash` overloads live next to it, which is why a `Hashable` (or
+  `tables.Keyable`) check succeeds without importing this module.
 - `hashIgnoreStyle` matches `cmpIgnoreStyle` — use them together
   for Nim-style identifier tables.
 
@@ -241,9 +321,12 @@ Hash values are prerequisites for `Table` and `HashSet` keys.
 [Source](../lib/std/tables.nim) ·
 [Examples](../examples/tables_basics.nim)
 
-Generic hash tables. Keys must satisfy `Keyable` (have `==` and `hash`).
-You must `import std/hashes` alongside `std/tables` to make the `hash`
-procs visible — tables does not re-export them.
+Generic hash tables. Keys must satisfy `Keyable`, which is `Hashable`
+(from `std/hashes`) plus `==`. The builtin key types need no import of
+their own: a concept requirement is resolved in the module that declares
+it, so `hash` is found in `std/hashes` even where it is not imported.
+Import `std/hashes` when you write a `hash` for your own key type, or
+need `Hash`, `!&` and `!$` by name.
 
 The table uses a hybrid strategy: **linear scan for ≤ 4 entries**,
 hash table with open addressing for larger sizes. This means small
@@ -262,8 +345,8 @@ tables have no hashing overhead at all.
 [Source](../lib/std/sets.nim) ·
 [Examples](../examples/sets_basics.nim)
 
-Hash-based sets for any hashable type. Built on top of `Table[T, bool]`.
-Like `tables`, you must also `import std/hashes`.
+Hash-based sets for any hashable type. Built on top of `Table[T, bool]`,
+so element types must satisfy `Keyable` under the same rules as table keys.
 
 - `containsOrIncl` is the deduplication primitive — returns whether
   the element was already present, and adds it if not.
@@ -357,6 +440,30 @@ Windows.
 - `wrapWords` handles Unicode graphemes correctly.
 - Set `splitLongWords = false` to keep long words intact instead of
   breaking them mid-word.
+
+
+## logging
+
+[Source](../lib/std/logging.nim)
+
+A port of Nim's `std/logging` whose log entries are lines of NIF in the
+line-based syntax, so a log file can be read back with
+`nifreader.open(file, lineBased = true)`:
+
+```nif
+info 2026-09-29T09:14:03Z "myapp" "server started on port 8080"
+```
+
+- The tag is the level (`debug`, `info`, `notice`, `warn`, `error`,
+  `fatal`); the message comes last as a string literal, escaped so that
+  an entry never spans more than one line.
+- `fmtStr` is not Nim's free-form prefix but a whitespace separated list of
+  fields between the tag and the message: `$date`, `$time`, `$datetime`,
+  `$app`, `$appname`, `$appdir`, `$levelid`, `$levelname`, or literal
+  words, which are written as strings. The default is `""`: no fields.
+- Times are UTC, like the rest of `std/times`, and `$datetime` says so
+  with a `Z`.
+- Handlers are thread-local, as in Nim.
 
 
 ## rawthreads

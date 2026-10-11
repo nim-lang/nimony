@@ -1,0 +1,1 @@
+tests/nimony/cps/tdelayvarparam.nim(14, 16) Error: `delay` hands `worker` to a scheduler, so its continuation can outlive this frame; parameter `b: var Box` would alias a location that is already gone. Take it as `sink` instead

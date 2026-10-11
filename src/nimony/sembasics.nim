@@ -30,7 +30,7 @@ template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind
   dest.addParRi()
 
 proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: NifLineInfo;
-                             option = FindAll): int =
+                             marker: var HashSet[SymId]; option = FindAll): int =
   result = 0
   let ignoreStyle = IgnoreStyleFeature in c.features
   for realName in stylesOfImport(c.importTab, name, ignoreStyle):
@@ -47,7 +47,7 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
             let res = tryLoadSym(defId)
             if res.status == LacksNothing:
               callable = isValidFnHead(res.decl.symKind)
-          if callable:
+          if callable and not marker.containsOrIncl(defId):
             inc result
             dest.addSymUse(defId, info)
 
@@ -68,7 +68,8 @@ proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: Str
             dest.addSymUse sym, info
             inc count
       it = it.up
-    inc count, considerImportedSymbols(c, dest, identifier, info)
+    var marker = initHashSet[SymId]()
+    inc count, considerImportedSymbols(c, dest, identifier, info, marker)
 
   # if the sym choice is empty, create an ident node:
   if count == 0:
@@ -132,38 +133,78 @@ proc buildSymChoiceForForeignModule*(c: var SemContext; dest: var TokenBuf; modu
     dest.addIdent(identifier, info)
 
 proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
-                       option = FindAll): int =
+                       option: ChoiceOption; nearestIsUnique: var bool): int =
+  ## Gathers every candidate for `identifier` into `dest`, innermost level
+  ## first. A module's own toplevel scope and everything imported into it are
+  ## the SAME, outermost level: `import` is not a shadowing boundary, it is the
+  ## `Scope` / `ImportScope` distance that overload resolution already ranks by
+  ## (see "Identifier lookup" and "Module-of-origin" in doc/language.md).
+  ##
+  ## `nearestIsUnique` reports whether the nearest level that contributed
+  ## anything contributed exactly one candidate; that is what lets a consumer
+  ## fall back to scope distance once type information has had its say.
+  ##
+  ## A symbol is a candidate once, however many ways it is visible: a module
+  ## imported directly and re-exported by another is one module, not an
+  ## ambiguity between two.
   result = 0
+  var nearest = -1
+  var marker = initHashSet[SymId]()
   let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
   while it != nil:
     var nonOverloadable = 0
+    let before = result
     for k in stylesOfScope(it, identifier, ignoreStyle):
       for sym in it.tab.getOrDefault(k):
+        # An object field is only reachable through `obj.field`; it is added
+        # to its object's scope purely so a duplicate field name is caught by
+        # `addNonOverloadable`, and (unlike every other local) it is never
+        # `publish`ed (see `semLocal`). Do not hand it out as a bare-identifier
+        # candidate: a field can otherwise shadow an outer type of the same
+        # name while its own sibling fields are still being sem-checked
+        # (`type Holder = object; seq: int; items: seq[Item]`), and the field
+        # symbol's position is meaningless outside its `(fld ...)` — resolving
+        # it as a value crashes `declToCursor`'s local-type skip instead of
+        # just being the "undeclared identifier" a bare field name is in Nim.
+        #
         # when resolving a caller `fn`, keep the module symbol out of the sym
         # choice so `foo[...]` binds a same-named proc (nim-lang/nimony#2130):
-        if option != FindOverloads or isValidFnHead(sym.kind):
+        if sym.kind notin {FldY, GfldY} and
+            (option != FindOverloads or isValidFnHead(sym.kind)) and
+            not marker.containsOrIncl(sym.name):
           dest.addSymUse sym, info
           inc result
           if sym.kind.isNonOverloadable:
             inc nonOverloadable
-    if result == 1 and (option == InnerMost or
-        (option == FindOverloads and nonOverloadable == 1)):
-      # unambiguous local symbol found
-      # in case of FindOverloads, if symbol is overloadable, consider other overloads
+    if nearest < 0 and result > before: nearest = result - before
+    # A lone NON-overloadable declaration (let, var, const, type, param, …)
+    # shadows: nothing further out is visible. Overloadable ones — routines
+    # and enum fields — never shadow; they accumulate, and context plus scope
+    # distance sort them out later. `FindAll` wants everything regardless.
+    if result == 1 and nonOverloadable == 1 and option != FindAll:
+      nearestIsUnique = true
       return
     it = it.up
-  inc result, considerImportedSymbols(c, dest, identifier, info, option)
+  let beforeImports = result
+  inc result, considerImportedSymbols(c, dest, identifier, info, marker, option)
+  if nearest < 0 and result > beforeImports: nearest = result - beforeImports
+  nearestIsUnique = nearest == 1
 
 proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
-                    option: ChoiceOption): int =
+                    option: ChoiceOption; nearestIsUnique: var bool): int =
   let oldLen = dest.len
   dest.buildTree OchoiceX, info:
-    result = rawBuildSymChoice(c, dest, identifier, info, option)
+    result = rawBuildSymChoice(c, dest, identifier, info, option, nearestIsUnique)
   # if the sym choice is empty, create an ident node:
   if result == 0:
     dest.shrink oldLen
     dest.addIdent(identifier, info)
+
+proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
+                    option: ChoiceOption): int =
+  var nearestIsUnique = false
+  result = buildSymChoice(c, dest, identifier, info, option, nearestIsUnique)
 
 proc addSymChoiceSyms*(c: var SemContext; dest: var TokenBuf; identifier: StrId; marker: var HashSet[SymId]; info: NifLineInfo) =
   # like rawBuildSymChoice but adds to an existing symchoice, ignoring duplicates
@@ -399,13 +440,13 @@ proc newSymId*(c: var SemContext; s: SymId; forceGlobal = false): SymId =
   ## a local-layout one because the copy lands at MODULE scope where the original
   ## did not (a template body declares in the template's scope; expanding it at
   ## toplevel puts the declaration in the module). See `expandTemplateImpl`.
-  var isGlobal = false
-  var name = extractBasename(pool.syms[s], isGlobal)
+  let isGlobal = not pool.symIsLocal(s)
+  var name = pool.symBasename(s)
   if isGlobal or forceGlobal:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
-  result = pool.syms.getOrIncl(name)
+  result = pool.symId(name)
 
 proc classifyType*(c: var SemContext; n: Cursor): TypeKind =
   result = typeKind(n)
@@ -479,19 +520,18 @@ proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
-  result = pool.syms.getOrIncl(name)
+  result = pool.symId(name)
 
 proc identToSym*(c: var SemContext; lit: StrId; kind: SymKind): SymId =
   result = identToSym(c, pool.strings[lit], kind)
 
 proc symToIdent*(s: SymId): StrId =
-  var name = pool.syms[s]
-  extractBasename name
   when false:
     # XXX activate this later!
+    var name = pool.symBasename(s)
     for i in 0..<name.len:
       if name[i] == ' ': name[i] = '.'
-  result = pool.strings.getOrIncl name
+  result = pool.symNameId(s)
 
 proc declareSym*(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind): SymStatus =
   let info = it.n.info
@@ -581,7 +621,7 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
   elif n.isDotToken:
     var name = "`anon"
     c.makeLocalSym(name)
-    let symId = pool.syms.getOrIncl(name)
+    let symId = pool.symId(name)
     let s = Sym(kind: kind, name: symId, pos: dest.len)
     result = DelayedSym(status: OkExisting, s: s, info: info)
     dest.addSymDef(symId, info)

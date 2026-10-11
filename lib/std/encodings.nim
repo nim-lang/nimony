@@ -307,6 +307,8 @@ else:
     const iconvDll = "libiconv.so"
   elif defined(macosx):
     const iconvDll = "libiconv.dylib"
+  elif defined(illumos):
+    const iconvDll = "libc.so.1"
   else:
     const iconvDll = "(libc.so.6|libiconv.so)"
 
@@ -319,12 +321,12 @@ else:
     const EILSEQ = 92.cint
   elif defined(bsd):
     const EILSEQ = 86.cint
-  elif defined(solaris):
+  elif defined(sunos):
     const EILSEQ = 88.cint
   elif defined(haiku):
     const EILSEQ = -2147454938.cint
 
-  var errno {.importc, header: "<errno.h>".}: cint
+  var errno {.importc, header: "<errno.h>", threadvar.}: cint # per thread in C
 
   when defined(bsd):
     {.pragma: importIconv, cdecl, header: "<iconv.h>".}

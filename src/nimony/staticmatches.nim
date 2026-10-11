@@ -9,9 +9,18 @@
 
 ## Helpers for matching value (`static`) generic parameters and the compile-time
 ## values bound to them. These are the parts of the static-parameter machinery
-## that do *not* depend on the `Match` object; the `Match`-bound logic
-## (`foldValueExpr`, `staticValueToBind`, `bindStaticTypevar`, ...) stays in
-## `sigmatch`.
+## that do *not* depend on the `Match` object.
+##
+## The explicit-generic-argument pipeline is split across three modules and is
+## the same for routine calls, explicit routine instantiation and type
+## instantiation:
+## - **sem** (`semLocalTypeImpl` with `AllowValues` at explicit generic-arg
+##   sites): semcheck each argument as a compile-time value or a type.
+## - **bind** (`sigmatch.matchExplicitGenericArg` / `staticValueToBind` /
+##   `bindStaticTypevar`, plus the `Match`-bound `foldValueExpr`): validate the
+##   sem'd argument against the parameter and canonicalize the bound value.
+## - **structural helpers** (this module): `Match`-free predicates such as
+##   `isStaticValue`, `staticValueType` and `staticValueTypeMatches`.
 
 import std/assertions
 include ".." / lib / nifprelude
@@ -25,12 +34,7 @@ proc isStaticTypevar*(s: SymId): bool =
   result = res.decl.symKind == StaticTypevarY
 
 proc sameStaticSymbol*(a, b: SymId): bool =
-  if a == b:
-    return true
-  let sa = pool.syms[a]
-  let sb = pool.syms[b]
-  result = isInstantiation(sa) and isInstantiation(sb) and
-    removeModule(sa) == removeModule(sb)
+  result = pool.symSameEntity(a, b)
 
 proc isStaticValue*(n: Cursor): bool =
   ## A canonical compile-time value as bound to a `staticTypevar`: a primitive
@@ -120,7 +124,7 @@ proc staticOpenArrayElemType*(t: Cursor): Cursor =
     inc depth
   if t.typeKind == InvokeT:
     inc t
-    if t.isSymbol and pool.syms[t.symId] == OpenArrayHeadName:
+    if t.isSymbol and pool.symString(t.symId) == OpenArrayHeadName:
       inc t
       result = t
   elif t.typeKind == VarargsT:

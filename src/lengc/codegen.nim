@@ -149,7 +149,7 @@ proc add*(c: var GeneratedCode; s: string) {.inline.} =
 
 type
   CppFile = object
-    buf: string  # write to buffer, then writeFileIfChanged at end
+    buf: string  # write to buffer, then to the file at the end
 
 proc write(f: var CppFile; s: string) = f.buf.add s
 proc write(f: var CppFile; c: char) = f.buf.add c
@@ -309,6 +309,11 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
       of ConstrefP:
         # A PARAMETER pragma; never legal on a proc.
         error c.m, "invalid proc pragma: ", n
+      of ImportjsP:
+        # The JS back end's extern: the argument is a JS splice template only
+        # jorogumo can answer. Ignoring it would emit a call to a C symbol that is
+        # never declared, so refuse while the name is still in hand.
+        errorAt c.m, "importjs is a JS-backend pragma and has no C lowering", n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.hasMore and n.kind == StrLit:
@@ -391,14 +396,13 @@ proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo;
     let lit = n.symId
     if {ImportcP, ImportcppP, ExportcP} * prag.flags != {}:
       if isProc and isBareImportProc(prag):
-        result = mangleToC(c.m.pool.syms[lit])
+        result = mangleToC(c.m.pool.symString(lit))
       elif prag.extern != StrId(0):
         result = c.m.pool.strings[prag.extern]
       else:
-        result = c.m.pool.syms[lit]
-        extractBasename(result)
+        result = c.m.pool.symBasename(lit)
     else:
-      result = mangleToC(c.m.pool.syms[lit])
+      result = mangleToC(c.m.pool.symString(lit))
     c.add result
   else:
     result = ""
@@ -724,8 +728,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       if prag.extern != StrId(0):
         asmName = c.m.pool.strings[prag.extern]
       else:
-        asmName = c.m.pool.syms[prc.name.symId]
-        extractBasename(asmName)
+        asmName = c.m.pool.symBasename(prc.name.symId)
       c.add " __asm__(NIM_ASM_PREFIX "
       c.add makeCString(asmName)
       c.add ")"
@@ -874,10 +877,9 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
 
-  if vfsExists(outp) and vfsRead(outp) == f.buf:
-    discard "unchanged, keep mtime for incremental builds"
-  else:
-    vfsWrite outp, f.buf
+  # Always written: the `.c` file is no interface file, its one consumer is
+  # this module's C compiler (doc/internals/ic.md).
+  vfsWrite outp, f.buf
 
   if c.headerFile.len > 0:
     let selectHeader = outp.changeFileExt(".h")

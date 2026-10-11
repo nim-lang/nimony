@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3628             )
+(.indexat 3618             )
 (stmts@,2,tests/nimony/nosystem/ttemplate.nim
  (type@2,1 :int.0.
   (i 64).
@@ -45,11 +45,11 @@
    (case@E e.0
     (of~C,1
      (ranges typeOfProc.0.)
-     (stmts
+     (scope
       (ret "typeOfProc")))
     (of~C,2
      (ranges typeOfIter.0.)
-     (stmts
+     (scope
       (ret "typeOfIter"))))
    (ret@2,2 result.0)))
  (proc@,E :typeof.0.@5
@@ -104,14 +104,12 @@
    (result@4 :result.1 . .
     (i@A,~5 64).@A,~5)
    (var@4 :x.5 . . string.0.sysvq0asl "abc"@4)
-   (asgn@7,1 result.1~7
-    (expr@N,~4
-     (add@2
-      (i~I,~2 64)4~I,4
-      (expr~2
-       (add@2
-        (i~I,~2 64)2~A,4 89~7,4)))))
-   (asgn@2,2 x.5~2 "34"@2)
+   (asgn@7,1 result.1
+    (add@P,~4
+     (i~I,~2 64)4~I,4
+     (add
+      (i~I,~2 64)2~A,4 89~7,4)))
+   (asgn@2,2 x.5 "34"@2)
    (ret@4,2 result.1)))
  (proc@,d :overloaded.0.@5 . . .
   (params@F). . .
@@ -120,8 +118,9 @@
     (i@A,~A 64)
     (add@D
      (i~3,~A 64)23@1 90@5))
-   (discard@,1
-    (call@8 foo.0.
+   (let@M :`x.0 . .
+    (i~3,~6 64)
+    (call~E,1 foo.0.
      (add@6
       (i@,~B 64)34~2 56@1)"xyz"@B))))
  (type@5,h :uint.0.
@@ -138,10 +137,10 @@
    (conv@1 T.3. x.4@1)))
  (glet@4,l :val.0. . .
   (i 64)123@6)
- (discard@,m
-  (expr@U,~3
-   (conv@1
-    (u~I,3 64)val.0.~C,3)))
+ (let@A,l :`x.1 . .
+  (u@3,1 64)
+  (conv@L,~2
+   (u~I,3 64)val.0.~C,3))
  (comment@F,E untyped.0. typedesc.0.@I int.0.@1,G int.0.@1,G int.0.~2,G int.0.@5,I int.0.@5,I int.0.~2,I int.0.~3,K int.0.@6,K int.0.@5,V int.0.@5,A float.0.@4,B plus.0.@8,M plus.0.@,M uint.0.~2,Y conv.0.@3,Y)
  (type@J,O :MyGeneric.0.Iu9y0wv. .
   (at MyGeneric.0.
@@ -179,10 +178,10 @@
  (x \2B.0. 165)
  (h plus.0. 170)
  (h foo.0. 183)
- (h overloaded.0. 434)
- (x uint.0. 228)
+ (h overloaded.0. 394)
+ (x uint.0. 251)
  (h conv.0. 66)
  (h@D,j T.3. 43)
  (h val.0. 127)
- (h MyGeneric.0.Iu9y0wv. 313)
+ (h MyGeneric.0.Iu9y0wv. 320)
  (h MyGeneric.0.I1hdb4b1. 136))

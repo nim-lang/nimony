@@ -5,3 +5,6 @@ proc test =
   dontTakeClosure(closureProc)
 
 test()
+
+proc takesOpenArray(a: openArray[int]; b: int) = discard
+takesOpenArray([1, 2], 3, 4)

@@ -17,6 +17,8 @@
 ## the incremental `MD5Context` (`md5Init` / `md5Update` / `md5Final`) for hashing
 ## data that arrives in pieces.
 
+{.feature: "staticContracts".}
+
 runnableExamples:
   # one-shot
   doAssert getMD5("abc") == "900150983cd24fb0d6963f7d28e17f72"
@@ -41,7 +43,7 @@ type
     state: array[4, uint32]   # running a0, b0, c0, d0
     length: uint64            # total number of bytes fed so far
     buffer: array[64, uint8]  # bytes of the current (partial) 64-byte block
-    bufLen: int               # how many bytes of `buffer` are in use (0 ..< 64)
+    bufLen: range[0..63]      # how many bytes of `buffer` are in use
 
 const
   Shift: array[64, int] = [
@@ -123,21 +125,25 @@ func md5Update*(c: var MD5Context, input: openArray[uint8]) =
   ## Feeds `input` into the running digest `c`.
   c.length = c.length + uint64(input.len)
   for i in 0 ..< input.len:
-    c.buffer[c.bufLen] = input[i]
-    inc c.bufLen
-    if c.bufLen == 64:
+    let at = c.bufLen
+    c.buffer[at] = input[i]
+    if at == 63:
       processBlock(c.state, c.buffer)
       c.bufLen = 0
+    else:
+      c.bufLen = at + 1
 
 func md5Update*(c: var MD5Context, input: string) =
   ## Feeds the bytes of `input` into the running digest `c`.
   c.length = c.length + uint64(input.len)
   for i in 0 ..< input.len:
-    c.buffer[c.bufLen] = cast[uint8](input[i])
-    inc c.bufLen
-    if c.bufLen == 64:
+    let at = c.bufLen
+    c.buffer[at] = cast[uint8](input[i])
+    if at == 63:
       processBlock(c.state, c.buffer)
       c.bufLen = 0
+    else:
+      c.bufLen = at + 1
 
 func md5Final*(c: var MD5Context, digest: var MD5Digest) =
   ## Finishes the digest computation for `c` and writes the 16-byte result into
@@ -147,17 +153,19 @@ func md5Final*(c: var MD5Context, digest: var MD5Digest) =
 
   # Padding: a single 0x80 byte, then zeros until 56 bytes into the final block,
   # then the original message length in bits as a little-endian uint64.
-  c.buffer[c.bufLen] = 0x80'u8
-  inc c.bufLen
-  if c.bufLen > 56:
-    while c.bufLen < 64:
-      c.buffer[c.bufLen] = 0'u8
-      inc c.bufLen
+  var n: int = c.bufLen
+  c.buffer[n] = 0x80'u8
+  inc n
+  if n > 56:
+    while n < 64:
+      c.buffer[n] = 0'u8
+      inc n
     processBlock(c.state, c.buffer)
-    c.bufLen = 0
-  while c.bufLen < 56:
-    c.buffer[c.bufLen] = 0'u8
-    inc c.bufLen
+    n = 0
+  while n < 56:
+    c.buffer[n] = 0'u8
+    inc n
+  c.bufLen = 0
   for i in 0 ..< 8:
     c.buffer[56 + i] = uint8((bitLen shr (8'u64 * uint64(i))) and 0xFF'u64)
   processBlock(c.state, c.buffer)

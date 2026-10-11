@@ -184,6 +184,59 @@ proc isStableAddrExpr(c: Cursor; deps: var seq[SymId]): bool =
   var op = child0(c)
   result = spine(op, deps)
 
+proc isPureValueExpr(c: Cursor): bool =
+  ## True for an expression whose evaluation has no effect and cannot fault:
+  ## symbols, literals, field reads of NAMED slots, conversions and non-trapping
+  ## arithmetic. False for a call, a `deref`/index (may fault), `div`/`mod` (may
+  ## trap), a constructor, an `ovf` — anything whose evaluation is itself an
+  ## observable event.
+  ##
+  ## What it buys: a store of such an expression to a local that nothing reads
+  ## can simply be deleted, and so can the local. That is ordinary dead-code
+  ## elimination, and it is what the specialized copies of an unswitched loop
+  ## need — the temp that fed the hoisted test is still computed once per
+  ## iteration and read nowhere, which is most of the cost the unswitch set out
+  ## to remove (`unswitch.nim`).
+  proc walk(n: var Cursor): bool =
+    case n.kind
+    of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit:
+      skip n
+      result = true
+    of TagLit:
+      case n.exprKind
+      of TrueC, FalseC, SufC, NilC:
+        skip n
+        result = true
+      of NotC, AndC, OrC, EqC, NeqC, LeC, LtC:
+        result = true
+        n.into:
+          while n.hasMore:
+            if not walk(n): result = false
+      of AddC, SubC, MulC, NegC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC,
+         ConvC, CastC:
+        # all of these carry their result TYPE as the first child
+        result = true
+        n.into:
+          if n.hasMore: skip n
+          while n.hasMore:
+            if not walk(n): result = false
+      of DotC:
+        # `(dot BASE field depth)` — a field read of a named slot; the base
+        # spine must be pure too, the selector and depth are metadata
+        result = true
+        n.into:
+          if n.hasMore:
+            if not walk(n): result = false
+          while n.hasMore: skip n
+      else:
+        skip n
+        result = false
+    else:
+      inc n
+      result = false
+  var n = c
+  result = walk(n)
+
 proc writtenRoot(c: Cursor): SymId =
   ## The local whose STORAGE this lvalue writes. A through-pointer store
   ## (`(*p).f = v`, `p[i] = v`) writes the pointee, not `p` — `p` is only
@@ -255,7 +308,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           writeSites: initTable[SymId, seq[int]](),
           names: initTable[SymId, string](),
           delCandidates: initTable[SymId, int](),
-          scopeDecls: @[@[]],
+          scopeDecls: @[newSeq[SymId]()],
           patchset: initPatchset(orig),
           synth: @[],
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags))
@@ -541,26 +594,22 @@ proc trVar(c: var Context; n: var Cursor) =
         # dead once all its reads are rewritten away (copy) or it was never
         # used (pure store). A snapshotted stable address is pure too.
         if initKind in LeafKinds or initKind == DotToken or
-           isLeafLit(initStart) or c.addrOf[nameSym] != 0:
+           isLeafLit(initStart) or c.addrOf[nameSym] != 0 or
+           isPureValueExpr(initStart):
           c.delCandidates[nameSym] = defPos
     while n.hasMore: skip n
 
 proc trAsgn(c: var Context; n: var Cursor) =
-  let isStore = n.stmtKind == StoreS
   let asgnPos = cursorToPosition(c.orig[], n)
-  var first, second = default(Cursor)
-  var haveFirst, haveSecond = false
+  # `asgn` is `(asgn dest src)`.
+  var lhs, rhs = default(Cursor)
+  var haveLhs, haveRhs = false
   n.into:
     if n.hasMore:
-      first = n; haveFirst = true; skip n
+      lhs = n; haveLhs = true; skip n
     if n.hasMore:
-      second = n; haveSecond = true; skip n
+      rhs = n; haveRhs = true; skip n
     while n.hasMore: skip n
-  # `asgn` is `(asgn dest src)`; `store` is `(store src dest)` (reversed).
-  let lhs = if isStore: second else: first
-  let rhs = if isStore: first else: second
-  let haveLhs = if isStore: haveSecond else: haveFirst
-  let haveRhs = if isStore: haveFirst else: haveSecond
   if haveRhs:
     var r = rhs
     trExpr(c, r)                         # propagate inside the value
@@ -575,7 +624,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
       if haveRhs:
         var depsIgnored: seq[SymId] = @[]
         if isLeafLit(rhs) or rhs.kind == Symbol or
-           isStableAddrExpr(rhs, depsIgnored):
+           isStableAddrExpr(rhs, depsIgnored) or isPureValueExpr(rhs):
           c.writeSites.mgetOrPut(dest, @[]).add asgnPos
         bindCopy(c, dest, rhs)
 
@@ -630,14 +679,11 @@ proc trCase(c: var Context; n: var Cursor) =
     closeBranches c
 
 proc collectWrites(start: Cursor; writes: var HashSet[SymId]) =
-  ## Storage root of every `asgn`/`store` target in the subtree at `start`.
+  ## Storage root of every `asgn` target in the subtree at `start`.
   ## Through-pointer stores do not count as writes to the pointer.
   if not start.hasMore or start.kind != TagLit: return
-  let sk = start.stmtKind
-  if sk in {AsgnS, StoreS}:
-    var lhs = child0(start)
-    if sk == StoreS: skip lhs            # dest is the 2nd child
-    let root = writtenRoot(lhs)
+  if start.stmtKind == AsgnS:
+    let root = writtenRoot(child0(start))
     if root != SymId(0): writes.incl root
   var n = start
   n.loopInto:
@@ -653,10 +699,7 @@ proc trLoopBody(c: var Context; n: var Cursor) =
       while n.hasMore: skip n
   of LoopS:
     n.into:
-      if n.hasMore: tr(c, n)             # before-cond
-      if n.hasMore: trExpr(c, n)         # cond
-      if n.hasMore: tr(c, n)             # body
-      if n.hasMore: tr(c, n)             # after
+      if n.hasMore: tr(c, n)             # body; the infinite loop has no cond
       while n.hasMore: skip n
   else:
     skip n
@@ -708,7 +751,7 @@ proc tr(c: var Context; n: var Cursor) =
   of TagLit:
     case n.stmtKind
     of VarS, GvarS, TvarS, ConstS: trVar(c, n)
-    of AsgnS, StoreS:              trAsgn(c, n)
+    of AsgnS:                      trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
     of IfS:                        trIf(c, n)
     of CaseS:                      trCase(c, n)
@@ -1010,20 +1053,15 @@ proc scanStab(c: var Context; sc: var StabScan; n: var Cursor) =
           else:
             scanStabExpr(c, sc, n)
         while n.hasMore: skip n
-    of AsgnS, StoreS:
-      let isStore = n.stmtKind == StoreS
-      var first, second = default(Cursor)
-      var haveFirst, haveSecond = false
+    of AsgnS:
+      var lhs, rhs = default(Cursor)
+      var haveLhs, haveRhs = false
       n.into:
         if n.hasMore:
-          first = n; haveFirst = true; skip n
+          lhs = n; haveLhs = true; skip n
         if n.hasMore:
-          second = n; haveSecond = true; skip n
+          rhs = n; haveRhs = true; skip n
         while n.hasMore: skip n
-      let lhs = if isStore: second else: first
-      let rhs = if isStore: first else: second
-      let haveLhs = if isStore: haveSecond else: haveFirst
-      let haveRhs = if isStore: haveFirst else: haveSecond
       var destSym = SymId(0)
       if haveLhs:
         if lhs.kind == Symbol:
@@ -1248,6 +1286,27 @@ when isMainModule:
     chk(
       "(stmts (var :t.0.M . . 5) (call side.0.M))",
       "(stmts . (call side.0.M))")
+
+  block dead_store_pure_expression_deleted:
+    # `var t; t = (x and 255)` with `t` never read: the shape a loop unswitch
+    # leaves behind once the test it fed was hoisted. Decl and store both go.
+    chk(
+      "(stmts (var :t.0.M . (u 64) .) " &
+      "(asgn t.0.M (bitand (u 64) x.0.M 255u)) (call side.0.M))",
+      "(stmts . . (call side.0.M))")
+
+  block dead_decl_pure_field_read_deleted:
+    # the same for a field read of a named slot, which is what the temp's own
+    # initializer is (`(dot b bytes 0)`)
+    chk(
+      "(stmts (var :t.0.M . (u 64) (dot b.0.M bytes.0.M 0)) (call side.0.M))",
+      "(stmts . (call side.0.M))")
+
+  block dead_store_keeps_faulting_expression:
+    # a `deref` can fault, so evaluating it is observable: not dead code
+    assertUnchanged(
+      "(stmts (var :t.0.M . (u 64) .) (asgn t.0.M (deref p.0.M)) " &
+      "(call side.0.M))")
 
   block dead_store_keeps_impure_binding:
     # var t = f() unused: the call's side effect must run, so it is kept.

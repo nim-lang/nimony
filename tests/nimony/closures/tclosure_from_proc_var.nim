@@ -39,7 +39,7 @@ proc main =
 
   # path B: the conversion happens on the argument of a `var` parameter and
   # the result is stored into a field
-  var o = default(Cb)
+  var o = Cb(accept: alwaysTrue)  # `accept` is not-nil: `default(Cb)` has no value for it
   wire(o, p)
   assert o.accept()
 

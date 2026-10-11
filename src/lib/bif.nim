@@ -155,7 +155,7 @@ proc findDeclaration*(module: var BifModule; name: string): Cursor =
   ## Returns the indexed declaration for ``name``, or a nil cursor when absent.
   result = default(Cursor)
   for entry in module.index:
-    if poolSym(module.buf.pool, entry.sym) == name:
+    if symString(module.buf.pool, entry.sym) == name:
       return module.buf.cursorAt(entry.pos)
 
 iterator declarations*(module: var BifModule):
@@ -164,7 +164,7 @@ iterator declarations*(module: var BifModule):
   # installs the buffer's cursor owner (a refcount write).
   ## Iterates all indexed global declarations in storage order.
   for entry in module.index:
-    yield (poolSym(module.buf.pool, entry.sym), entry.vis,
+    yield (symString(module.buf.pool, entry.sym), entry.vis,
       module.buf.cursorAt(entry.pos))
 
 proc isGlobalSymbol(s, dottedSuffix: string): bool =
@@ -353,7 +353,7 @@ proc storeToString*(b: var TokenBuf; dottedSuffix = ""): string =
   # pools, each in id order (ids are 1-based, dense up to len).
   for i in 1 .. b.tags.tags.len:      appendStr(result, b.tags.tags[TagId(i)])
   for i in 1 .. b.pool.strings.len:   appendStr(result, b.pool.strings[StrId(i)])
-  for i in 1 .. b.pool.syms.len:      appendStr(result, b.pool.syms[SymId(i)])
+  for i in 1 .. b.pool.syms.len:      appendStr(result, b.pool.symString(SymId(i)))
   for i in 1 .. b.pool.filenames.len: appendStr(result, b.pool.filenames[FileId(i)])
   # symbol index — self-contained at the offset we now know. `pos` is a token
   # index (always >= 0) and `vis` a 0/1 enum, so plain varints suffice.
@@ -496,7 +496,8 @@ proc loadFromFile*(f: File): BifModule =
   # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(readStr(f))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(readStr(f))
-  for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(readStr(f))
+  for _ in 1 .. nSyms:
+    discard result.buf.pool.symbols.addOrdered(symRecord(result.buf.pool, readStr(f)))
   for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(readStr(f))
   # symbol index (we are now positioned exactly at indexOffset).
   result.index = readIndex(f)
@@ -580,7 +581,8 @@ proc load*(filename: string): BifModule =
   # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(rStr(r))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(rStr(r))
-  for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(rStr(r))
+  for _ in 1 .. nSyms:
+    discard result.buf.pool.symbols.addOrdered(symRecord(result.buf.pool, rStr(r)))
   for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(rStr(r))
   # symbol index (we are now positioned exactly at indexOffset).
   let nIndex = int rVarint(r)
@@ -645,7 +647,7 @@ proc buildRemap*(src: var TokenBuf; pool: Pool; tags: TagPool): PoolRemap =
   let nSyms = src.pool.syms.len
   result.syms = newSeq[SymId](nSyms + 1)
   for i in 1 .. nSyms:
-    let id = pool.syms.getOrIncl(src.pool.syms[SymId(i)])
+    let id = pool.symId(src.pool.symString(SymId(i)))
     result.syms[i] = id
     if uint32(id) != uint32(i): result.identity = false
   let nFiles = src.pool.filenames.len
@@ -943,12 +945,12 @@ when isMainModule:
     doAssert m.index.len == 2, "expected 2 global syms, got " & $m.index.len
     # entry 0: foo, exported; its pos points at the enclosing (sdef tag.
     let e0 = m.index[0]
-    doAssert m.buf.pool.syms[e0.sym] == "foo.3.mymod"
+    doAssert m.buf.pool.symString(e0.sym) == "foo.3.mymod"
     doAssert e0.vis == ivExported
     var c = cursorAt(m.buf, int e0.pos)
     doAssert c.kind == TagLit and m.buf.tags.tagName(c.cursorTagId) == "sdef"
     # entry 1: bar, hidden.
-    doAssert m.buf.pool.syms[m.index[1].sym] == "bar.4.mymod"
+    doAssert m.buf.pool.symString(m.index[1].sym) == "bar.4.mymod"
     doAssert m.index[1].vis == ivHidden
 
     let foo = m.findDeclaration("foo.3.mymod")
@@ -1008,7 +1010,7 @@ when isMainModule:
     let tags = newTagPool()
     discard tags.registerTag("unrelated")
     discard pool.strings.getOrIncl("some other string")
-    discard pool.syms.getOrIncl("prior.symbol.0.othermod")
+    discard pool.symId("prior.symbol.0.othermod")
     for i in 0 ..< 200: discard pool.filenames.getOrIncl("file" & $i & ".nim")
 
     var m = loadInto(tmp, pool, tags)
@@ -1031,7 +1033,7 @@ when isMainModule:
     # ids, so `SymId` equality is a valid identity test against anything else
     # interned there.
     doAssert m.index.len == 1, "expected 1 global sym, got " & $m.index.len
-    doAssert m.index[0].sym == pool.syms.getOrIncl("foo.3.mymod")
+    doAssert m.index[0].sym == pool.symId("foo.3.mymod")
     doAssert m.index[0].vis == ivExported
     var decl = cursorAt(m.buf, int m.index[0].pos)
     doAssert decl.kind == TagLit and tags.tags[decl.cursorTagId] == "sdef",
@@ -1058,7 +1060,7 @@ when isMainModule:
     doAssert uint32(firstSymUse(m)) != 0'u32
     doAssert firstSymUse(m) == firstSymUse(m2),
              "the shared symbol got different SymIds in two modules"
-    doAssert firstSymUse(m) == pool.syms.getOrIncl("shared.1.othermod")
+    doAssert firstSymUse(m) == pool.symId("shared.1.othermod")
     # …and the tag pools agree too, which is what makes `cursorTagId` castable.
     doAssert m2.buf.tags == tags
     # Guard against a vacuous comparator: two genuinely different modules must
@@ -1088,7 +1090,7 @@ when isMainModule:
     # out a token block that dies with the temporary buffer.
     let pool2 = newPool()
     let tags2 = newTagPool()
-    discard pool2.syms.getOrIncl("prior.symbol.0.othermod")   # force a rewrite
+    discard pool2.symId("prior.symbol.0.othermod")   # force a rewrite
     var ff = open(tmp, fmRead)
     var fm = loadFromFileInto(ff, pool2, tags2)
     close(ff)
@@ -1097,6 +1099,6 @@ when isMainModule:
     doAssert sameTree(a, b), "loadFromFileInto disagrees with loadInto"
     a.endRead()
     b.endRead()
-    doAssert fm.index[0].sym == pool2.syms.getOrIncl("foo.3.mymod")
+    doAssert fm.index[0].sym == pool2.symId("foo.3.mymod")
 
   echo "bif self-tests passed"

@@ -102,7 +102,7 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
       skip n
       genStmtLLVM c, n
       if isLast:
-        let labelName = mangleToC(c.m.pool.syms[vflag])
+        let labelName = mangleToC(c.m.pool.symString(vflag))
         c.setLoc(iteInfo)
         c.emit LLInstr(kind: llBr, brTarget: labelName)
         discard c.startBlock(labelName)
@@ -170,23 +170,16 @@ proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
     while n.hasMore: skip n
 
 proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
+  ## `(loop body)`: infinite, left only by a `break`/`jmp` inside the body.
   let loopInfo = n.info
   n.into:
     let headerLabel = c.nextLabel()
-    let bodyLabel = c.nextLabel()
     let endLabel = c.nextLabel()
 
     c.setLoc(loopInfo)
     c.emit LLInstr(kind: llBr, brTarget: headerLabel)
     discard c.startBlock(headerLabel)
 
-    genStmtLLVM c, n
-    var cond = LLValue(); genCondLLVM(c, n, cond)
-    c.setLoc(loopInfo)
-    c.emit LLInstr(kind: llCondBr, condBrCond: cond,
-                   condBrTrue: bodyLabel, condBrFalse: endLabel)
-
-    discard c.startBlock(bodyLabel)
     c.currentProc.breakStack.add endLabel
     genStmtLLVM c, n
     discard c.currentProc.breakStack.pop()
@@ -326,7 +319,7 @@ proc genLabelLLVM(c: var LLVMCode; n: var Cursor) =
   let labelInfo = n.info
   n.into:
     if n.kind == SymbolDef:
-      let name = mangleToC(c.m.pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.symString(n.symId))
       if not c.currentProc.needsTerminator:
         c.setLoc(labelInfo)
         c.emit LLInstr(kind: llBr, brTarget: name)
@@ -340,7 +333,7 @@ proc genGotoLLVM(c: var LLVMCode; n: var Cursor) =
   let gotoInfo = n.info
   n.into:
     if n.kind == Symbol:
-      let name = mangleToC(c.m.pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.symString(n.symId))
       c.setLoc(gotoInfo)
       c.emit LLInstr(kind: llBr, brTarget: name)
       c.currentProc.needsTerminator = true
@@ -361,7 +354,7 @@ proc genMflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
     if n.kind == SymbolDef:
       let s = n.symId
       c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
-      let name = mangleToC(c.m.pool.syms[s])
+      let name = mangleToC(c.m.pool.symString(s))
       c.emitAlloca(name, c.prim.i8)
       c.emitStore(llIntTextC("0", c.prim.i8), llReg(name, c.prim.ptrT))
       inc n
@@ -389,23 +382,12 @@ proc genJtrueLLVM(c: var LLVMCode; n: var Cursor) =
         error c.m, "virtual flag not declared: ", n
       inc n
       if not n.hasMore:
-        let name = mangleToC(c.m.pool.syms[s])
+        let name = mangleToC(c.m.pool.symString(s))
         c.setLoc(jtrueInfo)
         c.emit LLInstr(kind: llBr, brTarget: name)
         c.currentProc.needsTerminator = true
     else:
       error c.m, "expected Symbol but got: ", n
-
-proc genStoreLLVM(c: var LLVMCode; n: var Cursor) =
-  let storeInfo = n.info
-  n.into:
-    var rhs = n
-    skip n
-    var target = LLValue(); genLvalueLLVM(c, n, target)
-    var val = LLValue(); genExprLLVM(c, rhs, val)
-    c.setLoc(storeInfo)
-    c.emitStore(val, target)
-    while n.hasMore: skip n
 
 proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
   let ovfInfo = n.info
@@ -512,7 +494,7 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
       inc n
     else:
       error c.m, "expected statement but got: ", n
-  of StmtsS:
+  of StmtsS, AlwaysS:
     n.loopInto:
       genStmtLLVM(c, n)
       if c.currentProc.needsTerminator:
@@ -558,8 +540,6 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
       c.setLoc(asgnInfo)
       c.emitStore(rval, lval)
       while n.hasMore: skip n
-  of StoreS:
-    genStoreLLVM c, n
   of IfS:
     genIfLLVM c, n
   of IteS, ItecS:

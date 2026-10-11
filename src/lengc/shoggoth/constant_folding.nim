@@ -235,9 +235,9 @@ when isMainModule:
     runConstantFolding buf
     assertRender(buf, before)
 
-  discard pool.syms.getOrIncl("x.0.M")
-  discard pool.syms.getOrIncl("y.0.M")
-  discard pool.syms.getOrIncl("use.0.M")
+  discard pool.symId("x.0.M")
+  discard pool.symId("y.0.M")
+  discard pool.symId("use.0.M")
 
   block add_two_literals:
     var buf = parse("(stmts (asgn x.0.M (add (i 32) 2 3)))")

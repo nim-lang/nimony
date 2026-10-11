@@ -23,3 +23,5 @@ proc main() =
 
 main()
 echo p.reactors.len
+
+{.feature: "assumeSync".}  # test program: globals shared freely

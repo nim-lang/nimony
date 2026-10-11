@@ -12,9 +12,11 @@ way they are.
 
 Implementation points:
 
-- `src/njvl/finalir.nim` — the lowering to the structured control-flow form
-  (`loop`/`ite`/`lab`/`jmp`). Currently reached from `src/nimony/contracts_fir.nim`
-  (contract and nil analysis), not yet from the backend pipeline.
+- `src/finalir/finalir.nim` — the lowering to the structured control-flow form
+  (`loop`/`ite`/`lab`/`jmp`). It runs in nimsem, as the module's last step
+  (`semmain.lowerAndProve`): the contract and nil analysis
+  (`src/nimony/contracts_fir.nim`) reads its output, and that same buffer is
+  what nimsem publishes, so the whole backend starts from it.
 - `src/hexer/xelim.nim` — the `Goal` enum; `TowardsFinalIr` is the mode
   `finalir.nim` runs `lowerExprs` in.
 - `src/hexer/pipeline.nim` — the backend pass order.
@@ -52,6 +54,45 @@ expression is evaluated once per iteration of" (rule 2).
 
 That rule is the whole point. It is what lets a pass that needs a temporary
 *emit a statement* instead of fabricating one inside an expression.
+
+## `assume`
+
+`(assume <cond>)` is a statement the lowering vouches for: it asserts nothing
+and checks nothing, it only tells the contract analysis something it could not
+have worked out on its own. One producer exists today — `forRangeAssumes` in
+`finalir.nim`.
+
+The reason it has to exist: an *inline* iterator is not inlined until hexer's
+`elimForLoops`, long after `contracts_fir` runs, so the Final IR for a `for`
+loop is a `(loop …)` that says nothing about the loop variable — it is not even
+declared there. The iterator's `.ensures` does say something, and it is exactly
+what the body needs:
+
+```nim
+iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
+    ensures: (a <= result and result < b).}
+```
+
+`trFor` substitutes the loop variable for `result` and the arguments for the
+parameters, and emits one `(assume …)` per conjunct at the head of the loop
+body (one per conjunct because the fact engine models a single comparison; a
+conjunction as one opaque condition contributes nothing). Without it the most
+ordinary contract in the language — `s[i]` under `for i in 0 ..< s.len` — could
+not be discharged at compile time.
+
+A conjunct that does not fit the grammar the substitution rebuilds is dropped
+rather than approximated, and an `assume` the analysis cannot model contributes
+no fact: an assumption is a statement of what holds, not an obligation, so
+losing one costs precision and nothing else.
+
+Two consequences of the same "not inlined yet" fact are worth knowing:
+
+* Nothing jumps out of that `(loop …)`, so `trLoopFromBody` emits no exit
+  label and **everything after such a loop is unreachable** as far as the Final
+  IR is concerned. Analyses must not report on a dead path: the join that
+  follows one keeps both arms of the next `if`, so contradictory facts hold at
+  once there.
+* The loop variable has no declaration to attach an init-state to.
 
 ## Why `xelim` used to run three times
 
@@ -219,24 +260,48 @@ clears it".
 ## Current pipeline
 
 ```
-desugar → lambdalift → xelim1 → eraiser → duplifier → destroyer → cps →
-vtables → constparams → xelim_final
+nimsem: … → derefs → finalir → contracts → <published module nif>
+hexer:  iterinliner → desugar → lambdalift → eraiser → duplifier →
+        destroyer → cps → vtables → constparams → xelim_final → lengcgen
 ```
 
-- **`xelim1`** establishes the normal form. It is the only pass that
-  *creates* it.
+Every pass from `finalir` on reads and writes the Final IR, `lengcgen`
+included: it spells `ite` as a Leng `if` and `loop` as `while true` (dropping
+the trailing back-edge), because Leng's back ends and optimizer passes speak
+those. Nimony `if`/`while`/`block`/`break` reaching it is a bug. Two producers
+are not hexer passes proper and get the lowering by other means: the lifter
+runs in `nimsem` too and so emits Nimony IR, and `pipeline.transform` lowers
+its hooks with `toFinalIr`; an `{.assembler.}` body is taken verbatim except
+that its `if`s are spelled `ite` (`finalir.trAsmStmt`).
+
+- **`finalir`** establishes the normal form (it runs `xelim` in
+  `TowardsFinalIr` mode). It is the only pass that *creates* it, and it runs
+  in nimsem: a module is published lowered. A body that is re-sem'd elsewhere
+  — a generic routine, a template — is published as sem left it.
 - **`eraiser`** (`src/hexer/eraiser.nim`) emits the `canRaise` temp and its
-  `if failed(tmp): raise tmp` check as statements. It moved *behind* `xelim1`
-  in the process: it used to run first precisely because it needed a repair
-  pass after it.
+  `ite failed(tmp): raise tmp` check as statements.
 - **`duplifier`** (`src/hexer/duplifier.nim`) does the same for its owning
   temps — `bindToTemp`/`finishOwningTemp`, `trNewobj`'s decl + OOM check +
   payload assignment, and `genLastRead`'s bitcopy + `=wasMoved`.
+- **`mover`** (`src/hexer/mover.nim`), the last-read analysis the duplifier
+  asks before it sinks a value, is the one *analysis* in the backend and it
+  reads the Final IR directly. It used to translate the module into
+  `controlflow.nim`'s goto form first, which then had to be mapped back: a
+  `srcMap` side-channel threaded through every buffer the CF builder moved or
+  truncated, plus an inverted index to find the query expression again in the
+  copy. All three are gone. What the goto form supplied — "what runs next" —
+  now comes from one `parents` array (token position → enclosing tag) and a
+  `(lab L)` table, both built once per module: `ite` forks, `loop` closes the
+  back-edge, `jmp` is one lookup because it is forward and scoped. Reasoning
+  on the same tree the duplifier rewrites also closes the gap the `AndX`/`OrX`
+  note in `xelim.isComplex` describes, where the two forms could disagree
+  about evaluation order.
 - **`xelim_final`** is *not* a repair pass. `LowerCasts` performs two real
   lowerings: it unnests calls (the Final-IR "calls are unnested statements"
   rule) and binds a cast's source and result to variables, which the NIFC
   backends require. It does still flatten `vtables`/`constparams` temps as a
-  side effect — see *Remaining work*.
+  side effect — see *Remaining work*. The `and`/`or` it materializes are
+  spelled `ite` here, `if` in the `TowardsFinalIr` run (`openIfElse`).
 
 `xelim2` is gone.
 

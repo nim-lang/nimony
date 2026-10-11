@@ -68,8 +68,7 @@ proc countInheritedFieldNames(objType: Cursor; counts: var Table[string, int]; d
     var f = n
     inc f # skip fld/gfld tag
     if f.isSymbolDef:
-      var name = pool.syms[f.symId]
-      extractBasename(name)
+      var name = pool.symBasename(f.symId)
       counts[name] = counts.getOrDefault(name, 0) + 1
     skip n # advance past this whole field
   if not baseType.isDotToken:
@@ -205,7 +204,7 @@ proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: NifLineInfo
     dest.addDotToken() # value
   publish c, dest, result, declStart
 
-proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor)
+proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = InLocalDecl)
 
 type
   ConceptParent = object
@@ -227,7 +226,11 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     # An ambiguous name (e.g. a concept redeclared next to `system`'s) sems to a
     # symbol choice, not a symbol: report the redeclaration instead of the
     # misleading "can only inherit from other concepts" (nim-lang/nimony#2260).
-    let ambiguous = parentType.exprKind in {CchoiceX, OchoiceX}
+    # (The name lookup reports the ambiguity as an error around the choice.)
+    var ambiguous = parentType.exprKind in {CchoiceX, OchoiceX}
+    if parentType.exprKind == ErrX:
+      let choice = parentType.childCursor
+      ambiguous = choice.exprKind in {CchoiceX, OchoiceX}
     dest.shrink before
     hadError = true
     if ambiguous:
@@ -488,122 +491,12 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
   var m = cursorAt(typeBuf, 0)
   semLocalTypeImpl c, dest, m, InLocalDecl
 
-proc isEnumFieldSym(n: Cursor): bool =
-  ## An enum field symbol is the canonical typed value of its enum type
-  ## (`annotateOrdinal` maps an ordinal back to exactly this symbol), so it is
-  ## accepted verbatim as a value argument rather than folded to a bare ordinal
-  ## (which would lose the enum type and fail re-checking).
-  if n.kind != Symbol: return false
-  let res = tryLoadSym(n.symId)
-  result = res.status == LacksNothing and res.decl.symKind == EfldY
-
-proc isStaticValue(n: Cursor): bool =
-  ## a canonical compile-time value as bound to a `staticTypevar`: a primitive
-  ## literal, an enum field, or a typed aggregate constructor (array/set/tuple/
-  ## object) whose elements are themselves static.
-  case n.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
-    result = true
-  of Symbol:
-    result = isEnumFieldSym(n)
-  of TagLit:
-    case n.exprKind
-    of FalseX, TrueX, SufX:
-      result = true
-    of AconstrX, SetconstrX, TupconstrX, OconstrX:
-      var elem = n
-      elem = sub(elem) # bound the element walk
-      skip elem # type
-      result = true
-      while elem.hasMore:
-        if elem.substructureKind in {KvU, RangeU}:
-          elem = sub(elem)
-          skip elem # key or range start
-          if not isStaticValue(elem):
-            result = false
-            break
-          skip elem
-          if not elem.hasMore:
-            break
-          inc elem
-        else:
-          if not isStaticValue(elem):
-            result = false
-            break
-          skip elem
-    else:
-      result = false
-  else:
-    result = false
-
-proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                        elemType: Cursor; info: NifLineInfo): bool =
-  ## Sem a generic argument bound to a value (`static`) parameter: an ordinary
-  ## expression of the parameter's element type that must either be a
-  ## compile-time constant or still symbolic (when used inside another
-  ## generic). Constant expressions are folded here, so `Matrix[2 + 3, T]`
-  ## and `Matrix[5, T]` produce the same instance.
-  result = true
-  var phase = SemcheckBodies
-  swap c.phase, phase
-  let start = dest.len
-  var it = Item(n: n, typ: elemType)
-  semExpr c, dest, it
-  swap c.phase, phase
-  n = it.n
-  var value = cursorAt(dest, start)
-  if isStaticValue(value) or containsGenericParams(value):
-    # a canonical constant already, or still symbolic: the latter is checked
-    # again when the enclosing generic is instantiated
-    discard
-  else:
-    var value2 = value
-    # `keepEnumFields`: an enum `const` alias folds to its field symbol (the
-    # canonical typed value) instead of collapsing to a bare ordinal, so
-    # `Box[someEnumConst]` canonicalizes like `Box[theLiteralField]`.
-    var folded = evalExpr(c, value2, keepEnumFields = true)
-    let f = beginRead(folded)
-    if isStaticValue(f):
-      dest.shrink start
-      dest.addSubtree f
-    else:
-      dest.shrink start
-      c.buildErr dest, info, "argument for a `static` generic parameter must be a constant expression"
-      result = false
-
-proc clearMissingConstraints(m: var Match) =
-  m.missingConstraints.clear()
-
-proc constraintMismatchMsg(m: var Match; constraint, arg: Cursor): string =
-  result = typeExprToString(arg) & " does not match constraint " & typeToString(constraint)
-  for key, _ in m.missingConstraints:
-    result.add "\nmissing: " & key
-
-proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = InLocalDecl) =
   let typeStart = dest.len
   let info = n.info
   dest.addParLe(n.cursorTagId, n.info) # copy `at`
   let invokeStart = n
   n = sub(n)
-  if n.isSymbol and isRoutineSym(n.symId):
-    # A routine in the head is not a generic type instantiation: it is a plugin
-    # call that `deferPluginCall` parked here, because `(at …)` is the only
-    # unresolved type application a type slot accepts. The arguments have been
-    # substituted by now, so put the call back together and let the ordinary
-    # expression path drive the plugin again — including a second deferral,
-    # which lands back here.
-    dest.shrink typeStart
-    var callBuf = createTokenBuf(16)
-    callBuf.addParLe(CallX, info)
-    while n.hasMore:
-      callBuf.addSubtree n
-      skip n
-    callBuf.addParRi()
-    n = invokeStart; skip n
-    var call = beginRead(callBuf)
-    semTypeExpr c, dest, call, InLocalDecl, info
-    endRead call
-    return
   semLocalTypeImpl c, dest, n, InInvokeHead
 
   var headId: SymId = SymId(0)
@@ -636,60 +529,42 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     else:
       c.buildErr dest, info, "cannot attempt to instantiate a non-type"
 
-  var params = default(Cursor)
-  if ok:
-    # only a generic type has a `(typevars ...)` list to walk; `ok` already
-    # implies it, whereas `decl.kind == TypeY` also holds for a concrete type
-    # like `Foo` in `Foo[T]`, whose `typevars` is a DotToken (#2440).
-    params = decl.typevars
-    params = sub(params) # bound the parameter walk
+  # One walk over the generic parameters: sem each explicit argument as a
+  # compile-time value or a type (`AllowValues`), bind/validate it exactly like
+  # an explicit routine instantiation does, and emit its canonical (folded)
+  # form. Only a generic type has parameters to walk; `ok` already implies it,
+  # whereas `decl.kind == TypeY` also holds for a concrete type like `Foo` in
+  # `Foo[T]`, whose `typevars` is a DotToken (#2440).
   var paramCount = 0
   var argCount = 0
   var m = createMatch(addr c)
   let usedTypevarsInitial = c.usedTypevars
   let beforeArgs = dest.len
+  if ok:
+    for (v, kind, elemType) in genericParams(headId):
+      inc paramCount
+      if n.hasMore:
+        inc argCount
+        var argBuf = createTokenBuf(16)
+        semLocalTypeImpl c, argBuf, n, AllowValues
+        if not m.err:
+          matchExplicitGenericArg m, v, kind, elemType, beginRead(argBuf)
+          if not m.err: dest.addSubtree m.inferred.getOrQuit(v)
   while n.hasMore:
     inc argCount
-    let argInfo = n.info
-    var tvKind = NoSym
-    var constraint = default(Cursor)
-    var haveParam = false
-    if cursorIsNil(params) or not params.hasMore:
-      # will error later from param/arg count not matching
-      discard
-    else:
-      inc paramCount
-      haveParam = true
-      tvKind = params.symKind
-      constraint = takeLocal(params, SkipFinalParRi).typ
-    var argBuf = createTokenBuf(16)
-    var addArg = true
-    if tvKind == StaticTypevarY:
-      # the parameter is a *value*: the argument is an ordinary constant
-      # expression of the parameter's element type, not a type
-      if not semStaticInvokeArg(c, argBuf, n, constraint, argInfo):
-        ok = false
-    else:
-      semLocalTypeImpl c, argBuf, n, AllowValues
-      if haveParam and not constraint.isDotToken:
-        var arg = beginRead(argBuf)
-        let argSnap = cursorAt(argBuf, 0)
-        var constraintMatch = constraint
-        clearMissingConstraints(m)
-        if not matchesConstraint(m, constraintMatch, arg):
-          c.buildErr dest, argInfo, constraintMismatchMsg(m, constraint, argSnap), argSnap
-          ok = false
-          addArg = false
-    if addArg:
-      dest.add argBuf
-  let usedTypevarsFinal = c.usedTypevars
-  let isConcrete = usedTypevarsInitial == usedTypevarsFinal # no generic params were used
+    semLocalTypeImpl c, dest, n, AllowValues
+  let isConcrete = usedTypevarsInitial == c.usedTypevars # no generic params were used
+
   dest.addParRi(n.endInfo)
   n = invokeStart; skip n
   if ok and paramCount != argCount:
     dest.shrink typeStart
-    c.buildErr dest, info, "wrong amount of generic parameters for type " & pool.syms[headId] &
+    c.buildErr dest, info, "wrong amount of generic parameters for type " & pool.symString(headId) &
       ", expected " & $paramCount & " but got " & $argCount
+    return
+  if m.err:
+    dest.shrink typeStart
+    c.buildErr dest, m.errorInfo, genericArgErrorMsg(m)
     return
 
   if ok and (isConcrete or
@@ -737,6 +612,33 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     assert sym.name != SymId(0)
     semTypeSym c, dest, sym, info, typeStart, InLocalDecl
 
+proc isSymbolicLength(n: Cursor): bool =
+  ## In an `array` index slot that still mentions generic parameters, tell a
+  ## symbolic *length* (`array[N, T]` for `N: static[int]`, `array[2*N, T]`)
+  ## apart from an unresolved index *type* (`array[I, T]`). Only a length may
+  ## be turned into a range type here; a type has to be left alone so that
+  ## instantiation can derive its own `low(I) .. high(I)` bounds.
+  var n = n
+  if n.exprKind == ExprX and isPureTypeValueExpr(n):
+    n = typeValueExpr(n)
+  case n.kind
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    result = res.status == LacksNothing and res.decl.symKind == StaticTypevarY
+  of TagLit:
+    if n.typeKind == PluginCallT:
+      # a deferred plugin call: only the template's declared return type says
+      # whether it stands for a length or for an index type
+      var head = n
+      inc head # tag
+      result = head.isSymbol and not pluginReturnsType(head.symId)
+    else:
+      # a type in tag form -- `(at Generic T)` included -- has a type kind; an
+      # arithmetic expression such as `(mul (i 64) 2 N)` has not.
+      result = n.typeKind == NoType
+  else:
+    result = false
+
 proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   dest.addParLe(n.cursorTagId, n.info)
@@ -775,8 +677,28 @@ proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
         dest.addIntLit(last, index.info)
       dest.addParRi()
     elif containsGenericParams(index):
-      # unresolved types are left alone
-      dest.addSubtree index
+      if isSymbolicLength(index):
+        # A length that is still symbolic. Canonicalize it to `0 .. len-1` right
+        # here so that the generic form of the array has the same *shape* as
+        # every instance of it. Leaving the bare length in the index slot puts a
+        # value where every consumer expects a type -- `system.high` is declared
+        # as `high[I, T](x: array[I, T]): I`, so `I` would bind to `N` and the
+        # result type of `high(a.elems)` would be a value, not a type
+        # (nim-lang/nimony#2485). The bounds are folded when the type is
+        # instantiated, exactly like the `range[0..N-1]` that `addRangeBound`
+        # already keeps symbolic.
+        dest.addParLe(RangetypeT, info)
+        dest.addSubtree c.types.intType
+        dest.addIntLit 0, info
+        dest.addParLe(SubX, info)
+        dest.addSubtree c.types.intType
+        dest.addSubtree index
+        dest.addIntLit 1, info
+        dest.addParRi()
+        dest.addParRi()
+      else:
+        # unresolved index types are left alone
+        dest.addSubtree index
     elif index.typeKind != NoType:
       c.buildErr dest, index.info, "invalid array index type: " & typeToString(index)
     else:
@@ -950,9 +872,11 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         stripNilAnnotation dest, before
         dest.addParPair annotation, info
         dest.addParRi()
-      elif nd.typeKind == ProctypeT:
+      elif nd.typeKind in {ProctypeT, ItertypeT}:
         discard
-        # Slot 0 of `(proctype <NilTag> ...)` is the nilability marker. Set
+        # Slot 0 of `(proctype <NilTag> ...)` is the nilability marker, and
+        # `(itertype ...)` has the same head (doc/tags.md), so `nil iterator
+        # (): int` is spelled the same way `nil proc ()` is. Set
         # it directly — it's either a placeholder dot inserted by
         # `semLocalTypeImpl` or a marker we now overwrite with `annotation`.
         # The head (and the placeholder dot) may carry line-info suffix
@@ -995,7 +919,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   case n.kind
   of Ident:
     let start = dest.len
-    let s = semIdent(c, dest, n, {})
+    let s = semIdent(c, dest, n, {PreferTypes})
     semTypeSym c, dest, s, info, start, context
   of Symbol:
     let start = dest.len
@@ -1009,7 +933,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let xkind = exprKind(n)
       if xkind == QuotedX:
         let start = dest.len
-        let s = semQuoted(c, dest, n, {})
+        let s = semQuoted(c, dest, n, {PreferTypes})
         semTypeSym c, dest, s, info, start, context
       elif xkind == ParX:
         let parStart = n
@@ -1263,7 +1187,18 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semParams c, dest, n
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
+      let beforePragmas = dest.len
       semPragmas c, dest, n, crucial, ProcY
+      if tk == ItertypeT and AutoClosuresFeature in c.features and
+          {ClosureP, PassiveP} * crucial.flags == {}:
+        # Under `autoclosures`, `iterator(): T` means the closure-iterator
+        # type. Writing the pragma out here is what makes the two spellings the
+        # same TREE — every `procHasPragma(typ, ClosureP)` downstream (typenav's
+        # closure projection, hexer's `isClosure`, the iter-value trampoline)
+        # tests for it, and none of them should have to know about the feature.
+        # Without the feature the annotation is required, as for proc types
+        # (doc/language.md, "Closures").
+        addImpliedClosurePragma c, dest, beforePragmas, info
       var hasNilSuffix = false
       if isTypeForm and not sourceIsNewLayout:
         var n2 = n
@@ -1295,7 +1230,18 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       dest.addParRi(n.endInfo)
       n = routineStart; skip n
     of InvokeT:
-      semInvoke c, dest, n
+      semInvoke c, dest, n, context
+    of PluginCallT:
+      # A deferred plugin call in a TYPE slot. `context` is forwarded so a
+      # value-returning plugin deferred into a value-allowing slot (an
+      # `array[binomial(N, K), T]` length, say) re-checks under `AllowValues`
+      # and its ordinal result is accepted as a length rather than misread as
+      # an (invalid) index type.
+      let info = n.info
+      var callBuf = pluginCallToCall(n, info)
+      var call = beginRead(callBuf)
+      semTypeExpr c, dest, call, context, info
+      endRead call
     of ErrT, ClosureTupleT:
       # `ClosureTupleT` is a hexer-internal lowering and never reaches sem.
       takeTree dest, n

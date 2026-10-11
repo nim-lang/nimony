@@ -13,6 +13,7 @@
 ## symbol it just uncovered.
 
 import plugins
+import typetraits_render
 
 const
   # Child slots of a `(type :Name <export> <typevars> <pragmas> <body>)` decl.
@@ -146,6 +147,11 @@ proc tr(n: NifCursor; defs: NifCursor): NifBuilder =
         result.addSubtree arg
       else:
         result = errorTree("'genericHead' expects an instantiated generic type", n)
+  of "name", "$":
+    var ty = arg
+    let s = renderTypeName(defs, ty)
+    result = createTree()
+    result.addStrLit s
   else:
     result = errorTree("unknown type trait: '" & trait & "'", n)
 

@@ -16,16 +16,18 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
+import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
 
 type
   Goal* = enum
-    ElimExprs    # normal mode: eliminate expressions
     LowerCasts   # lower cast expressions: bind both source and result to variables
     TowardsFinalIr # goal mode: prepare for the Final IR (doc/final_ir.md).
-                   # Calls bind to locations, and `and`/`or` are lowered to the
-                   # label/jump-friendly if-with-bool-temp form (`trAnd`/`trOr`).
-                   # Final IR never introduces a single cfvar.
+                   # Calls bind to locations. A short-circuit condition is
+                   # lowered exactly as in the other goals: a pure one is handed
+                   # on as an `and`/`or` tree, one with calls in its operands
+                   # becomes `(jmp)`/`(lab)` (`trCondJump`). Final IR never
+                   # introduces a single cfvar.
 
 proc isComplex(n: Cursor; goal: Goal): bool =
   var n = n
@@ -63,7 +65,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
       # never had this problem precisely because they are complex in *every*
       # goal, so they are already statements by the time the duplifier looks.
       result = true
-    elif goal in {LowerCasts, TowardsFinalIr} and n.exprKind in CallKinds:
+    elif n.exprKind in CallKinds:
       result = true
     else:
       result = false
@@ -81,8 +83,7 @@ type
     ## Where the value of the expression `trExpr` is translating should go.
     ## `IsLabel` is the control-flow mode: it compiles a short-circuit condition
     ## against a jump target rather than materialising it into a bool slot (the
-    ## two-target condition compiler `Cx`, below). Selected by goal, see
-    ## `CondJumpGoals`.
+    ## two-target condition compiler `Cx`, below), see `wantsCondJumps`.
     m: Mode
     t: TokenBuf
     lab: SymId        ## `IsLabel`: transfer to this label…
@@ -94,12 +95,19 @@ type
     thisModuleSuffix: string
     goal: Goal
 
+proc initTarget(m: Mode): Target {.inline.} =
+  ## Every `Target` buffer is bound to the global pools up front: a `Target`
+  ## left at `default` would reach the builders with no tag pool.
+  Target(m: m, t: initTokenBuf())
+
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
 proc tempSymName(c: var Context): string {.inline.} =
-  result = "`x." & $c.counter
+  # Separate prefixes: the `LowerCasts` run in hexer sees the temps nimsem's
+  # run already published with the module and must not reuse their names.
+  result = (if c.goal == LowerCasts: "`xc." else: "`x.") & $c.counter
   inc c.counter
 
 proc getType(c: var Context; n: Cursor): Cursor =
@@ -110,7 +118,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info
   let typ = getType(c, n)
   let s = tempSymName(c)
-  result = pool.syms.getOrIncl(s)
+  result = pool.symId(s)
   copyIntoKind dest, VarS, info:
     dest.addSymDef result, info
     dest.addDotToken() # export, pragmas
@@ -120,7 +128,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
 
 proc declareTempBool(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
   let s = tempSymName(c)
-  result = pool.syms.getOrIncl(s)
+  result = pool.symId(s)
   copyIntoKind dest, VarS, info:
     dest.addSymDef result, info
     dest.addDotToken() # export, pragmas
@@ -132,13 +140,19 @@ proc addTarget(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
 
 proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
-  var tar = Target(m: IsEmpty)
+  var tar = initTarget(IsEmpty)
   let typ = getType(c, n)
   let info = n.info
     # Capture before `trExpr` advances past the expression — when the
     # input is a standalone buffer (e.g. the hoisted RHS of `and`/`or`
     # short-circuit lowering) `n` lands at end-of-buffer and reading
     # `n.info` afterwards would assert in `nifcursors.load`.
+  if typ.typeKind == VoidT and n.stmtKind == StmtsS:
+    # A branch without a value (it ends in `return`/`raise`) is a statement
+    # list: lowering it as an expression would let a nested void `if` switch
+    # the shared target to `IsIgnored` for its successors (#2612).
+    trStmt c, dest, n
+    return
   trExpr c, dest, n, tar
 
   if typ.typeKind in {VoidT, AutoT}:
@@ -218,6 +232,32 @@ proc hoistDeclsFromExprX(tc: var TypeCache; outerDest, transformed: var TokenBuf
         transformed.addParRi(n.endInfo)  # closing `)` of stmts
     transformed.addParRi(n.endInfo)      # closing `)` of expr
 
+proc openIfElse(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+  ## `if cond: A else: B`: a Nimony `if` for `TowardsFinalIr`, an `ite` for
+  ## `LowerCasts` (which runs on the Final IR). The caller emits `cond`, then
+  ## `openThen`, `A`, `openElse`, `B`, `closeIfElse`.
+  if c.goal == LowerCasts:
+    dest.addParLe IteV, info
+  else:
+    dest.addParLe IfS, info
+    dest.addParLe ElifU, info
+
+proc openThen(dest: var TokenBuf; info: NifLineInfo) =
+  dest.addParLe StmtsS, info
+
+proc openElse(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+  dest.addParRi() # then
+  if c.goal != LowerCasts:
+    dest.addParRi() # elif
+    dest.addParLe ElseU, info
+  dest.addParLe StmtsS, info
+
+proc closeIfElse(c: var Context; dest: var TokenBuf) =
+  dest.addParRi() # else stmts
+  if c.goal != LowerCasts:
+    dest.addParRi() # else
+  dest.addParRi() # if/ite
+
 proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if isComplex(n, c.goal):
     # `x or y`  <=> `if x: true else: y` <=> `if x: tmp = true else: tmp = y`
@@ -225,7 +265,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     var tmp = declareTempBool(c, dest, info)
     n.into:
 
-      var aa = Target(m: IsEmpty)
+      var aa = initTarget(IsEmpty)
       trExpr c, dest, n, aa
       # Hoist any leading let/var decls in the RHS's stmt-list-expr to outer
       # scope so they remain visible after the `or` lowering — same idea as
@@ -233,16 +273,15 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       var rhs = createTokenBuf(16)
       hoistDeclsFromExprX(c.typeCache, dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
       var rhsCursor = beginRead(rhs)
-      copyIntoKind dest, IfS, info:
-        copyIntoKind dest, ElifU, info:
-          dest.addTarget aa                # if x
-          copyIntoKind dest, StmtsS, info:
-            copyIntoKind dest, AsgnS, info: # tmp = true
-              dest.addSymUse tmp, info
-              copyIntoKind dest, TrueX, info: discard
-        copyIntoKind dest, ElseU, info:
-          copyIntoKind dest, StmtsS, info:
-            trExprInto c, dest, rhsCursor, tmp # tmp = y
+      openIfElse c, dest, info
+      dest.addTarget aa                  # if x
+      openThen dest, info
+      copyIntoKind dest, AsgnS, info:    # tmp = true
+        dest.addSymUse tmp, info
+        copyIntoKind dest, TrueX, info: discard
+      openElse c, dest, info
+      trExprInto c, dest, rhsCursor, tmp # tmp = y
+      closeIfElse c, dest
       tar.t.addSymUse tmp, info
   else:
     copyInto tar.t, n:
@@ -256,7 +295,7 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     var tmp = declareTempBool(c, dest, info)
     n.into:
 
-      var aa = Target(m: IsEmpty)
+      var aa = initTarget(IsEmpty)
       trExpr c, dest, n, aa
       # Hoist any `let`/`var` decls that live inside the RHS's stmt-list-expr
       # to the outer `dest` (alongside `tmp`) so they remain in scope for the
@@ -266,17 +305,15 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       var rhs = createTokenBuf(16)
       hoistDeclsFromExprX(c.typeCache, dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
       var rhsCursor = beginRead(rhs)
-      copyIntoKind dest, IfS, info:
-        copyIntoKind dest, ElifU, info:
-          dest.addTarget aa                # if x
-          copyIntoKind dest, StmtsS, info:
-            trExprInto c, dest, rhsCursor, tmp # tmp = y
-        copyIntoKind dest, ElseU, info:
-          copyIntoKind dest, StmtsS, info:
-            # tmp = false
-            copyIntoKind dest, AsgnS, info:
-              dest.addSymUse tmp, info
-              copyIntoKind dest, FalseX, info: discard
+      openIfElse c, dest, info
+      dest.addTarget aa                  # if x
+      openThen dest, info
+      trExprInto c, dest, rhsCursor, tmp # tmp = y
+      openElse c, dest, info
+      copyIntoKind dest, AsgnS, info:    # tmp = false
+        dest.addSymUse tmp, info
+        copyIntoKind dest, FalseX, info: discard
+      closeIfElse c, dest
       tar.t.addSymUse tmp, info
   else:
     copyInto tar.t, n:
@@ -295,21 +332,16 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
   tar.t.addParRi()
 
 proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  ## Bind a *call* in a value-position of an aggregate to a fresh cursor temp
+  ## Bind a *call* in a value-position of an aggregate to a fresh temp
   ## so the call evaluates at a deterministic textual point relative to
   ## sibling pre-statements (e.g. a sibling's `wasMoved`). Non-call
   ## expressions are pure reads and are passed through to `trExpr`
   ## unchanged.
   ##
-  ## **The temp is a `cursor`, not a `let`.** The aggregate constructor
-  ## that immediately consumes this temp is the rightful owner of the
-  ## call result; declaring the temp as `let` would tell the destroyer
-  ## to inject `=destroy(tmp)` at scope end, which double-frees the
-  ## value already moved into the aggregate (the aggregate's field has
-  ## the only live owning reference). Cursor semantics: the temp is a
-  ## non-owning view that goes out of scope without cleanup, which is
-  ## exactly what xelim needs here. Surfaced 2026-05-01 by self-host
-  ## debugging — see `bug_self_host_nifconfig_destroy.md`.
+  ## **The temp is a `let`, not a `cursor`: it owns the call's result.** The
+  ## duplifier runs later and only moves out of an owning location, so the
+  ## aggregate's read (the last one) becomes a move; a cursor would get a
+  ## `=dup` and leak the call's result.
   if n.kind != TagLit or n.exprKind notin CallKinds:
     trExpr c, dest, n, tar
     return
@@ -317,11 +349,11 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   let info = n.info
   let typ = getType(c, n)
 
-  var childTar = Target(m: IsBound)
+  var childTar = initTarget(IsBound)
   trExpr c, dest, n, childTar
 
-  let tmp = pool.syms.getOrIncl(tempSymName(c))
-  dest.addParLe CursorS, info
+  let tmp = pool.symId(tempSymName(c))
+  dest.addParLe LetS, info
   dest.addSymDef tmp, info
   dest.addEmpty2 info  # export marker, pragmas
   dest.copyTree typ
@@ -396,7 +428,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
     tar.t.addParRi()
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if tar.m in {IsAppend, IsEmpty} and c.goal in {LowerCasts, TowardsFinalIr}:
+  if tar.m in {IsAppend, IsEmpty}:
     # bind to a temporary variable:
     let info = n.info
     let typ = getType(c, n)
@@ -409,14 +441,14 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     # Process the call into a temporary buffer so that any nested let
     # declarations are emitted before this one starts:
     var nestedDest = createTokenBuf(30)
-    var callTarget = Target(m: IsBound)
+    var callTarget = initTarget(IsBound)
     trExprLoop c, nestedDest, n, callTarget
 
     # Emit nested statements first
     dest.add nestedDest
 
     # Now create the let binding for this call
-    let tmp = pool.syms.getOrIncl(tempSymName(c))
+    let tmp = pool.symId(tempSymName(c))
     # `call() = 4` via a `var T` cannot be bound to a let variable
     # as the analysis in constracts_njvl is too simplistic.
     # It would produce: "Cannot reassign a let variable".
@@ -442,7 +474,7 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
 
 proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # IMPORTANT: Stores into `tar` helper!
-  var tar = Target(m: IsAppend)
+  var tar = initTarget(IsAppend)
   tar.t.copyInto n:
     while n.hasMore:
       trExpr c, dest, n, tar
@@ -482,10 +514,10 @@ proc condNodeSafe(n: Cursor): bool =
     result = true
 
 const
-  CondPassthroughGoals = {ElimExprs, TowardsFinalIr, LowerCasts}
-    ## Goals whose consumer compiles a condition with a *two-target* condition
-    ## compiler, i.e. can turn `a and b` straight into branches. finalir has
-    ## `Cx`; NIFC has C's `&&`/`||` (gcc) and arkham's `emitCondE` (native).
+  CondPassthroughGoals = {TowardsFinalIr, LowerCasts}
+    ## Every goal: their consumers turn `a and b` straight into branches.
+    ## finalir has `Cx`; NIFC has C's `&&`/`||` (gcc) and arkham's `emitCondE`
+    ## (native).
     ## For those, materialising a bool here is pure loss: `assert p != nil and
     ## rem > 0` became a temp + an if/else diamond + a re-test — ~90 NIFC tokens
     ## and 9 x86 instructions where two compare-and-branches suffice. It also
@@ -497,9 +529,10 @@ proc condPassthroughSafe(n: Cursor): bool =
   ## and *pure* leaves that finalir can emit inline — no calls and no
   ## statement-expressions with actual statements. Such a tree is handed to
   ## finalir verbatim so its two-target condition compiler (Cx) can lower it to
-  ## shared `(lab)`/`(jmp)` merges (linear). A subtree with a call in a leaf must
-  ## instead keep the bool-temp lowering here, because short-circuit evaluation
-  ## requires the call to be hoisted *into* the branch, which Cx does not do.
+  ## shared `(lab)`/`(jmp)` merges (linear). A subtree with a call in a leaf is
+  ## lowered to those jumps here instead (`trCondJump`), because short-circuit
+  ## evaluation requires the call to be hoisted *into* the branch, which a
+  ## consumer handed the bare tree cannot do.
   if n.kind != TagLit: return false
   result = condNodeSafe(n)
 
@@ -527,12 +560,14 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
     dest.takeTree n
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## An `if`/`while` condition that `wantsCondJumps` left alone: either there is
+  ## no short-circuit on its spine, or the spine is pure enough to hand on as a
+  ## tree. A short-circuit spine with a call in an operand never reaches here —
+  ## it is compiled against jump targets instead (`trIfFlat`, `trWhile`).
   assert tar.m == IsEmpty
   if n.exprKind in {AndX, OrX, NotX, ExprX} and c.goal in CondPassthroughGoals and
      condPassthroughSafe(n):
-    # Hand the short-circuit tree to the backend untouched. This has to happen
-    # in the FIRST xelim run too (`ElimExprs`): the later `LowerCasts` run never
-    # sees an `and`, because xelim1 has already turned it into a bool temp.
+    # Hand the short-circuit tree to the backend untouched.
     # Safe for the passes in between (duplifier/destroyer) precisely because
     # `condPassthroughSafe` admits no calls and no statement-expressions, so
     # there is nothing for the mover to sink into the wrong branch — the case
@@ -545,38 +580,6 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     # tree with no `and` inside copies verbatim, which is what the fall-through
     # did anyway.
     takeStrippingTrivialExpr(tar.t, n)
-    return
-  if c.goal in {LowerCasts, TowardsFinalIr}:
-    case n.exprKind
-    of AndX:
-      if c.goal in CondPassthroughGoals and condPassthroughSafe(n):
-        takeStrippingTrivialExpr(tar.t, n)
-      else:
-        trAnd c, dest, n, tar
-    of OrX:
-      if c.goal in CondPassthroughGoals and condPassthroughSafe(n):
-        takeStrippingTrivialExpr(tar.t, n)
-      else:
-        trOr c, dest, n, tar
-    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
-       InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
-       CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
-       ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
-       LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
-       PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX,
-       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX,
-       BaseobjX, HconvX, DconvX, CallstrlitX, InfixX, PrefixX,
-       HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
-       InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
-       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
-       DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
-       Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
-       MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
-       InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
-       SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
-      trExpr c, dest, n, tar
   else:
     trExpr c, dest, n, tar
 
@@ -632,7 +635,7 @@ proc mayBindToTemp(n: Cursor): bool =
 # ---------------------------------------------------------------------------
 
 proc freshLabel(c: var Context): SymId =
-  result = pool.syms.getOrIncl("`L." & $c.counter)
+  result = pool.symId("`L." & $c.counter)
   inc c.counter
 
 proc addJmp(dest: var TokenBuf; lab: SymId; info: NifLineInfo) =
@@ -666,20 +669,19 @@ proc condSpineHasShortCircuit(n: Cursor): bool =
   else:
     result = false
 
-const
-  CondJumpGoals = {ElimExprs, LowerCasts}
-    ## Goals whose consumer is the ordinary hexer→Leng pipeline.
-    ## `TowardsFinalIr` is excluded because `finalir.nim` carries its own
-    ## condition compiler and wants the `and`/`or` tree.
-
 proc wantsCondJumps(c: Context; n: Cursor): bool =
   ## `Cx` is for exactly the conditions that used to materialise a bool: a
-  ## short-circuit spine that the backend cannot take verbatim. A spine of pure
-  ## leaves still goes to the backend as `(and …)`/`(or …)` — C's `&&`/`||` and
-  ## arkham's `emitCondE` compile it to the same branches without growing the
-  ## function past the inliner's token budget (see `CondPassthroughGoals`).
-  c.goal in CondJumpGoals and
-    condSpineHasShortCircuit(n) and
+  ## short-circuit spine that the consumer cannot take verbatim. A spine of pure
+  ## leaves still goes on as `(and …)`/`(or …)` — C's `&&`/`||`, arkham's
+  ## `emitCondE` and finalir's own `genCond` compile it to the same branches
+  ## without growing the function past the inliner's token budget (see
+  ## `CondPassthroughGoals`).
+  ##
+  ## Every goal, `TowardsFinalIr` included. Materialising the bool there was
+  ## worse than a lost optimization: the Final IR then tested a temp whose
+  ## meaning lived in the diamond that built it, and the contract analysis had
+  ## to pattern-match that diamond to get `if i >= 0 and i < s.len` back.
+  condSpineHasShortCircuit(n) and
     not (c.goal in CondPassthroughGoals and condPassthroughSafe(n))
 
 template trExprToLabel(c: var Context; dest: var TokenBuf; n: var Cursor;
@@ -688,8 +690,8 @@ template trExprToLabel(c: var Context; dest: var TokenBuf; n: var Cursor;
   ## transfer to `(lab labArg)` exactly when `n` evaluates to `jumpIfTrueArg`,
   ## and fall through otherwise. (The parameters carry the `Arg` suffix so they
   ## cannot shadow the `Target` field names in the constructor below.)
-  var labelTar = Target(m: IsLabel, lab: labArg, jumpIfTrue: jumpIfTrueArg,
-                        conditional: conditionalArg)
+  var labelTar = Target(m: IsLabel, t: initTokenBuf(), lab: labArg,
+                        jumpIfTrue: jumpIfTrueArg, conditional: conditionalArg)
   trExpr c, dest, n, labelTar
 
 proc trCondJump(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
@@ -754,7 +756,7 @@ proc trCondJump(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
   else:
     # leaf: its pre-statements land here, then the guarded transfer
     let leafStart = n
-    var t0 = Target(m: IsEmpty)
+    var t0 = initTarget(IsEmpty)
     var scoped = false
     if not conditional:
       # Always evaluated: emit exactly what the plain `trIf` path emitted.
@@ -930,7 +932,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       let info = n.info
       case n.substructureKind
       of ElifU:
-        var t0 = Target(m: IsEmpty)
+        var t0 = initTarget(IsEmpty)
         n.into:
           trCond c, dest, n, t0
 
@@ -975,7 +977,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   if tar.m != IsIgnored:
     tmp = declareTemp(c, dest, n)
 
-  var t0 = Target(m: IsEmpty)
+  var t0 = initTarget(IsEmpty)
   n.into:
     trExpr c, dest, n, t0
     dest.addParLe CaseS, info
@@ -1083,7 +1085,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
           addLab dest, bodyLab, info
           trStmt c, dest, n
         else:
-          var tar = Target(m: IsEmpty)
+          var tar = initTarget(IsEmpty)
           trCond c, dest, n, tar
           dest.copyIntoKind IfS, info:
             dest.copyIntoKind ElifU, info:
@@ -1094,21 +1096,48 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
                 dest.copyIntoKind BreakS, info:
                   dest.addDotToken()
     else:
-      var tar = Target(m: IsEmpty)
+      var tar = initTarget(IsEmpty)
       trExpr c, dest, n, tar
       dest.addTarget tar
       trStmt c, dest, n
+
+proc registerForVars(c: var Context; vars: Cursor) =
+  ## The loop variables of a `for`: bound by an iterator this pass cannot see,
+  ## so nothing else declares them for the type cache.
+  var vars = vars
+  if vars.substructureKind in {UnpackflatU, UnpacktupU}:
+    vars = sub(vars) # peek only, never left
+    while vars.hasMore:
+      registerForVars c, vars
+      skip vars
+  elif isLocal(vars.symKind):
+    let local = asLocal(vars)
+    c.typeCache.registerLocal(local.name.symId, vars.symKind, local.typ)
 
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let head = n.load()
   n.into:
-    var tar = Target(m: IsEmpty)
-    trExpr c, dest, n, tar # iterator call
+    var tar = initTarget(IsEmpty)
+    # Only the iterator call's arguments are lowered; the call itself stays so
+    # `elimForLoops` can tell which iterator the loop runs.
+    if n.exprKind == HderefX:
+      tar.m = IsAppend
+      tar.t.addParLe(n.cursorTagId, n.info)
+      n.into:
+        trExprLoop c, dest, n, tar
+      tar.t.addParRi()
+    elif n.exprKind in CallKinds:
+      trExprLoop c, dest, n, tar
+    else:
+      trExpr c, dest, n, tar
     dest.addParLe(head.tagId, info)
     dest.addTarget tar
+    c.typeCache.openScope()
+    registerForVars c, n
     takeTree dest, n # for loop variables
     trStmt c, dest, n
+    c.typeCache.closeScope()
     dest.addParRi(n.endInfo)
 
 proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1133,7 +1162,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeTree tmp, n # pragmas
     c.typeCache.registerLocal(name, kind, n)
     takeTree tmp, n # type
-    var v = Target(m: IsBound)
+    var v = initTarget(IsBound)
     trExpr c, dest, n, v
     tmp.addTarget v
   dest.add tmp
@@ -1176,14 +1205,35 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
   if tar.m != IsIgnored:
     tar.t.addSymUse tmp, n.endInfo # `n` is already past the block
 
+proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `(ite cond then else|.)` in the `LowerCasts` run: what the condition
+  ## needs goes in front of the `ite`.
+  let head = n
+  n.into:
+    var cond = initTarget(IsEmpty)
+    trExpr c, dest, n, cond
+    dest.addParLe(head.cursorTagId, head.info)
+    dest.addTarget cond
+    trStmt c, dest, n
+    if n.isDotToken:
+      dest.takeTree n
+    else:
+      trStmt c, dest, n
+    dest.addParRi()
+
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
     if n.exprKind == ExprX:
-      var tar = Target(m: IsEmpty)
+      var tar = initTarget(IsEmpty)
       trExpr c, dest, n, tar
       if tar.m == IsAppend:
         dest.addTarget tar
+    elif n.finalIrKind == IteV:
+      trIte c, dest, n
+    elif n.finalIrKind == LoopV:
+      copyInto(dest, n):
+        trStmt c, dest, n
     else:
       takeTree dest, n
   of PragmaxS:
@@ -1191,17 +1241,17 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n  # pragmas
       trStmt c, dest, n  # body
   of IfS, WhenS:
-    var tar = Target(m: IsIgnored)
+    var tar = initTarget(IsIgnored)
     trIf c, dest, n, tar
   of CaseS:
-    var tar = Target(m: IsIgnored)
+    var tar = initTarget(IsIgnored)
     trCase c, dest, n, tar
   of TryS:
-    var tar = Target(m: IsIgnored)
+    var tar = initTarget(IsIgnored)
     trTry c, dest, n, tar
 
   of RetS, RaiseS, YldS:
-    var tar = Target(m: IsEmpty)
+    var tar = initTarget(IsEmpty)
     let head = n
     n.into:
       trExpr c, dest, n, tar
@@ -1210,30 +1260,24 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
 
   of DiscardS:
+    # `discard x` becomes a temp bound to `x`; `discard .` stays as it is.
     let head = n
     n.into:
-      if c.goal in {LowerCasts, TowardsFinalIr}:
-        if n.isDotToken:
+      if n.isDotToken:
+        dest.copyIntoKind DiscardS, head.info:
           dest.takeTree n
-        else:
-          let typ = getType(c, n)
-          var tar = Target(m: IsBound)
-          trExpr c, dest, n, tar
-          # we must bind the result to a temporary variable!
-          let tmp = pool.syms.getOrIncl("`x." & $c.counter)
-          inc c.counter
-          let info = n.endInfo # the discard operand is consumed: `n` is at
-                               # the (possibly elided) close
-          dest.addParLe LetS, info
-          dest.addSymDef tmp, info
-          dest.addEmpty2 info # no export marker, no pragmas
-          dest.copyTree typ
-          dest.addTarget tar
-          dest.addParRi()
       else:
-        var tar = Target(m: IsEmpty)
+        let typ = getType(c, n)
+        var tar = initTarget(IsBound)
         trExpr c, dest, n, tar
-        dest.addParLe(head.cursorTagId, head.info)
+        # we must bind the result to a temporary variable!
+        let tmp = pool.symId(tempSymName(c))
+        let info = n.endInfo # the discard operand is consumed: `n` is at
+                             # the (possibly elided) close
+        dest.addParLe LetS, info
+        dest.addSymDef tmp, info
+        dest.addEmpty2 info # no export marker, no pragmas
+        dest.copyTree typ
         dest.addTarget tar
         dest.addParRi()
 
@@ -1247,7 +1291,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trStmtCall c, dest, n
   of AsgnS:
     # IMPORTANT: Stores into `tar` helper!
-    var tar = Target(m: IsAppend)
+    var tar = initTarget(IsAppend)
     # Peek at the LHS: if it is the `result` variable, do not extract a
     # call on the RHS to a temporary.  nj.nim's trAsgn handles the call
     # directly via trBoundExpr and emits the "was successful?" branching
@@ -1264,19 +1308,15 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       lhsIsResult = peek.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      if c.goal in {LowerCasts, TowardsFinalIr}:
-        if c.goal == TowardsFinalIr and lhsIsResult:
-          tar.m = IsBound
-        # else: tar.m stays IsAppend so trExprCall can bind
-        trExpr c, dest, n, tar
-      else:
+      if c.goal == TowardsFinalIr and lhsIsResult:
         tar.m = IsBound
-        trExpr c, dest, n, tar
+      # else: tar.m stays IsAppend so trExprCall can bind
+      trExpr c, dest, n, tar
     dest.addTarget tar
 
   of AsmS, DeferS:
     # IMPORTANT: Stores into `tar` helper!
-    var tar = Target(m: IsAppend)
+    var tar = initTarget(IsAppend)
     tar.t.copyInto n:
       while n.hasMore:
         trExpr c, dest, n, tar
@@ -1286,7 +1326,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ProcS, FuncS, MethodS, ConverterS, IteratorS:
     trProc c, dest, n
   of BlockS:
-    var tar = Target(m: IsIgnored)
+    var tar = initTarget(IsIgnored)
     trBlock c, dest, n, tar
   of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
      IncludeS, ImportS, FromimportS, ImportexceptS,
@@ -1302,7 +1342,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.hasMore:
         trStmt c, dest, n
     c.typeCache.closeScope()
-  of StmtsS, UnpackdeclS:
+  of StmtsS, AlwaysS, UnpackdeclS:
     copyInto(dest, n):
       while n.hasMore:
         trStmt c, dest, n
@@ -1335,7 +1375,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   let dtk = typeKind(destType)
   # Quick check: if dest is not a value type, skip getType on source entirely
   if dtk notin {IntT, UIntT, FloatT, CharT, BoolT}:
-    var srcTarget = Target(m: IsEmpty)
+    var srcTarget = initTarget(IsEmpty)
     trExpr c, dest, n, srcTarget
     n = castStart; skip n
     tar.t.addParLe CastX, info
@@ -1347,7 +1387,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   let srcType = getType(c, n)
   if not needsBitCast(destType, srcType):
     # Same-family cast (e.g. int-to-int) - use plain C cast
-    var srcTarget = Target(m: IsEmpty)
+    var srcTarget = initTarget(IsEmpty)
     trExpr c, dest, n, srcTarget
     n = castStart; skip n
     tar.t.addParLe CastX, info
@@ -1358,7 +1398,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
 
   # Cross-family value type cast (e.g. int↔float):
   # lower to copyMem(addr dest, addr src, sizeof(DstType))
-  var srcTarget = Target(m: IsEmpty)
+  var srcTarget = initTarget(IsEmpty)
   trExpr c, dest, n, srcTarget
   n = castStart; skip n
 
@@ -1368,7 +1408,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   if srcCur.kind == Symbol:
     srcSym = srcCur.symId
   else:
-    srcSym = pool.syms.getOrIncl(tempSymName(c))
+    srcSym = pool.symId(tempSymName(c))
     copyIntoKind dest, VarS, info:
       dest.addSymDef srcSym, info
       dest.addDotToken() # export marker
@@ -1378,7 +1418,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       dest.addTarget srcTarget # value
 
   # Create dest variable (uninitialized)
-  let dstSym = pool.syms.getOrIncl(tempSymName(c))
+  let dstSym = pool.symId(tempSymName(c))
   copyIntoKind dest, VarS, info:
     dest.addSymDef dstSym, info
     dest.addDotToken() # export marker
@@ -1388,7 +1428,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     dest.addDotToken() # no initializer
 
   # Emit: copyMem(addr dstSym, addr srcSym, sizeof(DstType))
-  let copyMemSym = pool.syms.getOrIncl("copyMem.0." & SystemModuleSuffix)
+  let copyMemSym = pool.symId("copyMem.0." & SystemModuleSuffix)
   copyIntoKind dest, CallX, info:
     dest.addSymUse copyMemSym, info
     dest.copyIntoKind AddrX, info:
@@ -1437,7 +1477,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trAggregate c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
        InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
+       SizeofX, CanFormCyclesX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
        BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
@@ -1445,12 +1485,13 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        AshrX, BaseobjX, HconvX, DconvX, CompilesX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX,
        TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
-       IsmainmoduleX, DefaultobjX, DefaulttupX,
+       IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
        DefaultdistinctX, Delay0X, SuspendX, DoX, ArratX, TupatX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
        LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
        WasmovedX, SinkhX, TraceX, InternalTypeNameX,
-       InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
+       InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX,
+       PluginCallX, NoExpr:
       # `if`/`case`/`try`/`block` bind their value to a temp unless the
       # target is `IsIgnored`. A void-typed one has no value to bind, and
       # `declareTemp` would emit `(var :tmp . . .)` with an empty type slot,
@@ -1474,7 +1515,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
          IteratorS, ConverterS, MethodS, MacroS, TemplateS,
          TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
-         ForS, WhileS, CoroforS, RetS, YldS, StmtsS, PragmasS,
+         ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
          PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
@@ -1510,14 +1551,11 @@ proc preRegisterRoutines(c: var Context; n: Cursor) =
           skip h
     skip it
 
-proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
+proc lowerExprs*(pass: var Pass; goal: Goal) =
   var n = pass.n  # Extract cursor locally
-  # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
-  # runs three times in `pipeline.transform` (xelim1, xelim2, xelim_final);
-  # restarting from 0 each time produces colliding `\`x.<n>` SymIds whose
-  # Lengc-emitted C names clash within a single function. `pool.syms.getOrIncl`
-  # is identity-by-name, so two semantically distinct temps would otherwise
-  # share an identifier.
+  # Inherit the temp counter via `pass.nextTemp`: `lowerExprs` runs for
+  # `finalir` and again as `xelim_final`, and restarting from 0 would mint
+  # colliding `\`x.<n>` names within one function.
   var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
@@ -1536,5 +1574,5 @@ when isMainModule:
   let n = setupProgram("debug.txt", "debug.out", owningBuf)
   # A standalone debug driver: no target, so the host's width is stated.
   var pass = initPass(move owningBuf, "main", "xelim", sizeof(int)*8)
-  lowerExprs(pass)
+  lowerExprs(pass, TowardsFinalIr)
   echo pass.dest.toString(false)

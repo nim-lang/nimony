@@ -341,8 +341,6 @@ typedef NU8 NU;
 #  else
 #    define NIM_THREADVAR __thread
 #  endif
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112 && !defined __STDC_NO_THREADS__
-#  define NIM_THREADVAR _Thread_local
 #elif defined _WIN32 && ( \
        defined _MSC_VER || \
        defined __ICL || \
@@ -355,6 +353,8 @@ typedef NU8 NU;
        defined __SUNPRO_C || \
        defined __xlC__
 #  define NIM_THREADVAR __thread
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112 && !defined __STDC_NO_THREADS__
+#  define NIM_THREADVAR _Thread_local
 #else
 #  error "Cannot define NIM_THREADVAR"
 #endif

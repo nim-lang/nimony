@@ -908,7 +908,7 @@ proc validateSemModule*(nifFile, sourceFile: string; grammar: TagGrammar;
                         dumpTrees = false): int =
   ## Runs every check over one semchecked module. Returns the number of errors
   ## (warnings do not affect the exit code).
-  var owningBuf = default(TokenBuf)
+  var owningBuf = initTokenBuf()
   var ctx = SemCheckContext(grammar: grammar, strict: strict, noColors: noColors,
                             dumpTrees: dumpTrees)
   ctx.m = openSemModule(nifFile, sourceFile, owningBuf)

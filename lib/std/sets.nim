@@ -17,6 +17,10 @@ func excl*[T: Keyable](s: var HashSet[T]; x: T) =
   ## Removes `x` from `s` if present.
   s.t[x] = false
 
+func clear*[T: Keyable](s: var HashSet[T]) =
+  ## Removes every element from `s`.
+  s.t.clear()
+
 func contains*[T: Keyable](s: HashSet[T]; x: T): bool =
   ## True if `x` is in `s`.
   s.t.getOrDefault(x)

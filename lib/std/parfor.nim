@@ -130,7 +130,7 @@ proc parWait*(j: var ParJoin; workload = MixedBound) =
       # the pool starts with. `std/ioring` installs the real backend poller into
       # `gReactor`, so calling `poolPollIo` here would silently never advance any
       # parked I/O and this loop would spin forever.
-      discard gReactor(0.cint)
+      discard reactorPoll(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## Hand a chunk runner's continuation to the worker pool. Re-exported so the

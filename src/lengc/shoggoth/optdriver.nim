@@ -17,15 +17,16 @@
 ## per-body passes (`induction_variables`, …) are still being ported and plug
 ## into `optimizeBody`, which is currently an identity stage.
 
-import std / [os, assertions, strutils, syncio, sets]
+import std / [os, assertions, strutils, syncio, sets, envvars]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
+import ".." / ".." / "lib" / lengiface       # writeLengInterface (`.oc.idx.nif`)
 import induction_variables                     # runInductionVariables (live pass)
 import cse                                     # runCSE + collectFunctionSummaries
 import scalarizer                              # runScalarize (object → field scalars / SROA)
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import unswitch                                # runUnswitch (loop unswitching)
-import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
+import imi_bridge                             # runImi/parseModule (inter-module inliner)
 import vectorizer                             # runVectorizer (map loops -> (instr ...))
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
@@ -33,7 +34,9 @@ import tailcalls                              # runTailCalls (the tail-call enco
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
 
-const ArithRules = staticRead("rules/arith.rewrite.nif")
+include ".." / ".." / "lib" / compat2          # onRaiseQuit
+
+const ArithRules = slurp("rules/arith.rewrite.nif")
 
 let disabledPasses = block:
   ## `SHOGGOTH_DISABLE=rewrite,cse,…` turns individual optimization passes off.
@@ -84,12 +87,15 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   params: Cursor = default(Cursor); eng: Engine = nil;
                   vecMode = vecOff) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
-  ## are ported. The suffix is made unique per body (`st.bodies` is the body's
-  ## index in the module): the passes name synthesized temps `<kind>.<n>.<suffix>`
-  ## with a per-body counter, so without a per-body suffix two procs' first temps
-  ## would collide on one module-pool symbol and the C codegen — which declares
-  ## each symbol once — would leave later functions' uses undeclared.
-  let bodySuffix = suffix & "." & $st.bodies
+  ## are ported.
+  ##
+  ## The temps these passes mint are LOCALS of the body, so they are named like
+  ## locals -- `` `sroa.1 ``, `` `cse.1 `` -- and two bodies' first temps do
+  ## share a pool symbol. That is what a local name IS: every proc in the module
+  ## already has its own `result.0`, and both backends scope a local to its
+  ## function. This used to paste a per-body `<module>.<n>` after the counter to
+  ## avoid the sharing, which made the module suffix a MIDDLE segment of the
+  ## symbol (nimony#2457) -- a global's spelling for something that is not one.
   # The structural rewriter runs FIRST so its `deref_addr` rules fold the
   # inliner's by-address residue — `inc i` splices as `(deref (haddr i))` — before
   # anything else looks at the body. Removing those `addr` nodes un-poisons the
@@ -102,31 +108,41 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # propagation then cleans up the resulting scalar copies and dead stores, so the
   # later passes see simpler, scalar code.
   if passOn("ctorproj"): runConstructorProjection(buf)
-  if passOn("scalarize"): runScalarize(buf, bodySuffix, m)
+  if passOn("scalarize"): runScalarize(buf, m)
   if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
   # Hoist loop-invariant `if` conditions out of small loops by duplicating them
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
   # of per character. AFTER copyprop so propagated copies make structurally
   # identical conditions actually identical.
-  if passOn("unswitch"): runUnswitch(buf, bodySuffix)
+  if passOn("unswitch") and runUnswitch(buf) > 0 and passOn("copyprop"):
+    # A specialized copy no longer READS the temps that fed the hoisted test —
+    # but it still computes them, once per iteration, which is most of what the
+    # unswitch was meant to remove. Copy propagation's dead-store elimination is
+    # what actually deletes them, so it has to see the loop again. They come in
+    # CHAINS (`x = bytes and 255` over `bytes = b.bytes`) and one round only
+    # deletes the last link, so run until the body stops shrinking.
+    for _ in 0 ..< 3:
+      let before = buf.len
+      runCopyProp(buf, params, summaries, m)
+      if buf.len >= before: break
   # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
   # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
   # after those substitutions actually fold. Cheap: the DFA walk is linear
   # and a miss is a no-op.
   if eng != nil and passOn("rewrite"):
     runRewritesFix(eng, buf)
-  if passOn("indvars"): runInductionVariables(buf, bodySuffix, m)
+  if passOn("indvars"): runInductionVariables(buf, m)
   # CSE also deletes index checks a dominating identical check already made:
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
   if passOn("cse"):
-    st.checksRemoved += runCSE(buf, bodySuffix, summaries, m, params)
+    st.checksRemoved += runCSE(buf, summaries, m, params)
   # The vectorizer runs last of the passes that OPTIMIZE: its emitted
   # `(instr ...)` applications are final (selection-final by the tag's contract)
   # and no later pass needs to look at them; the scalar remainder loop it leaves
   # behind was already optimized by everything above. Only the encoding passes
   # below follow it, and they rewrite `ret`s, which it never emits.
   if vecMode != vecOff and passOn("vectorize"):
-    if runVectorizer(buf, bodySuffix, "vec." & suffix):
+    if runVectorizer(buf, "vec." & suffix):
       inc st.vectorized
   # The tail-call encoding runs after EVERYTHING, the vectorizer included.
   # `(ret (call …))` deliberately violates the Leng rule that calls are bound and
@@ -230,25 +246,32 @@ proc processFile*(input, output: string; verify = false;
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
   var st = Stats()
-  # 1. Whole-module inter-module inlining runs first, in the nifcursors world
-  #    (via the bridge); the result comes back as a NIF string.
+  # 1. Whole-module inter-module inlining runs first (via the bridge, which
+  #    owns the nifpools surface the inliner is written against).
   var imiChanged = false
-  let imiNif =
-    if passOn("imi"): runImi(input, suffix, splitFile(input).dir, imiChanged)
-    else: readFile(input)
+  var src = block:
+    var inlined =
+      if passOn("imi"): runImi(input, suffix, splitFile(input).dir, imiChanged)
+      else: parseModule(input)
+    # The inliner works on dense line info; the per-body passes were calibrated
+    # on the sparse form a plain parse stores (unswitch bounds loops in raw
+    # tokens, suffixes included), and CSE's temp order follows token positions.
+    # An in-memory copy keeps them seeing exactly the tokens they always saw.
+    withSparseLineInfo(inlined)
   if imiChanged: inc st.intermodChanged
-  # 2. Load the module as a typenav context (for type-precise aliasing), and
-  #    reparse the (post-inlining) body into nifcore SHARING that context's pool
-  #    so symbol ids line up between the type context and the optimization buffer.
-  var typeCtx = load(input)
-  var src = parseFromBuffer(imiNif, suffix, 4000,
-                            sharedPool = typeCtx.pool, sharedTags = typeCtx.tags)
+  # 2. Load the module as a typenav context (for type-precise aliasing), in the
+  #    SAME pools as `src`, so symbol ids line up between the type context and
+  #    the optimization buffer. This used to serialize the inliner's result to
+  #    NIF text and re-parse it into the context's pools: on `sem.nim` that
+  #    round trip was 9.7 % of the whole run.
+  var typeCtx = load(input, src.pool, src.tags)
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
   var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode)
   checkWellFormed(optimized)
-  writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
+  onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
+  onRaiseQuit writeLengInterface(optimized, output)
   if verify:
     var back = parseFromFile(output, 4000, sharedTags = createLengTagPool())
     checkWellFormed(back)

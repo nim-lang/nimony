@@ -110,3 +110,5 @@ proc main =
   report "sizeof"
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

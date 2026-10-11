@@ -18,13 +18,17 @@
 ## entirely — `nifreader.Reader` already provides `jumpTo`/`offset`, and the
 ## embedded index is read at the raw-token level with no pool involvement.
 
+when defined(nimony):
+  # `TypeScope.parent` is a nilable linked list: the outermost scope has none.
+  {.feature: "lenientnils".}
+
 import std / [assertions, tables, syncio] # syncio: `quit`
 from std / os import fileExists           # NOT a whole `os` import: it exports a
                                           # `FileId` that collides with nifcore's
 import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
 import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
 import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
-import ".." / "lib" / symparser             # splitSymName, splitModulePath, basename
+import ".." / "lib" / symparser             # splitModulePath
 import ".." / "lib" / foreignmodules         # shared lazy loader (ForeignModule)
 import ".." / "lib" / bif                    # binary NIF: isBifFile probe + load
 import noptions                              # ConfigRef
@@ -65,21 +69,22 @@ type
     prog: NifProgram
     requestedForeignSyms*: seq[Cursor]
 
-proc loadForeign(c: var MainModule; s: SplittedSymName): Cursor =
+proc loadForeign(c: var MainModule; s: SymId): Cursor =
   ## Resolve a foreign symbol's declaration through the shared `ForeignModule`
   ## lazy loader: open (and cache) the owning module, then jump to the symbol's
   ## indexed offset and parse just that one decl. The cursor stays valid because
   ## the `ForeignModule` owns the per-decl buffer.
-  if s.module == "":
-    raiseAssert "Cannot lookup declaration without module name: " & s.name
+  let module = c.pool.symModule(s)
+  if module == "":
+    raiseAssert "Cannot lookup declaration without module name: " & c.pool.symString(s)
   var m: ForeignModule
-  if c.prog.mods.hasKey(s.module):
-    m = getOrQuit(c.prog.mods, s.module)
+  if c.prog.mods.hasKey(module):
+    m = getOrQuit(c.prog.mods, module)
   else:
-    c.prog.scheme.name = s.module
+    c.prog.scheme.name = module
     m = openForeignModule($c.prog.scheme)
-    c.prog.mods[s.module] = m
-  let key = $s
+    c.prog.mods[module] = m
+  let key = c.pool.symString(s)
   if not hasDecl(m, key):
     raiseAssert "Symbol not found in NIF module: " & key
   result = getDecl(m, key, c.tags, c.pool)   # share the main module's pool (SymId-keyed)
@@ -96,9 +101,7 @@ proc externName*(s: SymId; n: Cursor): StrId =
   if nn.kind == StrLit:
     result = p.strings.getOrIncl(strVal(nn, p))
   else:
-    var base = p.syms[s]
-    extractBasename base
-    result = p.strings.getOrIncl(base)
+    result = p.symNameId(s)
 
 proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
                    isImport: var bool; bareImport: var bool): StrId =
@@ -153,23 +156,22 @@ proc canLoadForeign*(c: var MainModule; s: SymId): bool =
   ## looking for a function summary) needs "no" to be an answer. Warms the
   ## module cache, so a following `getDeclOrNil` costs one table hit.
   if c.defs.hasKey(s): return true
-  let splitted = splitSymName(c.pool.syms[s])
-  if splitted.module == "": return false
+  let module = c.pool.symModule(s)
+  if module == "": return false
   var m: ForeignModule
-  if c.prog.mods.hasKey(splitted.module):
-    m = getOrQuit(c.prog.mods, splitted.module)
+  if c.prog.mods.hasKey(module):
+    m = getOrQuit(c.prog.mods, module)
   else:
-    c.prog.scheme.name = splitted.module
+    c.prog.scheme.name = module
     if not fileExists($c.prog.scheme): return false
     m = openForeignModule($c.prog.scheme)
-    c.prog.mods[splitted.module] = m
-  result = hasDecl(m, $splitted)
+    c.prog.mods[module] = m
+  result = hasDecl(m, c.pool.symString(s))
 
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
-    let splitted = splitSymName(c.pool.syms[s])
-    if splitted.module == "": return nil
-    let pos = loadForeign(c, splitted)
+    if c.pool.symIsLocal(s): return nil
+    let pos = loadForeign(c, s)
     if firstChild(pos).kind == SymbolDef:
       let sk = pos.symKind
       var extern = StrId(0)
@@ -316,13 +318,18 @@ proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo;
   of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     inc n  # absorbed into the head token's own value/info; never freestanding
 
-proc load*(filename: string): MainModule =
+proc load*(filename: string; pool: Pool = nil; tags: TagPool = nil): MainModule =
   ## Load the main module, sniffing the file header for the actual format:
   ## filenames stay `.nif` throughout the pipeline, the content decides.
   ## Text is parsed with a canonical Leng tag pool so interned TagIds equal the
   ## master ordinals that `stmtKind`/`typeKind`/`symKind` decode against; a
   ## `.bif` is loaded zero-copy with its own fresh pools (the bif INVARIANT)
   ## and translated to the canonical pools during the densify copy below.
+  ##
+  ## `pool`/`tags`: intern into these instead of fresh ones, so the module's
+  ## SymIds line up with buffers the caller already holds (shoggoth optimizes a
+  ## buffer the inter-module inliner produced in nifpools' global pools). `tags`
+  ## must be seeded by master ordinal, as `createLengTagPool` does.
   let fromBif = isBifFile(filename)
   var raw = default(TokenBuf)
   if fromBif:
@@ -335,19 +342,25 @@ proc load*(filename: string): MainModule =
     of rd.WrongHeader: quit "nif files must start with Version directive"
     of rd.WrongMeta: quit "the format of meta information is wrong!"
     let nodeCount = rd.fileSize(r) div 7
-    raw = createTokenBuf(nodeCount, nil, createLengTagPool())
+    raw = createTokenBuf(nodeCount, pool,
+                         if tags != nil: tags else: createLengTagPool())
     nifcoreparse.parse(r, raw)
     rd.close(r)
   # Densify line info so `info(n)` is valid at every node (see `densify`). The
   # densified buffer shares `raw`'s pool/tags in the text case; in the bif case
   # it gets its own canonical pools and `DensifyRemap` translates the raw ids
   # (tags, line-info FileIds) — strings/symbols re-intern by value anyway.
+  # `config` is a not-nil ref, so it has no default value and the constructor
+  # owes it one: `codegen.generateCode` overwrites it with the driver's config
+  # (`m.config = s.config`) before anything reads a field off it.
   result = MainModule(current: TypeScope(locals: initTable[SymId, Cursor]()),
                       filename: filename,
+                      config: ConfigRef(),
                       prog: NifProgram(scheme: splitModulePath(filename)))
   var remap = default(DensifyRemap)
   if fromBif:
-    result.src = createTokenBuf(raw.len, nil, createLengTagPool())
+    result.src = createTokenBuf(raw.len, pool,
+                                if tags != nil: tags else: createLengTagPool())
     remap = buildDensifyRemap(result.src, raw)
   else:
     result.src = createTokenBuf(raw.len, raw.pool, raw.tags)

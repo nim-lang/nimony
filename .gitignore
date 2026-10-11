@@ -15,9 +15,21 @@ external/
 htmldocs/
 src/lengc/lengc_grammar.nim
 src/nifgram/nifgram
+src/nifler2/tests/tmini
+src/nifler2/tools/gramcheck
 src/lib/nifindexes
 tests/tester
 tools/tester
 *.exe
 # per-directory driver hastur generates for a joined test group
 _hastur_joined.nim
+# Nim's own `compiler/parser.nim`, which nifler parses `.nim` source with:
+# `hastur build nifler` checks it out at the commit
+# `src/nifler/nimparser/upstream.commit` pins (that file IS tracked), and
+# `parser.fetched` records which commit the copy on disk came from.
+src/nifler/nimparser/parser.nim
+src/nifler/nimparser/parser.nim.tmp
+src/nifler/nimparser/parser.fetched
+# Nim's own cycle collectors (`orc.nim`, `yrc.nim`, `cellseqs_v2.nim`), which
+# `system/orc` and `system/yrc` include: copied in by hastur at a pinned commit
+lib/std/system/upstream/

@@ -47,6 +47,14 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     for f1 in items(files):
       let f2 = resolveFile(c.g.config.paths, getFile(info), c.g.config.expandMM(f1.path))
+      if f1.path == MmPlaceholder and not semos.fileExists(f2):
+        # `include "$MM"` is system.nim's, but the file it names is the user's
+        # `--mm` value, so this is a command line error and it stops the
+        # compiler: going on without the strategy's three primitives buries it
+        # under every "undeclared identifier: arcInc" in the rest of system.nim,
+        # and `parseFile` would otherwise fail on a file no source mentions.
+        fatal "cannot find the runtime selected by `--mm:" & c.g.config.mm &
+              "`, expected it at: " & f2
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false
@@ -317,7 +325,8 @@ proc semExportSymbol(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     var it = Item(n: n, typ: c.types.autoType)
     let oldPhase = c.phase
     c.phase = SemcheckBodies
-    semExpr c, dest, it
+    # every overload of `module.name` is exported, so the choice is the answer
+    semExpr c, dest, it, {KeepChoices}
     c.phase = oldPhase
     n = it.n
   else:
@@ -349,8 +358,8 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineIn
     # overrides previous export mode if exists
     c.exports[sym] = ImportFilter(kind: ImportAll)
   else:
-    let name = pool.syms[sym]
-    let suffix = extractModule(name)
+    let name = pool.symString(sym)
+    let suffix = pool.symModule(sym)
     if suffix == "":
       c.buildErr dest, info, "cannot export non-global symbol"
       return
@@ -359,9 +368,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineIn
       c.buildErr dest, info, "exporting local symbol not implemented"
       return
     let moduleSym = c.processedModules.getOrQuit(suffix)
-    var basename = name
-    extractBasename(basename)
-    registerExportName(c, moduleSym, pool.strings.getOrIncl(basename))
+    registerExportName(c, moduleSym, pool.symNameId(sym))
     # Enum types carry their fields as separately-named symbols. Exporting only
     # the type name leaves the field names filtered out at the import site
     # (e.g. `export NifKind` wouldn't bring `TagLit`/`DotToken` into scope).
@@ -382,8 +389,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineIn
             if enumBody.substructureKind == EfldU:
               let local = asLocal(enumBody)
               if local.name.isSymbolDef:
-                var fname = pool.syms[local.name.symId]
-                extractBasename(fname)
+                var fname = pool.symBasename(local.name.symId)
                 registerExportName(c, moduleSym, pool.strings.getOrIncl(fname))
             skip enumBody
 
@@ -420,14 +426,13 @@ proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   producesVoid c, dest, info, it.typ
 
 proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId; info: NifLineInfo) =
-  let name = pool.syms[sym]
-  let suffix = extractModule(name)
+  let name = pool.symString(sym)
+  let suffix = pool.symModule(sym)
   if not c.processedModules.hasKey(suffix) or
       c.processedModules.getOrQuit(suffix) != moduleSym:
     # doesn't belong to exported module, no need to consider
     return
-  var basename = ensureMove name
-  extractBasename(basename)
+  var basename = pool.symBasename(sym)
   let strId = pool.strings.getOrIncl(basename)
   if c.exports.hasKey(moduleSym):
     let entry = addr c.exports.getOrQuit(moduleSym)

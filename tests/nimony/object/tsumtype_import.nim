@@ -19,6 +19,13 @@ proc negate(n: Node): Node =
   of SubOpr(a, b):
     result = AddOpr(a: negate(a), b: negate(b))
 
+# No expected type anywhere: the branch's owner type has to come back out of
+# the imported module's serialized `anum`, which is the only place it survives
+# (#2480):
+assert eval(AddOpr(a: Value(val: 10), b: Value(val: 32))) == 42
+let inferred = Value(val: 7)
+assert eval(inferred) == 7
+
 assert eval(negate(v)) == -42
 assert eval(negate(add)) == 10
 assert eval(negate(sub)) == -130

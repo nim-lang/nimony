@@ -16,11 +16,11 @@ when defined(windows):
 import std / [assertions, parseopt, strutils, os, osproc]
 
 import context, category, joined, nativelist, runner, walk, builders, deps,
-       tiers, boot, native, record, bugcmd, gitcmds, wasmdiff
+       tiers, boot, native, record, bugcmd, gitcmds, wasmdiff, parallel
 import install
+import ".." / lib / nimversion
 
 const
-  Version = "0.6.0"
   Usage = "hastur - tester tool for Nimony Version " & Version & """
 
   (c) 2024-2026 Andreas Rumpf
@@ -28,8 +28,8 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
-                       `nifbench` is the NIF micro-benchmark suite (src/nifbench),
+  build [all|nimony|nifler|nifler2|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|jorogumo|native|nifbench]   build selected tools (default: all).
+                       `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
                        `all` builds arkham + nifasm too when the sibling
@@ -47,20 +47,24 @@ Commands:
                        `--forward:` is appended to every compile (e.g.
                        `--forward:-d:release`).
   boot [options]       Self-host the *full* nimony toolchain (nimony,
-                       nimsem, hexer). `bin0/` is a fresh copy of the
-                       host-Nim-built toolchain; `binN/` is `binN-1/`'s
-                       nimony recompiling all three from source. Runs a
+                       nimsem, shoggoth, lengc). `bin0/` is a fresh
+                       copy of the host-Nim-built toolchain; `binN/` is
+                       `binN-1/`'s nimony recompiling all of them. Runs a
                        fixed number of self-compile passes and leaves the
                        results in place — nothing is installed back to
                        `bin/`. Extra args are forwarded to every
-                       `nimony c` invocation.
+                       `nimony c` invocation. With `../nativenif` checked
+                       out, every stage also compiles the web back end
+                       (`jorogumo`, JS + wasm) so it keeps building with
+                       Nimony; it joins the stage comparison from stage 1.
                        Every stage is compiled with `-d:release` by default
                        (the wider test: shoggoth + the `when defined(release)`
                        paths). `--no-release` boots at the default opt level.
                        To boot at another mode use `--forward:` so the flag
                        survives getopt intact — `--forward:-d:danger` replaces
                        the default rather than stacking on it.
-                       On linux/amd64 every stage is built with the C-FREE
+                       On linux/amd64, linux/arm64, windows/amd64 and
+                       macOS/arm64 every stage is built with the C-FREE
                        NATIVE backend (`nimony n`: arkham + nifasm, no C
                        compiler, no libc) when those two are built; otherwise
                        through the C backend.
@@ -84,7 +88,7 @@ Commands:
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
   wasmdiff             differential harness: run every `tests/ithaqua/*.nim`
                        through BOTH the native backend (arkham, the oracle)
-                       and the wasm backend (ithaqua) and require matching
+                       and the wasm backend (`jorogumo w`) and require matching
                        stdout + exit code. Needs the sibling `../nativenif`
                        and `node` on PATH.
   lengc                 run Leng tests.
@@ -93,7 +97,7 @@ Commands:
                        `--joined` below). This is what the test pool spawns
                        per directory; by hand it is how you run or debug a
                        single group.
-  bug [file]           build nimony+hexer and compile <file> to fill nimcache/.
+  bug [file]           build nimony+shoggoth and compile <file> to fill nimcache/.
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
@@ -104,6 +108,13 @@ Commands:
                        it (a dirty nativenif tree is left alone, with a
                        warning). The file is read at run time; an empty or
                        absent one means "build whatever is checked out".
+  update parser        re-pin `src/nifler/nimparser/upstream.commit` — Nim's
+                       own `compiler/parser.nim`, which nifler parses `.nim`
+                       source with — to the tip of nim-lang/Nim `devel`, and
+                       check it out. `build nifler` checks out the pin (from a
+                       Nim git checkout on this machine if it has the commit,
+                       else one HTTPS fetch); an empty or absent pin means
+                       "use whatever parser the host compiler ships".
   install              write activation script(s) at the project root that
                        prepend the toolchain dirs to `$PATH` for the current
                        shell. On Windows, also download MinGW+LLVM (gcc,
@@ -152,6 +163,9 @@ Options:
                         (implies --no-build). Binaries not found there are
                         looked up on `$PATH`.
   --no-build            skip the setup.hastur prep step during the tree walk
+  --prefill:DIR         (pool worker) seed --cachedir from the warmup cache DIR
+  --scratch             (pool worker) --cachedir is private: start it empty and
+                        delete it again when the work item passed
   --skip:DIR            leave DIR out of the tree walk (repeatable). For
                         splitting one sweep across CI runners: the tester job
                         passes `--skip:tests/boot` while a second job runs
@@ -205,6 +219,8 @@ proc handleCmdLine =
   var overwrite = false
   var forward = ""
   var withValgrind = false
+  var prefillDir = ""
+  var scratchCache = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -242,6 +258,15 @@ proc handleCmdLine =
           except: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
+      of "prefill":
+        # Set by the parallel pool on its workers: seed `--cachedir` from this
+        # warmup cache before doing anything else (`prefillFromWarmup`).
+        prefillDir = val
+      of "scratch":
+        # Set by the parallel pool on its workers: `--cachedir` is private to
+        # this one run, so it starts empty and is deleted again once the work
+        # item passed. A failed item keeps it for inspection.
+        scratchCache = true
       of "skip":
         if val.len == 0: writeHelp()
         skipDirs.add normalizeDirKey(val)
@@ -315,13 +340,28 @@ proc handleCmdLine =
 
   createDir binDir()
 
+  if scratchCache:
+    # A leftover from an earlier run in the same `nimcache/` (one without a
+    # `build` in between) must not count as a warm cache.
+    removeDir nimcacheDir
+  if prefillDir.len > 0:
+    prefillFromWarmup(prefillDir, nimcacheDir)
+
   case primaryCmd
   of "all":
     # `all` is now the tree walk: `tests/` (each suite via its setup.nim or the
     # built-in nimony runner; `tests/setup.hastur` builds the toolchain first)
-    # plus `examples/`. Directories marked `hastur.mode = skip` (dagon, hexer)
-    # stay out of the sweep but remain runnable via `hastur tests/<dir>`.
-    walkRoots(["tests", "examples"], forward, overwrite)
+    # plus `examples/` and `bench/`. Directories marked `hastur.mode = skip`
+    # (dagon, hexer) stay out of the sweep but remain runnable via
+    # `hastur tests/<dir>`.
+    #
+    # `bench/` is in the sweep so the benchmarks cannot rot unnoticed — they are
+    # not run by anything else, and a benchmark that stopped compiling is only
+    # discovered when someone reaches for it. Its `hastur.mode = bench` compiles
+    # them with `-d:benchSmoke`, which shrinks every workload to a deterministic
+    # smoke run: the question here is "does it build and does it still compute
+    # the same numbers", never "how fast".
+    walkRoots(["tests", "examples", "bench"], forward, overwrite)
 
   of "tiers":
     # `buildNimonyToolchain`, not `buildNimony`: every module on the tier list is
@@ -371,24 +411,15 @@ proc handleCmdLine =
       exec "git submodule update --init"
     case (if args.len > 0: args[0] else: "")
     of "", "all":
-      buildNifler(showProgress)
-      buildNimsem(showProgress)
-      buildNimony(showProgress)
-      buildLengc(showProgress)
-      buildShoggoth(showProgress)
-      buildNiflink(showProgress)
-      buildHexer(showProgress)
-      buildNifmake(showProgress)
-      buildValidator(showProgress)
-      buildDagon(showProgress)
-      buildPnak(showProgress)
-      buildNativeTools(showProgress)
+      buildAll()
     of "nifler":
       buildNifler(showProgress)
+    of "nifler2":
+      buildNifler2(showProgress)
     of "nimony":
       buildNimsem(showProgress)
       buildNimony(showProgress)
-      buildHexer(showProgress)
+      buildShoggoth(showProgress)
     of "lengc":
       buildLengc(showProgress)
     of "shoggoth":
@@ -399,17 +430,19 @@ proc handleCmdLine =
       buildArkham(showProgress)
     of "nifasm":
       buildNifasm(showProgress)
+    of "jorogumo":
+      # The web back end, both renderers in one binary: `nimony j` and
+      # `nimony w` run the same `bin/jorogumo`.
+      buildJorogumo(showProgress)
     of "native":
       # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
-      # the sibling `../nativenif`) plus shoggoth (the opt-gated Leng optimizer
-      # that also feeds the native path). `all` builds these three too; this
+      # the sibling `../nativenif`) plus shoggoth (hexer and the opt-gated Leng
+      # optimizer, both of which feed the native path). `all` builds these three too; this
       # spelling is the one that rebuilds JUST them, and errors out rather than
       # skip when the sibling checkout is missing.
       buildArkham(showProgress)
       buildNifasm(showProgress)
       buildShoggoth(showProgress)
-    of "hexer":
-      buildHexer(showProgress)
     of "nifmake":
       buildNifmake(showProgress)
     of "nifbench":
@@ -444,7 +477,6 @@ proc handleCmdLine =
     if not skipBuild:
       buildNimonyToolchain()
       buildNifmake()
-      buildShoggoth()
       buildArkham()
       buildNifasm()
     nativetests(overwrite)
@@ -457,14 +489,13 @@ proc handleCmdLine =
     if not skipBuild:
       buildNimonyToolchain()
       buildNifmake()
-      buildShoggoth()
       buildArkham()
       buildNifasm()
     nativeValgrindTests()
 
   of "wasmdiff":
     # Differential harness: the native backend (arkham) as the executable oracle
-    # for the wasm backend (ithaqua). Builds both toolchains, then diffs stdout
+    # for the wasm backend (`jorogumo w`). Builds both toolchains, then diffs stdout
     # and exit code of every `tests/ithaqua/*.nim` fixture across the two
     # pipelines. `wasmdiff.nim` builds what it needs itself.
     wasmdiffCmd()
@@ -517,9 +548,13 @@ proc handleCmdLine =
         for f in walkDirRec(root):
           if isGeneratedTestFile(f) and f.endsWith(".nim"): removeFile f
   of "update":
-    # `update deps` rather than a bare `update`, because the sibling repos are
-    # not the only thing this could come to re-pin.
+    # `update <what>` rather than a bare `update`: there is more than one pin,
+    # and they do not move together. `deps` is the sibling nativenif checkout;
+    # `parser` is Nim's own `compiler/parser.nim` that nifler is built with,
+    # whose bump can break the build on an older host install and so is never
+    # something to inherit from a nativenif re-pin.
     if args.len == 1 and args[0] == "deps": updateDepsCmd()
+    elif args.len == 1 and args[0] == "parser": updateParserCmd()
     else: writeHelp()
   of "install":
     runInstall(args)
@@ -534,6 +569,14 @@ proc handleCmdLine =
       walkCmd(rawPrimary, forward, overwrite)
     else:
       quit "invalid command: " & primaryCmd
+
+  # Only reached on success: every failing path above ends in `quit`. Done by
+  # the worker rather than left to the next `hastur build`'s `removeDir
+  # "nimcache"`, which would otherwise delete a whole run's worth of caches
+  # (~140k files, ~35s on Windows) on one thread.
+  if scratchCache:
+    try: removeDir nimcacheDir
+    except OSError: discard
 
 # Guarded even though nothing imports this module: a directory's `setup.nim`
 # custom runner takes the test kit from `kit.nim`, which deliberately does not

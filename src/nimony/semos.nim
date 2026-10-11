@@ -7,8 +7,10 @@
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
 from std / strutils import multiReplace, startsWith
+from std / algorithm import sort
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
-from std / osproc import execCmdEx
+from std / osproc import execCmdEx, startProcess, waitForExit, close,
+  poParentStreams
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -43,6 +45,16 @@ proc stdlibDir*(): string =
 
 proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
+  # Keep the compiler-internal `src/lib` modules (nifbuilder/nifreader, pulled
+  # in by `std/macros`) on the search path unconditionally. Macro-plugin and
+  # CTFE sub-compiles always inject `--path:<repo>/src/lib`; the OUTER build did
+  # not (unless a per-directory `nimony.paths` supplied it), so the two disagreed
+  # on module suffixes and a macro used outside the repo failed to compile its
+  # plugin (`cannot open <mod>.s.deps.nif`). Adding it here makes the suffixes
+  # agree everywhere.
+  let internalLib = nimonyDir() / "src" / "lib"
+  if dirExists(internalLib):
+    config.paths.add internalLib
   let pathsFile = findArgs(config.baseDir, "nimony.paths")
   processPathsFile pathsFile, config.paths
   #echo getAppFilename(), "CONFIG.BASEDIR: ", config.baseDir, " CONFIG.PATHS: ", config.paths
@@ -93,6 +105,30 @@ proc joinPath*(head, tail: string): string = head / tail
 
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
+
+proc renderCmd(exe: string; args: openArray[string]): string =
+  ## Diagnostics only. `execArgs` never hands this string to a shell.
+  result = quoteShell(exe)
+  for i in 0 ..< args.len:
+    result.add ' '
+    result.add quoteShell(args[i])
+
+proc execArgs*(exe: string; args: openArray[string]) =
+  ## `exec` without a shell in between: `execShellCmd` runs the command
+  ## through `cmd.exe /c` on Windows (`/bin/sh -c` elsewhere), an extra
+  ## process per call that buys nothing here — no redirection, no globbing,
+  ## and the quoting it forces on the caller is a bug surface of its own.
+  ## Arguments travel as an argv array, so callers pass them RAW: no
+  ## `quoteShell`, the spawner does its own quoting.
+  var code = -1
+  try:
+    let p = startProcess(exe, args = args, options = {poParentStreams})
+    code = waitForExit(p)
+    close p
+  except:
+    code = -1
+  if code != 0:
+    quit("FAILURE: " & renderCmd(exe, args))
 
 proc nimexec(cmd: string) =
   let t = findExe("nim")
@@ -161,8 +197,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     res.add ImportedFilename(path: s, name: s)
     inc n
   of Symbol:
-    var s = pool.syms[n.symId]
-    extractBasename s
+    var s = pool.symBasename(n.symId)
     res.add ImportedFilename(path: s, name: s)
     inc n
   of TagLit:
@@ -307,6 +342,38 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
     ("${nifcache}", nifcache)])
   result = path.normalizedPath()
 
+proc globMatch(pat, s: string; pi = 0; si = 0): bool =
+  ## `*` matches any run of characters, `?` exactly one.
+  var pi = pi
+  var si = si
+  while pi < pat.len:
+    case pat[pi]
+    of '*':
+      for k in si .. s.len:
+        if globMatch(pat, s, pi+1, k): return true
+      return false
+    of '?':
+      if si >= s.len: return false
+    else:
+      if si >= s.len or s[si] != pat[pi]: return false
+    inc pi
+    inc si
+  result = si == s.len
+
+proc globFiles*(pattern: string): seq[string] =
+  ## The files matching `pattern`, sorted. Like Nim's `walkFiles` as the
+  ## `.compile` tuple form uses it, except that only the file name component may
+  ## contain wildcards (the caller checks that).
+  result = @[]
+  let (dir, name) = splitPath(pattern)
+  try:
+    for it in walkDir(path(dir), relative = true):
+      if it.kind in {pcFile, pcLinkToFile} and globMatch(name, $it.path):
+        result.add dir / $it.path
+  except:
+    discard "an unreadable directory matches nothing"
+  sort result
+
 # ------------------ include/import handling ------------------------
 
 proc lastModTimeOrStale(path: string): int64 =
@@ -323,7 +390,7 @@ proc lastModTimeOrStale(path: string): int64 =
     result = -1'i64
 
 proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
-  let nifler = findTool("nifler")
+  let nifler = parserTool()
   let name = moduleSuffix(nimFile, paths)
   let src = nifcachePath / name & ".p.nif"
   let depsFile = nifcachePath / name & ".p.deps.nif"
@@ -340,8 +407,7 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
       fileExists(depsFile) and lastModTimeOrStale(depsFile) > srcTime:
     discard "already parsed by the dep scan"
   else:
-    exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
-      quoteShell(src)
+    execArgs nifler, ["--portablePaths", "--deps", "parse", nimFile, src]
 
   var r = rd.open(src)
   result = createTokenBuf()
@@ -412,6 +478,10 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
     if config.isDefined(d):
       result.add " -d:"
       result.add d
+  # A job cap chosen for a small machine must hold inside the sub-compile too.
+  if config.parallelBuild > 0:
+    result.add " --parallelBuild:"
+    result.add $config.parallelBuild
 
 proc runValidatorOnPlugin(config: NifConfig; nf, checkCache: string) =
   ## Run the plugin validator on `nf` before compiling it. Skipped when
@@ -531,7 +601,7 @@ proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
 
   for disamb in firstDisamb ..< nextDisamb:
     let name = pluginTempBase & "." & $disamb
-    c.freshSyms.incl pool.syms.getOrIncl(name)
+    c.freshSyms.incl pool.symId(name)
 
   if nextDisamb > firstDisamb:
     c.locals[pluginTempBase] = nextDisamb - 1
@@ -706,7 +776,7 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
   if result.exitCode != 0: return
 
   let modname = extractModuleSuffix(file)
-  let exe = nimcachePath / modname / splitFile(file).name.addFileExt(ExeExt)
+  let exe = nimcachePath / BackendDirC / modname / splitFile(file).name.addFileExt(ExeExt)
   # The child may start in `sourceDir`; keep the exe path absolute so it
   # still resolves against the outer compile's cwd, not the module dir.
   var exeToRun = exe
@@ -724,30 +794,48 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
 const
   writeNifModuleSuffix* = "wriwhv7qv"
 
+proc buildWriteNifModule(c: var SemContext): string =
+  # Forward the outer compile's CLI args (notably `--cc`) so the inner nimony
+  # emits a build file whose `nimsem` cmd-line MATCHES what the outer build
+  # file uses. Otherwise nifmake's per-cmd staleness check sees a different
+  # argv for `nimsem ... m sysvq0asl.p.nif`, decides the existing
+  # `sysvq0asl.s.nif` is stale, and tries to overwrite it — which on Windows
+  # fails because the outer nimsem (currently paused waiting on this exec)
+  # still has it mmap'd. The outer's args live on `c.commandLineArgs`.
+  let nimonyExe = findTool("nimony")
+  let cmd = quoteShell(nimonyExe) & c.commandLineArgs &
+    " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
+    " c " & quoteShell(stdlibFile("std/writenif.nim"))
+  try:
+    let (output, exitCode) = execCmdEx(cmd)
+    result = if exitCode != 0: output else: ""
+  except:
+    result = "failed to run: " & cmd
+
+const StaleLockNs = 120'i64 * 1_000_000_000'i64
+  ## A writenif build takes seconds; a lock this old lost its holder.
+
 proc prepareEval*(c: var SemContext): string =
+  ## Precompile `std/writenif` into this nimcache, once. Every module of a
+  ## parallel build that evaluates something at compile time gets here, all
+  ## sharing the nimcache, so the build is done under a lock: two concurrent
+  ## builds of it race on the same outputs, and on Windows the loser cannot
+  ## replace a file the winner's C compiler still has open.
+  result = ""
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
-    if not os.fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
-      # precompile the module.
-      # Forward the outer compile's CLI args (notably `--cc`) so the
-      # inner nimony emits a build file whose `nimsem` cmd-line MATCHES
-      # what the outer build file uses. Otherwise nifmake's per-cmd
-      # staleness check sees a different argv for `nimsem ... m
-      # sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is
-      # stale, and tries to overwrite it — which on Windows fails because
-      # the outer nimsem (currently paused waiting on this exec) still
-      # has it mmap'd. The outer's args live on `c.commandLineArgs`.
-      let nimonyExe = findTool("nimony")
-      var cmd = quoteShell(nimonyExe) & c.commandLineArgs &
-        " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
-        " c " & quoteShell(stdlibFile("std/writenif.nim"))
-      try:
-        let (output, exitCode) = execCmdEx(cmd)
-        if exitCode != 0:
-          return ensureMove(output)
-      except:
-        return "failed to run: " & cmd
-  return ""
+    let target = c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"
+    let lock = c.g.config.nifcachePath / writeNifModuleSuffix & ".lock"
+    while not os.fileExists(target):
+      if vfsTryLock(lock):
+        if not os.fileExists(target):   # built while we waited
+          result = buildWriteNifModule(c)
+        vfsUnlock(lock)
+        break
+      if vfsNow() - vfsMtime(lock) > StaleLockNs:
+        vfsUnlock(lock)
+      else:
+        vfsSleepMs(20)
 
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
                usedModules: HashSet[string]; sourceDir = ""): string =

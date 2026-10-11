@@ -1,0 +1,4 @@
+narrowed count: 1
+count follows affinity: true
+workers: 3
+workers unpinned: true

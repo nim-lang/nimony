@@ -91,4 +91,10 @@ assert sum(t) == 30
 let leaf: Tree[int] = Leaf(val: 42)
 assert sum(leaf) == 42
 
+# Without an expected type the constructor must infer `Tree[int]` -- the `ref`
+# alias, not the split-off `Tree.Obj[int]` (#2480):
+assert sum(Leaf(val: 7)) == 7
+let inferredLeaf = Leaf(val: 5)
+assert sum(inferredLeaf) == 5
+
 echo "tsumtype_generic: OK"

@@ -198,8 +198,7 @@ proc readBindSymRule(arg: Cursor): string =
   of Ident:
     result = pool.strings[arg.strId]
   of Symbol:
-    var s = pool.syms[arg.symId]
-    extractBasename s
+    var s = pool.symBasename(arg.symId)
     result = s
   of IntLit:
     case arg.intVal
@@ -209,6 +208,28 @@ proc readBindSymRule(arg: Cursor): string =
     else: result = ""
   else:
     result = ""
+
+proc addNifSymbol(dest: var string; s: string) =
+  ## Append `s` to `dest` the way NIF spells a symbol.
+  ##
+  ## `bindSym` round-trips the resolved symbol through TEXT (see below), and a
+  ## symbol name is not text: `@` introduces line info, `(`/`)` nest, and so on.
+  ## `@.0.sysvq0asl` — `bindSym "@"`, the `@[…]` sequence constructor — came
+  ## back from the re-parse as an unbalanced tree and the plugin died on
+  ## "addBufferSamePool with unclosed source tags". The rules mirror
+  ## `nifbuilder.addSymbolImpl`.
+  const Hex = "0123456789ABCDEF"
+  for i in 0 ..< s.len:
+    let ch = s[i]
+    let mustEscape =
+      if i == 0: ch in {'.', '0'..'9', '+', '-', '~'} or ch < ' ' or ch in ControlChars
+      else: ch == ' ' or ch < ' ' or ch in ControlChars
+    if mustEscape:
+      dest.add '\\'
+      dest.add Hex[int(ch) shr 4 and 0xF]
+      dest.add Hex[int(ch) and 0xF]
+    else:
+      dest.add ch
 
 proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   ## `bindSym(t: var NifBuilder; name: string; rule: BindSymRule = brClosed)` —
@@ -284,14 +305,14 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let forceOpen = ruleName == "brForceOpen"
   var nifText = ""
   if resolved.len == 1 and not forceOpen:
-    nifText = pool.syms[resolved[0]]
+    addNifSymbol nifText, pool.symString(resolved[0])
   else:
     let tag = if ruleName == "brClosed": "cchoice" else: "ochoice"
     nifText.add "("
     nifText.add tag
     for s in resolved:
       nifText.add " "
-      nifText.add pool.syms[s]
+      addNifSymbol nifText, pool.symString(s)
     nifText.add ")"
 
   # Synthesize: bindSymHelper(<t expr>, "<nifText>") and re-sem so the helper
@@ -382,14 +403,14 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if resolved.len == 1 and not forceOpen:
     synthBuf.copyIntoKind CallS, info:
       synthBuf.addIdent "newSymNode", info
-      synthBuf.addStrLit pool.syms[resolved[0]], info
+      synthBuf.addStrLit pool.symString(resolved[0]), info
   else:
     synthBuf.copyIntoKind CallS, info:
       synthBuf.addIdent "newSymChoiceNode", info
       synthBuf.addIdent ruleName, info
       synthBuf.copyIntoKind BracketX, info:
         for s in resolved:
-          synthBuf.addStrLit pool.syms[s], info
+          synthBuf.addStrLit pool.symString(s), info
   # no sentinel closer: nifcore's closeTag asserts on an unmatched ParRi and
   # the bounded cursor already stops at the buffer end
   var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
@@ -406,6 +427,49 @@ proc semIsMainModule*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let expected = it.typ
   it.typ = c.types.boolType
   commonType c, dest, it, beforeExpr, expected
+
+proc semInstantiationInfo*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(instantiationinfo)` folds to a named tuple literal. Inside a template
+  ## expansion it is the innermost template's call site (`semTemplateCall`
+  ## keeps the stack); elsewhere it is the node's own position.
+  let info = if c.templCallInfos.len > 0: c.templCallInfos[^1] else: it.n.info
+  skip it.n
+  var fname = ""
+  if info.file.isValid:
+    fname = realFile(pool.filenames[info.file])
+    var i = fname.len - 1
+    while i >= 0 and fname[i] != '/' and fname[i] != '\\':
+      dec i
+    if i >= 0: fname = fname.substr(i + 1)
+  var buf = createTokenBuf(24)
+  buf.addParLe(TupX, info)
+  buf.addParLe(KvU, info)
+  buf.addIdent("filename", info)
+  buf.addStrLit(fname, info)
+  buf.addParRi()
+  buf.addParLe(KvU, info)
+  buf.addIdent("line", info)
+  buf.addIntLit(int64(info.line), info)
+  buf.addParRi()
+  buf.addParLe(KvU, info)
+  buf.addIdent("column", info)
+  buf.addIntLit(int64(info.col), info)
+  buf.addParRi()
+  buf.addParRi()
+  if c.routine.kind == TemplateY:
+    # Semchecking a template's own body: the call site is not known yet, so
+    # keep the magic in the body (typed as the tuple it will become) and
+    # fold it when the expansion is semchecked.
+    var scratch = createTokenBuf(24)
+    var x = Item(n: cursorAt(buf, 0), typ: it.typ)
+    semExpr c, scratch, x
+    dest.addParLe(InstantiationinfoX, info)
+    dest.addParRi()
+    it.typ = x.typ
+  else:
+    var x = Item(n: cursorAt(buf, 0), typ: it.typ)
+    semExpr c, dest, x
+    it.typ = x.typ
 
 proc semEnumToStr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
@@ -430,9 +494,9 @@ proc semEnumToStr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
           "'$' is not available for type <" & typeToString(x.typ) & ">"
         return
       let typeSymId = typ.symId
-      let typeName = pool.syms[typeSymId]
+      let typeName = pool.symString(typeSymId)
       let dollorName = "dollar`." & typeName
-      let dollorSymId = pool.syms.getOrIncl(dollorName)
+      let dollorSymId = pool.symId(dollorName)
       shrink dest, beforeExpr
       dest.addParLe(CallX, info)
       dest.addSymUse(dollorSymId, info)
@@ -465,7 +529,7 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Nif
        TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, ClosureTupleT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
   of TagLit:
     case typ.typeKind
@@ -518,7 +582,7 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Nif
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
        StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
   else:
     c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
@@ -552,7 +616,7 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Ni
        TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, ClosureTupleT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
   of TagLit:
     case typ.typeKind
@@ -611,7 +675,7 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Ni
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
        StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
   else:
     c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
@@ -702,7 +766,7 @@ proc semDeref*(c: var SemContext; dest: var TokenBuf; it: var Item) =
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     c.buildErr dest, info, "invalid type for deref: " & typeToString(t)
   commonType c, dest, it, beforeExpr, expected
 
@@ -751,6 +815,16 @@ proc semSizeof*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # handle types
     semLocalTypeImpl c, dest, it.n, InLocalDecl
   it.typ = c.types.intType
+  commonType c, dest, it, beforeExpr, expected
+
+proc semCanFormCycles*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(canFormCycles T)`: stays a node until `derefs` folds it, the lifter
+  ## being the one that knows what the cycle collector traces.
+  let beforeExpr = dest.len
+  let expected = it.typ
+  copyInto dest, it.n:
+    semLocalTypeImpl c, dest, it.n, InLocalDecl
+  it.typ = c.types.boolType
   commonType c, dest, it, beforeExpr, expected
 
 proc semInclExcl*(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -870,7 +944,7 @@ proc semInternalTypeName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     if containsGenericParams(typ):
       isGeneric = true
     else:
-      typeName = pool.syms[typ.symId]
+      typeName = pool.symString(typ.symId)
   if not isGeneric:
     # only after `copyInto` closed its tag: shrinking away an OPEN tag would
     # leave the close unmatched (nifcore's closeTag asserts)

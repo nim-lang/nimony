@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tsubscripterroperand.nim(9, 11) Error: Type mismatch at [position]
+f(1)
+[1] expected: string but got: int64 (declared in tests/nimony/errmsgs/tsubscripterroperand.nim(5, 1))
+tests/nimony/errmsgs/tsubscripterroperand.nim(10, 12) Error: undeclared identifier: undeclaredThing

@@ -1,0 +1,20 @@
+-- pipeline
+v=2
+v=4
+-- twice
+7
+8
+-- relay
+10
+20
+-- cycle
+1
+2
+3
+1
+2
+3
+1
+-- module-level iter value
+1
+2

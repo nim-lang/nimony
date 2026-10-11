@@ -199,7 +199,13 @@ proc traverseTypes(m: var MainModule; o: var TypeOrder) =
       o.ordered.add n, TypedefKeyword
     of EnumT:
       o.ordered.add n, TypedefKeyword
-    else: discard
+    else:
+      # An imported scalar such as `Handle {.importc: "HANDLE", header:
+      # "<windef.h>".} = distinct int` has no body to order, but its header
+      # still has to be included — a proc signature or a local may be its
+      # only use in this module.
+      if usesHeader(decl.pragmas):
+        o.forwardedDecls.add n, TypedefKeyword
     inc i
 
 proc integralBits(t: Cursor): string {.inline.} =
@@ -444,11 +450,11 @@ proc mangleSym(c: var GeneratedCode; s: SymId): string =
       # `genProcDecl`). Using the libc identifier here would collide with a
       # header prototype whenever a splice moves the reference into a module
       # that includes that header.
-      result = mangleToC(c.m.pool.syms[s])
+      result = mangleToC(c.m.pool.symString(s))
     else:
       result = c.m.pool.strings[x.extern]
   else:
-    result = mangleToC(c.m.pool.syms[s])
+    result = mangleToC(c.m.pool.symString(s))
 
 proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   case n.typeKind
@@ -506,7 +512,7 @@ proc mangleField(c: var GeneratedCode; s: SymId; pragmas: Cursor; skipDecl: var 
           discard
         skip p
     if result.len > 0: return result
-  result = mangleToC(c.m.pool.syms[s])
+  result = mangleToC(c.m.pool.symString(s))
 
 proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor; skipDecl: var bool): string =
   if n.kind == SymbolDef:
@@ -591,7 +597,7 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
       if n.substructureKind == EfldU:
         n.into:
           if n.kind == SymbolDef:
-            let enumFieldName = mangleToC(c.m.pool.syms[n.symId])
+            let enumFieldName = mangleToC(c.m.pool.symString(n.symId))
             inc n
             c.add "#define "
             c.add enumFieldName

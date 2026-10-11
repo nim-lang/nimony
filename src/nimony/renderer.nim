@@ -374,8 +374,13 @@ proc gpragmas(g: var SrcGen, n: var Cursor) =
 
       put(g, tkSymbol, globalTags.tags[n.cursorTagId])
       n.into:
-        if n.hasMore:
-          putWithSpace(g, tkColon, ":")
+        var firstArg = true
+        while n.hasMore:
+          if firstArg:
+            putWithSpace(g, tkColon, ":")
+            firstArg = false
+          else:
+            gcomma(g)
           gsub(g, n)
 
     put(g, tkCurlyDotRi, ".}")
@@ -449,6 +454,13 @@ proc takeObjectFields(g: var SrcGen, fields: var Cursor) =
     gcase(g, fields, isCaseObject = true)
   of FldU, GfldU:
     takeField(g, fields)
+  of NilU:
+    # A fieldless sum-type branch (`of None: discard` in `std/opt`) carries
+    # `(nil)` as its entire body. There is no field to render and `discard` is
+    # how the source spells it.
+    skip fields
+    put(g, tkDiscard, "discard")
+    optNL(g)
   else:
     raiseAssert "todo"
 
@@ -593,8 +605,7 @@ proc bracketKind(g: SrcGen, n: Cursor): BracketKind =
       inc childCursor
       result = bracketKind(g, childCursor)
     elif n.isSymbol:
-      var name = pool.syms[n.symId]
-      extractBasename(name)
+      var name = pool.symBasename(n.symId)
 
       case name
       of "[]": result = bkBracket
@@ -957,13 +968,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       fields.into:
         skip fields, AnyType  # parent type / inheritance slot
         while fields.hasMore:
-          case fields.substructureKind
-          of CaseU:
-            gcase(g, fields, isCaseObject = true)
-          of FldU, GfldU:
-            takeField(g, fields)
-          else:
-            raiseAssert "todo"
+          takeObjectFields(g, fields)
 
       dedent(g)
 
@@ -1560,11 +1565,12 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gsub(g, n)
         put(g, tkParRi, ")")
 
-    of CallX, CallstrlitX:
+    of CallX, CallstrlitX, PluginCallX:
+      # a parked plugin call reads back exactly like the call it came from
       gcall(g, n)
 
     of HighX, LowX, TypeofX,
-       SizeofX, AlignofX, OffsetofX,
+       SizeofX, AlignofX, OffsetofX, CanFormCyclesX,
        CardX, UnpackX, FieldsX, CompilesX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX:
       gcallsystem(g, n, $n.exprKind)
@@ -1968,7 +1974,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gsub(g, n)
         put(g, tkParRi, ")")
 
-    of IsmainmoduleX,
+    of IsmainmoduleX, InstantiationinfoX,
         DoX, InternalTypeNameX, InternalFieldPairsX, FailedX:
       raiseAssert "todo"
 
@@ -1991,13 +1997,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     put(g, tkCharLit, lit)
     inc n
   of Symbol:
-    var name = pool.syms[n.symId]
-    extractBasename(name)
+    var name = pool.symBasename(n.symId)
     put(g, tkSymbol, name, n.symId)
     inc n
   of SymbolDef:
-    var name = pool.syms[n.symId]
-    extractBasename(name)
+    var name = pool.symBasename(n.symId)
     put(g, tkSymbol, name, n.symId, isDef = true)
     inc n
   of Ident:
@@ -2067,6 +2071,13 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
       result = toString(n, false)
   else:
     result = renderTree(n, renderFlags = renderFlags)
+
+proc asNimCode*(s: SymId): string =
+  ## `asNimCode` for the cases where only the `SymId` is at hand and no cursor
+  ## points at the symbol's token. Produces exactly what the `Symbol` case of
+  ## the renderer produces: the name as it was written in the Nim source,
+  ## without Nimony's disambiguating suffix.
+  result = pool.symBasename(s)
 
 proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var typ = n

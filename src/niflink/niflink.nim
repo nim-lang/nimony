@@ -18,6 +18,7 @@
 ##
 ##   (link
 ##     (apptype "console")               ; console | gui | lib | staticlib
+##     (linker "gcc")                    ; the C compiler driver nimony compiled with
 ##     (output "path/to/app")
 ##     (file "a.o"   (kind "obj"))       ; linked directly
 ##     (file "b.c"   (kind "csrc"))      ; compiled, then linked
@@ -42,6 +43,7 @@ type
 
   Manifest = object
     apptype: string
+    linker: string        ## the driver the objects were compiled with
     output: string
     objs: seq[LinkFile]   ## `kind "obj"` — linked directly
     csrcs: seq[LinkFile]  ## `kind "csrc"` — compiled to an object, then linked
@@ -87,7 +89,7 @@ proc readFileEntry(c: var Cursor; tags: TagPool; pool: Pool): tuple[file: LinkFi
   result = (file, kind)
 
 proc parseManifest(path: string): Manifest =
-  result = Manifest(apptype: "console", output: "",
+  result = Manifest(apptype: "console", linker: "", output: "",
                     objs: @[], csrcs: @[], flags: @[])
   var b = parseFromFile(path)
   var c = b.beginRead()
@@ -99,6 +101,8 @@ proc parseManifest(path: string): Manifest =
         case tagName(b.tags, c.cursorTagId)
         of "apptype":
           result.apptype = readStrChild(c, b.pool)
+        of "linker":
+          result.linker = readStrChild(c, b.pool)
         of "output":
           result.output = readStrChild(c, b.pool)
         of "file":
@@ -174,8 +178,12 @@ proc main =
   # `deps.nim` gates that on `not defined(nimony)` — so a *self-hosted* nimony
   # (every `hastur boot` stage past the first) left niflink reaching for a `cc`
   # that does not exist. Found by running the suite under Wine.
+  #
+  # A manifest names its driver, and that one wins: it is the one nimony
+  # compiled the objects with, so a `--cc` or a wrapper on the PATH (the i386
+  # CI job's `gcc -m32`) links what it compiled. `cc` knew neither.
   const DefaultCC = when defined(windows): "gcc" else: "cc"
-  let cc = getEnv("CC", DefaultCC)
+  let cc = if m.linker.len > 0: m.linker else: getEnv("CC", DefaultCC)
   var objs = m.objs
 
   # Compile any C sources to an object next to the source, then link them too

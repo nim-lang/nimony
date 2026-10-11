@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/timportjs.nim(9, 24) Error: importjs is a JS-backend pragma and has no C lowering

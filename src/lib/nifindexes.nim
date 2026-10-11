@@ -93,7 +93,7 @@ proc processDeclForChecksum(dest: var Sha1State; n: var Cursor) =
           else:
             skip n
         while n.hasMore: skip n
-    of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, BundleIdx, IndexIdx, DependencyIdx,
+    of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, BundleIdx, IndexIdx, DependencyIdx, LinkIdx,
        ExportIdx, FromexportIdx, ExportexceptIdx:
       n.loopInto:
         processDeclForChecksum(dest, n)
@@ -160,12 +160,13 @@ proc createIndex*(infile: string; root: NifLineInfo; buildChecksum: bool; sectio
     let final = SecureHash checksum.finalize()
     content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
-  # OnlyIfChanged: clients (downstream nimsem/hexer) depend on this file.
-  # When a module's interface and inline-proc bodies are unchanged, its
-  # checksum is identical, so we keep the old mtime to avoid cascading
-  # rebuilds through importers. nifmake's `needsRebuild` uses the freshest
-  # of a node's outputs (max), so the always-written `.s.nif` still proves
-  # "we ran since the inputs changed" for nimsem's own staleness check.
+  # The module's interface file (doc/internals/ic.md): importers' nimsem and
+  # hexer depend on this file, not on `.s.nif`. When a module's interface and
+  # inline-proc bodies are unchanged, its checksum is identical, so we keep
+  # the old mtime to avoid cascading rebuilds through importers. nifmake's
+  # `needsRebuild` uses the freshest of a node's outputs (max), so the
+  # always-written `.s.nif` still proves "we ran since the inputs changed"
+  # for nimsem's own staleness check.
   let existingContent = try: vfsRead(indexName) except: ""
   if existingContent != content:
     vfsWrite(indexName, content)
@@ -194,7 +195,7 @@ type
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
 proc symOrIdentOrDot(n: var Cursor): string =
-  if n.isSymbol: result = pool.syms[n.symId]
+  if n.isSymbol: result = pool.symString(n.symId)
   elif n.isIdent: result = pool.strings[n.strId]
   elif n.isDotToken: result = "."
   else: result = ""

@@ -60,10 +60,13 @@
 import std / [tables, sets, hashes, assertions, algorithm]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore (incl. rootOf, symId)
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
+import ".." / ".." / "lib" / symparser        # derivedName -- one spelling for a derived name
 import ".." / ".." / "models" / tags          # VarTagId for synthesis
 import patchsets
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import ".." / typenav                         # lookupField — the scalar's declared type
+
+include ".." / ".." / "lib" / compat2         # getOrQuit (host Nim)
 
 # ---- nifcore helpers ------------------------------------------------------
 
@@ -140,7 +143,7 @@ proc runConstructorProjection*(buf: var TokenBuf) =
   ## Fold field projections off inline (never-bound) object constructors.
   ## Iterated to a fixpoint so chains (`T(a: U(x: 1)).a.x`) collapse fully;
   ## each round removes at least one `oconstr`, so it terminates. Mints no new
-  ## symbols, so (unlike `runScalarize`) it needs no suffix.
+  ## symbols.
   var rounds = 0
   while rounds < 100:
     inc rounds
@@ -179,15 +182,17 @@ type
     accesses: seq[(SymId, SymId, int)] ## (object, field, dot-node position)
     patchset: Patchset
     synth: seq[TokenBuf]
-    suffix: string
     counter: int
     m: ptr MainModule                  ## module type context; nil ⇒ emit `.` and let the
                                        ## backend re-infer (the pre-existing behaviour, kept
                                        ## for the self-tests, which parse a body in isolation)
 
 proc freshScalarName(c: var Context): string =
+  ## A field scalar is a LOCAL of the body being scalarized, so its name is a
+  ## local's: `<ident>.<disamb>` and nothing else. Two bodies both minting
+  ## `` `sroa.1 `` is no more a problem than both having a `result.0`.
   inc c.counter
-  result = "`sroa." & $c.counter & "." & c.suffix
+  result = "`sroa." & $c.counter
 
 # ---- candidate collection -------------------------------------------------
 
@@ -196,7 +201,7 @@ proc recordOconstr(c: var Context; oSym: SymId; declPos: int; oconstr: Cursor) =
   ## nothing) on a base/inheritance part or a malformed `kv`; a name seen twice is
   ## disqualified outright (we can't tell the two objects apart by SymId).
   if oSym in c.candidates:
-    c.candidates[oSym].disqualified = true
+    c.candidates.getOrQuit(oSym).disqualified = true
     return
   var cand = Candidate(declPos: declPos,
                        typePos: -1,
@@ -257,7 +262,7 @@ proc recordLoad(c: var Context; oSym: SymId; declPos, typePos, loadPos: int) =
   ## scalar is initialised from `L.f`, re-read at the SAME program point where the
   ## whole-object copy happened, so it observes exactly the same memory.
   if oSym in c.candidates:
-    c.candidates[oSym].disqualified = true
+    c.candidates.getOrQuit(oSym).disqualified = true
     return
   c.candidates[oSym] = Candidate(declPos: declPos, typePos: typePos, loadPos: loadPos,
                                  valuePos: initTable[SymId, int](),
@@ -334,7 +339,7 @@ proc classify(c: var Context; n: Cursor) =
   of Symbol:
     let s = symId(n)
     if s in c.candidates:
-      c.candidates[s].disqualified = true        # a bare whole-object use
+      c.candidates.getOrQuit(s).disqualified = true        # a bare whole-object use
   of TagLit:
     case n.exprKind
     of DotC:
@@ -345,10 +350,10 @@ proc classify(c: var Context; n: Cursor) =
         skip f
         if f.kind == Symbol:
           let fSym = symId(f)
-          c.candidates[oSym].accessed.incl fSym
+          c.candidates.getOrQuit(oSym).accessed.incl fSym
           c.accesses.add (oSym, fSym, cursorToPosition(c.orig[], n))
         else:
-          c.candidates[oSym].disqualified = true  # `o.(weird)` → give up
+          c.candidates.getOrQuit(oSym).disqualified = true  # `o.(weird)` → give up
       else:
         var m = n                                 # nested base (`o.a.b`, deref, …)
         m.loopInto:
@@ -357,7 +362,7 @@ proc classify(c: var Context; n: Cursor) =
     of AddrC, HaddrC:
       let r = addrEscapeRoot(child0(n))           # `addr o` / `addr o.f` escapes o
       if r != SymId(0) and r in c.candidates:
-        c.candidates[r].disqualified = true
+        c.candidates.getOrQuit(r).disqualified = true
       var m = n
       m.loopInto:
         classify(c, m)
@@ -380,12 +385,12 @@ proc emitRewritten(c: var Context; dest: var TokenBuf; n: Cursor) =
     if n.exprKind == DotC:
       let base = child0(n)
       if base.kind == Symbol and symId(base) in c.candidates and
-         c.candidates[symId(base)].names.len > 0:
+         c.candidates.getOrQuit(symId(base)).names.len > 0:
         let oSym = symId(base)
         var f = base
         skip f
-        if f.kind == Symbol and symId(f) in c.candidates[oSym].names:
-          dest.addSymUse c.candidates[oSym].names[symId(f)]
+        if f.kind == Symbol and symId(f) in c.candidates.getOrQuit(oSym).names:
+          dest.addSymUse c.candidates.getOrQuit(oSym).names.getOrQuit(symId(f))
           return
     let tag = n.cursorTagId
     let li = rawLineInfo(n)
@@ -467,11 +472,9 @@ proc synthCursor(c: var Context; idx: int): Cursor {.inline.} =
 
 # ---- public entry ---------------------------------------------------------
 
-proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
-                   m: ptr MainModule = nil) =
+proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
   ## Scalar-replace non-escaping local objects in a single proc body. Names the
-  ## field scalars `` `sroa.<n>.<suffix> ``; pass a per-body-unique suffix (the
-  ## driver uses `bodySuffix`) so two bodies' scalars get distinct module symbols.
+  ## field scalars `` `sroa.<n> ``, which are locals of that body.
   ## `m` is the module type context each scalar's declared type is resolved through;
   ## without it the type slots are left empty and the backend re-infers them.
   var c = Context(orig: addr buf,
@@ -479,7 +482,6 @@ proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
                   accesses: @[],
                   patchset: initPatchset(addr buf),
                   synth: @[],
-                  suffix: moduleSuffix,
                   counter: 0,
                   m: m)
   block:
@@ -493,10 +495,10 @@ proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
   # A LOAD candidate has no constructor field list: its fields are exactly the ones
   # accessed, ordered by first access so the emitted decls are deterministic.
   for (oSym, fSym, dotAt) in c.accesses:
-    if c.candidates[oSym].loadPos >= 0 and fSym notin c.candidates[oSym].valuePos:
-      c.candidates[oSym].valuePos[fSym] = c.candidates[oSym].loadPos
-      c.candidates[oSym].dotPos[fSym] = dotAt
-      c.candidates[oSym].fieldOrder.add fSym
+    if c.candidates.getOrQuit(oSym).loadPos >= 0 and fSym notin c.candidates.getOrQuit(oSym).valuePos:
+      c.candidates.getOrQuit(oSym).valuePos[fSym] = c.candidates.getOrQuit(oSym).loadPos
+      c.candidates.getOrQuit(oSym).dotPos[fSym] = dotAt
+      c.candidates.getOrQuit(oSym).fieldOrder.add fSym
 
   # Survivors: not escaped, and every accessed field was constructor-initialised.
   var survPairs: seq[(int, SymId)] = @[]
@@ -513,37 +515,43 @@ proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
   # Assign scalar names in source order (deterministic output / codegen).
   for it in survPairs:
     let oSym = it[1]
-    let fields = c.candidates[oSym].fieldOrder
+    let fields = c.candidates.getOrQuit(oSym).fieldOrder
     for f in fields:
       let nm = freshScalarName(c)
-      c.candidates[oSym].names[f] = nm
+      c.candidates.getOrQuit(oSym).names[f] = nm
 
   # Replace each object decl with its field-scalar decls (constructor order).
   for it in survPairs:
     let oSym = it[1]
-    let declPos = c.candidates[oSym].declPos
-    let fields = c.candidates[oSym].fieldOrder
+    let declPos = c.candidates.getOrQuit(oSym).declPos
+    let fields = c.candidates.getOrQuit(oSym).fieldOrder
     var first = true
-    let isLoad = c.candidates[oSym].loadPos >= 0
+    let isLoad = c.candidates.getOrQuit(oSym).loadPos >= 0
     for f in fields:
-      let name = c.candidates[oSym].names[f]
-      let value = cursorAt(c.orig[], c.candidates[oSym].valuePos[f])
-      let idx =
-        if isLoad:
-          buildLoadFieldDecl(c, name, cursorAt(c.orig[], c.candidates[oSym].dotPos[f]),
-                             value, c.candidates[oSym].typePos, f)
-        else:
-          buildFieldDecl(c, name, value, c.candidates[oSym].typePos, f)
+      # Everything read out of `c` is copied into locals BEFORE `c` is passed
+      # as the mutable argument; a borrowed read alongside it aliases.
+      let name = c.candidates.getOrQuit(oSym).names.getOrQuit(f) & ""
+      let value = cursorAt(c.orig[], c.candidates.getOrQuit(oSym).valuePos.getOrQuit(f))
+      let typePos = c.candidates.getOrQuit(oSym).typePos
+      var idx = 0
+      if isLoad:
+        let dot = cursorAt(c.orig[], c.candidates.getOrQuit(oSym).dotPos.getOrQuit(f))
+        idx = buildLoadFieldDecl(c, name, dot, value, typePos, f)
+      else:
+        idx = buildFieldDecl(c, name, value, typePos, f)
       if first:
         c.patchset.addSubst(declPos, synthCursor(c, idx)); first = false
       else:
         c.patchset.addInsert(declPos, synthCursor(c, idx))
 
   # Rewrite every field access to its scalar (survivors only have names).
-  for acc in c.accesses:
-    let (oSym, fSym, pos) = acc
-    if oSym in c.candidates and fSym in c.candidates[oSym].names:
-      let idx = buildSymUse(c, c.candidates[oSym].names[fSym])
+  # By index: iterating `c.accesses` directly would borrow `c` for the whole
+  # loop, and the body mutates it.
+  for ai in 0 ..< c.accesses.len:
+    let (oSym, fSym, pos) = c.accesses[ai]
+    if oSym in c.candidates and fSym in c.candidates.getOrQuit(oSym).names:
+      let name = c.candidates.getOrQuit(oSym).names.getOrQuit(fSym) & ""
+      let idx = buildSymUse(c, name)
       c.patchset.addSubst(pos, synthCursor(c, idx))
 
   if not c.patchset.isEmpty:
@@ -577,15 +585,15 @@ when isMainModule:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1) (kv g.0.M 2))) " &
       "(asgn x.0.M (dot o.0.M f.0.M)) (asgn y.0.M (dot o.0.M g.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) (var :`sroa.2.M . . 2) " &
-      "(asgn x.0.M `sroa.1.M) (asgn y.0.M `sroa.2.M))")
+      "(stmts (var :`sroa.1 . . 1) (var :`sroa.2 . . 2) " &
+      "(asgn x.0.M `sroa.1) (asgn y.0.M `sroa.2))")
 
   block field_write_then_read:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1))) " &
       "(asgn (dot o.0.M f.0.M) 5) (asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) " &
-      "(asgn `sroa.1.M 5) (asgn x.0.M `sroa.1.M))")
+      "(stmts (var :`sroa.1 . . 1) " &
+      "(asgn `sroa.1 5) (asgn x.0.M `sroa.1))")
 
   block whole_object_use_disqualifies:
     # `o` is passed whole to a call → it must materialize → left alone.
@@ -606,7 +614,7 @@ when isMainModule:
     # `var o = src` (the inliner's by-value param copy). Fields come from `src.f`.
     chk(
       "(stmts (var :o.0.M . T.0.M src.0.M) (asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . (dot src.0.M f.0.M)) (asgn x.0.M `sroa.1.M))")
+      "(stmts (var :`sroa.1 . . (dot src.0.M f.0.M)) (asgn x.0.M `sroa.1))")
 
   block uninitialised_field_access_disqualifies:
     # `o.g` is read but the constructor never set `g` (think: other variant arm).
@@ -621,8 +629,8 @@ when isMainModule:
       "(stmts (var :p.0.M . . (oconstr U.0.M (kv a.0.M 1))) " &
       "(var :o.0.M . . (oconstr T.0.M (kv f.0.M (dot p.0.M a.0.M)))) " &
       "(asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) (var :`sroa.2.M . . `sroa.1.M) " &
-      "(asgn x.0.M `sroa.2.M))")
+      "(stmts (var :`sroa.1 . . 1) (var :`sroa.2 . . `sroa.1) " &
+      "(asgn x.0.M `sroa.2))")
 
   block unused_object_keeps_value_side_effects:
     # `o` is never used, but its field value is a call: explode so the call stays
@@ -630,15 +638,15 @@ when isMainModule:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M (call mk.0.M)))) " &
       "(call other.0.M))",
-      "(stmts (var :`sroa.1.M . . (call mk.0.M)) (call other.0.M))")
+      "(stmts (var :`sroa.1 . . (call mk.0.M)) (call other.0.M))")
 
   block nested_field_access_through_scalar:
     # `o.inner` is itself an object; `o.inner.x` becomes `(dot `sroa.1 x)`.
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv inner.0.M q.0.M))) " &
       "(asgn r.0.M (dot (dot o.0.M inner.0.M) x.0.M)))",
-      "(stmts (var :`sroa.1.M . . q.0.M) " &
-      "(asgn r.0.M (dot `sroa.1.M x.0.M)))")
+      "(stmts (var :`sroa.1 . . q.0.M) " &
+      "(asgn r.0.M (dot `sroa.1 x.0.M)))")
 
   # ---- #3: inline constructor projection ----------------------------------
 
@@ -697,7 +705,7 @@ when isMainModule:
     runConstructorProjection buf
     runScalarize buf
     let got = toString(buf)
-    let want = canon("(stmts (var :`sroa.1.M . . 5) (asgn r.0.M `sroa.1.M))")
+    let want = canon("(stmts (var :`sroa.1 . . 5) (asgn r.0.M `sroa.1))")
     doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
 
   echo "scalarizer.nim: all self-tests passed"

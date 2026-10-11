@@ -2,7 +2,7 @@
 
 Each `.nim` file here is one fixture for `hastur wasmdiff`: the SAME source
 pushed through both C-free pipelines — `nimony n` (arkham + nifasm) as the
-executable oracle, and `nimony w` (ithaqua) as the backend under test — with
+executable oracle, and `nimony w` (`jorogumo w`) as the backend under test — with
 their stdout required to match byte for byte and their exit codes to agree.
 
 There are no `.output` files on purpose. The expected output of a fixture is
@@ -17,8 +17,14 @@ before falling back to running all 18 individually anyway.
 The fixtures still run as ordinary tests in `hastur all` (unchecked output, but a
 compile and a clean exit), which is free stdlib coverage on the C backend.
 
+The directory is named after `ithaqua`, the wasm code generator this corpus was
+written against. That tool is gone: `../nativenif/src/web` is now one code
+generator with two renderers, and `jorogumo w` is what `nimony w` runs. The
+corpus is unchanged — it never named the tool, only the pipeline.
+
 `wasmgaps/` holds quarantined one-sided failures — the sweep walks only the top
-level — where ithaqua cannot compile the construct yet and the oracle is right.
+level — where the wasm renderer cannot compile the construct yet and the oracle
+is right.
 Its sibling `nativebugs/` (the mirror case: the ORACLE was the broken side) is
 gone, its six repros having been fixed and promoted to fixtures up here:
 `cmp_ignore_case`, `parse_float`, `rand_float`, `sort_empty`, `float32_ops` and

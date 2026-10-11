@@ -4,9 +4,10 @@
 
 import std / [oserrors, atomics]
 
-const nativeThreads* = defined(nimNoLibc) and defined(linux) and defined(amd64)
-  ## Whether threads here are the runtime's own `clone(2)` rather than an OS
-  ## thread library's. True on the native (arkham + nifasm) backend, which links
+const nativeThreads* = defined(nimNoLibc) and defined(amd64) and
+                      (defined(linux) or defined(freebsd))
+  ## Whether threads here are the runtime's own `clone(2)` (Linux) or
+  ## `thr_new(2)` (FreeBSD) rather than an OS thread library's. True on the native (arkham + nifasm) backend, which links
   ## no libc and therefore has no pthreads; false everywhere else, `nimony c`
   ## included — that build is raw-syscall too, but libc is still linked.
 
@@ -61,6 +62,50 @@ elif defined(genode):
                   affinity: cuint) {.
     importcpp: "#.initThread(@)".}
 
+
+elif nativeThreads and defined(freebsd):
+  # Native (arkham + nifasm) threads on FreeBSD. No libc, so no libthr: a thread
+  # is `thr_new(2)`. Unlike Linux's `clone` it is an ordinary call — the kernel
+  # starts the child at `start_func(arg)` on the stack it is given, with FS
+  # already pointing at `tls_base` — so there is no naked trampoline here.
+  import std / posix / posix
+
+  type
+    SysThread = int
+      ## A C `long`: the kernel stores the child's thread id here when it is
+      ## created, and `thr_exit` stores 1 and wakes the word as the thread dies,
+      ## which is the whole of `join` (thread ids start far above 1).
+
+    ThrParam {.pure.} = object ## `struct thr_param` (104 bytes)
+      startFunc: proc (arg: pointer) {.nimcall.}
+      arg: pointer
+      stackBase: pointer
+      stackSize: csize_t
+      tlsBase: pointer
+      tlsSize: csize_t
+      childTid: ptr int
+      parentTid: ptr int
+      flags: cint
+      rtp: nil pointer
+      spare: array[3, nil pointer]
+
+  const
+    NativeStackBytes = 8 * 1024 * 1024
+      ## The default stack, matching the Linux path (see there).
+    UmtxOpWait = cint(2)
+      ## The SHARED `UMTX_OP_WAIT` on a `long`: `thr_exit`'s wake is not the
+      ## private kind, and private and shared waiters do not meet.
+    CpuLevelWhich = cint(3)
+    CpuWhichTid = cint(1)
+
+  proc thrNew(param: ptr ThrParam; size: cint): cint {.importc: "thr_new", sideEffect.}
+  proc thrExit(state: ptr int) {.importc: "thr_exit", sideEffect.}
+  proc thrSelf(id: ptr int): cint {.importc: "thr_self", sideEffect.}
+  proc umtxOp(obj: pointer; op: cint; val: culong;
+              uaddr, uaddr2: nil pointer): cint {.importc: "_umtx_op", sideEffect.}
+  proc cpusetSetaffinity(level, which: cint; id: int; setsize: csize_t;
+                         mask: pointer): cint {.importc: "cpuset_setaffinity", sideEffect.}
+  proc tlsSizeCell(): pointer {.intrinsic: "TlsSize".}
 
 elif nativeThreads:
   # Native (arkham + nifasm) threads. There is no libc here, so there are no
@@ -185,9 +230,11 @@ else:
   when not defined(haiku):
     {.passC: "-pthread".}
 
+  when defined(illumos):
+    type SysThread = distinct cuint # pthread_t is 32-bit even in LP64
+  else:
+    type SysThread = distinct culong # glibc/musl integer, Darwin pointer
   type
-    SysThread = distinct culong  ## pthread_t: unsigned long on glibc/musl,
-                                 ## a pointer on Darwin — same width either way
     Pthread_attr = object ## pthread_attr_t as an opaque, oversized blob:
                           ## 56 B on glibc 64-bit, 36 B on i386, 64 B on
                           ## Darwin. int64 elements give both ABIs' alignment.
@@ -211,7 +258,7 @@ else:
   proc pthread_cancel(a1: SysThread): cint {.
     importc: "pthread_cancel".}
 
-when defined(posix) and not defined(macosx):
+when defined(posix) and not (defined(macosx) or defined(illumos)):
   type CpuSet = object ## cpu_set_t (glibc: 1024-bit mask)
     abi: array[16, uint64]
 
@@ -241,8 +288,19 @@ type
 proc `=copy`(dest: var RawThread; src: RawThread) {.error.}
 
 template nimThreadProcWrapperBody(closure: pointer) =
+  # first: chunks this thread allocates are stamped with its region's handle
+  when declared(nimAllocThreadInit):
+    nimAllocThreadInit()
   let t = cast[ptr RawThread](closure)
   t.dataFn(t.data)
+  # A memory management runtime with per-thread state that must outlive the
+  # thread (`system/yrc`: its queued decrements and candidate roots) hands it
+  # over here.
+  when declared(nimThreadTeardown):
+    nimThreadTeardown()
+  # last: the heap of this thread goes to the next thread that starts
+  when declared(nimAllocThreadTeardown):
+    nimAllocThreadTeardown()
 
 when defined(windows):
   proc threadProcWrapper(closure: pointer): uint32 {.stdcall.} =
@@ -252,6 +310,15 @@ when defined(windows):
 elif defined(genode):
   proc threadProcWrapper(closure: pointer) {.noconv.} =
     nimThreadProcWrapperBody(closure)
+elif nativeThreads and defined(freebsd):
+  proc childEntry(arg: pointer) {.nimcall.} =
+    ## `thr_new`'s `start_func`: an ordinary proc on this thread's own stack.
+    nimThreadProcWrapperBody(arg)
+    # Never `return` (there is nothing to return to): `thr_exit` ends this
+    # thread, and the word it is handed is what `join` waits on.
+    let t = cast[ptr RawThread](arg)
+    thrExit(addr t.sys)
+
 elif nativeThreads:
   proc childEntry(arg: pointer) {.nimcall.} =
     ## Where a new thread begins. `cloneRaw`'s `ret` lands here with `arg` in rdi
@@ -297,6 +364,42 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
     t.sys.initThread(runtimeEnv, stackSize.culonglong,
       threadProcWrapper, addr(t), if pinnedToCpu >= 0: pinnedToCpu else: affinityOffset)
     inc affinityOffset
+  elif nativeThreads and defined(freebsd):
+    # Same single mapping as the Linux path: the stack below the thread-local
+    # block, so an overflow faults instead of overwriting thread-locals.
+    let stackBytes = if stackSize > 0: (stackSize + 4095) and not 4095
+                     else: NativeStackBytes
+    let tlsBytes = max((cast[ptr int](tlsSizeCell())[] + 15) and not 15, 16)
+    let mem = mmap(nil, csize_t(stackBytes + tlsBytes), PROT_READ or PROT_WRITE,
+                   MAP_PRIVATE or MAP_ANONYMOUS, -1.cint, 0)
+    if mmapFailed(mem):
+      raiseOSError(osLastError())
+    t.stackMem = mem
+    t.stackBytes = stackBytes + tlsBytes
+    let base = cast[uint](mem)
+    # The block's self-pointer (see the Linux path): `&threadvar` is `FS:[0] + off`.
+    let tlsBase = base + uint(stackBytes)
+    cast[ptr uint](tlsBase)[] = tlsBase
+    # The kernel stores the id through BOTH pointers before the child runs. The
+    # child's copy (`t.sys`) becomes 1 when it exits, so the affinity call below
+    # reads the parent's own copy, which nothing else touches.
+    var tid = 0
+    var param = ThrParam(startFunc: childEntry, arg: addr t, stackBase: mem,
+                         stackSize: csize_t(stackBytes),
+                         tlsBase: cast[pointer](tlsBase), tlsSize: csize_t(tlsBytes),
+                         childTid: addr t.sys, parentTid: addr tid)
+    if thrNew(addr param, cint(sizeof(ThrParam))) != 0:
+      discard munmap(mem, csize_t(t.stackBytes))
+      t.stackMem = nil
+      t.stackBytes = 0
+      raiseOSError(osLastError())
+    if pinnedToCpu >= 0:
+      var s {.noinit.}: CpuSet
+      cpusetZero(s)
+      cpusetIncl(pinnedToCpu.cint, s)
+      # Not undoable, so a failure is not an error (see the Linux path).
+      discard cpusetSetaffinity(CpuLevelWhich, CpuWhichTid, tid,
+                                csize_t(sizeof(s)), addr s)
   elif nativeThreads:
     # One mapping holds both regions, with the stack BELOW the thread-local
     # block, so a stack overflow runs off the low end into unmapped memory and
@@ -358,7 +461,7 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
     if pthread_create(t.sys, a, threadProcWrapper, addr(t)) != 0:
       raiseOSError(osLastError())
     discard pthread_attr_destroy(a)
-    when not defined(macosx):
+    when not (defined(macosx) or defined(illumos)):
       if pinnedToCpu >= 0:
         var s {.noinit.}: CpuSet
         cpusetZero(s)
@@ -371,6 +474,18 @@ proc join*(t: var RawThread) =
     discard waitForSingleObject(t.sys, -1'i32)
   elif defined(genode):
     joinThread(t.sys)
+  elif nativeThreads and defined(freebsd):
+    # `thr_exit` stores 1 into `t.sys` and wakes it once the thread is done with
+    # user memory, so after that the stack can be given back. The wait returns
+    # spuriously, hence the loop.
+    while true:
+      let v = atomicLoad(t.sys, moAcquire)
+      if v == 1: break
+      discard umtxOp(addr t.sys, UmtxOpWait, culong(v), nil, nil)
+    if t.stackMem != nil:
+      discard munmap(t.stackMem, csize_t(t.stackBytes))
+      t.stackMem = nil
+      t.stackBytes = 0
   elif nativeThreads:
     # `t.sys` is the `CLONE_CHILD_CLEARTID` word: the kernel zeroes it and wakes
     # the futex on it as the thread dies. So the wait is the word itself — no
@@ -404,6 +519,16 @@ when defined(windows):
     ## Gets the ID of the currently running thread.
     if threadId == 0:
       threadId = int(getCurrentThreadId())
+    result = threadId
+
+elif defined(freebsd) and defined(nimNoLibc):
+  proc getThreadId*(): int =
+    ## Gets the ID of the currently running thread (`thr_self`, which writes it
+    ## through its pointer argument).
+    if threadId == 0:
+      var id = 0
+      discard thrSelf(addr id)
+      threadId = id
     result = threadId
 
 elif defined(linux) and defined(nimNoLibc):
@@ -489,9 +614,9 @@ elif defined(macosx):
       threadId = int(tid)
     result = threadId
 
-elif defined(solaris):
-  type thread_t {.importc: "thread_t", header: "<thread.h>".} = distinct int
-  proc thr_self(): thread_t {.importc, header: "<thread.h>".}
+elif defined(sunos):
+  type thread_t = distinct cuint
+  proc thr_self(): thread_t {.importc: "thr_self".}
 
   proc getThreadId*(): int =
     ## Gets the ID of the currently running thread.

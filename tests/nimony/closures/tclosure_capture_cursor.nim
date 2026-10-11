@@ -27,7 +27,9 @@ proc setup(node: Node) =
     echo "closure viewW=", nodeRef.viewW # read through the cursor
 
 proc run() =
-  let n = Node(viewW: 10)
+  # `releaseView` is a not-nil closure field, so it gets a value here; `setup`
+  # replaces it with the one this test is about.
+  let n = Node(viewW: 10, releaseView: proc() {.closure.} = discard)
   setup(n)
   n.releaseView()
   echo "node viewW=", n.viewW            # mutation visible on the aliased object
@@ -36,3 +38,5 @@ run()
 # Exactly one destroy: the cursor env field did not inflate node's rc, so the
 # sole owner (`n`) frees it once — no leak (would print 0) and no double free.
 echo "destroyed=", gDestroyed
+
+{.feature: "assumeSync".}  # test program: globals shared freely

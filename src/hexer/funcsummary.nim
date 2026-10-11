@@ -405,14 +405,12 @@ proc handleLocalDecl(a: var ProcAnalysis; n: var Cursor) =
   walkStmt(a, ic)            # capture nested calls / addr in the initializer
   skip n
 
-proc handleAssign(a: var ProcAnalysis; n: var Cursor; reversed: bool) =
+proc handleAssign(a: var ProcAnalysis; n: var Cursor) =
   var c = n
   inc c
-  let firstStart = c
+  let destStart = c
   skip c
-  let secondStart = c
-  let destStart = if reversed: secondStart else: firstStart
-  let valStart = if reversed: firstStart else: secondStart
+  let valStart = c
 
   let valRoots = exprRoots(a, valStart)
   let destBareSym = destStart.kind == Symbol
@@ -508,9 +506,7 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
   of VarS:
     handleLocalDecl(a, n)
   of AsgnS:
-    handleAssign(a, n, reversed = false)
-  of StoreS:
-    handleAssign(a, n, reversed = true)        # `(store value dest)`
+    handleAssign(a, n)
   of RetS:
     handleRet(a, n)
   of CallS:
@@ -541,7 +537,7 @@ proc markAllUnknown(a: var ProcAnalysis) =
 
 proc isExternProc(pragmas: Cursor): bool =
   ## A proc whose implementation lives outside the NIF world: `importc` /
-  ## `importcpp`. Its body is `(stmts .)` — an EMPTY body, not an effect-free
+  ## `importcpp` / `importjs`. Its body is `(stmts .)` — an EMPTY body, not an effect-free
   ## one, so walking it would "prove" that `time(addr x)` neither writes
   ## through nor escapes its argument and copyprop would then keep believing
   ## `x`'s pre-call value. There is nothing to analyse; say so.
@@ -549,7 +545,7 @@ proc isExternProc(pragmas: Cursor): bool =
   var p = pragmas
   result = false
   p.loopInto:
-    if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP}: return true
+    if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP, ImportjsP}: return true
     skip p
 
 proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =

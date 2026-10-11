@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 when defined(nodejs):
   proc getEnv*(key: string, default = ""): string {.tags: [ReadEnvEffect].} =
     var ret = default.cstring
@@ -113,7 +115,7 @@ else:
     # `environ` nor Darwin's `_NSGetEnviron` is needed. Windows never comes
     # here: its entry point receives no `envp` at all, so the block is read
     # from `GetEnvironmentStringsW` above instead.
-    var gEnv {.importc: "nimEnviron".}: cstringArray
+    let gEnv {.importc: "nimEnviron".}: cstringArray
 
     proc getEnvVarsC() =
       # retrieves the variables of char** env of C's main proc
@@ -153,7 +155,7 @@ else:
 
 
     var i = findEnvVar(key)
-    if i >= 0:
+    if i >= 0 and i < environment.len:
       result = substr(environment[i], find(environment[i], '=')+1)
     else:
       when useWinEnv or defined(nimNativeIo):
@@ -215,7 +217,7 @@ else:
     # the process itself may access its modified environment variables!
 
     var indx = findEnvVar(key)
-    if indx >= 0:
+    if indx >= 0 and indx < environment.len:
       environment[indx] = key & '=' & val
     else:
       add environment, (key & '=' & val)

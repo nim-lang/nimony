@@ -783,6 +783,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
             emitWhenMarker c
             c.b.addStrLit it[1].strVal
             c.b.endTree()
+        elif it.kind == nkIdent and it.ident.s == "enableTrace":
+          # `{.enableTrace.}` in a memory management runtime's `nimTraceRef`:
+          # the runtime collects cycles, which the build has to know before
+          # it can write the `nimsem`/`hexer` command lines (`deps.processDep`).
+          withDepsStream c:
+            c.b.addTree "enableTrace"
+            emitWhenMarker c
+            c.b.endTree()
   of nkCallKinds:
     let oldDepsEnabled = c.depsEnabled
     if n.len > 0 and n[0].kind == nkIdent and n[0].ident.s == "runnableExamples":
@@ -876,19 +884,17 @@ proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, de
   result = TranslationContext(conf: conf,
     portablePaths: portablePaths, depsEnabled: depsEnabled or depsOnly, lineInfoEnabled: not depsOnly,
     preserveDocs: preserveDocs)
-  # nifler opts into OnlyIfChanged: when a re-parse produces byte-identical
-  # output (e.g. `touch foo.nim` with no real edit, or comment-only edits
-  # that the parser strips), keep the old mtime on `.p.nif` / `.p.deps.nif`
-  # so downstream `nimsem` / `hexer` aren't perpetually re-fired.
+  # Always written, even when a re-parse comes out byte-identical: these are
+  # not interface files, so a fresh mtime only re-runs this module's `nimsem`,
+  # whose `.s.idx.nif` then spares the importers (doc/internals/ic.md).
   if depsOnly:
     # Memory-only builder for main output (will be discarded)
     result.b = nifbuilder.open(1024)
-    result.deps = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
+    result.deps = nifbuilder.open(outfile)
   else:
-    result.b = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
+    result.b = nifbuilder.open(outfile)
     if depsEnabled:
-      result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"),
-                                     writeMode = OnlyIfChanged)
+      result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"))
 
 proc close*(c: var TranslationContext; depsOnly = false) =
   if depsOnly:

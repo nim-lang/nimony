@@ -177,7 +177,8 @@ proc elemAt(j: Json; idx: int): Json =
     quit "not an array"
 
 proc lookup(j: Json; key: string): Json =
-  result = default(Json)
+  # No `result = default(Json)` to open with: `Json` is a not-nil ref and has
+  # no default. Every path below either returns a value or quits.
   case j
   of JObject(pairs):
     var p = 0

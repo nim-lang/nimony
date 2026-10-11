@@ -47,7 +47,7 @@ const
     # test-by-test and failed as a group, on three backend bugs that only a
     # module compiled as an import can reach (see `NativeJoinSkip`).
     #
-    # `tests/nimony/stdlib`: 45 of its 53 pass; the rest are in `NativeTestSkip`.
+    # `tests/nimony/stdlib`: 44 of its 53 pass; the rest are in `NativeTestSkip`.
     # This is the suite that covers the process vectors the Windows entry point
     # does not receive (`tcmdline`, `tenvvars`, `tos`) — the reason it is worth
     # running natively at all rather than only through the C backend.
@@ -126,26 +126,59 @@ const
     "tests/nimony/stdlib/trandom",
     # The one test on Windows that drives the ring on real sockets — every other
     # test in `tests/nimony/threads` either stubs itself out here or never
-    # reaches `rawthreads.create`. Two native gaps were found through it and
-    # fixed in arkham/nifasm (a `stdcall` proc DEFINITION is now entered under
-    # the Win64 ABI, and `nil` is now a legal proc value). What is left is a
-    # THIRD, undiagnosed one: about one run in eight the native build trips a
-    # seq bound check somewhere inside the ring —
-    #   lib/std/system/seqimpl.nim(167, 41): i < s.len   (also: 0 <= i)
-    # — at a point that varies with timing. The same program built with `nimony
-    # c` is clean over 25+ runs under Wine, and both backends enforce that
-    # contract identically (checked with a fixture that indexes past the end),
-    # so this is the native code computing a different index, not the ring
-    # asking for one. It is NOT in anything the deadline/connect coverage added:
-    # cutting the test back to the accept/read/write/polladd/abort surface it
-    # had before still fails 4 runs in 30.
+    # reaches `rawthreads.create`. Three native gaps have been found through it;
+    # the first two are fixed in arkham/nifasm (a `stdcall` proc DEFINITION is
+    # entered under the Win64 ABI, and `nil` is a legal proc value), and so is
+    # the third:
+    #
+    #   `{.threadvar.}` USED TO BE A PLAIN GLOBAL in a native Windows build.
+    #
+    # arkham collected thread-locals as ordinary globals on win_x64 on the
+    # premise that the PE image is single-threaded. `std/rawthreads` calls
+    # `CreateThread`, so every thread shared one copy of every thread-local —
+    # `threadpool.threadIdx` included, which made `ioLane()` answer the same lane
+    # for the main thread AND every worker: 32 threads on one unlocked slot
+    # arena, hence the double `complete()` that surfaced as
+    #   lib/std/system/seqimpl.nim(167, 41): i < s.len
+    # It is fixed with real PE static TLS (nativenif `4dc7e7a`).
+    #
+    # It stays skipped for a FOURTH problem, which only became reachable once the
+    # lanes were finally distinct: the native build now HANGS instead. The main
+    # thread spins in `waitCompletions` while all 31 workers sleep in their
+    # completion wait, i.e. a completion it is waiting for never arrives. What
+    # says this is code generation and not the ring: the same library built with
+    # `nimony c` passes 10 runs out of 10 under Wine while the native build hangs
+    # 6 out of 6, and ANY perturbation of `waitCompletions` — adding two locals
+    # and a branch — makes the native build pass 10 out of 10 too. The obvious
+    # suspect is register pressure: `&threadvar` went from one FS-relative load
+    # to a five-instruction walk through the TEB, and `ioLane()` does two of them.
     "tests/nimony/threads/tioringwin",
     # The odd one out: NOT a native gap. Its `std/typetraits` compile-time plugin
     # fails to run ("vfs: open failed"), and the C backend fails it identically,
     # so nothing here would fix it.
-    "tests/nimony/stdlib/ttypetraits"
+    "tests/nimony/stdlib/ttypetraits",
+    # `tall` imports EVERY stdlib module, which is the point of it: that they
+    # still compile together, and that `dagon` can document them. Nothing about
+    # it is a native assertion, and running it as one asks a much larger question
+    # than the file was written to ask — it reaches `threadpool`, `parfor`,
+    # `ticketlocks`, `socket`, `ioring` and the http modules, so it needs every
+    # threadvar the pinned arkham gets wrong on win_x64. It compiles and then
+    # faults on a null read before its first `echo`. nativenif #157 (`arkham/
+    # nifasm: real thread-locals on win_x64`) fixes exactly that — verified with
+    # `nimony n --os:windows` under wine, where all 45 of this directory's
+    # native-eligible tests pass with it and `tall` prints `ok` — but that commit
+    # is not the pin yet. Delete this line when it is.
+    "tests/nimony/stdlib/tall"
   ]
   NativeTestFiles* = [
+    # `std/dirs` read libc's `errno` after a failed syscall; a freestanding
+    # build has none, so every failure reported `Success`.
+    "tests/nimony/stdlib/tdir_errors",
+    # A constructor that selects a case branch and sets none of its fields. Sem
+    # used to leave that branch out of the `oconstr`, which the C back end's
+    # compound literal zeroed and arkham, storing only what is listed, did not:
+    # the Nimony-built native lengc crashed destroying a garbage `seq`.
+    "tests/nimony/object/tcaseobj_branchdefaults",
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
     # x86-64 `bsf`, AArch64 `rbit`+`clz` — so this is the one test whose POINT is
     # that the C and native backends agree on results they reach by different
@@ -188,6 +221,35 @@ const
     # (">8 integer params (stack TODO)"), which is what kept `nimony.nim` off the
     # native bootstrap ladder.
     "tests/nimony/calls/tstackparams",
+    # A `{.union.}` type, which lowers to a TOP-LEVEL `(union (fld …)*)` rather
+    # than to an object with a union part. arkham emitted union members only
+    # from inside `ObjectT` — the object-VARIANT shape — so a standalone one hit
+    # "type not supported: union" and took every module that imported
+    # `std/ioring` (whose io_uring SQE is nothing but these) with it. nifasm had
+    # always laid the shape out; only the declaration was missing.
+    "tests/nimony/object/tunionconstr",
+    # `{.packed.}` — the layout the OTHER side of an ABI already uses, stated as
+    # constants because only a backend that lays types out itself can get it
+    # wrong. arkham ignored the pragma entirely (and nifasm had no tag for it),
+    # which surfaced as `std/ioring`'s epoll backend HANGING: `epoll_event` is 12
+    # bytes and every entry past the first was read from the wrong address.
+    "tests/nimony/types/tpacked",
+    # The I/O ring, on the DEFAULT backend (io_uring) — the whole of `std/ioring`
+    # plus `std/posix/io_uring` through the freestanding syscall path. Native by
+    # nature: these reach the kernel with structs whose layout the C compiler
+    # owns under `nimony c`, so only a backend that lays them out itself can get
+    # them wrong — which it did, in four separate ways (`{.packed.}`, a
+    # top-level `(union …)`, a union CONSTANT, and a union field that
+    # `default()` left unzeroed, each of which the C backend hides).
+    "tests/nimony/threads/tioringhello",
+    "tests/nimony/threads/tioringrw",
+    "tests/nimony/threads/tpolladd",
+    "tests/nimony/threads/ttimers",
+    # Positioned transfers: default io_uring and an explicitly selected epoll
+    # program. The latter reaches pread/pwrite in the libc-free backend
+    # (nativenif #195); Linux runtime validation is still pending.
+    "tests/nimony/threads/tpositioned",
+    "tests/nimony/ioringepoll/tpositionedepoll",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",

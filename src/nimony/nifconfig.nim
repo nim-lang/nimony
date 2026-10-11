@@ -9,8 +9,6 @@
 import std / [os, sets, strutils]
 when defined(nimony):
   import std / syncio
-else:
-  import std / sequtils
 
 import ".." / lib / platform
 
@@ -20,11 +18,6 @@ include ".." / lib / nifprelude
 from ".." / lib / nifcoreparse import parse
 
 when defined(nimony):
-  func addUnique(s: var seq[string]; x: sink string) =
-    for i in 0 ..< s.len:
-      if s[i] == x: return
-    s.add x
-
   # `system.hostCPU`/`hostOS` are compile-time magics that Nimony doesn't
   # expose; derive the string values from `when defined(...)` branches.
   const
@@ -46,16 +39,20 @@ when defined(nimony):
     hostOS =
       when defined(windows): "windows"
       elif defined(macosx): "macosx"
+      elif defined(android): "android"
       elif defined(linux): "linux"
       elif defined(freebsd): "freebsd"
       elif defined(netbsd): "netbsd"
       elif defined(openbsd): "openbsd"
       elif defined(dragonfly): "dragonfly"
+      elif defined(illumos): "illumos"
       elif defined(solaris): "solaris"
       elif defined(haiku): "haiku"
-      elif defined(android): "android"
       elif defined(ios): "ios"
       else: "linux"
+
+const
+  HostPlatform* = "[" & hostOS & "; " & hostCPU & "]"
 
 const
   DefaultMM* = "atomicarc"
@@ -64,10 +61,30 @@ const
   MmPlaceholder* = "$MM"
     ## What `system.nim` writes instead of naming a strategy: `include "$MM"`.
     ## Expanded by `expandMM` to the module `--mm` selected. A new strategy is
-    ## then a new file under `MmDir` and nothing else -- no `when` chain in
-    ## `system.nim` that every strategy has to be added to.
+    ## then a new file -- under `MmDir` for the ones that ship with the stdlib,
+    ## anywhere for a runtime of the user's own -- and nothing else: no `when`
+    ## chain in `system.nim` that every strategy has to be added to.
   MmDir* = "system/"
-    ## Where the strategy modules live, relative to `system.nim`.
+    ## Where the strategy modules that ship with the stdlib live, relative to
+    ## `system.nim`. A `--mm` given as a PATH does not go through here.
+
+proc isStrategyName*(val: string): bool =
+  ## Tells the two kinds of `--mm:` value apart. A bare NAME (`--mm:atomicArc`)
+  ## selects a strategy that ships with the stdlib, a file under `MmDir`.
+  ## Anything else is the PATH of a runtime of the user's own (`--mm:rt/mygc`,
+  ## `--mm:$RT/gc`, `--mm:/opt/rt/gc.nim`) and is used as written.
+  result = val.len > 0
+  for ch in val:
+    if ch notin {'a'..'z', 'A'..'Z', '0'..'9', '_'}: return false
+
+proc toMM*(val: string): string =
+  ## What `NifConfig.mm` stores for a `--mm:` value. A strategy name is
+  ## `normalize`d, because it becomes a FILENAME under `MmDir` and filenames
+  ## stay all-lowercase while the option is spelled in camelCase
+  ## (`--mm:atomicArc` -> `system/atomicarc`). A path is kept verbatim: there
+  ## the spelling is the user's file's own, and on a case-sensitive filesystem
+  ## it is the only one that opens.
+  result = if isStrategyName(val): normalize(val) else: val
 
 type
   TrackMode* = enum
@@ -87,7 +104,8 @@ type
     backendC = "c"
     backendLLVM = "llvm"
     backendNative = "native"  # C-free: Leng -> arkham -> nifasm (static, libc-free)
-    backendWasm = "wasm"      # C-free: Leng -> ithaqua (whole-program .wasm, no linker)
+    backendWasm = "wasm"      # C-free: Leng -> `jorogumo w` (whole-program .wasm, no linker)
+    backendJs = "js"          # C-free: Leng -> `jorogumo j` (whole-program .js, no linker)
 
   OptLevel* = enum
     optDebug   # default: -O1 (debug-friendly but avoids dumb codegen)
@@ -97,10 +115,14 @@ type
 
   NifConfig* = object
     defines*: seq[string]
-    mm*: string  ## `--mm:NAME`: the memory management strategy. Stored
-                 ## `normalize`d, because it is used as a FILENAME (`MmDir & mm`)
-                 ## and filenames stay all-lowercase, while the option is spelled
-                 ## in camelCase (`--mm:atomicArc` -> `system/atomicarc`).
+    mm*: string  ## `--mm:NAME` or `--mm:PATH`: the memory management strategy,
+                 ## as `toMM` stores it -- a `normalize`d name for one of the
+                 ## strategies under `MmDir`, or the path of a runtime of the
+                 ## user's own, verbatim. `expandMM` turns it into the module
+                 ## `system.nim` includes.
+    cycles*: bool  ## `--cycles`: the runtime collects cycles. The driver finds
+                   ## `{.enableTrace.}` in it (`deps.processDep`) and passes
+                   ## this on to nimsem and hexer, which then lift `=trace`.
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
@@ -125,9 +147,14 @@ type
     ccKey*: string
     appType*: AppType
     backend*: Backend
+    jsBrowser*: bool  # `--browser`: the JS backend emits for a browser host
+                      # (no Node `fs`/`process`; output buffers, exports on
+                      # globalThis.NIF). Forwarded to jorogumo as --target:browser.
     optLevel*: OptLevel
     noValidate*: bool # skip running the validator on plugin sources
     verbose*: bool    # --verbose: dump Final IR on contract/init failures
+    keepSemTree*: bool # --keepsemtree: also write `<mod>.sem.nif`, the tree
+                      # before the Final IR lowering (for the sem validator)
     outFile*: string  # filename portion set by `--out:PATH` / `-o:PATH`
                       # (empty = derive from module basename).
     outDir*: string   # directory portion set by `--out:DIR/NAME` (its
@@ -135,14 +162,58 @@ type
     checkFlags*: string  # active check modes as a `genFlags` string (e.g. "br"),
                          # forwarded to `hexer c` so nifcgen injects only the
                          # requested runtime checks (empty = none).
+    parallelBuild*: int  # --parallelBuild:N: at most N processes at once per
+                         # nifmake run; 0 = one per core. Not an option of the
+                         # generated files, so no part of the cache memos
+                         # (`deps.addFrontendKey`).
     inlineFrames*: bool  # --inlineframes:on: record which template an expansion
                          # came from, so a debug backend can emit DWARF inlined
                          # frames for it (#1987). Off by default: it costs work
                          # in every template expansion and only a debug build
                          # reads it.
 
+proc targetDriverFlags*(config: NifConfig): seq[string] =
+  # On SunOS-drived platforms on x86, compilers default to 32-bit output on
+  # 64-bit systems. This function adds the necessary compiler flags for this
+  # (and potentially other) platforms in the future.
+  result = @[]
+  if config.targetOS in {osSolaris, osIllumos} and config.targetCPU == cpuAmd64:
+    result.add "-m64"
+
+proc defineKey*(d: string): string =
+  ## The name half of a `-d:` entry: `maxMem` for both `maxMem` and `maxMem=10`.
+  var i = 0
+  while i < d.len and d[i] != '=': inc i
+  result = d.substr(0, i-1)
+
 proc addDefine*(config: var NifConfig; symbol: string) =
-  config.defines.addUnique symbol
+  ## `-d:key` or `-d:key=value`. `--define:key:value` is accepted too: the
+  ## option parser has already eaten the first `:` as the option's own
+  ## separator, so what arrives here is `key:value`. A later definition of a key
+  ## replaces the earlier one, as in Nim.
+  var symbol = symbol
+  # `contains(string, char)` is not in the Nimony stdlib, so use `find`
+  if symbol.find('=') < 0:
+    let colon = symbol.find(':')
+    if colon >= 0: symbol[colon] = '='
+  let key = defineKey(symbol)
+  for i in 0 ..< config.defines.len:
+    if defineKey(config.defines[i]) == key:
+      config.defines[i] = symbol
+      return
+  config.defines.add symbol
+
+proc defineValue*(config: NifConfig; key: string; value: var string): bool =
+  ## True when `-d:key` was given, with `value` set to the text after the `=`
+  ## (the empty string for a bare `-d:key`). This is what `{.intdefine.}` and
+  ## its siblings read.
+  for d in config.defines:
+    var i = 0
+    while i < d.len and d[i] != '=': inc i
+    if d.substr(0, i-1) == key:
+      value = (if i < d.len: d.substr(i+1) else: "")
+      return true
+  return false
 
 proc initNifConfig*(baseDir: sink string): NifConfig =
   result = NifConfig(
@@ -153,7 +224,9 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     bits: sizeof(int)*8,
     targetCPU: platform.nameToCPU(hostCPU),
     targetOS: platform.nameToOS(hostOS),
-    cc: "gcc",
+    # FreeBSD's base system ships clang as its only C compiler; elsewhere
+    # `gcc` is either GCC or (macOS) a clang alias.
+    cc: (when defined(freebsd): "clang" else: "gcc"),
     linker: "",
     appType: appConsole, # console is the default
     checkFlags: "br"     # = genFlags(DefaultSettings) (BoundCheck + RangeCheck);
@@ -186,7 +259,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       c.into:
         while c.hasMore:
           if c.isStringLit:
-            result.defines.addUnique pool.strings[c.strId]
+            result.addDefine pool.strings[c.strId]
           skip c
     of "paths":
       c.into:
@@ -222,7 +295,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
     of "mm":
       c.into:
         if c.isStringLit:
-          result.mm = normalize(pool.strings[c.strId])
+          result.mm = toMM(pool.strings[c.strId])
         while c.hasMore: skip c
     else:
       c.into:
@@ -237,34 +310,33 @@ proc parseNifConfig*(configFile: string; result: var NifConfig) =
   nifreader.close(r)
   var c = beginRead(buf)
   parseConfig(c, result)
-proc getOptionsAsOneString*(config: NifConfig): string =
-  ## Returns the concatenation of options that affects generated files.
-  result = "--base:" & config.baseDir
-
-  for i in config.defines:
-    result.add(" -d:" & i)
-
-  result.add " --mm:" & config.mm
-  result.add " --bits:" & $config.bits
-  result.add " --cpu:" & platform.CPU[config.targetCPU].name
-  result.add " --os:" & platform.OS[config.targetOS].name
-
 proc expandMM*(config: NifConfig; path: string): string =
   ## Expands the `$MM` placeholder in an `include` path to the module implementing
-  ## the selected memory management strategy: `"$MM"` -> `"system/atomicarc"`.
-  ## Applied before the path is resolved, so `resolveFile`'s own `$VAR` (environment
-  ## variable) rule never sees it.
+  ## the selected memory management strategy: `"$MM"` -> `"system/atomicarc"` for
+  ## a strategy that ships with the stdlib, and to `--mm`'s value as written when
+  ## that is the path of a runtime of the user's own. What comes out is resolved
+  ## like any other `include` path, so an absolute path, one found via `--path`
+  ## and a `$VAR`-relative one (`resolveFile`'s environment-variable rule, which
+  ## only a `--mm` path can put there) all work.
   result = path
   if result.endsWith(MmPlaceholder):
     when defined(nimony):
       result.shrink result.len - MmPlaceholder.len
     else:
       result.setLen result.len - MmPlaceholder.len
-    result.add MmDir
+    if isStrategyName(config.mm): result.add MmDir
     result.add config.mm
 
+proc mmName*(config: NifConfig): string =
+  ## The strategy's NAME, the way `defined(gcName)` spells it. For a runtime
+  ## given as a path that is the module's basename, so `--mm:../rt/myGc.nim`
+  ## still makes `defined(gcMyGc)` true.
+  result = normalize(splitFile(config.mm).name)
+
 proc isDefined*(config: NifConfig; symbol: string): bool =
-  if symbol in config.defines:
+  var ignored = ""
+  if config.defineValue(symbol, ignored):
+    # `-d:key=value` defines `key`, so compare the name half, not the whole entry
     result = true
   elif cmpIgnoreStyle(symbol, platform.CPU[config.targetCPU].name) == 0:
     result = true
@@ -283,7 +355,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "posix", "unix":
       result = config.targetOS in {osLinux, osMorphos, osSkyos, osIrix, osPalmos,
                             osQnx, osAtari, osAix,
-                            osHaiku, osVxWorks, osSolaris, osNetbsd,
+                            osHaiku, osVxWorks, osSolaris, osIllumos, osNetbsd,
                             osFreebsd, osOpenbsd, osDragonfly, osMacosx, osIos,
                             osAndroid, osNintendoSwitch, osFreeRTOS, osCrossos, osZephyr, osNuttX}
     of "linux":
@@ -300,7 +372,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
       result = config.targetOS in {osMacos, osMacosx, osIos}
     of "osx", "macosx":
       result = config.targetOS in {osMacosx, osIos}
-    of "sunos": result = config.targetOS == osSolaris
+    of "sunos": result = config.targetOS in {osSolaris, osIllumos}
     of "freertos", "lwip":
       result = config.targetOS == osFreeRTOS
     of "littleendian": result = CPU[config.targetCPU].endian == littleEndian
@@ -311,7 +383,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "cpu64": result = config.bits == 64
     of "nimrawsetjmp":
       result = config.targetOS in {osSolaris, osNetbsd, osFreebsd, osOpenbsd,
-                            osDragonfly, osMacosx}
+                            osDragonfly, osMacosx, osIllumos}
     of "executable": result = config.appType in {appConsole, appGui}
     of "library": result = config.appType in {appLib, appStaticLib}
     of "dll": result = config.appType == appLib
@@ -319,9 +391,10 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "consoleapp": result = config.appType == appConsole
     of "guiapp": result = config.appType == appGui
     # `--mm:arc` makes `defined(gcArc)` true, `--mm:atomicArc` `defined(gcAtomicArc)`,
-    # and so on for a strategy this compiler has never heard of: `mm` is already
-    # normalized, and so is `symbol` here, so the two spellings meet.
-    else: result = config.mm.len > 0 and symbol.normalize == "gc" & config.mm
+    # and so on for a strategy this compiler has never heard of -- including one
+    # the user passed by path, which `mmName` reduces to its basename. Both that
+    # and `symbol` here are normalized, so the two spellings meet.
+    else: result = config.mm.len > 0 and symbol.normalize == "gc" & config.mmName
 
 when isMainModule:
   var conf = default(NifConfig)

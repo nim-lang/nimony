@@ -10,13 +10,51 @@ type
 func capInBytes[T](s: seq[T]): int {.inline.} =
   result = if s.data != nil: allocatedSize(s.data) else: 0
 
+# A collector that traces concurrently with the mutators (`system/yrc`) must
+# not read a buffer that is being reallocated or freed, nor a `len` that runs
+# ahead of the initialized slots. Such a runtime declares `nimSeqFenceEnter`/
+# `nimSeqFenceExit` (reentrant; a collection waits for open fences, a fence
+# waits for a running collection) and every operation below that frees,
+# moves or grows the buffer takes it -- only for element types the collector
+# traces at all. Any other runtime compiles this to nothing.
+
+func seqFenceEnter[T](): bool {.inline.} =
+  when declared(nimSeqFenceEnter):
+    result = nimCanFormCycles(T)
+    if result:
+      {.cast(noSideEffect).}:
+        nimSeqFenceEnter()
+  else:
+    result = false
+
+func seqFenceExit(fenced: bool) {.inline.} =
+  when declared(nimSeqFenceExit):
+    if fenced:
+      {.cast(noSideEffect).}:
+        nimSeqFenceExit()
+
 func `=destroy`*[T](s: seq[T]) =
   if s.data != nil:
     var i = 0
     while i < s.len:
       `=destroy`(s.data[i])
       inc i
+    let fenced = seqFenceEnter[T]()
     dealloc s.data
+    seqFenceExit fenced
+
+func `=trace`*[T](s: var seq[T]; env: pointer) =
+  ## The buffer is owned, so its elements are edges the cycle collector
+  ## follows. The compiler calls this only when `T` holds such an edge (a ref
+  ## that can form a cycle), so `seq[int]` costs nothing. `data` and `len`
+  ## are read once: see the fence above.
+  let d = s.data
+  if d != nil:
+    let L = s.len
+    var i = 0
+    while i < L:
+      `=trace`(d[i], env)
+      inc i
 
 func `=wasMoved`*[T](s: var seq[T]) {.inline.} =
   s.len = 0
@@ -29,7 +67,12 @@ func memSizeInBytes[T](size: int): int {.inline.} =
       # When required memory size is overflowed, cause out of memory.
       result = high(int)
 
-func newSeq*[T: HasDefault](size: int = 0): seq[T] {.nodestroy.} =
+func newSeq*[T](): seq[T] {.nodestroy, inline.} =
+  ## Creates an empty sequence. No element is made, so `T` needs no default
+  ## value: a `seq` of a not-nil ref starts empty and grows by `add`.
+  result = seq[T](len: 0, data: nil)
+
+func newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
   ## Creates a new sequence of length `size` with default-initialized elements.
   if size == 0:
     result = seq[T](len: size, data: nil)
@@ -112,16 +155,22 @@ func resize[T](dest: var seq[T]; addedElements: int): bool {.nodestroy.} =
   let oldCap = dest.capInBytes div sizeof(T)
   let newCap = recalcCap(oldCap, addedElements)
   let memSize = memSizeInBytes[T](newCap)
-  dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
-  if dest.data == nil:
-    dest.len = 0
+  let p = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
+  if p == nil:
+    # A failed `realloc` leaves the original block allocated and untouched, so
+    # keep it: the growth simply did not happen and `dest` is still exactly the
+    # seq it was. Overwriting `dest.data` with `nil` would leak that block and
+    # lose every element with it -- truncating the caller's data to nothing is
+    # the worst possible answer to being out of memory, and both callers
+    # (`add`, `growUnsafe`) already bail on `false`.
     {.cast(noSideEffect).}:
       oomHandler memSize
     result = false
   else:
+    dest.data = p
     result = true
 
-func `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
+func copyImpl[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
   if dest.data == src.data: return
   if src.len < dest.len:
     var i = src.len
@@ -132,33 +181,45 @@ func `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
     let oldCap = dest.capInBytes div sizeof(T)
     let newCap = recalcCap(oldCap, src.len - oldCap)
     let memSize = memSizeInBytes[T](newCap)
-    dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
-    if dest.data == nil:
-      dest.len = 0
+    let p = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
+    if p == nil:
+      # As in `resize`: the old block survives a failed `realloc`, so `dest`
+      # keeps it and stays a valid seq holding its previous contents. The copy
+      # did not happen; dropping the pointer would leak and truncate.
       {.cast(noSideEffect).}:
         oomHandler memSize
       return
+    dest.data = p
   dest.len = src.len
   var i = 0
   while i < dest.len:
     dest.data[i] = `=dup`(src.data[i])
     inc i
 
+func `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
+  let fenced = seqFenceEnter[T]()
+  copyImpl(dest, src)
+  seqFenceExit fenced
+
 func add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
   ## Appends `elem` to the end of `s`, growing storage if necessary.
+  let fenced = seqFenceEnter[T]()
   let L = s.len
-  if s.capInBytes < (L * sizeof(T)) + sizeof(T):
-    if not resize(s, 1):
-      # It is our responsibility to destroy the `sink` element if
-      # it could not be added:
-      `=destroy`(elem)
-      return
-  inc s.len
-  (s.data[L]) = elem
+  if s.capInBytes < (L * sizeof(T)) + sizeof(T) and not resize(s, 1):
+    seqFenceExit fenced
+    # It is our responsibility to destroy the `sink` element if
+    # it could not be added:
+    `=destroy`(elem)
+  else:
+    (s.data[L]) = elem
+    inc s.len
+    seqFenceExit fenced
 
-func len*[T](s: seq[T]): int {.inline.} =
+func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result).} =
   ## Number of elements in `s`.
-  s.len
+  result = s.len
+  # every write to the `len` field stores a non-negative count
+  {.assume: 0 <= result.}
 
 func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
   ## Unchecked pointer to `s`'s element storage (valid for `0 ..< s.len`).
@@ -166,20 +227,31 @@ func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
 
 func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} = s.data[i]
 
-func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline, linear.} =
+func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0),
+    ensures: s.len == old(s.len), inline, linear.} =
   (s.data[i]) = elem
+  # the element storage never overlaps the seq's own `len`, which a write
+  # through the `data` pointer may reach as far as the prover can tell
+  {.assume: s.len == old(s.len).}
 
 func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} = s.data[int i]
 
-func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint), inline, linear.} =
+func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint),
+    ensures: s.len == old(s.len), inline, linear.} =
   (s.data[int i]) = elem
+  {.assume: s.len == old(s.len).}
 
 func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
   ## Copies an array into a new sequence (`@[1,2]` builds `seq` literals via array constructors).
   result = newSeqUninit[T](a.len)
   if result.data != nil:
+    # The bound is the ARRAY's length, not the seq's: `a.len` is a compile-time
+    # constant and bounds `a[i]`, where `result.len` says nothing about the
+    # array's index range. The two are equal on this path — `data != nil` means
+    # the allocation of `a.len` elements succeeded — so this is the same loop,
+    # stated so that the index is provable.
     var i = 0
-    while i < result.len:
+    while i < a.len:
       (result.data[i]) = `=dup`(a[i])
       inc i
 
@@ -204,14 +276,15 @@ func addUnique*[T: Equatable](s: var seq[T]; x: sink T) =
 
 func shrink*[T](s: var seq[T]; newLen: int) =
   ## Drops trailing elements so length becomes `newLen`, destroying removed slots.
+  let fenced = seqFenceEnter[T]()
   var i = s.len-1
   while i >= newLen:
     `=destroy`(s.data[i])
     dec i
   s.len = newLen
+  seqFenceExit fenced
 
-func growUnsafe*[T](s: var seq[T]; newLen: int) =
-  ## Grows length to `newLen` without constructing new slots (unsafe unless initialized afterward).
+func growUnsafeImpl[T](s: var seq[T]; newLen: int) =
   {.keepOverflowFlag.}:
     let newSize = newLen * sizeof(T)
     if overflowFlag():
@@ -222,26 +295,40 @@ func growUnsafe*[T](s: var seq[T]; newLen: int) =
     if not resize(s, newLen - s.len): return
   s.len = newLen
 
+func growUnsafe*[T](s: var seq[T]; newLen: int) =
+  ## Grows length to `newLen` without constructing new slots (unsafe unless initialized afterward).
+  let fenced = seqFenceEnter[T]()
+  growUnsafeImpl(s, newLen)
+  seqFenceExit fenced
+
 func grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
   ## Extends `s` to length `newLen`, filling new slots with copies of `val`.
+  let fenced = seqFenceEnter[T]()
   var i = s.len
-  growUnsafe(s, newLen)
-  if s.data == nil: return
-  while i < newLen:
-    (s.data[i]) = `=dup`(val)
-    inc i
+  growUnsafeImpl(s, newLen)
+  # `growUnsafe` leaves the length alone when it could not allocate, and the
+  # seq keeps its old (smaller) buffer -- so the refusal must be read off the
+  # LENGTH. Testing `s.data == nil` instead would see a perfectly good buffer
+  # and fill `newLen` slots into storage that never grew.
+  if s.len >= newLen:
+    while i < newLen:
+      (s.data[i]) = `=dup`(val)
+      inc i
+  seqFenceExit fenced
 
 func setLen*[T: HasDefault](s: var seq[T]; newLen: int) {.nodestroy.} =
   ## Sets length to `newLen`, shrinking or default-growing as needed (`grow`/`shrink` are often clearer).
   if newLen < s.len:
     shrink(s, newLen)
   else:
+    let fenced = seqFenceEnter[T]()
     var i = s.len
-    growUnsafe(s, newLen)
-    if s.data == nil: return
-    while i < newLen:
-      (s.data[i]) = default(T)
-      inc i
+    growUnsafeImpl(s, newLen)
+    if s.len >= newLen: # else out of memory; see `grow`
+      while i < newLen:
+        (s.data[i]) = default(T)
+        inc i
+    seqFenceExit fenced
 
 proc newSeq*[T: HasDefault](s: out seq[T]; newLen: int) {.nodestroy, inline.} =
   s = newSeq[T](newLen)
@@ -253,7 +340,8 @@ func low*[T](s: seq[T]): int {.inline.} =
   ## Lowest valid index (`0` for sequences).
   0
 
-func pop*[T](s: var seq[T]): T {.requires: (s.len > 0), inline, nodestroy.} =
+func pop*[T](s: var seq[T]): T {.requires: (s.len > 0), ensures: s.len == old(s.len) - 1,
+    inline, nodestroy.} =
   ## Removes and returns the last element.
   let L = s.len-1
   result = s[L]

@@ -1,0 +1,12 @@
+close 1
+caught 1
+close 2
+caught 2
+close 4
+caught 4
+outer alive 3
+close 3
+kept 5
+close 5
+close 6
+caught 6

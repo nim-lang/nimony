@@ -151,7 +151,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
         if n.kind != Symbol:
           pragmas = parseTypePragmas local.pragmas
     else:
-      bug "could not load: " & pool.syms[n.symId]
+      bug "could not load: " & pool.symString(n.symId)
 
   case n.typeKind
   of IntT, UIntT, FloatT:
@@ -160,7 +160,17 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
-  of RefT, PtrT, MutT, OutT, RoutineTypes, NiltT, CstringT, PointerT, LentT:
+  of RoutineTypes:
+    # A closure is a {fn, env} pair: two pointers. Sizing it as one made the
+    # module that lowers it and the module that imports the still-unlowered
+    # type disagree about whether an object holding it is "big", so constparams
+    # gave the object's `=destroy` a pointer parameter on one side while the
+    # other side passed the value. See `tclosure_xmod_destroy`.
+    if procHasPragma(n, ClosureP):
+      update c, 2 * ptrSize, ptrSize
+    else:
+      update c, ptrSize, ptrSize
+  of RefT, PtrT, MutT, OutT, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.childCursor, ptrSize
@@ -219,7 +229,16 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     let size0 = bitsetSizeInBytes(n.childCursor)
     let size1 = int asSigned(size0, c.overflow)
     update c, size1, 1
-  of TupleT, ClosureTupleT:
+  of ClosureTupleT:
+    # The lowered (fn, env) pair. Its fn slot keeps the `closure` pragma but is
+    # a bare function pointer (`closuretypes.addClosureTuple`), so walking the
+    # slot as a `.closure` proctype would count the pair as three words and
+    # disagree with the still-unlowered spelling (two words) that an importing
+    # module sees: the defining module would pass an object holding the pair
+    # to its `=destroy` by pointer and the importer by value.
+    if c.strict: c.overflow = true
+    update c, 2 * ptrSize, ptrSize
+  of TupleT:
     if c.strict:
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true
@@ -236,7 +255,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     getSize c, cache, n.childCursor, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, InvokeT, UarrayT,
-     AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT:
+     AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT,
+     PluginCallT:
     c.overflow = true
 
 type

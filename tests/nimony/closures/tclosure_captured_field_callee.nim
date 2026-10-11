@@ -23,25 +23,32 @@ type
     onArg: proc (level: int) {.closure.}
     onArgs: proc (study: string; series: int) {.closure.}
 
+proc newState(): State =
+  ## Every closure field is not-nil, so the constructor owes each one a value;
+  ## each builder below then overwrites the single field it is about.
+  State(onZero: proc () {.closure.} = discard,
+        onArg: proc (level: int) {.closure.} = discard,
+        onArgs: proc (study: string; series: int) {.closure.} = discard)
+
 # --- control: field called from a PLAIN proc (state is a real param, not
 # captured — getType already types the ddot). Guards against an over-fix.
 proc fireDirect(state: State) =
   state.onZero()
 
 proc buildZero(): proc () {.closure.} =
-  let state = State()
+  let state = newState()
   state.onZero = proc () {.closure.} = echo "zero"
   result = proc () {.closure.} =
     state.onZero()               # captured object, zero-arg closure field
 
 proc buildArg(): proc () {.closure.} =
-  let state = State()
+  let state = newState()
   state.onArg = proc (level: int) {.closure.} = echo "arg ", level
   result = proc () {.closure.} =
     state.onArg(7)               # captured object, closure field with an arg
 
 proc buildArgsCaptured(): proc () {.closure.} =
-  let state = State()
+  let state = newState()
   state.onArgs = proc (study: string; series: int) {.closure.} =
     echo "args ", study, " ", series
   let study = "CT"
@@ -49,7 +56,7 @@ proc buildArgsCaptured(): proc () {.closure.} =
   result = proc () {.closure.} =
     state.onArgs(study, series)  # args are themselves captured into the env
 
-let s = State()
+let s = newState()
 s.onZero = proc () {.closure.} = echo "direct"
 fireDirect(s)
 

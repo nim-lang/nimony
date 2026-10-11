@@ -27,6 +27,7 @@ import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptca
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
   contracts_fir, exprexec, semimport, module_plugins, sem
+import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
 
@@ -42,7 +43,7 @@ type
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
-    return default(TokenBuf)
+    return initTokenBuf()
   result = createTokenBuf(32)
   for m, ex in c.exports:
     let path = toAbsolutePath(c.importedModules.getOrQuit(m).path)
@@ -95,6 +96,10 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
     if c.toBundle.len != 0:
       deps.buildTree TagId(BundleIdx), NoLineInfo:
         deps.add c.toBundle
+    if c.toLink.len != 0:
+      deps.buildTree TagId(LinkIdx), NoLineInfo:
+        for f in c.toLink:
+          deps.addStrLit f
     if c.passL.len != 0:
       deps.buildTree TagId(PassLP), NoLineInfo:
         for i in c.passL:
@@ -108,7 +113,7 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
         for f in c.fileDeps:
           deps.addStrLit f
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
-  onRaiseQuit writeFile(deps, depsFile, OnlyIfChanged)
+  onRaiseQuit writeFile(deps, depsFile)
 
 proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
   ## Overwrite `(proc :sym ...)` subtrees with DotTokens for every symbol
@@ -171,11 +176,11 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
           if tk.isTagLit:
             echo "  [", k, "] TagLit ", globalTags.tags[tk.tagId], " jump=", uint32(tk) shr JumpShift
           elif tk.kind in {Symbol, SymbolDef}:
-            echo "  [", k, "] ", tk.kind, " ", pool.syms[tk.symId]
+            echo "  [", k, "] ", tk.kind, " ", pool.symString(tk.symId)
           else:
             echo "  [", k, "] ", tk.kind
         break
-  onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)
+  onRaiseQuit writeFile(dest, outfile)
   let root = readonlyCursorAt(dest, 0).info
   onRaiseQuit createIndex(outfile, root, true,
     IndexSections(
@@ -233,7 +238,7 @@ proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: NifLineInfo): 
   # phase 3).
   c.deferredLocals.clear()
   c.onDemandResolved.clear()
-  result = createTokenBuf()
+  result = createTokenBuf(buf.len + buf.len div 8)
   result.addParLe(StmtsS, moduleLineInfo)
   semToplevelStmts(c, result, buf)
   result.addParRi()
@@ -243,7 +248,8 @@ proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: NifLineInfo): 
   ## Phase 3: Check bodies.
   c.phase = SemcheckBodies
   c.deferredLocals.clear()  # phase-2 cursors are stale here (#1974)
-  result = createTokenBuf()
+  # checked bodies come out about 1.25x their input; generic instances follow
+  result = createTokenBuf(buf.len + buf.len div 2)
   result.addParLe(StmtsS, moduleLineInfo)
   semToplevelStmts(c, result, buf)
 
@@ -259,7 +265,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   # For types from the current module, use typeHooks (hooks haven't been embedded
   # in type pragmas yet - that happens in injectDerefs at the end).
   # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
-  let moduleSuffix = extractModule(pool.syms[symId])
+  let moduleSuffix = pool.symModule(symId)
   let hooks = if moduleSuffix == c.thisModuleSuffix:
       c.typeHooks.getOrDefault(symId)
     else:
@@ -301,7 +307,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
           inc counter
         discard requestRoutineInstance(c, hook, typeArgs, inferred, info)
       else:
-        quit "BUG: Could not load hook: " & pool.syms[hook]
+        quit "BUG: Could not load hook: " & pool.symString(hook)
 
 proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, typeInstSym: SymId): SymId =
   # check if instance actually matches method
@@ -328,8 +334,8 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
     while typevars.hasMore:
       let name = takeLocal(typevars, SkipFinalParRi).name.symId
       if name notin inferred:
-        c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.syms[methodSym] &
-          ", cannot infer generic parameter " & pool.syms[name]
+        c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.symString(methodSym) &
+          ", cannot infer generic parameter " & pool.symString(name)
         return SymId(0)
       typeArgsBuf.addSubtree inferred.getOrQuit(name)
     let instance = requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
@@ -454,17 +460,24 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
 
 func hasPendingPlugins(c: SemContext): bool {.inline.} = c.pendingTypePlugins.len != 0 or c.pendingModulePlugins.len != 0
 
-proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
-  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
+proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
+  ## Lower the module to the Final IR (`doc/internals/final_ir.md`), prove its
+  ## contracts and publish the lowered tree without the prover's facts.
+  if c.g.config.keepSemTree:
+    # The structured tree, for the sem validator; the compiler never reads it.
+    onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif")
+  var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
+  when true: #defined(enableContracts):
+    var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
+                                    c.g.config.bits, c.g.config.verbose)
+    if reporters.reportErrors(moreErrors) > 0:
+      quit 1
+  dest = stripAnalysisFacts(ensureMove fir)
 
-  assert n0.stmtKind == StmtsS
-  let path = getFile(n0.info) # gets current module path, maybe there is a better way
-  addSelfModuleSym(c, path)
-
-  if {SkipSystem, IsSystem} * c.moduleFlags == {}:
-    let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
-    importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
-
+proc runPhases(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
+  ## The three sem phases. Each phase's buffer is consumed by the next one and
+  ## released when this returns, before generics, derefs and the contract pass
+  ## add their own copies of the module.
   #echo "PHASE 1"
   var (buf1, moduleLineInfo) = phase1(c, dest, n0)
   dbgCheckSeals(buf1, "phase1")
@@ -483,6 +496,36 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       endRead(r)
   #echo "PHASE 3"
   dest = phase3(c, buf2, moduleLineInfo)
+
+proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
+  ## `injectDerefs` over the checked module. `afterSem` is released on return:
+  ## nothing after derefs reads it.
+  when defined(dumpPhases):
+    block:
+      var r = beginRead(afterSem)
+      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
+      endRead(r)
+  var finalBuf = beginRead afterSem
+  result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
+                        cycles = c.g.config.cycles)
+  when defined(dumpPhases):
+    block:
+      var r = beginRead(result)
+      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
+      endRead(r)
+
+proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
+  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
+
+  assert n0.stmtKind == StmtsS
+  let path = getFile(n0.info) # gets current module path, maybe there is a better way
+  addSelfModuleSym(c, path)
+
+  if {SkipSystem, IsSystem} * c.moduleFlags == {}:
+    let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
+    importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
+
+  runPhases(c, dest, n0)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, readonlyCursorAt(c.expanded, 0).info
@@ -512,24 +555,11 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     if c.hasPendingPlugins:
+      # Another plugin round follows, so the module is not lowered yet.
       dest = move afterSem
     else:
-      when defined(dumpPhases):
-        block:
-          var r = beginRead(afterSem)
-          syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
-          endRead(r)
-      var finalBuf = beginRead afterSem
-      dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
-      when defined(dumpPhases):
-        block:
-          var r = beginRead(dest)
-          syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
-          endRead(r)
-    when true: #defined(enableContracts):
-      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
+      dest = derefsOf(c, move afterSem)
+      lowerAndProve(c, dest)
   else:
     quit 1
 
@@ -545,17 +575,15 @@ proc resolveCyclicImports(c: var SemContext) =
   for (targetSuffix, moduleSym) in c.deferredCyclicImports:
     let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule())
     for symId in prog.mem.symIds:
-      let symName = pool.syms[symId]
-      let modSuffix = extractModule(symName)
+      let symName = pool.symString(symId)
+      let modSuffix = pool.symModule(symId)
       if modSuffix == targetSuffix:
-        var baseName = symName
-        extractBasename(baseName)
-        let nameId = pool.strings.getOrIncl(baseName)
+        let nameId = pool.symNameId(symId)
         c.importTab.mgetOrPut(nameId, @[]).addIfAbsent(moduleSym)
         module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
 
 proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[ModuleFlag];
-                    commandLineArgs: string; canSelfExec: bool): SemContext =
+                    commandLineArgs, hostCommandLineArgs: string; canSelfExec: bool): SemContext =
   result = SemContext(
     types: createBuiltinTypes(config.config.bits),
     thisModuleSuffix: suffix,
@@ -564,8 +592,14 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     phase: SemcheckTopLevelSyms,
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
+    hostCommandLineArgs: hostCommandLineArgs,
     canSelfExec: canSelfExec,
+    pendingSumtypes: initTokenBuf(),
+    toBuild: initTokenBuf(),
+    toBundle: initTokenBuf(),
     pending: createTokenBuf(),
+    importSnippets: initTokenBuf(),
+    expanded: initTokenBuf(),
     executeExpr: exprexec.executeExpr,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
@@ -602,22 +636,19 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
-    when true:
-      var moreErrors = analyzeContractsFinalIr(afterSem, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     if c.hasPendingPlugins:
       dest = move afterSem
     else:
-      var finalBuf = beginRead afterSem
-      dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+      dest = derefsOf(c, move afterSem)
+      lowerAndProve(c, dest)
   else:
     quit 1
 
 proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
-  ## Validate that `dest` conforms to the post-sem subset of `doc/tags.md`.
+  ## Validate that `dest` conforms to the published subset of `doc/tags.md`:
+  ## the post-sem vocabulary plus the Final IR's control flow.
   ## Reports violations on stderr and aborts with a non-zero exit status so
   ## that drift from the spec is a hard error. Active by default in host-Nim
   ## builds; nimony's own bootstrap build skips this until the validator
@@ -625,7 +656,7 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
   ## `-d:skipPostSemValidator` opts out (used by Windows CI — see hastur's
   ## `validatePassesFlag`).
   when not defined(nimony) and not defined(skipPostSemValidator):
-    let phase = postSemPhase()
+    let phase = postFinalIrPhase()
     let violations = validate(dest, phase)
     if violations.len > 0:
       stderr.writeLine "[" & moduleName & "] post-sem validator found " &
@@ -636,7 +667,7 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
 
 proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
                         moduleFlags: set[ModuleFlag];
-                        commandLineArgs: string; canSelfExec: bool) =
+                        commandLineArgs, hostCommandLineArgs: string; canSelfExec: bool) =
   ## Semantic check multiple modules that form a cycle group.
   ## All modules are processed through each phase together:
   ## phase1(all) -> resolve cyclic imports -> phase2(all) ->
@@ -647,17 +678,17 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
 
   var modules = newSeqOfCap[ModuleState](infiles.len)
   for i in 0..<infiles.len:
-    var ms = ModuleState(outfile: outfiles[i])
+    var ms = ModuleState(outfile: outfiles[i], buf1: initTokenBuf())
     ms.owningBuf = createTokenBuf(300)
     if i == 0:
       ms.n0 = setupProgram(infiles[i], outfiles[i], ms.owningBuf)
       ms.c = initSemContext(prog.main.name, sharedConfig, moduleFlags,
-                            commandLineArgs, canSelfExec)
+                            commandLineArgs, hostCommandLineArgs, canSelfExec)
     else:
       let suffix = splitModulePath(infiles[i]).name
       ms.n0 = loadModule(infiles[i], ms.owningBuf, suffix)
       ms.c = initSemContext(suffix, sharedConfig, moduleFlags,
-                            commandLineArgs, canSelfExec)
+                            commandLineArgs, hostCommandLineArgs, canSelfExec)
     ms.dest = createTokenBuf()
     modules.add ensureMove ms
 
@@ -708,7 +739,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
       quit 1
 
 proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-               commandLineArgs: sink string; canSelfExec: bool) =
+               commandLineArgs, hostCommandLineArgs: sink string; canSelfExec: bool) =
   ## Semantic check one or more modules.
   ## For single modules (len=1), this is the normal case.
   ## For multiple modules, they form a cycle group and are processed together.
@@ -717,7 +748,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
 
   if infiles.len > 1:
     semcheckCycleGroup(infiles, outfiles, ensureMove config, moduleFlags,
-                       commandLineArgs, canSelfExec)
+                       commandLineArgs, hostCommandLineArgs, canSelfExec)
     return
 
   let infile = infiles[0]
@@ -728,7 +759,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
   if SkipSystem in moduleFlags:
     programs.publishStringType()
   var c = initSemContext(prog.main.name, ProgramContext(config: config),
-                         moduleFlags, commandLineArgs, canSelfExec)
+                         moduleFlags, commandLineArgs, hostCommandLineArgs, canSelfExec)
 
   var dest = createTokenBuf()
 

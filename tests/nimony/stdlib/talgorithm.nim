@@ -35,3 +35,18 @@ block:
   var one = @[42]
   sort(one, myCmpInt)
   assert one == @[42]
+
+block:
+  # the `cmp`-less sort, and binary search on the sorted result
+  var s = @[5, 1, 4, 1, 3, 5, 2]
+  sort(s)
+  assert s == @[1, 1, 2, 3, 4, 5, 5]
+  assert lowerBound(s, 1) == 0
+  assert upperBound(s, 1) == 2
+  assert lowerBound(s, 4) == 4
+  assert upperBound(s, 4) == 5
+  assert lowerBound(s, 6) == 7
+  assert upperBound(s, 0) == 0
+  var e: seq[int] = @[]
+  assert lowerBound(e, 3) == 0
+  assert upperBound(e, 3) == 0

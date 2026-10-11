@@ -432,7 +432,7 @@ proc isFinal*(n: Cursor): bool =
   result = typeHasPragma(n, FinalP, ObjectT)
 
 proc hasRtti*(s: SymId): bool =
-  if pool.syms[s].startsWith("`t.0.IAref"):
+  if pool.symString(s).startsWith("`t.0.IAref"):
     # This `startsWith` is a minor hack but we know that types of this
     # internal name only have a refcount and a payload, hence no RTTI
     return false
@@ -455,7 +455,7 @@ proc hasRtti*(pragmas: Cursor): bool =
 
 proc getTypeSection*(s: SymId): TypeDecl =
   let res = tryLoadSym(s)
-  assert res.status == LacksNothing, "could not load type declaration: " & pool.syms[s]
+  assert res.status == LacksNothing, "could not load type declaration: " & pool.symString(s)
   result = asTypeDecl(res.decl)
 
 proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
@@ -647,7 +647,7 @@ proc toTypeImpl*(n: Cursor): Cursor =
       if local.kind == TypeY:
         result = local.body
     else:
-      bug "could not load: " & pool.syms[result.symId]
+      bug "could not load: " & pool.symString(result.symId)
 
 proc isConceptSym*(s: SymId): bool =
   let section = getTypeSection(s)
@@ -727,30 +727,38 @@ proc conceptExtends*(sub, sup: SymId): bool {.sideEffect.} =
       return true
   false
 
-proc collectConceptHierarchyBodiesImpl(body: Cursor; result: var seq[Cursor];
+proc collectConceptHierarchyBodiesImpl(owner: SymId; body: Cursor; result: var seq[(SymId, Cursor)];
                                       visited: var HashSet[SymId]) {.sideEffect.} =
-  result.add body
+  result.add (owner, body)
   for p in conceptParentSyms(conceptParentsSlot(body)):
     if p notin visited:
       visited.incl p
-      collectConceptHierarchyBodiesImpl(getTypeSection(p).body, result, visited)
+      collectConceptHierarchyBodiesImpl(p, getTypeSection(p).body, result, visited)
 
-iterator conceptHierarchyBodies*(body: Cursor): Cursor {.sideEffect.} =
-  var bodies: seq[Cursor] = @[]
+iterator conceptHierarchyBodies*(conceptSym: SymId; body: Cursor): (SymId, Cursor) {.sideEffect.} =
+  ## Yields `(declaringConcept, conceptBody)` for `body` and every concept it
+  ## inherits from. `declaringConcept` is `conceptSym` for `body` itself, which
+  ## may be `SymId(0)` when the caller only has the body at hand.
+  var bodies: seq[(SymId, Cursor)] = @[]
   var visited = initHashSet[SymId]()
-  collectConceptHierarchyBodiesImpl(body, bodies, visited)
+  if conceptSym != SymId(0):
+    visited.incl conceptSym
+  collectConceptHierarchyBodiesImpl(conceptSym, body, bodies, visited)
   for b in bodies:
     yield b
 
-iterator conceptHierarchyRoutines*(body: Cursor): (Cursor, Cursor) {.sideEffect.} =
-  ## Yields `(conceptBody, requirementRoutine)` from the hierarchy (deduplicated).
-  for cbody in conceptHierarchyBodies(body):
+iterator conceptHierarchyRoutines*(conceptSym: SymId; body: Cursor): (SymId, Cursor, Cursor) {.sideEffect.} =
+  ## Yields `(declaringConcept, conceptBody, requirementRoutine)` from the
+  ## hierarchy (deduplicated). A requirement inherited via `concept of` carries
+  ## the parent that declares it, not `conceptSym`: it is resolved against the
+  ## parent's module, which is where a call would find its implementations.
+  for (owner, cbody) in conceptHierarchyBodies(conceptSym, body):
     var ops = conceptStmtsSlot(cbody)
     if ops.stmtKind == StmtsS:
       ops.into StmtsS:
         while ops.hasMore:
           if ops.symKind in RoutineKinds:
-            yield (cbody, ops)
+            yield (owner, cbody, ops)
           skip ops
 
 when isMainModule:

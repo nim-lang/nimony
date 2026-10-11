@@ -119,8 +119,7 @@ proc declFileOf*(s: SymId): string =
 proc baseName*(s: SymId): string =
   ## `skip.0.nifcore` -> `skip`.
   if s == NoSymId: return ""
-  result = pool.syms[s]
-  extractBasename result
+  result = pool.symBasename(s)
 
 proc isDeclaredIn*(s: SymId; fileTail: string): bool =
   ## True when `s` was declared in a file whose path ends in `fileTail`
@@ -612,8 +611,8 @@ proc collectProcsIn(m: var SemModule; n: Cursor) =
         # into this module's NIF under this module's suffix and even inherits
         # the instantiation site's file, so the name is what gives it away:
         # an instance carries its `I…` key.
-        if extractModule(pool.syms[s]) == m.suffix and
-            not isInstantiation(pool.syms[s]) and
+        if pool.symModule(s) == m.suffix and
+            not pool.symIsInstantiation(s) and
             sameFileName(realFile(fileOf(c.info)), m.file):
           var p = ProcFacts(sym: s, name: baseName(s), info: c.info,
                             params: r.params, body: r.body,

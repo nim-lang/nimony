@@ -14,9 +14,52 @@ type
   Node = ref object
     data: int
 
-var n: Node       # Error: not-nil ref requires initialization
+var n: Node       # Error at module level: no default value to initialize with
 var m: Node = nil # Error: cannot assign nil to a not-nil type
 ```
+
+
+## No default value
+
+A not-nil pointer is the one leaf type with no value in zeroed storage: zeroed
+storage reads as `nil`, which is exactly what the type rules out. Anything built
+out of one inherits that — an array element, a tuple slot, an object field
+without a default of its own:
+
+```nim
+type
+  Node = ref object
+    data: int
+  Pair = object
+    n: Node
+    count: int
+
+var a: array[8, Node]   # Error: `array[8, Node]` has no default value
+var p: Pair             # Error: so has `Pair`, through its `n` field
+var q = default(Node)   # Error: `default` has no value to hand back either
+```
+
+The rule bites at **module level**, where a variable's storage is simply zeroed:
+a global is readable from another module and another thread, so no flow analysis
+can stand behind it. A **local** owes nothing at its declaration — `var r: Node`
+is fine as long as a write reaches it before any read, which the initialization
+analysis checks:
+
+```nim
+proc p(): Node = Node(data: 1)
+
+proc ok =
+  var r: Node           # fine
+  r = p()
+  echo r.data
+
+proc notOk =
+  var r: Node
+  echo r.data           # Error: cannot prove that r has been initialized
+```
+
+The same rule is why `newSeq[T](n)` and `setLen` ask for a `T` that has a
+default; `shrink` and `add` do not.
 
 
 ## Nullable types with `nil` prefix
@@ -82,6 +125,17 @@ var optCallback: nil proc (x: int) = nil # nullable proc var
 if optCallback != nil:
   optCallback(42)
 ```
+
+An iterator type is a
+pointer pair like any other closure, and follows the same rule:
+
+```nim
+type It = iterator (): int
+
+var run: It                 # Error: no default value
+var maybeRun: nil It = nil  # nullable iterator value
+```
+
 
 
 ## Porting Nim 2 code: the `lenientnils` feature

@@ -24,9 +24,9 @@ proc updateAtom(dest: var Sha1State; n: Cursor) =
   ## Hashes one leaf token (build-agnostic: the hashed content is the tag/sym
   ## name, string, or numeric value, so the digest matches classic byte-for-byte).
   if n.isSymbolDef:
-    update(dest, " :"); update(dest, pool.syms[n.symId])
+    update(dest, " :"); update(dest, pool.symString(n.symId))
   elif n.isSymbol:
-    update(dest, " "); update(dest, pool.syms[n.symId])
+    update(dest, " "); update(dest, pool.symString(n.symId))
   elif n.isIdent:
     update(dest, " "); update(dest, pool.strings[n.strId])
   elif n.isIntLit:

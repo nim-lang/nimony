@@ -1,0 +1,5 @@
+packed:  size=13 a=0 b=4 c=12
+natural: size=24 a=0 b=8 c=16
+small:   size=9 x=0 y=1
+array stride=13 third=26
+runtime stride=13 third=26

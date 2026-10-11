@@ -28,7 +28,7 @@ proc foundSymbol(n: Cursor; mode: TrackMode) =
     if (n.isSymbol and mode == TrackUsages) or (n.isSymbolDef and mode == TrackDef):
       var r = (if n.isSymbol: "use\t" else: "def\t")
       r.add "\t" # unknown symbol kind
-      r.add pool.syms[n.symId]
+      r.add pool.symString(n.symId)
       r.add "\t"
       # unknown signature:
       r.add "\t"
@@ -167,7 +167,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
               # Add definition of field, only happens once because of the matching line info check
               let typeDefinition = getTypeSection(containingType.symId)
               var typeBody = typeDefinition.body
-              findAndAddFieldDefinition(c, typeBody, pool.syms[c.sym], c.sym, containingType)
+              findAndAddFieldDefinition(c, typeBody, pool.symString(c.sym), c.sym, containingType)
 
             c.usages.add(Usage(n: n, containingType: containingType))
 
@@ -210,8 +210,7 @@ proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: NifLineInf
 proc findLocal(file: string; sym: SymId; toTrack: NifLineInfo; mode: TrackMode; bits: int) =
   var buf = parseFromFile(file)
 
-  var name = pool.syms[sym]
-  extractBasename name
+  var name = pool.symBasename(sym)
 
   var offset = -1
   var parentOffset = 0
@@ -280,7 +279,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
     while n.hasMore:
       if n.isSymbol or n.isSymbolDef:
         # performance critical! May run over every symbol in the project!
-        let name = pool.syms[n.symId]
+        let name = pool.symString(n.symId)
         var tokenLen = 0
         var dots = 0
         for i in 0 ..< name.len:

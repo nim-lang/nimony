@@ -19,6 +19,8 @@ import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import patchsets
+
+include ".." / ".." / "lib" / compat2   # getOrQuit (host Nim)
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import intrinsiceffects                       # is this `(instr …)` a pure value?
 import ".." / typenav                         # getNominalType — the temp's declared type
@@ -34,30 +36,31 @@ type
     patchset: Patchset
     synth: seq[TokenBuf]
     tempCounter: int
-    moduleSuffix: string
     m: ptr MainModule  ## module type context; nil ⇒ emit `.` and let the backend
                        ## re-infer (what the self-tests, which parse a body in
                        ## isolation, still do)
 
-proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
+proc createContext(orig: ptr TokenBuf;
                    m: ptr MainModule): Context =
   Context(orig: orig,
           patchset: initPatchset(orig),
           synth: @[],
           tempCounter: 0,
-          moduleSuffix: moduleSuffix,
           m: m)
 
 proc freshTempName(c: var Context): string =
   inc c.tempCounter
-  result = "iv.p." & $c.tempCounter & "." & c.moduleSuffix
+  # A pointer induction variable is a LOCAL of this body, so its name is a
+  # local's: `<ident>.<disamb>`. The backtick keeps it out of the source
+  # namespace, like every other minted name here.
+  result = "`iv.p." & $c.tempCounter
 
 # ---- pattern detection ----------------------------------------------------
 
 proc isIvIncPattern(c: Cursor; outIvSym: var SymId): bool =
   ## Matches `(asgn lhs (add T lhs 1))`. Sets `outIvSym` to `lhs`'s id.
   if c.kind != TagLit: return false
-  if c.stmtKind notin {AsgnS, StoreS}: return false
+  if c.stmtKind != AsgnS: return false
   var probe = c
   inc probe                                  # past `(asgn`
   if probe.kind != Symbol: return false
@@ -75,8 +78,7 @@ proc isIvIncPattern(c: Cursor; outIvSym: var SymId): bool =
   return true
 
 proc loopBodyCursor(loopCursor: Cursor): Cursor =
-  ## Cursor at the loop body. Handles `(while cond body)` and
-  ## `(loop pre cond body after)`.
+  ## Cursor at the loop body. Handles `(while cond body)` and `(loop body)`.
   result = loopCursor
   case loopCursor.stmtKind
   of WhileS:
@@ -84,17 +86,12 @@ proc loopBodyCursor(loopCursor: Cursor): Cursor =
     skip result                              # past cond
   of LoopS:
     inc result                               # past `(loop`
-    skip result                              # past before-cond
-    skip result                              # past cond
   else: discard
 
 proc writeTargetOf(start: Cursor): Cursor =
-  ## The lvalue a statement writes: `(asgn dest src)` → `dest`, but
-  ## `(store src dest)` → the SECOND child. Reading the first child for both
-  ## looked at the *source* of a `store` and missed its target.
+  ## The lvalue a statement writes: `(asgn dest src)` → `dest`.
   result = start
   inc result                                 # past the tag
-  if start.stmtKind == StoreS: skip result   # past the source
 
 proc countWritesOf(start: Cursor; sym: SymId; counter: var int) =
   ## Counts Symbol-LHS assignments to `sym` anywhere in the subtree at `start`,
@@ -102,7 +99,7 @@ proc countWritesOf(start: Cursor; sym: SymId; counter: var int) =
   if not start.hasMore: return
   case start.kind
   of TagLit:
-    if start.stmtKind in {AsgnS, StoreS}:
+    if start.stmtKind == AsgnS:
       let lhs = writeTargetOf(start)
       if lhs.kind == Symbol and symId(lhs) == sym:
         inc counter
@@ -152,7 +149,7 @@ type
 
 proc collectLoopFacts(n: Cursor; f: var LoopFacts) =
   if not n.hasMore or n.kind != TagLit: return
-  if n.stmtKind in {AsgnS, StoreS}:
+  if n.stmtKind == AsgnS:
     let lhs = writeTargetOf(n)
     if lhs.kind == Symbol: f.assigned.incl symId(lhs)
   # An `(instr …)` counts unless its row is `efPure`: the loop rewrites below
@@ -328,7 +325,7 @@ proc transformLoop(c: var Context; n: var Cursor) =
       if not baseIsStable(c, base, facts): continue
       var p: string
       if acc.arrSym in arrToP:
-        p = arrToP[acc.arrSym]
+        p = arrToP.getOrQuit(acc.arrSym)
       else:
         p = freshTempName(c)
         arrToP[acc.arrSym] = p
@@ -394,12 +391,12 @@ proc tr(c: var Context; n: var Cursor) =
 
 # ---- public entry --------------------------------------------------------
 
-proc runInductionVariables*(buf: var TokenBuf; moduleSuffix = "M";
+proc runInductionVariables*(buf: var TokenBuf;
                             m: ptr MainModule = nil) =
   ## Two-phase IV strength reduction: record rewrite patches, then rebuild
   ## `buf` with pointer decls hoisted before each loop, pointer bumps before
   ## the iv-inc, and `(deref p)` substituted for each `(at arr iv)` access.
-  var ctx = createContext(addr buf, moduleSuffix, m)
+  var ctx = createContext(addr buf, m)
   var n = beginRead(buf)
   tr(ctx, n)
   if not ctx.patchset.isEmpty:
@@ -432,18 +429,18 @@ when isMainModule:
       "(stmts (asgn i.0.M 0) (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))")
     runInductionVariables buf
     assertSame(buf,
-      "(stmts (asgn i.0.M 0) (var :iv.p.1.M . . (addr (at arr.0.M i.0.M))) " &
-      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref iv.p.1.M)) " &
-      "(asgn iv.p.1.M (addr (pat iv.p.1.M 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))")
+      "(stmts (asgn i.0.M 0) (var :`iv.p.1 . . (addr (at arr.0.M i.0.M))) " &
+      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p.1)) " &
+      "(asgn `iv.p.1 (addr (pat `iv.p.1 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))")
 
   block multiple_accesses_same_array:
     var buf = parse(
       "(stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) (asgn y.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))")
     runInductionVariables buf
     assertSame(buf,
-      "(stmts (var :iv.p.1.M . . (addr (at arr.0.M i.0.M))) " &
-      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref iv.p.1.M)) " &
-      "(asgn y.0.M (deref iv.p.1.M)) (asgn iv.p.1.M (addr (pat iv.p.1.M 1))) " &
+      "(stmts (var :`iv.p.1 . . (addr (at arr.0.M i.0.M))) " &
+      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p.1)) " &
+      "(asgn y.0.M (deref `iv.p.1)) (asgn `iv.p.1 (addr (pat `iv.p.1 1))) " &
       "(asgn i.0.M (add (i 32) i.0.M 1)))))")
 
   block multiple_arrays:
@@ -451,11 +448,11 @@ when isMainModule:
       "(stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr1.0.M i.0.M)) (asgn y.0.M (at arr2.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))")
     runInductionVariables buf
     assertSame(buf,
-      "(stmts (var :iv.p.1.M . . (addr (at arr1.0.M i.0.M))) " &
-      "(var :iv.p.2.M . . (addr (at arr2.0.M i.0.M))) " &
-      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref iv.p.1.M)) " &
-      "(asgn y.0.M (deref iv.p.2.M)) (asgn iv.p.1.M (addr (pat iv.p.1.M 1))) " &
-      "(asgn iv.p.2.M (addr (pat iv.p.2.M 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))")
+      "(stmts (var :`iv.p.1 . . (addr (at arr1.0.M i.0.M))) " &
+      "(var :`iv.p.2 . . (addr (at arr2.0.M i.0.M))) " &
+      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p.1)) " &
+      "(asgn y.0.M (deref `iv.p.2)) (asgn `iv.p.1 (addr (pat `iv.p.1 1))) " &
+      "(asgn `iv.p.2 (addr (pat `iv.p.2 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))")
 
   block iv_used_outside_at:
     assertUnchanged(
@@ -499,8 +496,8 @@ when isMainModule:
       "(stmts (while c.0.M (stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))))")
     runInductionVariables buf
     assertSame(buf,
-      "(stmts (while c.0.M (stmts (var :iv.p.1.M . . (addr (at arr.0.M i.0.M))) " &
-      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref iv.p.1.M)) " &
-      "(asgn iv.p.1.M (addr (pat iv.p.1.M 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))))")
+      "(stmts (while c.0.M (stmts (var :`iv.p.1 . . (addr (at arr.0.M i.0.M))) " &
+      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p.1)) " &
+      "(asgn `iv.p.1 (addr (pat `iv.p.1 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))))")
 
   echo "induction_variables.nim: all self-tests passed"

@@ -1,0 +1,8 @@
+basics ok
+anchoring ok
+searching ok
+rewriting ok
+capturing ok
+capture degradation ok
+character classes ok
+runtime patterns ok

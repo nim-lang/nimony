@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 2612             )
+(.indexat 2610             )
 (stmts@,2,tests/nimony/nosystem/tdistinct.nim
  (type@2,1 :int.0.
   (i 64).
@@ -42,11 +42,11 @@
    (case@E e.0
     (of~C,1
      (ranges typeOfProc.0.)
-     (stmts
+     (scope
       (ret "typeOfProc")))
     (of~C,2
      (ranges typeOfIter.0.)
-     (stmts
+     (scope
       (ret "typeOfIter"))))
    (ret@2,2 result.0)))
  (proc@,D :typeof.0.@5
@@ -112,7 +112,7 @@
        (i@B,~2 64)y.3))))
    (ret result.1)))
  (gvar@4,Z :x.0. . . VarId.0.@3 .)
- (asgn@2,b x.0.~2
+ (asgn@2,b x.0.
   (infix@4 \2B.1. x.0.~2 x.0.@2))
  (glet@4,d :y.0. . .
   (i 8)
@@ -138,4 +138,4 @@
  (x VarId.0. 167)
  (x \2B.1. 67)
  (h x.0. 363)
- (h y.0. 87))
+ (h y.0. 85))

@@ -1,10 +1,10 @@
+{.feature: "staticContracts".}
 
-import assertions
+import hashes, assertions
 
 type
-  Keyable* = concept ## Concept describing types usable as table keys (`==` plus `hash`).
+  Keyable* = concept of Hashable ## Types usable as table keys: `Hashable` plus `==`.
     func `==`(a, b: Self): bool
-    func hash(a: Self): Hash
 
   HashEntry = object
     fullhash: Hash
@@ -18,39 +18,61 @@ func mustRehash(length, counter: int): bool {.inline.} =
 
 func isFilled(a: HashEntry): bool {.inline.} = a.position > 0
 
+func emptySlot(s: seq[HashEntry]; h: Hash): int {.requires: s.len > 0,
+    ensures: 0 <= result and result < s.len, inline.} =
+  ## The first unfilled slot on `h`'s linear probe sequence.
+  var i = h
+  while isFilled(s[i and high(s).uint]): inc i
+  result = int(i and high(s).uint)
+
 func resize(t: var seq[HashEntry]) =
   # does not have to be generic.
   let newLen = if t.len == 0: 4 else: t.len * 2
   var s = newSeq[HashEntry](newLen)
+  # the allocation failed: keep probing the old index, full as it is
+  if s.len == 0: return
   for i in 0 ..< t.len:
     if isFilled(t[i]):
-      var h = t[i].fullhash and high(s).uint
-      while isFilled(s[h]): h = nextTry(h, high(s))
-      s[h] = t[i]
+      s[emptySlot(s, t[i].fullhash)] = t[i]
   t = ensureMove s
 
 const
   HashThreshold = 4
 
 func fillHashPart[K: Keyable, V](t: var Table[K, V]) =
-  t.hashes = newSeq[HashEntry](HashThreshold*2)
+  ## Builds a COMPLETE index for `data`, or leaves `hashes` empty.
+  ##
+  ## Sized for what `data` already holds rather than a fixed minimum: this runs
+  ## again after an earlier attempt could not allocate, by which time `data` may
+  ## be far past `HashThreshold`, and an index too small for it would leave
+  ## `emptySlot` with no free slot to find.
+  var cap = HashThreshold*2
+  while mustRehash(cap, t.data.len): cap = cap * 2
+  t.hashes = newSeq[HashEntry](cap)
+  if t.hashes.len == 0: return
   for i in 0 ..< t.data.len:
     let fullhash = hash(t.data[i][0])
-    var hi = fullhash and t.hashes.high.uint
-    while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
-    t.hashes[hi] = HashEntry(fullhash: fullhash, position: i+1)
+    t.hashes[emptySlot(t.hashes, fullhash)] = HashEntry(fullhash: fullhash, position: i+1)
 
-func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int =
-  if t.data.len <= HashThreshold:
+func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int {.
+    ensures: result < t.data.len.} =
+  if t.data.len <= HashThreshold or t.hashes.len == 0:
+    # No index: either the table is still tiny, or the index could not be
+    # allocated. A linear scan is slow but correct, and correctness is what
+    # matters here -- answering "absent" would make `[]=` store a second copy
+    # of a key that is already present.
     for i in 0 ..< t.data.len:
       if t.data[i][0] == k: return i
   else:
-    var h = kh and t.hashes.high.uint
-    while isFilled(t.hashes[h]):
-      let d = t.hashes[h]
-      if d.fullhash == kh and t.data[d.position-1][0] == k:
+    var h = kh
+    while isFilled(t.hashes[h and high(t.hashes).uint]):
+      let d = t.hashes[h and high(t.hashes).uint]
+      # `position` points into `data` for every filled entry; an entry that
+      # does not is no match rather than a read past its end
+      if d.fullhash == kh and d.position >= 1 and d.position <= t.data.len and
+          t.data[d.position-1][0] == k:
         return d.position-1
-      h = nextTry(h, high(t.hashes))
+      inc h
   result = -1
 
 func contains*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
@@ -79,8 +101,9 @@ func getOrDefault*[K: Keyable, V](t: Table[K, V]; k: K; fallback: V): V =
 func getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
   ## Like `[]`, but terminates the program if `k` is missing (after `assert`).
   let idx = rawGet(t, k, hash(k))
-  {.cast(noSideEffect).}:
-    assert idx >= 0
+  if idx < 0:
+    {.cast(noSideEffect).}:
+      raiseAssert "key not found"
   t.data[idx][1]
 
 when defined(nimony):
@@ -105,14 +128,32 @@ else:
     t.data[idx][1]
 
 func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
-  if t.data.len == HashThreshold:
-    fillHashPart t
+  if t.hashes.len == 0:
+    # `fillHashPart` is the only thing that builds an index from `data`;
+    # `resize` merely grows an existing one, so using it here would leave an
+    # index that is non-empty and yet missing every key already stored, and
+    # `rawGet` would trust it.
+    if t.data.len >= HashThreshold:
+      fillHashPart t
   elif mustRehash(t.hashes.len, t.data.len):
     resize t.hashes
+    if mustRehash(t.hashes.len, t.data.len):
+      # The index could not grow. Storing the pair anyway would eventually fill
+      # every slot, and both probe loops in this module assume a free slot
+      # exists -- a lookup for an absent key would then never terminate. Refuse
+      # the insert instead: it is an allocation failure like any other, and the
+      # table stays consistent and usable.
+      return
+  let oldLen = t.data.len
   t.data.add (k, v)
-  var hi = h and t.hashes.high.uint
-  while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
-  t.hashes[hi] = HashEntry(fullhash: h, position: t.data.len)
+  # Two ways this can have no new entry to index: an index that could not be
+  # allocated (`hashes` empty), or an `add` that could not allocate -- which
+  # leaves `data` untouched, so `data.len` is the test. Indexing anyway would
+  # write a slot whose `position` names an OLD pair: `rawGet` compares keys and
+  # so never matches it, but it stays filled forever, and enough of them make
+  # `emptySlot` spin on a probe sequence with no free slot left.
+  if t.data.len > oldLen and t.hashes.len > 0:
+    t.hashes[emptySlot(t.hashes, h)] = HashEntry(fullhash: h, position: t.data.len)
 
 func `[]=`*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V) =
   ## Inserts or updates `k` with `v`.
@@ -128,8 +169,17 @@ func mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V 
   let h = hash(k)
   var idx = rawGet(t, k, h)
   if idx < 0:
+    let oldLen = t.data.len
     rawPut(t, k, v, h)
     idx = t.data.len-1
+    # When the insert was refused, `data.len-1` names the pair BEFORE the one
+    # asked for, so a reference to someone else's value would escape. Both tests
+    # matter: `idx < 0` for a table that is still empty, and `len <= oldLen` for
+    # a refusal that left a non-empty one. Keeping `idx < 0` explicit is also
+    # what tells the contract prover that the index below is in range.
+    if idx < 0 or t.data.len <= oldLen:
+      {.cast(noSideEffect).}:
+        raiseAssert "out of memory"
   result = t.data[idx][1]
 
 func len*[K, V](t: Table[K, V]): int {.inline.} =
@@ -182,11 +232,10 @@ func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
     while size < t.data.len * 2:
       size = size * 2
     t.hashes = newSeq[HashEntry](size)
+    if t.hashes.len == 0: return
     for i in 0 ..< t.data.len:
       let fullhash = hash(t.data[i][0])
-      var hi = fullhash and t.hashes.high.uint
-      while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
-      t.hashes[hi] = HashEntry(fullhash: fullhash, position: i+1)
+      t.hashes[emptySlot(t.hashes, fullhash)] = HashEntry(fullhash: fullhash, position: i+1)
   else:
     # data fits the linear-scan threshold; drop the hash table entirely.
     t.hashes.shrink(0)

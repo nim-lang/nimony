@@ -74,6 +74,9 @@ func len*(s: string): int {.alwaysInline, semantics: "string.len", ensures: (0 <
   result = ssLen(s)
   if result > PayloadSize:
     result = s.more.fullLen
+  # A length is never negative: `ssLen` is one byte of the header, and `fullLen`
+  # is only ever set from a non-negative length.
+  {.assume: 0 <= result.}
 
 func high*(s: string): int {.alwaysInline.} = len(s) - 1
 func low*(s: string): int {.inline.} = 0
@@ -90,9 +93,9 @@ func isOom*(s: string): bool {.inline.} =
 
 # ---- hashing ----
 #
-# `system/hashes` is included after this file and cannot see this representation,
-# so the mixing steps are restated here. THEY MUST STAY IN LOCK-STEP
-# WITH `!&` AND `!$` from `system/hashes` — `hash(string)` is just an inline shim for
+# `std/hashes` cannot see this representation and `system` cannot import
+# `std/hashes`, so the mixing steps are restated here. THEY MUST STAY IN LOCK-STEP
+# WITH `hashes.!&` AND `hashes.!$` — `hash(string)` is just an inline shim for
 # `hashStr`, and two different mixes would silently split every table.
 
 template hashMix(h: uint; val: uint): uint =
@@ -267,10 +270,34 @@ iterator pairs*(s: string): (int, char) {.inline.} =
 func `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
   s.bytes = 0
 
-func `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
+func destroyHeapStr(more: ptr LongString) {.noinline.} =
+  ## The cold half of `=destroy`. Only a HEAP string reaches here, and on the
+  ## compiler's own workload that is 0.17% of destroys — so this is the same
+  ## split, for the same reason, as `hashStr`/`hashStrLong` above.
+  ##
+  ## The size is the whole point. `arcDec` is `{.inline.}`, so by the time the
+  ## inliner scores `=destroy` its body has already absorbed the atomic
+  ## acquire-load plus the LL/SC decrement loop — well past `InlineTinyBound`
+  ## (100 tokens), which is why `=destroy` stayed an out-of-line call at every
+  ## site despite carrying `{.inline.}` (a pragma `computeInlineInfo`
+  ## deliberately does not consult; only `.alwaysInline` is). Splitting the
+  ## check from the tail is what makes the half that is worth splicing small
+  ## enough to splice.
+  ##
+  ## `ptr LongString` rather than `string`: a `string` parameter would drag the
+  ## lifecycle hooks back into the cold half, which is the thing being escaped.
+  if arcDec(more.rc):
+    dealloc(more)
+
+func `=destroy`*(s: string) {.exportc: "nimStrDestroy", alwaysInline.} =
+  ## The check, and nothing else. Out of line this costs a `bl` and — on
+  ## AArch64, where `bl` clobbers the link register — a frame in the callee for
+  ## the sole benefit of a branch that is not taken: measured on `nifbench`,
+  ## 788,157 calls of which 3 reached `dealloc`, and 1,576,308 of the 1,576,314
+  ## instructions spent saving and restoring `lr` were on paths that never
+  ## called anything.
   if ssLen(s) == HeapSlen:
-    if arcDec(s.more.rc):
-      dealloc(s.more)
+    destroyHeapStr(s.more)
 
 func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", nodestroy.} =
   let ssrc = ssLen(src)
@@ -308,9 +335,12 @@ when defined(nimNativeIo):
 else:
   func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 
-func len*(a: cstring): int {.inline.} =
-  if a == nil: 0
-  else: a.strlen.int
+func len*(a: cstring): int {.inline, ensures: (0 <= result).} =
+  if a == nil: result = 0
+  else:
+    result = a.strlen.int
+    # `strlen` counts bytes; no C string is longer than `high(int)`.
+    {.assume: 0 <= result.}
 
 # ---- internal growth helpers ----
 
@@ -353,6 +383,15 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       # Sync inline cache after creating new block (use oldLen since new data may not exist yet)
       copyMem(inlinePtrV(s), addr p.data[0], min(oldLen, AlwaysAvail))
     else:
+      # `s` becomes the OOM cookie, so release what it is holding first: only
+      # the heap case owns anything (a static long string is never freed, a
+      # short/medium one keeps its chars inline), and `arcDec` covers both the
+      # unique owner and a shared one exactly as the success path above does.
+      # Dropping the pointer instead would leak a block at the one moment
+      # memory is known to be scarce.
+      if isHeap:
+        let old = s.more
+        if arcDec(old.rc): dealloc(old)
       strOom s, LongStringDataOffset + newCap
 
 func transitionToLong(s: var string; sl: int; newLen: int) =
@@ -573,13 +612,18 @@ func `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), alwaysI
   if ssLen(s) > PayloadSize: s.more.data[i]
   else: inlinePtr(s)[i]
 
-func `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
+func `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0),
+    ensures: len(s) == old(len(s)), inline.} =
   prepareMutation(s)
   if ssLen(s) > PayloadSize:
     s.more.data[i] = c
     if i < AlwaysAvail: inlinePtrV(s)[i] = c
   else:
     inlinePtrV(s)[i] = c
+  # A character is written into the payload; the length lives in the header
+  # byte and in `fullLen`, which neither write reaches, and `prepareMutation`
+  # copies a shared payload without changing its length.
+  {.assume: len(s) == old(len(s)).}
 
 # ---- substr / slicing ----
 
@@ -826,7 +870,7 @@ func `==`*(a, b: string): bool {.alwaysInline, semantics: "string.==".} =
     return abytes == bbytes            # SWAR: one word covers slen + all chars
   equalStringsLong(a, b)
 
-func nimStrAtLe(s: string; idx: int; ch: char): bool {.inline.} =
+func nimStrAtLe(s: string; idx: Natural; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
 
 func cmp*(a, b: string): int =

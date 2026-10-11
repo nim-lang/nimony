@@ -9,7 +9,7 @@ type
   TicketLock* = object
     nextTicket, nowServing: int
 
-proc acquire*(L: var TicketLock) {.inline.} =
+proc acquire*(L: var TicketLock) {.sync, inline.} =
   let myTicket = atomicFetchAdd(L.nextTicket, 1, moRelaxed)
   while true:
     let currentlyServing = atomicLoad(L.nowServing, moAcquire)
@@ -20,7 +20,7 @@ proc acquire*(L: var TicketLock) {.inline.} =
       cpuRelax()
       dec delaySlots
 
-proc release*(L: var TicketLock) {.inline.} =
+proc release*(L: var TicketLock) {.sync, inline.} =
   let myTicket = atomicLoad(L.nowServing, moRelaxed)
   atomicStore(L.nowServing, myTicket + 1, moRelease)
 

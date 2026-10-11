@@ -1,0 +1,1 @@
+tests/nimony/templates/tredeclare_in_template.nim(4, 7) Error: attempt to redeclare: size

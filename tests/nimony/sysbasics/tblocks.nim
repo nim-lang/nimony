@@ -10,7 +10,7 @@ foo()
 proc main =
   block endLess:
     let s = 12
-    break
+    break endLess
 
   block endLess:
     let s = 12
@@ -38,5 +38,5 @@ proc test(): int {.discardable.} =
 block:
   test()
 
-block: # errors
-  break
+block errors:
+  break errors

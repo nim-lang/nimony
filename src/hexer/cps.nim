@@ -99,7 +99,7 @@ proc passiveCallHook(c: var Context; n: Cursor): bool =
 proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
                             contVar: SymId; info: NifLineInfo) =
   dest.copyIntoKind CallS, info:
-    dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.symId("complete.0." & SystemModuleSuffix), info
     dest.addSymUse contVar, info
 
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
@@ -118,13 +118,13 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     # fallback to init wrapper call for methods, closures, proctype
     # calls because we cant restore its coroTypeForProc
     if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.childCursor.kind == DotToken or n.childCursor.symKind notin RoutineKinds:
-      let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+      let contVar = pool.symId("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
         dest.addSymDef contVar, info
         dest.addDotToken() # exported
         dest.addDotToken() # pragmas
-        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.addSymUse pool.symId(ContinuationName), info
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
           let callStart = n
@@ -143,19 +143,19 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
               dest.copyTree target
           # add StopContinuation:
           dest.copyIntoKind OconstrX, info:
-            dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+            dest.addSymUse pool.symId(ContinuationName), info
             dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+              dest.addSymUse pool.symId(FnFieldName), info
               dest.addParPair NilX, info
             dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+              dest.addSymUse pool.symId(EnvFieldName), info
               dest.addParPair NilX, info
       emitCompleteFromNormal(c, dest, contVar, info)
     else:
       # Stack-allocate the callee's frame (statically known callee).
       # Null callee.callee (see emitStackFrameTag) so deallocFrame is a
       # nop — `callee == nil` marks the frame as stack-allocated.
-      let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
+      let coroVar = pool.symId("`coroVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       var sym = n.childCursor.symId
       copyIntoKind dest, VarS, info:
@@ -164,13 +164,13 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         dest.addDotToken() # pragmas
         dest.addSymUse coroTypeForProc(c, sym), info
         dest.addDotToken() # default value
-      let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+      let contVar = pool.symId("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
         dest.addSymDef contVar, info
         dest.addDotToken() # exported
         dest.addDotToken() # pragmas
-        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.addSymUse pool.symId(ContinuationName), info
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
           dest.addSymUse sym, info
@@ -187,12 +187,12 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
               dest.copyTree target
           # add StopContinuation:
           dest.copyIntoKind OconstrX, info:
-            dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+            dest.addSymUse pool.symId(ContinuationName), info
             dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+              dest.addSymUse pool.symId(FnFieldName), info
               dest.addParPair NilX, info
             dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+              dest.addSymUse pool.symId(EnvFieldName), info
               dest.addParPair NilX, info
       # Tag as stack-allocated:
       emitStackFrameTag(c, dest, coroVar, info)
@@ -211,13 +211,30 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     # because the rest of the pipeline already assumes code like
     # `let tmp = fnConstruct(args); return tmp` so that is what we
     # generate here:
-    let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+    let contVar = pool.symId("`contVar." & $c.currentProc.counter)
     inc c.currentProc.counter
     dest.addParLe VarS, info
     dest.addSymDef contVar, info
     dest.addDotToken() # exported
     dest.addDotToken() # pragmas
-    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    dest.addSymUse pool.symId(ContinuationName), info
+
+    let fn = n.childCursor
+    if fn.kind == Symbol and fn.symId == pool.symId("iterAdvance.0." & SystemModuleSuffix):
+      # A `for` loop's step (`coro_transform.lowerPassiveFor`): run the
+      # iterator now, and continue HERE once it yields or finishes.
+      copyIntoKind dest, CallS, info:
+        dest.addSymUse pool.symId("iterSwitch.0." & SystemModuleSuffix), info
+        let callStart = n
+        n = sub(n)
+        skip n # iterAdvance
+        coroTr(c, dest, n) # addr cell
+        n = callStart; skip n
+        contNextState c, dest, state, info
+      dest.addParRi() # VarS
+      dest.copyIntoKind RetS, info:
+        dest.addSymUse contVar, info
+      return
 
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
@@ -255,7 +272,7 @@ proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(suspend)` — parks only after a preceding `(delay0)` in the same
   ## state (`Continuation(fn: nil, env: this)`). A bare `suspend()` is a
-  ## synchronous transition to the next state so `complete()` can drive on.
+  ## synchronous transition to the next state so the trampoline drives on.
   let info = n.info
   var state = -1
   n.into: # suspend
@@ -265,16 +282,16 @@ proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.copyIntoKind RetS, info:
     if park:
       dest.copyIntoKind OconstrX, info:
-        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.addSymUse pool.symId(ContinuationName), info
         dest.copyIntoKind KvU, info:
-          dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+          dest.addSymUse pool.symId(FnFieldName), info
           dest.addParPair NilX, info
         dest.copyIntoKind KvU, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+          dest.addSymUse pool.symId(EnvFieldName), info
           dest.copyIntoKind CastX, info:
             dest.copyIntoKind PtrT, info:
-              dest.addSymUse pool.syms.getOrIncl(RootObjName), info
-            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+              dest.addSymUse pool.symId(RootObjName), info
+            dest.addSymUse pool.symId(EnvParamName), info
     else:
       assert state != -1
       contNextState(c, dest, state, info)
@@ -287,23 +304,31 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = sub(n)
   if n.kind == Symbol:
     let sym = n.symId
+    # A method has to be dispatched, and its vtable slot holds the `init`
+    # wrapper, not the state proc; the wrapper allocates the frame itself.
+    let isMethod = c.typeCache.getType(n, {SkipAliases}).typeKind == MethodT
     inc n, SkipName    # the fn symbol, re-emitted below
     # Create a child coroutine and return it as a Continuation without
     # yielding. The callee's frame is heap-allocated via allocFrame.
     copyIntoKind dest, CallS, info:
-      dest.addSymUse sym, info
+      if isMethod:
+        publishWrapperSignature(sym, c.thisModuleSuffix)
+        dest.addSymUse coroWrapperProc(c, sym), info
+      else:
+        dest.addSymUse sym, info
       while n.hasMore:
         coroTr(c, dest, n)
-      emitAllocFrame(c, dest, sym, info)
+      if not isMethod:
+        emitAllocFrame(c, dest, sym, info)
       # Pass StopContinuation as the caller so the child doesn't
       # resume anyone on finish.
       dest.copyIntoKind OconstrX, info:
-        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.addSymUse pool.symId(ContinuationName), info
         dest.copyIntoKind KvU, info:
-          dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+          dest.addSymUse pool.symId(FnFieldName), info
           dest.addParPair NilX, info
         dest.copyIntoKind KvU, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+          dest.addSymUse pool.symId(EnvFieldName), info
           dest.addParPair NilX, info
     n = delayStart; skip n, SkipFull # the delay, already translated
   else:
@@ -332,7 +357,10 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # proctype function pointer, NOT a tuple.
     let isClosureIterType = nk == ItertypeT and not procHasPragma(n, PassiveP)
     let isPassiveIterType = nk == ItertypeT and procHasPragma(n, PassiveP)
-    if isPassiveProc or isClosureIterType or isPassiveIterType:
+    # A childless routine type is the bare typeclass, as written in `[T: proc]`
+    # / `[T: iterator]`: no signature to lower, so copy it through.
+    let isTypeclass = nk in {ProctypeT, ItertypeT} and isChildless(n)
+    if not isTypeclass and (isPassiveProc or isClosureIterType or isPassiveIterType):
       var info = n.info
       if isClosureIterType:
         # open the (closureTuple … (ref RootObj)) wrapper
@@ -353,7 +381,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # return type becomes a ptr parameter:
       if not isVoidType(n):
         dest.copyIntoKind ParamU, info:
-          dest.addSymDef pool.syms.getOrIncl(ResultParamName), info
+          dest.addSymDef pool.symId(ResultParamName), info
           dest.addDotToken() # export
           dest.addDotToken() # pragmas
           dest.copyIntoKind PtrT, info:
@@ -363,13 +391,13 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skip n, SkipType
       # here we add caller param
       dest.copyIntoKind ParamU, info:
-        dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
+        dest.addSymDef pool.symId(CallerParamName), info
         dest.addDotToken() # export
         dest.addDotToken() # pragmas
-        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.addSymUse pool.symId(ContinuationName), info
         dest.addDotToken() # default value
       dest.addParRi()
-      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      dest.addSymUse pool.symId(ContinuationName), info
       while n.hasMore:
         trProctype(c, dest, n)
       dest.addParRi(n.endInfo)
@@ -377,7 +405,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isClosureIterType:
         # proctype is already closed; add the env slot and close the tuple
         dest.copyIntoKind RefT, info:
-          dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+          dest.addSymUse pool.symId(BareRootObjName), info
         dest.addParRi() # close tuple
     else:
       copyInto dest, n:

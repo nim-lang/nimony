@@ -25,8 +25,7 @@ proc conceptRoutineBasename*(routine: Cursor): StrId =
   assert prc.symKind in RoutineKinds
   inc prc
   assert prc.isSymbolDef
-  var name = pool.syms[prc.symId]
-  extractBasename(name)
+  var name = pool.symBasename(prc.symId)
   pool.strings.getOrIncl(name)
 
 proc conceptSelfSymFromSlot*(body: Cursor): SymId =
@@ -51,8 +50,7 @@ proc isConceptSelfSym(s: SymId; headerSelf: SymId): bool =
   let res = tryLoadSym(s)
   if res.status != LacksNothing or res.decl.symKind != TypevarY:
     return false
-  var name = pool.syms[s]
-  extractBasename(name)
+  var name = pool.symBasename(s)
   name == "Self"
 
 proc collectSelfSymsInType(typ: Cursor; headerSelf: SymId; result: var seq[SymId]) =
@@ -196,13 +194,13 @@ iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basenam
   if c != nil:
     let ignoreStyle = IgnoreStyleFeature in c.features
     if conceptSym != SymId(0):
-      let modSuffix = extractModule(pool.syms[conceptSym])
+      let modSuffix = pool.symModule(conceptSym)
       if modSuffix != "":
         for cand in loadSyms(modSuffix, basename):
           if not seen.containsOrIncl(cand):
             yield cand
       if typeRoot != SymId(0):
-        let typeModule = extractModule(pool.syms[typeRoot])
+        let typeModule = pool.symModule(typeRoot)
         if typeModule != "" and typeModule != c.thisModuleSuffix:
           for cand in loadSyms(typeModule, basename):
             if not seen.containsOrIncl(cand):
@@ -295,7 +293,7 @@ proc sameConceptRoutineTrees*(requirement, candidate: Cursor;
   sameTreesButIgnoreSymIds(rReq, rCand)
 
 proc conceptRequirementInBody*(routine: Cursor; actualBody: Cursor): bool =
-  for _, req in conceptHierarchyRoutines(actualBody):
+  for _, _, req in conceptHierarchyRoutines(SymId(0), actualBody):
     if sameConceptRoutineTrees(routine, req):
       return true
   false

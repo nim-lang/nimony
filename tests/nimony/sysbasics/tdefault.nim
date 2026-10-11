@@ -3,7 +3,8 @@ import std/assertions
 discard default(string)
 discard default(int)
 
-discard default(ptr int)
+type NilPtrInt = nil ptr int  # a NOT-NIL `ptr int` has no default value
+discard default(NilPtrInt)
 type Enum = enum a, b, c
 discard default(Enum)
 

@@ -1075,6 +1075,80 @@ An expression `b` can be assigned to an expression `a` iff `a` is an
 `l-value` and `isImplicitlyConvertible(b.typ, a.typ)` holds.
 
 
+## Identifier lookup
+
+An identifier does not denote a single declaration; it denotes a
+`symbol choice`:idx: — every declaration that is visible under that name.
+Lookup only *collects* the candidates. Deciding which one is meant is the
+job of overload resolution and overload disambiguation, described in the
+two sections that follow.
+
+Candidates are collected level by level, from the innermost scope outward.
+The outermost level is **the module's own toplevel scope together with
+everything imported into it**: `import` is not a separate lookup mechanism
+and not a shadowing boundary. All it contributes is the scope distance that
+the ["Module-of-origin"](#module-of-origin) rule already ranks by.
+
+Whether the walk continues past a level is decided by the *kind* of the
+declarations found there, never by which module they came from:
+
+- A **non-overloadable** declaration — `let`, `var`, `const`, `type`, a
+  routine parameter, a generic parameter, an object field, `result`, a
+  block label — *shadows*.
+  Once one is found on its own, the walk stops and nothing further out is
+  visible under that name.
+- An **overloadable** declaration — a proc, func, converter, template,
+  macro, iterator, or an **enum field** — never shadows. Overloadable
+  declarations accumulate into the symbol choice across every level,
+  including across `import`.
+
+  ```nim
+  # module m:
+  type Color* = enum
+    red, green
+
+  # caller:
+  import m
+  proc red() = discard
+  proc paint(c: Color) = discard
+
+  paint(red)   # `red` is a choice of {the local proc, m.Color.red};
+               # the parameter type picks the enum field
+  ```
+
+  Had `Color` been declared in the calling module instead, the same choice
+  would arise and resolve the same way: an overloadable declaration is never
+  hidden merely because a same-named one exists closer in, or closer to
+  home.
+
+Once collected, a choice is resolved in this order:
+
+1. **Context.** In a call, overload resolution picks the candidate. In any
+   position where a type is expected — an argument, `x: T = p`, a
+   constructor field, a `case` branch — overload disambiguation picks the
+   candidate of that type.
+2. **Scope distance.** If context did not narrow the choice to one
+   candidate, the nearest declaration wins: an inner scope beats an outer
+   one, and the module's own declaration beats an imported one, by the same
+   `Scope` / `ImportScope` relation used for calls.
+
+   ```nim
+   type E = enum A, B
+
+   block:
+     type E = enum A, B
+     let x = A       # the block's `E.A`: nearer, and nothing else narrows it
+   ```
+3. **Otherwise it is ambiguous** and a static error is reported. Ambiguity
+   is only possible between candidates at the *same* distance — most
+   importantly two different modules exporting the same name, which stays
+   an error and must be resolved by qualifying the name.
+
+Note that shadowing and ambiguity are decided in that order: a declaration
+that shadows removes candidates before any of this runs, so a `let` in an
+inner scope can never be ambiguous against anything outside it.
+
+
 ## Overload resolution
 
 In a call `p(args)` where `p` may refer to more than one
@@ -1278,14 +1352,22 @@ overload resolution called *overload disambiguation* that is performed when an
 overloaded symbol is used in a context where there is additional type information
 available. Let `p` be an overloaded symbol. These contexts are:
 
-- In a function call `q(..., p, ...)` when the corresponding formal parameter
-  of `q` is a `proc` type. If `q` itself is overloaded then the cartesian product
-  of every interpretation of `q` and `p` must be considered.
-- In an object constructor `Obj(..., field: p, ...)` when `field` is a `proc`
-  type. Analogous rules exist for array/set/tuple constructors.
-- In a declaration like `x: T = p` when `T` is a `proc` type.
+- In a function call `q(..., p, ...)`, against the type of the corresponding
+  formal parameter of `q`. If `q` itself is overloaded then the cartesian
+  product of every interpretation of `q` and `p` must be considered.
+- In an object constructor `Obj(..., field: p, ...)`, against the type of
+  `field`. Analogous rules exist for array/set/tuple constructors.
+- In a declaration like `x: T = p`, against `T`.
+- In a `case` branch, against the type of the selector.
 
-As usual, ambiguous matches produce a compile-time error.
+The expected type may be of any kind, not only a `proc` type: a choice
+between a routine and an enum field is disambiguated by an expected enum
+type exactly as a choice between two routines is disambiguated by an
+expected `proc` type.
+
+When the context leaves more than one candidate, scope distance decides;
+see [Identifier lookup](#identifier-lookup). As usual, matches that remain
+ambiguous after that produce a compile-time error.
 
 
 
@@ -1708,9 +1790,17 @@ Example:
   ```
 
 The block statement is a means to group statements to a (named) `block`.
-Inside the block, the `break` statement is allowed to leave the block
-immediately. A `break` statement can contain a name of a surrounding
-block to specify which block is to be left.
+Inside a named block, `break <name>` leaves the block immediately. An
+unlabeled `break` never leaves a block; it leaves the innermost loop, so a
+`block` inside a loop can be used as a plain scope:
+
+  ```nim
+  for i in 1..10:
+    block:
+      let x = compute(i)
+      if x < 0:
+        break # leaves the `for` loop, not the `block`
+  ```
 
 
 ### Break statement
@@ -1721,9 +1811,13 @@ Example:
   break
   ```
 
-The `break` statement is used to leave a block immediately. If `symbol`
-is given, it is the name of the enclosing block that is to be left. If it is
-absent, the innermost block is left.
+The `break` statement is used to leave a loop or a block immediately. If
+`symbol` is given, it is the name of the enclosing block that is to be left.
+If it is absent, the innermost loop is left; an unlabeled `break` outside of
+a loop is an error.
+
+With `{.feature: "anonBlockBreaks".}` (implied by `"v2"`) an unlabeled `break`
+leaves the innermost loop *or* block, as in Nim 2.
 
 
 ### While statement
@@ -2707,6 +2801,47 @@ The feature does not affect proc *types*: `proc(): int` stays a plain proc
 pointer and only `proc(): int {.closure.}` can store a closure. The feature is
 also implied by the `"v2"` meta feature.
 
+#### Iterators under the feature
+
+The feature covers two more spellings, both about closure iterators:
+
+- an *anonymous* `iterator(): T = ...` literal is marked `.closure.`
+  implicitly, wherever it appears. A named iterator is never marked — that
+  would silently turn an inline iterator into a coroutine;
+- `iterator(): T` as a **type** means `iterator(): T {.closure.}`.
+
+The second one goes further than the proc half above, and for a reason that
+does not apply to procs: `proc(): int` is a second, inhabited type — a
+one-word function pointer — so there the annotation distinguishes two real
+things. There is no bare `iterator(): int` *value*; an iterator type is either
+a closure iterator or a `.passive.` one, so without the feature the
+unannotated spelling is a type only `nil` can inhabit. `.passive.` is still
+spelled out: the feature picks the `.closure.` reading, it does not make the
+two interchangeable.
+
+```nim
+{.feature: "autoclosures".}
+
+func iter[T](s: seq[T]): iterator(): T =        # type: implicitly `.closure.`
+  return iterator(): T =                        # literal: implicitly `.closure.`
+    for x in s:
+      yield x
+
+func take[T](it: iterator(): T; n: int): iterator(): T =
+  return iterator(): T =
+    var k = 0
+    for v in it():
+      if k >= n: break
+      yield v
+      inc k
+
+for x in take(iter(@[1, 2, 3, 4]), 2)():
+  echo x # 1, 2
+```
+
+Without the feature the same program spells every iterator type and every
+iterator literal `iterator(): T {.closure.}`.
+
 
 ## Func
 
@@ -2726,6 +2861,103 @@ func withSideEffect(x: int): int {.sideEffect.} =
 ```
 
 
+
+## Contracts
+
+A routine may state a precondition with the `requires` pragma. The expression
+may name the routine's parameters, `result` (for `ensures`), and constants:
+
+```nim
+func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0).} =
+  s.data[i]
+```
+
+A contract is discharged at the **call site**, not inside the routine: the
+compiler substitutes the arguments for the parameters and asks whether what it
+knows on this path implies the result. Three answers are possible, and only the
+middle one is silent:
+
+* **proven** — nothing more happens; the contract cost nothing.
+* **undecided** — the compiler cannot tell. The call keeps the run-time guard
+  the callee carries (`if not cond: panic`), which `--boundchecks:off` and
+  `-d:danger` remove like any other check.
+* **violated** — what is known on this path implies the *negation* of the
+  contract. This is a compile-time error.
+
+```nim
+proc needsPositive(x: int) {.requires: x > 0.}
+
+needsPositive(0)          # Error: contract violated: 0 < x
+needsPositive(readInt())  # undecided: checked at run time
+```
+
+Undecided is the default answer rather than an error because
+`seq`/`string`/`openArray` indexing *is* a contract, and the prover cannot yet
+track a container's length through its construction — `var s = newSeq[int](4)`
+followed by `s[0]` is undecided — so demanding a proof everywhere would still
+reject a good deal of ordinary code. What it does prove reliably: literals and
+locals with a known value; a value under a matching guard, including `a and b`
+and the guard clause `if i < 0 or i >= s.len: return`; `s.len` in every
+spelling; the range of a
+`for` loop variable, taken from the iterator's own `ensures`; and the counting
+loop, whose induction variable only ever moves one way:
+
+```nim
+var i = 0
+while i < s.len:
+  use s[i]                # proven: `i < s.len` is the guard, `0 <= i` is an
+  inc i                   # invariant, because the body only ever raises `i`
+```
+
+
+```nim
+iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
+    ensures: (a <= result and result < b).} = ...
+
+for i in 0 ..< s.len:
+  use s[i]                # proven; no run-time bounds check is needed here
+```
+
+Two module pragmas move the default:
+
+* `{.feature: "staticContracts".}` — every contract a call site in this module
+  carries must be *proven*. This is where the language is headed; adopt it per
+  module as the prover grows.
+* `{.feature: "runtimeContracts".}` — no call site in this module is judged at
+  all, and the run-time guard is the only check. It wins if both are given.
+
+### Assertions and assumptions
+
+Inside a body, two statements take part in the same reasoning:
+
+* `{.assert: cond.}` is a claim the compiler must **prove**. It is judged at
+  compile time and only there: nothing is emitted for it at run time, so an
+  assertion that is not proven is an error — an undecided one exactly like a
+  violated one, whatever the module's contract features. No switch turns it
+  off. Afterwards `cond` is known, so an assertion can carry an obligation
+  further.
+* `{.assume: cond.}` makes `cond` known **without proof**. It is the override
+  for what the prover cannot establish, and the programmer's word: a false
+  assumption is undefined behaviour, and the line that states it is where to
+  look.
+
+```nim
+proc get(s: seq[int]; i: int): int =
+  if i >= 0 and i < s.len:
+    {.assert: i + 1 <= s.len.}   # proven from the guard
+    result = s[i]
+
+proc first(s: seq[int]): int =
+  {.assume: s.len > 0.}          # the caller's word; nothing checks it
+  result = s[0]
+```
+
+The `assert` template of `std/assertions` is a different thing: an ordinary
+run-time check for debugging, compiled out by `-d:noAssertions` and
+`-d:danger`. While it is compiled in, its `if not cond:` is a guard like any
+other, but an obligation that only it discharges stops being provable once it
+is switched off — the build then fails rather than losing a check. State such a
+claim with `{.assert.}`.
 
 ## Lifetime-tracking hooks
 
@@ -3694,7 +3926,7 @@ Some consequences of this rule:
 - A candidate whose own constraint is the concept being checked, such as `proc <=[T: Orderable](x, y: T)` while checking `Orderable`, does not count: a type satisfies a concept only through a derivation that does not assume the conclusion.
 - Candidates are looked up by name where a call would find them: in the module that declares the concept, in the module that declares the checked type (operations are attached to their type by living in its module), and in every module visible where the check happens.
 
-A concept that inherits with `concept of` adds its parents' requirements to its own; all of them are checked the same way.
+A concept that inherits with `concept of` adds its parents' requirements to its own; all of them are checked the same way. "The module that declares the concept" is then the module declaring the concept the requirement is written in, not the one being checked: an inherited requirement resolves where its own concept lives, exactly as it would for a direct check of that parent.
 
 ### Atoms and containers
 
@@ -3780,7 +4012,7 @@ type
     iterator items(x: Self): T
     proc `==`(a, b: T): bool
 
-proc find[T](x: Findable[T]; elem: T): int =
+proc find[T; C: Findable[T]](x: C; elem: T): int =
   var i = 0
   for a in items(x):
     if a == elem: return i
@@ -3788,7 +4020,9 @@ proc find[T](x: Findable[T]; elem: T): int =
   return -1
 ```
 
-Thanks to the `x` being declared as `Findable[T]`, it is known that the element `a` of the collection is of type `T` and that `T` supports equality comparisons via `==`.
+Thanks to `C` being constrained by `Findable[T]`, it is known that the element `a` of the collection is of type `T` and that `T` supports equality comparisons via `==`. At the call site `T` is inferred from the concept's requirements: here `items` binds it to the element type of the collection.
+
+A concept can only be used as a constraint of a type parameter; `proc find[T](x: Findable[T]; elem: T)` is not a generic over the collection type.
 
 This find function can be used with any collection that fulfills the `Findable` concept, for example:
 
@@ -3797,8 +4031,8 @@ type
   MyCollection = object
     data: seq[int]
 
-proc items(x: MyCollection): int =
-  return x.data
+iterator items(x: MyCollection): int =
+  for d in x.data: yield d
 
 var myCollection = MyCollection(data: @[1, 2, 3, 4, 5])
 echo find(myCollection, 3) # 2
@@ -4332,7 +4566,7 @@ The following features are available:
 | Feature | Description |
 |---------|-------------|
 | `"lenientnils"` | Makes `ref`, `ptr`, `pointer`, `cstring` and proc types nullable by default, matching Nim 2 behavior. See [lenientnils.md](lenientnils.md). |
-| `"autoclosures"` | Marks a routine that is nested inside another routine as `.closure.` implicitly, so that capturing proc literals need no annotation. For compatibility with Nim 2. See [Closures](#closures). |
+| `"autoclosures"` | Marks a routine that is nested inside another routine as `.closure.` implicitly, so that capturing proc literals need no annotation; also marks anonymous iterator literals and reads the `iterator(...)` *type* as the closure-iterator one. For compatibility with Nim 2. See [Closures](#closures). |
 | `"canraise"` | Allows procs without a `raises` annotation to raise exceptions. |
 | `"lenientconverters"` | Allows the definition of converters for basic types such as `int`. For compatibility with Nim 2. |
 | `"untyped"` | Treats templates and generic procs as `.untyped` by default. For compatibility with Nim 2. |
@@ -4341,11 +4575,49 @@ The following features are available:
 | `"varToverloads"` | Allow for overloading via `var T`. For compatibility with Nim 2. |
 | `"lenientFloats"` | Allows implicit narrowing of float *values* (named constants and arbitrary expressions, not just literals) to a smaller float type. Off by default because the narrowing can lose precision. For compatibility with Nim 2. |
 | `"lenientAliasing"` | Allow for aliasing like `f(#[byvar]# x, x)` in function calls. For compatibility with Nim 2. |
+| `"runtimeContracts"` | Check `.requires` contracts at run time only: no call site in this module is judged statically. |
+| `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
+| `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
+| `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
 
 ### noreturn pragma
 The `noreturn` pragma is used to mark a proc that never returns.
+
+
+
+### intdefine, booldefine and strdefine pragmas
+
+These let the command line override a constant's initializer, which is how a
+build is configured without editing source:
+
+  ```nim
+  const
+    bufSize {.intdefine.}: int = 4096
+    verbose {.booldefine.} = false
+    banner {.strdefine.} = "nimony"
+  ```
+
+`-d:bufSize=8192` (equivalently `--define:bufSize:8192`) then compiles `bufSize`
+as `8192`. A key that is not given on the command line leaves the written
+default alone, so the declaration always reads as its own documentation.
+
+The key is the constant's name. A string literal argument names a different one,
+which is how a key with dots in it is reached:
+
+  ```nim
+  const chunk {.intdefine: "mylib.chunkSize".}: int = 256
+  ```
+
+For `booldefine`, a bare `-d:key` means `true`; `true`/`false`, `on`/`off` and
+`1`/`0` are all accepted. `strdefine` takes the text verbatim. `intdefine`
+parses a decimal integer, optionally signed and with `_` separators, and the
+result is checked against the constant's declared type exactly as a written
+literal would be -- so `-d:key=1000` into an `int8` is an error, not a silent
+truncation.
+
+`-d:key=value` also makes `defined(key)` true, as in Nim.
 
 
 
@@ -4445,7 +4717,77 @@ initialized within the `var` section. (Every thread-local variable needs to
 be replicated at thread creation.)
 
 
+### Compile pragma
+
+The `compile`:idx: pragma compiles a foreign C, C++ or Objective-C source file
+with the C compiler and links the resulting object file into the program. It
+comes in the three forms Nim 2 offers:
+
+  ```nim
+  {.compile: "logic.c".}
+  {.compile("fast.c", "-O3 -DUSE_SIMD").}   # extra flags for this file
+  {.compile: ("cfiles/*.c", "$1.o").}        # every matching file
+  ```
+
+Paths are relative to the file the pragma appears in; `${path}` expands to that
+file's directory. The language follows from the file extension (`.cpp`, `.cc`,
+`.cxx`, `.c++` are C++; `.m` is Objective-C; `.mm` is Objective-C++; everything
+else is C). The source is compiled with the same compiler and target flags as
+the generated code, plus `passC` and the file's own flags.
+
+In the tuple form, the first string is a pattern; only its file name may contain
+the wildcards `*` and `?`. It is an error if no file matches. `$1` in the second
+string is replaced by each match's file name (`util.c`) and names that file's
+object.
+
+Every argument, in every form, is a constant `string` expression, so flags and
+paths can be computed at compile time:
+
+  ```nim
+  const simd = when defined(amd64): "-mavx2" else: ""
+  {.compile("fast.c", "-O3 " & simd).}
+  ```
+
+`passC` and `passL` take constant expressions the same way.
+
+The objects are cached across projects. An object's name includes a hash of the
+source path, the file's flags and the complete compiler command line, so two
+`util.c` files in different directories, or one file compiled with different
+flags, never share an object. Headers that the source file includes are *not*
+tracked: editing only a header does not recompile the file.
+
+### Link pragma
+
+The `link`:idx: pragma links a prebuilt object file or static library into the
+program:
+
+  ```nim
+  {.link: "vendor/fast.o".}
+  {.link: "vendor/libfast.a".}
+  ```
+
+The path is relative to the file the pragma appears in; `${path}` expands to that
+file's directory. `.o` is appended if the name has no extension. It is an error
+if the file does not exist. The argument is a constant `string` expression, like
+the arguments of `compile`. The linked files come after all other objects on
+the linker's command line, so a static library can resolve symbols from any of
+them. A file linked by several modules is linked once. Replacing the file
+relinks the program.
+
+To link against a library by name (`-lfoo`), use `passL` instead.
+
+With the native backend (`nimony n`) a program that uses `compile` or `link` is
+finished by the system linker, together with libc. On Linux this has to be
+requested with `-d:useLibc`: without it `nimony n` builds a freestanding
+executable that links no libc and cannot link a foreign object, and it says so.
+With `-d:useLibc`, `importc` procs call libc rather than the kernel, and threads
+are pthreads. The allocator and the I/O layer stay Nimony's own, as with the C
+backend. See [install.md](install.md#runtime--duselibc-and-friends).
+
 ### Build pragma
+
+`build` is *not* the way to compile foreign sources; that is the `compile`
+pragma above. `build` is for code generators that consume Nimony's own IR.
 
 The `build`:idx: pragma routes a module's generated intermediate representation
 through a *custom backend*: an external tool that turns the module's IR into a

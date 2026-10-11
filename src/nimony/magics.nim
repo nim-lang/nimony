@@ -24,6 +24,7 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "Declared": res DeclaredX
   of "AstToStr": res AstToStrX
   of "IsMainModule": res IsmainmoduleX
+  of "InstantiationInfo": res InstantiationinfoX
   of "Compiles": res CompilesX
   of "ArrGet": res AtX
   of "ArrAt": res ArratX
@@ -50,10 +51,11 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "Not": res NotX
   of "Xor": res XorX
   of "SizeOf": res SizeofX
+  of "CanFormCycles": res CanFormCyclesX
   of "Type", "TypeOf": res TypeofX
   of "Addr": res AddrX
   of "Deref": res DerefX
-  of "EqI", "EqB", "EqCh", "EqF64", "EqRef", "EqEnum": res EqX, TypedMagic
+  of "EqI", "EqB", "EqCh", "EqF64", "EqRef", "EqEnum", "EqProc": res EqX, TypedMagic
   of "LeI", "LeU", "LeB", "LeCh", "LeF64", "LePtr", "LeEnum": res LeX, TypedMagic
   of "LtI", "LtU", "LtB", "LtCh", "LtF64", "LtPtr", "LtEnum": res LtX, TypedMagic
   of "Low": res LowX

@@ -201,7 +201,7 @@ proc resolvedTypeKind(typ: Cursor): TypeKind =
     t = skipModifier(decl.body)
   result = t.typeKind
 
-proc typeForNil(typ: Cursor): Cursor =
+proc typeForNil*(typ: Cursor): Cursor =
   ## The type a bare `(nil)` sitting in a slot declared as `typ` should carry,
   ## or a nil cursor when `typ` is nothing a `nil` can be typed with (`.`, an
   ## unresolved typevar, `nilt` itself, a non-pointer).
@@ -652,7 +652,6 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     return
 
   let tt = getType(c.typeCache, n)
-  let calleeKind = tt.stmtKind
   let fnType = skipProcTypeToParams(tt.skipModifier)
   if not fnType.isParamsTag:
     bug "derefs trCall: callee type not params at " & infoToStr(n.info)
@@ -668,7 +667,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   var pragmas = retType
   skip pragmas
   if IsNoSideEffect in c.r.props:
-    if whichEffect(calleeKind, pragmas) == HasSideEffect:
+    if calleeEffect(tt.skipModifier, pragmas) == HasSideEffect:
       swap c.dest, callBuf
       buildLocalErr c.dest, n.info, "cannot call a routine with side effects from a `.noSideEffect` context"
       n = callExpr
@@ -977,7 +976,7 @@ proc shouldCollapseTry(c: var Context; tryAfterTag: Cursor): bool =
 proc emitRefExceptionType(dest: var TokenBuf; info: NifLineInfo) =
   ## Emits `(ref Exception)` into `dest`.
   dest.copyIntoKind RefT, info:
-    dest.addSymUse pool.syms.getOrIncl(ExceptionName), info
+    dest.addSymUse pool.symId(ExceptionName), info
 
 proc trTryCollapsed(c: var Context; n: var Cursor) =
   ## Lower a try with ref-typed except arms into a single catchall
@@ -1000,8 +999,8 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
 
     # Mint a fresh symbol for `err` (moved-out exc).
     inc c.tmpCounter
-    let errSym = pool.syms.getOrIncl("`err." & $c.tmpCounter)
-    let excSym = pool.syms.getOrIncl(ExcThreadVarName)
+    let errSym = pool.symId("`err." & $c.tmpCounter)
+    let excSym = pool.symId(ExcThreadVarName)
 
     # Open the synthesized `(except . (stmts ...))`
     c.dest.addParLe ExceptU, info
@@ -1155,7 +1154,7 @@ proc trRaise(c: var Context; n: var Cursor) =
   if lookahead.isDotToken:
     if c.handlerStack.len > 0:
       let h = c.handlerStack[^1]
-      let excSym = pool.syms.getOrIncl(ExcThreadVarName)
+      let excSym = pool.symId(ExcThreadVarName)
       c.dest.copyIntoKind StmtsS, info:
         c.dest.copyIntoKind AsgnS, info:
           c.dest.addSymUse excSym, info
@@ -1173,8 +1172,8 @@ proc trRaise(c: var Context; n: var Cursor) =
 
   let opType = getType(c.typeCache, lookahead, {SkipAliases})
   if opType.typeKind == RefT:
-    let excSym = pool.syms.getOrIncl(ExcThreadVarName)
-    let failureSym = pool.syms.getOrIncl(FailureName)
+    let excSym = pool.symId(ExcThreadVarName)
+    let failureSym = pool.symId(FailureName)
     c.dest.copyIntoKind StmtsS, info:
       c.dest.addParLe AsgnS, info
       c.dest.addSymUse excSym, info
@@ -1318,11 +1317,9 @@ proc trType(c: var Context; n: var Cursor) =
       # symbol lets the consumer reuse it (via loadHook/tryLoadHook) so the
       # dispatched method IS in the vtable.
       #
-      # Only `=destroy` is handled here (not `=trace`): it is the hook the
-      # consumer materializes on scope-exit / reassignment / seq-clear. Forcing
-      # `=trace` generation for every class — even `{.acyclic.}` ones that never
-      # need it — bloats vtables and trips a latent nilability bug in the
-      # synthesized `=trace` body; leave it to the existing forged-hooks path.
+      # `=trace` joins it only under `--mm:orc`, where the cycle collector
+      # traces a cell through its static type's `=trace` and so needs the
+      # dynamic type's one in the vtable. Otherwise nothing calls it.
       if hasMethods and not isGeneric and hasRtti(s):
         var buf = createTokenBuf(1)
         buf.addSymUse s, info
@@ -1330,19 +1327,21 @@ proc trType(c: var Context; n: var Cursor) =
         c.typeSymBufs.add buf
         let existing = if c.hooks.hasKey(s): c.hooks.getOrQuit(s)
                        else: default(HooksPerType)
-        let hookProc = getHook(c.lifter[], attachedDestroy, typeCursor, info)
-        if hookProc != SymId(0):
-          if existing.a[attachedDestroy] == SymId(0):
-            # not already emitted from c.hooks above
-            c.dest.addParLe hookToTag(attachedDestroy), NoLineInfo
-            c.dest.addSymUse hookProc, NoLineInfo
-            c.dest.addParRi()
-          let key = destroyMethodKey()
-          var dup = false
-          for (k, _) in methodsToAdd:
-            if k == key: dup = true; break
-          if not dup:
-            methodsToAdd.add (key, hookProc)
+        for op in [attachedDestroy, attachedTrace]:
+          if op == attachedTrace and not c.lifter.cycles: continue
+          let hookProc = getHook(c.lifter[], op, typeCursor, info)
+          if hookProc != SymId(0):
+            if existing.a[op] == SymId(0):
+              # not already emitted from c.hooks above
+              c.dest.addParLe hookToTag(op), NoLineInfo
+              c.dest.addSymUse hookProc, NoLineInfo
+              c.dest.addParRi()
+            let key = if op == attachedDestroy: destroyMethodKey() else: traceMethodKey()
+            var dup = false
+            for (k, _) in methodsToAdd:
+              if k == key: dup = true; break
+            if not dup:
+              methodsToAdd.add (key, hookProc)
       if hasMethods:
         addMethodsDecl c.dest, methodsToAdd
       c.dest.addParRi()
@@ -1386,6 +1385,112 @@ proc trType(c: var Context; n: var Cursor) =
     c.dest.takeTree n # body
     c.dest.addParRi(n.endInfo)
 
+proc isChainedStringConcatCall(n: Cursor): bool =
+  ## A `string.&` with a `string.&` for an operand: at least three leaves. A
+  ## single `a & b` is left to `&` itself.
+  result = false
+  if isStringConcatCall(n):
+    var c = n
+    inc c                       # past the call tag
+    skip c                      # the callee
+    if isStringConcatCall(c):
+      result = true
+    else:
+      skip c                    # the first operand
+      result = isStringConcatCall(c)
+
+proc collectConcatLeaves(n: var Cursor; leaves: var seq[Cursor]) =
+  ## The operands of a nested `string.&` chain that are not `&` themselves,
+  ## left to right.
+  n.into:
+    skip n                      # the callee
+    for _ in 0..1:
+      if isStringConcatCall(n):
+        collectConcatLeaves(n, leaves)
+      else:
+        leaves.add n
+        skip n
+
+proc emitLenSum(dest: var TokenBuf; intType: Cursor; lenSym: SymId;
+                leaves: seq[TokenBuf]; hi: int; info: NifLineInfo) =
+  ## `len(leaves[0]) + … + len(leaves[hi])`, left-associated.
+  if hi > 0:
+    dest.addParLe AddX, info
+    dest.addSubtree intType
+    emitLenSum(dest, intType, lenSym, leaves, hi-1, info)
+  dest.copyIntoKind CallX, info:
+    dest.addSymUse lenSym, info
+    dest.add leaves[hi]
+  if hi > 0:
+    dest.addParRi()
+
+proc trStringConcatChain(c: var Context; n: var Cursor) =
+  ## `a & b & c & d`, a chain of `string.&`, becomes one allocation:
+  ##
+  ##   (expr
+  ##     (var :t0 . . string a)          # only a leaf that is not a plain
+  ##     …                               # location: it is read twice below
+  ##     (var :s . . string (call newStringOfCap (add len(a) … len(d))))
+  ##     (call add (haddr s) a) … (call add (haddr s) d)
+  ##     s)
+  ##
+  ## Done here rather than in the backend because this is Nimony IR with
+  ## `derefs`' spelling already known — the `(haddr s)` a `var string`
+  ## parameter wants — and so the lowering meets ordinary statements instead
+  ## of a nested call it would have to keep nested for someone else to fold.
+  let info = n.info
+  var leaves: seq[Cursor] = @[]
+  collectConcatLeaves(n, leaves)
+  let stringType = c.typeCache.builtins.stringType
+  # Forged symbol names — indices match declaration order across the system
+  # module's includes (setops/seqimpl/stringimpl/openarrays). If an overload
+  # with the same identifier is inserted earlier in system, these numbers must
+  # shift. (`len(string)` is `len.4`, not `.5`: object fields no longer share
+  # the global per-name counter.)
+  let newStrSym = pool.symId("newStringOfCap.0." & SystemModuleSuffix)
+  let lenSym    = pool.symId("len.4."           & SystemModuleSuffix)
+  let addSym    = pool.symId("add.2."           & SystemModuleSuffix)
+  c.dest.addParLe ExprX, info
+  var uses: seq[TokenBuf] = @[]
+  for leaf in leaves:
+    var l = leaf
+    var translated = createTokenBuf(16)
+    swap c.dest, translated
+    tr c, l, WantT
+    swap c.dest, translated
+    var use = createTokenBuf(4)
+    if needsTemp(beginRead(translated)):
+      inc c.tmpCounter
+      let tmp = pool.symId("`dc." & $c.tmpCounter)
+      c.dest.copyIntoKind VarS, info:
+        c.dest.addSymDef tmp, info
+        c.dest.addDotToken() # not exported
+        c.dest.addDotToken() # no pragmas
+        c.dest.addSubtree stringType
+        c.dest.add translated
+      use.addSymUse tmp, info
+    else:
+      use = ensureMove translated
+    uses.add ensureMove use
+  inc c.tmpCounter
+  let s = pool.symId("`dc." & $c.tmpCounter)
+  c.dest.copyIntoKind VarS, info:
+    c.dest.addSymDef s, info
+    c.dest.addDotToken() # not exported
+    c.dest.addDotToken() # no pragmas
+    c.dest.addSubtree stringType
+    c.dest.copyIntoKind CallX, info:
+      c.dest.addSymUse newStrSym, info
+      emitLenSum(c.dest, c.typeCache.builtins.intType, lenSym, uses, uses.len-1, info)
+  for u in uses:
+    c.dest.copyIntoKind CallS, info:
+      c.dest.addSymUse addSym, info
+      c.dest.copyIntoKind HaddrX, info:
+        c.dest.addSymUse s, info
+      c.dest.add u
+  c.dest.addSymUse s, info
+  c.dest.addParRi()
+
 proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cursor)) =
   case n.kind
   of Symbol:
@@ -1413,10 +1518,22 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
   of TagLit:
     case n.exprKind
     of CallKinds:
-      var disallowDangerous = true
-      trCall c, n, e, disallowDangerous
+      if not e.wantMutable and isChainedStringConcatCall(n):
+        trStringConcatChain c, n
+      else:
+        var disallowDangerous = true
+        trCall c, n, e, disallowDangerous
     of PragmaxX:
       trPragmaBlock c, n
+    of CanFormCyclesX:
+      # `canFormCycles(T)`: answered here, where the lifter can say it
+      let info = n.info
+      var t = n
+      inc t
+      let traced = needsTraceOf(c.lifter[], t)
+      skip n
+      c.dest.addParLe(if traced: TrueX else: FalseX, info)
+      c.dest.addParRi()
     of DotX, DdotX, AtX, ArratX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:
@@ -1513,6 +1630,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
           tr c, n, WantT, elemType
 
     else:
+      if e.wantMutable and n.stmtKind in {IfS, CaseS, TryS, BlockS}:
+        # An `if`/`case`/`try`/`block` expression yields a value, not a
+        # location: passing it to a `var`/`out` parameter would mutate a
+        # temporary.
+        cannotPassToVar c.dest, n.info, n
+        skip n
+        return
       case n.stmtKind
       of RetS:
         trReturn(c, n)
@@ -1554,14 +1678,18 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
-                   thisModuleSuffix: string; bits: int): TokenBuf =
+                   thisModuleSuffix: string; bits: int; cycles = false): TokenBuf =
+  ## `cycles`: the runtime collects cycles (`NifConfig.cycles`).
+  let inputWidth = subtreeWidth(n)
   var c = Context(typeCache: createTypeCache(bits),
-    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
+    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId),
+    dest: createTokenBuf(inputWidth + inputWidth div 4), # about 1.12x the input
     hooks: ensureMove(hooks),
     classes: ensureMove(classes),
     lifter: nil) # set below after hooks is moved
   # Pass address of hooks to lifter so it can look up hooks from current module
-  c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks)
+  c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks,
+                              cycles = cycles)
   c.typeCache.openScope()
   var n2 = n
   var n3 = n

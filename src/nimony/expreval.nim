@@ -21,7 +21,7 @@ type
   EvalContext* = object
     c: ptr SemContext
     trueValue, falseValue: Cursor
-    expectedType: TypeCursor # used as the result type when forwarding
+    expectedType*: TypeCursor # used as the result type when forwarding
                              # complex const initialisers (e.g. `block:`)
                              # to `executeExpr`. Default-constructed when
                              # no type context is available.
@@ -219,6 +219,33 @@ proc emptySeqValue(c: var EvalContext; seqType: Cursor; info: NifLineInfo): Curs
   buf.addParRi() # oconstr
   result = cursorAt(buf, 0)
 
+proc executeRetType(c: EvalContext; routineRetType: TypeCursor): Cursor =
+  ## Pick the result type passed to `executeExpr`. A concrete routine return
+  ## type is used as-is; `auto`, `untyped`, or generic returns fall back to
+  ## `expectedType`, and finally to `auto` so an untyped plugin can expand
+  ## first and the sub-compile can infer the serialised type.
+  result = skipModifier(routineRetType)
+  if result.typeKind in {AutoT, UntypedT} or containsGenericParams(result):
+    if not cursorIsNil(c.expectedType):
+      result = skipModifier(c.expectedType)
+    elif c.c != nil:
+      result = c.c[].types.autoType
+
+proc pluginExecuteRetType(c: EvalContext; templateSym: Cursor): Cursor =
+  ## Result type for re-driving a parked `(pluginCall <template> …)` through
+  ## `executeExpr`, mirroring `forwardToExecute`.
+  if templateSym.kind == Symbol:
+    let res = tryLoadSym(templateSym.symId)
+    if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
+      result = executeRetType(c, asRoutine(res.decl).retType)
+      return
+  if not cursorIsNil(c.expectedType):
+    result = skipModifier(c.expectedType)
+  elif c.c != nil:
+    result = c.c[].types.autoType
+  else:
+    result = default(Cursor)
+
 proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
                       args: var Cursor): Cursor =
   ## Reconstructs `(call routine args...)` from `args` (positioned at the first
@@ -244,10 +271,7 @@ proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
   # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
   # with the outer const's type. Keep `expectedType` for generic return
   # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
-  var retType = skipModifier(routine.retType)
-  if retType.typeKind == AutoT or containsGenericParams(retType):
-    if not cursorIsNil(c.expectedType):
-      retType = skipModifier(c.expectedType)
+  let retType = executeRetType(c, routine.retType)
   let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
                                  retType, resultBuf, n.info)
   if errorMsg.len == 0:
@@ -596,15 +620,23 @@ proc evalBitSetImpl(n, typ: Cursor; bits: int): seq[uint8]
 proc evalOrdinal(c: ptr SemContext, n: Cursor; bits = 0): xint
 
 proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
+  let orig = n
   var a = default(Cursor)
   var b = createNaN()
   n.into:
     assert n.typeKind == SetT
     skip n # skip type
-    a = eval(c, n)
+    # Each operand is read through a copy and skipped structurally: an operand
+    # that does not fold leaves its cursor wherever it gave up, and `into`
+    # insists on the whole node being consumed.
+    var operand = n
+    a = eval(c, operand)
+    skip n
     b = evalOrdinal(nil, n, c.bits)
     skip n # skips b
-  assert a.exprKind == SetconstrX, "got " & toString(a)
+  if a.exprKind != SetconstrX or b.isNaN:
+    cannotEval orig
+    return
 
   var isInSet = false
   a.peekInto:
@@ -651,13 +683,16 @@ proc bitSetCard(x: seq[uint8]): BiggestInt =
 
 proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
   let info = n.info
+  let orig = n
   var a = default(Cursor)
   n.into:
     assert n.typeKind == SetT
     skip n # skip type
     a = eval(c, n)
-
-  assert a.exprKind == SetconstrX, "got " & toString(a)
+  if a.exprKind != SetconstrX:
+    # a set only known at run time
+    cannotEval orig
+    return
   var typeA = a
   inc typeA
 
@@ -666,6 +701,7 @@ proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
 
 proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   let info = n.info
+  let orig = n
   var elementTyp = default(Cursor)
   var a = default(Cursor)
   var b = default(Cursor)
@@ -676,8 +712,10 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
     skip n # skip type
     a = eval(c, n)
     b = eval(c, n)
-  assert a.exprKind == SetconstrX, "got " & toString(a)
-  assert b.exprKind == SetconstrX, "got " & toString(b)
+  if a.exprKind != SetconstrX or b.exprKind != SetconstrX:
+    # a set only known at run time
+    cannotEval orig
+    return
   var typeA = a
   inc typeA
   var typeB = b
@@ -776,7 +814,17 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
   else:
     cannotEval nOrig
 
+proc evalImpl(c: var EvalContext; n: var Cursor): Cursor
+
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
+  ## Folds `n` and moves past it, whether it folded or not: an operand that
+  ## does not fold leaves the cursor wherever the evaluation gave up, and every
+  ## caller walking a node's children needs the next one, not that place.
+  var operand = n
+  result = evalImpl(c, operand)
+  skip n
+
+proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
   result = default(Cursor)
   template propagateError(r: Cursor): Cursor =
     let val = r
@@ -807,7 +855,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         inc local.val # takes the first counter field
         return eval(c, local.val)
       else: discard
-    error "cannot evaluate symbol at compile time: " & pool.syms[symId], info
+    error "cannot evaluate symbol at compile time: " & pool.symString(symId), info
   of StrLit, CharLit, IntLit, UIntLit, FloatLit:
     result = n
     inc n
@@ -996,6 +1044,10 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       evalCmpOp(c, n, `<=`)
     of LtX:
       evalCmpOp(c, n, `<`)
+    of InstantiationinfoX:
+      # folded by sem (semInstantiationInfo) before any constant evaluation
+      cannotEval n
+      skip n
     of IsmainmoduleX:
       skip n
       if c.c == nil:
@@ -1080,6 +1132,33 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of CallKinds:
       result = evalCall(c, n)
       skip n
+    of PluginCallX:
+      # A parked deferred plugin call `(pluginCall <template> <args>…)`. Once its
+      # arguments are concrete, re-drive the plugin by reconstructing the call and
+      # forwarding to the sub-compile, exactly as `semPluginCall` does after
+      # instantiation. Guarded like the other shell-out arms (`AtX` in `evalCall`).
+      if c.c == nil or c.c.executeExpr == nil or c.noExecute:
+        cannotEval n
+        skip n
+      else:
+        var ch = n
+        inc ch # template symbol, then args
+        let retType = pluginExecuteRetType(c, ch)
+        var callBuf = createTokenBuf(16)
+        callBuf.addParLe(CallS, n.info)
+        var arg = ch
+        while arg.hasMore:
+          callBuf.addSubtree arg
+          skip arg
+        callBuf.addParRi()
+        var resultBuf = createTokenBuf(12)
+        let errorMsg = c.c.executeExpr(c.c[], cursorAt(callBuf, 0), retType, resultBuf, n.info)
+        if errorMsg.len == 0:
+          result = cursorAt(resultBuf, 0)
+        else:
+          result = c.error("cannot evaluate expression at compile time: " &
+            asNimCode(n) & "\n\n" & errorMsg, n.info)
+        skip n
     of SizeofX:
       # `c.c` is nil for callers that evaluate outside sem (hexer's constant
       # folding); sizes are only computable with a SemContext, so fold fails
@@ -1149,6 +1228,18 @@ proc evalOrdinal(c: ptr SemContext, n: Cursor; bits = 0): xint =
 
 proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
   evalOrdinal(addr c, n)
+
+proc tryEvalOrdinal*(bits: int; n: Cursor): xint =
+  ## Fold a compile-time ordinal without a `SemContext` (hexer/FIR callers).
+  ## Returns NaN when the expression is not foldable; never shells out to
+  ## sub-compile.
+  var ec = initEvalContext(nil, noExecute = true, bits = bits)
+  var cur = n
+  let val = eval(ec, cur)
+  if val.isTagLit and val.cursorTagId == nifpools.ErrT:
+    result = createNaN()
+  else:
+    result = getConstOrdinalValue(val)
 
 proc getConstStringValue*(val: Cursor): StrId =
   if val.isStringLit:

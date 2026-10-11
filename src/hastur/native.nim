@@ -281,7 +281,6 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
   ## default `all` sweep leaves this opt-in.
   if not skipBuild:
     buildNimony()
-    buildHexer()
     buildShoggoth()
     buildArkham()
     buildNifasm()

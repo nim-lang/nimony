@@ -1,0 +1,20 @@
+==241959== Memcheck, a memory error detector
+==241959== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==241959== Using Valgrind-3.26.0 and LibVEX; rerun with -h for copyright info
+==241959== Command: nimcache/tagev5azt1/taggregate_call_temp
+==241959== 
+==241959== Warning: set address range perms: large range [0x20000000000, 0x20040000000) (defined)
+abab 0
+abab 1
+abab 2
+1
+OK
+==241959== 
+==241959== HEAP SUMMARY:
+==241959==     in use at exit: 0 bytes in 0 blocks
+==241959==   total heap usage: 4 allocs, 4 frees, 4,192 bytes allocated
+==241959== 
+==241959== All heap blocks were freed -- no leaks are possible
+==241959== 
+==241959== For lists of detected and suppressed errors, rerun with: -s
+==241959== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

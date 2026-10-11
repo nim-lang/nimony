@@ -5,15 +5,17 @@ pipeline is split into tools and phases:
 
 - Nifler: parses Nim to NIF.
 - Nimony: semantic checking and front-end lowering.
-- Hexer: lowering passes and Leng generation.
+- Shoggoth: lowering passes, Leng generation and dead code elimination
+  (passes in `src/hexer/`), plus the optional Leng optimizer (`shoggoth opt`,
+  passes in `src/lengc/shoggoth/`, run only for `--opt:speed`/`--opt:size`).
 - Lengc: C/C++ backend based on NIF.
 
 When debugging compiler behavior, assume `nifler`, `nifmake`, and `lengc` are
-stable. Most problems tend to be in `Nimony` or `Hexer`.
+stable. Most problems tend to be in `Nimony` or `Shoggoth`.
 
 ## Quick Debug Workflow
 
-1. Build the Nimony toolchain (Nimony + Hexer):
+1. Build the Nimony toolchain (Nimony + Shoggoth):
    - `nim c -r src/hastur/hastur build nimony`
 2. Produce `nimcache/` artifacts:
    - `bin/nimony c mybug.nim`
@@ -25,7 +27,7 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 ## Where to Look
 
 - `src/nimony/` for semantic analysis and front-end phases.
-- `src/hexer/` for lowering passes and Leng generation steps.
+- `src/hexer/` for shoggoth's lowering passes and Leng generation steps.
 - `src/nifler/` and `src/lengc/` only when evidence points there.
 - `src/hastur/` for test/build tooling and command behavior (`hastur.nim` is the
   CLI; the logic lives in its sibling modules).
@@ -62,6 +64,29 @@ See `src/lengc/shoggoth/vectorizer.nim` for good style:
 
 Tests often include large amounts of produced NIF code. Use `hastur --overwrite` to overwrite all test results or `hastur --overwrite test ...` to overwrite a specific test case. The resulting diffs are always part of the code review process.
 
+## Benchmarks and the stdlib coverage check
+
+`hastur all` sweeps `bench/` alongside `tests/` and `examples/`, so a benchmark
+that stops compiling is caught by the suite rather than by whoever next reaches
+for it. `bench/hastur.mode` puts the directory in the `bench` category, which
+compiles with `-d:benchSmoke`: each benchmark shrinks its workload to something
+that costs milliseconds and prints only deterministic values (checksums,
+digests), which is what its `.output` golden holds. The suite's question there
+is "does it still build and still compute the same numbers" — never "how fast".
+Add a benchmark the same way: a `when smoke:` shape for the workload and the
+reporting, then `hastur --overwrite bench` or a hand-written `.output`.
+
+`tests/nimony/stdlib/tall.nim` imports every module in `lib/std` and is checked
+against that directory on every run that reaches it (`src/hastur/coverage.nim`).
+A new stdlib module must be added there: `tall.nim` is the only test that
+compiles the stdlib modules together, and `dagon` walks it as the aggregator
+driver for the website's documentation, so a module missing from it is a module
+missing from the docs. Subdirectories count too (`std/http/httpmsg`) — the
+check carries a deny list of the ones that hold no importable module
+(`system/`, `private/`, `posix/`, …), so a new *public* subdirectory fails the
+check rather than being silently skipped, and a new internals one needs a line
+on that list with its reason.
+
 ## Joined tests
 
 A test directory's plain tests (no `.msgs`, no golden `.nim.c`/`.nif`, exit code
@@ -84,3 +109,14 @@ Consequences when writing a test:
   test by test, so the report still names the single test that broke. Use
   `--joined:off` to rule the grouping out entirely, or `hastur joined <dir>` to
   run one group by hand.
+
+## `setup.nim` suites run inside the pool
+
+In a parallel tree walk (`--jobs:N`, which `tools/tester.nim` passes) the
+`setup.nim` suites (`boot`, `validator`, `incremental`, …) are items of the same
+pool as the tests, so they overlap with them instead of running first. Such a
+runner is handed `--no-build` once the walk has built the toolchain, and must
+then leave every tool `build all` builds alone: relinking `bin/nimony` while
+other workers are running it fails on Windows. A tool of its own (`contracts`,
+`controlflow`) it may still build. The pool's order comes from how long each
+item took last time (`nimcache_static/hastur.times`), longest first.

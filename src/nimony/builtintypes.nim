@@ -49,6 +49,11 @@ const
   ExceptionName* = "Exception.0." & SystemModuleSuffix
   ExcThreadVarName* = "exc.0." & SystemModuleSuffix
   ContinuationName* = "Continuation.0." & SystemModuleSuffix
+  BareRootObjName* = "RootObj.0." & SystemModuleSuffix
+    ## The system's real `RootObj`: the env slot of a lowered closure tuple and
+    ## of an iter value, and what `typenav` answers for that slot. "Bare"
+    ## disambiguates it from `coro_transform.RootObjName`, which despite its
+    ## name is `CoroutineBase`.
   OpenArrayHeadName* = "openArray.0." & SystemModuleSuffix
 
 proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo) =
@@ -57,10 +62,10 @@ proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo
   ## returns a `T`. Prefer `addLengReturnType` unless the caller has already
   ## established that the routine raises.
   if retType.isDotToken or retType.typeKind == VoidT:
-    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+    dest.addSymUse pool.symId(ErrorCodeName), info
   else:
     dest.addParLe TupleT, info
-    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+    dest.addSymUse pool.symId(ErrorCodeName), info
     dest.addSubtree retType
     dest.addParRi()
 
@@ -143,7 +148,7 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
 
   let stringPos = result.mem.len
   when true:
-    result.mem.addSymUse(pool.syms.getOrIncl(StringName), NoLineInfo)
+    result.mem.addSymUse(pool.symId(StringName), NoLineInfo)
     result.mem.addDotToken()
   else:
     result.mem.addParLe "string"
@@ -225,7 +230,7 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result.mem.addParRi() # close uarray
 
   let continuationPos = result.mem.len
-  result.mem.addSymUse(pool.syms.getOrIncl(ContinuationName), NoLineInfo)
+  result.mem.addSymUse(pool.symId(ContinuationName), NoLineInfo)
 
 
   result.autoType = result.mem.cursorAt(autoPos)
@@ -254,7 +259,7 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result.continuationType = result.mem.cursorAt(continuationPos)
 
 proc isStringType*(a: Cursor): bool {.inline.} =
-  result = a.isSymbol and a.symId == pool.syms.getOrIncl(StringName)
+  result = a.isSymbol and a.symId == pool.symId(StringName)
   #a.typeKind == StringT: StringT now unused!
 
 proc isSomeStringType*(a: Cursor): bool {.inline.} =

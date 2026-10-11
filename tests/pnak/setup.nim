@@ -13,5 +13,7 @@ if arg("bindir").len > 0: toolchainDir = arg("bindir")
 if arg("cachedir").len > 0: nimcacheDir = arg("cachedir")
 let dir = if arg("dir").len > 0: arg("dir") else: getCurrentDir()
 
-buildPnak()
+# `--no-build`: the tree walk's `build all` already built it.
+if "--no-build" notin commandLineParams():
+  buildPnak()
 pnaktests(dir)

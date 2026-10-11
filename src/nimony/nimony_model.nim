@@ -300,6 +300,14 @@ template takeInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
 
 proc isAtom*(n: Cursor): bool {.inline.} = n.hasMore and not n.isTagLit
 
+proc isChildless*(n: Cursor): bool {.inline.} =
+  ## True for a sealed `TagLit` with an empty body, like the bare `proc`
+  ## typeclass `(proctype)` written as `[T: proc]`. `hasMore` on the node
+  ## ITSELF answers a different question -- "are there more tokens left in
+  ## this scope" -- and is true of every node that is there at all; only the
+  ## body cursor carries the child count.
+  n.isTagLit and not sub(n).hasMore
+
 proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.inline, nifEmits: "Y".} =
   dest.addSymUse(s, info)
 
@@ -321,10 +329,7 @@ proc addEmpty3*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) =
   dest.addDotToken(info)
   dest.addDotToken(info)
 
-proc symNameId(s: SymId): StrId =
-  var name = pool.syms[s]
-  extractBasename name
-  pool.strings.getOrIncl(name)
+proc symNameId(s: SymId): StrId = pool.symNameId(s)
 
 proc sameTreesNC(a, b: Cursor): bool =
   ## Structural equality on nifcore cursors, ignoring sparse line-info
@@ -477,6 +482,9 @@ proc skipToReturnType*(n: var Cursor) =
 proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
   var typ = typ
   if typ.typeKind in RoutineTypes:
+    # A childless routine type is the bare `proc` typeclass, as written in
+    # `[T: proc]`: nothing to walk to, and no pragmas to find.
+    if isChildless(typ): return false
     skipToReturnType typ
     skip typ, SkipType # return type
     result = hasPragma(typ, kind)
@@ -499,6 +507,39 @@ proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
   else:
     result = HasSideEffect
 
+proc calleeEffect*(calleeType: Cursor; pragmas: Cursor): Effect =
+  ## The effect of CALLING something of type `calleeType`. `calleeType` is
+  ## what `getType` answers for the callee: a routine decl tag
+  ## (`proc`/`func`/`iterator`/…) or a routine TYPE form
+  ## (`proctype`/`itertype`). `iterator` is `noSideEffect` by default
+  ## (doc/language.md), and the itertype of a first-class closure-iterator
+  ## value says the same thing about the routine behind it — otherwise a
+  ## `for` loop over an iter VALUE would be rejected inside any `func` or
+  ## iterator body, while the same loop over the iter SYM is accepted.
+  if calleeType.typeKind == ItertypeT:
+    whichEffect(IteratorS, pragmas)
+  else:
+    whichEffect(calleeType.stmtKind, pragmas)
+
+proc isAddrOfAconstrUarray*(n: Cursor): bool =
+  ## True when `n` points at `(addr (aconstr (uarray T) …))`, the
+  ## static-uarray-pointer shape `exprexec` produces for an evaluated
+  ## const payload. `lengcgen` hoists exactly this shape into a module
+  ## level `(const <anon> …)` and rewrites the site to
+  ## `cast[ptr T](addr <anon>)`, so it is what makes the storage static;
+  ## anything failing this test is an ordinary address-of. The `uarray`
+  ## slot is the discriminator -- do not drop it.
+  ## Checks the `addr` tag itself so the test is safe to apply to an
+  ## arbitrary expression, not only inside an already-matched addr case.
+  result = false
+  if n.exprKind in {AddrX, HaddrX}:
+    var inner = n
+    inc inner # past addr tag
+    if inner.exprKind == AconstrX:
+      var typSlot = inner
+      inc typSlot # past aconstr tag
+      result = typSlot.typeKind == UarrayT
+
 proc isNilAnnotation*(n: Cursor): bool {.inline.} =
   ## Returns true if `n` is a `(notnil)`, `(nil)`, or `(unchecked)` annotation.
   n.isTagLit and n.substructureKind in {NotnilU, NilU, UncheckedU}
@@ -509,3 +550,65 @@ proc skipNilAnnotation*(n: var Cursor) {.inline.} =
   ## may have appended when an importc'd pointer alias was inlined.
   while n.hasMore:
     skip n
+
+proc needsTemp*(n: Cursor): bool =
+  ## Must `n` be bound to a temporary to be evaluated more than once? A
+  ## literal or a location built from symbols is read again for free; anything
+  ## with a call or a constructor in it is not.
+  # Pre-initialise: the contract analyser drops the `IfFalse cf s`
+  # implication for the leaving-path cfvar raised inside the inner
+  # while-loop, so it cannot prove `result` is set on the normal exit of
+  # the AtX branch. `result = false` here is the bool default anyway —
+  # run `bin/nimony c --verbose src/hexer/desugar.nim` (with this line
+  # removed) to see the Final IR that trips the checker.
+  result = false
+  case n.kind
+  of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit:
+    result = false
+  of TagLit:
+    var n = n
+    case n.exprKind
+    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX, CanFormCyclesX:
+      result = false
+    of ExprX:
+      n = sub(n)  # throwaway copy; bounds the probe under vpr
+      let first = n
+      skip n
+      if not n.hasMore:
+        # single element expr
+        result = needsTemp(first)
+      else:
+        result = true
+    of SufX:
+      inc n
+      result = needsTemp(n)
+    of DconvX:
+      inc n
+      skip n
+      result = needsTemp(n)
+    of AtX, PatX, ArratX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
+      result = false
+      n = sub(n)  # throwaway copy; bounds the walk under vpr
+      while n.hasMore:
+        if needsTemp(n):
+          return true
+        skip n
+    of ErrX, DerefX, AndX, OrX, XorX, NotX, NegX, AlignofX,
+        OffsetofX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX,
+        OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
+        BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
+        ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
+        HderefX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, CallstrlitX, InfixX,
+        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
+        InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        Delay0X, SuspendX, DoX, PlussetX, MinussetX, MulsetX,
+        XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
+      result = true
+  else:
+    result = true

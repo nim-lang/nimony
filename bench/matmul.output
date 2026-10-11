@@ -1,0 +1,7 @@
+matmul: 64x64, 0 MFLOP per call, reps=1, tile=32
+f64-ijk 16232
+f64-ikj 16232
+f64-tiled 16232
+f32-ijk 16232
+f32-ikj 16232
+f32-tiled 16232

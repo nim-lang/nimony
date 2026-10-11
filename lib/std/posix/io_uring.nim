@@ -81,6 +81,14 @@ type
     MSG_WAITFORONE
   MsgFlags* = set[MsgFlag]
 
+  SockFlag* = enum
+    ## The creation flags `OP_SOCKET` accepts. Not a bit-position enum: the
+    ## kernel's values sit at unrelated high bits of the type word (see
+    ## `socket`), so they are translated there rather than cast.
+    SOCK_NONBLOCK   ## SOCK_NONBLOCK
+    SOCK_CLOEXEC    ## SOCK_CLOEXEC
+  SockFlags* = set[SockFlag]
+
   SyncFileRangeFlag* {.size: sizeof(uint32).} = enum
     SYNC_FILE_RANGE_WAIT_BEFORE
     SYNC_FILE_RANGE_WRITE
@@ -188,12 +196,18 @@ type
   InnerSqeSplice* {.union.} = object
     spliceFdIn* {.importc: "splice_fd_in".}: uint32
     fileIndex* {.importc: "file_index".}: uint32
+    optLen*: uint32
+      ## `optlen` — the socket-uring-cmd word (SOCKET_URING_OP_GETSOCKOPT/
+      ## SETSOCKOPT) that shares this slot for entirely different ops.
     addrLen*: InnerSqeSplicePadAddrLen
 
   InnerSqeCmd* {.union.} = object
     addr3* {.importc: "addr3".}: nil pointer
     pad2* {.importc: "__pad2".}: array[2, uint64]
     cmd* {.importc: "cmd".}: uint8
+    optval*: nil pointer
+      ## `optval` — the socket-uring-cmd's user pointer to the option value,
+      ## the same eight bytes the socket-cmd ABI reuses for its own argument.
   
   Op* {.size: sizeof(uint8).} = enum
     OP_NOP
@@ -247,15 +261,28 @@ type
     OP_SENDMSG_ZC
     OP_LAST
   
+  InnerSqeSockPair = object
+    ## `struct { __u32 level; __u32 optname; }` — the socket-uring-cmd's level
+    ## and optname, as a *non-union* object: the two are a pair of consecutive
+    ## words, and a `.union.` member cannot carry two of them (every union
+    ## member overlaps at offset 0, so two `uint32`s would alias each other).
+    ## It rides in the same 8 bytes as `addr`, inside `InnerSqeAddr`.
+    level*: uint32
+    optname*: uint32
+
   InnerSqeOffset* {.union.} = object
     off*: Off
     addr2*: nil pointer
     cmdOp*: uint32
+      ## `cmd_op`: the low word of the union; the kernel's `__pad1` is the high
+      ## half of `off`, which a fresh (zeroed) SQE keeps at 0 — `io_uring_cmd_prep`
+      ## rejects a non-zero `__pad1` with EINVAL.
     pad1*: Off
 
   InnerSqeAddr* {.union.} = object
     `addr`*: nil pointer
     spliceOffIn*: Off
+    sockPair*: InnerSqeSockPair
 
   Sqe* {.pure, bycopy.} = object
     opcode*: Op
@@ -525,7 +552,6 @@ const
   REGISTER_FILES_SKIP* = -2
   OP_SUPPORTED* = 1u shl 0
 
-proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
 
 # There is no errno here. A Linux syscall reports failure by *returning*
 # `-errno`, which is the whole convention this file talks to the kernel in;
@@ -538,6 +564,27 @@ proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
 # `mmap`, and `newRing` wrote through the `MAP_FAILED` it got back. The ioring
 # init that is supposed to fall back to epoll segfaulted instead.)
 
+# ---------------------------------------------------- the three syscalls ---
+#
+# io_uring has NO libc wrapper — glibc exposes no `io_uring_enter` — so the two
+# backends reach the kernel by different routes and this is the only place that
+# knows it. Everything below calls `sysSetup`/`sysEnter`/`sysRegister` and each
+# result still goes through `pcall`, which already hides which convention
+# reported the error.
+#
+# * The C backend goes through libc's `syscall(NR, …)` multiplexer. `enter`
+#   takes six arguments, so that call has SEVEN — one past what the SysV
+#   argument registers hold, which the C compiler places on the stack.
+# * The freestanding backend (`nimony n`: arkham + nifasm, `-d:nimNoLibc`)
+#   links no libc, and cannot use the multiplexer even if it did: it is
+#   variadic and its seventh argument has nowhere to go. Naming the three
+#   directly is what lets arkham trap straight into the kernel — it lowers an
+#   `importc` whose C name is in its `LinuxSyscalls` table to a raw `syscall`
+#   instruction, and these three are in it (425/426/427, the same numbers on
+#   x86-64 and AArch64 because io_uring postdates the unified syscall tables).
+#   The C names do not have to exist anywhere: arkham consumes the name and
+#   emits no call.
+
 const
   # Arch-independent since their introduction in Linux 5.1 (io_uring was added
   # after the syscall tables were unified).
@@ -545,8 +592,34 @@ const
   SYS_io_uring_enter = cint(426)
   SYS_io_uring_register = cint(427)
 
+when defined(nimNoLibc):
+  proc sysSetup(entries: cint; params: ptr Params): cint {.
+    importc: "io_uring_setup", sideEffect.}
+  proc sysEnter(fd, toSubmit, minComplete, flags: cint; arg: nil pointer;
+                sz: cint): cint {.importc: "io_uring_enter", sideEffect.}
+  proc sysRegister(fd, op: cint; arg: nil pointer; nrArgs: cint): cint {.
+    importc: "io_uring_register", sideEffect.}
+else:
+  proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
+
+  proc sysSetup(entries: cint; params: ptr Params): cint =
+    syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0)
+  proc sysEnter(fd, toSubmit, minComplete, flags: cint; arg: nil pointer;
+                sz: cint): cint =
+    # `argsz` is a size_t in the kernel: a 64-bit register. Through the
+    # variadic `syscall()` a `cint` only defines the LOW 32 bits of that
+    # register; the high half is whatever the C compiler left there. gcc
+    # happened to zero it, clang did not, and the kernel compares the full
+    # value against sizeof(io_uring_getevents_arg): every timed wait came
+    # back EINVAL ("submit and wait cannot fail: ValueError", once per lane)
+    # in any clang-built program. The u32 kernel parameters (fd, to_submit,
+    # min_complete, flags) read only the low half and are unaffected.
+    syscall(SYS_io_uring_enter, fd, toSubmit, minComplete, flags, arg, csize_t(sz))
+  proc sysRegister(fd, op: cint; arg: nil pointer; nrArgs: cint): cint =
+    syscall(SYS_io_uring_register, fd, op, arg, nrArgs, 0, 0)
+
 proc setup*(entries: cint, params: ptr Params): FileHandle {.raises, tags: [].} =
-  result = cint pcall(syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0))
+  result = cint pcall(sysSetup(entries, params))
   if result < 0:
     raiseOSError(OSErrorCode(-result), "io_uring setup syscall failed")
 
@@ -554,14 +627,13 @@ proc enter*(fd: cint, toSubmit: cint, minComplete: cint,
             flags: EnterFlags, sig: nil pointer, sz: cint): cint {.raises, tags: [].} =
   ## `sig` points to a kernel sigset (8 bytes on Linux) or is nil.
   var f = flags
-  result = cint pcall(syscall(SYS_io_uring_enter, fd, toSubmit, minComplete,
-                              cast[ptr cint](f.addr)[], sig, sz))
+  result = cint pcall(sysEnter(fd, toSubmit, minComplete,
+                               cast[ptr cint](f.addr)[], sig, sz))
   if result < 0:
     raiseOSError(OSErrorCode(-result), "io_uring enter syscall failed")
 
 proc register*(fd: cint, op: RegisterOp, arg: nil pointer, nr_args: cint): cint {.raises, tags: [].} =
-  result = cint pcall(syscall(SYS_io_uring_register, fd, cint(op), arg,
-                              nr_args, 0, 0))
+  result = cint pcall(sysRegister(fd, cint(op), arg, nr_args))
   if result < 0:
     raiseOSError(OSErrorCode(-result), "io_uring register syscall failed")
 
@@ -792,9 +864,13 @@ proc sqNeedsEnter(queue: var Queue; submit: int; flags: var EnterFlags): bool =
   return false;
 
 proc cqNeedsFlush(queue: var Queue): bool =
+  ## Whether the CQ needs an `io_uring_enter` with GETEVENTS first: the kernel
+  ## sets SQ_CQ_OVERFLOW when completions did not fit and SQ_TASKRUN when
+  ## deferred completion work is pending. Either flag alone is the signal, as
+  ## in liburing; with DEFER_TASKRUN, TASKRUN on its own is the normal case.
   var sqFlags = atomicLoad(cast[ptr uint32](queue.sq.flags)[], moRelaxed)
-  return {SQ_CQ_OVERFLOW, SQ_TASKRUN} <= cast[ptr SqringFlags](sqFlags.addr)[]
-  # {SqCqOverflow, SqTaskrun} <= atomic_load_explicit(queue.sq.flags, moRelaxed)
+  let f = cast[ptr SqringFlags](sqFlags.addr)[]
+  return {SQ_CQ_OVERFLOW, SQ_TASKRUN} * f != {}
 
 proc cqNeedsEnter(queue: var Queue): bool =
   SETUP_IOPOLL in queue.params.flags or queue.cqNeedsFlush
@@ -839,9 +915,9 @@ proc submitAndWait*(queue: var Queue; waitNr: uint; ts: nil ptr Timespec): int
   discard queue.sqNeedsEnter(submited, flags)
   var arg = GeteventsArg(sigmask: 0'u64, sigmaskSz: 0'u32, pad: 0'u32,
                          ts: cast[uint64](ts))
-  let r = pcall(syscall(SYS_io_uring_enter, queue.fd, submited.cint, waitNr.cint,
-                        cast[ptr cint](flags.addr)[], arg.addr,
-                        cint(sizeof(GeteventsArg))))
+  let r = pcall(sysEnter(queue.fd, submited.cint, waitNr.cint,
+                         cast[ptr cint](flags.addr)[], arg.addr,
+                         cint(sizeof(GeteventsArg))))
   if r < 0:
     let e = cint(-r)
     if e == ETIME or e == EINTR or e == EAGAIN or e == EBUSY:
@@ -1038,7 +1114,7 @@ proc statx*(sqe: ptr Sqe; fd: FileHandle; path: var string; flags: uint32;
   sqe.prepRw(OP_STATX, fd, cast[pointer](path.toCString),
              cast[ptr uint32](m.addr)[], cast[pointer](buf))
 
-proc read*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int = 0): ptr Sqe =
+proc read*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int64 = 0): ptr Sqe =
   sqe.prepRw(OP_READ, fd, buffer, len, offset)
 
 proc read*(sqe: ptr Sqe; fd: FileHandle; group_id: uint16, len: int, offset: int = 0): ptr Sqe =
@@ -1056,7 +1132,7 @@ proc read_fixed*(sqe: ptr Sqe; fd: FileHandle; iovec: IOVec; offset: int = 0; bu
   sqe.buf.bufIndex = bufferIndex.uint16
   sqe.prepRw(OP_READ_FIXED, fd, iovec.iov_base, iovec.iov_len, offset)
 
-proc write*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int = 0): ptr Sqe =
+proc write*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int64 = 0): ptr Sqe =
   sqe.prepRw(OP_WRITE, fd, buffer, len, offset)
 
 proc write*(sqe: ptr Sqe; fd: FileHandle; str: var string; offset: int = 0): ptr Sqe =
@@ -1079,7 +1155,7 @@ proc accept_multishot*(sqe: ptr Sqe; sock: SocketHandle, `addr`: ptr SockAddr, a
   sqe.accept(sock, `addr`, addrLen, flags)
 
 proc connect*(sqe: ptr Sqe; sock: SocketHandle, `addr`: ptr SockAddr, addrLen: SockLen): ptr Sqe =
-  sqe.prepRw(OP_CONNECT, sock, cast[pointer](`addr`), 0, cast[pointer](addrLen))
+  sqe.prepRw(OP_CONNECT, sock, cast[pointer](`addr`), 0, addrLen)
 
 proc epoll_ctl*(sqe: ptr Sqe; epfd: FileHandle; fd: FileHandle; op: uint32; ev: ptr EpollEvent): ptr Sqe =
   sqe.prepRw(OP_EPOLL_CTL, epfd, cast[pointer](ev), op, fd)
@@ -1160,7 +1236,16 @@ proc sendmsg_zc*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: M
 
 proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: var string; flags: int32 = 0; mode: set[FilePermission] = {}): ptr Sqe =
   sqe.opFlags.openFlags = cast[uint32](flags)
-  sqe.prepRw(OP_OPENAT, dfd, cast[pointer](path.toCString), cast[ptr cint](mode.addr)[], 0)
+  sqe.prepRw(OP_OPENAT, dfd, cast[pointer](path.toCString), permissionBits(mode), 0)
+
+proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: cstring; flags: int32;
+             mode: set[FilePermission]): ptr Sqe =
+  ## Variant for a caller that already holds the NUL-terminated path in its own
+  ## buffer — the ioring op context carries it that way — rather than in a
+  ## `string`. Same SQE as the `var string` form: `len` carries `mode`, and
+  ## `open_flags` the flags.
+  sqe.opFlags.openFlags = cast[uint32](flags)
+  sqe.prepRw(OP_OPENAT, dfd, cast[pointer](path), permissionBits(mode), 0)
 
 proc close*[T: FileHandle | SocketHandle](sqe: ptr Sqe; fd: T): ptr Sqe =
   sqe.opcode = OP_CLOSE
@@ -1285,6 +1370,42 @@ proc getxattr*(sqe: ptr Sqe; name: var string; buf: pointer; len: int; path: var
   sqe.cmd.addr3 = cast[pointer](path.toCString)
   sqe.prepRw(OP_GETXATTR, 0.cint, cast[pointer](name.toCString), len, buf)
 
-proc socket*(sqe: ptr Sqe; domain: Domain; `type`: SockType; protocol: Protocol; flags: int = 0): ptr Sqe =
-  sqe.opFlags.rwFlags = KernelRwfT(flags)
-  sqe.prepRw(OP_SOCKET, domain.cint, 0, protocol.cint, `type`.cint)
+proc socket*(sqe: ptr Sqe; domain: Domain; `type`: SockType; protocol: Protocol;
+             flags: SockFlags = {}): ptr Sqe =
+  ## `IORING_OP_SOCKET`: create a socket and complete with its fd (the ring
+  ## never makes the socket(2) syscall). `domain`/`type`/`protocol` travel in
+  ## `fd`/`off`/`len` exactly as the kernel's `io_socket_prep` reads them
+  ## (verified against v6.8/6.10/master). `flags` are the type word's own high
+  ## bits: `io_socket_prep` extracts them with `type & ~SOCK_TYPE_MASK`. They
+  ## do NOT go into `rw_flags`: a non-zero `rw_flags` (or `addr`) is EINVAL
+  ## there.
+  const
+    SockNonBlockBit = 0o4000'i32     # SOCK_NONBLOCK (= O_NONBLOCK)
+    SockCloExecBit = 0o2000000'i32   # SOCK_CLOEXEC (= O_CLOEXEC)
+  var typeWord = int32(`type`)
+  if SOCK_NONBLOCK in flags: typeWord = typeWord or SockNonBlockBit
+  if SOCK_CLOEXEC in flags: typeWord = typeWord or SockCloExecBit
+  sqe.prepRw(OP_SOCKET, cint(domain), 0, cint(protocol), Off(typeWord))
+
+const
+  SocketUringOpSock* = 0'u32  ## SOCKET_URING_OP_SIOCINQ
+  SocketUringOpGetsockopt* = 2'u32  ## SOCKET_URING_OP_GETSOCKOPT
+  SocketUringOpSetsockopt* = 3'u32  ## SOCKET_URING_OP_SETSOCKOPT
+
+proc cmdSockSetsockopt*(sqe: ptr Sqe; fd: FileHandle; level, optName: cint;
+                        optVal: pointer; optLen: SockLen): ptr Sqe =
+  ## setsockopt(2) as `IORING_OP_URING_CMD` + `SOCKET_URING_OP_SETSOCKOPT`
+  ## (kernel 6.7+; earlier kernels answer the SQE with `-EOPNOTSUPP`). No
+  ## syscall is made by this process: the whole request travels in the SQE —
+  ## `cmd_op` in the `off` union's low word, `level`/`optname` in the `addr`
+  ## union, `optlen` in the `file_index` slot, and `optval` (a user pointer,
+  ## read when the command runs) in the `addr3` slot. `optval` must stay valid
+  ## until the op completes, like a submitRead buffer.
+  sqe.opcode = OP_URING_CMD
+  sqe.fd = fd
+  sqe.off.cmdOp = SocketUringOpSetsockopt
+  sqe.`addr`.sockPair.level = uint32(level)
+  sqe.`addr`.sockPair.optname = uint32(optName)
+  sqe.splice.optLen = uint32(optLen)
+  sqe.cmd.optval = optVal
+  return sqe

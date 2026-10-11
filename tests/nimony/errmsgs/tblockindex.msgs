@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tblockindex.nim(14, 13) Error: cannot prove 'p - start' is in range 0..15 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tblockindex.nim(20, 14) Error: cannot prove contract: i < s.len and 0 <= i [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tblockindex.nim(34, 15) Error: cannot prove contract: i < s.len and 0 <= i [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tblockindex.nim(41, 15) Error: cannot prove contract: i < s.len and 0 <= i [pass --verbose for the Final IR]

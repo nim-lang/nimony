@@ -110,8 +110,11 @@ func runeLen*(s: openArray[char]): int =
     else: inc i
     inc(result)
 
-func runeLenAt*(s: openArray[char], i: Natural): int =
+func runeLenAt*(s: openArray[char], i: Natural): Positive =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
+  ##
+  ## The result type says 1..6: a rune is never zero bytes wide, and a caller
+  ## stepping an offset by it needs that to keep the offset a `Natural`.
   ##
   ## See also:
   ## * `fastRuneAt template <#fastRuneAt.t,string,int,untyped>`_
@@ -136,7 +139,11 @@ template fastRuneAt*(s: openArray[char], i: int, result: untyped, doInc = true):
   ## If ``doInc == true`` (default), ``i`` is incremented by the number
   ## of bytes that have been processed.
   # bind ones
-  if uint(s[i]) <= 127:
+  if i < 0 or i >= s.len:
+    # no rune starts outside `s`
+    result = replRune
+    when doInc: inc(i)
+  elif uint(s[i]) <= 127:
     result = Rune(uint(s[i]))
     when doInc: inc(i)
   elif uint(s[i]) shr 5 == 0b110:
@@ -1222,7 +1229,7 @@ func runeLen*(s: string): int {.inline.} =
     ## note: a.len == 8
   runeLen(toOa(s))
 
-func runeLenAt*(s: string, i: Natural): int {.inline.} =
+func runeLenAt*(s: string, i: Natural): Positive {.inline.} =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
   ##
   ## See also:

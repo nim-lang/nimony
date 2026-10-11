@@ -215,7 +215,7 @@ block:
 type
   ProcType = proc (x: int) {.nimcall.}
 
-var call: ProcType = ProcType(nil)
+var call: ProcType = proc (x: int) = discard x  # `ProcType` is not-nil: no `ProcType(nil)`
 call = proc (x: int) = discard x
 call(1)
 

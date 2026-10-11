@@ -2,38 +2,61 @@
 ## `selfcheck` sequence built on top of it.
 
 import std / [syncio, os, osproc, strutils, times]
-import context, deps, builders, tiers
+import context, deps, builders, tiers, binstamps
+export binstamps
 
 # ---- deterministic self-host bootstrap ------------------------------------
 # `bin0/` is a fresh copy of the host-Nim-built toolchain in `bin/`; `binN/`
-# (N >= 1) is `binN-1/`'s nimony recompiling all three self-tools from
+# (N >= 1) is `binN-1/`'s nimony recompiling all the self-tools from
 # source. Each pass produces a sibling `binN/` directory next to `lib/` and
 # nothing is fed back into `bin/` — `bin/` remains the host-Nim-built
 # toolchain the rest of hastur drives the test suite with.
 
 ## The boot bootstrap rebuilds the *full* toolchain at every stage — not just
 ## `bin/nimony`. nimony is only the driver; the heavy lifting (semantic
-## analysis, hexer lowering) happens in `nimsem` and `hexer`, both reached
+## analysis, hexer lowering) happens in `nimsem` and `shoggoth`, both reached
 ## via `findTool` from each `nimony c` invocation. Iterating only over the
 ## driver therefore exercises self-hosting of nimony alone while the
-## stage-0 nimsem and hexer keep doing all the real work — bugs in their
+## stage-0 nimsem and shoggoth keep doing all the real work — bugs in their
 ## codegen go undetected indefinitely. `tooldirs.binDir` and
 ## `semos.nimonyDir` accept any tail starting with `bin`, so stage-N's
 ## nimony resolves stage-N's tools and the project's stdlib without any
 ## CLI override.
-const BootSelfTools = ["nimsem", "hexer", "nimony"]
-  ## Tools rebuilt from source at every stage. The order matters: nimsem and
-  ## hexer are needed by every later `nimony c` call, so they go first;
-  ## nimony itself goes last because it's the one each *next* stage will
-  ## drive with.
-const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "shoggoth"]
+const BootSelfTools = ["nimsem", "shoggoth", "lengc", "nimony"]
+  ## Tools rebuilt from source at every stage. The order matters: nimsem,
+  ## shoggoth (hexer plus the `-d:release` optimizer) and lengc (the C code
+  ## generator) are all reached by every later `nimony c` call, so they go
+  ## first; nimony itself goes last because it's the one each *next* stage
+  ## will drive with. lengc and shoggoth used to be carried over from `bin/`,
+  ## which left a Nimony-built lengc/shoggoth untested by the boot although
+  ## they compile under Nimony.
+const BootCarryTools = ["nifler", "niflink", "nifmake", "validator"]
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
 
+const JorogumoSource = NativenifDir & "/src/jorogumo/jorogumo.nim"
+
+var bootJorogumo = false
+  ## Does this boot also compile the web back end (`jorogumo`: JS + wasm, from
+  ## the sibling `../nativenif`) at every stage? It is not part of the
+  ## toolchain the NEXT stage drives with, but it compiles with Nimony and
+  ## nothing else would notice when it stops doing so. Set by `bootCmd`.
+
+proc bootStageTools(): seq[string] =
+  ## What `compileBootStage` compiles: the self-tools, plus jorogumo when the
+  ## nativenif checkout is there. jorogumo goes FIRST so it overlaps with the
+  ## self-tools instead of trailing them.
+  result = @[]
+  if bootJorogumo: result.add "jorogumo"
+  result.add BootSelfTools
+
 proc bootCarryTools*(): seq[string] =
   result = @BootCarryTools
   if bootNative: result.add BootNativeTools
+  # nimony parses with nifler2 whenever it sits next to it, so a stage parses
+  # with the same tool `bin/` does -- and with nifler where `bin/` has none
+  if fileExists(binDir() / "nifler2".addFileExt(ExeExt)): result.add "nifler2"
 
 const NativeBootReady = true
   ## Requires a nativenif checkout whose arkham holds each emit step's demand
@@ -73,13 +96,20 @@ proc useNativeBoot*(): bool =
   ## inliner supplies the register pressure that reaches them; neither was the
   ## inliner's fault. `SHOGGOTH_DISABLE=<pass,…>` is what separated those questions.
   ##
+  ## macOS/arm64 is IN, as of 2026-09-08. What had kept it out was one nifasm bug:
+  ## `extprocLib` read the token after an `(extproc :name "extname")` without
+  ## checking the decl had one, and the Darwin form has none — so every stage-1
+  ## tool died in `resolveForeignSym` ("advancing past end of scope"). With that
+  ## fixed `--boot-backend:native` reaches the byte-identical stage1==stage2==stage3
+  ## fixed point in ~245s on an M-series laptop.
+  ##
   ## windows/amd64 is in as of #2325: arkham's win_x64 target emits a PE that
   ## imports what it needs per dll, so a native boot there needs no MinGW and no
   ## libc — which is what makes the Windows job the slowest in the matrix (601s
   ## of stages against 61s natively).
-  when defined(linux) and (defined(amd64) or defined(arm64)):
-    result = NativeBootReady and missingNativeTools().len == 0
-  elif defined(windows) and defined(amd64):
+  when (defined(linux) and (defined(amd64) or defined(arm64))) or
+       (defined(windows) and defined(amd64)) or
+       (defined(macosx) and defined(arm64)):
     result = NativeBootReady and missingNativeTools().len == 0
   else:
     result = false
@@ -97,7 +127,8 @@ proc bootBackendLine*(withValgrind: bool): string =
   if bootBackend == bbC:
     return result & " — forced by --boot-backend:c"
   when (defined(linux) and (defined(amd64) or defined(arm64))) or
-       (defined(windows) and defined(amd64)):
+       (defined(windows) and defined(amd64)) or
+       (defined(macosx) and defined(arm64)):
     if withValgrind:
       result.add " — --valgrind cannot see the native heap"
     elif not NativeBootReady:
@@ -114,7 +145,9 @@ proc bootBackendLine*(withValgrind: bool): string =
 proc bootSourceFor*(tool: string): string =
   case tool
   of "nimony", "nimsem": "src/nimony/" & tool & ".nim"
-  of "hexer": "src/hexer/hexer.nim"
+  of "lengc": "src/lengc/lengc.nim"
+  of "shoggoth": "src/lengc/shoggoth/shoggoth.nim"
+  of "jorogumo": JorogumoSource
   else: quit "boot: no source mapping for tool " & tool
 
 proc bootStageDir*(stage: int): string =
@@ -163,7 +196,7 @@ proc bootToolCmd*(compiler, source, outBin, cacheBase, args: string;
                  withValgrind: bool): string =
   ## The `compiler <c|n> --out:outBin source` command line for one boot tool.
   ## `compiler` is the previous stage's nimony, so it transitively drives the
-  ## previous stage's nimsem/hexer (siblings under the same stage's bin dir)
+  ## previous stage's nimsem/shoggoth (siblings under the same stage's bin dir)
   ## for this build. The subcommand is `n` for a native boot (arkham + nifasm,
   ## no C compiler), `c` otherwise.
   let cache = cacheBase / outBin.extractFilename
@@ -186,7 +219,7 @@ proc compileBootStage*(stage: int; cacheBase, args: string; withValgrind: bool):
   ## Build stage `stage` of the toolchain. Returns the stage's bin
   ## directory. Driver of stage N is the stage-(N-1) nimony.
   ##
-  ## The stage's three tools (nimsem, hexer, nimony) are compiled CONCURRENTLY.
+  ## The stage's tools (`BootSelfTools`) are compiled CONCURRENTLY.
   ## They are independent: each gets its own `--nimcache` and its own `--out`,
   ## and the only shared input — the previous stage's `bin/` — is read-only for
   ## the duration. Serially this was the single longest stretch of the Windows
@@ -201,7 +234,7 @@ proc compileBootStage*(stage: int; cacheBase, args: string; withValgrind: bool):
 
   var outBins: seq[string] = @[]
   var cmds: seq[string] = @[]
-  for tool in BootSelfTools:
+  for tool in bootStageTools():
     let outBin = result / tool.addFileExt(ExeExt)
     outBins.add outBin
     cmds.add bootToolCmd(prevNimony, bootSourceFor(tool), outBin, cacheBase,
@@ -230,64 +263,8 @@ proc compileBootStage*(stage: int; cacheBase, args: string; withValgrind: bool):
     if not fileExists(outBin):
       quit "FAILURE: boot stage " & $stage & ": " & outBin &
            " was not produced (did `--out` get rejected?)"
-  echo "[boot] stage ", stage, " produced ", BootSelfTools.join(", "), " in ",
+  echo "[boot] stage ", stage, " produced ", bootStageTools().join(", "), " in ",
        formatFloat(dt, ffDecimal, precision=2), "s"
-
-const HeaderSkipBytes = 4096
-  ## Bytes at the start of an executable to skip during stage-comparison.
-  ## Big enough to cover the volatile header regions of all three common
-  ## formats: ELF (.note.gnu.build-id is at ~1 KB), Mach-O (LC_UUID lives
-  ## inside the load commands), PE (DOS header + COFF header with
-  ## TimeDateStamp). 4 KB also matches the typical page size so the cut
-  ## tends to fall on a section boundary.
-
-proc maskBuildStamps*(buf: var string) =
-  ## Zero out byte regions whose contents depend on *when* the binary was
-  ## linked, not *what* the toolchain produced. Two stages whose code is
-  ## identical otherwise still compare equal.
-  ##
-  ## Approach: skip the first `HeaderSkipBytes` (covers ELF build-id,
-  ## Mach-O LC_UUID, PE COFF TimeDateStamp — all live in headers) and
-  ## additionally mask `HH:MM:SS` / `Mmm DD YYYY` ASCII strings anywhere
-  ## else (mimalloc bakes `__DATE__` / `__TIME__` into .rodata via
-  ## `vendor/mimalloc/src/options.c`).
-  let skip = min(HeaderSkipBytes, buf.len)
-  for k in 0 ..< skip: buf[k] = '\0'
-
-  proc isDigit(c: char): bool {.inline.} = c >= '0' and c <= '9'
-
-  # HH:MM:SS — exact 8 bytes.
-  var i = skip
-  while i + 8 <= buf.len:
-    if buf[i+2] == ':' and buf[i+5] == ':' and
-       isDigit(buf[i]) and isDigit(buf[i+1]) and
-       isDigit(buf[i+3]) and isDigit(buf[i+4]) and
-       isDigit(buf[i+6]) and isDigit(buf[i+7]):
-      for k in i ..< i + 8: buf[k] = '\0'
-      i += 8
-    else:
-      inc i
-
-  # `Mmm DD YYYY` — month abbreviation + day (space-padded) + 4-digit year.
-  const Months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-  i = skip
-  while i + 11 <= buf.len:
-    var matched = false
-    if buf[i+3] == ' ' and buf[i+6] == ' ' and
-       (buf[i+4] == ' ' or isDigit(buf[i+4])) and isDigit(buf[i+5]) and
-       isDigit(buf[i+7]) and isDigit(buf[i+8]) and
-       isDigit(buf[i+9]) and isDigit(buf[i+10]):
-      let m = buf.substr(i, i + 2)
-      for mo in Months:
-        if m == mo:
-          matched = true
-          break
-    if matched:
-      for k in i ..< i + 11: buf[k] = '\0'
-      i += 11
-    else:
-      inc i
 
 proc bootBinariesEqual*(pa, pb: string): bool =
   ## Equal ignoring linker / preprocessor build-time stamps (build-id and
@@ -317,8 +294,14 @@ proc stagesEqual*(a, b: string): bool =
   ## converged once both stages produced binaries of equal size — the
   ## self-compile pass that built `b` having succeeded is what tells us
   ## the previous stage is functional.
+  ##
+  ## jorogumo counts from stage 1 on: `bin0/` has no Nimony-built one to
+  ## compare with, so a tool only one side has is skipped.
+  var tools = @BootSelfTools
+  let joro = "jorogumo".addFileExt(ExeExt)
+  if fileExists(a / joro) and fileExists(b / joro): tools.add "jorogumo"
   when defined(macosx):
-    for tool in BootSelfTools:
+    for tool in tools:
       let pa = a / tool.addFileExt(ExeExt)
       let pb = b / tool.addFileExt(ExeExt)
       if getFileSize(pa) != getFileSize(pb):
@@ -327,7 +310,7 @@ proc stagesEqual*(a, b: string): bool =
         return false
     return true
   else:
-    for tool in BootSelfTools:
+    for tool in tools:
       let pa = a / tool.addFileExt(ExeExt)
       let pb = b / tool.addFileExt(ExeExt)
       if not bootBinariesEqual(pa, pb):
@@ -403,7 +386,16 @@ proc bootCmd*(args: string; withValgrind: bool; release = true) =
     let exe = binDir() / tool.addFileExt(ExeExt)
     if not fileExists(exe):
       quit "boot: " & exe & " not found; run `hastur build all` first"
-  for tool in BootSelfTools:
+  # The web back end rides along wherever the native tools would: a 64-bit host
+  # with the sibling checkout. Not cloning it for a boot is the same call
+  # `build all` makes (see `hostGetsNativeTools`).
+  when defined(cpu64):
+    bootJorogumo = dirExists(NativenifDir)
+  if bootJorogumo:
+    syncNativenif()
+  else:
+    echo "[boot] ", NativenifDir, " not available — not compiling jorogumo"
+  for tool in bootStageTools():
     let src = bootSourceFor(tool)
     if not fileExists(src):
       quit "boot: " & src & " missing"
@@ -436,7 +428,7 @@ proc selfcheckCmd*() =
   ## a maintainer runs after touching anything in `src/nimony/`, `src/hexer/`
   ## or `src/lib/` that the compiler itself depends on:
   ##
-  ##   1. Rebuild nimony + nimsem + hexer from host Nim, so all three reflect
+  ##   1. Rebuild the self-tools (`BootSelfTools`) from host Nim, so all reflect
   ##      current source. `boot` copies `bin/` into `bin0/` at every run, so
   ##      a stale `bin/` would still poison `bin0/`.
   ##   2. `bootstrap`: compile every module on the bootstrap list with the

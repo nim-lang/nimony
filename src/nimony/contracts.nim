@@ -235,9 +235,11 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
     # no base type
     if e.hasMore and e.substructureKind == mark:
       result = true
-  of ProctypeT:
-    # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
-    # nilability marker is at slot 0.
+  of ProctypeT, ItertypeT:
+    # `(proctype <NilTag> (params) RetType <Pragmas>)`. The nilability marker is
+    # at slot 0, and `(itertype ...)` mirrors that shape exactly (doc/tags.md):
+    # a first-class closure-iterator VALUE is a pointer pair like any other
+    # closure, so it is not-nil by default the same way.
     let e = t.childCursor
     if e.substructureKind == mark:
       result = true
@@ -318,7 +320,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
       n.into:
         assert n.isSymbol
         let expected = lookupField(c.typeCache, objType, n.symId)
-        assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
+        assert not cursorIsNil(expected), "could not lookup type for " & pool.symString(n.symId)
         skip n # field name
         checkNilMatch c, n, expected
         skip n # value
@@ -352,7 +354,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {VarY, LetY, CursorY, PatternvarY}:
       if symId notin c.directlyInitialized and symId notin c.writesTo:
-        buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
+        buildErr(c, pc.info, "cannot prove that " & asNimCode(pc) & " has been initialized")
         # do not name the same variable twice:
         c.writesTo.add symId
     inc pc
@@ -742,7 +744,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
           return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
-        of StmtsS, ScopeS, BlockS, ContinueS, BreakS, LabS, JmpS:
+        of StmtsS, AlwaysS, ScopeS, BlockS, ContinueS, BreakS, LabS, JmpS:
           # `lab`/`jmp` cannot actually reach here: `controlflow.trJmp`/`trLab`
           # consume them into the goto instructions this walker reads.
           inc pc
@@ -915,7 +917,7 @@ proc traverseProc(c: var Context; n: var Cursor) =
 
 proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind
-  of StmtsS:
+  of StmtsS, AlwaysS:
     c.toplevelStmts.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
@@ -942,7 +944,9 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
 
 proc analyzeContracts*(input: var TokenBuf; bits: int): TokenBuf =
   #let oldInfos = prepare(input)
-  var c = Context(typeCache: createTypeCache(bits), bits: bits)
+  var c = Context(cf: initTokenBuf(), toplevelStmts: initTokenBuf(),
+                  errors: initTokenBuf(),
+                  typeCache: createTypeCache(bits), bits: bits)
   c.typeCache.openScope()
   var n = beginRead(input)
   traverseToplevel c, n

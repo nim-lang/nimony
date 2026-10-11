@@ -64,10 +64,14 @@
 ## `provenKey`, which resolves a symbol to the expression it was defined from
 ## (see the comment there).
 
-import std / [tables, sets, hashes, assertions, strutils, formatfloat]
+import std / [tables, sets, hashes, assertions, strutils, formatfloat, algorithm]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/pragmaKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
+
+include ".." / ".." / "lib" / compat2         # getOrQuit (host Nim)
+
+proc cmpInts(a, b: int): int = cmp(a, b)
 import trackers, patchsets
 import aliasing                               # intra-proc Steensgaard alias classes
 import accesspaths                            # root :: selector paths (doc/cse.md)
@@ -269,7 +273,6 @@ type
                                 ## dominates the first occurrence and sits AFTER
                                 ## every store/decl preceding it in that block
     tempCounter: int
-    moduleSuffix: string
     resolver: SummaryResolver       ## module table + foreign-module fallback,
                                     ## memoized (see `resolveCallee`)
     aa: Aliasing                ## intra-proc alias partition of this body
@@ -311,9 +314,10 @@ type
     loopStack: seq[LoopFrame]   ## enclosing loops, outermost first; LICM reads
                                 ## this to hoist invariant loads to a pre-header
 
-proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
-                   summaries: ptr FunctionSummaryTable): Context =
-  result = Context(orig: orig,
+proc createContext(orig: ptr TokenBuf;
+                   summaries: ptr FunctionSummaryTable;
+                   m: ptr MainModule): Context =
+  result = Context(orig: orig, m: m,
           cache: initTracker[string, CachedEntry](),
           materialized: initTable[int, string](),
           pending: initTable[int, PendingDecl](),
@@ -325,8 +329,7 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           stmtStack: @[],
           curStmt: -1,
           tempCounter: 0,
-          moduleSuffix: moduleSuffix,
-          resolver: initSummaryResolver(summaries, nil),
+          resolver: initSummaryResolver(summaries, m),
           localDefPos: initTable[SymId, int](),
           proven: initTracker[string, int](),
           provenRoots: @[],
@@ -574,7 +577,7 @@ proc provenKey(c: var Context; cur: Cursor; result: var string; depth = 0) =
   of Symbol:
     let s = symId(cur)
     if depth < MaxResolveDepth and c.isDiamond(s):
-      let (pa, pb, isAnd) = c.shortCircuit[s]
+      let (pa, pb, isAnd) = c.shortCircuit.getOrQuit(s)
       result.add (if isAnd: "(&" else: "(|")
       var a = cursorAt(c.orig[], pa)
       provenKey(c, a, result, depth + 1)
@@ -583,7 +586,7 @@ proc provenKey(c: var Context; cur: Cursor; result: var string; depth = 0) =
       provenKey(c, b, result, depth + 1)
       result.add ')'
     elif depth < MaxResolveDepth and c.resolvable(s):
-      var d = cursorAt(c.orig[], c.defExpr[s])
+      var d = cursorAt(c.orig[], c.defExpr.getOrQuit(s))
       provenKey(c, d, result, depth + 1)
     else:
       result.add 'S'; result.add symName(cur)
@@ -613,13 +616,13 @@ proc collectResolvedRoots(c: var Context; cur: Cursor; acc: var seq[SymId];
     let s = symId(cur)
     if s notin acc: acc.add s
     if depth < MaxResolveDepth and c.isDiamond(s):
-      let (pa, pb, _) = c.shortCircuit[s]
+      let (pa, pb, _) = c.shortCircuit.getOrQuit(s)
       var a = cursorAt(c.orig[], pa)
       collectResolvedRoots(c, a, acc, depth + 1)
       var b = cursorAt(c.orig[], pb)
       collectResolvedRoots(c, b, acc, depth + 1)
     elif depth < MaxResolveDepth and c.resolvable(s):
-      var d = cursorAt(c.orig[], c.defExpr[s])
+      var d = cursorAt(c.orig[], c.defExpr.getOrQuit(s))
       collectResolvedRoots(c, d, acc, depth + 1)
   of TagLit:
     var n = cur
@@ -665,7 +668,7 @@ proc expressionMentionsAny(cur: Cursor; targets: HashSet[SymId]): bool =
 proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
   if not start.hasMore: return
   if start.kind != TagLit: return
-  if start.stmtKind in {AsgnS, StoreS}:
+  if start.stmtKind == AsgnS:
     let lhs = child0(start)
     if lhs.kind == Symbol:
       writes.incl symId(lhs)
@@ -1205,9 +1208,8 @@ proc preScanLoop(c: Context; start: Cursor; frame: var LoopFrame) =
   if start.kind != TagLit: return
   let sk = start.stmtKind
   let ek = start.exprKind
-  if sk in {AsgnS, StoreS}:
-    var lhs = child0(start)
-    if sk == StoreS: skip lhs
+  if sk == AsgnS:
+    let lhs = child0(start)
     if lhs.kind == Symbol:
       frame.writes.incl symId(lhs)
     else:
@@ -1472,27 +1474,46 @@ proc substUse(c: var Context; exprPos: int; tempName: string; deref: bool) =
 type
   LoadTypeClass = enum
     ltcScalar      ## a value type we can materialize a temp for
-    ltcAggregate   ## object/union/array — caching copies the whole thing
-    ltcUnknown     ## type navigation failed (`(err)` sentinel)
+    ltcAggregate   ## object/union/array/flexarray — caching copies the whole thing
+    ltcUnknown     ## type navigation failed (`(err)` sentinel, or a nominal
+                   ## type this module's context cannot resolve)
+
+const
+  ValueTypes = {IT, UT, FT, CT, BoolT, PtrT, AptrT, EnumT, ProctypeT}
+    ## The type kinds a temp can HOLD: everything that fits in a register and
+    ## whose spelling is a complete type. This is an ALLOW-list on purpose.
+    ## It used to be a deny-list of `{ObjectT, UnionT, ArrayT}`, and what a
+    ## deny-list does when a kind is missing from it is not "miss an
+    ## optimization" but "emit a temp that cannot exist": `FlexarrayT` was
+    ## missing, so the string payload `(dot (deref s.more) data)` became
+    ## `NC8 t[] = …` — gcc says "invalid initializer", arkham segfaulted. Any
+    ## type kind this list does not name is refused, including one added to
+    ## Leng tomorrow.
 
 proc classifyLoad(c: var Context; n: Cursor): LoadTypeClass =
   ## Classify the value loaded by `n` for value-CSE eligibility. Needs the type
   ## context; without it (`m == nil`, e.g. the self-tests) we assume scalar.
   ##
-  ## `ltcAggregate`: object/union/array — caching copies the whole aggregate into
-  ## a temp (a pessimization), and the temp would need its aggregate type spelled.
+  ## `ltcAggregate`: anything outside `ValueTypes` — an object/union/array copies
+  ## the whole thing into a temp (a pessimization) and needs its aggregate type
+  ## spelled; a `flexarray` cannot be spelled at all, having no size. The string
+  ## payload `(dot (deref s.more) data)` is exactly that shape, and it only
+  ## became a repeated load once loop unswitching specialized the long-string
+  ## path (`unswitch.nim`), which is how the deny-list's omission surfaced.
   ##
-  ## `ltcUnknown`: `getType` returned its `(err)` sentinel (a non-type tag) — the
-  ## value's type cannot be navigated, so a hoisted `(var :t . . load)` would force
-  ## the C backend to *infer* a type it equally cannot resolve, emitting `(err)` in
-  ## a type position. This happens after inter-module inlining splices a foreign
-  ## body whose loads reference types not in this module's context. We must not
-  ## value-CSE such a load.
+  ## `ltcUnknown`: `getType` returned its `(err)` sentinel (a non-type tag), or a
+  ## bare `Symbol` — `navigateToObjectBody` gave up because the nominal type is
+  ## not in this module's context (an inter-module-inlined foreign body's loads
+  ## do that). Either way the value's type cannot be navigated, so a hoisted
+  ## `(var :t . . load)` would force the C backend to *infer* a type it equally
+  ## cannot resolve, emitting `(err)` in a type position. We must not value-CSE
+  ## such a load — and "I could not resolve it" is no evidence that it is small.
   if c.m == nil: return ltcScalar
   let t = getType(c.m[], n)             # navigates nominal → object/array body
-  if t.typeKind in {ObjectT, UnionT, ArrayT}: ltcAggregate
-  elif t.kind == TagLit and t.typeKind == NoType: ltcUnknown
-  else: ltcScalar
+  if t.kind != TagLit: ltcUnknown
+  elif t.typeKind in ValueTypes: ltcScalar
+  elif t.typeKind == NoType: ltcUnknown
+  else: ltcAggregate
 
 proc latestLocalDef(c: Context; start: Cursor): int =
   ## The largest declaration position among the locals read anywhere in the
@@ -1544,6 +1565,40 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     # Don't: on the arkham targets the address folds into the load/store addressing mode
     # for free, so caching it saves nothing and ties up a register across the live range.
     # Leave the lvalue inline (no temp) — NOT value-CSE'd (unsound across its own writes).
+    #
+    # This also blocks VALUE-CSE of every lvalue that is written anywhere in the
+    # body, which is the compiler's dominant idiom: the fields of a `var`
+    # parameter. `enterScope` reads `c.p` seven times and assigns it once at the
+    # end, and all seven reads are refused because of that one assignment. That
+    # is 2073 refused loads over nifbench's modules — so it looks like the reason
+    # the emitted arm64 code reloads the same `[base, #off]` inside one basic
+    # block 6.2% of the time, against gcc's 0.3%.
+    #
+    # It is not, and this was measured rather than argued (2026-09-05, nifbench,
+    # `nimony n -d:danger`). Narrowing the refusal to the addr-of'd subset — a
+    # plain store target is invalidated precisely by `invalidateForStore`, which
+    # is strictly sharper than refusing it body-wide — does eliminate the loads,
+    # and LOSES:
+    #
+    #     loads          75.63M -> 73.02M   -2.61M
+    #     frame push/pop 50.36M -> 52.82M   +2.46M
+    #     reg-to-reg mov 44.93M -> 45.88M   +0.95M
+    #     TOTAL         439.52M -> 440.32M  +0.80M
+    #
+    # A CSE temp trades N loads for one load plus a value that must live in a
+    # register across its whole range. A load here is a single `ldr` with the
+    # offset folded in, so eliminating one saves exactly one instruction; a range
+    # that straddles a call can only be homed callee-saved, and arkham charges a
+    # whole prologue/epilogue PAIR for that on every entry to the proc. Refusing
+    # ranges that straddle a call turns the loss into a 0.35M win (-0.08%) —
+    # still not worth the machinery, because arkham's volatile local pool is five
+    # registers (x9-x13; x0-x7 are withheld) so even a call-free temp lands in a
+    # callee-saved register as soon as anything else is live.
+    #
+    # So this refusal is not what makes CSE ineffective on these targets: the
+    # register cost is. Revisit it when a cross-call value stops costing a
+    # prologue pair — shrink-wrapping, or spending callee-saved registers only on
+    # values that genuinely cross a call — and the same 2.61M becomes a real win.
     if addrMode or isAddrOf: return false
   let usePos = cursorToPosition(c.orig[], n)          # node to rewrite
   let lvaluePos = cursorToPosition(c.orig[], lvalueCur)  # `L`, what the decl caches
@@ -1580,7 +1635,7 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
       c.materialized[fp] = tempName
       c.pending[fp] = PendingDecl(tempName: tempName, exprPos: fp, addrMode: addrMode,
                                   hoistPos: invHoist,
-                                  usePositions: @[(usePos, derefThis)])
+                                  usePositions: @[(pos: usePos, deref: derefThis)])
       return true
     return false
   # Second-or-later occurrence. The cache is flow-sensitive and intersects at
@@ -1610,8 +1665,8 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     c.materialized[fp] = tempName
     c.pending[fp] = PendingDecl(tempName: tempName, exprPos: fp, addrMode: addrMode,
                                 hoistPos: entry.firstStmtPos,
-                                usePositions: @[(entry.firstUsePos, derefFirst),
-                                                (usePos, derefThis)])
+                                usePositions: @[(pos: entry.firstUsePos, deref: derefFirst),
+                                                (pos: usePos, deref: derefThis)])
   result = true
 
 proc isPureRegArith(n: Cursor): bool =
@@ -1675,7 +1730,16 @@ proc flushPending(c: var Context) =
   ## Because the rewrites are applied here (not eagerly), dropping leaves the
   ## original expressions untouched and correct.
   var symReadsReady = false
-  for fp, pd in c.pending:
+  # In SOURCE order, never the table's. Two temps can hoist to the same spot,
+  # and their decls come out in the order this loop visits them; hash order
+  # made that depend on how `Table` happens to be implemented — a shoggoth
+  # built by Nimony and one built by Nim disagreed on 24 of nimsem's modules —
+  # and on the token layout of the input (`pending` is keyed by position).
+  var order = newSeqOfCap[int](c.pending.len)
+  for fp in c.pending.keys: order.add fp
+  sort(order, cmpInts)
+  for fp in order:
+    let pd = c.pending.getOrQuit(fp)
     if pd.hoistPos < 0: continue
     let firstCur = cursorAt(c.orig[], pd.exprPos)
     if pd.hoistPos <= latestLocalDef(c, firstCur):
@@ -1830,7 +1894,19 @@ proc trAsgn(c: var Context; n: var Cursor) =
     # recurs it is address-CSE'd — `handleCandidate` rewrites it to `(deref t)`,
     # still a valid assignment target. Then invalidate the aliasing class; the
     # address temp of this exact location survives (its address didn't move).
-    discard handleCandidate(c, lhsStart)
+    #
+    # The `when` is load-bearing, not tidiness. This call is sound ONLY in
+    # address mode, where the rewrite `L` → `(deref t)` is still an assignment
+    # target. A VALUE temp is not: rewriting an LHS to a bare symbol turns
+    # `p.pos = p.pos + 1` into `t = p.pos; t = t + 1` and drops the store. With
+    # `AddressCSE` off nothing reaches here today only because `handleCandidate`
+    # refuses every `writeTargets` key outright — so the guard is invisible until
+    # someone narrows that refusal, and then it is a silent miscompile (measured:
+    # parseopt's `next` stopped advancing and walked off the string). Keep the
+    # write-vs-read distinction here, where it belongs, instead of relying on a
+    # refusal three modules away.
+    when AddressCSE:
+      discard handleCandidate(c, lhsStart)
     invalidateForStore(c, lhsStart)
   else: discard
 
@@ -1894,10 +1970,7 @@ proc trLoopBody(c: var Context; n: var Cursor) =
       while n.hasMore: skip n
   of LoopS:
     n.into:
-      if n.hasMore: tr(c, n)
-      if n.hasMore: trExpr(c, n)
-      if n.hasMore: tr(c, n)
-      if n.hasMore: tr(c, n)
+      if n.hasMore: tr(c, n)             # body; the infinite loop has no cond
       while n.hasMore: skip n
   else:
     skip n
@@ -1992,13 +2065,13 @@ proc isHoistAnchor(sk: LengStmt): bool {.inline.} =
   # a temp hoisted at the first occurrence's statement must not be reused by an
   # occurrence OUTSIDE that block, so the block must appear on the anchor stack.
   # `(scope)`/`(if)`/`(case)`/`(while)`/`(loop)`/`(try)`/`(onerr)` qualify.
-  # `(stmts)` is transparent, and LEAF statements (asgn/store/call/var/ret/…) form
+  # `(stmts)` is transparent, and LEAF statements (asgn/call/var/ret/…) form
   # no block of their own — anchoring them would give two sibling statements
   # DIFFERENT anchor stacks and defeat all cross-statement CSE (which is the whole
   # point of hoisting a shared load/address to a dominating decl). Unknown/other
   # statements stay anchored (the safe, CSE-suppressing default).
   sk notin {NoStmt, StmtsS,
-            AsgnS, StoreS, CallS, VarS, GvarS, TvarS, ConstS, DiscardS,
+            AsgnS, CallS, VarS, GvarS, TvarS, ConstS, DiscardS,
             RetS, BreakS, RaiseS, JmpS, LabS, EmitS, KeepovfS, MflagS, VflagS}
 
 proc tr(c: var Context; n: var Cursor) =
@@ -2012,7 +2085,7 @@ proc tr(c: var Context; n: var Cursor) =
     case sk
     of VarS, ConstS:               trVar(c, n, isBodyLocal = true)
     of GvarS, TvarS:               trVar(c, n, isBodyLocal = false)
-    of AsgnS, StoreS:              trAsgn(c, n)
+    of AsgnS:                      trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
     of IfS:
       var gcond = default(Cursor)
@@ -2090,13 +2163,6 @@ proc collectWriteTargets(c: var Context; n: var Cursor) =
       c.writeTargets.incl hashExpr(lhs)
     n.loopInto:
       collectWriteTargets(c, n)    # recurse (find `(addr L)` in the RHS / indices)
-  of StoreS:                       # (store src dest) — dest is the 2nd child
-    var lhs = child0(n)
-    skip lhs
-    if lhs.kind == TagLit and lhs.exprKind in {DotC, AtC, DerefC, PatC}:
-      c.writeTargets.incl hashExpr(lhs)
-    n.loopInto:
-      collectWriteTargets(c, n)
   else:
     n.loopInto:
       collectWriteTargets(c, n)
@@ -2115,7 +2181,7 @@ proc registerParams(c: var Context; params: Cursor) =
       if nameCur.kind == SymbolDef: c.paramSyms.incl symId(nameCur)
     skip p
 
-proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
+proc runCSE*(buf: var TokenBuf;
              summaries: ptr FunctionSummaryTable = nil;
              m: ptr MainModule = nil;
              params: Cursor = default(Cursor)): int {.discardable.} =
@@ -2124,9 +2190,9 @@ proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
   ## once on the whole module; nil ⇒ every call conservatively clears. `m` is the
   ## module type context (proc params already registered in the current scope) —
   ## nil falls back to the coarse, type-agnostic alias partition.
-  var ctx = createContext(addr buf, moduleSuffix, summaries)
-  ctx.m = m                          # type context: skip value-CSE of aggregates
-  ctx.resolver.m = m                 # foreign-summary fallback resolves through it
+  # `m`: type context (skips value-CSE of aggregates); the resolver's
+  # foreign-summary fallback resolves through it too.
+  var ctx = createContext(addr buf, summaries, m)
   ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
   registerParams(ctx, params)
   block:
@@ -2391,6 +2457,27 @@ when isMainModule:
       "(asgn y.0.M (dot (dot o.0.M a.0.M) f.0.M)) " &
       "(asgn (dot o.0.M a.0.M) 7))))")
 
+  block loop_pointer_field_store_not_hoisted:
+    # The loop advances the POINTER `t.p` the load goes through — an inlined
+    # cursor `inc`. The load reads `t.p` itself, so it is not invariant even
+    # though `*(t.p)` and `t.p` never name the same storage (`collectReadPaths`
+    # must report the pointer operand of a `deref`). Measured: hoisting it
+    # miscompiled nimsem's `nominalRoot` once `inc` was inlined into it.
+    # `t` is a body local whose address is never taken — the case where no
+    # pointer can reach it and only the path rule can say the store matters.
+    assertUnchanged(
+      "(stmts (var :t.0.M . Cursor.0.M .) (while c.0.M (stmts " &
+      "(asgn y.0.M (deref (dot t.0.M p.0.M))) " &
+      "(asgn (dot t.0.M p.0.M) q.0.M))))")
+
+  block pointer_field_store_kills_deref_load:
+    # Straight-line twin: after `t.p = q`, `*(t.p)` is a different load.
+    assertUnchanged(
+      "(stmts (var :t.0.M . Cursor.0.M .) " &
+      "(asgn y.0.M (deref (dot t.0.M p.0.M))) " &
+      "(asgn (dot t.0.M p.0.M) q.0.M) " &
+      "(asgn z.0.M (deref (dot t.0.M p.0.M))))")
+
   block loop_unknown_call_not_hoisted:
     # Unknown callee in the body may clobber `pp` → not invariant.
     assertUnchanged(
@@ -2443,7 +2530,7 @@ when isMainModule:
     # `SymId` keys line up; mirror that here via `sharedPool`.
     var body = parseFromBuffer(bodyIn, "M", 100,
                                sharedPool = mb.pool, sharedTags = createLengTagPool())
-    runCSE(body, "M", addr summaries)
+    runCSE(body, addr summaries)
     let got = toString(body)
     let want = canon(bodyExpected)
     doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
@@ -2454,7 +2541,7 @@ when isMainModule:
     var body = parseFromBuffer(bodyIn, "M", 100,
                                sharedPool = mb.pool, sharedTags = createLengTagPool())
     let before = toString(body)
-    runCSE(body, "M", addr summaries)
+    runCSE(body, addr summaries)
     doAssert toString(body) == before, "expected unchanged:\n  " & bodyIn
 
   block summary_disjoint_survives:

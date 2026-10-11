@@ -1,5 +1,7 @@
 (.nif27)
-(.indexat 128              )
+(.indexat 156              )
 (stmts@,2,tests/nimony/nosystem/tfloatliterals0.nim
- (discard -0.0@8)
- (discard@,1 0.0@8))(.index@,2,tests/nimony/nosystem/tfloatliterals0.nim)
+ (let :`x.0 . .
+  (f 64)-0.0@8)
+ (let@8 :`x.1 . .
+  (f 64)0.0@,1))(.index@,2,tests/nimony/nosystem/tfloatliterals0.nim)

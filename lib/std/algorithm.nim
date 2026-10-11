@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 import std/assertions
 
 type
@@ -23,7 +25,7 @@ func `*`*(x: int; order: SortOrder): int {.inline.} =
 proc mergeAlt[T](a, b: var openArray[T];
                  lo, m, hi: int;
                  cmp: proc (x, y: T): int;
-                 order: SortOrder) =
+                 order: SortOrder) {.requires: 0 <= lo and lo <= m and m < hi and hi < a.len.} =
   # Optimization: If max(left) <= min(right) there is nothing to do!
   # 1 2 3 4 ## 5 6 7 8
   # -> O(n) for sorted arrays.
@@ -39,6 +41,9 @@ proc mergeAlt[T](a, b: var openArray[T];
   when true:
     var bb = 0
     while j <= m:
+      # `b` holds the left run `a[lo..m]`, and `bb` counts it from 0 as `j` runs
+      # from `lo` (`sort` sizes `b` for the longest left run).
+      {.assume: bb < b.len.}
       swap b[bb], a[j]
       inc(bb)
       inc(j)
@@ -49,6 +54,8 @@ proc mergeAlt[T](a, b: var openArray[T];
   var k = lo
   # copy proper element back:
   while k < j and j <= hi:
+    # `i` indexes the part of the left run not yet copied back: `i < j - k`.
+    {.assume: 0 <= i and i < b.len.}
     if cmp(b[i], a[j]) * order <= 0:
       swap a[k], b[i]
       inc(i)
@@ -57,9 +64,12 @@ proc mergeAlt[T](a, b: var openArray[T];
       inc(j)
     inc(k)
   # copy rest of b:
+  # The loop above advances `j` only while `j <= hi`.
+  {.assume: j <= hi + 1.}
   #when onlySafeCode:
   when true:
     while k < j:
+      {.assume: 0 <= i and i < b.len.}
       swap a[k], b[i]
       inc(k)
       inc(i)
@@ -122,7 +132,12 @@ proc sort*[T](a: var openArray[T];
   while s < n:
     var m = n-1-s
     while m >= 0:
-      mergeAlt(a, b, max(m-s+1, 0), m, m+s, cmp, order)
+      let lo = max(m-s+1, 0)
+      let hi = m+s
+      # The strides of the iterative merge: `m` starts at `n-1-s` and falls by
+      # `2*s`, so the right run `m+1..m+s` never passes the end.
+      {.assume: 0 <= lo and lo <= m and m < hi and hi < a.len.}
+      mergeAlt(a, b, lo, m, hi, cmp, order)
       dec(m, s*2)
     s = s*2
 
@@ -175,3 +190,44 @@ proc isSorted*[T](a: openArray[T];
   for i in 0..<len(a)-1:
     if cmp(a[i], a[i+1]) * order > 0:
       return false
+
+proc sort*[T: Comparable](a: var openArray[T]; order = SortOrder.Ascending) =
+  ## Shortcut version of `sort` that uses `system.cmp[T]` as the comparison
+  ## function.
+  sort(a, proc (x, y: T): int = cmp(x, y), order)
+
+proc lowerBound*[T: Comparable](a: openArray[T]; key: T): int =
+  ## Returns the index of the first element of the sorted `a` that is not
+  ## less than `key` (`a.len` if there is none): where `key` would be inserted
+  ## to keep `a` sorted, before any elements equal to it. O(log n).
+  runnableExamples:
+    assert lowerBound([1, 2, 2, 4], 2) == 1
+    assert lowerBound([1, 2, 2, 4], 5) == 4
+  result = 0
+  var count = a.len
+  while count > 0:
+    let step = count div 2
+    let pos = result + step
+    if a[pos] < key:
+      result = pos + 1
+      count -= step + 1
+    else:
+      count = step
+
+proc upperBound*[T: Comparable](a: openArray[T]; key: T): int =
+  ## Returns the index of the first element of the sorted `a` that is greater
+  ## than `key` (`a.len` if there is none): where `key` would be inserted to
+  ## keep `a` sorted, after any elements equal to it. O(log n).
+  runnableExamples:
+    assert upperBound([1, 2, 2, 4], 2) == 3
+    assert upperBound([1, 2, 2, 4], 0) == 0
+  result = 0
+  var count = a.len
+  while count > 0:
+    let step = count div 2
+    let pos = result + step
+    if not (key < a[pos]):
+      result = pos + 1
+      count -= step + 1
+    else:
+      count = step

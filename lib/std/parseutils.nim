@@ -2,6 +2,7 @@
 ## identifiers, etc.
 
 {.feature: "lenientnils".}
+{.feature: "staticContracts".}
 
 # TODO: Replace `quit` with exceptions when it is implemented
 from std/syncio import quit
@@ -265,7 +266,7 @@ type
   BigDec = object
     ## value = 0.d[0..nd-1] * 10^dp  (sign in `neg`)
     d: array[MaxDecDigits, char]
-    nd: int
+    nd: range[0..MaxDecDigits]
     dp: int
     neg: bool
     trunc: bool     ## a nonzero digit fell off the end — the stored value is
@@ -299,6 +300,9 @@ func rightShiftBig(a: var BigDec; k: int) =
     let c = uint64(ord(a.d[r]) - ord('0'))
     let dig = n shr k
     n = n and mask
+    # Every digit read produces at most one digit written, and at least one was
+    # read before the first write: the write cursor trails the read cursor.
+    {.assume: w < r.}
     a.d[w] = chr(int(dig) + ord('0'))
     inc w
     n = n * 10'u64 + c
@@ -313,10 +317,12 @@ func rightShiftBig(a: var BigDec; k: int) =
     elif dig > 0'u64:
       a.trunc = true
     n = n * 10'u64
+  # the loops above write only below `MaxDecDigits`
+  {.assume: 0 <= w and w <= MaxDecDigits.}
   a.nd = w
   trimBig(a)
 
-func leftShiftBig(a: var BigDec; k: int) =
+func leftShiftBig(a: var BigDec; k: int) {.requires: 0 <= k and k <= MaxShift.} =
   ## a = a * 2^k, exactly. Digits are produced right to left into the region
   ## `[0, nd+delta)`; `delta` over-estimates by at most one, and the surplus
   ## shows up as unwritten leading slots, which the compaction below removes.
@@ -328,6 +334,9 @@ func leftShiftBig(a: var BigDec; k: int) =
     n = n + (uint64(ord(a.d[r]) - ord('0')) shl k)
     let quo = n div 10'u64
     let rem = n - 10'u64 * quo
+    # `delta` over-estimates the digits `k` shifts add, so there is always room
+    # to the left of the digit being written.
+    {.assume: 1 <= w.}
     dec w
     if w < MaxDecDigits: a.d[w] = chr(int(rem) + ord('0'))
     elif rem != 0'u64: a.trunc = true
@@ -336,6 +345,7 @@ func leftShiftBig(a: var BigDec; k: int) =
   while n > 0'u64:
     let quo = n div 10'u64
     let rem = n - 10'u64 * quo
+    {.assume: 1 <= w.}
     dec w
     if w < MaxDecDigits: a.d[w] = chr(int(rem) + ord('0'))
     elif rem != 0'u64: a.trunc = true
@@ -343,12 +353,18 @@ func leftShiftBig(a: var BigDec; k: int) =
   # `w` is the index of the most significant digit actually written: 0 when the
   # estimate was exact, 1 when it was one too generous.
   let stored = min(a.nd + delta, MaxDecDigits)
+  {.assume: 0 <= stored.} # `nd` and `delta` are both non-negative
   if w > 0:
-    var j = 0
-    while w + j < stored:
-      a.d[j] = a.d[w + j]
-      inc j
-    a.nd = j
+    var src = w
+    var dst = 0
+    while src < stored:
+      # `dst` trails `src` by `w`
+      {.assume: dst < src.}
+      a.d[dst] = a.d[src]
+      inc src
+      inc dst
+    {.assume: dst <= stored.}
+    a.nd = dst
   else:
     a.nd = stored
   a.dp = a.dp + delta - w
@@ -414,7 +430,7 @@ func floatBitsBig(a: var BigDec): uint64 =
       shiftBig(a, -n)
       exp = exp + n
     while a.dp < 0 or (a.dp == 0 and a.nd > 0 and a.d[0] < '5'):
-      let n = if -a.dp >= Log2Pow10Len: 27 else: Log2Pow10[-a.dp]
+      let n = if a.dp <= -Log2Pow10Len: 27 else: Log2Pow10[-a.dp]
       shiftBig(a, n)
       exp = exp - n
     # Binary floats are normalized to [1, 2), not [0.5, 1).
@@ -461,6 +477,7 @@ func decimalToFloat(buf: cstring): float64 {.noSideEffect.} =
     elif buf[i] != '0':
       a.trunc = true
     inc i
+  {.assume: nd <= MaxDecDigits.} # the loop above advances `nd` only below it
   a.nd = nd
   var se = nd                          # digits are integral: value = D * 10^exp
   if buf[i] == 'E' or buf[i] == 'e':
@@ -577,7 +594,8 @@ func parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
         expSign = -1
 
       inc(i)
-    if s[i] notin {'0'..'9'}:
+    # `inc` twice past `i+1 < s.len` can reach the end: "1e+" has no digit.
+    if i >= s.len or s[i] notin {'0'..'9'}:
       return 0
     while i < s.len and s[i] in {'0'..'9'}:
       exponent = exponent * 10 + (ord(s[i]) - ord('0'))
@@ -586,7 +604,10 @@ func parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
 
   var realExponent = expSign*exponent - fracExponent
   let expNegative = realExponent < 0
-  var absExponent = abs(realExponent)
+  # Not `abs`: `abs(low(int))` is negative, and the index below needs to know.
+  var absExponent: Natural = 0
+  if realExponent < 0: absExponent = -realExponent
+  else: absExponent = realExponent
 
   # if exponent greater than can be represented: +/- zero or infinity
   if absExponent > 999:
@@ -613,16 +634,20 @@ func parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
     # if exponent is greater try to fit extra exponent above 22 by multiplying
     # integer part is there is space left.
     let slop = 15 - kdigits - fdigits
+    # no digit count is negative (`slop` may well be: 16 digits get here too, but
+    # then no exponent above 22 fits and the branch below is not taken)
+    {.assume: slop <= 15.}
     if absExponent <= 22 + slop and not expNegative:
       number = sign * integer.float * powtens[slop] * powtens[absExponent-slop]
       return i
 
   # if failed: slow path with the exact decimal reader.
-  var t {.noinit.}: array[500, char] # flaviu says: 325 is the longest reasonable literal
+  const TLen = 500 # flaviu says: 325 is the longest reasonable literal
+  var t {.noinit.}: array[TLen, char]
   var ti = 0
-  let maxlen = t.len - 1 - "e+000".len # reserve enough space for exponent
+  const maxlen = TLen - 1 - "e+000".len # reserve enough space for exponent
 
-  let endPos = i
+  let endPos = min(i, s.len) # `i` never passed the end; `min` says so
   result = endPos
   i = 0
   # re-parse without error checking, any error should be handled by the code above.
@@ -635,6 +660,7 @@ func parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
       inc(i)
 
   # insert exponent
+  {.assume: ti <= maxlen.} # the loop above advances `ti` only below `maxlen`
   t[ti] = 'E'
   inc(ti)
   t[ti] = if expNegative: '-' else: '+'

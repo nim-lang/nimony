@@ -1,0 +1,2 @@
+5
+tests/nimony/rtchecks/treqsplit_indirect.nim(10, 24): 0 < x [AssertionDefect]

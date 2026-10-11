@@ -1045,3 +1045,18 @@ block: # toHex
   assert toHex(0xBEEF'u16) == "BEEF"
   assert toHex(0'u32) == "00000000"
   assert toHex(0xDEADBEEF'u32) == "DEADBEEF"
+
+block rfindTests:
+  let s = "foo.bar.baz"
+  assert s.rfind('.') == 7
+  assert s.rfind('x') == -1
+  assert s.rfind('.', last = 6) == 3
+  assert s.rfind('f', start = 1) == -1
+  assert s.rfind({'a', 'r'}) == 9
+  assert s.rfind({'q'}) == -1
+  assert s.rfind("ba") == 8
+  assert s.rfind("ba", last = 7) == 4
+  assert s.rfind("zz") == -1
+  assert s.rfind("") == 11
+  assert s.rfind("foo.bar.baz!") == -1
+  assert s[0 ..< s.rfind('.')] == "foo.bar"

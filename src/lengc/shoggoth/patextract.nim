@@ -34,10 +34,12 @@
 ## tool reads the pre-optimizer `<mod>.c.nif`. It always prefers an `.oc.nif`
 ## if one is present.
 
-import std / [os, osproc, strutils, assertions, syncio, parseopt]
+import std / [os, osproc, strutils, assertions, syncio, parseopt, dirs, paths]
 import ".." / ".." / "lib" / nifcoreparse  # re-exports nifcore
 import ".." / ".." / "gear2" / modnames    # moduleSuffix (canonical modname)
 import ".." / ".." / "lib" / argsfinder    # findArgs / processPathsFile
+
+include ".." / ".." / "lib" / compat2       # onRaiseQuit, path()
 
 proc findNimony(explicit: string): string =
   if explicit.len > 0: return explicit
@@ -140,9 +142,14 @@ proc patMain*(args: seq[string]) =
 
   # The trailing arg is the optional name substring; with --from there is no
   # .nim file, so the first positional is the substring.
-  let nameSubstr =
-    if fromFile.len > 0: (if files.len > 0: files[^1] else: "")
-    else: (if files.len > 1: files[1] else: "")
+  # (Plain assignments rather than a nested `if` expression: the self-hosted
+  # compiler's initialization analysis cannot prove the temp such an expression
+  # lowers to is always assigned.)
+  var nameSubstr = ""
+  if fromFile.len > 0:
+    if files.len > 0: nameSubstr = files[^1]
+  elif files.len > 1:
+    nameSubstr = files[1]
 
   if fromFile.len > 0:
     if not fileExists(fromFile): quit "no such file: " & fromFile
@@ -154,20 +161,27 @@ proc patMain*(args: seq[string]) =
   let nimFile = files[0]
   if not fileExists(nimFile): quit "no such file: " & nimFile
 
-  let tmp = if nimcache.len > 0: nimcache
-            else: getTempDir() / "patextract_" & extractFilename(nimFile).changeFileExt("")
-  removeDir(tmp)
-  createDir(tmp)
+  var tmp = nimcache
+  if tmp.len == 0:
+    tmp = getTempDir() / "patextract_" & extractFilename(nimFile).changeFileExt("")
+  # `dirs` takes a `Path` and is `{.raises.}` under Nimony; a patextract that
+  # cannot manage its scratch dir has nothing sensible to fall back to.
+  onRaiseQuit removeDir(path(tmp))
+  onRaiseQuit createDir(path(tmp))
   defer:
-    if not keep: removeDir(tmp)
+    if not keep: onRaiseQuit removeDir(path(tmp))
 
   let exe = findNimony(nimony)
-  var args = @["c", "-f", "--nimcache:" & tmp]
-  if runShoggoth: args.add "--opt:speed"
-  args.add nimFile
+  var cmd = @[exe, "c", "-f", "--nimcache:" & tmp]
+  if runShoggoth: cmd.add "--opt:speed"
+  cmd.add nimFile
   # Tolerate a non-zero exit: the `.c.nif` we want is emitted before the C
   # build / optimizer, so a later-stage failure still leaves it in nimcache.
-  let (outp, _) = execCmdEx(quoteShellCommand(@[exe] & args))
+  var outp = ""
+  try:
+    outp = execCmdEx(quoteShellCommand(cmd))[0]
+  except:
+    quit "patextract: cannot run " & exe
 
   let nif = moduleNif(tmp, nimFile)
   if nif.len == 0:

@@ -65,3 +65,5 @@ proc main =
   echo withLet(false, 100)
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

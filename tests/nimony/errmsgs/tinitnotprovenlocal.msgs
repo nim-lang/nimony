@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tinitnotprovenlocal.nim(13, 12) Error: cannot prove that x has been initialized [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tinitnotprovenlocal.nim(15, 1) Error: cannot prove that dest has been initialized [pass --verbose for the Final IR]

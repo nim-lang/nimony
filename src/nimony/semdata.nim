@@ -6,6 +6,11 @@
 
 ## Types required by semantic checking.
 
+when defined(nimony):
+  # `SemRoutine.parent` and the other back-links here are nilable chains: the
+  # outermost routine has no parent.
+  {.feature: "lenientnils".}
+
 import std / [tables, sets, hashes, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -21,10 +26,17 @@ type
     kind*: SymKind
     hasDefer*: bool
     inGeneric*, inLoop*, inBlock*, inInst*, inExcept*: int
+    breakTargets*: seq[SymId]
+      ## What an unlabeled `break` can leave, innermost last: `SymId(0)` for a
+      ## loop, the label for a `block` (only under `anonBlockBreaks`).
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma (e.g., ErrorCode, MyError)
     resId*: SymId
+    conceptBounds*: seq[TypeCursor]
+      ## `(at Concept ...)` invocations constraining the signature's typevars,
+      ## as in `C: Findable[T]`: their requirements are available on the
+      ## typevars passed to them.
     parent*: SemRoutine
 
 proc createSemRoutine*(kind: SymKind; parent: SemRoutine): SemRoutine =
@@ -49,7 +61,13 @@ type
   SemFlag* = enum
     KeepMagics
     AllowOverloads
+    KeepChoices  ## the consumer resolves a symbol choice itself (overload
+                 ## resolution against the formal parameter types), so lookup
+                 ## must not collapse it by scope distance nor call it
+                 ## ambiguous: context has not spoken yet
     PreferIterators
+    PreferTypes  ## a name in a type position: a symbol choice with exactly one
+                 ## type candidate means that type (see `semIdentImpl`)
     AllowUndeclared
     AllowModuleSym
     AllowEmpty
@@ -81,6 +99,9 @@ type
     flags*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma
     headerFileTok*: NifToken
+    defineKey*: string  ## `{.intdefine: "custom.key".}`: the command-line key to
+                        ## read the constant's value from. Empty means the
+                        ## constant's own name, which is the common case.
 
   ImportedModule* = object
     path*: string
@@ -166,7 +187,16 @@ type
       ## syms of type instantiations to add their declarations to module
     pendingSumtypes*: TokenBuf
       ## synthesized oneof type declarations to emit at module end
+    refObjOwners*: Table[SymId, SymId]
+      ## `T.Obj` → `T` for every `type T = ref|ptr object` split off by
+      ## `semTypeSection`. The split runs in `SemcheckTopLevelSyms`, but the
+      ## object body -- and with it a sum type's synthesized `anum` -- is
+      ## semchecked one phase later, by which time `T.Obj` is an ordinary
+      ## sibling declaration with nothing pointing back at `T`.
     includeStack*: seq[string]
+    templCallInfos*: seq[NifLineInfo]
+      ## call sites of the template expansions being semchecked, innermost
+      ## last; `instantiationInfo` reads the top
     importedModules*: OrderedTable[SymId, ImportedModule]
     selfModuleSym*: SymId
     instantiatedFrom*: seq[NifLineInfo]
@@ -218,6 +248,8 @@ type
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.
+    hostCommandLineArgs*: string # the same minus the target triple, for the
+                                 # compile-time-eval processes we build and RUN
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
@@ -229,6 +261,7 @@ type
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     toBundle*: TokenBuf ## `.bundle` custom-linker entries (link-step override)
+    toLink*: seq[string] ## absolute paths of the `.link`ed objects/libraries
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
@@ -329,10 +362,9 @@ proc typeToCanonAux(result: var string; c: var Cursor) =
     elif c.isSymbolDef:
       result.add " !symdef"
     elif c.isSymbol:
-      let s = pool.syms[c.symId]
-      if isInstantiation(s):
+      if pool.symIsInstantiation(c.symId):
         result.add " s\""
-        result.add removeModule(s)
+        result.add pool.symWithoutModule(c.symId)
         result.add '"'
       else:
         result.add " s"

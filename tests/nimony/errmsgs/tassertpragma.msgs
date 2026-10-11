@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tassertpragma.nim(9, 7) Error: assertion violated: x < 3 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tassertpragma.nim(12, 5) Error: cannot prove assertion: 0 <= i and i < len(s) [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tassertpragma.nim(17, 5) Error: cannot prove assertion: 1 < i [pass --verbose for the Final IR]

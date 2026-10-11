@@ -69,10 +69,8 @@ proc kindLabel(k: NimonyStmt): string =
   of GletS, TletS: "let"
   else: "?"
 
-proc basename(symName: string): string =
-  var work = symName
-  extractBasename(work)
-  result = work
+proc basename(sym: SymId): string =
+  result = pool.symBasename(sym)
 
 const UnreservedUrlChar = {'A'..'Z', 'a'..'z', '0'..'9', '-', '.', '_', '~'}
 proc urlEscape(s: string): string =
@@ -94,8 +92,8 @@ proc symHref(ctx: RenderCtx; sym: SymId): string =
   ## `<relative-path-to-target>#…`, computed as the relative path from the
   ## *current* page to the target page under the shared outdir, so the link
   ## works without any web-server config.
-  let s = pool.syms[sym]
-  let m = extractModule(s)
+  let s = pool.symString(sym)
+  let m = pool.symModule(sym)
   let anchor = urlEscape(s)
   if m.len == 0 or m == ctx.currentModule:
     return "#" & anchor
@@ -136,7 +134,7 @@ proc emitTyperef(b: var HtmlBuilder; ctx: RenderCtx; sym: SymId) =
   ## Cross-module-aware type reference. HTML: `<a class="typeref" href="…">name</a>`.
   ## NIF: `(typeref "href" "name")` — the href becomes the link target if a
   ## downstream tool wants to re-resolve.
-  let name = basename(pool.syms[sym])
+  let name = basename(sym)
   let href = symHref(ctx, sym)
   case b.format
   of hofHtml:
@@ -146,6 +144,23 @@ proc emitTyperef(b: var HtmlBuilder; ctx: RenderCtx; sym: SymId) =
     emitTag(b, "typeref"):
       emitText(b, href)
       emitText(b, name)
+
+const PrimTypeNames = [
+  "int", "int8", "int16", "int32", "int64",
+  "uint", "uint8", "uint16", "uint32", "uint64",
+  "float", "float32", "float64", "float128",
+  "bool", "char", "void", "pointer", "cstring",
+  "auto", "untyped", "typed"]
+  ## The builtin types the renderer writes as a bare name: they have no symbol
+  ## behind them, so nothing else in `emitSrcGen` can tell them apart from a
+  ## symbol whose `SymId` was lost. Names only — `set`, `array`, `range`,
+  ## `varargs` and `typedesc` reach the same fallback and are keywords, not
+  ## primitives, so they are deliberately not here.
+  ##
+  ## `int` is on the list for completeness and does not occur today: sem
+  ## resolves it to the target's width, so a source `int` reaches the doc
+  ## generator as `(i 64)` and renders as `int64`. Recovering the spelling
+  ## would mean carrying it through the whole type representation.
 
 proc emitPrim(b: var HtmlBuilder; name: string) =
   ## A primitive type rendered as a typeref-class span without a link target.
@@ -182,6 +197,10 @@ proc emitSrcGen(b: var HtmlBuilder; ctx: RenderCtx; g: SrcGen) =
         let cand = ctx.nameToSym.getOrDefault(frag, 0)
         if cand > 0:
           emitTyperef(b, ctx, SymId(cand))
+        elif frag in PrimTypeNames:
+          # Checked after the symbol lookup so a declared symbol always wins:
+          # this is a name match, and a name match is the weaker claim.
+          emitPrim(b, frag)
         else:
           emitName(b, frag)
     of tkSpaces:
@@ -264,7 +283,7 @@ proc summarise(doc: string): string =
 proc declAnchor(sym: SymId): string =
   ## Anchor id for a decl. Same value byte-for-byte as the URL fragment
   ## produced by `symHref`, so internal links land cleanly.
-  urlEscape(pool.syms[sym])
+  urlEscape(pool.symString(sym))
 
 template emitDeclItem(b: var HtmlBuilder; sym: SymId; body: untyped) =
   ## `<li id="…"><code>…</code></li>` (or NIF `(li "anchor" (code …))`).
@@ -281,8 +300,8 @@ template emitDeclItem(b: var HtmlBuilder; sym: SymId; body: untyped) =
 proc recordEntry(idx: var seq[DocIdxEntry]; sk: NimonyStmt; sym: SymId; doc: string) =
   idx.add DocIdxEntry(
     kind: kindLabel(sk),
-    basename: basename(pool.syms[sym]),
-    symid: pool.syms[sym],
+    basename: basename(sym),
+    symid: pool.symString(sym),
     summary: summarise(doc))
 
 proc isExported(exported: Cursor): bool =
@@ -302,7 +321,7 @@ proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
     emitTag(b, "code"):
       emitKw(b, kindLabel(sk))
       emitText(b, " ")
-      emitName(b, basename(pool.syms[r.name.symId]))
+      emitName(b, basename(r.name.symId))
       emitOp(b, "(")
       var p = r.params
       if p.isTagLit and p.substructureKind == ParamsU:
@@ -312,7 +331,7 @@ proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
           if not first: emitOp(b, "; ")
           first = false
           let local = asLocal(p)
-          emitText(b, basename(pool.syms[local.name.symId]))
+          emitText(b, basename(local.name.symId))
           emitOp(b, ": ")
           var typ = local.typ
           renderTypeExpr(b, ctx,typ)
@@ -349,14 +368,14 @@ proc renderTypeDecl(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
       emitTagAttr(b, wrapper, [("class", "sig")]):
         emitKw(b, "type")
         emitText(b, " ")
-        emitName(b, basename(pool.syms[t.name.symId]))
+        emitName(b, basename(t.name.symId))
         emitOp(b, " = ")
         emitSrcGen(b, ctx, bodyG)
     else:
       emitTag(b, wrapper):
         emitKw(b, "type")
         emitText(b, " ")
-        emitName(b, basename(pool.syms[t.name.symId]))
+        emitName(b, basename(t.name.symId))
         if hasBody:
           emitOp(b, " = ")
           emitSrcGen(b, ctx, bodyG)
@@ -375,7 +394,7 @@ proc renderLocal(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
     emitTag(b, "code"):
       emitKw(b, kindLabel(sk))
       emitText(b, " ")
-      emitName(b, basename(pool.syms[l.name.symId]))
+      emitName(b, basename(l.name.symId))
       var typ = l.typ
       if typ.hasMore and typ.kind != DotToken:
         emitOp(b, ": ")
@@ -417,12 +436,11 @@ proc parseImports(n: var Cursor; ctx: var RenderCtx) =
 proc buildNameLookup(ctx: var RenderCtx) =
   for i in 1 ..< pool.syms.len:
     let sid = SymId(i)
-    let full = pool.syms[sid]
-    let modid = extractModule(full)
+    let full = pool.symString(sid)
+    let modid = pool.symModule(sid)
     if modid.len > 0 and modid != ctx.currentModule and modid notin ctx.importMap:
       continue
-    var base = full
-    extractBasename(base)
+    var base = pool.symBasename(sid)
     if base.len == 0: continue
     let old = ctx.nameToSym.getOrDefault(base, 0)
     if old == 0:

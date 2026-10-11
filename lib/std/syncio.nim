@@ -1,42 +1,10 @@
 {.feature: "lenientnils".}
+{.feature: "staticContracts".}
 
 import std/formatfloat
 
-type
-  FileMode* = enum       ## The file mode when opening a file.
-    fmRead,              ## Open the file for read access only.
-                         ## If the file does not exist, it will not
-                         ## be created.
-    fmWrite,             ## Open the file for write access only.
-                         ## If the file does not exist, it will be
-                         ## created. Existing files will be cleared!
-    fmReadWrite,         ## Open the file for read and write access.
-                         ## If the file does not exist, it will be
-                         ## created. Existing files will be cleared!
-    fmReadWriteExisting, ## Open the file for read and write access.
-                         ## If the file does not exist, it will not be
-                         ## created. The existing file will not be cleared.
-    fmAppend             ## Open the file for writing only; append data
-                         ## at the end. If the file does not exist, it
-                         ## will be created.
-
-  FileSeekPos* = enum    ## Position relative to which seek should happen.
-                         # The values are ordered so that they match with stdio
-                         # SEEK_SET, SEEK_CUR and SEEK_END respectively.
-    fspSet               ## Seek to absolute value
-    fspCur               ## Seek relative to current position
-    fspEnd               ## Seek relative to end
-
-  FilePermission* = enum   ## File access permission, modelled after UNIX.
-    fpUserExec,            ## execute access for the file owner
-    fpUserWrite,           ## write access for the file owner
-    fpUserRead,            ## read access for the file owner
-    fpGroupExec,           ## execute access for the group
-    fpGroupWrite,          ## write access for the group
-    fpGroupRead,           ## read access for the group
-    fpOthersExec,          ## execute access for others
-    fpOthersWrite,         ## write access for others
-    fpOthersRead           ## read access for others
+import std/commonio
+export commonio
 
 when defined(nimNativeIo):
   # Freestanding IO: a `File` is a small heap object holding the raw OS file
@@ -70,7 +38,7 @@ when defined(nimNativeIo):
       flags: set[FileFlag]
       wbuf: seq[char]      ## write buffer (grows on demand; empty for read-only streams)
       rbuf: seq[char]      ## read buffer
-      rpos: int            ## consume cursor into `rbuf`
+      rpos: Natural        ## consume cursor into `rbuf`
     File* = ref FileObj    ## The type representing a file handle.
 else:
   type
@@ -85,7 +53,6 @@ when defined(nimNativeIo):
     #     (bytes transferred; `0` read == EOF; negative == error) so the shared
     #     buffering below is identical on both platforms. ---------------------
     const ERROR_BROKEN_PIPE = 109'i32   ## writer end of a pipe was closed
-    const FILE_APPEND_DATA = 0x00000004'u32
 
     proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int =
       var written: int32 = 0
@@ -146,13 +113,6 @@ when defined(nimNativeIo):
     proc sysOpen(path: cstring; flags: cint): cint = -1
     proc sysClose(fd: OsFileHandle): cint = 0
     proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 = -1
-    const
-      O_RDONLY = 0'i32
-      O_WRONLY = 1'i32
-      O_RDWR = 2'i32
-      O_CREAT = 0o100'i32
-      O_TRUNC = 0o1000'i32
-      O_APPEND = 0o2000'i32
   else:
     # --- raw syscall wrappers (arkham lowers these to `syscall` instructions) -
     proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "write".}
@@ -171,26 +131,6 @@ when defined(nimNativeIo):
       proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
     proc sysClose(fd: OsFileHandle): cint {.importc: "close".}
     proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
-
-    when defined(macosx) or defined(macos) or defined(freebsd) or
-         defined(openbsd) or defined(netbsd) or defined(dragonfly):
-      const
-        # BSD/Darwin open(2) flags (differ from Linux; O_RDONLY/WRONLY/RDWR match).
-        O_RDONLY = 0x0000'i32
-        O_WRONLY = 0x0001'i32
-        O_RDWR   = 0x0002'i32
-        O_CREAT  = 0x0200'i32
-        O_TRUNC  = 0x0400'i32
-        O_APPEND = 0x0008'i32
-    else:
-      const
-        # Linux open(2) flags (stable across x86_64/arm64).
-        O_RDONLY = 0'i32
-        O_WRONLY = 1'i32
-        O_RDWR   = 2'i32
-        O_CREAT  = 0o100'i32
-        O_TRUNC  = 0o1000'i32
-        O_APPEND = 0o2000'i32
 
     proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
       File(fd: fd, flags: flags)
@@ -218,40 +158,78 @@ when defined(nimNativeIo):
       off += k
     result = true
 
-  proc flushImpl(f: File) =
-    if f.wbuf.len > 0:
-      if not rawWriteAll(f.fd, addr f.wbuf[0], f.wbuf.len):
-        f.flags.incl ffError
-      f.wbuf.setLen 0
+  # The buffer work is done on the object behind the `ref`: a field reached
+  # through a `ref` can be written by any alias, so only a `var FileObj`
+  # parameter makes `wbuf`/`rbuf` locations whose length a check can bound.
 
-  proc writeBytes(f: File; p: pointer; n: int) =
+  proc flushImpl(fo: var FileObj) =
+    if fo.wbuf.len > 0:
+      if not rawWriteAll(fo.fd, addr fo.wbuf[0], fo.wbuf.len):
+        fo.flags.incl ffError
+      fo.wbuf.setLen 0
+
+  proc flushImpl(f: File) {.inline.} = flushImpl(f[])
+
+  proc writeBytes(fo: var FileObj; p: pointer; n: int) =
     if n <= 0: return
-    let oldLen = f.wbuf.len
-    f.wbuf.setLen(oldLen + n)
-    copyMem(addr f.wbuf[oldLen], p, n)
-    if ffUnbuf in f.flags or f.wbuf.len >= NativeBufSize:
-      flushImpl f
+    let oldLen = fo.wbuf.len
+    fo.wbuf.setLen(oldLen + n)
+    if oldLen >= fo.wbuf.len:
+      # Out of memory: `setLen` could not grow the buffer, so it kept its old
+      # length and contents. `n` is positive, so a `setLen` that worked is
+      # strictly longer than `oldLen` -- the length is the signal either way.
+      fo.flags.incl ffError
+      return
+    copyMem(addr fo.wbuf[oldLen], p, n)
+    if ffUnbuf in fo.flags or fo.wbuf.len >= NativeBufSize:
+      flushImpl fo
 
-  proc fillBuf(f: File): bool =
+  proc writeBytes(f: File; p: pointer; n: int) {.inline.} = writeBytes(f[], p, n)
+
+  proc fillBuf(fo: var FileObj): bool =
     ## Refills `rbuf` from the fd. Returns false on EOF/error (and records which).
-    f.rbuf.setLen NativeBufSize
-    let k = sysRead(f.fd, addr f.rbuf[0], uint(NativeBufSize))
-    f.rpos = 0
+    fo.rbuf.setLen NativeBufSize
+    fo.rpos = 0
+    if fo.rbuf.len < NativeBufSize:
+      # out of memory: `setLen` could not grow the buffer, so it is still short
+      fo.flags.incl ffError
+      return false
+    let k = sysRead(fo.fd, addr fo.rbuf[0], uint(NativeBufSize))
     if k > 0:
-      f.rbuf.setLen k
+      fo.rbuf.setLen k
       result = true
     else:
-      f.rbuf.setLen 0
-      if k < 0: f.flags.incl ffError
-      else: f.flags.incl ffEof
+      fo.rbuf.setLen 0
+      if k < 0: fo.flags.incl ffError
+      else: fo.flags.incl ffEof
       result = false
 
-  proc readByte(f: File): int =
+  proc fillBuf(f: File): bool {.inline.} = fillBuf(f[])
+
+  proc readByte(fo: var FileObj): int =
     ## Returns the next byte as 0..255, or -1 at EOF/error.
-    if f.rpos >= f.rbuf.len:
-      if not fillBuf(f): return -1
-    result = int(f.rbuf[f.rpos])
-    inc f.rpos
+    result = -1
+    while true:
+      if fo.rpos < fo.rbuf.len:
+        result = int(fo.rbuf[fo.rpos])
+        inc fo.rpos
+        break
+      if not fillBuf(fo): break
+
+  proc readByte(f: File): int {.inline.} = readByte(f[])
+
+  proc readInto(fo: var FileObj; dest: ptr UncheckedArray[char]; size: int): int =
+    var off = 0
+    while off < size:
+      if fo.rpos >= fo.rbuf.len:
+        if not fillBuf(fo): break
+        continue
+      var take: Natural = fo.rbuf.len - fo.rpos
+      if take > size - off: take = size - off
+      copyMem(addr dest[off], addr fo.rbuf[fo.rpos], take)
+      fo.rpos = fo.rpos + take
+      off += take
+    result = off
 
   proc flushStdStreams() {.nimcall.} =
     ## Registered with `system/exits` so every process exit flushes the buffered
@@ -277,8 +255,9 @@ when defined(nimNativeIo):
     f = newFile(fd, fileFlags)
     result = true
 else:
+  # Bindings to C's stdio objects, which lock internally: read-only here.
   when defined(macos) or defined(macosx):
-    var
+    let
       stdin* {.importc: "__stdinp", header: "<stdio.h>".}: File
         ## Standard input file handle.
       stdout* {.importc: "__stdoutp", header: "<stdio.h>".}: File
@@ -286,7 +265,7 @@ else:
       stderr* {.importc: "__stderrp", header: "<stdio.h>".}: File
         ## Standard error file handle.
   else:
-    var
+    let
       stdin* {.importc: "stdin", header: "<stdio.h>".}: File
         ## Standard input file handle.
       stdout* {.importc: "stdout", header: "<stdio.h>".}: File
@@ -385,16 +364,7 @@ proc writeBuffer*(f: File; buffer: pointer; size: int): int =
 proc readBuffer*(f: File; buffer: pointer; size: int): int =
   ## Reads raw bytes from a file.
   when defined(nimNativeIo):
-    var off = 0
-    let dest = cast[ptr UncheckedArray[char]](buffer)
-    while off < size:
-      if f.rpos >= f.rbuf.len:
-        if not fillBuf(f): break
-      let take = min(f.rbuf.len - f.rpos, size - off)
-      copyMem(addr dest[off], addr f.rbuf[f.rpos], take)
-      f.rpos += take
-      off += take
-    result = off
+    result = readInto(f[], cast[ptr UncheckedArray[char]](buffer), size)
   else:
     result = cast[int](c_fread(buffer, 1'u, cast[uint](size), f))
 
@@ -415,6 +385,13 @@ else:
 
   const IOFBF = 0'i32  ## _IOFBF; 0 on glibc/musl, Darwin and Windows alike
 
+when defined(nimNativeIo):
+  proc nativeFileFlags(mode: FileMode): set[FileFlag] =
+    case mode
+    of fmRead: {ffReadable}
+    of fmWrite, fmAppend: {ffWritable}
+    of fmReadWrite, fmReadWriteExisting: {ffReadable, ffWritable}
+
 proc open*(f: out File; filename: string;
            mode: FileMode = fmRead;
            bufSize: int = -1): bool =
@@ -422,30 +399,12 @@ proc open*(f: out File; filename: string;
   ## Returns whether the open succeeded.
   when defined(nimNativeIo) and defined(windows):
     # `bufSize` is advisory only: the buffers are `seq[char]` and grow on demand.
-    var desiredAccess, shareMode, disposition: DWORD
-    var fileFlags: set[FileFlag]
-    shareMode = FILE_SHARE_READ or FILE_SHARE_WRITE
-    case mode
-    of fmRead:
-      desiredAccess = GENERIC_READ; disposition = OPEN_EXISTING
-      fileFlags = {ffReadable}
-    of fmWrite:
-      desiredAccess = GENERIC_WRITE; disposition = CREATE_ALWAYS
-      fileFlags = {ffWritable}
-    of fmReadWrite:
-      desiredAccess = GENERIC_READ or GENERIC_WRITE; disposition = CREATE_ALWAYS
-      fileFlags = {ffReadable, ffWritable}
-    of fmReadWriteExisting:
-      desiredAccess = GENERIC_READ or GENERIC_WRITE; disposition = OPEN_EXISTING
-      fileFlags = {ffReadable, ffWritable}
-    of fmAppend:
-      # FILE_APPEND_DATA makes every write land at end-of-file — the Win32
-      # counterpart of POSIX `O_APPEND` (no initial seek needed).
-      desiredAccess = FILE_APPEND_DATA; disposition = OPEN_ALWAYS
-      fileFlags = {ffWritable}
+    let (access, disposition) = win32OpenArgs(mode)
+    let fileFlags = nativeFileFlags(mode)
     var tmpFilename = filename
     let h = createFileW(newWideCString(tmpFilename).toWideCString,
-                        desiredAccess, shareMode, nil, disposition,
+                        DWORD(access), FILE_SHARE_READ or FILE_SHARE_WRITE,
+                        nil, DWORD(disposition),
                         FILE_ATTRIBUTE_NORMAL, Handle 0)
     if h == INVALID_HANDLE_VALUE:
       f = nil
@@ -455,19 +414,8 @@ proc open*(f: out File; filename: string;
       result = true
   elif defined(nimNativeIo):
     # `bufSize` is advisory only: the buffers are `seq[char]` and grow on demand.
-    var flags: cint
-    var fileFlags: set[FileFlag]
-    case mode
-    of fmRead:
-      flags = O_RDONLY; fileFlags = {ffReadable}
-    of fmWrite:
-      flags = O_WRONLY or O_CREAT or O_TRUNC; fileFlags = {ffWritable}
-    of fmReadWrite:
-      flags = O_RDWR or O_CREAT or O_TRUNC; fileFlags = {ffReadable, ffWritable}
-    of fmReadWriteExisting:
-      flags = O_RDWR; fileFlags = {ffReadable, ffWritable}
-    of fmAppend:
-      flags = O_WRONLY or O_CREAT or O_APPEND; fileFlags = {ffWritable}
+    let flags = cint(posixOpenFlags(mode))
+    let fileFlags = nativeFileFlags(mode)
     var tmpFilename = filename.terminatingZero()
     let rawFilename = cast[cstring](readRawData(tmpFilename))
     let fd = sysOpen(rawFilename, flags, 0o666'i32)
@@ -630,6 +578,20 @@ proc writeFile*(filename, content: string) {.raises.} =
       f.write content
     finally:
       close(f)
+  else:
+    raise IOError
+
+proc writeFile*(filename: string; content: openArray[byte]) {.raises.} =
+  ## Opens `filename` for writing, writes the bytes of `content`, and closes
+  ## the file. Raises `IOError` if the file cannot be opened or fully written.
+  var f: File
+  if open(f, filename, fmWrite):
+    var written = content.len
+    if content.len > 0:
+      written = writeBuffer(f, addr content[0], content.len)
+    close(f)
+    if written != content.len:
+      raise IOError
   else:
     raise IOError
 

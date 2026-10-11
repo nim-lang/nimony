@@ -275,16 +275,6 @@ proc walk(a: var Aliasing; m: ptr MainModule; n: var Cursor) =
       while c.hasMore: skip c
     connect(a, m, destStart, srcStart)
     skip n
-  of StoreS:                       # (store src dest) — reversed operands
-    var c = n
-    var srcStart, destStart: Cursor
-    c.into:
-      srcStart = c
-      skip c
-      destStart = c
-      while c.hasMore: skip c
-    connect(a, m, destStart, srcStart)
-    skip n
   of VarS, GvarS, TvarS, ConstS:   # (var name pragmas type init)
     var c = n
     var nameStart: Cursor

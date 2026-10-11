@@ -637,6 +637,36 @@ and embedded source context; `orig` lets the diagnostic location and embedded
 source context differ.
 
 
+### Parsing Nim code: `nimparser`
+
+A plugin that finds it easier to write Nim than to build its trees can have
+the text parsed. `nimparser` is a module of its own, next to `plugins`, so that
+only the plugins that import it compile a Nim parser:
+
+```nim
+import plugins, nimparser
+
+proc tr(n: NifCursor): NifBuilder =
+  var code = parseStmt("echo " & $2 & " * 21", n.info)
+  result = createTree()
+  result.takeTree code
+```
+
+```nim
+proc parseStmt*(code: string; info = NoLineInfo): NifCursor
+proc parseExpr*(code: string; info = NoLineInfo): NifCursor
+```
+
+`parseStmt` returns a cursor at `(stmts ...)`; `parseExpr` one at exactly one
+expression and rejects anything else. The cursor keeps its tree alive. The tree
+is the one the parser writes for a `.nim` file, so it can be spliced into the
+output as it is. Every node is
+positioned at `info`. A syntax error comes back as an error tree at `info`,
+whose message says where in `code` the error is.
+
+`std/macros` offers the same two procs, returning a `NimNode`.
+
+
 ### Validation
 
 The compiler performs a validation of the plugin code. If the plugin code is invalid, it is rejected. The details of this validation process are still work-in-progress and deliberately not documented yet.

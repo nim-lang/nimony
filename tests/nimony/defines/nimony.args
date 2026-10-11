@@ -1,0 +1,6 @@
+--define:tdefInt=42
+--define:tdefBool
+--define:tdefStr=hello
+--define:my.key=7
+--define:tdefColon:10
+--define:tdefOff=false

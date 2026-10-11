@@ -1,18 +1,18 @@
 (.nif27)
-(.indexat 660              )
+(.indexat 835              )
 (stmts@,1,tests/nimony/nosystem/twhen.nim
  (import
   (kv mwhzgh6nt1 "tests/nimony/nosystem/deps/mwhen.nim"))
  (stmts@2,3
-  (discard "good"@8))
+  (let :`x.0 . . string.0.sysvq0asl "good"@8))
  (stmts@2,A
-  (discard "good"@8))
+  (let :`x.1 . . string.0.sysvq0asl "good"@8))
  (stmts@2,D
-  (discard "good"@8))
+  (let :`x.2 . . string.0.sysvq0asl "good"@8))
  (stmts@2,K
-  (discard "good"@8))
+  (let :`x.3 . . string.0.sysvq0asl "good"@8))
  (stmts@2,P
-  (discard "good"@8))
+  (let :`x.4 . . string.0.sysvq0asl "good"@8))
  (proc@,R :not.0.@5
   (not). .
   (params@B
@@ -22,8 +22,8 @@
   (pragmas@R
    (magic@2 Not@7)). .)
  (stmts@2,W
-  (discard "good"@8))
+  (let :`x.5 . . string.0.sysvq0asl "good"@8))
  (stmts@2,Z
-  (discard "good"@8))
+  (let :`x.6 . . string.0.sysvq0asl "good"@8))
  (comment@A,Z true.0.mwhzgh6nt1 false.0.mwhzgh6nt1 isMainModule.0.mwhzgh6nt1 bool.0.mwhzgh6nt1@5,~8 bool.0.mwhzgh6nt1@1,~8 true.0.mwhzgh6nt1@1,~8))(.index@,1,tests/nimony/nosystem/twhen.nim
- (x not.0. 316))
+ (x not.0. 441))

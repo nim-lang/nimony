@@ -45,5 +45,41 @@ type
   Composite[A, B: static[int]] = object
     s: Span[bump(A)]
 
-func foo[A, B: static[int]](): Span[bump(A)] = B
-assert foo[2, 3]() == 3
+func foo[A, B: static[int]](): Span[bump(A)] = bump(B)
+
+let f = foo[2, 1]()
+assert typeof(f) is Span[3]
+assert typeof(f) is range[0..3]
+assert f == 2
+
+proc makeSized[N: static[int]; T: HasDefault](): Sized[N, T] = Sized[N, T]()
+
+let s2 = makeSized[5, int]()
+assert sizeof(s2.data) == 48, "makeSized[5, int]() default-constructs array[6, int]"
+
+proc makeGrid[R, C: static[int]; T](): Grid[R, C, T] = Grid[R, C, T]()
+
+let g2 = makeGrid[2, 3, int]()
+assert sizeof(g2.data) == 56, "makeGrid[2, 3, int]() default-constructs array[7, int]"
+
+# issue #2583: field symbols inside a static object value are not typevars
+type
+  Tag = object
+    n: int
+  Box[S: static[Tag]] = object
+
+template sameBox[S1, S2: static[Tag]](x: Box[S1], y: Box[S2]): bool =
+  when Box[S1] is Box[S2]:
+    true
+  else:
+    false
+
+func wrapped[S1, S2: static[Tag]](x: Box[S1], y: Box[S2]): bool =
+  sameBox(x, y)
+
+const tagA = Tag(n: 1)
+const tagB = Tag(n: 2)
+var boxA: Box[tagA]
+var boxB: Box[tagB]
+assert not wrapped(boxA, boxB)
+assert wrapped(boxA, boxA)

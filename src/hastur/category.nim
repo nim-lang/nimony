@@ -12,6 +12,10 @@ type
     Compat # compatibility mode tests
     Valgrind # valgrind tests
     Optimized # tests compiled with --opt:speed (exercise the shoggoth passes)
+    Bench # `bench/`: compiled with `-d:benchSmoke`, which shrinks each
+          # benchmark's workload to a deterministic smoke run. The suite's
+          # question is "does it still build and still compute the same
+          # numbers", not "how fast is it" — a duration has no golden.
     Skip # `hastur.mode = skip`: the tree walk ignores this directory and its
          # subtree (non-suite dirs: fixtures, inputs owned by another runner)
 
@@ -20,6 +24,7 @@ proc toCommand*(cat: Category): string =
   of Basics: "m"
   of Tracked: "check --silentMake"
   of Optimized: "c --silentMake --opt:speed"
+  of Bench: "c --silentMake -d:benchSmoke"
   of Normal, Compat, Valgrind, Skip: "c --silentMake"
 
 const ModeFile* = "hastur.mode"
@@ -39,6 +44,7 @@ proc parseMode*(s, src: string): Category =
   of "compat": Compat
   of "valgrind": Valgrind
   of "opt", "optimized": Optimized
+  of "bench": Bench
   of "skip": Skip
   else: quit "invalid mode '" & s.strip & "' in " & src
 

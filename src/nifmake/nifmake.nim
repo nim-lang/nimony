@@ -10,6 +10,10 @@
 
 import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm, terminal]
 import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifpools, nimversion]
+when defined(windows):
+  import std/winlean
+else:
+  import std/posix
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[
@@ -57,14 +61,24 @@ type
     tokens*: TokenBuf
     ext*: string
 
+  InputsOf* = object
+    cmd*: string      ## the command whose nodes' outputs are meant
+    suffix*: string   ## only the outputs ending in this; "" = all of them
+
   Node* = object
     cmdIdx*: int      # index into Dag.commands
     inputs*: seq[string]
     outputs*: seq[string]
     args*: seq[string]
     deps*: seq[int]   # node IDs this depends on
+    inputsOf*: seq[InputsOf]
+      ## commands whose outputs are inputs of this node; expanded into
+      ## `inputs` once the whole file is parsed (see `expandInputsOf`)
     state*: NodeState
     depth*: int       # depth in the DAG for parallel execution
+    atomic*: bool
+      ## `(atomic)`: the command writes to temporary files that replace the
+      ## outputs only once it succeeded, see `runDag`
 
   Dag* = object
     nodes*: seq[Node]
@@ -79,10 +93,21 @@ type
   CliOption = enum
     Parallel, Force, Rerun, Verbose, Profile, Report, Progress
 
+  CmdStats = object
+    sec: float
+    count: int
+    peakKiB, sumKiB: int  ## peak RSS of the hungriest invocation / all summed
+    peakLabel: string     ## the node that hit `peakKiB`
+
   ProfileData* = object
     parseTime: float
     dagSetupTime: float
-    cmdTime: Table[string, tuple[sec: float, count: int]]
+    cmdStats: Table[string, CmdStats]
+    heaviest: seq[tuple[kib: int, cmdName, label: string]]
+      ## the `HeaviestShown` hungriest nodes, descending
+    spans: seq[tuple[start, finish: int64, kib: int]]
+      ## lifetime (monotonic nanoseconds) and peak RSS of every executed node;
+      ## `concurrentPeak` sweeps these for the build's memory high-water mark
     execWallTime: float
 
 proc addSpace(result: var string) {.inline.} =
@@ -176,7 +201,8 @@ proc registerCommand(dag: var Dag; cmdName: string; ext: string): int =
   dag.commands.add Command(name: cmdName, ext: ext)
 
 proc addNode(dag: var Dag; cmdName: string;
-             inputs, outputs, args: sink seq[string]; ext: string): int =
+             inputs, outputs, args: sink seq[string]; ext: string;
+             inputsOf: sink seq[InputsOf] = @[]; atomic = false): int =
   ## Add a build node to the DAG and return its ID
   result = dag.nodes.len
   let cmdIdx = registerCommand(dag, cmdName, ext)
@@ -186,14 +212,38 @@ proc addNode(dag: var Dag; cmdName: string;
     outputs: outputs,
     args: args,
     deps: @[],
+    inputsOf: inputsOf,
     state: nsUnvisited,
-    depth: 0
+    depth: 0,
+    atomic: atomic
   )
   dag.nodes.add(node)
 
   # Map outputs to this node
   for output in outputs:
     dag.nameToId[output] = result
+
+proc expandInputsOf(dag: var Dag) =
+  ## Turn each node's `(inputsof <cmd> ["suffix"])` entries into ordinary
+  ## inputs: every output of every node that runs `<cmd>`, or those of them
+  ## that end in `suffix`. Done as a post-pass because a `do` rule may name a
+  ## command whose nodes appear later in the file.
+  var byCommand = initTable[string, seq[string]]()
+  for node in dag.nodes:
+    let name = dag.commands[node.cmdIdx].name
+    if name notin byCommand: byCommand[name] = @[]
+    for output in node.outputs:
+      byCommand[name].add output
+  for nodeId in 0 ..< dag.nodes.len:
+    if dag.nodes[nodeId].inputsOf.len == 0: continue
+    var seen = initHashSet[string]()
+    for input in dag.nodes[nodeId].inputs: seen.incl input
+    for x in dag.nodes[nodeId].inputsOf:
+      if x.cmd notin byCommand:
+        quit "`inputsof` names a command with no nodes: " & x.cmd
+      for output in byCommand[x.cmd]:
+        if output.endsWith(x.suffix) and not seen.containsOrIncl(output):
+          dag.nodes[nodeId].inputs.add output
 
 proc findDependencies(dag: var Dag; nodeId: int) =
   ## Find dependencies for a node and link them
@@ -205,19 +255,44 @@ proc findDependencies(dag: var Dag; nodeId: int) =
       if depId != nodeId and depId notin node.deps:
         node.deps.add(depId)
 
-proc removeOutdatedArtifacts(node: Node; opt: set[CliOption]) =
-  ## Remove outdated build artifacts for a node. Only used with --force;
-  ## removing before normal incremental builds breaks tools that use OnlyIfChanged.
+proc touchOutputs(node: Node; opt: set[CliOption]) =
+  ## `--force` gives every output a fresh mtime, including those a tool left
+  ## untouched via `OnlyIfChanged`. Done *after* the node ran, never by
+  ## deleting the outputs first: a const-eval or plugin sub-compile shares the
+  ## nimcache and may be reading them right now (writes are atomic renames,
+  ## so replacing a file under a reader is fine; removing it is not).
+  let now = getTime()
   for output in node.outputs:
     if vfsExists(output):
       try:
-        vfsRemove(output)
-        if Verbose in opt:
-          echo "Removed outdated artifact: ", output
+        setLastModificationTime(output, now)
       except:
-        stderr.writeLine "Warning: Could not remove outdated artifact: ", output
+        if Verbose in opt:
+          stderr.writeLine "Warning: Could not touch artifact: ", output
 
-proc needsRebuild(node: Node): bool =
+type
+  StatEntry = tuple[exists: bool, mtime: int64]
+  StatCache = object
+    ## Memoizes one `stat` per path for the length of a build. A node names
+    ## every module's Leng file (see `addInlineSourceInputs` in Nimony's
+    ## `deps.nim`), so the same path is asked about once per node: on a no-op
+    ## `nimsem` rebuild that was 88k `newfstatat` calls for ~1.3k distinct
+    ## files. Only a node writing its outputs can change what a `stat` says,
+    ## and `invalidate` is called exactly there.
+    entries: Table[string, StatEntry]
+
+proc stat(sc: var StatCache; path: string): StatEntry =
+  sc.entries.withValue(path, e):
+    return e[]
+  let exists = vfsExists(path)
+  result = (exists, if exists: vfsMtime(path) else: low(int64))
+  sc.entries[path] = result
+
+proc invalidate(sc: var StatCache; node: Node) =
+  for output in node.outputs:
+    sc.entries.del output
+
+proc needsRebuild(sc: var StatCache; node: Node): bool =
   ## Check if a node needs to be rebuilt
   result = false
 
@@ -226,28 +301,24 @@ proc needsRebuild(node: Node): bool =
   if node.outputs.len == 0:
     return true
 
-  # Check if any output is missing
-  for output in node.outputs:
-    if not vfsExists(output):
-      return true
-
   # Use the *freshest* output as the staleness reference (max instead of
-  # min). Tools may write some outputs OnlyIfChanged — when the content
-  # didn't change those preserve their old mtime. Using min would treat
-  # "preserved old" as the floor and re-fire the node forever even though
-  # some other output (always written) is fresh enough to prove "we ran
-  # since the inputs last changed".
+  # min). A node's interface files (Nimony's `doc/internals/ic.md`) are
+  # written only when they change and keep their old mtime otherwise; the
+  # node's main output is written on every run and proves "we ran since the
+  # inputs last changed". Using min would re-fire the node forever.
   var freshestOutput = low(int64)
   for output in node.outputs:
-    let outputTime = vfsMtime(output)
-    if outputTime > freshestOutput:
-      freshestOutput = outputTime
+    let o = sc.stat(output)
+    # A missing output is the one unconditional reason to run.
+    if not o.exists:
+      return true
+    if o.mtime > freshestOutput:
+      freshestOutput = o.mtime
 
   for input in node.inputs:
-    if vfsExists(input):
-      let inputTime = vfsMtime(input)
-      if inputTime > freshestOutput:
-        return true
+    let i = sc.stat(input)
+    if i.exists and i.mtime > freshestOutput:
+      return true
 
 proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDepth: var int): bool =
   case nodes[nodeId].state
@@ -271,12 +342,12 @@ proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDept
     result = true
 
 proc topologicalSort(dag: var Dag): seq[int] =
-  ## Perform topological sort on the DAG, then re-order by depth so the
-  ## scheduler in `runDag` can group same-depth nodes contiguously and
-  ## dispatch them via `execProcesses` in parallel. The DFS post-order is
-  ## already a valid topological order, but it interleaves depths — and
-  ## the `currentDepth`-batching loop downstream then sees one node per
-  ## batch and serializes the build.
+  ## Perform topological sort on the DAG, then re-order by depth. The DFS
+  ## post-order is already a valid topological order; sorting by depth on top
+  ## of it is what makes the order a useful dispatch PRIORITY for `runDag` —
+  ## among the nodes that are ready at the same moment, the one whose
+  ## dependency chain is shortest starts first, which keeps a parallel run
+  ## deterministic and puts the widest fan-out in front.
   result = @[]
   dag.maxDepth = 0
 
@@ -288,32 +359,44 @@ proc topologicalSort(dag: var Dag): seq[int] =
   let nodes = addr dag.nodes
   result.sort proc(a, b: int): int = cmp(nodes[a].depth, nodes[b].depth)
 
-proc executeCommand(command: string): bool =
-  ## Execute a shell command and return success status
-  try:
-    let exitCode = execShellCmd(command)
-    result = exitCode == 0
-  except:
-    result = false
-
-proc failed(arg: string) =
-  stdout.write "nifmake: "
-  stdout.writeLine arg
+proc failed(command: string; exitCode = 0) =
+  ## Name the command that failed. A build that fans out over many processes is
+  ## only debuggable if the output that a child left behind can be tied back to
+  ## the command that produced it -- a bare "SIGSEGV" in a CI log names neither
+  ## the tool nor the module it was working on.
+  stdout.write "nifmake: command failed"
+  if exitCode != 0:
+    stdout.write " (exit code "
+    stdout.write $exitCode
+    stdout.write ")"
+  stdout.write ": "
+  stdout.writeLine command
 
 proc toSeconds(d: Duration): float =
   float(d.inNanoseconds) / 1e9
 
-proc recordCmdTime(profile: var ProfileData; cmdName: string; sec: float) =
-  if cmdName notin profile.cmdTime:
-    profile.cmdTime[cmdName] = (0.0, 0)
-  var e = profile.cmdTime[cmdName]
-  e.sec += sec
-  e.count += 1
-  profile.cmdTime[cmdName] = e
+const HeaviestShown = 10
+
+proc recordCmd(profile: var ProfileData; cmdName, label: string;
+               start, finish: MonoTime; peakKiB: int) =
+  let e = addr profile.cmdStats.mgetOrPut(cmdName, CmdStats())
+  e.sec += toSeconds(finish - start)
+  inc e.count
+  e.sumKiB += peakKiB
+  if peakKiB > e.peakKiB:
+    e.peakKiB = peakKiB
+    e.peakLabel = label
+  if peakKiB > 0:
+    profile.spans.add (start.ticks, finish.ticks, peakKiB)
+    var i = profile.heaviest.len
+    while i > 0 and profile.heaviest[i-1].kib < peakKiB: dec i
+    if i < HeaviestShown:
+      profile.heaviest.insert((peakKiB, cmdName, label), i)
+      if profile.heaviest.len > HeaviestShown: profile.heaviest.setLen HeaviestShown
 
 type
   CmdStatus = enum
-    Enqueued, Running, Finished
+    Enqueued, Running, Finished, Failed
 
   Progressor = object
     ## Live percentage indicator. `total` is the number of nodes we expect to
@@ -329,17 +412,18 @@ proc nodeLabel(dag: Dag; node: Node): string =
   if node.outputs.len > 0: extractFilename(node.outputs[0])
   else: dag.commands[node.cmdIdx].name
 
-proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption]): int =
+proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption];
+                  sc: var StatCache): int =
   ## Estimate how many nodes will run, propagating staleness along the DAG:
   ## a node rebuilds if it is stale itself or any dependency will rebuild.
   ## `sortedNodes` is depth-ordered (deps first), so a single forward pass
-  ## suffices. This is an upper bound — a dependency written `OnlyIfChanged`
-  ## may not actually re-trigger its dependents — so the bar can finish a hair
-  ## early; the caller forces the final reading to `hi`.
+  ## suffices. This is an upper bound — an unchanged interface file does not
+  ## re-trigger its dependents — so the bar can finish a hair early; the
+  ## caller forces the final reading to `hi`.
   result = 0
   var willBuild = newSeq[bool](dag.nodes.len)
   for nodeId in sortedNodes:
-    var w = Force in opt or Rerun in opt or needsRebuild(dag.nodes[nodeId])
+    var w = Force in opt or Rerun in opt or needsRebuild(sc, dag.nodes[nodeId])
     if not w:
       for depId in dag.nodes[nodeId].deps:
         if willBuild[depId]: w = true; break
@@ -366,9 +450,167 @@ proc finish(p: Progressor) =
     stdout.write "\n"
     stdout.flushFile()
 
+type
+  Scheduler = object
+    ## Ready-queue state for `runDag`'s parallel path. `pending[n]` counts the
+    ## dependencies of `n` that have not completed yet; `successors[n]` is the
+    ## reverse edge that decrements them. `rank` is a node's position in the
+    ## topological order and is the dispatch priority, so a run stays
+    ## deterministic and deps-first.
+    pending: seq[int]
+    successors: seq[seq[int]]
+    rank: seq[int]
+    ready: seq[int]
+    done: int
+
+  RunningJob = object
+    process: Process
+    nodeId: int
+    command: string   # kept for the failure message
+    cmdName: string
+    label: string
+    start: MonoTime
+    tmpOutputs: seq[string]  # an `atomic` node's outputs, as written
+
+proc atomicTmpNames(node: Node; nodeId: int): seq[string] =
+  ## Where an `atomic` node's command writes its outputs instead. The names are
+  ## unique per nifmake process, so concurrent builds that share an output --
+  ## the objects of `.compile`d files in Nimony's cross-project
+  ## `nimcache_static/`, which every parallel test of a directory builds --
+  ## never write into the same file, and no reader ever sees a half-written
+  ## one: the output appears only by a rename, once complete.
+  result = @[]
+  let suffix = ".tmp" & $getCurrentProcessId() & "_" & $nodeId
+  for output in node.outputs:
+    result.add output & suffix
+
+proc commitAtomic(node: Node; tmpOutputs: seq[string]; success: bool) =
+  for i in 0 ..< tmpOutputs.len:
+    let tmp = tmpOutputs[i]
+    if success and fileExists(tmp):
+      try:
+        moveFile(tmp, node.outputs[i])
+      except OSError:
+        # Windows refuses to replace a file that is open, e.g. while another
+        # build links it. That build produced the same output the same way,
+        # so it is as good as ours.
+        if not fileExists(node.outputs[i]):
+          quit "nifmake: cannot move " & tmp & " to " & node.outputs[i]
+    if fileExists(tmp):
+      try: removeFile(tmp)
+      except OSError: discard
+
+proc initScheduler(dag: Dag; sortedNodes: seq[int]): Scheduler =
+  result = Scheduler(
+    pending: newSeq[int](dag.nodes.len),
+    successors: newSeq[seq[int]](dag.nodes.len),
+    rank: newSeq[int](dag.nodes.len),
+    ready: @[],
+    done: 0)
+  for r, nodeId in sortedNodes:
+    result.rank[nodeId] = r
+  for nodeId in sortedNodes:
+    # `deps` is already deduplicated by `findDependencies`, so one edge per
+    # producer and the count matches the number of releases.
+    for depId in dag.nodes[nodeId].deps:
+      result.successors[depId].add nodeId
+      inc result.pending[nodeId]
+  for nodeId in sortedNodes:
+    if result.pending[nodeId] == 0: result.ready.add nodeId
+
+proc takeReady(s: var Scheduler): int =
+  ## Remove and return the ready node that comes first in topological order.
+  var best = 0
+  for k in 1 ..< s.ready.len:
+    if s.rank[s.ready[k]] < s.rank[s.ready[best]]: best = k
+  result = s.ready[best]
+  s.ready.del best  # order within `ready` does not matter, `rank` decides
+
+proc complete(s: var Scheduler; nodeId: int) =
+  inc s.done
+  for succId in s.successors[nodeId]:
+    dec s.pending[succId]
+    if s.pending[succId] == 0:
+      s.ready.add succId
+
+when defined(windows):
+  type
+    ProcessMemoryCounters = object
+      cb, pageFaultCount: DWORD
+      peakWorkingSetSize, workingSetSize: uint
+      quotaPeakPagedPoolUsage, quotaPagedPoolUsage: uint
+      quotaPeakNonPagedPoolUsage, quotaNonPagedPoolUsage: uint
+      pagefileUsage, peakPagefileUsage: uint
+
+  proc getProcessMemoryInfo(process: Handle; counters: ptr ProcessMemoryCounters;
+                            cb: DWORD): WINBOOL {.
+    stdcall, dynlib: "kernel32", importc: "K32GetProcessMemoryInfo".}
+
+  proc peakKiBOf(p: Process): int =
+    ## Peak working set of a child that has just exited, 0 if Windows won't
+    ## say. The pid still resolves at this point ONLY because osproc's process
+    ## handle is still open: it is the last handle to the kernel object, and
+    ## `peekExitCode` (not just `close`) drops it. Call this before either of
+    ## them -- see `waitForAnyJob`. Wine (10.0) answers this only for the
+    ## calling process and denies it for any other, so under Wine the memory
+    ## column stays empty.
+    result = 0
+    let h = openProcess(PROCESS_QUERY_LIMITED_INFORMATION or PROCESS_VM_READ,
+                        0, DWORD(p.processID))
+    if h != 0:
+      var c = ProcessMemoryCounters(cb: DWORD(sizeof(ProcessMemoryCounters)))
+      if getProcessMemoryInfo(h, addr c, c.cb) != 0:
+        result = int(c.peakWorkingSetSize div 1024)
+      discard closeHandle(h)
+
+proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int): int =
+  ## Index of the first job in `pool` that has exited, with its exit code and
+  ## peak memory use (resident set, KiB).
+  result = 0
+  when defined(windows):
+    # A 1ms tick is far below the cheapest node in a real build (a `nifler`
+    # parse is ~2.5ms).
+    while true:
+      for idx in 0 ..< pool.len:
+        if not osproc.running(pool[idx].process):
+          # Order matters: `peekExitCode` closes the process handle (it calls
+          # osproc's `closeThreadAndProcessHandle`), that handle is the last
+          # one alive, and once the kernel object goes so does the pid --
+          # `openProcess` then fails with ERROR_INVALID_PARAMETER and the
+          # memory column reads 0. Sample the memory first.
+          peakKiB = peakKiBOf(pool[idx].process)
+          exitCode = try: peekExitCode(pool[idx].process) except CatchableError: -1
+          return idx
+      sleep 1
+  else:
+    # Reaps with `wait4` rather than through osproc because only `wait4` hands
+    # back the child's `ru_maxrss`, which covers the `sh -c` wrapper's own
+    # children too. Waiting on any child is fine: `pool` holds all of them.
+    # osproc never learns of the exit, so the caller must not ask it
+    # (`running`, `peekExitCode`); `close` does not wait and stays safe.
+    while true:
+      var status: cint = 0
+      var ru = default(Rusage)
+      # Unlike waitpid, illumos/Solaris wait4 uses 0 for any child;
+      # -1 selects process group 1 there and normally fails with ECHILD.
+      const anyChild = when defined(sunos): Pid(0)
+                       else: Pid(-1)
+      let pid = wait4(anyChild, addr status, 0, addr ru)
+      if pid < 0:
+        if errno == EINTR: continue
+        raiseOSError(osLastError())
+      for idx in 0 ..< pool.len:
+        if pool[idx].process.processID == int(pid):
+          exitCode = exitStatusLikeShell(status)
+          # macOS reports bytes, other supported implementations KiB.
+          # illumos leaves ru_maxrss unimplemented (0): no memory column.
+          peakKiB = when defined(macosx): int(ru.ru_maxrss) div 1024
+                    else: int(ru.ru_maxrss)
+          return idx
+
 var gMaxJobs = 0
-  ## Concurrency cap for `--parallel:N` / `-j:N` (0 = use all cores, the
-  ## `execProcesses` default). Set during option parsing, read in `runDag`.
+  ## Concurrency cap for `--parallel:N` / `-j:N` (0 = use all cores). Set
+  ## during option parsing, read in `runDag`.
 
 proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             progressLo = 0; progressHi = 100): bool =
@@ -379,6 +621,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
   if profile != nil:
     profile[].dagSetupTime = toSeconds(getMonoTime() - sortStart)
 
+  var sc = StatCache(entries: initTable[string, StatEntry]())
+
   # The live bar is routed only where it makes sense: it needs an interactive
   # terminal, and it must not corrupt `--verbose`'s line output or `--report`'s
   # machine-readable stdout.
@@ -386,102 +630,89 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     active: Progress in opt and Verbose notin opt and Report notin opt and isatty(stdout),
     done: 0, total: 0, lo: progressLo, hi: progressHi)
   if prog.active:
-    prog.total = countToBuild(dag, sortedNodes, opt)
+    prog.total = countToBuild(dag, sortedNodes, opt, sc)
     prog.draw("")  # paint the starting reading (lo%) right away
 
-  if Parallel in opt:
-    var i = 0
-    while i < sortedNodes.len:
-      let currentDepth = dag.nodes[sortedNodes[i]].depth
-      var commands: seq[string] = @[]
-      var nodeIds: seq[int] = @[]
-      var cmdNames: seq[string] = @[]
-      var labels: seq[string] = @[]  # captured by afterRunEvent (can't capture `dag`)
+  # Dataflow scheduling: a node starts as soon as *its own* dependencies are
+  # done, not when every node of its DAG depth is. The depth-barrier version
+  # this replaces made one slow node block every unrelated node one level
+  # below it — measured on a cold `nimsem` build, ~40 stdlib modules each
+  # waited 0.96s behind a single `nimversion` const-eval sub-compile they do
+  # not import. Staleness is still evaluated at dispatch time, after the
+  # dependencies have actually been written, so unchanged interface files keep
+  # pruning their dependents exactly as before. A sequential run is this with
+  # a single slot: `rank` dispatches in topological order.
+  let jobs = if Parallel notin opt: 1
+             elif gMaxJobs > 0: gMaxJobs
+             else: countProcessors()
+  var sched = initScheduler(dag, sortedNodes)
+  var pool: seq[RunningJob] = @[]
+  var aborted = false
+  let execStart = if profile != nil: getMonoTime() else: MonoTime()
 
-      # Collect all commands at the current depth
-      while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
-        let node = addr dag.nodes[sortedNodes[i]]
-        if Force in opt or Rerun in opt or needsRebuild(node[]):
-          if Force in opt:
-            removeOutdatedArtifacts(node[], opt)
-          if Verbose in opt:
-            echo "Building: ", node.outputs.join(", ")
-          let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
-          if Verbose in opt:
-            echo "Command: ", expandedCmd
-          commands.add(expandedCmd)
-          nodeIds.add(sortedNodes[i])
-          cmdNames.add(dag.commands[node.cmdIdx].name)
-          labels.add(nodeLabel(dag, node[]))
-        inc i
-
-      # Execute all commands at this depth in parallel
-      if commands.len > 0:
-        var progress = newSeq[CmdStatus](commands.len)
-        var startTimes = if profile != nil: newSeq[MonoTime](commands.len) else: @[]
-        if profile != nil: startTimes.setLen(commands.len)
-        let depthStart = if profile != nil: getMonoTime() else: MonoTime()
-
-        proc beforeRunEvent(idx: int) =
-          progress[idx] = Running
-          if profile != nil: startTimes[idx] = getMonoTime()
-
-        proc afterRunEvent(idx: int; p: Process) =
-          progress[idx] = Finished
-          inc prog.done
-          prog.draw(labels[idx])
-          if profile != nil:
-            let sec = toSeconds(getMonoTime() - startTimes[idx])
-            profile[].recordCmdTime(cmdNames[idx], sec)
-
-        let maxExitCode =
-          if gMaxJobs > 0:
-            execProcesses(commands, n = gMaxJobs,
-                          beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
-          else:
-            execProcesses(commands,
-                          beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
-        if profile != nil:
-          profile[].execWallTime += toSeconds(getMonoTime() - depthStart)
-        if maxExitCode != 0:
-          if prog.active:
-            stdout.write "\n"
-            stdout.flushFile()
-          for i, p in pairs(progress):
-            if p == Running:
-              failed commands[i]
-          return false
-  else:
-    # Sequential execution
-    for nodeId in sortedNodes:
+  while sched.done < sortedNodes.len:
+    # Dispatch everything that fits.
+    while not aborted and pool.len < jobs and sched.ready.len > 0:
+      let nodeId = sched.takeReady()
       let node = addr dag.nodes[nodeId]
-      if Force in opt or Rerun in opt or needsRebuild(node[]):
-        if Force in opt:
-          removeOutdatedArtifacts(node[], opt)
+      if Force in opt or Rerun in opt or needsRebuild(sc, node[]):
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
-        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
+        let tmpOutputs = if node.atomic: atomicTmpNames(node[], nodeId)
+                         else: @[]
+        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs,
+                                        (if node.atomic: tmpOutputs else: node.outputs),
+                                        node.args, dag.baseDir)
         if Verbose in opt:
           echo "Command: ", expandedCmd
-        let cmdName = dag.commands[node.cmdIdx].name
-        let start = if profile != nil: getMonoTime() else: MonoTime()
-        if not executeCommand(expandedCmd):
-          if profile != nil:
-            profile[].recordCmdTime(cmdName, toSeconds(getMonoTime() - start))
-          if prog.active:
-            stdout.write "\n"
-            stdout.flushFile()
-          failed expandedCmd
-          return false
-        inc prog.done
-        prog.draw(nodeLabel(dag, node[]))
-        if profile != nil:
-          let sec = toSeconds(getMonoTime() - start)
-          profile[].recordCmdTime(cmdName, sec)
-          profile[].execWallTime += sec
+        pool.add RunningJob(
+          process: startProcess(expandedCmd,
+                                options = {poStdErrToStdOut, poParentStreams, poEvalCommand}),
+          nodeId: nodeId,
+          command: expandedCmd,
+          cmdName: dag.commands[node.cmdIdx].name,
+          label: nodeLabel(dag, node[]),
+          start: (if profile != nil: getMonoTime() else: MonoTime()),
+          tmpOutputs: tmpOutputs)
       else:
         if Verbose in opt:
           echo "Up to date: ", node.outputs.join(", ")
+        sched.complete nodeId
+
+    if pool.len == 0:
+      # Nothing running and nothing ready: either the DAG is finished, or a
+      # failure left the rest unreachable.
+      break
+
+    var exitCode = 0
+    var peakKiB = 0
+    let k = waitForAnyJob(pool, exitCode, peakKiB)
+    let job = pool[k]
+    pool.del k
+    close job.process
+    if profile != nil:
+      profile[].recordCmd(job.cmdName, job.label, job.start, getMonoTime(),
+                          peakKiB)
+    inc prog.done
+    prog.draw job.label
+    if job.tmpOutputs.len > 0:
+      commitAtomic(dag.nodes[job.nodeId], job.tmpOutputs, exitCode == 0)
+    if exitCode == 0:
+      if Force in opt: touchOutputs(dag.nodes[job.nodeId], opt)
+      sc.invalidate dag.nodes[job.nodeId]
+      sched.complete job.nodeId
+    else:
+      if prog.active:
+        stdout.write "\n"
+        stdout.flushFile()
+      failed job.command, exitCode
+      aborted = true
+      inc sched.done
+
+  if profile != nil:
+    profile[].execWallTime += toSeconds(getMonoTime() - execStart)
+  if aborted:
+    return false
 
   prog.finish()
 
@@ -538,7 +769,7 @@ proc generateMakefile(dag: Dag; filename: string) =
 
 proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
   if n.kind == SymbolDef:
-    let cmdName = pool.syms[n.symId]
+    let cmdName = pool.symString(n.symId)
     inc n
 
     var tokens = createTokenBuf(4)
@@ -574,7 +805,7 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
 proc parseDoRule(n: var Cursor; dag: var Dag) =
   var cmdName: string
   if n.kind == Symbol:
-    cmdName = pool.syms[n.symId]
+    cmdName = pool.symString(n.symId)
     inc n
   elif n.kind == Ident:
     cmdName = n.strVal
@@ -585,6 +816,8 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
   var inputs: seq[string] = @[]
   var outputs: seq[string] = @[]
   var args: seq[string] = @[]
+  var inputsOf: seq[InputsOf] = @[]
+  var atomic = false
 
   # Parse imports and results
   while n.hasMore:
@@ -604,6 +837,26 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
             if n.kind == StrLit:
               args.add(n.strVal)
             inc n
+        elif tag == "atomic":
+          atomic = true
+        elif tag == "inputsof":
+          # "every output of every node running <cmd>" — the whole-program
+          # dependency a codegen node has on a phase that precedes it, written
+          # once instead of naming N files per node (which is N*N strings for
+          # N modules and dominated the .build.nif). A string after the
+          # command keeps only the outputs with that suffix.
+          var x = InputsOf(cmd: "", suffix: "")
+          while n.hasMore:
+            if n.kind == Ident:
+              x.cmd = n.strVal
+            elif n.kind == Symbol:
+              x.cmd = pool.symString(n.symId)
+            elif n.kind == StrLit:
+              x.suffix = n.strVal
+            inc n
+          if x.cmd.len == 0:
+            quit "`inputsof` without a command"
+          inputsOf.add x
         else:
           quit "unsupported tag in `do` definition: " & tag
         # Body must consume all children — mop up anything we didn't recognise.
@@ -611,7 +864,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
     else:
       quit "expected `input` or `output` in `do` definition, but found: " & $n.kind
 
-  discard addNode(dag, cmdName, inputs, outputs, args, ".args")
+  discard addNode(dag, cmdName, inputs, outputs, args, ".args", inputsOf, atomic)
 
 proc parseNifFile(filename: string; baseDir: sink string): Dag =
   ## Parse a .nif file and build the DAG
@@ -640,6 +893,11 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
         else:
           quit "expected statement in .nif file, but found: " & $n.kind
 
+  # `(inputsof cmd)` names a whole build phase; resolve it now that every node
+  # is known, then let `findDependencies` turn the filenames into edges as it
+  # does for any other input.
+  expandInputsOf(result)
+
   # Find dependencies between nodes
   for i in 0..<result.nodes.len:
     findDependencies(result, i)
@@ -658,14 +916,14 @@ Commands:
 
 Options:
   -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
-  --makefile <name>     Output Makefile name (default: Makefile)
-  --force               Force rebuild of all targets (removes their outputs first)
-  --rerun               Run every command regardless of staleness, but KEEP the
-                        existing outputs, so a tool writing OnlyIfChanged can
-                        still report "unchanged" and spare everything
-                        downstream. For a caller that knows the results are
-                        stale for a reason no input mtime can express — e.g.
-                        nimony when the compilation options changed.
+  --makefile:<name>     Output Makefile name (default: Makefile)
+  --force               Force rebuild of all targets
+  --rerun               Run every command regardless of staleness, but leave
+                        the outputs' mtimes to the tools, so an interface file
+                        that comes out unchanged still spares its dependents.
+                        For a caller that knows the results are stale for a
+                        reason no input mtime can express — e.g. nimony when
+                        the compilation options changed.
   --verbose             Show verbose output
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.
@@ -674,7 +932,7 @@ Options:
                         --report). The optional LO:HI range remaps the bar so a
                         caller running several builds can show one continuous
                         0..100% bar across them.
-  --profile             Print timing profile of executed commands to stderr.
+  --profile             Print time and peak memory of executed commands to stderr.
   --report              Print machine-readable per-command invocation
                         counts to stdout, e.g.
                           nifmake-report nimsem=2 hexer=1 total=3
@@ -683,7 +941,7 @@ Options:
 Examples:
   nifmake run build.nif
   nifmake makefile build.nif
-  nifmake --makefile build.mk makefile build.nif
+  nifmake --makefile:build.mk makefile build.nif
 """
   quit(0)
 
@@ -698,10 +956,10 @@ proc printReport(profile: ProfileData) =
   ## Zero-invocation runs print just `nifmake-report` (no entries) — that
   ## is the up-to-date signal used by the incremental-build regression
   ## test. Adds `total` as the sum across all commands.
-  var entries = newSeq[(string, int)](profile.cmdTime.len)
+  var entries = newSeq[(string, int)](profile.cmdStats.len)
   var i = 0
   var total = 0
-  for cmd, data in profile.cmdTime.pairs:
+  for cmd, data in profile.cmdStats.pairs:
     entries[i] = (cmd, data.count)
     inc i
     total += data.count
@@ -716,22 +974,61 @@ proc printReport(profile: ProfileData) =
   stdout.write $total
   stdout.write "\n"
 
+proc concurrentPeak(profile: ProfileData): tuple[kib, jobs: int] =
+  ## Upper bound on the whole build's memory high-water mark: sweeps the node
+  ## lifetimes and sums the peak RSS of everything alive at the same instant.
+  ## Pessimistic on purpose -- a process only sits at its peak briefly, but the
+  ## peaks are all `wait4` hands back, so this is the cheapest honest bound.
+  ## Note that the `peak` column above is a single process, which is why this
+  ## number can be much larger with `--parallel`.
+  result = (0, 0)
+  var events = newSeqOfCap[(int64, int)](profile.spans.len * 2)
+  for s in profile.spans:
+    events.add (s.start, s.kib)
+    events.add (s.finish, -s.kib)
+  # Ties must release before they acquire, otherwise a node that exits exactly
+  # as its successor starts is counted twice.
+  events.sort(proc (a, b: (int64, int)): int =
+    result = cmp(a[0], b[0])
+    if result == 0: result = cmp(a[1], b[1]))
+  var cur = 0
+  var live = 0
+  for (_, delta) in events:
+    cur += delta
+    if delta > 0: inc live else: dec live
+    if cur > result.kib: result = (cur, live)
+
+proc fmtKiB(kib: int): string =
+  if kib >= 1024 * 1024: formatFloat(kib / (1024 * 1024), ffDecimal, 1) & " GiB"
+  else: $(kib div 1024) & " MiB"
+
 proc printProfile(profile: ProfileData) =
   stderr.writeLine "\n--- nifmake profile ---"
   stderr.writeLine "  parse .nif:     ", profile.parseTime.formatFloat(ffDecimal, 3), "s"
   stderr.writeLine "  DAG setup:      ", profile.dagSetupTime.formatFloat(ffDecimal, 3), "s"
   stderr.writeLine "  executed commands:"
-  var entries = newSeq[(string, float, int)](profile.cmdTime.len)
-  var i = 0
-  for cmd, data in profile.cmdTime.pairs:
-    entries[i] = (cmd, data.sec, data.count)
-    inc i
-  entries.sort(proc(a, b: (string, float, int)): int = cmp(b[1], a[1]))
-  for (cmd, sec, count) in entries:
-    stderr.writeLine "    ", cmd.alignLeft(12), " ", sec.formatFloat(ffDecimal, 3).align(8), "s  (", count, " invocations)"
-  let execTotal = profile.cmdTime.values.toSeq.foldl(a + b.sec, 0.0)
+  var entries: seq[(string, CmdStats)] = @[]
+  for cmd, data in profile.cmdStats.pairs:
+    entries.add (cmd, data)
+  entries.sort(proc(a, b: (string, CmdStats)): int = cmp(b[1].sec, a[1].sec))
+  for (cmd, data) in entries:
+    var line = "    " & cmd.alignLeft(12) & " " & data.sec.formatFloat(ffDecimal, 3).align(8) &
+      "s  (" & $data.count & " invocations)"
+    if data.peakKiB > 0:
+      line.add "  peak " & fmtKiB(data.peakKiB) & " (" & data.peakLabel & "), avg " &
+        fmtKiB(data.sumKiB div data.count)
+    stderr.writeLine line
+  let execTotal = profile.cmdStats.values.toSeq.foldl(a + b.sec, 0.0)
   stderr.writeLine "  exec total:     ", execTotal.formatFloat(ffDecimal, 3), "s"
   stderr.writeLine "  wall time:      ", profile.execWallTime.formatFloat(ffDecimal, 3), "s"
+  let cp = concurrentPeak(profile)
+  if cp.kib > 0:
+    stderr.writeLine "  concurrent RSS: ", fmtKiB(cp.kib),
+      " (upper bound, ", $cp.jobs, " jobs live)"
+  if profile.heaviest.len > 0:
+    stderr.writeLine "  heaviest nodes (peak RSS):"
+    for h in profile.heaviest:
+      stderr.writeLine "    ", fmtKiB(h.kib).align(9), "  ", h.cmdName.alignLeft(12), " ", h.label
   stderr.writeLine "---"
 
 proc main() =
@@ -744,7 +1041,8 @@ proc main() =
     progressLo = 0
     progressHi = 100
 
-  for kind, key, val in getopt():
+  var p = initOptParser(allowWhitespaceAfterColon = false)
+  for kind, key, val in p.getopt():
     case kind
     of cmdArgument:
       case key.normalize
@@ -764,10 +1062,10 @@ proc main() =
       of "version", "v": writeVersion()
       of "parallel", "j":
         opt.incl Parallel
-        # `--parallel:N` / `-j:N` caps the per-depth fan-out at N processes;
+        # `--parallel:N` / `-j:N` caps the scheduler at N live processes;
         # bare `--parallel` (no value) keeps the all-cores default. Without this
-        # the value was discarded and every DAG depth ran on all cores, which
-        # OOMs large projects (e.g. nimbus under `nim ic -d:icJobs:N`).
+        # the value was discarded and the build ran on all cores, which OOMs
+        # large projects (e.g. nimbus under `nim ic -d:icJobs:N`).
         if val.len > 0:
           try:
             gMaxJobs = parseInt(val)
@@ -809,7 +1107,7 @@ proc main() =
       quit "Input file required for 'run' command"
 
     if Profile in opt or Report in opt:
-      var profile = ProfileData(cmdTime: initTable[string, tuple[sec: float, count: int]]())
+      var profile = ProfileData()
       let parseStart = getMonoTime()
       var dag = parseNifFile(inputFile, baseDir)
       profile.parseTime = toSeconds(getMonoTime() - parseStart)

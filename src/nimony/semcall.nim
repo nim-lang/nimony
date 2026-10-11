@@ -16,7 +16,7 @@ proc fetchCallableType(c: var SemContext; dest: var TokenBuf; n: Cursor; s: Sym)
         skipToLocalType d
       result = d
     else:
-      c.buildErr dest, n.info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
+      c.buildErr dest, n.info, "could not load symbol: " & pool.symString(s.name) & "; errorCode: " & $res.status
       result = c.types.autoType
 
 proc pickBestMatch(c: var SemContext; m: openArray[Match]; flags: set[SemFlag] = {}): int =
@@ -30,7 +30,7 @@ proc pickBestMatch(c: var SemContext; m: openArray[Match]; flags: set[SemFlag] =
         case cmpMatches(m[result], m[i], preferIterators = PreferIterators in flags)
         of NobodyWins:
           other = i
-          #echo "ambiguous ", pool.syms[m[result].fn.sym], " vs ", pool.syms[m[i].fn.sym]
+          #echo "ambiguous ", pool.symString(m[result].fn.sym), " vs ", pool.symString(m[i].fn.sym)
         of FirstWins:
           discard "result remains the same"
         of SecondWins:
@@ -69,7 +69,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           if n.exprKind in {DefinedX, DeclaredX, AstToStrX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX,
               ArratX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX, ProccallX, DelayX,
-              BindSymX, BindSymNameX}:
+              BindSymX, BindSymNameX, InstantiationinfoX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -110,14 +110,23 @@ proc typeofCallIs(c: var SemContext; dest: var TokenBuf; it: var Item; beforeCal
 
 proc deferPluginCall(c: var SemContext; dest: var TokenBuf; it: var Item;
                      beforeCall: int; info: NifLineInfo) =
-  ## The plugin answered `(deferexpansion)`. Rewrite the call into
-  ## `(at <template> <args>…)` and type it as `typedesc[…]`, so `exprToType`
-  ## installs that node as the type. `(at …)` is *already* nimony's unresolved
-  ## type application — the shape `Foo[T]` takes inside a generic body — so it
-  ## passes the post-sem validator in a type slot, compares with `sameTrees`,
-  ## and gets substituted by `subsGenericProc` for free. The instantiation's
-  ## re-sem then routes it through `semInvoke`, which recognizes the plugin head
-  ## and asks the plugin again, now with concrete arguments.
+  ## The plugin answered `(deferexpansion)`. Park the call as
+  ## `(pluginCall <template> <args>…)`. Its own tag is what makes it
+  ## unambiguous: `(at …)` also means subscript, explicit generic instantiation
+  ## and generic type invocation, so every pass that met one had to probe the
+  ## head to tell them apart. It survives `sameTrees` and `subsGenericProc`
+  ## like any other tree, and the instantiation's re-sem turns it back into a
+  ## call, which drives the plugin again with concrete arguments.
+  ##
+  ## The parked node's RESULT CATEGORY comes from the template's declared
+  ## return type, because nothing else can supply it: the plugin has produced
+  ## nothing to classify, and both categories are live (`distinctBase` returns a
+  ## type, a `thrice(n)` folder returns a value). A `typedesc` result is typed
+  ## `typedesc[…]` so that `exprToType` installs the node as the type; every
+  ## other result — `untyped` included — is a value, and the node stays an
+  ## ordinary expression of the declared type. An `untyped` plugin template
+  ## therefore behaves like an `untyped` template body: the enclosing expression
+  ## is left unchecked and re-checked once instantiation has substituted.
   ##
   ## Deferring is only well-founded when some argument can still change: with
   ## nothing left to substitute, the retry would ask the same question forever.
@@ -143,23 +152,41 @@ proc deferPluginCall(c: var SemContext; dest: var TokenBuf; it: var Item;
   var atBuf = createTokenBuf(16)
   block:
     var head = readonlyCursorAt(dest, beforeCall)
-    atBuf.addParLe(AtT, info)
+    atBuf.addParLe(PluginCallX, info)
     var ch = childCursor(head)
     while ch.hasMore:
       atBuf.addSubtree ch
       skip ch
     atBuf.addParRi()
     endRead head
-  let typeStart = dest.len
-  dest.addParLe(TypedescT, info)
+  var callee = SymId(0)
   block:
+    var head = readonlyCursorAt(dest, beforeCall)
+    let fn = childCursor(head)
+    if fn.isSymbol: callee = fn.symId
+    endRead head
+  if callee != SymId(0) and not pluginReturnsType(callee):
+    # a value: the `(at …)` node replaces the call as an ordinary expression
+    let retType = asRoutine(tryLoadSym(callee).decl).retType
+    let typeStart = dest.len
+    dest.addSubtree retType
+    it.typ = typeToCursor(c, dest, typeStart)
+    expectUnique dest
+    shrink dest, beforeCall
     var ab = beginRead(atBuf)
     dest.addSubtree ab
     endRead ab
-  dest.addParRi()
-  it.typ = typeToCursor(c, dest, typeStart)
-  expectUnique dest
-  shrink dest, typeStart
+  else:
+    let typeStart = dest.len
+    dest.addParLe(TypedescT, info)
+    block:
+      var ab = beginRead(atBuf)
+      dest.addSubtree ab
+      endRead ab
+    dest.addParRi()
+    it.typ = typeToCursor(c, dest, typeStart)
+    expectUnique dest
+    shrink dest, typeStart
 
 proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: SymId; beforeCall: int;
                      m: Match; flags: set[SemFlag]) =
@@ -199,10 +226,14 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # overload is what actually dec-refs. `callHead` counts too: both it and
     # the throwaway `readonlyCursorAt` that used to supply `.info` bumped the
     # rc and were never released, so `shrink` always took the copying path.
-    # `pastFn` is a plain `childCursor` copy sharing `callHead`'s ref, so it
-    # must not be released separately.
+    # `pastFn` counts too: `childCursor` builds its result with `result = c`,
+    # which runs Cursor's `=copy` and takes a ref of its OWN — it does not
+    # share `callHead`'s. Leaving it out kept the rc at 2 here and made every
+    # template expansion copy the module buffer anyway; `expectUnique` did not
+    # catch it because it only asserts under `-d:debug`.
     endRead args
     endRead firstVarargMatch
+    endRead pastFn
     endRead callHead
     if outcome == PluginDeferred:
       deferPluginCall c, dest, it, beforeCall, callInfo
@@ -233,9 +264,24 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # token instead and takes the `bypassVis` path.) Tokens in the expanded
     # tree that come from another file are call-site arguments substituted in,
     # and stay judged against the caller's module — see `visibilityModule`.
-    c.visOwner.add VisOwner(module: extractModule(pool.syms[fnId]),
+    c.visOwner.add VisOwner(module: pool.symModule(fnId),
                             file: res.decl.info.file.uint32)
-    semExpr c, dest, a, flags
+    c.templCallInfos.add callInfo
+    if outcome == PluginExpanded and c.phase == SemcheckBodies and
+        c.currentScope.kind == ToplevelScope and
+        (returnType.isDotToken or returnType.typeKind == VoidT):
+      # A toplevel statement is only sem'd in the body phase, so declarations
+      # a plugin expands to would skip the phases before it: no signature pass
+      # means a forward declaration is never matched with its implementation,
+      # and a routine cannot call one declared after it. Give the expansion
+      # every phase, as a toplevel `when` branch gets. Only a statement-shaped
+      # expansion can declare anything; an expression one (`echo foldr(...)`
+      # at the toplevel) must not have its gensyms run through phases meant
+      # for declarations.
+      semExprMissingPhases c, dest, a, SemcheckBodies
+    else:
+      semExpr c, dest, a, flags
+    discard c.templCallInfos.pop()
     case returnType.typeKind
     of UntypedT:
       # untyped return type ignored, maybe could be handled in commonType
@@ -264,7 +310,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     it.kind = a.kind
     typeofCallIs c, dest, it, beforeCall, a.typ
   else:
-    c.buildErr dest, it.n.info, "could not load symbol: " & pool.syms[fnId] & "; errorCode: " & $res.status
+    c.buildErr dest, it.n.info, "could not load symbol: " & pool.symString(fnId) & "; errorCode: " & $res.status
 
 type
   FnCandidates = object
@@ -284,11 +330,11 @@ proc conceptMethodAlreadyListed(cands: FnCandidates; routine: Cursor): bool =
 proc sameConceptMethod(a, b: FnCandidate): bool {.inline.} =
   sameConceptRoutineTrees(a.typ, b.typ, equivKinds = true)
 
-proc collectConceptMethodsFor(fn: StrId; concpt: Cursor): seq[FnCandidate] =
+proc collectConceptMethodsFor(fn: StrId; conceptSym: SymId; concpt: Cursor): seq[FnCandidate] =
   ## All routines named `fn` required by `concpt` (including its parents),
   ## deduplicated by signature shape.
   result = @[]
-  for _, routine in conceptHierarchyRoutines(concpt):
+  for _, _, routine in conceptHierarchyRoutines(conceptSym, concpt):
     var prc = routine
     inc prc
     if prc.isSymbolDef and sameIdent(prc.symId, fn):
@@ -301,7 +347,24 @@ proc collectConceptMethodsFor(fn: StrId; concpt: Cursor): seq[FnCandidate] =
         result.add FnCandidate(kind: routine.symKind, sym: prc.symId,
                                typ: routine, fromConcept: true)
 
-proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
+proc conceptMethodsForInvocation(c: var SemContext; fn: StrId; typ: Cursor): seq[FnCandidate] =
+  ## `typ` is `(at Concept A1 ... An)`: the requirements of a container concept
+  ## with the concept's own type parameters replaced by `A1 ... An`, so that
+  ## `iterator items(x: Self): T` of `Findable[T]` yields the caller's `T` and
+  ## `proc ==(a, b: T)` accepts it.
+  result = @[]
+  if isConceptInvocation(typ):
+    let (conceptSym, args) = conceptInvocationArgs(typ)
+    var bindings = initTable[SymId, Cursor]()
+    for (s, arg) in args:
+      bindings[s] = arg
+    for cand in collectConceptMethodsFor(fn, conceptSym, getTypeSection(conceptSym).body):
+      var buf = createTokenBuf(32)
+      substituteTypevars(buf, cand.typ, bindings)
+      result.add FnCandidate(kind: cand.kind, sym: cand.sym,
+                             typ: typeToCursor(c, buf, 0), fromConcept: true)
+
+proc conceptMethodsForConstraint(c: var SemContext; fn: StrId; typ: Cursor): seq[FnCandidate] =
   ## Candidate routines named `fn` that are *guaranteed* to be available on a
   ## type variable constrained by `typ`. `and` exposes the union of its
   ## operands' operations; `or` exposes only their intersection: an operation is
@@ -312,12 +375,14 @@ proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
   if typ.isSymbol:
     let section = getTypeSection typ.symId
     if section.body.typeKind == ConceptT:
-      result = collectConceptMethodsFor(fn, section.body)
+      result = collectConceptMethodsFor(fn, typ.symId, section.body)
+  elif typ.typeKind == InvokeT:
+    result = conceptMethodsForInvocation(c, fn, typ)
   elif typ.typeKind == AndT:
     var t = typ
     t.into:
       while t.hasMore:
-        for cand in conceptMethodsForConstraint(fn, t):
+        for cand in conceptMethodsForConstraint(c, fn, t):
           var dup = false
           for ex in result:
             if sameConceptMethod(cand, ex):
@@ -331,7 +396,7 @@ proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
     var first = true
     t.into:
       while t.hasMore:
-        let branch = conceptMethodsForConstraint(fn, t)
+        let branch = conceptMethodsForConstraint(c, fn, t)
         if first:
           result = branch
           first = false
@@ -351,9 +416,32 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
   assert res.status == LacksNothing
   let local = asLocal(res.decl)
   if local.kind == TypevarY and not local.typ.isDotToken:
-    for cand in conceptMethodsForConstraint(fn, local.typ):
+    for cand in conceptMethodsForConstraint(c, fn, local.typ):
       if not conceptMethodAlreadyListed(cands, cand.typ):
         cands.addUnique cand
+
+proc invocationMentions(inv: Cursor; s: SymId): bool =
+  result = false
+  var n = inv
+  n.into:
+    skip n # the concept
+    while n.hasMore:
+      if n.isSymbol and n.symId == s:
+        result = true
+      skip n
+
+proc addConceptBoundMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
+  ## `proc find[T; C: Findable[T]](x: C; elem: T)`: `Findable[T]`'s
+  ## requirements that are phrased in terms of `T` (`proc ==(a, b: T)`) are
+  ## available on `T` inside the body.
+  var r = c.routine
+  while r != nil:
+    for bound in r.conceptBounds:
+      if invocationMentions(bound, typevar):
+        for cand in conceptMethodsForInvocation(c, fn, bound):
+          if not conceptMethodAlreadyListed(cands, cand.typ):
+            cands.addUnique cand
+    r = r.parent
 
 proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   result = false
@@ -371,7 +459,7 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
   assert res.status == LacksNothing
   let decl = asTypeDecl(res.decl)
   if decl.kind == TypeY:
-    let moduleSuffix = extractModule(pool.syms[s])
+    let moduleSuffix = pool.symModule(s)
     if moduleSuffix == "" or
         # with --noSystem, magic types can have the system module suffix
         # without the system module being loaded
@@ -407,6 +495,7 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
         c.cachedTypeboundOps[(s, fn)] = ops
   elif decl.kind == TypevarY:
     maybeAddConceptMethods c, fn, s, cands
+    addConceptBoundMethods c, fn, s, cands
 
 type
   CallState = object
@@ -555,6 +644,21 @@ proc anyArgTypeIsError(cs: CallState): bool =
   for a in cs.args:
     if a.typ.typeKind == ErrT: return true
   result = false
+
+proc calleeErrored(n: Cursor): bool =
+  ## True when the sem'd callee is an `(err ...)`, or contains one: a chained
+  ## call like `nosuch(1)(2)` keeps the failed inner call as
+  ## `(call (err ...) 1)`, and its diagnostic is the one worth reporting.
+  if n.exprKind == ErrX:
+    result = true
+  elif n.isTagLit:
+    var ch = sub(n)
+    while ch.hasMore:
+      if calleeErrored(ch): return true
+      skip ch
+    result = false
+  else:
+    result = false
 
 proc buildCallSource(buf: var TokenBuf; cs: CallState; callee: Cursor) =
   case cs.source
@@ -814,9 +918,9 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     var isEmptyOpenArray = false
     if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n) and
         # normal overload of `toOpenArray` for arrays:
-        (pool.syms[conv] == "toOpenArray.0." & SystemModuleSuffix or
+        (pool.symString(conv) == "toOpenArray.0." & SystemModuleSuffix or
           # normal overload of `toOpenArray` for seqs:
-          pool.syms[conv] == "toOpenArray.1." & SystemModuleSuffix):
+          pool.symString(conv) == "toOpenArray.1." & SystemModuleSuffix):
       # infer generic params of openarray converter, then match instantiated empty array/seq arg:
       isEmptyOpenArray = true
       var returnTypeMatch = createMatch(addr c)
@@ -931,7 +1035,15 @@ proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor,
     convMatch = ensureMove(match)
 
 proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; finalFn: SymId) =
-  if finalFn in c.compiledMacros:
+  # A macro's plugin binary is compiled when its DECLARATION is semchecked
+  # (semdecls: `kind == MacroY and pass == checkBody`), which registers it in
+  # `c.compiledMacros`. A macro IMPORTED from another module has its
+  # declaration semchecked in the *defining* module's run, not here, so it is
+  # absent from this run's `compiledMacros` — but the dependency build already
+  # compiled its plugin into the shared nifcache. Accept that on-disk plugin so
+  # imported macros (e.g. an importable `{.async.}`) expand too.
+  if finalFn in c.compiledMacros or
+     macroPluginExists(c.g.config.nifcachePath, finalFn):
     # Serialize arguments to NIF. Prefer `arg.orig` (raw, pre-sem AST) so
     # macros that walk their bodies aren't tripped by sem-attached `(err
     # …)` diagnostics or other sem rewrites the user never wrote.
@@ -960,10 +1072,10 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       # arguments it echoed back keep the caller's — see `visibilityModule`.
       let macroRes = tryLoadSym(finalFn)
       if macroRes.status == LacksNothing:
-        c.visOwner.add VisOwner(module: extractModule(pool.syms[finalFn]),
+        c.visOwner.add VisOwner(module: pool.symModule(finalFn),
                                 file: macroRes.decl.info.file.uint32)
       else:
-        c.visOwner.add VisOwner(module: extractModule(pool.syms[finalFn]),
+        c.visOwner.add VisOwner(module: pool.symModule(finalFn),
                                 file: cs.callNodeInfo.file.uint32)
       semExpr c, dest, a
       discard c.visOwner.pop()
@@ -973,7 +1085,7 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     else:
       buildErr c, dest, cs.callNodeInfo, "macro plugin execution failed"
   else:
-    buildErr c, dest, cs.callNodeInfo, "macro '" & pool.syms[finalFn] & "' not compiled"
+    buildErr c, dest, cs.callNodeInfo, "macro '" & pool.symString(finalFn) & "' not compiled"
 
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   # Everything the candidate collection below writes to `dest` is a
@@ -1048,18 +1160,28 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       cs.fn = Item(n: beginRead(choiceBuf), typ: c.types.autoType, kind: CchoiceY)
       resolveOverloads(c, dest, it, cs)
       return
+    elif calleeErrored(cs.fn.n):
+      # The callee itself failed to semcheck and reported a precise diagnostic
+      # ("undeclared identifier: 'x'" for `x(1)(2)`, say). Re-emit the call
+      # around that `(err ...)` so the message survives instead of being
+      # replaced by the generic "cannot call expression of type auto"
+      # (nim-lang/nimony#2553).
+      it.n = cs.scope; skip it.n
+      closeArgsScope c, cs, merge = false
+      buildCallSource dest, cs, cs.fn.n
+      return
     else:
       buildErr c, dest, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
   # From here on exactly one tree is appended to `dest`: the call, or a single
   # `(err ...)`. `earlyErr` keeps the first diagnostic so the error tail can
-  # still report it instead of its generic fallback. It stays a `default`
-  # buffer on the overwhelmingly common path where nothing errored — that
-  # costs no allocation, while `createTokenBuf` always allocates storage plus
-  # a literals and a tag pool.
-  var earlyErr = default(TokenBuf)
+  # still report it instead of its generic fallback. `initTokenBuf` binds the
+  # global pools without allocating storage, so on the overwhelmingly common
+  # path where nothing errored it costs nothing; `createTokenBuf` below
+  # allocates only once there is a diagnostic to keep.
+  var earlyErr = initTokenBuf()
   if dest.len > errStart:
     earlyErr = createTokenBuf(4)
-    earlyErr.addSubtree readonlyCursorAt(dest, errStart)
+    earlyErr.addSubtree cursorAt(dest, errStart)
     dest.shrink errStart
   var idx = pickBestMatch(c, m, cs.flags)
 
@@ -1090,7 +1212,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         if not isVarargs:
           skip param
         var arg = cs.args[ai]
-        var convMatch = default(Match)
+        var convMatch = createMatch(addr c)
         if isVarargs and varargsHasConverter(f) and tryVarargsConverter(c, convMatch, f, arg):
           anyConverters = true
           # match already built call, just use it
@@ -1120,6 +1242,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           newArgs.add CallArg(n: beginRead(newArgBufs[bufPos]), typ: convMatch.returnType)
         else:
           newArgs.add arg
+        inc ai
+      # surplus arguments must still reach `sigmatch` so that it reports
+      # "too many arguments" (#2617)
+      while ai < cs.args.len:
+        newArgs.add cs.args[ai]
         inc ai
       if anyConverters:
         sigmatch(newMatch, m[mi].fn, newArgs, genericArgs)
@@ -1154,7 +1281,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # adding args or type args may have errored
       if finalFn.sym != SymId(0) and
           # overload of `@` with empty array param:
-          pool.syms[finalFn.sym] == "@.1." & SystemModuleSuffix and
+          pool.symString(finalFn.sym) == "@.1." & SystemModuleSuffix and
           (AllowEmpty in cs.flags or isSomeSeqType(it.typ) or isSomeOpenArrayType(it.typ)):
         # empty seq will be handled, either by `commonType` now or
         # the call this is an argument of in the case of AllowEmpty
@@ -1389,6 +1516,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     callNode: it.n.load(),
     callNodeInfo: it.n.info,
     dest: createTokenBuf(16),
+    genericDest: initTokenBuf(),
     source: source,
     flags: {InTypeContext, AllowEmpty, PreferIterators}*flags
   )
@@ -1526,7 +1654,10 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       namedStart = arg.n
       arg.n = sub(arg.n)
       takeTree dest, arg.n
-    semExpr c, dest, arg, {AllowEmpty}
+    # `KeepChoices`: an argument that is a symbol choice stays one — the formal
+    # parameter it ends up matching is what picks the candidate, so lookup must
+    # not collapse it by scope distance nor declare it ambiguous here.
+    semExpr c, dest, arg, {AllowEmpty, KeepChoices}
     if named:
       dest.addParRi(arg.n.endInfo)
       # reset only reachable inside `if named:`, where namedStart was set:

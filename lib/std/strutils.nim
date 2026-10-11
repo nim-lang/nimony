@@ -320,7 +320,7 @@ iterator splitWhitespace*(s: string; maxsplit: int = -1): string =
   ##   ```
   ##
   ## ...generates "foo", "bar", "baz".
-  var last = 0
+  var last: Natural = 0
   var splits = maxsplit
   while last < len(s):
     while last < len(s) and s[last] in Whitespace: inc(last)
@@ -706,6 +706,53 @@ func find*(s, sub: string; start: Natural = 0; last = -1): int =
 
   # TODO: use `memmem` C function like Nim 2.
   result = find(initSkipTable(sub), s, sub, start, last)
+
+func rfind*(s: string; sub: char; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` (both ends included)
+  ## in reverse -- starting at high indexes and moving lower to the first
+  ## character or `start`. If `last` is unspecified or negative, it defaults to
+  ## `s.high` (the last element).
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  result = -1
+  var i = if last < 0: s.high else: last
+  while i >= int(start):
+    if s[i] == sub:
+      return i
+    dec i
+
+func rfind*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
+  ## Searches for `chars` in `s` inside range `start..last` (both ends included)
+  ## in reverse. If `last` is unspecified or negative, it defaults to `s.high`.
+  ##
+  ## If `s` contains none of the characters in `chars`, -1 is returned.
+  result = -1
+  var i = if last < 0: s.high else: last
+  while i >= int(start):
+    if s[i] in chars:
+      return i
+    dec i
+
+func rfind*(s, sub: string; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` (both ends included)
+  ## in reverse. If `last` is unspecified or negative, it defaults to `s.high`.
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  if sub.len == 0:
+    let rightIndex = if last < 0: s.len else: last
+    return max(int(start), rightIndex)
+  if sub.len > s.len - start:
+    return -1
+  let last = if last < 0: s.high else: last
+  var i = last - sub.len + 1
+  while i >= int(start):
+    var j = 0
+    while j < sub.len and sub[j] == s[i+j]:
+      inc j
+    if j == sub.len:
+      return i
+    dec i
+  result = -1
 
 func replace*(s: string; sub, by: char): string =
   ## Returns a copy of `s` where every `sub` is replaced by `by`.
@@ -1330,7 +1377,9 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
   ## raised if an ill-formed format string has been passed to the `%` operator.
   result = newStringOfCap(formatstr.len + a.len shl 4)
   const PatternChars = {'a'..'z', 'A'..'Z', '0'..'9', '\128'..'\255', '_'}
-  var i = 0
+  # `Natural`, not `int`: these walk `formatstr` and the lower half of every
+  # index obligation then comes from the type, not from a guard.
+  var i: Natural = 0
   var num = 0
   while i < len(formatstr):
     if formatstr[i] == '$' and i+1 < len(formatstr):
@@ -1355,7 +1404,7 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
         if idx < 0 or idx >= a.len: invalidFormatString(formatstr)
         add result, a[idx]
       of '{':
-        var j = i+2
+        var j: Natural = i+2
         var k = 0
         var negative = formatstr[j] == '-'
         if negative: inc j
@@ -1377,7 +1426,7 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
           else: invalidFormatString(formatstr)
         i = j+1
       of 'a'..'z', 'A'..'Z', '\128'..'\255', '_':
-        var j = i+1
+        var j: Natural = i+1
         while j < formatstr.len and formatstr[j] in PatternChars: inc(j)
         var x = findNormalized(substr(formatstr, i+1, j-1), a)
         if x >= 0 and x < a.len - 1: add result, a[x+1]
