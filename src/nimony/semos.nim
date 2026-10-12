@@ -670,12 +670,12 @@ proc loadPluginOutput(outputFile: string; info: NifLineInfo): PluginOutput =
   peelSidecars result
 
 const GlobalLayoutDecls = {TypeY, ProcY, FuncY, ConverterY, MethodY,
-                           TemplateY, MacroY, IteratorY}
+                           TemplateY, MacroY, IteratorY, ConstY}
 
 proc collectGlobalDecls(c: var SemContext; n: Cursor;
                         renames: var Table[SymId, SymId]) =
-  ## `genSym()` hands out local names (`tmp.N`), but a type or a routine gets
-  ## a GLOBAL name wherever it is written: the backends lift it to module
+  ## `genSym()` hands out local names (`tmp.N`), but a type, a routine or a
+  ## const gets a GLOBAL name wherever it is written: the backends lift it to module
   ## scope, where a local name is neither indexed (#2644) nor unique (#2645).
   var n = n
   if n.kind == TagLit:
