@@ -11,7 +11,7 @@ import std/[assertions, syncio, os, dirs, envvars]
 
 when defined(posix):
   import std/posix/posix
-  when defined(linux):
+  when defined(linux) and not defined(wasm32):  # Emscripten has no epoll
     from std/posix/epoll import EpollData, EpollEvent
   when defined(osx) or defined(freebsd):
     from std/posix/kqueue import KEvent
@@ -61,7 +61,7 @@ when defined(posix):
     src.add "#include <sys/types.h>\n"
     src.add "#include <sys/wait.h>\n"
     src.add "#include <netinet/in.h>\n"
-    when defined(linux):
+    when defined(linux) and not defined(wasm32):  # Emscripten has no epoll
       src.add "#include <sys/epoll.h>\n"
     when defined(osx) or defined(freebsd):
       src.add "#include <sys/event.h>\n"
@@ -236,7 +236,7 @@ when defined(posix):
       ck("offsetof(struct kevent, udata)", off(ke, addr ke.udata))
 
     # ---- Linux struct epoll_event (packed on amd64 only) ----
-    when defined(linux):
+    when defined(linux) and not defined(wasm32):  # Emscripten has no epoll
       let ev = cast[ptr EpollEvent](addr scratch[0])
       ck("sizeof(struct epoll_event)", int64(sizeof(EpollEvent)))
       ck("offsetof(struct epoll_event, events)", off(ev, addr ev.events))

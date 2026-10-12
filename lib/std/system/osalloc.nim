@@ -135,8 +135,16 @@ elif defined(posix) and not defined(StandaloneHeapSize):
       MAP_ANONYMOUS {.importc: "MAP_ANONYMOUS", header: "<sys/mman.h>".}: cint
       MAP_PRIVATE {.importc: "MAP_PRIVATE", header: "<sys/mman.h>".}: cint
 
+  # `off_t` of the plain `mmap` symbol: `int` matches it on LP64 and on i386
+  # glibc (32-bit legacy off_t), but Emscripten's wasm32 musl has a 64-bit
+  # off_t with a 32-bit `int`; a narrower parameter there makes wasm-ld swap
+  # the import for a trapping stub ("function signature mismatch: mmap").
+  when defined(wasm32):
+    type MmapOff = int64
+  else:
+    type MmapOff = int
   proc mmap(adr: pointer, len: csize_t, prot, flags, fildes: cint,
-            off: int): pointer {.importc: "mmap".}
+            off: MmapOff): pointer {.importc: "mmap".}
 
   proc munmap(adr: pointer, len: csize_t): cint {.importc: "munmap".}
 

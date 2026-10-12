@@ -115,7 +115,13 @@ else:
     # `environ` nor Darwin's `_NSGetEnviron` is needed. Windows never comes
     # here: its entry point receives no `envp` at all, so the block is read
     # from `GetEnvironmentStringsW` above instead.
-    let gEnv {.importc: "nimEnviron".}: cstringArray
+    when defined(wasm32):
+      # Emscripten calls `main(argc, argv)` with no third argument, so the
+      # `envp` that genMainProc stores into `nimEnviron` is garbage there;
+      # libc's `environ` is the populated block on this target.
+      let gEnv {.importc: "environ", header: "<unistd.h>".}: cstringArray
+    else:
+      let gEnv {.importc: "nimEnviron".}: cstringArray
 
     proc getEnvVarsC() =
       # retrieves the variables of char** env of C's main proc

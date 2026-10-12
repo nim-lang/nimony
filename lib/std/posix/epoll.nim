@@ -21,10 +21,10 @@ const
   EPOLLWRBAND* = 0x00000200'u32
   EPOLLMSG* = 0x00000400'u32
   EPOLLRDHUP* = 0x00002000'u32
-  EPOLLEXCLUSIVE* = (1 shl 28).uint32
-  EPOLLWAKEUP* = (1 shl 29).uint32
-  EPOLLONESHOT* = (1 shl 30).uint32
-  EPOLLET* = (1 shl 31).uint32
+  EPOLLEXCLUSIVE* = 0x10000000'u32
+  EPOLLWAKEUP* = 0x20000000'u32
+  EPOLLONESHOT* = 0x40000000'u32
+  EPOLLET* = 0x80000000'u32  # `1 shl 31` overflows a 32-bit int
 
 # Valid opcodes ( "op" parameter ) to issue to epoll_ctl().
 

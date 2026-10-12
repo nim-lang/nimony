@@ -37,5 +37,8 @@ elif defined(arm64):
 elif defined(i386):
   include "i386/types"
   include "i386/consts"
+elif defined(wasm32):
+  include "wasm32/types"
+  include "wasm32/consts"
 else:
-  {.error: "std/posix has no transcribed ABI for this Linux architecture; supported: amd64, arm64, i386".}
+  {.error: "std/posix has no transcribed ABI for this Linux architecture; supported: amd64, arm64, i386, wasm32".}

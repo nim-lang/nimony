@@ -13,9 +13,13 @@
 when defined(posix):
   # Foundation types must precede platform Stat layouts: nimony does not
   # resolve forward references across these conditional type sections.
+  when defined(wasm32):
+    # Emscripten's musl: `time_t` is 64-bit while `long` is 32-bit.
+    type Time* = distinct int64  ## time_t
+  else:
+    type Time* = distinct clong  ## time_t
   type
     ClockId* = cint  ## clockid_t (int on Linux, Darwin and FreeBSD)
-    Time* = distinct clong  ## time_t
     Timespec* {.pure.} = object
       tv_sec*: Time  ## Seconds.
       tv_nsec*: clong  ## Nanoseconds.
@@ -228,7 +232,11 @@ when defined(posix):
   proc write*(fildes: cint; buf: pointer; nbyte: int): int {.importc: "write", sideEffect.}
 
   # genMainProc captures main's envp into nimEnviron on every backend.
-  let posix_environ* {.importc: "nimEnviron".}: ptr UncheckedArray[cstring]
+  when defined(wasm32):
+    # Emscripten's `main` gets no envp (see std/envvars); use libc's block.
+    let posix_environ* {.importc: "environ", header: "<unistd.h>".}: ptr UncheckedArray[cstring]
+  else:
+    let posix_environ* {.importc: "nimEnviron".}: ptr UncheckedArray[cstring]
 
   proc strerror*(errnum: cint): cstring {.importc: "strerror", sideEffect.}
   proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.importc: "nanosleep", sideEffect.}
