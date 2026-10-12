@@ -994,36 +994,6 @@ template moveToTopLevel(c: var EContext; dest: var TokenBuf; mode: TraverseMode;
   else:
     body
 
-proc makeLocalDeclName(c: var EContext; s: SymId): string =
-  # for proc and type decls
-  result = pool.symBasename(s)
-  result.add "."
-  result.addInt c.localDeclCounters
-  inc c.localDeclCounters
-  result.add "."
-  result.add c.main
-
-proc makeLocalSymId(c: var EContext; s: SymId): SymId =
-  let newName = makeLocalDeclName(c, s)
-  result = pool.symId(newName)
-
-proc trHoistedConst(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMode) =
-  ## A const that still exists inside a proc body HERE has an aggregate value
-  ## — the simple-literal ones were inlined at their use sites by `trExpr`.
-  ## Leng keeps no proc-level consts: hoist the decl to the top level (the
-  ## `c.pending` tail, like synthesized type decls) under a module-suffixed
-  ## name, so the embedded index can serve it — single-dot locals are never
-  ## indexed, and whole-program consumers (arkham's foreign loading, jorogumo)
-  ## resolve foreign declarations through the index.
-  var peek = n
-  inc peek                                  # into (const, at the SymbolDef
-  let oldSym = peek.symId
-  let newSym = makeLocalSymId(c, oldSym)
-  c.hoistedConsts[oldSym] = newSym          # decl precedes every use in Nim
-  var temp = createTokenBuf(30)
-  trLocal c, temp, n, ConstY, mode, newSym
-  c.pending.add temp
-
 proc buildProcType(c: var EContext; dest: var TokenBuf; thisProc: Cursor): SymId =
   var thisProc = asRoutine(thisProc)
   var procTypeBuf = createTokenBuf()
@@ -1913,13 +1883,13 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addSubtree n
     inc n
   of Symbol:
-    if c.hoistedConsts.hasKey(n.symId):
-      dest.addSymUse c.hoistedConsts.getOrQuit(n.symId), n.info
-      inc n
-      return
     var inlineValue = getInitValue(c.typeCache, n.symId)
     var inlineValueCopy = inlineValue
-    if not cursorIsNil(inlineValue) and not inlineValue.isDotToken and isSimpleLiteral(inlineValueCopy):
+    # A `string` const is not inlined: its value would be a temporary whose
+    # inline (SSO) bytes die with the enclosing block, and a coroutine frame
+    # keeps a `toOpenArray` of it across a suspension point.
+    if not cursorIsNil(inlineValue) and not inlineValue.isDotToken and
+        inlineValue.kind != StrLit and isSimpleLiteral(inlineValueCopy):
       trExpr(c, dest, inlineValue)
     else:
       dest.addSubtree n
@@ -2175,10 +2145,8 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of TvarS, TletS:
       trLocal c, dest, n, TvarY, mode, SymId(0)
     of ConstS:
-      if mode == TraverseTopLevel:
-        trLocal c, dest, n, ConstY, mode, SymId(0)
-      else:
-        trHoistedConst c, dest, n, mode
+      # always at module level: `finalir.toFinalIr` moves every const there
+      trLocal c, dest, n, ConstY, mode, SymId(0)
     of CallKindsS:
       dest.addParLe(applicationTag(n), n.info)
       n.into:
