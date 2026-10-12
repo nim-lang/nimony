@@ -44,15 +44,7 @@ func sqrt*(x: float32): float32 =
   if x == 0'f32 or cls == fcInf:
     return x
 
-  # Newton-Raphson method: x_{n+1} = (x_n + x/x_n) / 2
-  var guess = x
-  if x > 0'f32:
-    guess = x / 2'f32
-
-  for _ in 0..5:
-    guess = (guess + x / guess) * 0.5'f32
-
-  return guess
+  return float32(sqrtFinite64(float64(x)))
 
 func sqrt*(x: float64): float64 =
   ## Square root for f64
@@ -62,15 +54,7 @@ func sqrt*(x: float64): float64 =
   if x == 0'f64 or cls == fcInf:
     return x
 
-  # Newton-Raphson method: x_{n+1} = (x_n + x/x_n) / 2
-  var guess = x
-  if x > 0'f64:
-    guess = x / 2'f64
-
-  for _ in 0..6:
-    guess = (guess + x / guess) * 0.5'f64
-
-  return guess
+  return sqrtFinite64(x)
 
 # ============================================================================
 # CBRT Implementation
@@ -128,32 +112,31 @@ func cbrt*(x: float32): float32 =
   return float32(t)
 
 func cbrt*(x: float64): float64 =
-  ## Cube root for f64
-  ## origin: core-math/src/binary64/cbrt/cbrt.c
-  ## Copyright (c) 2021-2022 Alexei Sibidanov.
-  ##
-  ## Compute the cube root of the argument using polynomial approximation
-  ## and Newton-Raphson iterations.
-
+  ## Cube root for f64, using exponent-scaled Newton iteration.
   if x.isNaN:
     return x
-  if x == 0'f64:
-    return x
-  let cls = classify(x)
-  if cls == fcInf:
+  if x == 0'f64 or classify(x) in {fcInf, fcNegInf}:
     return x
 
-  # Use Newton-Raphson for cube root: x_{n+1} = (2*x_n + x/(x_n^2)) / 3
-  let absX = x.abs
-  var guess = if absX >= 1'f64: absX else: 1'f64
+  # Keep the Newton iteration in a compact range. Starting at abs(x) makes
+  # convergence take hundreds of steps for large inputs and loses accuracy
+  # even for small integers such as 8.
+  var part = frexp(x.abs)
+  var rem = part.exp mod 3
+  if rem < 0:
+    rem += 3
+  part.frac *= powerOfTwo64(rem)
+  let scaleExp = part.exp - rem
 
-  for _ in 0..5:
-    let x2 = guess * guess
-    guess = (2'f64 * guess + absX / x2) / 3'f64
+  var guess = 1.0
+  for _ in 0..6:
+    let guess2 = guess * guess
+    guess = (2.0 * guess + part.frac / guess2) / 3.0
+  guess += (part.frac - guess * guess * guess) / (3.0 * guess * guess)
 
-  if x < 0'f64:
-    return -guess
-  return guess
+  result = guess * powerOfTwo64(scaleExp div 3)
+  if signbit(x):
+    result = -result
 
 # ============================================================================
 # POW Implementation
@@ -259,167 +242,362 @@ const IVLN2_F64 = 1.44269504088896338700e+00
 const IVLN2_H_F64 = 1.44269502162933349609e+00
 const IVLN2_L_F64 = 1.92596299112661746887e-08
 
+func powScale32(x: float32, n: int32): float32 {.inline.} =
+  ## Scale by 2^n, including subnormal results, as fdlibm's scalbnf does.
+  if n < -126:
+    let scale = cast[float32]((n + 25 + 127).uint32 shl 23)
+    return (x * scale) * cast[float32](0x33000000'u32) # 2^-25
+  if n > 127:
+    return (x * 2'f32) * cast[float32](0x7f000000'u32) # 2^127
+  x * cast[float32]((n + 127).uint32 shl 23)
+
 func pow*(x, y: float32): float32 =
-  ## Power function for f32
-  ## origin: FreeBSD /usr/src/lib/msun/src/e_powf.c
-  ## Conversion to float by Ian Lance Taylor, Cygnus Support, ian@cygnus.com.
+  ## Port of FreeBSD msun e_powf.c (fdlibm), converted by Ian Lance Taylor.
+  var hx = cast[int32](cast[uint32](x))
+  let hy = cast[int32](cast[uint32](y))
+  var ix = hx and 0x7fffffff'i32
+  let iy = hy and 0x7fffffff'i32
+  var ax, z, zH, zL, pH, pL, y1, t1, t2, r, sn, t, u, v, w: float32
+  var i, j, k, n, yisint, isBits: int32
 
-  var hx: int32 = cast[int32](cast[uint32](x))
-  var hy: int32 = cast[int32](cast[uint32](y))
+  if iy == 0: return 1'f32
+  if hx == 0x3f800000'i32: return 1'f32
+  if ix > 0x7f800000'i32 or iy > 0x7f800000'i32: return x + y
 
-  var ix: int32 = hx and 0x7fffffff
-  var iy: int32 = hy and 0x7fffffff
-
-  # x**0 = 1, even if x is NaN
-  if iy == 0:
-    return 1.0'f32
-
-  # 1**y = 1, even if y is NaN
-  if hx == 0x3f800000'i32:
-    return 1.0'f32
-
-  # NaN if either arg is NaN
-  if ix > 0x7f800000 or iy > 0x7f800000:
-    return x + y
-
-  # determine if y is an odd int when x < 0
-  var yisint: int32 = 0
+  yisint = 0
   if hx < 0:
     if iy >= 0x4b800000'i32:
-      yisint = 2  # even integer y
+      yisint = 2
     elif iy >= 0x3f800000'i32:
-      var k: int32 = (iy shr 23) - 0x7f  # exponent
-      var j: int32 = iy shr (23 - k)
+      k = (iy shr 23) - 0x7f
+      j = iy shr (23 - k)
       if (j shl (23 - k)) == iy:
         yisint = 2 - (j and 1)
 
-  # special value of y
-  if iy == 0x7f800000:  # y is +-inf
-    if ix == 0x3f800000:
-      return 1.0'f32  # (-1)**+-inf is 1
-    elif ix > 0x3f800000:
-      return if hy >= 0: y else: 0.0'f32  # (|x|>1)**+-inf = inf,0
-    else:
-      return if hy >= 0: 0.0'f32 else: -y  # (|x|<1)**+-inf = 0,inf
-
-  if iy == 0x3f800000:  # y is +-1
-    return if hy >= 0: x else: 1.0'f32 / x
-
-  if hy == 0x40000000'i32:  # y is 2
-    return x * x
-
-  if hy == 0x3f000000'i32 and hx >= 0:  # y is 0.5, x >= +0
-    return sqrt(x)
-
-  var ax: float32 = if x >= 0: x else: -x
-
-  # special value of x
-  if ix == 0x7f800000 or ix == 0 or ix == 0x3f800000:
-    var z: float32 = ax
+  if ix == 0 and hx < 0:
     if hy < 0:
-      z = 1.0'f32 / z
+      return if yisint == 1: -Inf.float32 else: Inf.float32
+    return if yisint == 1: cast[float32](0x80000000'u32) else: 0'f32
+
+  if iy == 0x7f800000'i32:
+    if ix == 0x3f800000'i32: return 1'f32
+    if ix > 0x3f800000'i32:
+      return if hy >= 0: y else: 0'f32
+    return if hy >= 0: 0'f32 else: -y
+  if iy == 0x3f800000'i32: return if hy >= 0: x else: 1'f32 / x
+  if hy == 0x40000000'i32: return x * x
+  if hy == 0x3f000000'i32 and hx >= 0: return sqrt(x)
+
+  ax = x.abs
+  if ix == 0x7f800000'i32 or ix == 0 or ix == 0x3f800000'i32:
+    z = ax
+    if hy < 0: z = 1'f32 / z
     if hx < 0:
-      if ((ix - 0x3f800000) or yisint) == 0:
-        z = (z - z) / (z - z)  # (-1)**non-int is NaN
+      if ((ix - 0x3f800000'i32) or yisint) == 0:
+        z = (z - z) / (z - z)
       elif yisint == 1:
-        z = -z  # (x<0)**odd = -(|x|**odd)
+        z = cast[float32](cast[uint32](z) xor 0x80000000'u32)
     return z
 
-  var sn: float32 = 1.0'f32  # sign of result
+  sn = 1'f32
   if hx < 0:
-    if yisint == 0:
-      return (x - x) / (x - x)  # (x<0)**(non-int) is NaN
-    if yisint == 1:
-      sn = -1.0'f32  # (x<0)**(odd int)
+    if yisint == 0: return (x - x) / (x - x)
+    if yisint == 1: sn = -1'f32
 
-  # For simplicity and correctness, fall back to exp/ln for general case
-  # Full FreeBSD implementation would require extensive bit manipulation
-  var lnAx = ln(ax)
-  var yLnAx = y * lnAx
-  return sn * exp(yLnAx)
+  if iy > 0x4d000000'i32:
+    if ix < 0x3f7ffff8'i32: return if hy < 0: sn * HUGE_F32 * HUGE_F32 else: sn * TINY_F32 * TINY_F32
+    if ix > 0x3f800007'i32: return if hy > 0: sn * HUGE_F32 * HUGE_F32 else: sn * TINY_F32 * TINY_F32
+    t = ax - 1'f32
+    w = (t * t) * (0.5'f32 - t * (0.333333333333'f32 - t * 0.25'f32))
+    u = IVLN2_H_F32 * t
+    v = t * IVLN2_L_F32 - w * IVLN2_F32
+    t1 = u + v
+    isBits = cast[int32](cast[uint32](t1) and 0xfffff000'u32)
+    t1 = cast[float32](cast[uint32](isBits))
+    t2 = v - (t1 - u)
+  else:
+    var s2, sH, sL, tH, tL: float32
+    n = 0
+    if ix < 0x00800000'i32:
+      ax *= TWO24_F32
+      n -= 24
+      ix = cast[int32](cast[uint32](ax))
+    n += (ix shr 23) - 0x7f
+    j = ix and 0x007fffff'i32
+    ix = j or 0x3f800000'i32
+    if j <= 0x1cc471'i32:
+      k = 0
+    elif j < 0x5db3d7'i32:
+      k = 1
+    else:
+      k = 0
+      n += 1
+      ix -= 0x00800000'i32
+    ax = cast[float32](cast[uint32](ix))
+
+    u = ax - BP_F32[k]
+    v = 1'f32 / (ax + BP_F32[k])
+    let s = u * v
+    sH = s
+    isBits = cast[int32](cast[uint32](sH) and 0xfffff000'u32)
+    sH = cast[float32](cast[uint32](isBits))
+    isBits = cast[int32]((((cast[uint32](ix) shr 1) and 0xfffff000'u32) or 0x20000000'u32))
+    tH = cast[float32](cast[uint32](isBits) + 0x00400000'u32 + (cast[uint32](k) shl 21))
+    tL = ax - (tH - BP_F32[k])
+    sL = v * ((u - sH * tH) - sH * tL)
+    s2 = s * s
+    r = s2 * s2 * (L1_F32 + s2 * (L2_F32 + s2 * (L3_F32 + s2 * (L4_F32 + s2 * (L5_F32 + s2 * L6_F32)))))
+    r += sL * (sH + s)
+    s2 = sH * sH
+    tH = 3'f32 + s2 + r
+    isBits = cast[int32](cast[uint32](tH) and 0xfffff000'u32)
+    tH = cast[float32](cast[uint32](isBits))
+    tL = r - ((tH - 3'f32) - s2)
+    u = sH * tH
+    v = sL * tH + tL * s
+    pH = u + v
+    isBits = cast[int32](cast[uint32](pH) and 0xfffff000'u32)
+    pH = cast[float32](cast[uint32](isBits))
+    pL = v - (pH - u)
+    zH = CP_H_F32 * pH
+    zL = CP_L_F32 * pH + pL * CP_F32 + DP_L_F32[k]
+    t = float32(n)
+    t1 = ((zH + zL) + DP_H_F32[k]) + t
+    isBits = cast[int32](cast[uint32](t1) and 0xfffff000'u32)
+    t1 = cast[float32](cast[uint32](isBits))
+    t2 = zL - (((t1 - t) - DP_H_F32[k]) - zH)
+
+  isBits = cast[int32](cast[uint32](y) and 0xfffff000'u32)
+  y1 = cast[float32](cast[uint32](isBits))
+  pL = (y - y1) * t1 + y * t2
+  pH = y1 * t1
+  z = pL + pH
+  j = cast[int32](cast[uint32](z))
+  if j > 0x43000000'i32: return sn * HUGE_F32 * HUGE_F32
+  if j == 0x43000000'i32 and pL + OVT_F32 > z - pH: return sn * HUGE_F32 * HUGE_F32
+  if (j and 0x7fffffff'i32) > 0x43160000'i32: return sn * TINY_F32 * TINY_F32
+  if j == cast[int32](0xc3160000'u32) and pL <= z - pH: return sn * TINY_F32 * TINY_F32
+
+  i = j and 0x7fffffff'i32
+  k = (i shr 23) - 0x7f
+  n = 0
+  if i > 0x3f000000'i32:
+    n = j + (0x00800000'i32 shr (k + 1))
+    k = ((n and 0x7fffffff'i32) shr 23) - 0x7f
+    t = cast[float32](cast[uint32](n) and not (0x007fffff'u32 shr k))
+    n = ((n and 0x007fffff'i32) or 0x00800000'i32) shr (23 - k)
+    if j < 0: n = -n
+    pH -= t
+  t = pL + pH
+  isBits = cast[int32](cast[uint32](t) and 0xffff8000'u32)
+  t = cast[float32](cast[uint32](isBits))
+  u = t * LG2_H_F32
+  v = (pL - (t - pH)) * LG2_F32 + t * LG2_L_F32
+  z = u + v
+  w = v - (z - u)
+  t = z * z
+  t1 = z - t * (P1_F32 + t * (P2_F32 + t * (P3_F32 + t * (P4_F32 + t * P5_F32))))
+  r = (z * t1) / (t1 - 2'f32) - (w + z * w)
+  z = 1'f32 - (r - z)
+  j = cast[int32](cast[uint32](z))
+  j += n shl 23
+  if (j shr 23) <= 0:
+    z = powScale32(z, n)
+  else:
+    z = cast[float32](cast[uint32](j))
+  sn * z
+
+func powLowWord(x: float64): uint32 {.inline.} =
+  cast[uint32](cast[uint64](x) and 0xffffffff'u64)
+
+func powHighWord(x: float64): uint32 {.inline.} =
+  cast[uint32](cast[uint64](x) shr 32)
+
+func powWithLowWord(x: float64, low: uint32): float64 {.inline.} =
+  cast[float64]((cast[uint64](x) and 0xffffffff00000000'u64) or uint64(low))
+
+func powWithHighWord(x: float64, high: uint32): float64 {.inline.} =
+  cast[float64]((cast[uint64](x) and 0xffffffff'u64) or (uint64(high) shl 32))
+
+func powScale64(x: float64, n: int32): float64 {.inline.} =
+  ## Scale by 2^n, including subnormal results, as fdlibm's scalbn does.
+  if n < -1022:
+    let scale = cast[float64]((n + 54 + 1023).uint64 shl 52)
+    return (x * scale) * cast[float64](0x3c90000000000000'u64) # 2^-54
+  if n > 1023:
+    return (x * 2.0) * cast[float64](0x7fe0000000000000'u64) # 2^1023
+  x * cast[float64]((n + 1023).uint64 shl 52)
 
 func pow*(x, y: float64): float64 =
-  ## Power function for f64
-  ## origin: FreeBSD /usr/src/lib/msun/src/e_pow.c
-  ##
-  ## Accuracy:
-  ##      pow(x,y) returns x**y nearly rounded. In particular
-  ##                      pow(integer,integer)
-  ##      always returns the correct integer provided it is
-  ##      representable.
+  ## Port of FreeBSD msun e_pow.c (fdlibm).
+  var t1, t2: float64
+  let hx = cast[int32](powHighWord(x))
+  let lx = powLowWord(x)
+  let hy = cast[int32](powHighWord(y))
+  let ly = powLowWord(y)
+  var ix = hx and 0x7fffffff'i32
+  let iy = hy and 0x7fffffff'i32
+  var yisint, k, j: int32
 
-  # x**0 = 1, even if x is NaN
-  if y == 0.0:
-    return 1.0
-
-  # 1 ** (anything) is 1
-  if x == 1.0:
-    return 1.0
-
-  # NaN if either arg is NaN
-  if x.isNaN or y.isNaN:
+  if (cast[uint32](iy) or ly) == 0'u32: return 1.0
+  if hx == 0x3ff00000'i32 and lx == 0'u32: return 1.0
+  if ix > 0x7ff00000'i32 or (ix == 0x7ff00000'i32 and lx != 0'u32) or
+     iy > 0x7ff00000'i32 or (iy == 0x7ff00000'i32 and ly != 0'u32):
     return x + y
 
-  let absX = if x >= 0: x else: -x
+  yisint = 0
+  if hx < 0:
+    if iy >= 0x43400000'i32:
+      yisint = 2
+    elif iy >= 0x3ff00000'i32:
+      k = (iy shr 20) - 0x3ff
+      if k > 20:
+        j = cast[int32](ly shr (52 - k))
+        if (j shl (52 - k)) == cast[int32](ly):
+          yisint = 2 - (j and 1)
+      elif ly == 0'u32:
+        j = iy shr (20 - k)
+        if (j shl (20 - k)) == iy:
+          yisint = 2 - (j and 1)
 
-  # Handle infinity and zero cases
-  let yCls = classify(y)
-  if yCls == fcInf:
-    if absX > 1.0:
-      return if y > 0.0: float64(1.0 / 0.0) else: 0.0  # inf, 0
+  if ix == 0 and lx == 0'u32 and hx < 0:
+    if hy < 0:
+      return if yisint == 1: -Inf else: Inf
+    return if yisint == 1: cast[float64](0x8000000000000000'u64) else: 0.0
+
+  if ly == 0'u32:
+    if iy == 0x7ff00000'i32:
+      if ((ix - 0x3ff00000'i32) or cast[int32](lx)) == 0:
+        return 1.0
+      if ix >= 0x3ff00000'i32:
+        return if hy >= 0: y else: 0.0
+      return if hy >= 0: 0.0 else: -y
+    if iy == 0x3ff00000'i32:
+      return if hy >= 0: x else: 1.0 / x
+    if hy == 0x40000000'i32:
+      return x * x
+    if hy == 0x3fe00000'i32 and hx >= 0:
+      return sqrt(x)
+
+  var ax = x.abs
+  if lx == 0'u32 and (ix == 0x7ff00000'i32 or ix == 0 or ix == 0x3ff00000'i32):
+    var z = ax
+    if hy < 0: z = 1.0 / z
+    if hx < 0:
+      if ((ix - 0x3ff00000'i32) or yisint) == 0:
+        z = (z - z) / (z - z)
+      elif yisint == 1:
+        z = cast[float64](cast[uint64](z) xor 0x8000000000000000'u64)
+    return z
+
+  var sn = 1.0
+  if hx < 0:
+    if yisint == 0: return (x - x) / (x - x)
+    if yisint == 1: sn = -1.0
+
+  if iy > 0x41e00000'i32:
+    if iy > 0x43f00000'i32:
+      if ix <= 0x3fefffff'i32:
+        return if hy < 0: HUGE_F64 * HUGE_F64 else: TINY_F64 * TINY_F64
+      if ix >= 0x3ff00000'i32:
+        return if hy > 0: HUGE_F64 * HUGE_F64 else: TINY_F64 * TINY_F64
+    if ix < 0x3fefffff'i32:
+      return if hy < 0: sn * HUGE_F64 * HUGE_F64 else: sn * TINY_F64 * TINY_F64
+    if ix > 0x3ff00000'i32:
+      return if hy > 0: sn * HUGE_F64 * HUGE_F64 else: sn * TINY_F64 * TINY_F64
+    let t = ax - 1.0
+    let w = (t * t) * (0.5 - t * (0.3333333333333333333333 - t * 0.25))
+    let u = IVLN2_H_F64 * t
+    let v = t * IVLN2_L_F64 - w * IVLN2_F64
+    t1 = powWithLowWord(u + v, 0'u32)
+    t2 = v - (t1 - u)
+  else:
+    var n: int32 = 0
+    if ix < 0x00100000'i32:
+      ax *= TWO53
+      n -= 53
+      ix = cast[int32](powHighWord(ax))
+    n += (ix shr 20) - 0x3ff
+    j = ix and 0x000fffff'i32
+    ix = j or 0x3ff00000'i32
+    var interval: int32
+    if j <= 0x3988e'i32:
+      interval = 0
+    elif j < 0xbb67a'i32:
+      interval = 1
     else:
-      return if y > 0.0: 0.0 else: float64(1.0 / 0.0)  # 0, inf
+      interval = 0
+      n += 1
+      ix -= 0x00100000'i32
+    ax = powWithHighWord(ax, cast[uint32](ix))
 
-  let xCls = classify(x)
-  if xCls == fcInf:
-    if y > 0.0:
-      return if x > 0.0: float64(1.0 / 0.0) else: 0.0
-    else:
-      return if x > 0.0: 0.0 else: float64(1.0 / 0.0)
+    let bp = BP_F64[interval]
+    let u = ax - bp
+    let v = 1.0 / (ax + bp)
+    let ss = u * v
+    let sH = powWithLowWord(ss, 0'u32)
+    let tHbits = ((cast[uint32](ix) shr 1) or 0x20000000'u32) + 0x00080000'u32 + (cast[uint32](interval) shl 18)
+    let tH = cast[float64](uint64(tHbits) shl 32)
+    let tL = ax - (tH - bp)
+    let sL = v * ((u - sH * tH) - sH * tL)
+    let s2 = ss * ss
+    var r = s2 * s2 * (L1_F64 + s2 * (L2_F64 + s2 * (L3_F64 + s2 * (L4_F64 + s2 * (L5_F64 + s2 * L6_F64)))))
+    r += sL * (sH + ss)
+    let s2h = sH * sH
+    let tH2 = powWithLowWord(3.0 + s2h + r, 0'u32)
+    let tL2 = r - ((tH2 - 3.0) - s2h)
+    let u2 = sH * tH2
+    let v2 = sL * tH2 + tL2 * ss
+    let pH = powWithLowWord(u2 + v2, 0'u32)
+    let pL = v2 - (pH - u2)
+    let zH = CP_H_F64 * pH
+    let zL = CP_L_F64 * pH + pL * CP_F64 + DP_L_F64[interval]
+    let nf = float64(n)
+    t1 = powWithLowWord(((zH + zL) + DP_H_F64[interval]) + nf, 0'u32)
+    t2 = zL - (((t1 - nf) - DP_H_F64[interval]) - zH)
 
-  # Handle zero
-  if x == 0.0:
-    if y > 0.0:
-      return 0.0
-    else:
-      return float64(1.0 / 0.0)  # inf
+  let y1 = powWithLowWord(y, 0'u32)
+  let pL = (y - y1) * t1 + y * t2
+  var pH = y1 * t1
+  let z = pL + pH
+  var jWord = cast[int32](powHighWord(z))
+  let iWord = cast[int32](powLowWord(z))
 
-  if y == 1.0:
-    return x
-  if y == -1.0:
-    return 1.0 / x
-  if y == 2.0:
-    return x * x
-  if y == 0.5:
-    return if x >= 0.0: sqrt(x) else: float64(0.0 / 0.0)  # NaN
+  if jWord >= 0x40900000'i32:
+    if ((jWord - 0x40900000'i32) or iWord) != 0: return sn * HUGE_F64 * HUGE_F64
+    if pL + OVT_F64 > z - pH: return sn * HUGE_F64 * HUGE_F64
+  elif (jWord and 0x7fffffff'i32) >= 0x4090cc00'i32:
+    if ((cast[uint32](jWord) - 0xc090cc00'u32) or cast[uint32](iWord)) != 0'u32:
+      return sn * TINY_F64 * TINY_F64
+    if pL <= z - pH: return sn * TINY_F64 * TINY_F64
 
-  # General case: use exp and ln
-  # x^y = exp(y * ln(x))
-  # For sign, check if y is an odd integer when x < 0
-  let signX = x < 0.0
-  if signX:
-    # Check if y is close to an integer
-    let yAbs = if y < 0: -y else: y
-    if yAbs < 1e15:  # avoid precision issues
-      let yInt = y.int64
-      if yInt.float64 != y:
-        return float64(0.0 / 0.0)  # NaN for non-integer
-    
-      let lnAbsX = ln(absX)
-      let yLnAbsX = y * lnAbsX
-      var result = exp(yLnAbsX)
-    
-      if (yInt and 1) == 1:
-        result = -result
-    
-      return result
-    else:
-      # For large y, assume it's not integral
-      return float64(0.0 / 0.0)  # NaN
+  let iz = jWord and 0x7fffffff'i32
+  k = (iz shr 20) - 0x3ff
+  var n: int32 = 0
+  if iz > 0x3fe00000'i32:
+    n = jWord + (0x00100000'i32 shr (k + 1))
+    k = ((n and 0x7fffffff'i32) shr 20) - 0x3ff
+    let t = cast[float64](uint64(cast[uint32](n and not (0x000fffff'i32 shr k))) shl 32)
+    n = ((n and 0x000fffff'i32) or 0x00100000'i32) shr (20 - k)
+    if jWord < 0: n = -n
+    pH -= t
 
-  let lnAbsX = ln(absX)
-  let yLnAbsX = y * lnAbsX
-  return exp(yLnAbsX)
+  let t = powWithLowWord(pL + pH, 0'u32)
+  let u = t * LG2_H_F64
+  let v = (pL - (t - pH)) * LG2_F64 + t * LG2_L_F64
+  var z2 = u + v
+  let w = v - (z2 - u)
+  let tSquare = z2 * z2
+  let tPoly = z2 - tSquare * (P1_F64 + tSquare * (P2_F64 + tSquare * (P3_F64 + tSquare * (P4_F64 + tSquare * P5_F64))))
+  let r = (z2 * tPoly) / (tPoly - 2.0) - (w + z2 * w)
+  z2 = 1.0 - (r - z2)
+  jWord = cast[int32](powHighWord(z2))
+  jWord += n shl 20
+  if (jWord shr 20) <= 0:
+    z2 = powScale64(z2, n)
+  else:
+    z2 = powWithHighWord(z2, cast[uint32](jWord))
+  sn * z2
 
 # ============================================================================
 # HYPOT Implementation
@@ -440,75 +618,33 @@ func pow*(x, y: float64): float64 =
 # - May raise overflow or underflow
 
 func hypot*(x, y: float32): float32 =
-  ## Euclidean distance (hypotenuse) for f32
-  ## origin: core-math
-  ## Copyright (c) 2022 Alexei Sibidanov.
-  const X1P90 = 1.2379400392853462e30'f32  # 2^90
-  const X1P_90 = 8.0779990119113e-28'f32   # 2^-90
+  ## Euclidean distance (hypotenuse) for f32.
+  if classify(x) in {fcInf, fcNegInf} or classify(y) in {fcInf, fcNegInf}:
+    return float32(Inf)
+  if x.isNaN or y.isNaN:
+    return x + y
 
-  var xi: uint32 = cast[uint32](x)
-  var yi: uint32 = cast[uint32](y)
-
-  xi = xi and (-1i32).uint32 shr 1  # clear sign bit
-  yi = yi and (-1i32).uint32 shr 1
-
-  # swap if needed
-  if xi < yi:
-    swap(xi, yi)
-
-  var x_val = cast[float32](xi)
-  var y_val = cast[float32](yi)
-
-  if yi == (0xff'u32 shl 23):
-    return y_val
-  if xi >= (0xff'u32 shl 23) or yi == 0 or xi - yi >= (25'u32 shl 23):
-    return x_val + y_val
-
-  var z: float32 = 1.0'f32
-  if xi >= ((0x7f'u32 + 60) shl 23):
-    z = X1P90
-    x_val *= X1P_90
-    y_val *= X1P_90
-  elif yi < ((0x7f'u32 - 60) shl 23):
-    z = X1P_90
-    x_val *= X1P90
-    y_val *= X1P90
-
-  return z * sqrt((x_val.float64 * x_val.float64 + y_val.float64 * y_val.float64).float32)
+  let ax = float64(x.abs)
+  let ay = float64(y.abs)
+  let large = max(ax, ay)
+  let small = min(ax, ay)
+  if large == 0.0:
+    return 0'f32
+  let ratio = small / large
+  float32(large * sqrtFinite64(1.0 + ratio * ratio))
 
 func hypot*(x, y: float64): float64 =
-  ## Euclidean distance (hypotenuse) for f64
-  ## origin: core-math/src/binary64/hypot/hypot.c
-  ## Copyright (c) 2022 Alexei Sibidanov.
-  const X1P1023 = 8.98846567431158e307  # 2^1023
-  const X1P_1023 = 1.11022302462516e-308  # 2^-1023
+  ## Euclidean distance (hypotenuse) for f64.
+  if classify(x) in {fcInf, fcNegInf} or classify(y) in {fcInf, fcNegInf}:
+    return Inf
+  if x.isNaN or y.isNaN:
+    return x + y
 
-  var xi: uint64 = cast[uint64](x)
-  var yi: uint64 = cast[uint64](y)
-
-  xi = xi and (-1i64).uint64 shr 1  # clear sign bit
-  yi = yi and (-1i64).uint64 shr 1
-
-  # swap if needed
-  if xi < yi:
-    swap(xi, yi)
-
-  var x_val = cast[float64](xi)
-  var y_val = cast[float64](yi)
-
-  if yi == (0x7ff'u64 shl 52):
-    return y_val
-  if xi >= (0x7ff'u64 shl 52) or yi == 0 or xi - yi >= (54'u64 shl 52):
-    return x_val + y_val
-
-  var z: float64 = 1.0
-  if xi >= ((0x3ff'u64 + 510) shl 52):
-    z = X1P1023
-    x_val *= X1P_1023
-    y_val *= X1P_1023
-  elif yi < ((0x3ff'u64 - 510) shl 52):
-    z = X1P_1023
-    x_val *= X1P1023
-    y_val *= X1P1023
-
-  return z * sqrt(x_val * x_val + y_val * y_val)
+  let ax = x.abs
+  let ay = y.abs
+  let large = max(ax, ay)
+  let small = min(ax, ay)
+  if large == 0.0:
+    return 0.0
+  let ratio = small / large
+  large * sqrtFinite64(1.0 + ratio * ratio)

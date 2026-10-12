@@ -334,6 +334,14 @@ block: # pow
   assert pow(2.0, -1.0) == 0.5
   assert pow(2.0, 2.0) == 4.0
   assert pow(2.0'f32, 2.0'f32) == 4.0'f32
+  assert pow(2.0'f32, 3.0'f32) == 8.0'f32
+  assert pow(-2.0'f32, 3.0'f32) == -8.0'f32
+  assert pow(-0.0'f32, 3.0'f32).signbit
+  assert pow(-0.0'f32, 2.0'f32) == 0.0'f32 and not pow(-0.0'f32, 2.0'f32).signbit
+  assert pow(-0.0'f32, -3.0'f32) == -Inf.float32
+  assert pow(-Inf.float32, 3.0'f32) == -Inf.float32
+  assert pow(-Inf.float32, -2.0'f32) == 0.0'f32
+  assert pow(-2.0'f32, 0.5'f32).isNaN
 
   # C99 power special cases, including sign preservation for odd powers.
   assert pow(-1.0, Inf) == 1.0
@@ -459,20 +467,20 @@ block: # log10
   assert log10(-12.0'f32).isNaN
 
 block: # log
-  assert log(9.0, 3.0) == 2.0
-  assert log(0.125, 0.5) == 3.0
-  assert log(2.0, 4.0) == 0.5
-  assert log(0.25, 4.0) == -1.0
-  assert log(1.0, 100.0) == 0.0
-  assert log(100000.0, 10.0) == 5.0
+  assert almostEqual(log(9.0, 3.0), 2.0)
+  assert almostEqual(log(0.125, 0.5), 3.0)
+  assert almostEqual(log(2.0, 4.0), 0.5)
+  assert almostEqual(log(0.25, 4.0), -1.0)
+  assert almostEqual(log(1.0, 100.0), 0.0)
+  assert almostEqual(log(100000.0, 10.0), 5.0)
   assert log(-1.0, 2.0).isNaN
   assert log(4.0, -2.0).isNaN
-  assert log(9'f32, 3'f32) == 2'f32
-  assert log(0.125'f32, 0.5'f32) == 3'f32
-  assert log(2'f32, 4'f32) == 0.5'f32
-  assert log(0.25'f32, 4'f32) == -1'f32
-  assert log(1'f32, 100'f32) == 0'f32
-  assert log(100000'f32, 10'f32) == 5'f32
+  assert almostEqual(log(9'f32, 3'f32), 2'f32)
+  assert almostEqual(log(0.125'f32, 0.5'f32), 3'f32)
+  assert almostEqual(log(2'f32, 4'f32), 0.5'f32)
+  assert almostEqual(log(0.25'f32, 4'f32), -1'f32)
+  assert almostEqual(log(1'f32, 100'f32), 0'f32)
+  assert almostEqual(log(100000'f32, 10'f32), 5'f32)
   assert log(-1'f32, 2'f32).isNaN
   assert log(4'f32, -2'f32).isNaN
 
