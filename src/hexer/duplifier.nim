@@ -1214,7 +1214,9 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
   ## Only reached inside a `.raises` routine (see the call site). Exception
   ## lowering has already run, so this raise is emitted in its finished form —
   ## `addRaisedCode` pairs the code with the result slot the way the routine's
-  ## rewritten signature demands.
+  ## Leng signature demands.
+  var lowered = createTokenBuf(4)
+  addSuccessTupleType(lowered, c.retType, info)
   copyIntoKind c.dest, IteV, info:
     copyIntoKind c.dest, EqX, info:
       copyIntoKind c.dest, PointerT, info: discard
@@ -1222,7 +1224,7 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
       copyIntoKind c.dest, NilX, info: discard
     copyIntoKind c.dest, StmtsS, info:
       copyIntoKind c.dest, RaiseS, info:
-        addRaisedCode(c.dest, c.retType,
+        addRaisedCode(c.dest, beginRead(lowered),
                       pool.symId("OutOfMemError.0." & SystemModuleSuffix),
                       c.resultSym, info)
     c.dest.addDotToken() # no else

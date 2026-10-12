@@ -109,23 +109,20 @@ proc addLengReturnType*(dest: var TokenBuf; retType, pragmas: Cursor;
   ## proctype rewritten the other is a function pointer that does not match its
   ## function, and nothing but the C compiler is going to notice.
   ##
-  ## The `eraiser` is the one pass that BAKES the answer into the
-  ## declarations it emits, because `cps` runs after it and builds a
-  ## coroutine's frame and result slot out of the return type. Everything that
-  ## still queries Nimony afterwards — `cps` for a callee, `lengcgen` for a
-  ## foreign proctype, which is pulled in as a type and never as code — has to
-  ## come back here for the same answer.
+  ## Nothing bakes the answer into a signature before `lengcgen`: hexer's
+  ## passes keep nimsem's signatures, `.raises` included, for the module's own
+  ## routines and the imported ones alike. `cps` for a coroutine's result slot,
+  ## `xelim` for the temp of a raising call and `lengcgen` for declarations and
+  ## proctypes all come back here for the same answer.
   if hasPragma(pragmas, RaisesP):
     addSuccessTupleType(dest, retType, info)
   else:
     dest.addSubtree retType
 
 proc addPragmasWithoutRaises*(dest: var TokenBuf; pragmas: Cursor) =
-  ## Copy a pragma list minus `(raises)`. Used where the raising-ness of a
-  ## routine has already been spent — the `eraiser` has put the success tuple
-  ## in the signature, so leaving the pragma on would have `lengcgen` wrap the
-  ## return type a second time — and on the procs `cps` generates FOR a
-  ## coroutine, which return a `Continuation` and never fail.
+  ## Copy a pragma list minus `(raises)`. Used on the procs `cps` generates
+  ## FOR a coroutine, which return a `Continuation` and never fail: the error
+  ## travels through the result slot instead.
   if pragmas.isDotToken or not pragmas.isTagLit:
     dest.addDotToken()
     return

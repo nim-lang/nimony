@@ -113,6 +113,13 @@ proc tempSymName(c: var Context): string {.inline.} =
 proc getType(c: var Context; n: Cursor): Cursor =
   result = getType(c.typeCache, n)
   assert result.typeKind != AutoT, "cannot compute type of: " & toString(n, false)
+  if c.goal == LowerCasts and n.exprKind in CallKinds and
+      procHasPragma(getType(c.typeCache, n.childCursor, {SkipAliases}), RaisesP):
+    # Signatures are nimsem's (`T` plus `.raises`), but exceptions are lowered
+    # by now: the call's value is the success tuple (#2642).
+    var buf = createTokenBuf(6)
+    addSuccessTupleType(buf, result, n.info)
+    result = c.typeCache.keepAlive(buf)
 
 proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info

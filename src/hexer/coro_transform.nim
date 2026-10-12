@@ -328,9 +328,8 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
           buf.takeTree p # pragmas
           buf.takeTree p # type
           buf.takeTree p # default value
-    # `fn` is the NIMONY declaration — this is the foreign case, so nothing
-    # has lowered it — hence the mapping is applied here rather than read off
-    # an already-lowered return type the way `generateCoroutineHelpers` does.
+    # `fn` is the nimsem declaration, as every signature is; the mapping is
+    # applied here as in `generateCoroutineHelpers`.
     let raises = hasPragma(fn.pragmas, RaisesP)
     var ret = fn.retType
     if raises or not isVoidType(ret):
@@ -2184,17 +2183,18 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
             c.typeCache.registerLocal(paramSym, ParamY, n)
             coroTr c, dest, n # type
             dest.takeTree n # default value
-    hasResult = not isVoidType(n)
+    var pragmas = n
+    skip pragmas # the return type
+    hasResult = hasPragma(pragmas, RaisesP) or not isVoidType(n)
     if hasResult:
       dest.copyIntoKind ParamU, info:
         dest.addSymDef pool.symId(ResultParamName), info
         dest.addDotToken() # export
         dest.addDotToken() # pragmas
         dest.copyIntoKind PtrT, info:
-          dest.takeTree n
+          addLengReturnType(dest, n, pragmas, info)
         dest.addDotToken() # default value
-    else:
-      skip n
+    skip n
     dest.copyIntoKind ParamU, info:
       dest.addSymDef pool.symId(CallerParamName), info
       dest.addDotToken() # export
@@ -2362,15 +2362,17 @@ proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) 
         skip n, SkipValue # default value
 
 proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
-                     paramsBegin, paramsEnd: int; origParams: Cursor) =
+                     paramsBegin, paramsEnd: int; origParams, pragmas: Cursor) =
   let info = readonlyCursorAt(dest, paramsBegin).info
   var retType = createTokenBuf(4)
-  # balanced span: raw copy keeps its seals
-  for i in paramsEnd..<dest.len: retType.add dest[i]
-  # No success-tuple wrapping here. the `eraiser` has already put it in the
-  # signature, which is why a `.raises` routine that returns nothing still
-  # arrives with a return type — its `ErrorCode` — and so still gets a result
-  # slot to hand it back through.
+  # The signature is nimsem's, so the result slot holds the Leng return type:
+  # a `.raises` routine hands back its success tuple through it — or, when it
+  # returns nothing, its `ErrorCode`, so it still gets a slot.
+  block:
+    var nimonyRet = createTokenBuf(4)
+    # balanced span: raw copy keeps its seals
+    for i in paramsEnd..<dest.len: nimonyRet.add dest[i]
+    addLengReturnType(retType, beginRead(nimonyRet), pragmas, info)
   c.currentProc.resultIsTuple = beginRead(retType).typeKind == TupleT
   block:
     var t = createTokenBuf(8)
@@ -2528,7 +2530,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
             # A method's state proc is never dispatched to — its `init`
             # wrapper is what the vtable slot holds — so it stops being one.
             setTagAt(dest, procStart, cast[TagId](ProcS))
-          patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
+          patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams, n
       if isCoroutine and isConcrete:
         # The state machine returns a `Continuation` and cannot fail; the
         # error, if there is one, went into the frame's result slot.
