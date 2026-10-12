@@ -1189,6 +1189,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # begin with — so this is JS-only and jorogumo rejects it under `w`.
         if js and c.config.jsBrowser:
           b.addStrLit "--target:browser"
+        # Wasm-only like the browser flag above: jorogumo's JS renderer has
+        # no host-import mode and no `dbg$` exports.
+        if wasm and c.config.hostImports:
+          b.addStrLit "--host-imports"
+        if wasm and c.config.exportAll:
+          b.addStrLit "--export-all"
         b.withTree "output":
           b.addStrLit "-o:"
         b.withTree "input":
@@ -2050,6 +2056,8 @@ proc addBackendKey(b: var Builder; c: DepContext; passC, passL: string) =
       b.withTree "layout":
         b.addStrLit c.config.layoutFile
     if c.config.jsBrowser: b.addKeyw "browser"
+    if c.config.hostImports: b.addKeyw "hostImports"
+    if c.config.exportAll: b.addKeyw "exportAll"
 
 proc frontendMemoFile(config: NifConfig): string =
   config.nifcachePath / "config.nif"
