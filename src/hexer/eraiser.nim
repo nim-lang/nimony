@@ -358,20 +358,10 @@ proc addPropagationCheck(c: var Context; dest: var TokenBuf; target: SymId;
 
 proc takeRaisingHeader(c: var Context; dest: var TokenBuf; decl: Cursor;
                        n: var Cursor): bool =
-  ## `typenav.takeRoutineHeader`, plus the signature half of this pass: a
-  ## `.raises` routine RETURNS its success tuple.
-  ##
-  ## The `(raises)` pragma stays: `lengcgen` reads it to decide that a raising
-  ## `.noreturn` proc must NOT get C's `noreturn` attribute, because under goto
-  ## exceptions such a proc does return — it hands back an error code — and
-  ## telling gcc otherwise deletes the callers' error paths. What `lengcgen`
-  ## no longer does from the pragma is rewrite THIS return type; it now does
-  ## that for proctypes only.
-  ##
-  ## This used to happen in `lengcgen`, at the very end, which was fine while
-  ## nothing between here and there had to know a raising routine's real shape.
-  ## `cps` does: it builds a coroutine's frame and its result slot out of the
-  ## return type, and it cannot wait for codegen to tell it what that is.
+  ## `typenav.takeRoutineHeader`. The signature stays nimsem's: a `.raises`
+  ## routine still returns `T` and says so with the pragma, like the imported
+  ## routines every later pass reads from the index. Whoever needs the success
+  ## tuple derives it with `addLengReturnType` (#2642).
   result = true # assume concrete
   let sym = n.symId
   for i in 0..<BodyPos:
@@ -381,9 +371,6 @@ proc takeRaisingHeader(c: var Context; dest: var TokenBuf; decl: Cursor;
     elif i == TypevarsPos:
       result = n.substructureKind != TypevarsU
       takeTree dest, n
-    elif i == ReturnTypePos:
-      addLengReturnType(dest, n, asRoutine(decl, SkipExclBody).pragmas, n.info)
-      skip n
     else:
       takeTree dest, n
 

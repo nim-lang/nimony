@@ -848,16 +848,9 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
   skip n
   # n is now at the pragmas position:
   if rewriteRaises and hasPragma(n, RaisesP):
-    # PROCTYPES only. A raising routine's DECLARATION gets its success tuple
-    # from the `eraiser`, which has to run before `cps` — a coroutine's frame
-    # and result slot are built out of the return type, and that cannot wait
-    # for codegen. Imported routines included: `transformInlineRoutines` runs
-    # the whole pipeline over those too.
-    #
-    # A proctype is different. `(type :Fn . . . (proctype ... (raises)))` in
-    # another module is pulled in as a type DECLARATION, not as code, so this
-    # is the only pass that ever looks at one. Hence the mapping lives in
-    # `builtintypes.addLengReturnType`: several sites, one definition.
+    # Declarations and proctypes alike: the passes before this one keep
+    # nimsem's signatures, `.raises` and all, so the Leng return type is
+    # decided here, by `builtintypes.addLengReturnType`.
     var ret = createTokenBuf(6)
     addLengReturnType(ret, retType, n, NoLineInfo)
     retType = cursorAt(ret, 0)
@@ -1099,7 +1092,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
           while n.hasMore: skip n
     skip n, SkipType # return type
   else:
-    trParams c, dest, n
+    trParams c, dest, n, rewriteRaises = true
 
   let pinfo = n.info
   let procRaises = hasPragma(n, RaisesP)
