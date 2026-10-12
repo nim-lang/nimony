@@ -156,3 +156,55 @@ proc staticValueTypeMatches*(elemType, valueType: Cursor): bool =
     inc arrElem
     return sameTrees(openArrayElem, arrElem)
   false
+
+proc isConstantArg*(n: Cursor): bool =
+  ## Tier-1 constant expression, the argument restriction of a `staticParam`:
+  ## literals, `const` / enum field / `staticParam` / `staticTypevar`
+  ## references, the fixed primitive opcode set (`+ - *`, unary `-` and the
+  ## comparisons), conversions of such values and aggregate constructors over
+  ## them. Anything else would need general CTFE, which is never implicit: such
+  ## an argument must be written `static(expr)` at the call site.
+  if not n.hasMore: return false
+  case n.kind
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
+    result = true
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    result = res.status == LacksNothing and
+      res.decl.symKind in {ConstY, EfldY, StaticTypevarY, StaticParamY}
+  of TagLit:
+    case n.exprKind
+    of FalseX, TrueX, NilX, InfX, NeginfX, NanX:
+      result = true
+    of SufX:
+      var inner = n
+      inc inner
+      result = isConstantArg(inner)
+    of AddX, SubX, MulX, NegX, EqX, NeqX, LeX, LtX, ConvX, HconvX, DconvX:
+      # `(op T a b)` / `(neg T a)` / `(conv T a)`: skip the type, check operands
+      var it = n
+      it = sub(it)
+      skip it # type
+      result = true
+      while it.hasMore:
+        if not isConstantArg(it):
+          result = false
+          break
+        skip it
+    of AconstrX, SetconstrX, TupconstrX, OconstrX:
+      result = isStaticValue(n)
+    of ExprX:
+      # a `(expr x)` wrapper around a single value, as left by sem for
+      # parenthesized expressions
+      var it = n
+      it = sub(it)
+      result = it.hasMore
+      while it.hasMore:
+        if not isConstantArg(it):
+          result = false
+          break
+        skip it
+    else:
+      result = false
+  else:
+    result = false

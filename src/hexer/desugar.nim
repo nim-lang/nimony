@@ -1343,7 +1343,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
               copyInto dest, n:
                 takeTree dest, n # keep set constructor
                 tr(c, dest, n)
-            of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+            of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
                 TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, ElseU,
                 TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
                 EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU,

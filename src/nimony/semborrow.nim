@@ -51,7 +51,7 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
   n.into ParamsU:
     while n.hasMore:
       let param = asLocal(n)
-      if param.kind == ParamY and param.name.isSymbolDef:
+      if isParamLike(param.kind) and param.name.isSymbolDef:
         var isDistinct = false
         let destType = skipDistinct(param.typ, isDistinct)
         if isDistinct:

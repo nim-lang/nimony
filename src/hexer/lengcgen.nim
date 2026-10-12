@@ -552,7 +552,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
           of ElseU:
             takeInto dest, n:      # (else ...)
               trBranchBody c, dest, n, flags
-          of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+          of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
               TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
               CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
               UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
@@ -561,7 +561,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
         dest.addParRi # end of union
     of NilU:
       skip n, SkipFull
-    of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+    of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU, TypevarU,
         StaticTypevarU, EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
         ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
         UnpacktupU, ExceptU, FinU, UncheckedU, CallargsU,
@@ -837,7 +837,7 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
     dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
-        if n.symKind != ParamY:
+        if not isParamLike(n.symKind):
           error c, "expected (param) but got: ", n
         maybeByConstRef(c, dest, n)
       dest.addParRi(n.endInfo)
@@ -1056,7 +1056,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     # count each param as used:
     n.into:                                     # (params ...)
       while n.hasMore:
-        assert n.symKind == ParamY
+        assert isParamLike(n.symKind)
         n.into:                                 # (param ...)
           let (param, _) = getSymDef(c, n)
           while n.hasMore: skip n
@@ -1957,7 +1957,7 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       c.typeCache.registerLocal(renameTo, symKind, typAt, n)
 
     if mode == TraverseSig:
-      if localDecl.substructureKind == ParamU:
+      if isParamLike(localDecl.substructureKind):
         # Parameter decls in NIFC have no dot token for the default value!
         discard
       else:
@@ -2049,7 +2049,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       of ElseU:
         takeInto dest, n:
           trStmt c, dest, n
-      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
           TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU,
           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,

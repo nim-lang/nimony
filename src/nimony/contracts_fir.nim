@@ -480,7 +480,7 @@ proc outlivesProc(c: var FirContext; s: SymId): bool =
   if s == c.resultSym: return true
   let x = localInfoOf(c, s)
   result = x.kind in {GvarY, TvarY, GletY, TletY} or
-           (x.kind == ParamY and x.typ.typeKind in {MutT, OutT})
+           (isParamLike(x.kind) and x.typ.typeKind in {MutT, OutT})
 
 proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
   ## The borrow `value` carries, if any: one already held by the symbol
@@ -3600,7 +3600,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       let argSym = extractSymId(n)
       if argSym != NoSymId:
         let argInfo = getLocalInfo(c.typeCache, argSym)
-        if argInfo.kind == ParamY and isVarOpenArray(c, argInfo.typ) and
+        if isParamLike(argInfo.kind) and isVarOpenArray(c, argInfo.typ) and
             not isVarOpenArray(c, param.typ):
           buildErr c, n.info, "`" & pool.symString(argSym).split('.')[0] &
             "` is a `var openArray` parameter: only its elements may change, " &
@@ -3860,7 +3860,7 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
       # Sem already rejected a source-level `x = …` on it.
       if isInitialized(c, symId):
         c.buildErr n.info, "invalid reassignment to `let` variable"
-    elif x.kind == ParamY and isVarOpenArray(c, x.typ):
+    elif isParamLike(x.kind) and isVarOpenArray(c, x.typ):
       c.buildErr n.info, "a `var openArray` parameter cannot be replaced; only its elements can change"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))

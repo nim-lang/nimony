@@ -82,7 +82,7 @@ proc compatVarargsParamElem*(fn: FnCandidate): Cursor =
     skipToParams f
   if f.substructureKind == ParamsU:
     loopInto f:
-      if f.symKind == ParamY:
+      if isParamLike(f.symKind):
         let p = asLocal(f)
         let elem = compatVarargsElem(p.typ)
         if not cursorIsNil(elem):

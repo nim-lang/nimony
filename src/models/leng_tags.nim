@@ -95,7 +95,7 @@ proc rawTagIsLengStmt*(raw: TagEnum): bool {.inline.} =
 type
   LengType* = enum
     NoType
-    ParamsT = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
+    ParamsT = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"; after sem an entry may also be a `(staticParam ...)`
     UnionT = (ord(UnionTagId), "union")  ## first two are Leng union declarations (untagged, and discriminated from a case object - see `doc/internals/leng-spec.md`), third is the Nimony union pragma
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration

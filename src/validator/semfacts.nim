@@ -297,7 +297,7 @@ proc emitsBySignature(params: Cursor): bool =
   var first = true
   var firstIsBuf = false
   while n.hasMore:
-    if n.isTagLit and n.symKind == ParamY:
+    if n.isTagLit and isParamLike(n.symKind):
       let typ = asLocal(n).typ
       let tracked = classifyType(typ)
       if tracked == tkCursor and isMutType(typ): return false
@@ -540,7 +540,7 @@ proc collectParams(p: var ProcFacts) =
   if not p.params.isTagLit or p.params.substructureKind != ParamsU: return
   var n = childCursor(p.params)
   while n.hasMore:
-    if n.isTagLit and n.symKind == ParamY:
+    if n.isTagLit and isParamLike(n.symKind):
       let local = asLocal(n)
       p.addVar local.name, local.typ, isParam = true, isMut = isMutType(local.typ)
       if classifyType(local.typ) == tkCursor and isMutType(local.typ):

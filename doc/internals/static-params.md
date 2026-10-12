@@ -1,7 +1,9 @@
 # Static parameters (value generics) for Nimony
 
-Status: design. This document records the design for compile-time *value*
-parameters — the replacement for Nim 2's `static[T]` type modifier.
+Status: design; `staticTypevar`, `staticParam` and the `staticOverloads`
+tiebreaker are implemented (see the implementation notes). This document
+records the design for compile-time *value* parameters — the replacement for
+Nim 2's `static[T]` type modifier.
 
 ## Goal
 
@@ -277,3 +279,13 @@ and would reintroduce the undecidability we are avoiding.
 * Overload resolution: static-only differences are ambiguous unless the
   backwards-compat `.feature` is enabled, in which case the static preference is
   the last tiebreaker.
+* `staticParam` is a restriction on the *call site* only. The routine is not
+  instantiated per value: inside the body the parameter is an ordinary value of
+  its element type, and hexer treats the declaration exactly like a `param`
+  (`isParamLike`). A reference to a `staticParam` counts as a tier-1 constant,
+  so it can be forwarded to another `static` parameter. The check lives in
+  `staticmatches.isConstantArg`, called from `sigmatchLoop` after the argument
+  matched the plain element type, and from `semLocal` for a default value.
+* `static(expr)` / `static expr` in an expression position is the explicit
+  general-CTFE request: the operand is evaluated like a `const` initializer and
+  the resulting value takes its place.

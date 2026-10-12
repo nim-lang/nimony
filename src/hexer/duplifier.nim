@@ -112,7 +112,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   if r != NoSymId:
     var canAnalyse = false
     let v = c.typeCache.getLocalInfo(r)
-    if v.kind == ParamY:
+    if isParamLike(v.kind):
       canAnalyse = v.typ.typeKind == SinkT
     elif v.kind in {VarY, LetY}:
       # CursorY omitted here on purpose as we cannot steal ownership from a cursor

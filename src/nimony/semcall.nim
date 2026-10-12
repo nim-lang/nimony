@@ -87,7 +87,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
               skipToParams paramType
               assert paramType.substructureKind == ParamsU
               inc paramType
-              assert paramType.symKind == ParamY
+              assert isParamLike(paramType.symKind)
               paramType = asLocal(paramType).typ
               if m.inferred.len != 0:
                 paramType = instantiateType(c, paramType, m.inferred)
