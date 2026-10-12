@@ -293,7 +293,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
     skip constraint # pragmas
     if isStaticConstraint(constraint):
       kind = StaticTypevarY
-  elif kind == ParamY and c.routine.kind notin {TemplateY, MacroY}:
+  elif kind == ParamY:
     # `x: static[int]` declares a *constant parameter*: the call-site argument
     # must be a constant expression. The type slot holds the plain element
     # type; the static-ness lives in the `staticParam` tag.

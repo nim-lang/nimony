@@ -38,3 +38,11 @@ echo pick(one)
 
 proc fwd[T](a: T; k: static[int]): int = rep(a, k).len
 echo fwd(7, 3)
+
+# templates take `static` parameters too, including plugin templates: the
+# plugin sees the constant argument
+template twiceT(x: static[int]): int = x * 2
+echo twiceT(c + 1)
+
+template show(x: static[int]) {.plugin: "deps/mstaticarg".}
+show(3)
