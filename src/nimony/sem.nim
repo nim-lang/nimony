@@ -1390,10 +1390,16 @@ proc semBlock(c: var SemContext; dest: var TokenBuf; it: var Item) =
         if label.isDotToken:
           anonLabel.addIdent "`blk", label.info
           label = beginRead(anonLabel)
-        let declStart = dest.len
         let delayed = handleSymDef(c, dest, label, BlockY)
         c.addSym dest, delayed
-        publish c, dest, delayed.s.name, declStart
+        # A label that is already a symbol (a re-checked or template-expanded
+        # block) is not in scope, so `break` finds it through this entry: it
+        # has to be a `(block :label (stmts))` for its kind to be `BlockY` (#2640).
+        var decl = createTokenBuf(3)
+        decl.buildTree BlockS, delayed.info:
+          decl.addSymDef delayed.s.name, delayed.info
+          decl.buildTree StmtsS, delayed.info: discard # the body is not part of the entry
+        programs.publish delayed.s.name, decl, c.phase
         skip it.n # the label (or the dot it replaced)
         if anonBreaks: c.routine.breakTargets.add delayed.s.name
 

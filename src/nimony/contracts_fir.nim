@@ -820,6 +820,25 @@ proc argOf(n: Cursor; subst: Table[SymId, Cursor]): Cursor =
   if result.isSymbol and subst.hasKey(result.symId):
     result = peelExpr(subst.getOrQuit(result.symId))
 
+proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor]) =
+  ## `n` with every substituted symbol replaced by the expression it stands for.
+  var n = n
+  case n.kind
+  of Symbol:
+    if subst.hasKey(n.symId):
+      dest.addSubtree subst.getOrQuit(n.symId)
+    else:
+      dest.addSubtree n
+  of TagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        addSubstituted(dest, n, subst)
+        skip n
+      dest.addParRi(n.endInfo)
+  else:
+    dest.addSubtree n
+
 proc substitutes(n: Cursor; subst: Table[SymId, Cursor]): bool =
   ## Whether `argOf(n, subst)` replaces `n`. The replacement is an expression of
   ## the caller: it must be read with no substitution, because a caller's local
@@ -1258,8 +1277,14 @@ proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): V
       var hi = zero()
       if m.exprKind in CallKinds and ensuredResultRange(c, m, lo, hi):
         c.declaredRange[result] = RangeBounds(lo: lo, hi: hi)
-      else:
+      elif subst.len == 0:
         noteDeclaredRange(c, result, getType(c.typeCache, m))
+      else:
+        # `m` is the callee's view, `m.value` of a parameter `m`: only the
+        # caller's argument can be typed here (#2643)
+        var buf = createTokenBuf(16)
+        addSubstituted(buf, m, subst)
+        noteDeclaredRange(c, result, getType(c.typeCache, c.typeCache.keepAlive(buf)))
   else:
     result = InvalidVarId
 
@@ -2865,8 +2890,14 @@ proc operandInterval(c: var FirContext; n: Cursor; rd: Reading;
     lo = k
     hi = k
     result = true
-  else:
+  elif rd.args.len == 0 or substitutes(n, rd.args):
     result = valueBounds(c, argOf(n, rd.args), lo, hi)
+  else:
+    # `m.value` of a callee's parameter `m`: `valueBounds` reads the caller's
+    # scope, so it has to see the argument in place of `m` (#2643)
+    var buf = createTokenBuf(16)
+    addSubstituted(buf, n, rd.args)
+    result = valueBounds(c, c.typeCache.keepAlive(buf), lo, hi)
 
 proc proveByIntervals(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   ## A comparison `pureCompare` cannot state as `a <= b + c`, decided by the

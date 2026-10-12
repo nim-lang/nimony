@@ -130,6 +130,12 @@ type
       ## `swap` while `transformCoroutineDecl` runs, then swap back.
       ## `coroTypes` and `shouldPublish` accumulate here across all
       ## iters in the module and get flushed in `elimLambdas`.
+    constDepth: Table[SymId, int]
+      ## a proc-level const -> the `procStack` depth of its declaration
+    liftedConsts: Table[SymId, SymId]
+      ## a proc-level const that a nested routine mentions -> its module level
+      ## name. The routine is lifted out of the const's scope, so pass 2 moves
+      ## the const along with it (#2641). Pass 1 enters the consts with a 0.
     hoisted: TokenBuf
       ## Statements `genCall` and `emitIterValue` put in front of the current
       ## statement (callee temp, env==nil dispatch, iterator frame); the Final
@@ -187,6 +193,8 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let typ = n
     tr(c, dest, n)
     c.typeCache.registerLocal(name, kind, typ, n)
+    if kind == ConstY and c.procStack.len > 0:
+      c.constDepth[name] = c.procStack.len
     tr(c, dest, n)  # value
 
 proc propagateEnvNeed(c: var Context) =
@@ -468,6 +476,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       noteNestedRef c, n.symId
       takeTree dest, n
     else:
+      if loc.kind == ConstY and
+          c.constDepth.getOrDefault(n.symId, c.procStack.len) < c.procStack.len:
+        c.liftedConsts[n.symId] = SymId(0)
       takeTree dest, n
   of TagLit:
     if c.procStack.len == 0 and n.stmtKind in ToplevelRootKinds:
@@ -1274,6 +1285,35 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       treType c, dest, n # type (might grow an environment parameter)
       tre c, dest, n # value
 
+proc treConst(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## A const of a routine that a nested routine mentions moves to where the
+  ## nested routine is lifted to, ahead of it.
+  let s = n.childCursor.symId
+  if c.liftedConsts.hasKey(s) and c.procStack.len > c.liftDepth:
+    var name = pool.symBasename(s)
+    name.add "`c."
+    name.add $c.counter
+    inc c.counter
+    name.add "."
+    name.add c.thisModuleSuffix
+    let newSym = pool.symId(name)
+    c.liftedConsts[s] = newSym
+    let info = n.info
+    var decl = createTokenBuf(16)
+    decl.copyIntoKind ConstS, info:
+      n.into:
+        let sinfo = n.info
+        inc n # name
+        decl.addSymDef newSym, sinfo
+        takeTree decl, n # export marker
+        takeTree decl, n # pragmas
+        c.typeCache.registerLocal(s, ConstY, n)
+        treType c, decl, n
+        tre c, decl, n # value
+    c.dest.add decl
+  else:
+    treLocal c, dest, n
+
 proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId; ownsEnvLocal: bool) =
   copyInto dest, n:
     while n.hasMore:
@@ -1807,6 +1847,11 @@ proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
+    let lifted = c.liftedConsts.getOrDefault(n.symId)
+    if lifted != SymId(0):
+      dest.addSymUse lifted, n.info
+      inc n
+      return
     # is this the usage of a proc symbol that is a closure? If so,
     # turn it into a `(fn, env)` tuple and generate the environment.
     let origTyp = c.typeCache.getType(n, {SkipAliases})
@@ -1894,7 +1939,9 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       treToplevelStmt c, dest, n
       return
     case n.stmtKind
-    of LocalDecls:
+    of ConstS:
+      treConst c, dest, n
+    of LocalDecls - {ConstS}:
       treLocal c, dest, n
     of ProcS, FuncS, MethodS, ConverterS:
       treProcLift c, dest, n

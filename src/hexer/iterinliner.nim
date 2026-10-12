@@ -339,11 +339,13 @@ proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
   ## A fresh name for every local and label `n` declares. Labels have to be
   ## known up front: a `jmp` comes before its `lab`. A nested routine gets a
   ## fresh name too (one definition per copy), but what it declares inside is
-  ## its own and keeps its names.
+  ## its own and keeps its names. That name is unique in the module, not just
+  ## in the routine: the backend lifts the routine out to module scope (#2645).
   if n.isTagLit and n.stmtKind in NestedRoutines:
     let d = n.childCursor
     if d.kind == SymbolDef:
-      mapping[d.symId] = pool.symId("`ii." & $e.getTmpId)
+      mapping[d.symId] = pool.symId("`iir." & $e.localDeclCounters)
+      inc e.localDeclCounters
   elif n.isTagLit and n.stmtKind notin {MacroS, TemplateS, TypeS, PragmasS}:
     if n.stmtKind in {VarS, LetS, CursorS, PatternvarS, ResultS, LabS}:
       let d = n.childCursor

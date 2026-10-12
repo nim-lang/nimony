@@ -669,17 +669,80 @@ proc loadPluginOutput(outputFile: string; info: NifLineInfo): PluginOutput =
     rd.close(r)
   peelSidecars result
 
-proc addPluginBody(dest: var TokenBuf; o: var PluginOutput) =
+const GlobalLayoutDecls = {TypeY, ProcY, FuncY, ConverterY, MethodY,
+                           TemplateY, MacroY, IteratorY}
+
+proc collectGlobalDecls(c: var SemContext; n: Cursor;
+                        renames: var Table[SymId, SymId]) =
+  ## `genSym()` hands out local names (`tmp.N`), but a type or a routine gets
+  ## a GLOBAL name wherever it is written: the backends lift it to module
+  ## scope, where a local name is neither indexed (#2644) nor unique (#2645).
+  var n = n
+  if n.kind == TagLit:
+    if n.symKind in GlobalLayoutDecls:
+      let def = n.childCursor
+      if def.kind == SymbolDef and pool.symIsLocal(def.symId) and
+          not renames.hasKey(def.symId):
+        var name = pool.symBasename(def.symId)
+        var counter = addr c.globals.mgetOrPut(name, -1)
+        counter[] += 1
+        name.add '.'
+        name.addInt counter[]
+        name.add '.'
+        name.add c.thisModuleSuffix
+        renames[def.symId] = pool.symId(name)
+    n.into:
+      while n.hasMore:
+        collectGlobalDecls(c, n, renames)
+        skip n
+
+proc addRenamed(dest: var TokenBuf; n: Cursor; renames: Table[SymId, SymId]) =
+  var n = n
+  case n.kind
+  of Symbol, SymbolDef:
+    let r = renames.getOrDefault(n.symId)
+    if r == SymId(0):
+      dest.addSubtree n
+    elif n.kind == Symbol:
+      dest.addSymUse r, n.info
+    else:
+      dest.addSymDef r, n.info
+  of TagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        addRenamed(dest, n, renames)
+        skip n
+      dest.addParRi(n.endInfo)
+  else:
+    dest.addSubtree n
+
+proc addPluginBody(c: var SemContext; dest: var TokenBuf; o: var PluginOutput) =
   ## Appends the output proper, everything after the sidecars, to `dest`.
   ## `addSubtree` re-interns a bif's private-pool content into the global pools.
   if o.buf.len > 0:
+    var body = createTokenBuf(o.buf.len)
     var n = beginRead(o.buf)
     while n.hasMore and o.isSidecar(n):
       skip n
     while n.hasMore:
-      addSubtree(dest, n)
+      addSubtree(body, n)
       skip n
     endRead(n)
+    var renames = initTable[SymId, SymId]()
+    n = beginRead(body)
+    while n.hasMore:
+      collectGlobalDecls(c, n, renames)
+      skip n
+    endRead(n)
+    n = beginRead(body)
+    while n.hasMore:
+      if renames.len == 0: addSubtree(dest, n)
+      else: addRenamed(dest, n, renames)
+      skip n
+    endRead(n)
+    for _, r in renames:
+      c.freshSyms.incl r
 
 proc memoIsStale(outputFile: string; deps: seq[string]): bool =
   ## True when a file the cached output depended on has changed or vanished
@@ -748,7 +811,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
     output = loadPluginOutput(outputFile, info)
   for d in output.deps:
     recordFileDep c, d
-  addPluginBody dest, output
+  addPluginBody c, dest, output
   registerGeneratedSymbols(c, firstDisamb, output.nextName)
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
