@@ -1,0 +1,6 @@
+ok: ABC
+ok: XYZ
+2
+ok: ab
+raised: FullError
+raised: BadOperation
