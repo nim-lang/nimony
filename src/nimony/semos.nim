@@ -821,13 +821,10 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   var noAdditional = nifcore.createTokenBuf(1)
   runPlugin(c, dest, info, pluginName, input, noAdditional)
 
-proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
-                commandLineArgs: string;
-                sourceDir = ""): tuple[output: string, exitCode: int] =
-  # Compile the .p.nif through the full pipeline, then run the resulting
-  # binary. Compilation must keep the outer cwd (nimcache paths are relative
-  # to the invoking compile). Only the execution step uses `workingDir` so
-  # relative paths like `doc/version.md` resolve next to the caller module.
+proc compileProgram(file: string; nimcachePath: string;
+                    commandLineArgs: string): tuple[output: string, exitCode: int] =
+  ## Compile the .p.nif through the full pipeline. Compilation must keep the
+  ## outer cwd: nimcache paths are relative to the invoking compile.
   let nimonyExe = findTool("nimony")
   let compileCmd = quoteShell(nimonyExe) & commandLineArgs &
     " --nimcache:" & quoteShell(nimcachePath) &
@@ -836,8 +833,12 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
     result = execCmdEx(compileCmd)
   except:
     result = (output: "failed to run: " & compileCmd, exitCode: -1)
-  if result.exitCode != 0: return
 
+proc runCompiledProgram(file: string; nimcachePath: string; args: string;
+                        sourceDir: string): tuple[output: string, exitCode: int] =
+  ## Run the binary `compileProgram` built for `file`. Only the execution
+  ## step uses `workingDir` so relative paths like `doc/version.md` resolve
+  ## next to the caller module.
   let modname = extractModuleSuffix(file)
   let exe = nimcachePath / BackendDirC / modname / splitFile(file).name.addFileExt(ExeExt)
   # The child may start in `sourceDir`; keep the exe path absolute so it
@@ -848,14 +849,22 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
       exeToRun = os.absolutePath(exe)
     except:
       return (output: "failed to resolve exe path: " & exe, exitCode: -1)
-  let runCmd = quoteShell(exeToRun)
+  let runCmd = quoteShell(exeToRun) & args
   try:
     result = execCmdEx(runCmd, workingDir = sourceDir)
   except:
     result = (output: "failed to run: " & runCmd, exitCode: -1)
 
+proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
+                commandLineArgs: string;
+                sourceDir = ""): tuple[output: string, exitCode: int] =
+  result = compileProgram(file, nimcachePath, commandLineArgs)
+  if result.exitCode == 0:
+    result = runCompiledProgram(file, nimcachePath, "", sourceDir)
+
 const
   writeNifModuleSuffix* = "wriwhv7qv"
+  readNifModuleSuffix = "reaprsoka" # `std/readnif`, which imports `std/writenif`
 
 proc buildWriteNifModule(c: var SemContext): string =
   # Forward the outer compile's CLI args (notably `--cc`) so the inner nimony
@@ -868,7 +877,7 @@ proc buildWriteNifModule(c: var SemContext): string =
   let nimonyExe = findTool("nimony")
   let cmd = quoteShell(nimonyExe) & c.commandLineArgs &
     " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
-    " c " & quoteShell(stdlibFile("std/writenif.nim"))
+    " c " & quoteShell(stdlibFile("std/readnif.nim"))
   try:
     let (output, exitCode) = execCmdEx(cmd)
     result = if exitCode != 0: output else: ""
@@ -878,8 +887,13 @@ proc buildWriteNifModule(c: var SemContext): string =
 const StaleLockNs = 120'i64 * 1_000_000_000'i64
   ## A writenif build takes seconds; a lock this old lost its holder.
 
+proc evalModulesExist(c: var SemContext): bool =
+  let nimcache = c.g.config.nifcachePath
+  result = os.fileExists(nimcache / writeNifModuleSuffix & ".s.nif") and
+    os.fileExists(nimcache / readNifModuleSuffix & ".s.nif")
+
 proc prepareEval*(c: var SemContext): string =
-  ## Precompile `std/writenif` into this nimcache, once. Every module of a
+  ## Precompile `std/writenif` and `std/readnif` into this nimcache, once. Every module of a
   ## parallel build that evaluates something at compile time gets here, all
   ## sharing the nimcache, so the build is done under a lock: two concurrent
   ## builds of it race on the same outputs, and on Windows the loser cannot
@@ -887,11 +901,10 @@ proc prepareEval*(c: var SemContext): string =
   result = ""
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
-    let target = c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"
     let lock = c.g.config.nifcachePath / writeNifModuleSuffix & ".lock"
-    while not os.fileExists(target):
+    while not evalModulesExist(c):
       if vfsTryLock(lock):
-        if not os.fileExists(target):   # built while we waited
+        if not evalModulesExist(c):   # built while we waited
           result = buildWriteNifModule(c)
         vfsUnlock(lock)
         break
@@ -927,5 +940,58 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
       parse(r, dest)
       rd.close(r)
       result = ""  # success: caller interprets "" as no error
+  except:
+    result = "I/O error while evaluating " & srcName
+
+proc writeEvalDeps(c: var SemContext; srcName: string) {.canRaise.} =
+  # `nimony s` opens the .p.deps.nif unconditionally, so an empty `(stmts)`
+  # is needed when the original module has no imports.
+  var deps = createTokenBuf(c.importSnippets.len + 4)
+  deps.addParLe StmtsS, NoLineInfo
+  if c.importSnippets.len > 0:
+    deps.add c.importSnippets
+  deps.addParRi()
+  writeFile(c.g.config.nifcachePath / srcName & ".p.deps.nif", toString(deps, true))
+
+proc runEvalOnce*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
+                  input: string; sourceDir = ""): string =
+  ## Like `runEval`, but `src` does not contain the values it computes with:
+  ## it reads them from an input file (see `std/readnif`). `srcName` names the
+  ## program by its content, so every call of the same shape shares one
+  ## binary, compiled once per process (and kept up to date across processes
+  ## by nifmake); only `input` differs per call.
+  ## Returns an error message if the evaluation failed, "" on success.
+  let nimcache = c.g.config.nifcachePath
+  let progfile = nimcache / srcName.addFileExt(".p.nif")
+  try:
+    var compileError = ""
+    if not c.builtEvalPrograms.contains(srcName):
+      # The name is the content's checksum: an existing file is this program.
+      # Rewriting it would only bump its mtime and force a rebuild.
+      if not os.fileExists(progfile):
+        writeFileAndIndex(progfile, src)
+        writeEvalDeps(c, srcName)
+      let (output, exitCode) = compileProgram(progfile, nimcache, c.commandLineArgs)
+      if exitCode != 0:
+        compileError = output
+      else:
+        c.builtEvalPrograms.incl srcName
+    if compileError.len > 0:
+      result = ensureMove(compileError)
+    else:
+      let basename = nimcache / srcName & "_" & computeChecksum(input)
+      let infile = basename & ".in.nif"
+      let outfile = basename & ".out.nif"
+      writeFile(infile, input)
+      let args = " " & quoteShell(os.absolutePath(infile)) & " " &
+        quoteShell(os.absolutePath(outfile))
+      let (output, exitCode) = runCompiledProgram(progfile, nimcache, args, sourceDir)
+      if exitCode != 0:
+        result = ensureMove(output)
+      else:
+        var r = rd.open(outfile)
+        parse(r, dest)
+        rd.close(r)
+        result = ""
   except:
     result = "I/O error while evaluating " & srcName

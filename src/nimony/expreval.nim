@@ -258,22 +258,41 @@ proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
   # would then fail to match the callee's formal parameter types.
   # `executeExpr` re-runs the full nimony pipeline and can resolve constants
   # itself via `rewriteSymsToIdents`.
-  var evaluatedCall = createTokenBuf(16)
-  evaluatedCall.addParLe CallS, n.info
-  evaluatedCall.addSymUse routine.name.symId, n.info
-  while args.hasMore:
-    evaluatedCall.takeTree args
-  evaluatedCall.addParRi()
-
-  var resultBuf = createTokenBuf(12)
-  assert c.c.executeExpr != nil
   # Prefer the routine's concrete return type so nested calls inside a
   # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
   # with the outer const's type. Keep `expectedType` for generic return
   # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
   let retType = executeRetType(c, routine.retType)
-  let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
-                                 retType, resultBuf, n.info)
+  var resultBuf = createTokenBuf(12)
+  var errorMsg = ""
+  # When every argument is a value, run the call through a program that is
+  # compiled once per callee and reads the values at runtime.
+  var handled = false
+  if c.c.executeCall != nil:
+    var argVals = createTokenBuf(16)
+    argVals.addParLe StmtsS, n.info
+    var a = args
+    var allValues = true
+    while allValues and a.hasMore:
+      let v = eval(c, a)
+      if v.isTagLit and v.cursorTagId == nifpools.ErrT:
+        allValues = false
+      else:
+        argVals.addSubtree v
+    argVals.addParRi()
+    if allValues:
+      handled = c.c.executeCall(c.c[], routine.name.symId, cursorAt(argVals, 0),
+                                retType, resultBuf, n.info, errorMsg)
+  if not handled:
+    var evaluatedCall = createTokenBuf(16)
+    evaluatedCall.addParLe CallS, n.info
+    evaluatedCall.addSymUse routine.name.symId, n.info
+    while args.hasMore:
+      evaluatedCall.takeTree args
+    evaluatedCall.addParRi()
+    assert c.c.executeExpr != nil
+    errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
+                               retType, resultBuf, n.info)
   if errorMsg.len == 0:
     result = cursorAt(resultBuf, 0)
   else:

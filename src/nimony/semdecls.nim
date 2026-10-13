@@ -590,7 +590,9 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
         crucial.magic = "true"
     if crucial.magic.len > 0:
       exportMarkerBecomesNifTag c, dest, beforeExportMarker, crucial
-    if n.isDotToken or n.isSymbol:
+    # An ident is the enum type of a declaration that is checked again: the
+    # const-eval sub-compile turns symbols back into idents.
+    if n.isDotToken or n.isSymbol or n.isIdent:
       if state.isBoolType:
         dest.addParLe(BoolT, n.info)
         dest.addParRi()

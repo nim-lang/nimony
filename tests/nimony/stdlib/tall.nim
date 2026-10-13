@@ -75,6 +75,7 @@ import std/parseutils
 import std/pathnorm
 import std/paths
 import std/random
+import std/readnif
 import std/rex
 import std/rawthreads
 import std/result

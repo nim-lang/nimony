@@ -154,6 +154,8 @@ type
     info*: NifLineInfo
 
   SemExpressionExecutor* = proc (c: var SemContext; expr: Cursor; expectedType: TypeCursor; result: var TokenBuf; info: NifLineInfo): string {.nimcall.}
+  SemCallExecutor* = proc (c: var SemContext; callee: SymId; args: Cursor; expectedType: TypeCursor;
+                           result: var TokenBuf; info: NifLineInfo; errorMsg: var string): bool {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
   ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
@@ -243,6 +245,8 @@ type
     phase*: SemPhase
     canSelfExec*: bool
     checkedForWriteNifModule*: bool
+    builtEvalPrograms*: HashSet[string]
+      ## const-eval programs `runEvalOnce` compiled in this process
     inWhen*: int
     inUncheckedAccess*: int
     templateInstCounter*: int
@@ -282,6 +286,7 @@ type
     usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
     pragmaStack*: seq[TokenBuf] # used to implement {.push.} and {.pop.}
     executeExpr*: SemExpressionExecutor
+    executeCall*: SemCallExecutor
     semStmtCallback*: SemStmtCallback
     semGetSize*: SemGetSize
     forceInstantiate*: ForceInstantiate

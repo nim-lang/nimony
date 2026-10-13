@@ -601,6 +601,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     importSnippets: initTokenBuf(),
     expanded: initTokenBuf(),
     executeExpr: exprexec.executeExpr,
+    executeCall: exprexec.executeCall,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
     forceInstantiate: forceInstantiateCallback,

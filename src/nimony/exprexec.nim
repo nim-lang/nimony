@@ -52,6 +52,8 @@ type
     bits: int
     structuralTypeToProc: Table[string, SymId]
     requests: seq[GenProcRequest]
+    readerTypeToProc: Table[string, SymId] # `fromNif` readers, see `executeCall`
+    readRequests: seq[GenProcRequest]
     usedModules: HashSet[string]
     errorMsg: string
     semCtx: ptr SemContext   # used to resolve `InvokeT` types via sem's
@@ -204,8 +206,8 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   rewriteTreeToIdents(newDest, n, c.thisModuleSuffix)
   c.dest = ensureMove newDest
 
-proc generateName(c: var SynthesizeSerializerCtx; key: string): string =
-  result = "`toNif" & "_" & key
+proc generateName(c: var SynthesizeSerializerCtx; key: string; prefix = "`toNif"): string =
+  result = prefix & "_" & key
   var counter = addr c.hookNames.mgetOrPut(result, -1)
   counter[] += 1
   result.add '.'
@@ -660,13 +662,383 @@ proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
     var mtok = c.dest[procStart]
     setTag(mtok, TagId(MethodS))
     c.dest[procStart] = mtok
+# --- argument readers for `executeCall` ---
+#
+# `executeCall` compiles one program per callee signature: the argument values
+# are not part of the program, they are encoded into a flat stream (see
+# `std/readnif`) that the program reads at runtime. `encodeArg` writes that
+# stream here, `genReadExpr`/`genReaderDecl` generate the code that reads it.
+# Both walk the same types and must agree on the supported subset:
+# ordinals, floats, strings, distinct/range thereof, arrays, tuples, seqs and
+# plain objects (no inheritance, no `case`).
+
+proc resolveTypeImpl(c: var SynthesizeSerializerCtx; orig: TypeCursor;
+                     instBuf: var TokenBuf): Cursor =
+  ## `toTypeImpl`, resolving a generic invocation via sem like `unravel` does.
+  result = toTypeImpl orig
+  if result.typeKind == InvokeT and c.semCtx != nil and
+      c.semCtx.semInstantiateType != nil:
+    let emptyBindings = initTable[SymId, Cursor]()
+    let inst = c.semCtx.semInstantiateType(c.semCtx[], result, emptyBindings)
+    instBuf = createTokenBuf(8)
+    instBuf.addSubtree inst
+    result = toTypeImpl(beginRead(instBuf))
+
+proc seqElemType(t: Cursor; elem: var Cursor): bool =
+  ## True when the object type `t` has `seq`'s shape: no parent, a length
+  ## field and a `ptr UncheckedArray[T]` field. `elem` is set to `T`.
+  result = false
+  if t.typeKind == ObjectT:
+    var n = sub(t)
+    if n.isDotToken:
+      skip n # no parent
+      var fields = 0
+      var last = default(Cursor)
+      while n.hasMore and n.substructureKind in {FldU, GfldU}:
+        let r = takeLocal(n, SkipFinalParRi)
+        inc fields
+        last = r.typ
+      if fields == 2 and not n.hasMore and last.typeKind == PtrT:
+        var inner = last
+        inc inner
+        if inner.typeKind == UarrayT:
+          inc inner
+          elem = inner
+          result = true
+
+proc plainObjectFields(t: Cursor; fields: var seq[Local]): bool =
+  ## True when the object type `t` has no parent and no `case` sections.
+  result = false
+  if t.typeKind == ObjectT:
+    var n = sub(t)
+    if n.isDotToken:
+      skip n # no parent
+      result = true
+      while result and n.hasMore:
+        if n.substructureKind in {FldU, GfldU}:
+          fields.add takeLocal(n, SkipFinalParRi)
+        else:
+          result = false
+
+proc stripConvs(v: Cursor): Cursor =
+  result = v
+  while result.exprKind in {HconvX, ConvX, DconvX}:
+    inc result # tag
+    skip result # type
+
+proc kvValue(v: Cursor): Cursor =
+  ## The value of a constructor element, which is either `(kv key value)` or
+  ## the value itself.
+  result = v
+  if result.substructureKind == KvU:
+    inc result
+    skip result # key
+
+proc addAtom(dest: var string; s: string) =
+  dest.add s
+  dest.add ' '
+
+proc encodeOrdinal(dest: var string; val: Cursor; unsigned: bool): bool =
+  var v = stripConvs(val)
+  if v.kind == Symbol:
+    let res = tryLoadSym(v.symId)
+    if res.status == LacksNothing and res.decl.symKind == EfldY:
+      v = asLocal(res.decl).val
+      inc v # the ordinal is the first entry of `(tup ord "name")`
+  if v.exprKind == SufX:
+    inc v
+  let x = getConstOrdinalValue(v)
+  result = not x.isNaN
+  if result:
+    var err = false
+    let i = asSigned(x, err)
+    if not err and not (unsigned and i < 0):
+      dest.addAtom $i
+    else:
+      err = false
+      let u = asUnsigned(x, err)
+      if err:
+        result = false
+      else:
+        dest.addAtom $u
+
+proc encodeFloat(dest: var string; val: Cursor): bool =
+  var v = stripConvs(val)
+  if v.exprKind == SufX:
+    inc v
+  result = true
+  var f = 0.0
+  case v.kind
+  of FloatLit: f = v.floatVal
+  of IntLit: f = float(v.intVal)
+  of TagLit:
+    case v.exprKind
+    of NanX: f = NaN
+    of InfX: f = Inf
+    of NeginfX: f = -Inf
+    else: result = false
+  else: result = false
+  if result:
+    dest.addAtom $cast[uint64](f)
+
+proc encodeArg(c: var SynthesizeSerializerCtx; dest: var string; typ, val: Cursor): bool =
+  ## Appends the value `val` of type `typ` to the argument stream. False when
+  ## the type or the shape of the value is not supported.
+  let v = stripConvs(val)
+  if isStringType(typ):
+    result = v.kind == StrLit
+    if result:
+      let str = pool.strings[v.strId]
+      dest.add $str.len
+      dest.add ':'
+      dest.addAtom str
+  else:
+    var instBuf = createTokenBuf(1)
+    let t = resolveTypeImpl(c, typ, instBuf)
+    var elem = default(Cursor)
+    var fields: seq[Local] = @[]
+    case t.typeKind
+    of IT, CT, BoolT, EnumT, OnumT, AnumT:
+      result = encodeOrdinal(dest, v, false)
+    of UT:
+      result = encodeOrdinal(dest, v, true)
+    of FloatT:
+      result = encodeFloat(dest, v)
+    of DistinctT, RangetypeT:
+      result = encodeArg(c, dest, t.childCursor, v)
+    of ArrayT:
+      result = v.exprKind == AconstrX
+      if result:
+        var count = 0
+        var e = v
+        e.peekInto:
+          skip e # type
+          while result and e.hasMore:
+            result = e.substructureKind != KvU and encodeArg(c, dest, t.childCursor, e)
+            skip e
+            inc count
+        result = result and getArrayLen(t) == createXint(int64 count)
+    of TupleT:
+      result = v.exprKind == TupconstrX
+      if result:
+        var e = v
+        var f = t
+        e.peekInto:
+          skip e # type
+          f.peekInto:
+            while result and f.hasMore and e.hasMore:
+              result = encodeArg(c, dest, getTupleFieldType(f), kvValue(e))
+              skip f
+              skip e
+            result = result and not f.hasMore and not e.hasMore
+    of ObjectT:
+      result = false
+      if v.exprKind == OconstrX:
+        if seqElemType(t, elem):
+          # `(oconstr seq[T] (kv len N) (kv data (nil) | (addr (aconstr …))))`
+          var e = v
+          e.peekInto:
+            skip e # type
+            while e.hasMore:
+              let d = kvValue(e)
+              if d.exprKind == NilX:
+                dest.addAtom "0"
+                result = true
+              elif d.exprKind == AddrX:
+                var arr = d
+                inc arr # addr
+                if arr.exprKind == AconstrX:
+                  # the count comes first, so the elements are collected aside
+                  var elems = ""
+                  var count = 0
+                  var ok = true
+                  arr.peekInto:
+                    skip arr # type
+                    while ok and arr.hasMore:
+                      ok = encodeArg(c, elems, elem, arr)
+                      skip arr
+                      inc count
+                  if ok:
+                    dest.addAtom $count
+                    dest.add elems
+                    result = true
+              skip e
+        elif plainObjectFields(t, fields):
+          result = true
+          for f in fields:
+            var found = false
+            var e = v
+            e.peekInto:
+              skip e # type
+              while not found and e.hasMore:
+                if e.substructureKind == KvU:
+                  var key = e
+                  inc key
+                  if key.isSymbol and key.symId == f.name.symId:
+                    found = true
+                    result = result and encodeArg(c, dest, f.typ, kvValue(e))
+                skip e
+            result = result and found
+    else:
+      result = false
+
+proc genReaderHeader(c: var SynthesizeSerializerCtx; dest: var TokenBuf; sym: SymId; typ: TypeCursor) =
+  # Leaves the declaration open at the position of the body.
+  dest.addParLe ProcS, c.info
+  addSymDef dest, sym, c.info
+  dest.addEmpty3 c.info # export marker, pattern, generics
+  dest.copyIntoKind ParamsU, c.info: discard
+  copyTree dest, typ # return type
+  dest.addEmpty() # pragmas
+  dest.addEmpty c.info # exc
+
+proc requestReader(c: var SynthesizeSerializerCtx; t: TypeCursor): SymId =
+  let key = mangle(t, Frontend, c.bits)
+  result = c.readerTypeToProc.getOrDefault(key)
+  if result == SymId(0):
+    result = pool.symId(generateName(c, key, "`fromNif"))
+    c.readRequests.add GenProcRequest(sym: result, typ: t)
+    c.readerTypeToProc[key] = result
+
+    var header = createTokenBuf(30)
+    genReaderHeader(c, header, result, t)
+    header.addEmpty() # body is empty
+    header.addParRi() # close ProcS declaration
+    programs.publish(result, header)
+
+proc readPrimitive(c: var SynthesizeSerializerCtx; dest: var TokenBuf; typ: TypeCursor; name: string) =
+  dest.copyIntoKind ConvX, c.info:
+    dest.addSubtree typ
+    dest.copyIntoKind CallS, c.info:
+      dest.addIdent name, c.info
+
+proc genReadExpr(c: var SynthesizeSerializerCtx; dest: var TokenBuf; typ: TypeCursor) =
+  ## Emits an expression of type `typ` that reads its value from the stream.
+  if isStringType(typ):
+    dest.copyIntoKind CallS, c.info:
+      dest.addIdent "readNifStr", c.info
+  else:
+    var instBuf = createTokenBuf(1)
+    let t = resolveTypeImpl(c, typ, instBuf)
+    case t.typeKind
+    of IT, EnumT, OnumT, AnumT: readPrimitive(c, dest, typ, "readNifInt")
+    of UT: readPrimitive(c, dest, typ, "readNifUInt")
+    of CT: readPrimitive(c, dest, typ, "readNifChar")
+    of BoolT: readPrimitive(c, dest, typ, "readNifBool")
+    of FloatT: readPrimitive(c, dest, typ, "readNifFloat")
+    of DistinctT, RangetypeT:
+      dest.copyIntoKind ConvX, c.info:
+        dest.addSubtree typ
+        genReadExpr(c, dest, t.childCursor)
+    else:
+      let procId = requestReader(c, typ)
+      dest.copyIntoKind CallS, c.info:
+        dest.addSymUse procId, c.info
+
+proc addResult(dest: var TokenBuf; info: NifLineInfo) =
+  dest.addIdent "result", info
+
+proc genReadLoop(c: var SynthesizeSerializerCtx; elem: TypeCursor; isSeq: bool; arrayLen: xint) =
+  ## `while idx < len: result[idx] = read()` for arrays,
+  ## `let n = read(); while idx < n: result.add read()` for seqs.
+  let indexVar = pool.symId("idx.0")
+  let lenVar = pool.symId("n.0")
+  declareIndexVar c, indexVar
+  if isSeq:
+    copyIntoKind c.dest, VarY, c.info:
+      addSymDef c.dest, lenVar, c.info
+      c.dest.addEmpty2 c.info # not exported, no pragmas
+      addIntType c
+      c.dest.copyIntoKind CallS, c.info:
+        c.dest.addIdent "readNifInt", c.info
+  copyIntoKind c.dest, WhileS, c.info:
+    if isSeq:
+      copyIntoKind c.dest, LtX, c.info:
+        addIntType c
+        copyIntoSymUse c.dest, indexVar, c.info
+        copyIntoSymUse c.dest, lenVar, c.info
+    else:
+      indexVarLowerThanArrayLen c, indexVar, arrayLen
+    copyIntoKind c.dest, StmtsS, c.info:
+      var value = createTokenBuf(8)
+      genReadExpr(c, value, elem)
+      if isSeq:
+        copyIntoKind c.dest, CallS, c.info:
+          c.dest.addIdent "add", c.info
+          c.dest.addResult c.info
+          c.dest.add value
+      else:
+        copyIntoKind c.dest, AsgnS, c.info:
+          copyIntoKind c.dest, ArratX, c.info:
+            c.dest.addResult c.info
+            copyIntoSymUse c.dest, indexVar, c.info
+          c.dest.add value
+      incIndexVar c, indexVar
+
+proc genReaderDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
+  var headerBuf = move c.dest
+  genReaderHeader(c, headerBuf, sym, typ)
+  c.dest = move headerBuf
+
+  var instBuf = createTokenBuf(1)
+  let t = resolveTypeImpl(c, typ, instBuf)
+  var elem = default(Cursor)
+  var fields: seq[Local] = @[]
+  copyIntoKind(c.dest, StmtsS, c.info):
+    # the fields are assigned one by one, `result` needs a start value:
+    copyIntoKind c.dest, AsgnS, c.info:
+      c.dest.addResult c.info
+      copyIntoKind c.dest, CallS, c.info:
+        c.dest.addIdent "default", c.info
+        c.dest.addSubtree typ
+    case t.typeKind
+    of ArrayT:
+      genReadLoop c, t.childCursor, false, getArrayLen(t)
+    of TupleT:
+      var f = t
+      var idx = 0
+      f.into:
+        while f.hasMore:
+          let fieldType = getTupleFieldType(f)
+          skip f
+          var value = createTokenBuf(8)
+          genReadExpr(c, value, fieldType)
+          copyIntoKind c.dest, AsgnS, c.info:
+            copyIntoKind c.dest, TupatX, c.info:
+              c.dest.addResult c.info
+              c.dest.addIntLit(idx, c.info)
+            c.dest.add value
+          inc idx
+    of ObjectT:
+      if seqElemType(t, elem):
+        genReadLoop c, elem, true, createXint(0'i64)
+      elif plainObjectFields(t, fields):
+        for f in fields:
+          var value = createTokenBuf(8)
+          genReadExpr(c, value, f.typ)
+          copyIntoKind c.dest, AsgnS, c.info:
+            copyIntoKind c.dest, DotX, c.info:
+              c.dest.addResult c.info
+              copyIntoSymUse c.dest, f.name.symId, c.info
+              c.dest.addIntLit(0, c.info)
+              c.dest.addStrLit "x", c.info # bypass field visibility, see `accessObjField`
+            c.dest.add value
+      else:
+        c.errorMsg = "unsupported argument type for compile-time evaluation: " & asNimCode(typ)
+    else:
+      c.errorMsg = "unsupported argument type for compile-time evaluation: " & asNimCode(typ)
+  c.dest.addParRi() # close ProcS declaration
+
 proc genMissingProcs*(c: var SynthesizeSerializerCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
-  while c.requests.len > 0:
+  while c.requests.len > 0 or c.readRequests.len > 0:
     let reqs = move(c.requests)
     for i in 0 ..< reqs.len:
       c.routineKind = ProcY
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
+    let readReqs = move(c.readRequests)
+    for i in 0 ..< readReqs.len:
+      genReaderDecl(c, readReqs[i].sym, readReqs[i].typ)
 
 proc collectSymDefsAux(n: var Cursor; defs: var HashSet[SymId]) =
   if n.isTagLit:
@@ -791,3 +1163,93 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
     let sourceDir = absoluteParentDir(getFile(info))
     result = runEval(s, dest, c.newModuleSuffix, c.dest, c.usedModules, sourceDir)
 
+
+proc executeCall*(s: var SemContext; callee: SymId; args: Cursor; expectedType: TypeCursor;
+                  dest: var TokenBuf; info: NifLineInfo; errorMsg: var string): bool {.nimcall.} =
+  ## Evaluates `callee(args)` where `args` is `(stmts v1 … vN)` holding the
+  ## already evaluated argument values. Unlike `executeExpr` the generated
+  ## program does not contain the values: it reads them at runtime, so every
+  ## call of `callee` shares a single compiled program (named by the checksum
+  ## of its content) and only the input file differs per call.
+  ##
+  ## Returns false when the call is outside of the supported subset (argument
+  ## types, value shapes), then the caller falls back to `executeExpr`.
+  ## Otherwise the outcome is in `dest` or, on failure, in `errorMsg`.
+  result = false
+  let res = tryLoadSym(callee)
+  if res.status == LacksNothing and isRoutine(res.decl.symKind):
+    let routine = asRoutine(res.decl)
+    var c = SynthesizeSerializerCtx(dest: createTokenBuf(150), info: res.decl.info,
+      routineKind: ProcY, bits: s.g.config.bits, errorMsg: "",
+      thisModuleSuffix: s.thisModuleSuffix,
+      semCtx: addr s)
+    # The line information is the callee's, not the call site's: the program
+    # must not depend on where it is called from.
+    var input = ""
+    var call = createTokenBuf(16)
+    call.addParLe CallS, c.info
+    call.addSymUse callee, c.info
+    var ok = routine.params.substructureKind == ParamsU
+    if ok:
+      var p = routine.params
+      var a = args
+      p.peekInto:
+        a.peekInto:
+          while ok and p.hasMore and a.hasMore:
+            let param = takeLocal(p, SkipFinalParRi)
+            var pt = param.typ
+            if pt.typeKind == SinkT:
+              inc pt
+            ok = encodeArg(c, input, pt, a)
+            if ok:
+              genReadExpr(c, call, pt)
+            skip a
+          ok = ok and not p.hasMore and not a.hasMore
+    call.addParRi()
+
+    var retTypeBuf = createTokenBuf(4)
+    if cursorIsNil(expectedType):
+      retTypeBuf.addSubtree s.types.autoType
+    else:
+      retTypeBuf.addSubtree expectedType
+    let retType = cursorAt(retTypeBuf, 0)
+    ok = ok and not isVoidType(retType) and retType.typeKind != AutoT
+
+    if ok:
+      let prepResult = semos.prepareEval(s)
+      if prepResult.len > 0:
+        errorMsg = prepResult
+        result = true
+      else:
+        c.dest.addParLe StmtsS, c.info
+        for m in ["writenif", "readnif"]:
+          c.dest.copyIntoKind ImportS, c.info:
+            c.dest.copyIntoKind InfixX, c.info:
+              c.dest.addIdent "/", c.info
+              c.dest.addIdent "std", c.info
+              c.dest.addIdent m, c.info
+        if s.importSnippets.len > 0:
+          c.dest.add s.importSnippets
+        c.dest.copyIntoKind CallS, c.info:
+          c.dest.addIdent "setupCall", c.info
+        c.dest.copyIntoKind StmtsS, c.info:
+          var calleeOnly = createTokenBuf(4)
+          calleeOnly.addSymUse callee, c.info
+          collectUsedSymsFromExpr c, s, cursorAt(calleeOnly, 0)
+          c.dest.copyIntoKind TryS, c.info:
+            c.dest.copyIntoKind StmtsS, c.info:
+              entryPoint(c, retType, cursorAt(call, 0))
+            c.dest.copyIntoKind ExceptU, c.info:
+              c.dest.addDotToken()
+              c.dest.copyIntoKind StmtsS, c.info:
+                discard
+        c.dest.copyIntoKind CallS, c.info:
+          c.dest.addIdent "teardown", c.info
+        genMissingProcs c
+        c.dest.addParRi() # StmtsS
+        rewriteSymsToIdents c
+        if c.errorMsg.len == 0:
+          let srcName = s.thisModuleSuffix.substr(0, 2) & computeChecksum(toString(c.dest, true))
+          let sourceDir = absoluteParentDir(getFile(info))
+          errorMsg = runEvalOnce(s, dest, srcName, c.dest, input, sourceDir)
+          result = true
