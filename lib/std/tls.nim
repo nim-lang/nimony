@@ -7,8 +7,9 @@
 #    distribution, for details about the copyright.
 #
 
-## A TLS 1.3 client (RFC 8446), written against `std/socket` and the
-## primitives of `std/crypto`.
+## A TLS 1.3 client (RFC 8446) as a `streamio.TlsEngine`: a state machine that
+## takes records in and gives records out and does no I/O of its own. The
+## stream core moves the bytes (`connect(address, tls = newTlsEngine())`).
 ##
 ## What it speaks, deliberately few:
 ##
@@ -18,28 +19,27 @@
 ## * Server authentication by `std/crypto/x509` against a `TrustStore`:
 ##   ECDSA P-256/P-384 and RSA-PSS `CertificateVerify`, a chain to a root, the
 ##   host name. There is no "insecure" switch; a caller who must talk to a
-##   self-signed server puts that certificate into the store it passes.
+##   self-signed server puts that certificate into the store.
 ##
 ## No session resumption, no 0-RTT, no client certificates (a request for one
 ## is answered with an empty certificate, which the server may refuse).
 ##
 ## .. code-block:: nim
-##   var c = TlsConn()
-##   tlsConnect(c, "example.com", 443, loadSystemTrustStore())
-##   c.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
-##   var buf = newString(4096)
-##   let n = c.read(buf)
+##   let e = newTlsEngine()
+##   let (r, w) = connect("example.com:443", "GET / HTTP/1.1\r\n...", tls = e)
+##   # on a failure, e.failure / e.certError / e.alert say what went wrong
 
 {.feature: "staticContracts".}
 
-import std/[socket, dns, times]
+import std/[times, streamio]
 import std/crypto/[sha2, hmac, chacha20poly1305, x25519, x509, ecdsa, rsa, sysrand]
+
+export streamio.TlsEngine
 
 type
   TlsFailure* = enum
     tfNone = "no failure"
     tfRandom = "the system random number generator could not be read"
-    tfConnect = "could not connect"
     tfProtocol = "the peer violated the TLS protocol"
     tfAlert = "the peer sent a fatal alert"
     tfUnsupported = "the server chose parameters this client does not speak"
@@ -47,7 +47,7 @@ type
     tfSignature = "the server's handshake signature does not verify"
     tfFinished = "the handshake transcript does not match"
     tfDecrypt = "a record failed authentication"
-    tfClosed = "the connection is closed"
+    tfState = "the engine was used out of order"
 
   Direction = object
     ## One direction of the record layer.
@@ -56,18 +56,33 @@ type
     iv: ChaChaNonce
     seqNo: uint64
 
-  TlsConn* = object
-    sock: Socket
-    failure*: TlsFailure       ## what went wrong, once something did
+  HsState = enum
+    hsIdle, hsWaitServerHello, hsWaitEncExt, hsWaitCert, hsWaitCertVerify,
+    hsWaitFinished, hsConnected, hsFailed
+
+  NimonyTlsEngine* = ref object of TlsEngine
+    ## The default engine. After a failure, `failure` (and `certError`,
+    ## `alert`) say what went wrong.
+    failure*: TlsFailure
     certError*: CertError      ## the detail when `failure == tfCertificate`
     alert*: int                ## the alert description, when `failure == tfAlert`
+    alpn*: string              ## the protocol the server picked, if any
+    store: TrustStore
+    host: string
+    state: HsState
+    secretKey: X25519Key
+    transcript: Sha256
+    hsSecret, cHs, sHs: seq[byte]
+    certRequested: bool
+    leaf: Certificate
     rd, wr: Direction
     encrypted: bool            ## records are protected (after ServerHello)
-    hs: seq[byte]              ## handshake bytes not yet parsed
-    app: seq[byte]             ## decrypted application data not yet read
-    appPos: int
-    eof: bool                  ## close_notify received
-    alpn*: string              ## the protocol the server picked, if any
+    inBuf: seq[byte]           ## network bytes not yet a whole record
+    hs: seq[byte]              ## handshake bytes not yet a whole message
+    outBuf: string             ## records waiting for `recordsOut`
+    app: string                ## plaintext waiting for `appOut`
+    peerClosed: bool
+    closeSent: bool
 
 const
   ContentChangeCipherSpec = 20'u8
@@ -208,132 +223,14 @@ proc finishedMac(baseSecret: openArray[byte]; transcript: Sha256): Sha256Digest 
 
 # ------------------------------------------------------------ record layer --
 
-template fail(c: var TlsConn; f: TlsFailure; e: ErrorCode) =
+template fail(e: NimonyTlsEngine; f: TlsFailure; err: ErrorCode) =
   ## Records why and raises. A template, so that both the prover and the
   ## reader see the `raise` at the call site: nothing after it runs.
-  if c.failure == tfNone: c.failure = f
-  raise e
+  if e.failure == tfNone: e.failure = f
+  e.state = hsFailed
+  raise err
 
-template fail(c: var TlsConn; f: TlsFailure) = fail(c, f, ProtocolError)
-
-proc sendRecord(c: var TlsConn; contentType: byte; payload: openArray[byte];
-                dl: Deadline) {.passive, raises.} =
-  ## One record. Once keys are in place it is protected: the real type moves
-  ## inside and the outer header always says application data.
-  var rec: seq[byte] = @[]
-  if not c.encrypted:
-    rec.put8 int(contentType)
-    rec.put16 0x0301                 # legacy_record_version, as RFC 8446 asks
-    rec.put16 payload.len
-    rec.putBytes payload
-  else:
-    var inner: seq[byte] = @[]
-    inner.putBytes payload
-    inner.add contentType
-    let ctLen = inner.len + 16
-    rec.put8 int(ContentApplicationData)
-    rec.put16 0x0303
-    rec.put16 ctLen
-    var aad: seq[byte] = @[]
-    for b in rec: aad.add b
-    let tag = chacha20Poly1305Seal(c.wr.key, nonceFor(c.wr), aad, inner)
-    c.wr.seqNo = c.wr.seqNo + 1'u64
-    rec.putBytes inner
-    rec.putBytes tag
-  var chars = newString(rec.len)
-  for i in 0 ..< rec.len:
-    if i < chars.len: chars[i] = char(rec[i])
-  write(c.sock, chars, dl)
-
-proc readRecord(c: var TlsConn; contentType: var byte; payload: var seq[byte];
-                dl: Deadline) {.passive, raises.} =
-  ## The next record, decrypted when keys are in place. ChangeCipherSpec
-  ## records — middlebox-compatibility noise that TLS 1.3 says to ignore — are
-  ## skipped here.
-  while true:
-    while c.sock.buffered < 5:
-      if fill(c.sock, dl) == 0: c.fail(tfClosed, EndOfStreamError)
-    var hdr = default(array[5, byte])
-    block:
-      let view = c.sock.peek
-      if view.len < 5: c.fail(tfProtocol)
-      for i in 0 ..< 5:
-        if i < view.len: hdr[i] = byte(view[i])
-    let typ = hdr[0]
-    let len = int(hdr[3]) shl 8 or int(hdr[4])
-    if len > MaxCiphertext: c.fail(tfProtocol)
-    while c.sock.buffered < 5 + len:
-      if fill(c.sock, dl) == 0: c.fail(tfClosed, EndOfStreamError)
-    var body: seq[byte] = @[]
-    block:
-      let view = c.sock.peek
-      for i in 5 ..< 5 + len:
-        if i < view.len: body.add byte(view[i])
-    c.sock.consume(5 + len)
-    if body.len != len: c.fail(tfProtocol)
-    if typ == ContentChangeCipherSpec:
-      continue
-    if not c.encrypted or typ != ContentApplicationData:
-      if c.encrypted and typ != ContentAlert: c.fail(tfProtocol)
-      contentType = typ
-      payload = body
-      return
-    if body.len < 17: c.fail(tfDecrypt)
-    let ctLen = body.len - 16
-    var ct: seq[byte] = @[]
-    var tag: seq[byte] = @[]
-    for i in 0 ..< body.len:
-      if i < ctLen: ct.add body[i]
-      else: tag.add body[i]
-    if not chacha20Poly1305Open(c.rd.key, nonceFor(c.rd), hdr, ct, tag):
-      c.fail(tfDecrypt)
-    c.rd.seqNo = c.rd.seqNo + 1'u64
-    # strip the zero padding; the last non-zero byte is the real type
-    var i = ct.len - 1
-    while i >= 0 and ct[i] == 0'u8: dec i
-    if i < 0: c.fail(tfProtocol)
-    contentType = ct[i]
-    payload = @[]
-    for j in 0 ..< i:
-      if j < ct.len: payload.add ct[j]
-    return
-
-proc onAlert(c: var TlsConn; payload: seq[byte]) {.raises.} =
-  ## `close_notify` ends the stream; every other alert in TLS 1.3 is fatal.
-  if payload.len >= 2 and payload[1] == 0'u8:
-    c.eof = true
-    return
-  if payload.len >= 2: c.alert = int(payload[1])
-  c.fail(tfAlert)
-
-proc nextHandshake(c: var TlsConn; msgType: var byte; msg: var seq[byte];
-                   dl: Deadline) {.passive, raises.} =
-  ## One whole handshake message (header included, which is what the
-  ## transcript hashes), reassembled across records as needed.
-  while true:
-    if c.hs.len >= 4:
-      let bodyLen = int(c.hs[1]) shl 16 or int(c.hs[2]) shl 8 or int(c.hs[3])
-      if bodyLen > MaxHandshake: c.fail(tfProtocol)
-      if c.hs.len >= 4 + bodyLen:
-        msgType = c.hs[0]
-        msg = @[]
-        var rest: seq[byte] = @[]
-        for i in 0 ..< c.hs.len:
-          if i < 4 + bodyLen: msg.add c.hs[i]
-          else: rest.add c.hs[i]
-        c.hs = rest
-        return
-    var typ = 0'u8
-    var payload: seq[byte] = @[]
-    readRecord(c, typ, payload, dl)
-    if typ == ContentAlert:
-      onAlert(c, payload)
-      c.fail(tfClosed, EndOfStreamError)
-    if typ != ContentHandshake: c.fail(tfProtocol)
-    if c.hs.len + payload.len > MaxHandshake: c.fail(tfProtocol)
-    c.hs.putBytes payload
-
-# --------------------------------------------------------------- handshake --
+template fail(e: NimonyTlsEngine; f: TlsFailure) = fail(e, f, ProtocolError)
 
 proc isIpLiteral(host: string): bool =
   result = host.len > 0
@@ -390,90 +287,90 @@ proc clientHello(host: string; random: array[32, byte]; keyShare: X25519Key): se
   result.put24 body.len
   result.putBytes body
 
-proc parseServerHello(c: var TlsConn; msg: seq[byte]; serverShare: var X25519Key) {.raises.} =
+proc parseServerHello(e: NimonyTlsEngine; msg: seq[byte]; serverShare: var X25519Key) {.raises.} =
   var pos = 4
   let limit = msg.len
   var v = 0
   var random: seq[byte] = @[]
-  if not get16(msg, pos, limit, v): c.fail(tfProtocol)
-  if not getBytes(msg, pos, limit, 32, random): c.fail(tfProtocol)
+  if not get16(msg, pos, limit, v): e.fail(tfProtocol)
+  if not getBytes(msg, pos, limit, 32, random): e.fail(tfProtocol)
   if random == @HelloRetryRandom:
     # We offered our one group; a server asking for another wants something
     # this client does not have.
-    c.fail(tfUnsupported)
+    e.fail(tfUnsupported)
   var sidLen = 0
   var sid: seq[byte] = @[]
   if not get8(msg, pos, limit, sidLen) or not getBytes(msg, pos, limit, sidLen, sid):
-    c.fail(tfProtocol)
-  if sid.len != 0: c.fail(tfProtocol)       # must echo our empty one
+    e.fail(tfProtocol)
+  if sid.len != 0: e.fail(tfProtocol)       # must echo our empty one
   var suite = 0
-  if not get16(msg, pos, limit, suite): c.fail(tfProtocol)
-  if suite != SuiteChaCha20Poly1305: c.fail(tfUnsupported)
-  if not get8(msg, pos, limit, v) or v != 0: c.fail(tfProtocol)
+  if not get16(msg, pos, limit, suite): e.fail(tfProtocol)
+  if suite != SuiteChaCha20Poly1305: e.fail(tfUnsupported)
+  if not get8(msg, pos, limit, v) or v != 0: e.fail(tfProtocol)
   var extLen = 0
-  if not get16(msg, pos, limit, extLen): c.fail(tfProtocol)
+  if not get16(msg, pos, limit, extLen): e.fail(tfProtocol)
   let extEnd = pos + extLen
-  if extEnd != limit: c.fail(tfProtocol)
+  if extEnd != limit: e.fail(tfProtocol)
   var version = 0
   var haveShare = false
   while pos < extEnd:
     var typ = 0
     var len = 0
-    if not get16(msg, pos, extEnd, typ) or not get16(msg, pos, extEnd, len): c.fail(tfProtocol)
-    let e = pos + len
-    if e > extEnd: c.fail(tfProtocol)
+    if not get16(msg, pos, extEnd, typ) or not get16(msg, pos, extEnd, len): e.fail(tfProtocol)
+    let stop = pos + len
+    if stop > extEnd: e.fail(tfProtocol)
     case typ
     of ExtSupportedVersions:
-      if not get16(msg, pos, e, version): c.fail(tfProtocol)
+      if not get16(msg, pos, stop, version): e.fail(tfProtocol)
     of ExtKeyShare:
       var group = 0
       var klen = 0
       var key: seq[byte] = @[]
-      if not get16(msg, pos, e, group) or not get16(msg, pos, e, klen) or
-         not getBytes(msg, pos, e, klen, key): c.fail(tfProtocol)
-      if group != GroupX25519 or key.len != 32: c.fail(tfUnsupported)
+      if not get16(msg, pos, stop, group) or not get16(msg, pos, stop, klen) or
+         not getBytes(msg, pos, stop, klen, key): e.fail(tfProtocol)
+      if group != GroupX25519 or key.len != 32: e.fail(tfUnsupported)
       for i in 0 ..< 32:
         if i < key.len: serverShare[i] = key[i]
       haveShare = true
     else:
       discard
-    pos = e
-  if version != Tls13: c.fail(tfUnsupported)
-  if not haveShare: c.fail(tfProtocol)
+    pos = stop
+  if version != Tls13: e.fail(tfUnsupported)
+  if not haveShare: e.fail(tfProtocol)
 
-proc parseCertificates(c: var TlsConn; msg: seq[byte]; chain: var seq[Certificate]) {.raises.} =
+proc parseCertificates(e: NimonyTlsEngine; msg: seq[byte]; chain: var seq[Certificate]) {.raises.} =
   var pos = 4
   let limit = msg.len
   var ctxLen = 0
   var ctx: seq[byte] = @[]
   if not get8(msg, pos, limit, ctxLen) or not getBytes(msg, pos, limit, ctxLen, ctx):
-    c.fail(tfProtocol)
+    e.fail(tfProtocol)
   var listLen = 0
-  if not get24(msg, pos, limit, listLen): c.fail(tfProtocol)
-  if pos + listLen != limit: c.fail(tfProtocol)
+  if not get24(msg, pos, limit, listLen): e.fail(tfProtocol)
+  if pos + listLen != limit: e.fail(tfProtocol)
   chain = @[]
   while pos < limit:
     var certLen = 0
     var der: seq[byte] = @[]
     if not get24(msg, pos, limit, certLen) or not getBytes(msg, pos, limit, certLen, der):
-      c.fail(tfProtocol)
+      e.fail(tfProtocol)
     var extLen = 0
     var exts: seq[byte] = @[]
     if not get16(msg, pos, limit, extLen) or not getBytes(msg, pos, limit, extLen, exts):
-      c.fail(tfProtocol)
+      e.fail(tfProtocol)
     var cert = default(Certificate)
     if not parseCertificate(der, cert):
       if chain.len == 0:
-        c.certError = ceParse
-        c.fail(tfCertificate)
+        e.certError = ceParse
+        e.fail(tfCertificate)
       # an extra certificate we cannot read is harmless; the leaf is not
       continue
     chain.add cert
   if chain.len == 0:
-    c.certError = ceParse
-    c.fail(tfCertificate)
+    e.certError = ceParse
+    e.fail(tfCertificate)
 
-proc verifyCertificateVerify(c: var TlsConn; msg: seq[byte]; leaf: Certificate;
+proc verifyCertificateVerify(e: NimonyTlsEngine; msg: seq[byte]; leaf: Certificate;
                              transcript: Sha256) {.raises.} =
   var pos = 4
   let limit = msg.len
@@ -481,7 +378,7 @@ proc verifyCertificateVerify(c: var TlsConn; msg: seq[byte]; leaf: Certificate;
   var sigLen = 0
   var sig: seq[byte] = @[]
   if not get16(msg, pos, limit, scheme) or not get16(msg, pos, limit, sigLen) or
-     not getBytes(msg, pos, limit, sigLen, sig): c.fail(tfProtocol)
+     not getBytes(msg, pos, limit, sigLen, sig): e.fail(tfProtocol)
   var content: seq[byte] = @[]
   for i in 0 ..< 64: content.add 0x20'u8
   content.putStr "TLS 1.3, server CertificateVerify"
@@ -504,216 +401,302 @@ proc verifyCertificateVerify(c: var TlsConn; msg: seq[byte]; leaf: Certificate;
     if key.kind == kkRsa: ok = rsaVerifyPss(key.rsa, rhSha512, content, sig, 64)
   else:
     discard
-  if not ok: c.fail(tfSignature)
+  if not ok: e.fail(tfSignature)
 
-proc parseEncryptedExtensions(c: var TlsConn; msg: seq[byte]) {.raises.} =
+proc parseEncryptedExtensions(e: NimonyTlsEngine; msg: seq[byte]) {.raises.} =
   var pos = 4
   let limit = msg.len
   var extLen = 0
-  if not get16(msg, pos, limit, extLen) or pos + extLen != limit: c.fail(tfProtocol)
+  if not get16(msg, pos, limit, extLen) or pos + extLen != limit: e.fail(tfProtocol)
   while pos < limit:
     var typ = 0
     var len = 0
-    if not get16(msg, pos, limit, typ) or not get16(msg, pos, limit, len): c.fail(tfProtocol)
-    let e = pos + len
-    if e > limit: c.fail(tfProtocol)
+    if not get16(msg, pos, limit, typ) or not get16(msg, pos, limit, len): e.fail(tfProtocol)
+    let stop = pos + len
+    if stop > limit: e.fail(tfProtocol)
     if typ == ExtAlpn:
       var listLen = 0
       var nameLen = 0
       var name: seq[byte] = @[]
-      if get16(msg, pos, e, listLen) and get8(msg, pos, e, nameLen) and
-         getBytes(msg, pos, e, nameLen, name):
-        c.alpn = ""
-        for b in name: c.alpn.add char(b)
-    pos = e
+      if get16(msg, pos, stop, listLen) and get8(msg, pos, stop, nameLen) and
+         getBytes(msg, pos, stop, nameLen, name):
+        e.alpn = ""
+        for b in name: e.alpn.add char(b)
+    pos = stop
 
-proc tlsConnect*(c: var TlsConn; host: string; port: uint16; store: TrustStore;
-                 dl = never) {.passive, raises.} =
-  ## Connects to `host:port` and runs the handshake. Raises on any failure,
-  ## with `c.failure` (and `c.certError`/`c.alert`) saying which; `c` is then
-  ## unusable. `host` is what the certificate must name.
-  c = TlsConn(sock: initSocket(-1, never), failure: tfNone, certError: ceNone, alert: 0,
-              rd: default(Direction), wr: default(Direction), encrypted: false,
-              hs: @[], app: @[], appPos: 0, eof: false, alpn: "")
-  var ip = host
-  if not isIpLiteral(host):
-    try:
-      ip = resolve(host, dl)
-    except ErrorCode as e:
-      c.fail(tfConnect, e)
-  try:
-    c.sock = connect(ip, port, dl)
-  except ErrorCode as e:
-    c.fail(tfConnect, e)
 
-  var secretKey = default(X25519Key)
-  var random = default(array[32, byte])
-  if not urandom(secretKey) or not urandom(random): c.fail(tfRandom, IOError)
-  var transcript = initSha256()
-  let hello = clientHello(host, random, x25519Public(secretKey))
-  transcript.update(hello)
-  sendRecord(c, ContentHandshake, hello, dl)
+# ----------------------------------------------------------------- records --
 
-  # ServerHello, in the clear
-  var typ = 0'u8
-  var msg: seq[byte] = @[]
-  nextHandshake(c, typ, msg, dl)
-  if typ != HsServerHello: c.fail(tfProtocol)
+proc seal(e: NimonyTlsEngine; contentType: byte; payload: openArray[byte]) =
+  ## One record into `outBuf`, protected once keys are in place: the real type
+  ## moves inside and the outer header always says application data.
+  var rec: seq[byte] = @[]
+  if not e.encrypted:
+    rec.put8 int(contentType)
+    rec.put16 0x0301                 # legacy_record_version, as RFC 8446 asks
+    rec.put16 payload.len
+    rec.putBytes payload
+  else:
+    var inner: seq[byte] = @[]
+    inner.putBytes payload
+    inner.add contentType
+    rec.put8 int(ContentApplicationData)
+    rec.put16 0x0303
+    rec.put16 inner.len + 16
+    var aad: seq[byte] = @[]
+    for b in rec: aad.add b
+    let tag = chacha20Poly1305Seal(e.wr.key, nonceFor(e.wr), aad, inner)
+    e.wr.seqNo = e.wr.seqNo + 1'u64
+    rec.putBytes inner
+    rec.putBytes tag
+  for b in rec: e.outBuf.add char(b)
+
+proc onAlert(e: NimonyTlsEngine; payload: seq[byte]) {.raises.} =
+  ## `close_notify` ends the stream; every other alert in TLS 1.3 is fatal.
+  if payload.len >= 2 and payload[1] == 0'u8:
+    e.peerClosed = true
+    return
+  if payload.len >= 2: e.alert = int(payload[1])
+  e.fail(tfAlert)
+
+# --------------------------------------------------------------- handshake --
+
+proc onServerHello(e: NimonyTlsEngine; msg: seq[byte]) {.raises.} =
   var serverShare = default(X25519Key)
-  parseServerHello(c, msg, serverShare)
-  transcript.update(msg)
-  let shared = x25519(secretKey, serverShare)
-  if isAllZero(shared): c.fail(tfProtocol)
-  # the rest of the handshake is protected; a fragment of it sharing the
-  # ServerHello's record would have been sent in the clear, which is illegal
-  if c.hs.len != 0: c.fail(tfProtocol)
-
-  # key schedule up to the handshake secrets
+  parseServerHello(e, msg, serverShare)
+  e.transcript.update(msg)
+  let shared = x25519(e.secretKey, serverShare)
+  if isAllZero(shared): e.fail(tfProtocol)
   let zeros = default(array[32, byte])
   let early = hkdfExtractSha256([], zeros)
   let derived = deriveSecret(early, "derived", initSha256())
-  let hsSecret = hkdfExtractSha256(derived, shared)
-  let cHs = deriveSecret(hsSecret, "c hs traffic", transcript)
-  let sHs = deriveSecret(hsSecret, "s hs traffic", transcript)
-  c.rd.setKeys(sHs)
-  c.wr.setKeys(cHs)
-  c.encrypted = true
+  var hsSecret: seq[byte] = @[]
+  for b in hkdfExtractSha256(derived, shared): hsSecret.add b
+  e.hsSecret = hsSecret
+  e.cHs = deriveSecret(hsSecret, "c hs traffic", e.transcript)
+  e.sHs = deriveSecret(hsSecret, "s hs traffic", e.transcript)
+  e.rd.setKeys(e.sHs)
+  e.wr.setKeys(e.cHs)
+  e.encrypted = true
+  e.state = hsWaitEncExt
 
-  nextHandshake(c, typ, msg, dl)
-  if typ != HsEncryptedExtensions: c.fail(tfProtocol)
-  parseEncryptedExtensions(c, msg)
-  transcript.update(msg)
-
-  nextHandshake(c, typ, msg, dl)
-  var certRequested = false
-  if typ == HsCertificateRequest:
-    certRequested = true
-    transcript.update(msg)
-    nextHandshake(c, typ, msg, dl)
-  if typ != HsCertificate: c.fail(tfProtocol)
-  var chain: seq[Certificate] = @[]
-  parseCertificates(c, msg, chain)
-  transcript.update(msg)
-  let verdict = verifyChain(store, chain, host, getTime().toUnix)
-  if verdict != ceNone:
-    c.certError = verdict
-    c.fail(tfCertificate)
-
-  nextHandshake(c, typ, msg, dl)
-  if typ != HsCertificateVerify: c.fail(tfProtocol)
-  if chain.len > 0:
-    verifyCertificateVerify(c, msg, chain[0], transcript)
-  transcript.update(msg)
-
-  nextHandshake(c, typ, msg, dl)
-  if typ != HsFinished: c.fail(tfProtocol)
-  let expected = finishedMac(sHs, transcript)
+proc onServerFinished(e: NimonyTlsEngine; msg: seq[byte]) {.raises.} =
+  let expected = finishedMac(e.sHs, e.transcript)
   var got: seq[byte] = @[]
   var p = 4
-  if not getBytes(msg, p, msg.len, 32, got) or p != msg.len: c.fail(tfProtocol)
-  if not constantTimeEquals(expected, got): c.fail(tfFinished)
-  transcript.update(msg)
-
+  if not getBytes(msg, p, msg.len, 32, got) or p != msg.len: e.fail(tfProtocol)
+  if not constantTimeEquals(expected, got): e.fail(tfFinished)
+  e.transcript.update(msg)
   # application secrets are derived over the transcript up to server Finished
-  let derived2 = deriveSecret(hsSecret, "derived", initSha256())
+  let zeros = default(array[32, byte])
+  let derived2 = deriveSecret(e.hsSecret, "derived", initSha256())
   let master = hkdfExtractSha256(derived2, zeros)
-  let cAp = deriveSecret(master, "c ap traffic", transcript)
-  let sAp = deriveSecret(master, "s ap traffic", transcript)
-
-  if certRequested:
+  let cAp = deriveSecret(master, "c ap traffic", e.transcript)
+  let sAp = deriveSecret(master, "s ap traffic", e.transcript)
+  if e.certRequested:
     # an empty Certificate: we have none to offer
     var empty: seq[byte] = @[]
     empty.put8 int(HsCertificate)
     empty.put24 4
     empty.put8 0
     empty.put24 0
-    transcript.update(empty)
-    sendRecord(c, ContentHandshake, empty, dl)
+    e.transcript.update(empty)
+    seal(e, ContentHandshake, empty)
   var fin: seq[byte] = @[]
   fin.put8 int(HsFinished)
   fin.put24 32
-  fin.putBytes finishedMac(cHs, transcript)
-  sendRecord(c, ContentHandshake, fin, dl)
+  fin.putBytes finishedMac(e.cHs, e.transcript)
+  seal(e, ContentHandshake, fin)
+  e.rd.setKeys(sAp)
+  e.wr.setKeys(cAp)
+  e.state = hsConnected
 
-  c.rd.setKeys(sAp)
-  c.wr.setKeys(cAp)
+proc onKeyUpdate(e: NimonyTlsEngine; msg: seq[byte]) {.raises.} =
+  if msg.len != 5: e.fail(tfProtocol)
+  let requested = msg[4] == 1'u8
+  e.rd.setKeys(hkdfExpandLabel(e.rd.secret, "traffic upd", [], 32))
+  if requested:
+    var ku: seq[byte] = @[]
+    ku.put8 int(HsKeyUpdate)
+    ku.put24 1
+    ku.put8 0
+    seal(e, ContentHandshake, ku)
+    e.wr.setKeys(hkdfExpandLabel(e.wr.secret, "traffic upd", [], 32))
 
-# ------------------------------------------------------- application data --
-
-proc onPostHandshake(c: var TlsConn; dl: Deadline) {.passive, raises.} =
-  ## Session tickets are dropped (no resumption); a KeyUpdate rolls the read
-  ## key and, if asked, ours too.
-  var typ = 0'u8
-  var msg: seq[byte] = @[]
-  while c.hs.len >= 4:
-    let bodyLen = int(c.hs[1]) shl 16 or int(c.hs[2]) shl 8 or int(c.hs[3])
-    if c.hs.len < 4 + bodyLen: return
-    nextHandshake(c, typ, msg, dl)
-    case typ
-    of HsNewSessionTicket:
-      discard
-    of HsKeyUpdate:
-      if msg.len != 5: c.fail(tfProtocol)
-      let requested = msg[4] == 1'u8
-      c.rd.setKeys(hkdfExpandLabel(c.rd.secret, "traffic upd", [], 32))
-      if requested:
-        var ku: seq[byte] = @[]
-        ku.put8 int(HsKeyUpdate)
-        ku.put24 1
-        ku.put8 0
-        sendRecord(c, ContentHandshake, ku, dl)
-        c.wr.setKeys(hkdfExpandLabel(c.wr.secret, "traffic upd", [], 32))
+proc onHandshakeMessage(e: NimonyTlsEngine; typ: byte; msg: seq[byte]) {.raises.} =
+  case e.state
+  of hsWaitServerHello:
+    if typ != HsServerHello: e.fail(tfProtocol)
+    onServerHello(e, msg)
+    # the rest of the handshake is protected; a fragment of it sharing the
+    # ServerHello's record would have been sent in the clear, which is illegal
+    if e.hs.len != 0: e.fail(tfProtocol)
+  of hsWaitEncExt:
+    if typ != HsEncryptedExtensions: e.fail(tfProtocol)
+    parseEncryptedExtensions(e, msg)
+    e.transcript.update(msg)
+    e.state = hsWaitCert
+  of hsWaitCert:
+    if typ == HsCertificateRequest and not e.certRequested:
+      e.certRequested = true
+      e.transcript.update(msg)
+    elif typ == HsCertificate:
+      var chain: seq[Certificate] = @[]
+      parseCertificates(e, msg, chain)
+      e.transcript.update(msg)
+      let verdict = verifyChain(e.store, chain, e.host, getTime().toUnix)
+      if verdict != ceNone:
+        e.certError = verdict
+        e.fail(tfCertificate)
+      if chain.len > 0: e.leaf = chain[0]
+      e.state = hsWaitCertVerify
     else:
-      c.fail(tfProtocol)
+      e.fail(tfProtocol)
+  of hsWaitCertVerify:
+    if typ != HsCertificateVerify: e.fail(tfProtocol)
+    verifyCertificateVerify(e, msg, e.leaf, e.transcript)
+    e.transcript.update(msg)
+    e.state = hsWaitFinished
+  of hsWaitFinished:
+    if typ != HsFinished: e.fail(tfProtocol)
+    onServerFinished(e, msg)
+  of hsConnected:
+    # session tickets are dropped (no resumption); a KeyUpdate rolls our keys
+    if typ == HsKeyUpdate: onKeyUpdate(e, msg)
+    elif typ != HsNewSessionTicket: e.fail(tfProtocol)
+  of hsIdle, hsFailed:
+    e.fail(tfState)
 
-proc read*(c: var TlsConn; dest: var openArray[char]; dl = never): int {.passive, raises.} =
-  ## Up to `dest.len` bytes of application data; `0` once the server has
-  ## closed the connection with `close_notify`. A connection that ends
-  ## WITHOUT one raises `EndOfStreamError`: that is a truncation an attacker
-  ## can cause, and the bytes before it may not be the whole message.
-  result = 0
-  if c.failure != tfNone: raise ProtocolError
-  while c.appPos >= c.app.len and not c.eof:
-    var typ = 0'u8
-    var payload: seq[byte] = @[]
-    readRecord(c, typ, payload, dl)
-    case typ
-    of ContentApplicationData:
-      c.app = payload
-      c.appPos = 0
-    of ContentHandshake:
-      c.hs.putBytes payload
-      onPostHandshake(c, dl)
-    of ContentAlert:
-      onAlert(c, payload)
-    else:
-      c.fail(tfProtocol)
-  while result < dest.len and c.appPos < c.app.len:
-    if c.appPos >= 0:
-      dest[result] = char(c.app[c.appPos])
-    inc result
-    inc c.appPos
+proc processHandshake(e: NimonyTlsEngine) {.raises.} =
+  ## Every whole handshake message in `hs`, in order.
+  while true:
+    let hs = e.hs
+    if hs.len < 4: return
+    let typ = hs[0]
+    let bodyLen = int(hs[1]) shl 16 or int(hs[2]) shl 8 or int(hs[3])
+    if bodyLen > MaxHandshake: e.fail(tfProtocol)
+    if hs.len < 4 + bodyLen: return
+    var msg: seq[byte] = @[]
+    var rest: seq[byte] = @[]
+    for i in 0 ..< hs.len:
+      if i < 4 + bodyLen: msg.add hs[i]
+      else: rest.add hs[i]
+    e.hs = rest
+    onHandshakeMessage(e, typ, msg)
 
-proc write*(c: var TlsConn; data: openArray[char]; dl = never) {.passive, raises.} =
-  ## Sends `data` as application records of at most 16 KiB each.
-  if c.failure != tfNone: raise ProtocolError
+proc processRecord(e: NimonyTlsEngine; hdr: array[5, byte]; body: seq[byte]) {.raises.} =
+  let typ = hdr[0]
+  if typ == ContentChangeCipherSpec:
+    return                       # middlebox-compatibility noise; TLS 1.3 ignores it
+  var contentType = typ
+  var payload: seq[byte] = @[]
+  if not e.encrypted or typ != ContentApplicationData:
+    if e.encrypted and typ != ContentAlert: e.fail(tfProtocol)
+    payload = body
+  else:
+    if body.len < 17: e.fail(tfDecrypt)
+    let ctLen = body.len - 16
+    var ct: seq[byte] = @[]
+    var tag: seq[byte] = @[]
+    for i in 0 ..< body.len:
+      if i < ctLen: ct.add body[i]
+      else: tag.add body[i]
+    if not chacha20Poly1305Open(e.rd.key, nonceFor(e.rd), hdr, ct, tag):
+      e.fail(tfDecrypt)
+    e.rd.seqNo = e.rd.seqNo + 1'u64
+    # strip the zero padding; the last non-zero byte is the real type
+    var i = ct.len - 1
+    while i >= 0 and ct[i] == 0'u8: dec i
+    if i < 0: e.fail(tfProtocol)
+    contentType = ct[i]
+    for j in 0 ..< i:
+      if j < ct.len: payload.add ct[j]
+  case contentType
+  of ContentHandshake:
+    if e.hs.len + payload.len > MaxHandshake: e.fail(tfProtocol)
+    e.hs.putBytes payload
+    processHandshake(e)
+  of ContentApplicationData:
+    if e.state != hsConnected: e.fail(tfProtocol)
+    for b in payload: e.app.add char(b)
+  of ContentAlert:
+    onAlert(e, payload)
+  else:
+    e.fail(tfProtocol)
+
+# ------------------------------------------------------------- the engine --
+
+proc newTlsEngine*(store: sink TrustStore): NimonyTlsEngine =
+  ## An engine that trusts `store`'s roots.
+  NimonyTlsEngine(failure: tfNone, certError: ceNone, alert: 0, alpn: "",
+                  store: store, host: "", state: hsIdle,
+                  secretKey: default(X25519Key), transcript: initSha256(),
+                  hsSecret: @[], cHs: @[], sHs: @[], certRequested: false,
+                  leaf: default(Certificate), rd: default(Direction),
+                  wr: default(Direction), encrypted: false, inBuf: @[], hs: @[],
+                  outBuf: "", app: "", peerClosed: false, closeSent: false)
+
+proc newTlsEngine*(): NimonyTlsEngine =
+  ## The default engine, verifying against the system's root certificates.
+  newTlsEngine(loadSystemTrustStore())
+
+method start*(e: NimonyTlsEngine; host: string) {.raises.} =
+  if e.state != hsIdle: e.fail(tfState, BadOperation)
+  e.host = host
+  var secretKey = default(X25519Key)
+  var random = default(array[32, byte])
+  if not urandom(secretKey) or not urandom(random): e.fail(tfRandom, IOError)
+  e.secretKey = secretKey
+  let hello = clientHello(host, random, x25519Public(secretKey))
+  e.transcript.update(hello)
+  seal(e, ContentHandshake, hello)
+  e.state = hsWaitServerHello
+
+method recordsIn*(e: NimonyTlsEngine; src: openArray[char]; used: var int) {.raises.} =
+  used = src.len
+  if e.state in {hsIdle, hsFailed}: e.fail(tfState, BadOperation)
+  for ch in src: e.inBuf.add byte(ch)
+  while true:
+    let buf = e.inBuf
+    if buf.len < 5: return
+    var hdr = default(array[5, byte])
+    for i in 0 ..< 5: hdr[i] = buf[i]
+    let len = int(hdr[3]) shl 8 or int(hdr[4])
+    if len > MaxCiphertext: e.fail(tfProtocol)
+    if buf.len < 5 + len: return
+    var body: seq[byte] = @[]
+    var rest: seq[byte] = @[]
+    for i in 5 ..< buf.len:
+      if i < 5 + len: body.add buf[i]
+      else: rest.add buf[i]
+    e.inBuf = rest
+    processRecord(e, hdr, body)
+
+method recordsOut*(e: NimonyTlsEngine; dest: var string) {.raises.} =
+  dest.add e.outBuf
+  e.outBuf = ""
+
+method appIn*(e: NimonyTlsEngine; src: openArray[char]; used: var int) {.raises.} =
+  ## Sealed as application records of at most 16 KiB each.
+  if e.state != hsConnected or e.closeSent: e.fail(tfState, BadOperation)
   var pos = 0
-  while pos < data.len:
+  while pos < src.len:
     var chunk: seq[byte] = @[]
-    while pos < data.len and chunk.len < MaxPlaintext:
-      chunk.add byte(data[pos])
+    while pos < src.len and chunk.len < MaxPlaintext:
+      chunk.add byte(src[pos])
       inc pos
-    sendRecord(c, ContentApplicationData, chunk, dl)
+    seal(e, ContentApplicationData, chunk)
+  used = src.len
 
-proc write*(c: var TlsConn; data: string; dl = never) {.passive, raises.} =
-  write(c, toOpenArray(data, 0, data.len - 1), dl)
+method appOut*(e: NimonyTlsEngine; dest: var string) {.raises.} =
+  dest.add e.app
+  e.app = ""
 
-proc close*(c: var TlsConn; dl = never) {.passive.} =
-  ## Sends `close_notify` (best effort) and closes the socket.
-  if c.failure == tfNone and c.encrypted:
-    try:
-      sendRecord(c, ContentAlert, [1'u8, 0'u8], dl)
-    except ErrorCode:
-      discard
-  close(c.sock)
-  c.failure = tfClosed
+method close*(e: NimonyTlsEngine) {.raises.} =
+  if e.state == hsConnected and not e.closeSent:
+    seal(e, ContentAlert, [1'u8, 0'u8])
+    e.closeSent = true
+
+method isConnected*(e: NimonyTlsEngine): bool = e.state == hsConnected
+
+method isPeerClosed*(e: NimonyTlsEngine): bool = e.peerClosed

@@ -57,6 +57,7 @@ import std/http/httpdate
 import std/http/httpmsg
 import std/http/httpparse
 import std/http/httpwire
+import std/httpclient
 import std/httpserver
 import std/intsets
 import std/ioring
@@ -95,6 +96,7 @@ import std/sha1
 import std/smartcli
 import std/socket
 import std/stacktraces
+import std/streamio
 import std/streams
 import std/stripes
 import std/strtabs

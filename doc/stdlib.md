@@ -509,36 +509,87 @@ How it works — nifasm lays a per-proc table (code range, frame size, name)
 at the end of `.text`, and the walk is a binary search per frame. See
 `nativenif/doc/tracetable.md`.
 
+## streamio
+
+[Source](../lib/std/streamio.nim)
+
+Streams as in nim-lang/nimony#2635: one `Reader`, one `Writer`, the same
+interface for files, strings, memory and connections.
+
+```nim
+var r = openReader(path"log.gz")
+r.setCodec gzipAdapter(fmtDetect)
+echo r.readLine()
+
+let (r, w) = connect("cache.local:6379", "PING\r\n")   # written AND flushed
+echo r.readLine()
+
+var w = openWriter()                 # in memory
+w.write data
+let bytes = extract(w)
+```
+
+- `Reader`/`Writer` are move-only values; a pair from one constructor shares
+  a core (descriptor, TLS engine, atomic end counts).
+- `read` returning `0` is the end of the data; everything else raises.
+- One codec slot per end (`setCodec`, an `Adapter` subclass: `gzipAdapter`,
+  HTTP framing, your own). TLS is not a codec: a `TlsEngine` lives in the
+  core, so compression can only sit above encryption.
+- A writer's destructor finishes it (codec trailer, `close_notify`, end of
+  data for the peer) and swallows errors; call `close` to see them, `abort` on
+  error paths to avoid a complete-looking truncated stream.
+- Not yet: `openReadWrite`, `pipe`/channels, `startTls`, deadlines, the
+  `sendfile`/`splice`/kTLS paths of `copy`.
+
 ## tls
 
 [Source](../lib/std/tls.nim)
 
-A TLS 1.3 client over `std/socket`: X25519 key exchange, the
-`TLS_CHACHA20_POLY1305_SHA256` suite, and server authentication by
-`std/crypto/x509` against a `TrustStore` (ECDSA P-256/P-384 and RSA-PSS
-`CertificateVerify`, a chain to a root, the host name). No TLS 1.2, no session
-resumption, no client certificates.
+A TLS 1.3 client as a `TlsEngine`: a state machine over buffers, no I/O of
+its own. X25519 key exchange, `TLS_CHACHA20_POLY1305_SHA256`, server
+authentication by `std/crypto/x509` (ECDSA P-256/P-384 and RSA-PSS
+`CertificateVerify`, a chain to a root, the host name). No TLS 1.2, no
+session resumption, no client certificates.
 
 ```nim
-var c = TlsConn()
-tlsConnect(c, "example.com", 443, loadSystemTrustStore())
-c.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
-var buf = newString(4096)
-let n = c.read(buf)
+let e = newTlsEngine()                         # system roots
+let (r, w) = connect("example.com:443", request, tls = e)
 ```
 
 - There is no "insecure" switch. A caller that must talk to a self-signed
-  server puts that certificate into the `TrustStore` it passes.
-- `tlsConnect` raises on every failure; `c.failure` says which step failed,
-  `c.certError` why a certificate was refused, `c.alert` which alert the peer
-  sent.
-- `read` returns `0` once the server has sent `close_notify`. A connection
-  that ends WITHOUT one raises `EndOfStreamError`: that is a truncation an
-  attacker can cause. An HTTP client that has read a complete,
-  `Content-Length`- or chunk-framed body may ignore it — several large sites
-  close this way.
+  server passes `newTlsEngine(store)` with that certificate in the store.
+- On a failure the engine keeps the reason: `e.failure`, `e.certError`,
+  `e.alert`.
+- A connection that ends WITHOUT `close_notify` raises `EndOfStreamError`
+  from `read`: that is a truncation an attacker can cause. Framed protocols
+  (HTTP) know where their data ends and never get there.
 - A server that offers neither X25519 nor ChaCha20-Poly1305 (some FIPS-mode
   servers) fails with `tfUnsupported`.
+
+## httpclient
+
+[Source](../lib/std/httpclient.nim)
+
+`httpGet`, `httpPost`, `httpPut`: the constructor sends the request, reads the
+status and headers, and returns the BODY as a `Reader`.
+
+```nim
+var page = httpGet("https://example.com/")
+var r = httpPost(url, openReader(path"big.bin"))     # streamed, chunked
+var resp = HttpHeaders("")
+var r2 = httpGet(url, headers"Accept: application/json\r\n", resp)
+```
+
+- A status outside 2xx raises `httpToErrorCode(status)` (404 is
+  `NameNotFound`), so a returned `Reader` always carries a successful body.
+- Bodies are de-framed (length, chunked, until close) and decoded (gzip,
+  deflate) by an adapter in the codec slot.
+- `HttpHeaders` is the wire format itself. `add` raises `BadOperation` on a
+  CR/LF in a value (header injection); `Host`, `Content-Length`,
+  `Transfer-Encoding` and `Connection` are the library's and raise as user
+  headers. `headers"..."` validates its literal when it runs (the compile-time
+  check the design asks for needs `static` parameters Nimony lacks).
+- One request per connection; redirects raise `RedirectError`.
 
 ## crypto
 

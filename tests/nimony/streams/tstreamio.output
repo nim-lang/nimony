@@ -1,0 +1,14 @@
+first
+second
+last
+0
+abcdef
+true true
+true
+truncated: SyntaxError
+8
+one
+two
+
+true
+write with fmtDetect: BadOperation

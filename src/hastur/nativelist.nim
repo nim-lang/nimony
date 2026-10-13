@@ -93,7 +93,10 @@ const
     "tests/nimony/asmnative",
     # `std/crypto` takes its `{.assembler.}` field and MAC arithmetic on this
     # backend, so the vectors here are what check that code
-    "tests/nimony/crypto"
+    "tests/nimony/crypto",
+    # streams (#2635) and the HTTP client on them: observed green on x86-64
+    # Linux only so far
+    "tests/nimony/streams"
   ]
 
   NativeJoinSkip*: array[0, string] = [
