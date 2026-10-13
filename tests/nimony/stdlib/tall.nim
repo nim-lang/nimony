@@ -32,6 +32,10 @@ import std/compress/checksums
 import std/compress/deflate
 import std/compress/gzip
 import std/cpuinfo
+import std/crypto/chacha20poly1305
+import std/crypto/hmac
+import std/crypto/sha2
+import std/crypto/x25519
 import std/deques
 import std/dirs
 import std/dns
