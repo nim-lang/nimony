@@ -199,6 +199,34 @@ type
     #    reads it. No column here can describe that, and in an `.assembler` proc
     #    none needs to — there is no allocator to inform.
     SyscallOp
+    # ── multi-word arithmetic and branch-free selection (x86-64). These are
+    #    what constant-time code is MADE of: a carry chain (`adc`/`sbb`) and a
+    #    full 64x64->128 product (`mul`) are how a field element wider than a
+    #    register is added and multiplied without a data-dependent branch, and a
+    #    conditional move (`cmovCC`) is how a secret-dependent choice is made
+    #    without one. Every row that READS a flag (`uses != {}`) and `mul`, whose
+    #    second result is a fixed register no signature can name, is legal only
+    #    inside an `{.assembler.}` proc: anywhere else an instruction the
+    #    compiler inserted could sit between the flag's definition and its use.
+    AdcOp
+    SbbOp
+    MulOp        # mul(var lo, var hi, s): rdx:rax = rax * s. `lo` must live in
+                 # rax and `hi` in rdx — the instruction has no other form.
+    ImulOp       # imul(var d, s): d = low half of d * s
+    CmovzOp
+    CmovnzOp
+    CmovcOp
+    CmovncOp
+    CmovsOp
+    CmovnsOp
+    CmovoOp
+    CmovnoOp
+    CmovaOp
+    CmovbeOp
+    CmovlOp
+    CmovgeOp
+    CmovgOp
+    CmovleOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -359,7 +387,10 @@ const
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
     "StackPointer", "TraceTable", "TlsSize", "VgClientRequest",
     "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize",
-    "NoinitStart", "NoinitSize", "bkpt", "semihost", "syscall"]
+    "NoinitStart", "NoinitSize", "bkpt", "semihost", "syscall",
+    "adc", "sbb", "mul", "imul",
+    "cmovz", "cmovnz", "cmovc", "cmovnc", "cmovs", "cmovns", "cmovo", "cmovno",
+    "cmova", "cmovbe", "cmovl", "cmovge", "cmovg", "cmovle"]
 
   Imm8 = [ptImmLit, ptNone, ptNone, ptNone, ptNone, ptNone]
     ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -403,6 +434,11 @@ const
   VecFma = [ptVec128, ptVec128, ptVec128, ptLaneBits, ptNone, ptNone]
   VecDup = [ptFloatW, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
   VecHAdd = [ptVec128, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
+
+  MulShape = [ptAnyIntW, ptAnyIntW, ptAnyIntW, ptNone, ptNone, ptNone]
+    ## `(lo, hi, s)`, all one width
+  MulRoles = [roInout, roOut, roIn, roIn, roIn, roIn]
+    ## `lo` is read (the multiplicand) and written; `hi` is only written
 
   AllArith = {mfZF, mfCF, mfSF, mfOF, mfPF}
     ## What an x86 arithmetic/compare instruction leaves defined. `test` clears CF
@@ -914,10 +950,83 @@ const
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,        # syscall
                  params: NoOps, roles: AllIn, ret: ptVoid,
                  widths: {}, tie: -1, effects: {efReads, efWrites, efBarrier},
-                 uses: {}, defs: {})
+                 uses: {}, defs: {}),
+    # ── multi-word arithmetic. 64-bit only: a limb is a machine word, and a
+    #    narrower carry chain is a bug rather than a feature.
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # adc
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # sbb
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 3,        # mul
+                 params: MulShape, roles: MulRoles, ret: ptVoid,
+                 widths: {64'u8}, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # imul
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {},
+                 defs: AllArith),
+    # ── conditional moves: `d = s` if the condition holds, else `d` is kept, so
+    #    `d` is read and written. No branch, whatever the flag says.
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovz
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovnz
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovc
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovnc
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovs
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfSF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovns
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfSF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovo
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfOF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovno
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfOF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmova
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF, mfZF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovbe
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF, mfZF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovl
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfSF, mfOF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovge
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfSF, mfOF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovg
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF, mfSF, mfOF},
+                 defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,        # cmovle
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF, mfSF, mfOF},
+                 defs: {})
   ]
 
-const LastIntrinsicOp* = SyscallOp
+const LastIntrinsicOp* = CmovleOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -948,6 +1057,16 @@ proc inoutOperand*(r: IntrinsicRow): int =
   result = -1
   for i in 0 ..< r.arity:
     if r.roles[i] == roInout: return i
+
+proc isAssemblerOnly*(r: IntrinsicRow): bool =
+  ## A row no compiled code may contain: it READS a flag (`adc`, `cmovz`), so
+  ## nothing may run between the instruction that set the flag and this one, or
+  ## it writes a result no signature can place (`mul`'s high half). Only an
+  ## `{.assembler.}` body, where no instruction is ever inserted, can use it.
+  if r.uses != {}: return true
+  for i in 0 ..< r.arity:
+    if r.roles[i] == roOut: return true
+  result = false
 
 proc isFlagWrite*(r: IntrinsicRow): bool {.inline.} =
   ## A row whose ONLY output is flags (`cmp`, `test`): it must be a STATEMENT,
