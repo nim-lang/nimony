@@ -38,6 +38,7 @@ import std/crypto/ecdsa
 import std/crypto/hmac
 import std/crypto/rsa
 import std/crypto/sha2
+import std/crypto/sysrand
 import std/crypto/x25519
 import std/crypto/x509
 import std/deques
@@ -105,6 +106,7 @@ import std/terminal
 import std/threadpool
 import std/ticketlocks
 import std/times
+import std/tls
 import std/typetraits
 import std/unicode
 import std/uri
