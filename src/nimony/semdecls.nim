@@ -435,6 +435,10 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
     # the input tree used the `typevar` tag; the declaration's static-ness
     # lives in the tag, so retag it
     setTagAt(dest, declStart, TagId(StaticTypevarY))
+  elif kind == ResultY:
+    # re-semming a body that already declares `result` (generic
+    # instantiation): the routine's tail expression assigns to it
+    c.routine.resId = delayed.s.name
   if kind notin {FldY, GfldY}:
     publish c, dest, delayed.s.name, declStart
 
@@ -691,6 +695,31 @@ proc semParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
         semParam c, dest, n
   else:
     buildErr c, dest, n.info, "expected '.' or 'params'"
+
+proc tailIsUnresolvedWhen(dest: TokenBuf; bodyStart: int): bool =
+  ## Whether the last statement of the body `(stmts …)` at `bodyStart` is a
+  ## `when` that a generic definition could not resolve. Its branches may be
+  ## the routine's result expression, so the tail is decided on instantiation.
+  result = false
+  var n = readonlyCursorAt(dest, bodyStart)
+  if n.stmtKind != StmtsS: return
+  n = sub(n)
+  while n.hasMore:
+    result = n.stmtKind == WhenS
+    skip n
+
+proc needsDeferredReturn(body: Cursor): bool =
+  ## A generic body whose definition left the tail open (see
+  ## `tailIsUnresolvedWhen`): it declares `result` but does not end in the
+  ## synthesized `(ret result)`.
+  var n = body
+  n = sub(n)
+  if n.stmtKind != ResultS: return false
+  var lastIsRet = false
+  while n.hasMore:
+    lastIsRet = n.stmtKind == RetS
+    skip n
+  result = not lastIsRet
 
 proc addReturnResult(c: var SemContext; dest: var TokenBuf; resId: SymId; info: NifLineInfo; bodyStart: int) =
   if resId != SymId(0):
@@ -1012,6 +1041,7 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
   c.openScope() # open body scope
   var resId = SymId(0)
   let bodyStart = dest.len
+  let deferredReturn = needsDeferredReturn(it.n)
   dest.addParLe(it.n.cursorTagId, it.n.info)
   it.n.into:
     # The body may already carry an explicit `(result ...)` declaration from a
@@ -1024,6 +1054,10 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
     dest.addParRi(it.n.endInfo)
   c.closeScope() # close body scope
   c.closeScope() # close parameter scope
+  if resId == SymId(0) and deferredReturn:
+    # the definition left the tail `when` open; now that it is resolved,
+    # `semProcBody` has turned a value tail into `result = …`
+    resId = c.routine.resId
   if resId != SymId(0):
     addReturnResult c, dest, resId, it.n.endInfo, bodyStart
   if hk != NoHook:
@@ -1081,6 +1115,12 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
       dest.addParRi(it.n.endInfo)
   c.closeScope() # close body scope
   c.closeScope() # close parameter scope
+  if resId != SymId(0) and c.routine.inGeneric > 0 and
+      tailIsUnresolvedWhen(dest, bodyStart):
+    # The tail is a `when` over generic parameters: whether its branches are
+    # the result expression or statements is only known on instantiation, so
+    # leave it as the tail and let `semBodyGenericInst` add the return.
+    resId = SymId(0)
   addReturnResult c, dest, resId, it.n.endInfo, bodyStart
   let hk = hookToKind(hookName)
   if hk != NoHook:
