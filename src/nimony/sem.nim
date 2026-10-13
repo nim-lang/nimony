@@ -2419,6 +2419,20 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
 
+proc semUnresolvedWhenBranch(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode) =
+  ## A branch of a `when` whose condition depends on generic parameters. In a
+  ## checked generic its body is type-checked at definition time like an `if`
+  ## branch, so the `when` has the branches' common type and a tail `when` is
+  ## classified as the result expression or as statements right here. Only
+  ## the fields of a generic object stay untyped until instantiation.
+  case mode
+  of NormalWhen:
+    withNewScope c:
+      semStmtBranch c, dest, it, true
+  of ObjectWhen:
+    var ctx = createUntypedContext(addr c, UntypedGeneric)
+    semTemplBody ctx, dest, it.n
+
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
                  state: var SemObjectState) =
   let start = dest.len
@@ -2455,8 +2469,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
           leaveUnresolved = true
       if leaveUnresolved:
         # might have been set above
-        var ctx = createUntypedContext(addr c, UntypedGeneric)
-        semTemplBody ctx, dest, it.n
+        semUnresolvedWhenBranch c, dest, it, mode
       else:
         takeTree dest, it.n
       dest.addParRi(it.n.endInfo)
@@ -2479,8 +2492,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       it.n = whenStart; skip it.n
       return
     else:
-      var ctx = createUntypedContext(addr c, UntypedGeneric)
-      semTemplBody ctx, dest, it.n
+      semUnresolvedWhenBranch c, dest, it, mode
     dest.addParRi(it.n.endInfo)
     it.n = elseStart; skip it.n
   dest.addParRi(it.n.endInfo)
@@ -2489,8 +2501,10 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
     # none of the branches evaluated, output nothing
     dest.shrink start
     producesVoid c, dest, info, it.typ
-  else:
+  elif mode == ObjectWhen:
     it.typ = c.types.untypedType
+  elif typeKind(it.typ) == AutoT:
+    producesVoid c, dest, info, it.typ
 
 proc semWhen(c: var SemContext; dest: var TokenBuf; it: var Item) =
   case c.phase
