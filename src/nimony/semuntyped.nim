@@ -357,7 +357,7 @@ proc semTemplType(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
     takeTree dest, n
   of IntT, FloatT, CharT, BoolT, UIntT, NiltT, AutoT,
       SymkindT, UntypedT, TypedT, CstringT, PointerT, TypekindT, OrdinalT,
-      PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UarrayT,
+      PtrT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NotT, UarrayT,
       StaticT, TypedescT, SetT, OrT, AndT, TupleT, ClosureTupleT, ArrayT, RangetypeT, VarargsT,
       InvokeT, ErrT, PluginCallT:
     semTemplBodySons c, dest, n

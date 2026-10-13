@@ -252,44 +252,55 @@ type
   CycleWalk = object
     target: SymId    ## `canFormCycle`: the pointee identity to find again;
                      ## `NoSymId` for `needsTrace`
-    visited: seq[SymId]
+    visited: seq[(SymId, bool)]
 
 proc canFormCycle(c: var LiftingCtx; refType: TypeCursor): bool
 
-proc walksToCycle(c: var LiftingCtx; w: var CycleWalk; t: TypeCursor; followPtr: bool): bool
+proc walksToCycle(c: var LiftingCtx; w: var CycleWalk; t: TypeCursor; followPtr: bool;
+                  plain: bool; owned = false): bool
+  ## `plain`: whether the walk crossed a reference that is not `owned`. Owning
+  ## edges are move-only and so form a forest (RFC #575): a cycle back to the
+  ## target is only possible if it contains a non-owned edge. Owned edges must
+  ## still be followed as a cycle can pass through them (`A.owned -> B`,
+  ## `B.plain -> A`). `owned`: the edge `t` spells is wrapped in `(owned ...)`.
 
-proc walksToCycleObj(c: var LiftingCtx; w: var CycleWalk; body: TypeCursor; followPtr: bool): bool =
+proc walksToCycleObj(c: var LiftingCtx; w: var CycleWalk; body: TypeCursor; followPtr, plain: bool): bool =
   ## `body` is an `(object ...)`.
   result = false
   var n = body
   n = sub(n) # into the object; bounds the walk
   let parent = n
-  if parent.kind != DotToken and walksToCycle(c, w, parent, followPtr):
+  if parent.kind != DotToken and walksToCycle(c, w, parent, followPtr, plain):
     return true
   skip n
   var iter = initObjFieldIter()
   while nextField(iter, n):
     let field = takeLocal(n, SkipFinalParRi)
     if field.kind in {FldY, GfldY} and not hasPragma(field.pragmas, CursorP):
-      if walksToCycle(c, w, field.typ, followPtr):
+      if walksToCycle(c, w, field.typ, followPtr, plain):
         return true
 
-proc walksToCycleRef(c: var LiftingCtx; w: var CycleWalk; refType: TypeCursor; followPtr: bool): bool =
+proc walksToCycleRef(c: var LiftingCtx; w: var CycleWalk; refType: TypeCursor; followPtr, plain, owned: bool): bool =
+  let plain = plain or not owned
   if w.target == NoSymId:
     # `needsTrace`: this is an edge; it matters iff its target is cyclic
     result = canFormCycle(c, refType)
   elif refTarget(refType) == w.target:
-    result = true
+    result = plain
   else:
     let impl = toTypeImpl(resolveAliases(refType))
-    result = walksToCycle(c, w, impl.childCursor, followPtr)
+    result = walksToCycle(c, w, impl.childCursor, followPtr, plain)
 
-proc walksToCycle(c: var LiftingCtx; w: var CycleWalk; t: TypeCursor; followPtr: bool): bool =
+proc walksToCycle(c: var LiftingCtx; w: var CycleWalk; t: TypeCursor; followPtr: bool;
+                  plain: bool; owned = false): bool =
   result = false
   if t.isSymbol:
     let s = t.symId
-    if s in w.visited: return false
-    w.visited.add s
+    # `plain` is part of the key: a type first reached only via owned edges
+    # must be revisited when it is also reachable via a plain edge.
+    let key = (s, plain or not owned)
+    if key in w.visited: return false
+    w.visited.add key
     let res = tryLoadSym(s)
     if res.status != LacksNothing: return false
     let decl = asTypeDecl(res.decl)
@@ -297,35 +308,39 @@ proc walksToCycle(c: var LiftingCtx; w: var CycleWalk; t: TypeCursor; followPtr:
     let body = decl.body
     case body.typeKind
     of RefT:
-      result = walksToCycleRef(c, w, t, followPtr)
+      result = walksToCycleRef(c, w, t, followPtr, plain, owned)
     of ObjectT:
       # a subclass can add the edge back that this class lacks:
       if hasRtti(s): return true
-      result = walksToCycleObj(c, w, body, followPtr or hasUserTrace(c, s))
+      result = walksToCycleObj(c, w, body, followPtr or hasUserTrace(c, s), plain)
     else:
-      result = walksToCycle(c, w, body, followPtr)
+      result = walksToCycle(c, w, body, followPtr, plain, owned)
     return result
 
   case t.typeKind
   of RefT:
-    result = walksToCycleRef(c, w, t, followPtr)
+    result = walksToCycleRef(c, w, t, followPtr, plain, owned)
   of PtrT, UarrayT:
-    result = followPtr and walksToCycle(c, w, t.childCursor, followPtr)
+    result = followPtr and walksToCycle(c, w, t.childCursor, followPtr, plain)
   of ObjectT:
-    result = walksToCycleObj(c, w, t, followPtr)
+    result = walksToCycleObj(c, w, t, followPtr, plain)
   of SinkT, ArrayT, DistinctT:
-    result = walksToCycle(c, w, t.childCursor, followPtr)
+    result = walksToCycle(c, w, t.childCursor, followPtr, plain, owned)
+  of OwnedT:
+    result = walksToCycle(c, w, t.childCursor, followPtr, plain, owned = true)
   of TupleT, ClosureTupleT:
     var tup = t
     tup = sub(tup)
     while tup.hasMore:
-      if walksToCycle(c, w, getTupleFieldType(tup), followPtr):
+      if walksToCycle(c, w, getTupleFieldType(tup), followPtr, plain):
         return true
       skip tup
   of RoutineTypes:
     # The environment of a closure is a `ref RootObj`: it may hold anything.
     # Any spelling of it, lowered or not, so the frontend and hexer agree.
-    result = isClosureValueType(t)
+    # That of an `owned` closure is acyclic by contract, checked where the
+    # closure is formed (RFC #575).
+    result = isClosureValueType(t) and not owned
   else:
     result = false
 
@@ -349,8 +364,33 @@ proc canFormCycle(c: var LiftingCtx; refType: TypeCursor): bool =
   if not acyclic and t.typeKind == RefT:
     var w = CycleWalk(target: refTarget(refType))
     if w.target != NoSymId:
-      result = walksToCycle(c, w, t.childCursor, false)
+      result = walksToCycle(c, w, t.childCursor, false, false)
   c.cyclicRefs[key] = result
+
+proc ownedClosureEnvCulprit*(c: var LiftingCtx; envRef: TypeCursor): Cursor =
+  ## RFC #575: an `owned` closure promises that its environment cannot be part
+  ## of a cycle, which the classification above relies on. Answers the field
+  ## of the environment `envRef` (a `ref` to the lifted environment object)
+  ## through which a cycle is possible, or a nil cursor. The environment
+  ## derives from the empty `RootObj` but is final, so its own RTTI does not
+  ## count.
+  result = default(Cursor)
+  let target = refTarget(envRef)
+  if target == NoSymId: return
+  let res = tryLoadSym(target)
+  if res.status != LacksNothing: return
+  let decl = asTypeDecl(res.decl)
+  if decl.kind != TypeY or decl.body.typeKind != ObjectT: return
+  var n = decl.body
+  n = sub(n)
+  skip n # the `RootObj` base
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    let field = takeLocal(n, SkipFinalParRi)
+    if field.kind in {FldY, GfldY} and not hasPragma(field.pragmas, CursorP):
+      var w = CycleWalk(target: target)
+      if walksToCycle(c, w, field.typ, false, false):
+        return field.name
 
 proc needsTrace(c: var LiftingCtx; typ: TypeCursor): bool =
   ## Does a value of type `typ` own a ref the cycle collector must follow?
@@ -358,7 +398,7 @@ proc needsTrace(c: var LiftingCtx; typ: TypeCursor): bool =
   if typ.isSymbol and c.tracedTypes.hasKey(typ.symId):
     return c.tracedTypes.getOrQuit(typ.symId)
   var w = CycleWalk(target: NoSymId)
-  result = walksToCycle(c, w, typ, false)
+  result = walksToCycle(c, w, typ, false, false)
   if typ.isSymbol:
     c.tracedTypes[typ.symId] = result
 
@@ -464,6 +504,8 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
   of ProctypeT:
     # `type Cb = proc() {.closure.}`: the alias of a closure value owns an env
     result = not isClosureProcType(r.body)
+  of OwnedT:
+    result = isTrivial(c, r.body)
   else:
     result = true
 
@@ -499,6 +541,9 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = true # lent types are borrowed; no hooks needed
   of SinkT, ArrayT:
     result = isTrivial(c, typ.childCursor)
+  of OwnedT:
+    # the owning edge cannot be copied, only moved (RFC #575):
+    result = c.op notin {attachedCopy, attachedDup} and isTrivial(c, typ.childCursor)
   of ObjectT:
     result = isTrivialObjectBody(c, typ)
   of TupleT, ClosureTupleT:
@@ -607,6 +652,14 @@ proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceS
     else:
       genCallHook c, s, paramA, paramB, forceStatic
 
+proc isCyclicCell(c: var LiftingCtx; refType: Cursor): bool {.inline.} =
+  c.cycles and (canFormCycle(c, refType) or elemHasRtti(refType))
+
+proc isOwnedAcyclicRef(c: var LiftingCtx; owned: TypeCursor): bool =
+  ## `owned ref T` whose cell cannot form a cycle.
+  let base = toTypeImpl(owned.childCursor)
+  result = base.typeKind == RefT and not isCyclicCell(c, owned.childCursor)
+
 proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # Goal: We produce a call to some function. Maybe this function must be
   # synthesized, if so this will be done by calling `requestLifting`.
@@ -645,6 +698,22 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
       result = requestLifting(c, c.op, loweredOf(c, typ))
     else:
       result = NoSymId
+  of OwnedT:
+    # The owning edge is an ordinary counted reference, but it is unique and
+    # so cannot be copied, only moved or converted to an unowned reference
+    # (RFC #575): its `=copy`/`=dup` is `.error`, which makes every value
+    # type with an owned field move-only. The other hooks are `T`'s.
+    if c.op in {attachedCopy, attachedDup}:
+      # the hook requested here is `.error` once generated, but the enclosing
+      # one must know now:
+      c.calledErrorHook = c.info
+      c.calledErrorHookSet = true
+      result = requestLifting(c, c.op, orig)
+    elif c.op == attachedDestroy and isOwnedAcyclicRef(c, typ):
+      # releasing the owning edge of an acyclic cell: see `arcDecOwned`
+      result = requestLifting(c, c.op, orig)
+    else:
+      result = lift(c, typ.childCursor)
   else:
     result = NoSymId
 
@@ -1038,7 +1107,10 @@ proc emitCyclicRefDestructor(c: var LiftingCtx; paramA: TokenBuf; refType: TypeC
   c.dest.addParRi()
   c.dest.addParRi()
 
-proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
+proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor;
+                       ownedEdge = false) =
+  ## `ownedEdge`: releases the owning edge of an `owned ref T`, see
+  ## `system/ownedrefs.arcDecOwned`.
   c.dest.addParLe IfS, c.info
   c.dest.addParLe ElifU, c.info
 
@@ -1047,7 +1119,7 @@ proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor
     # here we know that `x` is not nil:
     copyIntoKind c.dest, ElifU, c.info:
       copyIntoKind c.dest, CallS, c.info:
-        copyIntoSymUse c.dest, getCompilerProc(c, "arcDec"), c.info
+        copyIntoSymUse c.dest, getCompilerProc(c, if ownedEdge: "arcDecOwned" else: "arcDec"), c.info
         refcountOf(c, paramA)
 
       copyIntoKind c.dest, StmtsS, c.info:
@@ -1072,15 +1144,15 @@ proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
         refcountOf(c, x)
   c.dest.addParRi()
 
-proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
+proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; ownedEdge = false) =
   assert n.typeKind == RefT
   let baseType = n.childCursor
   case c.op
   of attachedDestroy:
-    if c.cycles and (canFormCycle(c, n) or elemHasRtti(n)):
+    if isCyclicCell(c, n):
       emitCyclicRefDestructor c, paramA, n
     else:
-      emitRefDestructor c, paramA, baseType
+      emitRefDestructor c, paramA, baseType, ownedEdge
   of attachedTrace:
     # only lifted for a ref type that `canFormCycle` (see `needsTrace`):
     # hand the field to the collector together with its cell operation
@@ -1173,6 +1245,14 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
   of ProctypeT:
     if isClosureProcType(typ):
       unravelTuple c, loweredOf(c, typ), paramA, paramB
+  of OwnedT:
+    if c.op in {attachedCopy, attachedDup}:
+      c.calledErrorHook = c.info
+      c.calledErrorHookSet = true
+    elif c.op == attachedDestroy and isOwnedAcyclicRef(c, typ):
+      unravelRef(c, toTypeImpl(typ.childCursor), paramA, paramB, ownedEdge = true)
+    else:
+      unravel(c, typ.childCursor, paramA, paramB)
   else:
     discard "nothing to do"
     #let fn = lift(c, typ)
@@ -1320,6 +1400,8 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
           var t = typ
           if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId):
             discard "empty hooks are valid for RTTI'ed types"
+          elif c.calledErrorHookSet:
+            discard "the `.error` hook of an `owned` type"
           else:
             assert false, "empty hook created for " & toString(typ, false)
       maybeAddReturn c, paramA

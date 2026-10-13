@@ -713,7 +713,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       n = sub(n)
       skipNilAnnotation n
       takeParRi dest, n, ptrStart
-    of StaticT, SinkT, DistinctT:
+    of StaticT, SinkT, OwnedT, DistinctT:
       n.into:
         trType c, dest, n, flags
     of TupleT, ClosureTupleT:

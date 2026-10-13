@@ -241,6 +241,7 @@ template ord*[T: Ordinal|enum](x: T): int =
   int(x)
 
 include "system/panics"
+include "system/ownedrefs"
 
 include "system/dyncalls"
 

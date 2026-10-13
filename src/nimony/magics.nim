@@ -113,6 +113,7 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "EnsureMove": res EmoveX
   of "UncheckedArray": res UarrayT
   of "Sink": res SinkT
+  of "Owned": res OwnedT
   of "Lent": res LentT
   of "Destroy": res DestroyX
   of "SinkHook": res SinkhX
