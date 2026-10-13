@@ -876,7 +876,8 @@ the same as that of `X`, so modules with and without the feature interoperate.
 | copy of an `owned` location        | error: move it, or convert to unowned    |
 | object construction                | yields `owned ref T` under `ownedRefs`   |
 | value type with an `owned` field   | move-only                                |
-| `owned` parameter                  | a `sink` parameter                       |
+| `owned` parameter                  | borrowed, like any other `ref` parameter |
+| `sink owned` parameter             | takes over the ownership                 |
 
 Fresh values (object constructions, `new`, lambdas, `nil`) have no other
 owner yet and so may initialize an `owned` location. With
@@ -898,6 +899,23 @@ reference, and so is the element type inferred for `@[Node()]`.
       result += it.data
       it = it.next
   ```
+
+An `owned` parameter is an ordinary parameter of an owned type: the callee can
+read it and write through it, but cannot reassign it, and the caller remains
+the owner. Ownership is only transferred to a `sink owned` parameter, so
+storing the parameter into another owned location requires `sink`:
+
+  ```nim
+  proc rename(n: owned Node; data: int) =
+    n.data = data            # ok: writes through the reference
+    let u: Node = n          # ok: a counted reference
+
+  proc append(list: Node; n: sink owned Node) =
+    list.next = n            # ok: `n` owns the cell and passes that on
+  ```
+
+Without the `sink`, `list.next = n` would be a copy of an `owned` location
+and is rejected.
 
 `owned` is rejected on `seq` and `string`, which are already unique.
 

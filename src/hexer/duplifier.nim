@@ -114,8 +114,9 @@ proc isLastRead(c: var Context; n: Cursor): bool =
     var canAnalyse = false
     let v = c.typeCache.getLocalInfo(r)
     if v.kind == ParamY:
-      # an `owned` parameter is a sink parameter (RFC #575)
-      canAnalyse = v.typ.typeKind in {SinkT, OwnedT}
+      # an `owned` parameter is borrowed like any other parameter, only
+      # `sink owned` takes over the ownership (RFC #575)
+      canAnalyse = v.typ.typeKind == SinkT
     elif v.kind in {VarY, LetY}:
       # CursorY omitted here on purpose as we cannot steal ownership from a cursor
       # as it doesn't have any.
@@ -1113,7 +1114,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects)
       else:
         let param = takeLocal(fnType, SkipFinalParRi)
         let pk = param.typ.typeKind
-        if pk in {SinkT, OwnedT}:
+        if pk == SinkT:
           e2 = WantOwner
         elif pk == VarargsT:
           # do not advance formal parameter:

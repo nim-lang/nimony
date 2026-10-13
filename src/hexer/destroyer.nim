@@ -252,8 +252,7 @@ proc registerSinkParameters(c: var Context; params: Cursor) =
   p = sub(p)  # throwaway copy; bounds the walk under vpr
   while p.hasMore:
     let r = takeLocal(p, SkipFinalParRi)
-    if r.typ.typeKind in {SinkT, OwnedT}:
-      # an `owned` parameter is a sink parameter (RFC #575)
+    if r.typ.typeKind == SinkT:
       let destructor = getDestructor(c.lifter[], r.typ.childCursor, p.endInfo)
       if destructor != NoSymId:
         c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)

@@ -23,7 +23,7 @@ proc build(n: int): owned nil Node =
 
 proc keep(s: var seq[Node]; x: sink Node) = s.add x
 
-proc ident[T](x: owned T): owned T = x
+proc ident[T](x: sink owned T): owned T = x
 
 proc mk(k: int): Cb =
   result = proc (x: int): int {.closure.} = x + k
@@ -54,6 +54,6 @@ proc main =
   let g: proc (x: int): int {.closure.} = f
   echo g(-2)
   let h = mk(5)
-  echo consume(h)      # the last read of `h`: moved into the owned parameter
+  echo consume(h)      # borrowed: `h` stays the owner
 
 main()

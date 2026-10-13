@@ -351,7 +351,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
       if not cursorIsNil(local.val):
         result = borrowsFromReadonly(c, local.val)
     of ParamY:
-      result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT, OwnedT}
+      result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
       result = false
   elif n.hasMore and (n.kind in {StrLit, IntLit, UIntLit, FloatLit, CharLit} or
