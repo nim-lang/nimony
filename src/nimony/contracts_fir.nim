@@ -623,25 +623,17 @@ proc arithType(typ: Cursor): Cursor =
     else:
       break
 
-proc arithWraps(bits: int; typ: Cursor): bool =
+proc arithWraps(typ: Cursor): bool =
   ## Does `+`, `-`, `*` or `shl` of type `typ` turn a result outside the type
-  ## into a *different value* of it? Unsigned arithmetic wraps by definition
-  ## (doc/language.md), and a signed type narrower than C's `int` is computed
-  ## promoted and truncated on the way back, so `127'i8 + 1` is `-128`. Such an
-  ## operation is not the mathematical one the difference rules read it as
-  ## until its operands are known to keep it in range: `if i + 1 < 2` says
-  ## nothing about `i` when `i` may be `127'i8`. Signed overflow from 32 bits
-  ## on is undefined in the generated C, which the C compiler already takes not
-  ## to happen; the rules here take it the same way.
-  let t = arithType(typ)
-  case t.typeKind
-  of UIntT, CharT: result = true
-  of IntT:
-    var w = t
-    inc w
-    let width = if w.kind == IntLit and w.intVal > 0: int(w.intVal) else: bits
-    result = width < 32
-  else: result = false
+  ## into a *different value* of it? That is what unsigned arithmetic does, at
+  ## every width: "Unsigned operations all wrap around; they cannot lead to
+  ## over- or underflow errors" (doc/language.md). Such an operation is not the
+  ## mathematical one the difference rules read it as until its operands are
+  ## known to keep it in range: `if i + 1 < 2` says nothing about `i` when `i`
+  ## may be `high(uint64)`. A signed operation that leaves its type is an
+  ## overflow error instead, so whatever the target, the value it produces
+  ## when it does produce one is the mathematical one.
+  result = arithType(typ).typeKind == UIntT
 
 proc foldWraps(bits: int; n: Cursor): bool =
   ## Does a wrapping operation inside the constant `n` fold to a value outside
@@ -652,7 +644,7 @@ proc foldWraps(bits: int; n: Cursor): bool =
   if n.exprKind in {AddX, SubX, MulX, NegX, ShlX}:
     var t = n
     t = sub(t)
-    if arithWraps(bits, t):
+    if arithWraps(t):
       let v = tryEvalOrdinal(bits, n)
       var tLo = zero()
       var tHi = zero()
@@ -815,7 +807,7 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
         # value of the type.
         var t = n
         t = sub(t)
-        if arithWraps(c.bits, t):
+        if arithWraps(t):
           var tLo = zero()
           var tHi = zero()
           if not integerTypeBounds(c.bits, arithType(t), tLo, tHi):
@@ -857,7 +849,7 @@ proc noWrap(c: var FirContext; n: Cursor): bool =
   ## otherwise only where the operands' bounds keep the result inside `T`.
   var t = n
   t = sub(t)
-  if not arithWraps(c.bits, t): return true
+  if not arithWraps(t): return true
   var tLo = zero()
   var tHi = zero()
   var lo = zero()
@@ -1416,7 +1408,7 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
         b = sub(b)
         # the body is in terms of the accessor's parameter, so no fact can
         # rule out a wrap: only a type that does not wrap reads as `path ± k`
-        if arithWraps(c.bits, b): return false
+        if arithWraps(b): return false
         skip b # the type operand
         var inner = accessorSubst(acc)
         inner[acc.param] = argOf(arg, subst)
@@ -1553,7 +1545,7 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
     if step.isNaN: stepArg = arg
     skip r
   if r.hasMore: return false
-  if arithWraps(c.bits, info.opType):
+  if arithWraps(info.opType):
     # `inc` of a `uint8` at 255 makes it 0, not 256: the step only moves what
     # is known where the facts keep it inside the type. The loop pre-scan has
     # no facts of the iteration to ask, so there it is a write like any other.
@@ -1564,6 +1556,9 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
     if not c.prescanning and not step.isNaN and
         integerTypeBounds(c.bits, arithType(info.opType), tLo, tHi):
       operandRange(c, peelExpr(target), lo, hi)
+      # an end no fact bounds is the type's own
+      if lo.isNaN: lo = tLo
+      if hi.isNaN: hi = tHi
     let moved = if info.isSub: -step else: step
     if lo.isNaN or hi.isNaN or lo + moved < tLo or tHi < hi + moved:
       loc = InvalidVarId
@@ -1926,9 +1921,9 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     var d = negValue
     d = sub(d)
     var negFits = true
-    if arithWraps(c.bits, d):
-      # `-low(int8)` is `low(int8)` again, and any `-a` of an unsigned `a > 0`
-      # wraps: the rule needs `-a` to stay inside the type
+    if arithWraps(d):
+      # `-a` of an unsigned `a > 0` wraps: the rule needs `-a` to stay inside
+      # the type
       var tLo = zero()
       var tHi = zero()
       var aLo = zero()
@@ -2199,7 +2194,7 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
                   of SubX: a - b
                   else: a * b
             result = not val.isNaN
-      if result and arithWraps(c.bits, opType):
+      if result and arithWraps(opType):
         # `255'u8 + 1` is 0, not 256: only a result inside the type is the
         # value the program computes
         var tLo = zero()
@@ -2943,7 +2938,7 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     let isSub = m.exprKind == SubX
     var r = m
     r = sub(r)
-    if arithWraps(c.bits, r):
+    if arithWraps(r):
       # Only the facts here can rule out a wrap, and they are about the
       # operands only where nothing stands in for them.
       if rd.args.len > 0 or rd.results.len > 0 or not noWrap(c, m): return false
@@ -4295,7 +4290,7 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   r = sub(r)
   # a wrapping `+` is not monotone, and the pre-scan has no facts to rule the
   # wrap out
-  if arithWraps(c.bits, r): return
+  if arithWraps(r): return
   skip r # the type operand
   var operand = r
   skip r
