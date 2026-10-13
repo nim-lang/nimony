@@ -2411,8 +2411,16 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
         if not matched:
           m.error InvalidMatch, f, arg.typ
         skip f
+    of TypekindT:
+      # The meta type `typedesc` (nim-lang/nimony#2625): like `typed`, but it
+      # only takes a type. Declarations admit no other bare type class here.
+      let fOrig = f
+      if not matchTypeConstraint(m, f, arg.typ):
+        m.error InvalidMatch, fOrig, arg.typ
+        f = fOrig
+        skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT,
+        DistinctT, StaticT, AutoT, OrdinalT, ConceptT, SymkindT,
         ClosureTupleT:
       # `ClosureTupleT` is a hexer-internal lowering; it never reaches sem.
       m.error UnhandledTypeBug, f, f

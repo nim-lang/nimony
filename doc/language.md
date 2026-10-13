@@ -4114,6 +4114,13 @@ The "types" of templates can be the symbols `untyped`,
 contexts. Regular types can be used too; this implies that `typed` expressions
 are expected.
 
+A parameter of the meta type `typedesc` (written without a type argument)
+accepts any type; such a parameter is only valid for templates and macros.
+Routines name the type with an explicit generic parameter instead:
+`proc f[T](x: typedesc[T])`. Other bare type classes such as `object` or
+`enum` cannot be used as parameter types of any routine kind; they are only
+valid as constraints of generic parameters (`proc f[T: object](x: T)`).
+
 
 
 ### Passing a code block to a template

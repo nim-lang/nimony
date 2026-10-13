@@ -356,7 +356,22 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
           c.buildErr dest, delayed.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)"
         insertType c, dest, typ, beforeType
       else:
-        let typ = semLocalType(c, dest, n) # 3
+        let typeStart = dest.len
+        let typeInfo = n.info
+        var typ = semLocalType(c, dest, n) # 3
+        if kind == ParamY and typ.typeKind == TypekindT:
+          # A bare type class as a parameter type. `typedesc` is a meta type like
+          # `untyped`/`typed` and only a template or macro may take it; any other
+          # use would be an implicit generic, which Nimony does not have.
+          let isMetaType = typ.childCursor.typeKind == TypedescT
+          if not isMetaType or c.routine.kind notin {TemplateY, MacroY}:
+            let what = asNimCode(typ)
+            dest.shrink typeStart
+            if isMetaType:
+              c.buildErr dest, typeInfo, "a bare 'typedesc' parameter is only valid for templates and macros; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`"
+            else:
+              c.buildErr dest, typeInfo, "type class '" & what & "' cannot be used as a parameter type; use an explicit generic parameter such as `proc f[T: " & what & "](x: T)`"
+            typ = typeToCursor(c, dest, typeStart)
         if n.isDotToken:
           # empty value
           takeTree dest, n
