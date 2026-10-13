@@ -404,7 +404,7 @@ template ceilDivUint[T: SomeUnsignedInt and IntegerArithmetic](x, y: T): T =
 template ceilDivSigned[T: SomeInteger](x, y: T; U: untyped): T {.untyped.} =
   T(ceilDivUint(x.U, y.U))
 
-func ceilDiv*[T: SomeInteger and IntegerArithmetic](x, y: T): T {.inline, raises.} =
+func ceilDiv*[T: SomeInteger and IntegerArithmetic](x, y: T): T {.inline, raises, untyped.} =
   ## Ceil division is conceptually defined as `ceil(x / y)`.
   ##
   ## Assumes `x >= 0` and `y > 0` (and `x + y - 1 <= high(T)` if T is SomeUnsignedInt).

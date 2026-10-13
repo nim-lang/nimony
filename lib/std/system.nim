@@ -540,7 +540,7 @@ func addEscapedChar*(s: var string, c: char) {.noSideEffect, inline.} =
     s.add(HexChars[int((n and 0xF0) shr 4)])
     s.add(HexChars[int(n and 0xF)])
 
-func addQuoted*[T](s: var string, x: T) =
+func addQuoted*[T](s: var string, x: T) {.untyped.} =
   ## Appends `x` to string `s` in place, applying quoting and escaping
   ## if `x` is a string or char.
   ##
