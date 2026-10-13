@@ -753,8 +753,8 @@ proc processMethods(c: var Context) =
         mine[].methods = parentMethods
         mine[].signatureToIndex = parentSig
       for j in 0 ..< c.methodDecls.len:
-        let m = c.methodDecls[j]
-        if m.cls == cls:
+        if c.methodDecls[j].cls == cls:
+          let m = c.methodDecls[j] # copies a `Cursor`: only the matches pay
           var methodName = pool.symBasename(m.name)
           # The synthesized virtual `=destroy`/`=trace` object hooks are named
           # `=destroy_<mangledType>` / `=trace_<mangledType>`. Normalize to the
