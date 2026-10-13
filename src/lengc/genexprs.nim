@@ -118,7 +118,7 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
        builtin = cBuiltinFor(op, bits)
        if builtin.len == 0:
          let row = IntrinsicRows[op]
-         if row.isFlagRead or row.isFlagWrite or row.isAssemblerOnly:
+         if row.isFlagRead or row.isFlagWrite or row.uses != {}:
            # No portable form exists or ever will: C has no notion of a condition
            # code, and what makes a flag usable at all — that nothing runs between
            # its definition and its read — is exactly what a C compiler will not
@@ -126,6 +126,12 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
            errorAt c.m, "`" & IntrinsicNames[op] & "` is a machine flag " &
              "instruction; C has no condition codes, so it is only available " &
              "inside an `{.assembler.}` proc compiled by arkham", start
+         elif row.isAssemblerOnly:
+           # A result in a register the signature cannot name — `mul`'s high
+           # half, `umull`'s pair — which only an assembler body can place.
+           errorAt c.m, "`" & IntrinsicNames[op] & "` writes a result in fixed " &
+             "registers; it is only available inside an `{.assembler.}` proc " &
+             "compiled by arkham", start
          elif row.inoutOperand >= 0:
            # A two-address row. C has no destructive-operand form, and suggesting
            # `{.intrinsic.}` would be wrong advice: the portable spelling of
