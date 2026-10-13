@@ -266,7 +266,10 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
       semCall c, dest, call, {}
     else:
       dest.add m.args
-    it.typ = expected
+    # a bare type class such as `typedesc` only checks the argument; it must
+    # not replace the argument's concrete type (`typedesc[int]`)
+    if expected.typeKind != TypekindT:
+      it.typ = expected
 
 # -------------------- declare `result` -------------------------
 
