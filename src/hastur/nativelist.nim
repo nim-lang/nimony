@@ -85,6 +85,17 @@ const
     "tests/nimony/scopes"
   ]
 
+  NativeTestDirsX64* = [
+    # `{.assembler.}` programs. They name x86-64 registers, and only arkham can
+    # compile them at all — the C backend refuses an assembler body by design —
+    # so the tree walk skips the directory (`hastur.mode`) and only the native
+    # suite on an x86-64 host runs it.
+    "tests/nimony/asmnative",
+    # `std/crypto` takes its `{.assembler.}` field and MAC arithmetic on this
+    # backend, so the vectors here are what check that code
+    "tests/nimony/crypto"
+  ]
+
   NativeJoinSkip*: array[0, string] = [
     # Directories whose tests each compile and run correctly through `nimony n`
     # — they are in the lists above — but whose JOINED program does not, so the

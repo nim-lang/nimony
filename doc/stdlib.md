@@ -508,3 +508,55 @@ handler wants so its own frame does not head the trace.
 How it works — nifasm lays a per-proc table (code range, frame size, name)
 at the end of `.text`, and the walk is a binary search per frame. See
 `nativenif/doc/tracetable.md`.
+
+## tls
+
+[Source](../lib/std/tls.nim)
+
+A TLS 1.3 client over `std/socket`: X25519 key exchange, the
+`TLS_CHACHA20_POLY1305_SHA256` suite, and server authentication by
+`std/crypto/x509` against a `TrustStore` (ECDSA P-256/P-384 and RSA-PSS
+`CertificateVerify`, a chain to a root, the host name). No TLS 1.2, no session
+resumption, no client certificates.
+
+```nim
+var c = TlsConn()
+tlsConnect(c, "example.com", 443, loadSystemTrustStore())
+c.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+var buf = newString(4096)
+let n = c.read(buf)
+```
+
+- There is no "insecure" switch. A caller that must talk to a self-signed
+  server puts that certificate into the `TrustStore` it passes.
+- `tlsConnect` raises on every failure; `c.failure` says which step failed,
+  `c.certError` why a certificate was refused, `c.alert` which alert the peer
+  sent.
+- `read` returns `0` once the server has sent `close_notify`. A connection
+  that ends WITHOUT one raises `EndOfStreamError`: that is a truncation an
+  attacker can cause. An HTTP client that has read a complete,
+  `Content-Length`- or chunk-framed body may ignore it — several large sites
+  close this way.
+- A server that offers neither X25519 nor ChaCha20-Poly1305 (some FIPS-mode
+  servers) fails with `tfUnsupported`.
+
+## crypto
+
+[Sources](../lib/std/crypto/)
+
+`sha2` (SHA-256/384/512), `hmac` (HMAC and HKDF), `chacha20poly1305`
+(RFC 8439), `x25519` (RFC 7748), `ecdsa` and `rsa` (signature
+*verification*), `x509` (certificates, chains, host names, PEM trust stores),
+`sysrand` (OS randomness). Every module is compiled under
+`{.feature: "staticContracts".}`: each index and contract in them is proven,
+not checked.
+
+- `bignum`, `ecdsa` and `rsa` are variable time and only ever see public
+  values (signatures, keys, digests). Do not hand them a secret.
+- `x25519` and `chacha20poly1305` handle secrets and are constant time. On
+  the native backend (x86-64) their arithmetic is `{.assembler.}` code in
+  `crypto/private/`, so the instructions that run cannot depend on a key; the
+  portable versions avoid secret-dependent branches and indices by
+  construction. See [assembler.md](assembler.md).
+- Compare MACs with `hmac.constantTimeEquals`, never `==`.
+- Key material comes from `sysrand.urandom`, never `std/random`.

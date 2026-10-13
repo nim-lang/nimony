@@ -440,7 +440,9 @@ proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits
       dest.addSubtree d.params
       dest.addSubtree d.returnType
       dest.addSubtree d.pragmas
-      if d.body.isTagLit:
+      if d.body.isTagLit and not hasPragma(d.pragmas, AssemblerP):
+        # (an `{.assembler.}` body is machine code: nothing to optimize, and
+        # its `while`/`break` are the back end's)
         var body = createTokenBuf(64)
         var b = d.body
         body.addSubtree b
