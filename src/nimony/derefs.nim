@@ -144,7 +144,7 @@ proc isAddressable*(n: Cursor): bool =
     let res = tryLoadSym(s)
     assert res.status == LacksNothing
     let local = asLocal(res.decl)
-    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, PatternvarY, ConstY, GletY, TletY, GvarY, TvarY}
+    result = local.kind in {ParamY, StaticParamY, LetY, ResultY, VarY, CursorY, PatternvarY, ConstY, GletY, TletY, GvarY, TvarY}
     # Assignments to `ConstY` are prevented later.
   else:
     # A path rooted at a call returning `var T` / `lent T` is addressable,
@@ -271,7 +271,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
         assert fnType.isParamsTag
         inc fnType
         let firstParam = asLocal(fnType)
-        if firstParam.kind == ParamY:
+        if isParamLike(firstParam.kind):
           let mightForward = firstParam.typ.typeKind in {MutT, OutT, LentT}
           if not mightForward:
             someIndirection = true
@@ -282,7 +282,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     else:
       break
   if n.isSymbol:
-    if c.typeCache.fetchSymKind(n.symId) == ParamY and n.symId == c.r.firstParam:
+    if isParamLike(c.typeCache.fetchSymKind(n.symId)) and n.symId == c.r.firstParam:
       # There is a difference between
       # proc forward(x: var int): var int = x
       # and
@@ -350,7 +350,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
     of PatternvarY:
       if not cursorIsNil(local.val):
         result = borrowsFromReadonly(c, local.val)
-    of ParamY:
+    of ParamY, StaticParamY:
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
       result = false
@@ -516,7 +516,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
         var params = n
         inc params
         let firstParam = asLocal(params)
-        if firstParam.kind == ParamY:
+        if isParamLike(firstParam.kind):
           c.r.firstParam = firstParam.name.symId
           c.r.firstParamKind = firstParam.typ.typeKind
         takeTree c.dest, n

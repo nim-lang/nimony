@@ -58,11 +58,18 @@ proc isValidFnHead*(t: SymKind): bool {.inline.} =
   t != ModuleY
 
 proc isLocal*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, StaticTypevarY, CursorY, PatternvarY, FldY, GfldY, EfldY, GletY, TletY, GvarY, TvarY}
+  t in {LetY, VarY, ResultY, ConstY, ParamY, StaticParamY, TypevarY, StaticTypevarY, CursorY, PatternvarY, FldY, GfldY, EfldY, GletY, TletY, GvarY, TvarY}
 
 proc isTypevarLike*(t: SymKind): bool {.inline.} =
   ## generic parameters: ordinary type variables and value ("static") parameters
   t in {TypevarY, StaticTypevarY}
+
+proc isParamLike*(t: SymKind): bool {.inline.} =
+  ## term parameters: ordinary parameters and constant ("static") parameters
+  t in {ParamY, StaticParamY}
+
+proc isParamLike*(t: SubstructureKind): bool {.inline.} =
+  t in {ParamU, StaticParamU}
 
 proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol

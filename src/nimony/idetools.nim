@@ -136,7 +136,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
     else:
       case n.substructureKind
-      of ParamU:
+      of ParamU, StaticParamU:
         n.into:
           let sym = n.symId
           if sym == c.sym and c.searchKind notin {skField, skDot}:

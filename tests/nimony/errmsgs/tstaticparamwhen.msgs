@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tstaticparamwhen.nim(6, 8) Error: cannot evaluate `static` parameter 'backward' at compile time: it only requires a constant argument at the call site; use a generic value parameter `[backward: static[T]]` for a compile-time value

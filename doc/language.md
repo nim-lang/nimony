@@ -4579,6 +4579,7 @@ The following features are available:
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
 | `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
 | `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
+| `"staticOverloads"` | When two overloads differ only in whether a parameter is `static[T]` or `T`, prefer the `static` one for a constant argument instead of reporting an ambiguity. For compatibility with Nim 2. |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
 

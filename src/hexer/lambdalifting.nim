@@ -803,7 +803,7 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId;
           # exactly as `treParams` does for a proc.
           copyInto result, n:
             while n.hasMore:
-              assert n.substructureKind == ParamU
+              assert isParamLike(n.substructureKind)
               copyInto result, n:
                 let name = n.symId
                 let paramInfo = n.info
@@ -1277,7 +1277,7 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId; ownsEnvLocal: bool) =
   copyInto dest, n:
     while n.hasMore:
-      assert n.substructureKind == ParamU
+      assert isParamLike(n.substructureKind)
       copyInto dest, n:
         let name = n.symId
         let paramInfo = n.info # `n` sits at the scope's end below
@@ -1539,7 +1539,7 @@ proc calleeHasClosureParam(typ: Cursor): bool =
   if t.substructureKind != ParamsU: return false
   inc t # into (params …), at the first param
   while t.hasMore:
-    if t.substructureKind == ParamU:
+    if isParamLike(t.substructureKind):
       var pt = t
       inc pt   # (param -> name
       skip pt  # name -> export

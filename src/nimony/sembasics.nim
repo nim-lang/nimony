@@ -77,7 +77,7 @@ proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: Str
     dest.addIdent(identifier, info)
 
 proc isNonOverloadable*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ParamY, TypevarY, StaticTypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
+  t in {LetY, VarY, ParamY, StaticParamY, TypevarY, StaticTypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
 
 proc buildSymChoiceForSelfModule*(c: var SemContext; dest: var TokenBuf;
                                   identifier: StrId; info: NifLineInfo): int =
@@ -609,7 +609,7 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
   elif n.isSymbolDef:
     discard "ok, and no need to re-add it to the symbol table ... or is there?"
     let status =
-      if c.phase == SemcheckBodies and kind in {ParamY, TypevarY, StaticTypevarY}: OkNew
+      if c.phase == SemcheckBodies and kind in {ParamY, StaticParamY, TypevarY, StaticTypevarY}: OkNew
       elif not c.freshSyms.missingOrExcl(n.symId): OkExistingFresh
       else: OkExisting
 
