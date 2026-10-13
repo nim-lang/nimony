@@ -1,0 +1,7 @@
+tests/nimony/errmsgs/tnarrowwrap.nim(12, 5) Error: cannot prove assertion: 0 <= at [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tnarrowwrap.nim(18, 7) Error: cannot prove assertion: i < 1 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tnarrowwrap.nim(24, 7) Error: cannot prove assertion: 6 < i [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tnarrowwrap.nim(30, 7) Error: cannot prove assertion: i < 1 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tnarrowwrap.nim(36, 7) Error: cannot prove assertion: i < 1 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tnarrowwrap.nim(45, 7) Error: cannot prove assertion: 3 < i [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tnarrowwrap.nim(52, 7) Error: cannot prove assertion: 0 < result [pass --verbose for the Final IR]

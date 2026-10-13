@@ -85,6 +85,7 @@ type
     isSub: bool
     stepSym: SymId   ## the step is this second parameter …
     stepLit: xint    ## … or, when `stepSym` is `NoSymId`, this literal
+    opType: Cursor   ## the type the `±` is carried out in
 
   RangeBounds = object
     lo, hi: xint
@@ -606,7 +607,72 @@ proc integerTypeBounds(bits: int; typ: Cursor; lo, hi: var xint): bool =
         hi = if width == 64: createXint(high(uint64)) else: (createXint(1'i64) shl width) - createXint(1'i64)
       result = not lo.isNaN and not hi.isNaN
 
-proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): bool =
+proc arithType(typ: Cursor): Cursor =
+  ## The builtin type an operation of type `typ` is carried out in: an alias,
+  ## a `range` and a `distinct` compute in their base type.
+  result = typ
+  var guard = 0
+  while guard < 8:
+    inc guard
+    if result.isSymbol:
+      let s = tryLoadSym(result.symId)
+      if s.status != LacksNothing or s.decl.symKind != TypeY: break
+      result = asTypeDecl(s.decl).body
+    elif result.typeKind in {RangetypeT, DistinctT}:
+      result = sub(result)
+    else:
+      break
+
+proc arithWraps(bits: int; typ: Cursor): bool =
+  ## Does `+`, `-`, `*` or `shl` of type `typ` turn a result outside the type
+  ## into a *different value* of it? Unsigned arithmetic wraps by definition
+  ## (doc/language.md), and a signed type narrower than C's `int` is computed
+  ## promoted and truncated on the way back, so `127'i8 + 1` is `-128`. Such an
+  ## operation is not the mathematical one the difference rules read it as
+  ## until its operands are known to keep it in range: `if i + 1 < 2` says
+  ## nothing about `i` when `i` may be `127'i8`. Signed overflow from 32 bits
+  ## on is undefined in the generated C, which the C compiler already takes not
+  ## to happen; the rules here take it the same way.
+  let t = arithType(typ)
+  case t.typeKind
+  of UIntT, CharT: result = true
+  of IntT:
+    var w = t
+    inc w
+    let width = if w.kind == IntLit and w.intVal > 0: int(w.intVal) else: bits
+    result = width < 32
+  else: result = false
+
+proc foldWraps(bits: int; n: Cursor): bool =
+  ## Does a wrapping operation inside the constant `n` fold to a value outside
+  ## its type? `tryEvalOrdinal` folds over 64 bits only, so `255'u8 + 1` comes
+  ## back as 256 where the program computes 0.
+  result = false
+  if not n.isTagLit: return false
+  if n.exprKind in {AddX, SubX, MulX, NegX, ShlX}:
+    var t = n
+    t = sub(t)
+    if arithWraps(bits, t):
+      let v = tryEvalOrdinal(bits, n)
+      var tLo = zero()
+      var tHi = zero()
+      if not v.isNaN and (not integerTypeBounds(bits, arithType(t), tLo, tHi) or
+          v < tLo or tHi < v):
+        return true
+  var r = n
+  r = sub(r)
+  while r.hasMore and not result:
+    result = foldWraps(bits, r)
+    skip r
+
+proc foldOrdinal(bits: int; n: Cursor): xint =
+  ## `tryEvalOrdinal`, but NaN for a constant whose folded value is not the one
+  ## the program computes (`foldWraps`).
+  result = tryEvalOrdinal(bits, n)
+  if not result.isNaN and foldWraps(bits, n): result = createNaN()
+
+proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
+                 keepWrap = false): bool =
   ## The interval `n` lies in by its *shape* alone — no flow facts: a constant,
   ## `a and k` (`0..k` for a constant `k >= 0`, whatever `a` is), `a shr k` of a
   ## non-negative bounded `a`, and a conversion whose target type holds the
@@ -615,7 +681,7 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): boo
   ## and none of it is expressible as `a <= b + c`.
   result = false
   if depth <= 8:
-    let folded = tryEvalOrdinal(c.bits, n)
+    let folded = foldOrdinal(c.bits, n)
     if not folded.isNaN:
       lo = folded
       hi = folded
@@ -645,7 +711,7 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): boo
         if valueBounds(c, d, aLo, aHi, depth+1) and zero() <= aLo:
           skip d
           var err = false
-          let k = asSigned((tryEvalOrdinal(c.bits, d)), err)
+          let k = asSigned((foldOrdinal(c.bits, d)), err)
           if not err and k >= 0 and k < 64:
             lo = aLo shr int(k)
             hi = aHi shr int(k)
@@ -743,6 +809,20 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): boo
                   result = not lo.isNaN and not hi.isNaN
       else:
         discard
+      if result and not keepWrap and n.exprKind in {AddX, SubX, MulX, ShlX}:
+        # The interval above is the *mathematical* one. Where the operation
+        # wraps and the interval leaves the type, the value is merely some
+        # value of the type.
+        var t = n
+        t = sub(t)
+        if arithWraps(c.bits, t):
+          var tLo = zero()
+          var tHi = zero()
+          if not integerTypeBounds(c.bits, arithType(t), tLo, tHi):
+            result = false
+          elif lo < tLo or tHi < hi:
+            lo = tLo
+            hi = tHi
       if not result and (n.isSymbol or
           n.exprKind in {DotX, DdotX, TupatX, HderefX, DerefX, ArratX, AtX, PatX}):
         # a location lies in whatever the flow facts bound it to
@@ -760,11 +840,30 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): boo
           while t.typeKind in {LentT, SinkT, MutT, OutT}:
             t = sub(t)
           result = integerTypeBounds(c.bits, t, lo, hi)
+          # ... narrowed by the one end the facts do know: `digits <= 99` for
+          # a `uint32` is `0..99`
+          if result and not fLo.isNaN and lo < fLo: lo = fLo
+          if result and not fHi.isNaN and fHi < hi: hi = fHi
+          if result and hi < lo: result = false
       if not result and n.exprKind in {DotX, DdotX}:
         # A field of a `range` type is in that range whatever path it is read
         # by — through a pointer, too, where no flow fact may be kept because of
         # aliasing: every write to such a field owes the range.
         result = staticRangeBounds(getType(c.typeCache, n), lo, hi)
+
+proc noWrap(c: var FirContext; n: Cursor): bool =
+  ## `n` is `(add T a b)`, `(sub T a b)` or `(mul T a b)`: is its value the
+  ## mathematical one? Always, for a type that does not wrap (`arithWraps`);
+  ## otherwise only where the operands' bounds keep the result inside `T`.
+  var t = n
+  t = sub(t)
+  if not arithWraps(c.bits, t): return true
+  var tLo = zero()
+  var tHi = zero()
+  var lo = zero()
+  var hi = zero()
+  result = integerTypeBounds(c.bits, arithType(t), tLo, tHi) and
+           valueBounds(c, n, lo, hi, keepWrap = true) and tLo <= lo and hi <= tHi
 
 # --- Derived locations: `s.len`, `x.f.g`, `len(s)` ---
 #
@@ -1315,6 +1414,9 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
         # ... with exactly that one argument, and a body `path ± k`
         var b = body
         b = sub(b)
+        # the body is in terms of the accessor's parameter, so no fact can
+        # rule out a wrap: only a type that does not wrap reads as `path ± k`
+        if arithWraps(c.bits, b): return false
         skip b # the type operand
         var inner = accessorSubst(acc)
         inner[acc.param] = argOf(arg, subst)
@@ -1327,7 +1429,7 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
           # `path` is a location of the argument
           let loc = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
           skip b
-          let off = tryEvalOrdinal(c.bits, b)
+          let off = foldOrdinal(c.bits, b)
           if not off.isNaN:
             # ... and `k` a constant
             v = loc
@@ -1380,7 +1482,7 @@ proc matchStep(decl: Cursor; info: var StepInfo): bool =
   if extractSymId(e) != first.name.symId: return false
   skip e
   info = StepInfo(param: first.name.symId, isSub: v.exprKind == SubX,
-                  stepSym: NoSymId, stepLit: createXint(0'i32))
+                  stepSym: NoSymId, stepLit: createXint(0'i32), opType: sub(v))
   let sid = extractSymId(e)
   if sid != NoSymId and sid == second:
     info.stepSym = second
@@ -1391,7 +1493,7 @@ proc matchStep(decl: Cursor; info: var StepInfo): bool =
   of IntLit: info.stepLit = createXint(lit.intVal)
   of UIntLit: info.stepLit = createXint(lit.uintVal)
   else:
-    info.stepLit = tryEvalOrdinal(0, e)   # `bits` is irrelevant for a literal
+    info.stepLit = foldOrdinal(0, e)   # `bits` is irrelevant for a literal
     if info.stepLit.isNaN: return false
   result = true
 
@@ -1435,6 +1537,7 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
   if not stepOf(c, fnSym, info): return false
   skip r # the callee
   if not r.hasMore: return false
+  let target = r
   loc = plainLocationVarId(c, r)
   if loc == InvalidVarId: return false
   skip r
@@ -1446,10 +1549,26 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
     case arg.kind
     of IntLit: step = createXint(arg.intVal)
     of UIntLit: step = createXint(arg.uintVal)
-    else: step = tryEvalOrdinal(c.bits, arg)
+    else: step = foldOrdinal(c.bits, arg)
     if step.isNaN: stepArg = arg
     skip r
   if r.hasMore: return false
+  if arithWraps(c.bits, info.opType):
+    # `inc` of a `uint8` at 255 makes it 0, not 256: the step only moves what
+    # is known where the facts keep it inside the type. The loop pre-scan has
+    # no facts of the iteration to ask, so there it is a write like any other.
+    var tLo = zero()
+    var tHi = zero()
+    var lo = createNaN()
+    var hi = createNaN()
+    if not c.prescanning and not step.isNaN and
+        integerTypeBounds(c.bits, arithType(info.opType), tLo, tHi):
+      operandRange(c, peelExpr(target), lo, hi)
+    let moved = if info.isSub: -step else: step
+    if lo.isNaN or hi.isNaN or lo + moved < tLo or tHi < hi + moved:
+      loc = InvalidVarId
+      stepArg = default(Cursor)
+      return false
   if step.isNaN: return false
   delta = if info.isSub: -step else: step
   result = true
@@ -1672,13 +1791,16 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   var isLit = false
   var r = value
   let sym = skipSymbol(r)
+  # The rules below read `+`, `-` and `*` mathematically, which a wrapping one
+  # (`arithWraps`) only is once its operands keep it inside its type.
+  let mathValue = value.exprKind notin {AddX, SubX, MulX} or noWrap(c, value)
 
   # `v + k` / `v - k`, the shape every "one past the last state" assignment
   # takes. The obligation below is already stated as `lo <= v + off <= hi`, so
   # a stepped value only has to fill in `off`; without this a guarded
   # `if s < High: t = s + 1` proved nothing about `t` and the conversion had to
   # be spelled as a `cast`.
-  if sym == NoSymId and value.exprKind in {AddX, SubX}:
+  if sym == NoSymId and mathValue and value.exprKind in {AddX, SubX}:
     let isSub = value.exprKind == SubX
     var a = value
     a = sub(a)
@@ -1696,7 +1818,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
       case a.kind
       of IntLit: k = createXint(a.intVal)
       of UIntLit: k = createXint(a.uintVal)
-      else: k = tryEvalOrdinal(c.bits, a)
+      else: k = foldOrdinal(c.bits, a)
       if not k.isNaN:
         v = baseLoc
         off = if isSub: -k else: k
@@ -1749,25 +1871,25 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
       else:
         break
     var offset = zero()
-    if lin.exprKind == AddX:
+    if lin.exprKind == AddX and noWrap(c, lin):
       var d = lin
       d = sub(d)
       skip d # the type operand
       let first = d
       skip d
-      let k = tryEvalOrdinal(c.bits, d)
+      let k = foldOrdinal(c.bits, d)
       if not k.isNaN:
         offset = k
         lin = first
-    if lin.exprKind == MulX:
+    if lin.exprKind == MulX and noWrap(c, lin):
       var d = lin
       d = sub(d)
       skip d # the type operand
-      var factor = tryEvalOrdinal(c.bits, d)
+      var factor = foldOrdinal(c.bits, d)
       skip d
       var operand = d
       if factor.isNaN:
-        factor = tryEvalOrdinal(c.bits, d)
+        factor = foldOrdinal(c.bits, d)
         operand = lin
         operand = sub(operand)
         skip operand # the type operand
@@ -1803,9 +1925,21 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   if sym == NoSymId and negValue.exprKind == NegX:
     var d = negValue
     d = sub(d)
+    var negFits = true
+    if arithWraps(c.bits, d):
+      # `-low(int8)` is `low(int8)` again, and any `-a` of an unsigned `a > 0`
+      # wraps: the rule needs `-a` to stay inside the type
+      var tLo = zero()
+      var tHi = zero()
+      var aLo = zero()
+      var aHi = zero()
+      var o = d
+      skip o
+      negFits = integerTypeBounds(c.bits, arithType(d), tLo, tHi) and
+                valueBounds(c, o, aLo, aHi) and tLo <= -aHi and -aLo <= tHi
     skip d # the type operand
     let operand = plainLocationVarId(c, d)
-    if operand != InvalidVarId and
+    if negFits and operand != InvalidVarId and
        (not needLo or impliesHere(c, query(operand, VarId(0), -lo))) and
        (not needHi or impliesHere(c, query(VarId(0), operand, hi))):
       return
@@ -1822,7 +1956,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     skip d # the type operand
     let leftLoc = plainLocationVarId(c, d)
     skip d
-    let k = tryEvalOrdinal(c.bits, d)
+    let k = foldOrdinal(c.bits, d)
     if leftLoc != InvalidVarId and not k.isNaN and zero() < k and
        impliesHere(c, query(VarId(0), leftLoc, zero())):
       let one = createXint(1'i64)
@@ -1846,7 +1980,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     case d.kind
     of IntLit: k = createXint(d.intVal)
     of UIntLit: k = createXint(d.uintVal)
-    else: k = tryEvalOrdinal(c.bits, d)
+    else: k = foldOrdinal(c.bits, d)
     if not k.isNaN and zero() <= k:
       var ok = false
       if not isShift:
@@ -1874,7 +2008,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   # `o = o + runeLenAt(s, o)` to a `Natural`, once `runeLenAt` says it returns a
   # `Positive`. An upper bound on a sum stays out of reach, so this only applies
   # where the target's upper bound is the base type's own.
-  if sym == NoSymId and value.exprKind == AddX and not needHi:
+  if sym == NoSymId and mathValue and value.exprKind == AddX and not needHi:
     var d = value
     d = sub(d)
     skip d # the type operand
@@ -1899,7 +2033,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   # `lo <= a - b` is `b <= a - lo`, and `a - b <= hi` is `a <= b + hi`. That is
   # what lets a `Natural` computed as a difference — `result = j - i` with
   # `i <= j` known — be bound without a cast.
-  if sym == NoSymId and value.exprKind == SubX:
+  if sym == NoSymId and mathValue and value.exprKind == SubX:
     var d = value
     d = sub(d)
     skip d # the type operand
@@ -1926,7 +2060,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     # value proved instantly. `tryEvalOrdinal` returns NaN for anything that is
     # not compile-time constant, so a genuine variable still takes the path
     # below.
-    let folded = tryEvalOrdinal(c.bits, value)
+    let folded = foldOrdinal(c.bits, value)
     if not folded.isNaN:
       off = folded
       isLit = true
@@ -2049,6 +2183,7 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
     if n.exprKind == SufX:
       result = constOrdinal(c, r, val)
     else:
+      let opType = r
       skip r # the type operand
       var a = zero()
       if constOrdinal(c, r, a):
@@ -2064,6 +2199,13 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
                   of SubX: a - b
                   else: a * b
             result = not val.isNaN
+      if result and arithWraps(c.bits, opType):
+        # `255'u8 + 1` is 0, not 256: only a result inside the type is the
+        # value the program computes
+        var tLo = zero()
+        var tHi = zero()
+        result = integerTypeBounds(c.bits, arithType(opType), tLo, tHi) and
+                 tLo <= val and val <= tHi
     dec c.constDepth
     if result: return
   if n.kind == Symbol and c.moduleConsts.hasKey(n.symId) and c.constDepth < 8:
@@ -2073,7 +2215,7 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
     result = constOrdinal(c, c.moduleConsts.getOrQuit(n.symId), val)
     dec c.constDepth
     if result: return
-  val = tryEvalOrdinal(c.bits, n)
+  val = foldOrdinal(c.bits, n)
   result = not val.isNaN
 
 proc operandRange(c: var FirContext; n: Cursor; lo, hi: var xint) =
@@ -2107,7 +2249,7 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC;
     fact.c = fact.c + cval
     result = true
     skip pc
-  elif pc.exprKind in {AddX, SubX}:
+  elif pc.exprKind in {AddX, SubX} and noWrap(c, pc):
     # The sign matters: `i <= s.len - 2` recorded as `i <= s.len + 2` is a
     # different fact, and once `s.len` became a location the engine can name
     # (rather than an opaque call it ignored) the difference started deciding
@@ -2190,7 +2332,7 @@ proc leftHandStep(c: var FirContext; n: Cursor; fact: var LeXplusC;
   case r.kind
   of IntLit: k = createXint(r.intVal)
   of UIntLit: k = createXint(r.uintVal)
-  else: k = tryEvalOrdinal(c.bits, r)
+  else: k = foldOrdinal(c.bits, r)
   if k.isNaN: return false
   fact.a = v
   fact.c = fact.c + (if isSub: k else: -k)
@@ -2288,7 +2430,7 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind;
     result.a = ov
     result.c = result.c - ok
     skip r
-  elif r.exprKind in {AddX, SubX} and leftHandStep(c, r, result, call):
+  elif r.exprKind in {AddX, SubX} and noWrap(c, r) and leftHandStep(c, r, result, call):
     # `i + 3 <= n` is `i <= n - 3`. Only the *right* side of a comparison used
     # to be read arithmetically, so the loop `while i + 3 <= n:` — which is how
     # a chunked walk states its bound, `base64.encode` among them — proved
@@ -2801,6 +2943,10 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     let isSub = m.exprKind == SubX
     var r = m
     r = sub(r)
+    if arithWraps(c.bits, r):
+      # Only the facts here can rule out a wrap, and they are about the
+      # operands only where nothing stands in for them.
+      if rd.args.len > 0 or rd.results.len > 0 or not noWrap(c, m): return false
     skip r # the type operand
     # the base is an operand of its own: a location, `old(e)`, `high(s)`, or a
     # literal a parameter stands for at this call site (`i + 2` with `i = 0`)
@@ -2814,7 +2960,7 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     of IntLit: off = createXint(k.intVal)
     of UIntLit: off = createXint(k.uintVal)
     else:
-      off = tryEvalOrdinal(c.bits, k)
+      off = foldOrdinal(c.bits, k)
       if off.isNaN: return false
     v = base
     cnst = baseConst + (if isSub: -off else: off)
@@ -3300,7 +3446,7 @@ proc arrayBound(c: var FirContext; n: Cursor; res: var xint): bool =
     res = createXint(n.uintVal)
     result = true
   else:
-    res = tryEvalOrdinal(c.bits, n)
+    res = foldOrdinal(c.bits, n)
     result = not res.isNaN
 
 proc checkIndexInBounds(c: var FirContext; idx, bounds: Cursor) =
@@ -3788,7 +3934,7 @@ proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
   ## `x` lies within `d` of `y`. `x = d + y` is the same sum.
   result = false
   let v = peelExpr(value)
-  if v.exprKind notin {AddX, SubX}: return
+  if v.exprKind notin {AddX, SubX} or not noWrap(c, v): return
   var r = v
   r = sub(r)
   skip r # the type operand
@@ -4141,12 +4287,15 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
     case b.kind
     of IntLit: k = createXint(b.intVal)
     of UIntLit: k = createXint(b.uintVal)
-    else: k = tryEvalOrdinal(c.bits, b)
+    else: k = foldOrdinal(c.bits, b)
     if not k.isNaN and k >= zero(): result = ivNonNegative
     return
   if v.exprKind notin {AddX, SubX}: return
   var r = v
   r = sub(r)
+  # a wrapping `+` is not monotone, and the pre-scan has no facts to rule the
+  # wrap out
+  if arithWraps(c.bits, r): return
   skip r # the type operand
   var operand = r
   skip r
@@ -4160,7 +4309,7 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   case konst.kind
   of IntLit: k = createXint(konst.intVal)
   of UIntLit: k = createXint(konst.uintVal)
-  else: k = tryEvalOrdinal(c.bits, konst)
+  else: k = foldOrdinal(c.bits, konst)
   if k.isNaN:
     # Not a constant, but a value the body declared as non-negative moves the
     # destination just as monotonically.
