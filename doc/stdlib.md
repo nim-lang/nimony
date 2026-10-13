@@ -554,9 +554,9 @@ not checked.
 - `bignum`, `ecdsa` and `rsa` are variable time and only ever see public
   values (signatures, keys, digests). Do not hand them a secret.
 - `x25519` and `chacha20poly1305` handle secrets and are constant time. On
-  the native backend (x86-64) their arithmetic is `{.assembler.}` code in
-  `crypto/private/`, so the instructions that run cannot depend on a key; the
-  portable versions avoid secret-dependent branches and indices by
+  the native backend (x86-64 and AArch64) their arithmetic is `{.assembler.}`
+  code in `crypto/private/`, so the instructions that run cannot depend on a
+  key; the portable versions avoid secret-dependent branches and indices by
   construction. See [assembler.md](assembler.md).
 - Compare MACs with `hmac.constantTimeEquals`, never `==`.
 - Key material comes from `sysrand.urandom`, never `std/random`.

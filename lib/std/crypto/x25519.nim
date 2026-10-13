@@ -23,8 +23,11 @@ const
   BasePoint*: X25519Key = [9'u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
-when defined(nimNativeBackend) and defined(amd64):
-  import std/crypto/private/fe25519x64
+when defined(nimNativeBackend) and (defined(amd64) or defined(arm64)):
+  when defined(amd64):
+    import std/crypto/private/fe25519x64
+  else:
+    import std/crypto/private/fe25519a64
 
   # The field arithmetic is hand-written assembler (see the module), which is
   # what makes the ladder's timing independent of the scalar on this backend.

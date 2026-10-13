@@ -118,7 +118,7 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
        builtin = cBuiltinFor(op, bits)
        if builtin.len == 0:
          let row = IntrinsicRows[op]
-         if row.isFlagRead or row.isFlagWrite or row.uses != {}:
+         if row.isFlagRead or row.isFlagWrite or row.uses != {} or row.isFlagValue:
            # No portable form exists or ever will: C has no notion of a condition
            # code, and what makes a flag usable at all — that nothing runs between
            # its definition and its read — is exactly what a C compiler will not

@@ -42,8 +42,11 @@ func chachaState(key: ChaChaKey; counter: uint32; nonce: ChaChaNonce): array[16,
   result[12] = counter
   for i in 0 ..< 3: result[13 + i] = load32le(nonce, i * 4)
 
-when defined(nimNativeBackend) and defined(amd64):
-  import std/crypto/private/chacha20x64
+when defined(nimNativeBackend) and (defined(amd64) or defined(arm64)):
+  when defined(amd64):
+    import std/crypto/private/chacha20x64
+  else:
+    import std/crypto/private/chacha20a64
 
   func chachaRounds(s: array[16, uint32]): array[16, uint32] =
     ## `s` plus its 20 rounds, by the hand-written block function.
@@ -102,8 +105,11 @@ func chacha20Xor*(key: ChaChaKey; counter: uint32; nonce: ChaChaNonce;
 
 # --------------------------------------------------------------- Poly1305 ---
 
-when defined(nimNativeBackend) and defined(amd64):
-  import std/crypto/private/poly1305x64
+when defined(nimNativeBackend) and (defined(amd64) or defined(arm64)):
+  when defined(amd64):
+    import std/crypto/private/poly1305x64
+  else:
+    import std/crypto/private/poly1305a64
 
   # The block function and the final reduction are hand-written assembler
   # (see the module): the accumulator depends on the key, and only assembler
