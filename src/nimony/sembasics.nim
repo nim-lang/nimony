@@ -506,6 +506,10 @@ type
     lit*: StrId
     s*: Sym
     info*: NifLineInfo
+    isTemplParam*: bool
+      ## The name is an `untyped` parameter of the enclosing template, written
+      ## as a use of it (see `untypedTemplParam`): nothing is declared or
+      ## published under it.
 
 proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
   var name = str
@@ -582,9 +586,36 @@ proc success*(s: DelayedSym): bool {.inline.} = success s.status
 
 proc markSymInProgress*(c: var SemContext; s: SymId)  # forward decl
 
+proc untypedTemplParam(c: var SemContext; lit: StrId; info: NifLineInfo): SymId =
+  ## In `template t(name: untyped) = (var name = 0)` the local is named by the
+  ## argument, as in Nim: the declaration must keep the parameter so that
+  ## expansion substitutes it. Returns that parameter, or `SymId(0)` when `lit`
+  ## does not name an `untyped` parameter of an enclosing template.
+  result = SymId(0)
+  var r {.cursor.} = c.routine
+  while r != nil and r.kind != TemplateY: r = r.parent
+  if r == nil: return
+  var symsBuf = createTokenBuf(4)
+  if buildSymChoice(c, symsBuf, lit, info, InnerMost) != 1: return
+  var sym = cursorAt(symsBuf, 0)
+  if sym.exprKind == OchoiceX: inc sym
+  if sym.isSymbol:
+    let res = tryLoadSym(sym.symId)
+    if res.status == LacksNothing and res.decl.symKind == ParamY and
+        asLocal(res.decl).typ.typeKind == UntypedT:
+      result = sym.symId
+
 proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind): DelayedSym =
   let info = n.info
-  if n.isIdent:
+  var param = SymId(0)
+  if n.isIdent and kind in {LetY, VarY, CursorY}:
+    param = untypedTemplParam(c, n.strId, info)
+  if param != SymId(0):
+    let s = Sym(kind: kind, name: param, pos: dest.len)
+    result = DelayedSym(status: OkExisting, lit: n.strId, s: s, info: info, isTemplParam: true)
+    dest.addSymUse(param, info)
+    inc n
+  elif n.isIdent:
     let lit = n.strId
     if kind in {LetY, VarY, GletY, GvarY, TletY, TvarY} and
         c.currentScope.kind == ToplevelScope and

@@ -435,7 +435,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
     # the input tree used the `typevar` tag; the declaration's static-ness
     # lives in the tag, so retag it
     setTagAt(dest, declStart, TagId(StaticTypevarY))
-  if kind notin {FldY, GfldY}:
+  if kind notin {FldY, GfldY} and not delayed.isTemplParam:
     publish c, dest, delayed.s.name, declStart
 
 proc semLocal(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind) =
