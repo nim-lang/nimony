@@ -39,6 +39,7 @@ import std/crypto/hmac
 import std/crypto/rsa
 import std/crypto/sha2
 import std/crypto/x25519
+import std/crypto/x509
 import std/deques
 import std/dirs
 import std/dns
