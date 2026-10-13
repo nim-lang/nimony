@@ -518,7 +518,7 @@ interface for files, strings, memory and connections.
 
 ```nim
 var r = openReader(path"log.gz")
-r.setCodec gzipAdapter(fmtDetect)
+r.setAdapter gzipAdapter(fmtDetect)
 echo r.readLine()
 
 let (r, w) = connect("cache.local:6379", "PING\r\n")   # written AND flushed
@@ -532,10 +532,10 @@ let bytes = extract(w)
 - `Reader`/`Writer` are move-only values; a pair from one constructor shares
   a core (descriptor, TLS engine, atomic end counts).
 - `read` returning `0` is the end of the data; everything else raises.
-- One codec slot per end (`setCodec`, an `Adapter` subclass: `gzipAdapter`,
-  HTTP framing, your own). TLS is not a codec: a `TlsEngine` lives in the
+- One adapter slot per end (`setAdapter`, an `Adapter` subclass: `gzipAdapter`,
+  HTTP framing, your own). TLS is not a adapter: a `TlsEngine` lives in the
   core, so compression can only sit above encryption.
-- A writer's destructor finishes it (codec trailer, `close_notify`, end of
+- A writer's destructor finishes it (adapter trailer, `close_notify`, end of
   data for the peer) and swallows errors; call `close` to see them, `abort` on
   error paths to avoid a complete-looking truncated stream.
 - Not yet: `openReadWrite`, `pipe`/channels, `startTls`, deadlines, the
@@ -583,12 +583,14 @@ var r2 = httpGet(url, headers"Accept: application/json\r\n", resp)
 - A status outside 2xx raises `httpToErrorCode(status)` (404 is
   `NameNotFound`), so a returned `Reader` always carries a successful body.
 - Bodies are de-framed (length, chunked, until close) and decoded (gzip,
-  deflate) by an adapter in the codec slot.
+  deflate) by an adapter in the adapter slot.
 - `HttpHeaders` is the wire format itself. `add` raises `BadOperation` on a
   CR/LF in a value (header injection); `Host`, `Content-Length`,
   `Transfer-Encoding` and `Connection` are the library's and raise as user
-  headers. `headers"..."` validates its literal when it runs (the compile-time
-  check the design asks for needs `static` parameters Nimony lacks).
+  headers. `headers"..."` is a compiler plugin (`lib/std/deps/httpheaders.nim`):
+  a malformed literal — a missing `\r\n`, a bad name, a lone line break —
+  is a compile-time error at the literal, judged by the same rules
+  (`std/http/httpheaders`) that `add` applies at run time.
 - One request per connection; redirects raise `RedirectError`.
 
 ## crypto

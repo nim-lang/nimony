@@ -21,7 +21,7 @@
 ##   echo r.readLine()                  # +PONG
 ##
 ##   var w = openWriter()
-##   w.setCodec gzipAdapter(fmtGzip)
+##   w.setAdapter gzipAdapter(fmtGzip)
 ##   w.write data
 ##   let gz = extract(w)
 ##
@@ -30,14 +30,14 @@
 ## * `Reader` and `Writer` are concrete, move-only values. A pair returned by
 ##   one constructor shares a `Core`: the descriptor, the TLS engine if any, and
 ##   atomic counts of live readers and writers.
-## * Each end has ONE adapter slot, `codec` (compression, HTTP framing, …),
-##   set with `setCodec`. Encryption is not an adapter: a `TlsEngine` lives in
+## * Each end has ONE adapter slot, `adapter` (compression, HTTP framing, …),
+##   set with `setAdapter`. Encryption is not an adapter: a `TlsEngine` lives in
 ##   the core, because TLS is a property of the connection, not of a direction.
-##   So the write path is caller -> codec -> TLS -> descriptor and the read path
+##   So the write path is caller -> adapter -> TLS -> descriptor and the read path
 ##   the reverse; compression below encryption cannot be written.
 ## * `read` answering `0` is the end of the data. Everything that goes wrong
 ##   raises an `ErrorCode`.
-## * Streams close themselves. A writer's destructor finishes it (codec
+## * Streams close themselves. A writer's destructor finishes it (adapter
 ##   trailer, TLS `close_notify`, `shutdown(SHUT_WR)`) and swallows errors; call
 ##   `close` to see them. `abort` ends a writer without the clean finish.
 ##
@@ -47,7 +47,7 @@
 
 {.feature: "lenientnils".}
   # `core` is a `ptr` that is nil exactly in a moved-from or closed end, and the
-  # codec and TLS slots are nil when empty; every access is behind a check.
+  # adapter and TLS slots are nil when empty; every access is behind a check.
 
 import std/[ioring, socket, dns, paths, atomics, commonio, strutils]
 import std/compress/gzip
@@ -77,7 +77,7 @@ type
     ## An engine serves one connection.
 
   Adapter* = ref object of RootObj
-    ## What sits in a stream's `codec` slot: a one-direction transformation of
+    ## What sits in a stream's `adapter` slot: a one-direction transformation of
     ## the byte stream. Subclass it and override `run`.
 
 method start*(e: TlsEngine; host: string) {.base, raises.} =
@@ -120,7 +120,7 @@ method run*(a: Adapter; src: openArray[char]; used: var int;
   raise UnimplementedOperation
 
 method attach*(a: Adapter; reading: bool) {.base, raises.} =
-  ## Called by `setCodec` with the direction the adapter now serves. An
+  ## Called by `setAdapter` with the direction the adapter now serves. An
   ## adapter that only works one way raises for the other.
   discard
 
@@ -226,7 +226,7 @@ proc readFd(c: ptr Core; dest: var string): int {.passive, raises.} =
   result = n
 
 proc coreRecv(c: ptr Core; dest: var string): int {.passive, raises.} =
-  ## Appends bytes from below the codec; `0` once the source has ended.
+  ## Appends bytes from below the adapter; `0` once the source has ended.
   result = 0
   if c.peerDone: return
   case c.kind
@@ -276,14 +276,14 @@ type
     core: nil ptr Core
     buf: string          ## decoded bytes not yet handed out start at `pos`
     pos: int
-    raw: string          ## bytes from below not yet taken by the codec
-    codec: nil Adapter
+    raw: string          ## bytes from below not yet taken by the adapter
+    adapter: nil Adapter
     eof: bool            ## the source below has ended
 
   Writer* = object
     core: nil ptr Core
-    buf: string          ## caller bytes not yet pushed through the codec
-    codec: nil Adapter
+    buf: string          ## caller bytes not yet pushed through the adapter
+    adapter: nil Adapter
     finished: bool
 
 proc `=destroy`*(r: Reader) =
@@ -296,7 +296,7 @@ proc `=dup`*(x: Reader): Reader =
   ## A `Reader` has one owner: "duplicating" one moves it, which is what lets a
   ## `.raises` constructor hand one back (as `std/socket`'s `Socket` does).
   result = Reader(core: x.core, buf: x.buf, pos: x.pos, raw: x.raw,
-                  codec: x.codec, eof: x.eof)
+                  adapter: x.adapter, eof: x.eof)
   `=wasMoved`(cast[ptr Reader](unsafeAddr x)[])
 
 proc `=copy`*(dest: var Reader; src: Reader) {.error.}
@@ -319,16 +319,16 @@ proc `=wasMoved`*(w: var Writer) {.nodestroy, inline.} =
   w.core = nil
 
 proc `=dup`*(x: Writer): Writer =
-  result = Writer(core: x.core, buf: x.buf, codec: x.codec, finished: x.finished)
+  result = Writer(core: x.core, buf: x.buf, adapter: x.adapter, finished: x.finished)
   `=wasMoved`(cast[ptr Writer](unsafeAddr x)[])
 
 proc `=copy`*(dest: var Writer; src: Writer) {.error.}
 
 proc initReader(c: ptr Core): Reader =
-  Reader(core: c, buf: "", pos: 0, raw: "", codec: nil, eof: false)
+  Reader(core: c, buf: "", pos: 0, raw: "", adapter: nil, eof: false)
 
 proc initWriter(c: ptr Core): Writer =
-  Writer(core: c, buf: "", codec: nil, finished: false)
+  Writer(core: c, buf: "", adapter: nil, finished: false)
 
 # ------------------------------------------------------------------ reading --
 
@@ -338,15 +338,15 @@ proc refill(r: var Reader): bool {.passive, raises.} =
     r.buf = r.buf.substr(r.pos)
     r.pos = 0
   while true:
-    if r.codec != nil:
-      if r.codec.atEnd: return false
+    if r.adapter != nil:
+      if r.adapter.atEnd: return false
       if r.raw.len > 0 or r.eof:
         var used = 0
         let before = r.buf.len
-        r.codec.run(r.raw, used, r.buf, final = r.eof)
+        r.adapter.run(r.raw, used, r.buf, final = r.eof)
         if used > 0: r.raw = r.raw.substr(used)
         if r.buf.len > before: return true
-        if r.codec.atEnd or r.eof: return false
+        if r.adapter.atEnd or r.eof: return false
         if used == 0 and r.raw.len > 0 and r.eof: return false
     else:
       if r.raw.len > 0:
@@ -411,11 +411,11 @@ proc close*(r: var Reader) {.raises.} =
 # ------------------------------------------------------------------ writing --
 
 proc push(w: var Writer; final: bool) {.passive, raises.} =
-  ## Moves the buffered bytes through the codec and down.
-  if w.codec != nil:
+  ## Moves the buffered bytes through the adapter and down.
+  if w.adapter != nil:
     var outb = ""
     var used = 0
-    w.codec.run(w.buf, used, outb, final)
+    w.adapter.run(w.buf, used, outb, final)
     if used >= w.buf.len: w.buf = ""
     elif used > 0: w.buf = w.buf.substr(used)
     elif final and w.buf.len > 0: raise ProtocolError   # an adapter must take all at the end
@@ -450,7 +450,7 @@ proc finishImpl(w: var Writer; clean: bool) {.passive, raises.} =
       endWriting(c)
 
 proc close*(w: var Writer) {.passive, raises.} =
-  ## Optional: finishes the stream — codec trailer, TLS `close_notify`, end of
+  ## Optional: finishes the stream — adapter trailer, TLS `close_notify`, end of
   ## data for the peer — and raises if any of it fails, which the destructor
   ## cannot.
   if w.core == nil or w.finished: raise BadOperation
@@ -459,7 +459,7 @@ proc close*(w: var Writer) {.passive, raises.} =
   w.core = nil
 
 proc abort*(w: var Writer) =
-  ## Ends the writer WITHOUT a clean finish: no codec trailer, no
+  ## Ends the writer WITHOUT a clean finish: no adapter trailer, no
   ## `close_notify`. For error paths, where a clean finish would hand the peer
   ## a complete-looking, truncated stream.
   if w.core != nil:
@@ -473,7 +473,7 @@ proc abort*(w: var Writer) =
 
 proc extract*(w: sink Writer): string {.raises.} =
   ## The bytes of an in-memory writer (`openWriter(sizeHint)`), finished:
-  ## codec trailers included.
+  ## adapter trailers included.
   var ww = w
   let c = ww.core
   if c == nil or c.kind != ckMemory: raise BadOperation
@@ -483,13 +483,13 @@ proc extract*(w: sink Writer): string {.raises.} =
 
 # ------------------------------------------------------------------ adapters --
 
-proc setCodec*(r: var Reader; a: nil Adapter) {.passive, raises.} =
-  ## Fills (or with `nil` empties) the reader's codec slot. Bytes read from
-  ## below but not yet handed out become the new codec's input. Replacing a
-  ## codec that has not reached its end raises: its data would be lost.
+proc setAdapter*(r: var Reader; a: nil Adapter) {.passive, raises.} =
+  ## Fills (or with `nil` empties) the reader's adapter slot. Bytes read from
+  ## below but not yet handed out become the new adapter's input. Replacing a
+  ## adapter that has not reached its end raises: its data would be lost.
   if r.core == nil: raise BadOperation
-  if r.codec != nil:
-    if not r.codec.atEnd: raise BadOperation
+  if r.adapter != nil:
+    if not r.adapter.atEnd: raise BadOperation
     if r.pos < r.buf.len: raise BadOperation
     r.buf = ""
     r.pos = 0
@@ -498,15 +498,15 @@ proc setCodec*(r: var Reader; a: nil Adapter) {.passive, raises.} =
     r.buf = ""
     r.pos = 0
   if a != nil: a.attach(true)
-  r.codec = a
+  r.adapter = a
 
-proc setCodec*(w: var Writer; a: nil Adapter) {.passive, raises.} =
-  ## Fills (or with `nil` empties) the writer's codec slot. Bytes written
-  ## before go out first, through the old codec, which writes its trailer.
+proc setAdapter*(w: var Writer; a: nil Adapter) {.passive, raises.} =
+  ## Fills (or with `nil` empties) the writer's adapter slot. Bytes written
+  ## before go out first, through the old adapter, which writes its trailer.
   if w.core == nil or w.finished: raise BadOperation
-  push(w, w.codec != nil)
+  push(w, w.adapter != nil)
   if a != nil: a.attach(false)
-  w.codec = a
+  w.adapter = a
 
 type
   GzipAdapter* = ref object of Adapter
@@ -642,7 +642,7 @@ proc connectWriter*(address: string; tls: nil TlsEngine = nil): Writer {.passive
   result = initWriter(connectCore(address, tls, 0, 1))
 
 proc detachWriter*(w: var Writer) =
-  ## Drops a writer WITHOUT ending its direction: no codec trailer, no
+  ## Drops a writer WITHOUT ending its direction: no adapter trailer, no
   ## `close_notify`, no `shutdown`. For a protocol layer that has written
   ## its request and keeps only the reader (`std/httpclient`), where ending
   ## the direction would make many servers drop the connection.

@@ -54,6 +54,7 @@ import std/heapqueue
 import std/http/httpcoding
 import std/http/httpconn
 import std/http/httpdate
+import std/http/httpheaders
 import std/http/httpmsg
 import std/http/httpparse
 import std/http/httpwire

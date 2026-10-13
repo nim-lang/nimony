@@ -15,21 +15,21 @@ proc main() {.raises.} =
   w.write "def"
   echo extract(w)
 
-  # gzip both ways through the codec slot
+  # gzip both ways through the adapter slot
   var text = ""
   for i in 0 ..< 200: text.add "line " & $i & "\n"
   var gw = openWriter()
-  gw.setCodec gzipAdapter(fmtGzip)
+  gw.setAdapter gzipAdapter(fmtGzip)
   gw.write text
   let gz = extract(gw)
   echo gz.len < text.len, " ", uncompress(gz) == text
   var gr = openReader(gz)
-  gr.setCodec gzipAdapter(fmtDetect)
+  gr.setAdapter gzipAdapter(fmtDetect)
   echo gr.readAll() == text
 
   # a truncated stream is an error, not a short read
   var cut = openReader(gz.substr(0, gz.len div 2))
-  cut.setCodec gzipAdapter(fmtDetect)
+  cut.setAdapter gzipAdapter(fmtDetect)
   try:
     discard cut.readAll()
     echo "no error?"
@@ -53,17 +53,17 @@ proc main() {.raises.} =
   let pz = path"tstreamio_tmp.gz"
   block:
     var zw = openWriter(pz)
-    zw.setCodec gzipAdapter(fmtGzip)
+    zw.setAdapter gzipAdapter(fmtGzip)
     zw.write text
   var zr = openReader(pz)
-  zr.setCodec gzipAdapter(fmtDetect)
+  zr.setAdapter gzipAdapter(fmtDetect)
   echo zr.readAll() == text
 
   # direction is checked
   try:
-    gr.setCodec gzipAdapter(fmtDetect)
+    gr.setAdapter gzipAdapter(fmtDetect)
     var bad = openWriter()
-    bad.setCodec gzipAdapter(fmtDetect)
+    bad.setAdapter gzipAdapter(fmtDetect)
     echo "no error?"
   except ErrorCode as e:
     echo "write with fmtDetect: ", e

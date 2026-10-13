@@ -24,7 +24,7 @@
 ##   returned from here always carries a successful body.
 ## * The body is de-framed (`Content-Length`, chunked, or until the server
 ##   closes) and its content coding undone (gzip, deflate) by an adapter in the
-##   reader's codec slot. Trailers are read and dropped.
+##   reader's adapter slot. Trailers are read and dropped.
 ## * Request headers are an `HttpHeaders`, the wire format itself. The library
 ##   writes `Host`, `Content-Length`/`Transfer-Encoding` and `Connection`
 ##   itself; a user header with one of those names raises `BadOperation`
@@ -37,50 +37,18 @@
 {.feature: "lenientnils".}
 
 import std/[streamio, tls, uri, strutils]
+import std/http/httpheaders
 import std/compress/gzip
 import std/errorcodes/errorcodes_http
 
-export streamio
+export streamio, httpheaders
 
 # ------------------------------------------------------------------ headers --
 
-type
-  HttpHeaders* = distinct string
-    ## `Name: value\r\n` lines, in order. Repeated names are just lines.
-
-func isTokenChar(c: char): bool {.inline.} =
-  c in {'!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~',
-        '0'..'9', 'a'..'z', 'A'..'Z'}
-
-proc validHeaderBlock*(s: string): bool =
-  ## Every line is `token: value\r\n` with no stray CR or LF.
-  result = true
-  var i = 0
-  while i < s.len:
-    var nameLen = 0
-    while i < s.len and s[i] != ':':
-      if not isTokenChar(s[i]): return false
-      inc i
-      inc nameLen
-    if nameLen == 0 or i >= s.len: return false
-    inc i                                     # ':'
-    while i < s.len and s[i] != '\r':
-      if s[i] == '\n': return false
-      inc i
-    if i + 1 >= s.len or s[i+1] != '\n': return false
-    i += 2
-
-proc headers*(s: string): HttpHeaders =
-  ## A header block literal. A malformed one is a programming error and
-  ## panics. (The design asks for this check at compile time; Nimony cannot
-  ## yet evaluate a template's argument in a `const`.) Values from outside the
-  ## program go through `add`, which raises instead.
-  # `headers"A: b\r\n"` is a raw string literal: its `\r\n` is spelled,
-  # not escaped. Both spellings mean the line end.
-  let t = s.replace("\\r\\n", "\r\n")
-  if not validHeaderBlock(t):
-    panic "malformed header block: every line must be `Name: value\r\n`"
-  result = HttpHeaders(t)
+template headers*(s: string): HttpHeaders {.plugin: "deps/httpheaders".}
+  ## A header block literal, checked while the program is compiled:
+  ## `headers"Accept: application/json\r\n"`. A malformed block is a
+  ## compile-time error. Values known only at run time go through `add`.
 
 proc add*(h: var HttpHeaders; name, value: string) {.raises.} =
   ## Appends `name: value`. `BadOperation` for a name outside the token
@@ -140,7 +108,7 @@ type
     csSize, csData, csDataEnd, csTrailer, csDone
 
   HttpBodyAdapter = ref object of Adapter
-    ## De-frames an HTTP body and undoes its content coding: the reader's codec
+    ## De-frames an HTTP body and undoes its content coding: the reader's adapter
     ## for a response. Framing knows where the body ends, so bytes past it stay
     ## below, untouched.
     framing: Framing
@@ -289,7 +257,7 @@ proc engineFor(t: Target; tls: nil TlsEngine): nil TlsEngine {.raises.} =
 
 proc readResponse(r: var Reader; response: var HttpHeaders) {.passive, raises.} =
   ## The status line and headers; raises for a status outside 2xx, then puts
-  ## the body adapter into `r`'s codec slot.
+  ## the body adapter into `r`'s adapter slot.
   var code = 0
   while true:
     let status = r.readLine()
@@ -342,7 +310,7 @@ proc readResponse(r: var Reader; response: var HttpHeaders) {.passive, raises.} 
     a.dec = initDecoder(fmtDetect)
   elif ce.len > 0 and ce != "identity":
     raise UnimplementedOperation
-  r.setCodec a
+  r.setAdapter a
 
 proc httpGet*(url: string; headers: HttpHeaders; response: out HttpHeaders;
               tls: nil TlsEngine = nil): Reader {.passive, raises.} =
