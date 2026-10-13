@@ -132,7 +132,8 @@ proc dbgLocationId(c: var LLVMCode; info: NifLineInfo): int =
     ", column: " & $(rawInfo.col + 1) &
     ", scope: !" & $scopeInProc(c, fileId) & ")")
   var scopeId = 0
-  for origin in c.currentProc.frameStack:
+  for i in 0 ..< c.currentProc.frameStack.len:
+    let origin = c.currentProc.frameStack[i]
     let spId = getOrCreateInlineSP(c, origin, fileId, rawInfo.line)
     if spId == 0: continue
     if scopeId != 0:
@@ -254,7 +255,8 @@ proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
   # drift: the innermost origin names the SP that `dbgLocationId` will scope to.
   let inFrame = c.currentProc.frameStack.len > 0
   var varScopeId = c.currentProc.subprogramId
-  for origin in c.currentProc.frameStack:
+  for i in 0 ..< c.currentProc.frameStack.len:
+    let origin = c.currentProc.frameStack[i]
     let spId = getOrCreateInlineSP(c, origin, fileId, rawInfo.line)
     if spId != 0: varScopeId = spId
   var varMetadata = "!DILocalVariable(name: \"" & debugName & "\""

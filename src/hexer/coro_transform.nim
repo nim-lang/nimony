@@ -1981,7 +1981,12 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
   ## the constructor lacks is the bug above, and a field the constructor
   ## has and the type lacks does not compile.
   const info = NoLineInfo
-  for key, value in c.currentProc.localToEnv.pairs:
+  # `coroTr` takes `c` as `var`, so the table is moved out of `c` for the loop
+  # rather than borrowed. `coroTr` looks every symbol up in it, but it only
+  # translates field types here, and a type never names a lifted local: the
+  # lookups miss either way.
+  var localToEnv = move c.currentProc.localToEnv
+  for key, value in localToEnv.pairs:
     if (value.def != value.use or key == c.currentProc.resultSym) and
        value.field notin c.currentProc.constrFields:
       # The default's type has to be the field's own, and the field got
@@ -2004,6 +2009,7 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
               init.addSubtree fieldType
         else:
           addDefaultValue(init, fieldType, info, c.ptrSize)
+  c.currentProc.localToEnv = move localToEnv
   init.addParRi() # object constructor
   init.addParRi() # assignment
 
@@ -2066,7 +2072,9 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
     copyIntoKind dest, ObjectT, info:
       # we inherit from CoroutineBase:
       dest.addSymUse pool.symId(RootObjName), info
-      for key, value in c.currentProc.localToEnv.pairs:
+      # Moved out for the loop, as in the constructor above.
+      var localToEnv = move c.currentProc.localToEnv
+      for key, value in localToEnv.pairs:
         if value.def != value.use or key == c.currentProc.resultSym:
           let beforeField = dest.len
           copyIntoKind dest, FldU, info:
@@ -2090,6 +2098,7 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
               coroTr c, dest, typ
             dest.addDotToken() # default value
           programs.publish(value.field, dest, beforeField)
+      c.currentProc.localToEnv = move localToEnv
       if c.currentProc.resultSym == SymId(0) and
          pool.symId(ResultFieldName) in c.currentProc.constrFields:
         # A result slot with no `result` local for `escapingLocals` to lift

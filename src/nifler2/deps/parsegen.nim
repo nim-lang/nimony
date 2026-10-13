@@ -897,7 +897,10 @@ proc analyse(g: var Grammar) =
   ## Everything after parsing the productions: monomorphization, the fixed
   ## points, and the checks. `g.errors` is empty when the grammar is fine.
   monomorphize g
-  for name in g.order:
+  # The passes below take `g` as `var`, so they loop over a snapshot of the
+  # rule order rather than borrow it from `g`.
+  let order = g.order
+  for name in order:
     for e in g.rules.getOrDefault(name): recordArgs(g, e.body)
   for name in g.order:
     for e in g.rules.getOrDefault(name): reclassify(g, e.body)
@@ -915,7 +918,7 @@ proc analyse(g: var Grammar) =
   sortStrings undeclared
   for u in undeclared: g.errors.add "undeclared rule: " & u
 
-  for name in g.order:
+  for name in order:
     for e in g.rules.getOrDefault(name):
       var locals = initHashSet[string]()
       for pn in e.paramNames: locals.incl pn
@@ -964,11 +967,11 @@ proc analyse(g: var Grammar) =
   while changed and rounds < 200:
     changed = false
     inc rounds
-    for name in g.order:
+    for name in order:
       let after = g.follow.getOrDefault(name)
       for e in g.rules.getOrDefault(name): propagate(g, e.body, after, changed)
 
-  for name in g.order: checkConflicts(g, name)
+  for name in order: checkConflicts(g, name)
 
 # --------------------------------------------------------------- reading
 

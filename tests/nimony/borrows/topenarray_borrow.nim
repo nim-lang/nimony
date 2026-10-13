@@ -140,3 +140,26 @@ proc testRebind =
 testRebind()
 
 {.feature: "assumeSync".}  # test program: globals shared freely
+
+# A call that returns a fresh value hands the loop a temporary it owns: the
+# loop borrows nothing of the call's first argument, so that argument may be
+# passed on as `var` in the body.
+type
+  Registry = object
+    entries: seq[int]
+    hits: int
+
+proc snapshot(r: Registry): seq[int] = r.entries
+
+proc record(r: var Registry; x: int) =
+  r.hits += x
+  r.entries.add x
+
+proc testOwnedCallResult =
+  var r = Registry(entries: @[1, 2, 3])
+  for x in snapshot(r):
+    record(r, x)
+  assert r.hits == 6
+  assert r.entries.len == 6
+
+testOwnedCallResult()

@@ -466,9 +466,9 @@ proc leaveScope(c: var Context) =
   ## here; the outer destination keeps its own storage and later uses stay
   ## as that outer name. Literal snapshots are values, not names, and survive
   ## (`invalidate` does not clear an alias's `litOf`).
-  for s in c.scopeDecls[^1]:
+  let decls = c.scopeDecls.pop()
+  for s in decls:
     invalidate(c, s)
-  c.scopeDecls.setLen c.scopeDecls.len - 1
 
 # ---- main traversal -------------------------------------------------------
 

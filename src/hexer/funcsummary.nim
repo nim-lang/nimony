@@ -628,7 +628,8 @@ proc resolveSummaries(analyses: var Table[SymId, ProcAnalysis]): FunctionSummary
   for _ in 0 ..< MaxIters:
     var changed = false
     for sym, a in analyses.mpairs:
-      for call in a.calls:
+      for i in 0 ..< a.calls.len:
+        let call = a.calls[i]
         if analyses.hasKey(call.callee):
           applyCallee(a, call, result.getOrDefault(call.callee))
         else:
