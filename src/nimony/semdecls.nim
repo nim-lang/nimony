@@ -152,17 +152,17 @@ proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial:
 
 proc isStaticConstraint(n: Cursor): bool =
   ## Detects the `static[T]` / `static T` / bare `static` constraint forms of a
-  ## generic parameter before semchecking: nifler keeps `static` as a plain
-  ## identifier in `static[T]` (giving `(at static T)`) but produces a
-  ## `(static T)` type for the prefix form `static T`.
+  ## parameter before semchecking: nifler keeps `static` as a plain identifier,
+  ## giving `(at static T)` for `static[T]` and `(cmd static T)` for the prefix
+  ## form `static T`. A `(static T)` type is accepted as well.
   if n.typeKind == StaticT: return true
   var n = n
-  if n.exprKind == AtX: inc n
+  if n.exprKind in {AtX, CmdX}: inc n
   n.isIdent and pool.strings[n.strId] == "static"
 
 proc isStaticSugarHead(n: Cursor): bool =
-  ## True when the `AtX` cursor `n` is the `static[T]` sugar `(at static T)`,
-  ## i.e. its head is the literal `static` identifier — as opposed to an
+  ## True when the `AtX`/`CmdX` cursor `n` is the `static[T]` / `static T`
+  ## sugar, i.e. its head is the literal `static` identifier — as opposed to an
   ## already-desugared element type that is itself an invocation such as
   ## `Shape[N]` (`(at Shape N)`).
   var head = n
@@ -180,7 +180,7 @@ proc semStaticTypevarType(c: var SemContext; dest: var TokenBuf; n: var Cursor) 
         c.buildErr dest, info, "`static` requires an explicit element type, e.g. `static[int]`"
       else:
         discard semLocalType(c, dest, n)
-  elif n.exprKind == AtX and isStaticSugarHead(n):
+  elif n.exprKind in {AtX, CmdX} and isStaticSugarHead(n):
     # the `static[T]` sugar: nifler renders it as `(at static T)`. An `AtX` whose
     # head is *not* the `static` identifier is an already-desugared element type
     # that is itself a generic instantiation (e.g. `Shape[N]` -> `(at Shape N)`),
