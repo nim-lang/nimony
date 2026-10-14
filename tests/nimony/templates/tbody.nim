@@ -23,3 +23,26 @@ proc main =
       echo "yes ", x.s[SymId(1)]
 
 main()
+
+# nim-lang/nimony#2625: a bare `typedesc` template parameter used as a
+# generic argument.
+type Res[T] = object
+  ok: bool
+
+proc err[T](): Res[T] =
+  Res[T](ok: false)
+
+template guard(T: typedesc; x: int) =
+  if x < 0:
+    return err[T]()
+
+proc check(x: int): Res[float] =
+  guard(float, x)
+  Res[float](ok: true)
+
+proc checkPassive(x: int): Res[float] {.passive.} =
+  guard(float, x)
+  Res[float](ok: true)
+
+echo check(3).ok, " ", check(-3).ok
+echo checkPassive(3).ok, " ", checkPassive(-3).ok

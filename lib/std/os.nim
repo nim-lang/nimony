@@ -263,11 +263,9 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ##   discard execShellCmd("ls -la")
   ##   ```
   when defined(posix):
-    # No libc `system()` binding: replicate it as fork + execve of
-    # `/bin/sh -c command` + waitpid, inheriting the parent's standard
-    # streams — exactly what glibc's `system()` does, and the same fork+exec
-    # path osproc.execCmd uses. `os` can't import osproc (circular), so the
-    # sequence is inlined here.
+    # No libc `system()` binding: launch `/bin/sh -c command` and wait,
+    # inheriting the parent's streams. illumos always uses posix_spawn;
+    # other platforms use fork/exec. `os` can't import osproc (circular).
     var sh = "/bin/sh"
     var dashc = "-c"
     var cmd = command
@@ -278,15 +276,22 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
     argv[1] = dashc.toCString
     argv[2] = cmd.toCString
     argv[3] = nil.cstring
-    let pid = fork()
-    if pid == Pid(0):
-      # child: exec the shell; only reached past here if exec failed.
-      discard execve(sh.toCString, cast[CCharArray](argv),
-                     cast[CCharArray](posix_environ))
-      exitnow(127'i32)
+    var pid = Pid(-1)
+    when defined(illumos):
+      let rc = posix_spawn(pid, sh.toCString, nil, nil,
+                           cast[CCharArray](argv), cast[CCharArray](posix_environ))
+      let launchFailed = rc != 0
+    else:
+      pid = fork()
+      if pid == Pid(0):
+        # child: exec the shell; only reached past here if exec failed.
+        discard execve(sh.toCString, cast[CCharArray](argv),
+                       cast[CCharArray](posix_environ))
+        exitnow(127'i32)
+      let launchFailed = pid.int < 0
     dealloc(cast[pointer](argv))
-    if pid.int < 0:
-      result = -1   # fork failed, like `system()`
+    if launchFailed:
+      result = -1   # launch failed, like `system()`
     else:
       var status: cint = 0'i32
       if waitpid(pid, status, 0'i32).int < 0:

@@ -213,6 +213,9 @@ when defined(posix):
   type CChar* {.importc: "char", nodecl.} = int8
   type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
 
+  when defined(illumos):
+    include "illumos/spawn"
+
   proc execve*(path: cstring; argv, env: CCharArray): cint {.importc: "execve", sideEffect.}
   # waitpid is libc sugar for wait4 with NULL rusage. wait4 is exported by
   # glibc, musl and libSystem, and arkham lowers it to the raw syscall.

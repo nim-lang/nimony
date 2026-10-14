@@ -63,7 +63,7 @@ proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Ite
     typecheck(c, dest, lastSonInfo, it.typ, c.routine.returnType)
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
      TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     commonType c, dest, it, beforeLastSon, c.routine.returnType
@@ -356,7 +356,22 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
           c.buildErr dest, delayed.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)"
         insertType c, dest, typ, beforeType
       else:
-        let typ = semLocalType(c, dest, n) # 3
+        let typeStart = dest.len
+        let typeInfo = n.info
+        var typ = semLocalType(c, dest, n) # 3
+        if kind == ParamY and typ.typeKind == TypekindT:
+          # A bare type class as a parameter type. `typedesc` is a meta type like
+          # `untyped`/`typed` and only a template or macro may take it; any other
+          # use would be an implicit generic, which Nimony does not have.
+          let isMetaType = typ.childCursor.typeKind == TypedescT
+          if not isMetaType or c.routine.kind notin {TemplateY, MacroY}:
+            let what = asNimCode(typ)
+            dest.shrink typeStart
+            if isMetaType:
+              c.buildErr dest, typeInfo, "a bare 'typedesc' parameter is only valid for templates and macros; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`"
+            else:
+              c.buildErr dest, typeInfo, "type class '" & what & "' cannot be used as a parameter type; use an explicit generic parameter such as `proc f[T: " & what & "](x: T)`"
+            typ = typeToCursor(c, dest, typeStart)
         if n.isDotToken:
           # empty value
           takeTree dest, n
@@ -1607,7 +1622,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
             semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, ownerSym
         of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
            TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
-           StaticT, TupleT, ClosureTupleT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+           StaticT, TupleT, ClosureTupleT, AnumT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
            DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
            UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
           semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, ownerSym
