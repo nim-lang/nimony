@@ -64,6 +64,17 @@ const
   ChunkSize = 16 * 1024       ## one read from below; one TLS record's worth
   FlushAt = 64 * 1024         ## a writer pushes its buffer down past this
 
+proc addBytes(dest: var string; src: openArray[char]) {.inline.} =
+  ## `dest.add` for a slice: one capacity check and one `copyMem`.
+  if src.len > 0:
+    let old = dest.len
+    copyMem(beginStore(dest, old + src.len, old), addr src[0], src.len)
+    endStore(dest)
+
+proc copyBytes(dest: var openArray[char]; src: openArray[char]) {.inline.} =
+  ## The first `src.len` bytes of `dest` := `src`.
+  copyMem(addr dest[0], addr src[0], src.len)
+
 # ------------------------------------------------------------ extension points
 
 type
@@ -202,7 +213,7 @@ proc sendRecords(c: ptr Core) {.passive, raises.} =
 proc coreSend(c: ptr Core; data: openArray[char]) {.passive, raises.} =
   case c.kind
   of ckMemory:
-    for ch in data: c.data.add ch
+    c.data.addBytes data
   of ckString:
     raise BadOperation
   of ckFd:
@@ -218,11 +229,12 @@ proc coreSend(c: ptr Core; data: openArray[char]) {.passive, raises.} =
       writeFd(c, data)
 
 proc readFd(c: ptr Core; dest: var string): int {.passive, raises.} =
-  ## Appends one read's worth; `0` at the end of the source.
-  var tmp = newSeq[char](ChunkSize)
-  let n = readAsync(c.fd, addr tmp[0], ChunkSize, c.dl)
+  ## Appends one read's worth; `0` at the end of the source. The kernel writes
+  ## straight into `dest`'s spare room: no staging buffer, no zero-fill.
+  let old = dest.len
+  let n = readAsync(c.fd, beginStore(dest, old + ChunkSize, old), ChunkSize, c.dl)
+  dest.setLen old + max(n, 0)            # a shrink: keeps the capacity, syncs the prefix
   if n < 0: raise toErr(n)
-  for i in 0 ..< n: dest.add tmp[i]
   result = n
 
 proc coreRecv(c: ptr Core; dest: var string): int {.passive, raises.} =
@@ -231,7 +243,8 @@ proc coreRecv(c: ptr Core; dest: var string): int {.passive, raises.} =
   if c.peerDone: return
   case c.kind
   of ckString:
-    for i in c.dataPos ..< c.data.len: dest.add c.data[i]
+    if c.dataPos < c.data.len:
+      dest.addBytes toOpenArray(c.data, c.dataPos, c.data.len - 1)
     result = c.data.len - c.dataPos
     c.dataPos = c.data.len
     if result == 0: c.peerDone = true
@@ -335,7 +348,7 @@ proc initWriter(c: ptr Core): Writer =
 proc refill(r: var Reader): bool {.passive, raises.} =
   ## More decoded bytes in `buf`; `false` at the end of the data.
   if r.pos > 0:
-    r.buf = r.buf.substr(r.pos)
+    r.buf = if r.pos < r.buf.len: r.buf.substr(r.pos) else: ""
     r.pos = 0
   while true:
     if r.adapter != nil:
@@ -368,10 +381,9 @@ proc read*(r: var Reader; dest: var openArray[char]): int {.passive, raises.} =
   if dest.len == 0: return
   if r.pos >= r.buf.len:
     if not refill(r): return 0
-  while result < dest.len and r.pos < r.buf.len:
-    dest[result] = r.buf[r.pos]
-    inc result
-    inc r.pos
+  result = min(dest.len, r.buf.len - r.pos)
+  copyBytes(dest, toOpenArray(r.buf, r.pos, r.pos + result - 1))
+  r.pos += result
 
 proc readLine*(r: var Reader): string {.passive, raises.} =
   ## One line without its `\n` and a trailing `\r`. At the end of the data the
@@ -386,11 +398,11 @@ proc readLine*(r: var Reader): string {.passive, raises.} =
       if r.buf[i] == '\n':
         var last = i
         if last > r.pos and r.buf[last - 1] == '\r': dec last
-        for k in r.pos ..< last: result.add r.buf[k]
+        if last > r.pos: result.addBytes toOpenArray(r.buf, r.pos, last - 1)
         r.pos = i + 1
         return
       inc i
-    for k in r.pos ..< r.buf.len: result.add r.buf[k]
+    if r.pos < r.buf.len: result.addBytes toOpenArray(r.buf, r.pos, r.buf.len - 1)
     r.pos = r.buf.len
 
 proc readAll*(r: var Reader): string {.passive, raises.} =
@@ -398,7 +410,7 @@ proc readAll*(r: var Reader): string {.passive, raises.} =
   result = ""
   if r.core == nil: raise BadOperation
   while true:
-    for k in r.pos ..< r.buf.len: result.add r.buf[k]
+    if r.pos < r.buf.len: result.addBytes toOpenArray(r.buf, r.pos, r.buf.len - 1)
     r.pos = r.buf.len
     if not refill(r): return
 
@@ -427,7 +439,7 @@ proc push(w: var Writer; final: bool) {.passive, raises.} =
 
 proc write*(w: var Writer; data: openArray[char]) {.passive, raises.} =
   if w.core == nil or w.finished: raise BadOperation
-  for ch in data: w.buf.add ch
+  w.buf.addBytes data
   if w.buf.len >= FlushAt: push(w, false)
 
 proc write*(w: var Writer; data: string) {.passive, raises.} =
