@@ -945,10 +945,42 @@ func fullMul(a, b: uint64; hi: var uint64): uint64 =
   hi = b11 + (mid1 shr 32) + (mid2 shr 32)
   result = (b00 and 0xFFFFFFFF'u64) or (mid2 shl 32)
 
+when false:
+  # Waiting for `{.assembler.}` procs on the native backend: one `mul`/`umulh`
+  # instead of `fullMul`'s four 32-bit products. To enable, drop the
+  # `when false` and route `fullMul` to `fullMulAsm` under the same `when`.
+  type Words = ptr UncheckedArray[uint64]
+
+  when defined(nimNativeBackend) and defined(amd64):
+    proc mulq(lo: var uint64; hi: var uint64; s: uint64) {.instruction: "mul".}
+
+    proc fullMulAsm(a {.register: "rdi".}: uint64; b {.register: "rsi".}: uint64;
+                    hiOut {.register: "rdx".}: Words): uint64 {.assembler.} =
+      var dst {.register: "rcx".}: Words
+      var lo {.register: "rax".}: uint64
+      dst = hiOut                  # `mul` overwrites rdx
+      var hi {.register: "rdx".}: uint64
+      lo = a
+      mulq(lo, hi, b)              # rdx:rax = rax * b
+      dst[0] = hi
+      result = lo
+  elif defined(nimNativeBackend) and defined(arm64):
+    proc mul3(a, b: uint64): uint64 {.instruction: "mul3".}
+    proc umulh(a, b: uint64): uint64 {.instruction: "umulh".}
+
+    proc fullMulAsm(a {.register: "x0".}: uint64; b {.register: "x1".}: uint64;
+                    hiOut {.register: "x2".}: Words): uint64 {.assembler.} =
+      var hi {.register: "x3".}: uint64
+      var lo {.register: "x4".}: uint64
+      hi = umulh(a, b)
+      hiOut[0] = hi
+      lo = mul3(a, b)
+      result = lo
+
 func power(q: int): int =
   ## ⌊q * log2(10)⌋ + 63, as ⌊q * 217706 / 2^16⌋ + 63 — exact over the whole
   ## range of decimal exponents that reach Eisel–Lemire.
-  result = ashr(int64(q) * 217706'i64, 16) + 63
+  result = int(ashr(int64(q) * 217706'i64, 16)) + 63
 
 func computeProductApprox(q: int; w: uint64; precision: int; lo, hi: var uint64)
     {.requires: SmallestPowerOfFive <= q and q <= LargestPowerOfFive.} =
@@ -1261,9 +1293,13 @@ func decimalToBits(s: openArray[char]; n: Number; f: FloatFormat): uint64 =
 
 func fastPath64(n: Number; value: var float64): bool =
   ## Clinger: exact operands, so the one IEEE operation rounds correctly.
-  ## (Assumes no x87-style excess precision, as every supported target does.)
+  ## Not on i386, where C compilers default to the x87 FPU: it computes in
+  ## 80-bit registers and rounds a second time when storing the double, which
+  ## can be off by one ulp. Eisel–Lemire, integer-only, takes those instead.
+  ## (`fastPath32` is fine there: 64 significand bits >= 2*24+2 make the
+  ## double rounding harmless for one float32 operation.)
   result = false
-  if not n.manyDigits and n.mantissa <= MaxMantissaFastPath64 and
+  if not defined(i386) and not n.manyDigits and n.mantissa <= MaxMantissaFastPath64 and
       -MaxExpFastPath64 <= n.exponent and n.exponent <= MaxExpDisguised64:
     if n.exponent < 0:
       value = float64(n.mantissa) / Pow10F64[-n.exponent]
