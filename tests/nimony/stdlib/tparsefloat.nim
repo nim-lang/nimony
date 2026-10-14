@@ -225,3 +225,29 @@ block: # signed zeros, specials and prefix lengths
   assert y.classify == fcNegInf
   assert parseFloat("0.15625xyz", y) == 7
   assert y == 0.15625'f32
+
+block: # `strict`: the delimited shape only
+  var x = 3.0
+  assert parseFloat("1_000.5", x) == 7
+  assert x == 1000.5
+  assert parseFloat("1_000.5", x, strict = true) == 1
+  assert x == 1.0
+  assert parseFloat("2.5_0e1", x, strict = true) == 3
+  assert x == 2.5
+  assert parseFloat("2.5e1_0", x, strict = true) == 5
+  assert x == 25.0
+  assert parseFloat("-.5e-1x", x, strict = true) == 6
+  assert x == -0.05
+  x = 3.0
+  for text in ["+1", "nan", "-inf", "Infinity", "1e", "1e+", "2.5E-", ".", "-", "_1"]:
+    assert parseFloat(text, x, strict = true) == 0, text
+  assert x == 3.0
+  assert parseFloat("1e", x) == 1                # not strict: the `e` is left
+  var y = 0.0'f32
+  assert parseFloat("12_5", y, strict = true) == 2
+  assert y == 12.0'f32
+  assert parseFloat("+1", y, strict = true) == 0
+  # more than 19 digits, with and without separators
+  assert bits64("1234567890123456789012345") == bits64("1_234_567_890_123_456_789_012_345")
+  assert bits64("0.000000000000000000001234567890123456789012345e30") ==
+    bits64("0.000_000_000_000_000_000_001_234_567_890_123_456_789_012_345e30")

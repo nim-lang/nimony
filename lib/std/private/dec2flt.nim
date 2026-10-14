@@ -826,6 +826,8 @@ const
 
 # ── scanning ──────────────────────────────────────────────────────────────
 
+template isDigit(c: char): bool = c >= '0' and c <= '9'
+
 func addDigit(n: var Number; d: uint64; nsig: var int; inFraction: bool) {.inline.} =
   ## Leading zeros are not significant; past the 19th significant digit only
   ## the exponent moves.
@@ -852,7 +854,7 @@ func scanNumber(s: openArray[char]; n: var Number): int =
   var inFraction = false
   while i < s.len:
     let c = s[i]
-    if c in {'0'..'9'}:
+    if isDigit(c):
       addDigit(n, uint64(ord(c) - ord('0')), nsig, inFraction)
       inc ndigits
       inc i
@@ -872,9 +874,9 @@ func scanNumber(s: openArray[char]; n: var Number): int =
       if j < s.len and (s[j] == '+' or s[j] == '-'):
         eneg = s[j] == '-'
         inc j
-      if j < s.len and s[j] in {'0'..'9'}:
+      if j < s.len and isDigit(s[j]):
         var e = 0
-        while j < s.len and s[j] in {'0'..'9'}:
+        while j < s.len and isDigit(s[j]):
           if e < ExpSaturation: e = e * 10 + (ord(s[j]) - ord('0'))
           inc j
           while j < s.len and s[j] == '_': inc j
@@ -882,6 +884,113 @@ func scanNumber(s: openArray[char]; n: var Number): int =
         n.exponent = n.exponent + n.explicitExp
         i = j
     result = i
+
+func takeSignificant(s: openArray[char]; digitsStart, digitsEnd: int):
+    tuple[mantissa: uint64, exponent: int, manyDigits: bool] =
+  ## More than 19 significant digits: keep the first 19, as Rust's parser
+  ## re-reads them. The digit text holds only digits and at most one `.`.
+  var mantissa = 0'u64
+  var taken = 0
+  var exponent = 0
+  var many = false
+  var seen = false
+  var inFraction = false
+  let start = max(digitsStart, 0)
+  let stop = min(digitsEnd, s.len)
+  for k in start ..< stop:
+    let c = s[k]
+    if c == '.':
+      inFraction = true
+    else:
+      let d = uint64(ord(c) - ord('0'))
+      if seen or d != 0'u64:
+        seen = true
+        if taken < MaxMantissaDigits:
+          mantissa = mantissa * 10'u64 + d
+          inc taken
+          if inFraction: dec exponent
+        else:
+          if not inFraction: inc exponent
+          if d != 0'u64: many = true
+      elif inFraction:
+        dec exponent              # a leading zero after the point
+  result = (mantissa: mantissa, exponent: exponent, manyDigits: many)
+
+func readDigits(s: openArray[char]; start: int; mantissa: var uint64): int {.
+    requires: 0 <= start, ensures: 0 <= result.} =
+  ## Reads a run of digits from `start` into `mantissa` (wrapping past 19 of
+  ## them; the caller re-reads those) and returns where it ends.
+  var i = start
+  while i < s.len and isDigit(s[i]):
+    mantissa = mantissa * 10'u64 + uint64(ord(s[i]) - ord('0'))
+    inc i
+  result = i
+
+func scanNumberFast(s: openArray[char]; n: var Number; strict: bool): int =
+  ## Everything but digit separators, in one pass without per-digit
+  ## bookkeeping, as Rust's `parse_partial_number`. Returns -1 when a `_` follows a digit, which sends the caller
+  ## to `scanNumber`. In `strict` mode a `_` ends the number, a `+` sign is no
+  ## number, and neither is a token whose `e` has no digits.
+  var i = 0
+  if i < s.len and (s[i] == '-' or (s[i] == '+' and not strict)):
+    n.negative = s[i] == '-'
+    inc i
+  n.digitsStart = i
+  var mantissa = 0'u64
+  let integerStart = i
+  i = readDigits(s, i, mantissa)
+  var digits = i - integerStart
+  var fraction = 0
+  if i < s.len and s[i] == '.':
+    inc i
+    let fractionStart = i
+    i = readDigits(s, i, mantissa)
+    fraction = i - fractionStart
+    digits = digits + fraction
+  n.digitsEnd = i
+  if digits == 0:
+    result = 0
+  elif not strict and i < s.len and s[i] == '_':
+    result = -1
+  else:
+    result = i
+    var exponent = 0
+    if i < s.len and (s[i] == 'e' or s[i] == 'E'):
+      var j = i + 1
+      var negative = false
+      if j < s.len and (s[j] == '+' or s[j] == '-'):
+        negative = s[j] == '-'
+        inc j
+      if j < s.len and isDigit(s[j]):
+        while j < s.len and isDigit(s[j]):
+          if exponent < ExpSaturation: exponent = exponent * 10 + (ord(s[j]) - ord('0'))
+          inc j
+        if not strict and j < s.len and s[j] == '_':
+          result = -1
+        else:
+          if negative: exponent = -exponent
+          result = j
+      elif strict:
+        result = 0                # an exponent marker without digits
+    if result > 0:
+      n.explicitExp = exponent      # 0 unless an exponent was read
+      if digits > MaxMantissaDigits:
+        # Leading zeros are not significant: the wrapped-around accumulation
+        # above is still exact if at most 19 digits follow them.
+        let start = max(n.digitsStart, 0)
+        let stop = min(n.digitsEnd, s.len)
+        var k = start
+        while k < stop and (s[k] == '0' or s[k] == '.'):
+          if s[k] == '0': dec digits
+          inc k
+      if digits <= MaxMantissaDigits:
+        n.mantissa = mantissa
+        n.exponent = n.explicitExp - fraction
+      else:
+        let taken = takeSignificant(s, n.digitsStart, n.digitsEnd)
+        n.mantissa = taken.mantissa
+        n.manyDigits = taken.manyDigits
+        n.exponent = taken.exponent + n.explicitExp
 
 func matchesIgnoreCase(s: openArray[char]; i: int; word: string): bool {.
     requires: i >= 0.} =
@@ -919,16 +1028,11 @@ func scanSpecial(s: openArray[char]; isNan, negative: var bool): int =
 
 # ── Eisel–Lemire ──────────────────────────────────────────────────────────
 
+proc clz64(x: uint64): int32 {.intrinsic: "Clz", noSideEffect.}
+
 func leadingZeros(x: uint64): int =
-  ## For x != 0.
-  result = 0
-  var v = x
-  if (v and 0xFFFFFFFF00000000'u64) == 0'u64: (result = result + 32; v = v shl 32)
-  if (v and 0xFFFF000000000000'u64) == 0'u64: (result = result + 16; v = v shl 16)
-  if (v and 0xFF00000000000000'u64) == 0'u64: (result = result + 8; v = v shl 8)
-  if (v and 0xF000000000000000'u64) == 0'u64: (result = result + 4; v = v shl 4)
-  if (v and 0xC000000000000000'u64) == 0'u64: (result = result + 2; v = v shl 2)
-  if (v and 0x8000000000000000'u64) == 0'u64: result = result + 1
+  ## For x != 0 (the portable `Clz` intrinsic is undefined at 0).
+  result = int(clz64(x))
 
 func fullMul(a, b: uint64; hi: var uint64): uint64 =
   ## The 128-bit product a*b: returns the low word, stores the high one.
@@ -1195,7 +1299,7 @@ func parseDecimalSeq(s: openArray[char]; n: Number; d: var DecimalSeq) =
     let c = s[i]
     if c == '.':
       inFraction = true
-    elif c in {'0'..'9'}:
+    elif isDigit(c):
       let dig = uint8(ord(c) - ord('0'))
       if nd == 0 and dig == 0'u8:
         if inFraction: dec dp     # a leading zero after the point
@@ -1330,43 +1434,56 @@ func fastPath32(n: Number; value: var float32): bool =
         value = float32(n.mantissa * pow) * Pow10F32[MaxExpFastPath32]
         result = true
 
-func parseFloat64*(s: openArray[char]; number: var float64): int =
+func parseFloat64*(s: openArray[char]; number: var float64;
+                   strict = false): int =
   ## Reads a decimal float at the start of `s` into `number`, correctly
   ## rounded to nearest, ties to even. Returns the number of characters read,
-  ## or 0 (leaving `number` alone) if `s` does not start with a float.
-  var isNan = false
-  var negative = false
-  result = scanSpecial(s, isNan, negative)
-  if result > 0:
-    if isNan: number = NaN
-    elif negative: number = -Inf
-    else: number = Inf
-  else:
-    var n = Number(mantissa: 0'u64, exponent: 0, negative: false,
-                   manyDigits: false, digitsStart: 0, digitsEnd: 0, explicitExp: 0)
+  ## or 0 (leaving `number` alone) if `s` does not start with a float. See
+  ## `parseutils.parseFloat` for `strict`.
+  var n = Number(mantissa: 0'u64, exponent: 0, negative: false,
+                 manyDigits: false, digitsStart: 0, digitsEnd: 0, explicitExp: 0)
+  result = scanNumberFast(s, n, strict)
+  if result < 0:
+    # digit separators
+    n = Number(mantissa: 0'u64, exponent: 0, negative: false,
+               manyDigits: false, digitsStart: 0, digitsEnd: 0, explicitExp: 0)
     result = scanNumber(s, n)
+  if result > 0:
+    var value = 0.0
+    if not fastPath64(n, value):
+      value = cast[float64](decimalToBits(s, n, F64))
+    number = if n.negative: -value else: value
+  elif not strict:
+    # Only text without digits can be a special value.
+    var isNan = false
+    var negative = false
+    result = scanSpecial(s, isNan, negative)
     if result > 0:
-      var value = 0.0
-      if not fastPath64(n, value):
-        value = cast[float64](decimalToBits(s, n, F64))
-      number = if n.negative: -value else: value
+      if isNan: number = NaN
+      elif negative: number = -Inf
+      else: number = Inf
 
-func parseFloat32*(s: openArray[char]; number: var float32): int =
+func parseFloat32*(s: openArray[char]; number: var float32;
+                   strict = false): int =
   ## Like `parseFloat64`, rounding once, directly to binary32 — never via a
   ## float64, which would round twice.
-  var isNan = false
-  var negative = false
-  result = scanSpecial(s, isNan, negative)
-  if result > 0:
-    if isNan: number = float32(NaN)
-    elif negative: number = float32(-Inf)
-    else: number = float32(Inf)
-  else:
-    var n = Number(mantissa: 0'u64, exponent: 0, negative: false,
-                   manyDigits: false, digitsStart: 0, digitsEnd: 0, explicitExp: 0)
+  var n = Number(mantissa: 0'u64, exponent: 0, negative: false,
+                 manyDigits: false, digitsStart: 0, digitsEnd: 0, explicitExp: 0)
+  result = scanNumberFast(s, n, strict)
+  if result < 0:
+    n = Number(mantissa: 0'u64, exponent: 0, negative: false,
+               manyDigits: false, digitsStart: 0, digitsEnd: 0, explicitExp: 0)
     result = scanNumber(s, n)
+  if result > 0:
+    var value = 0.0'f32
+    if not fastPath32(n, value):
+      value = cast[float32](uint32(decimalToBits(s, n, F32)))
+    number = if n.negative: -value else: value
+  elif not strict:
+    var isNan = false
+    var negative = false
+    result = scanSpecial(s, isNan, negative)
     if result > 0:
-      var value = 0.0'f32
-      if not fastPath32(n, value):
-        value = cast[float32](uint32(decimalToBits(s, n, F32)))
-      number = if n.negative: -value else: value
+      if isNan: number = float32(NaN)
+      elif negative: number = float32(-Inf)
+      else: number = float32(Inf)
