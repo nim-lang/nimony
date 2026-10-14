@@ -208,6 +208,35 @@ proc nativeValgrindTests*() =
   if c.failures > 0:
     quit "FAILURE: Some native valgrind tests failed."
 
+proc nativeCrossTestFile(c: var TestCounters; file, cpu, runner, cache: string) =
+  ## One native test cross-compiled for `cpu` and run under `runner` (qemu-user).
+  ## The `.output`/`.exitcode` expectations are the host's: a test whose output
+  ## depends on the target says so by living in a target's directory.
+  let msgs = file.changeFileExt(".msgs")
+  if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+    return
+  inc c.total
+  let (compilerOutput, compilerExitCode) =
+    execNimonyNativeCross(cpu, cache, quoteShell(file))
+  if compilerExitCode != 0:
+    failure c, file, "native --cpu:" & cpu & " compiler exitcode 0",
+      removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
+    return
+  let exe = file.generatedExeFile(BackendDirNative, cache)
+  if not exe.fileExists():
+    failure c, file, "native --cpu:" & cpu & " executable", "missing: " & exe
+    return
+  let (output, exitCode) = osproc.execCmdEx(quoteShell(runner) & " " & quoteShell(exe))
+  var expected = file.changeFileExt(".output")
+  if exitCode != 0:
+    expected = file.changeFileExt(".exitcode")
+    if not expected.fileExists():
+      failure c, file, "test program exitcode 0 (" & cpu & ")",
+        "exitcode " & $exitCode & "\n" & output
+      return
+  if expected.fileExists() and readFile(expected).strip != output.strip:
+    failure c, file, readFile(expected).strip, output
+
 proc nativetests*(overwrite: bool) =
   ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`,
   ## plus `NativeTestDirsWindows` on Windows, minus `NativeTestSkip`) through
@@ -223,6 +252,9 @@ proc nativetests*(overwrite: bool) =
   var dirs: seq[string] = @NativeTestDirs
   when defined(windows): dirs.add @NativeTestDirsWindows
   when defined(amd64): dirs.add @NativeTestDirsX64
+  when defined(arm64):
+    dirs.add @NativeTestDirsA64
+    for f in NativeTestSkipA64: skip.incl slashed(f.addFileExt(".nim"))
   for dir in dirs:
     var files: seq[string] = @[]
     for x in walkDir(dir):
@@ -237,6 +269,25 @@ proc nativetests*(overwrite: bool) =
     for f in files: nativeTestFile c, f, overwrite
   for f in NativeTestFiles:
     nativeTestFile c, f.addFileExt(".nim"), overwrite
+  when defined(linux) and defined(amd64):
+    # The AArch64 assembler and crypto code, cross-compiled and run under
+    # qemu-user: the only way an x86-64 host checks it at all.
+    let qemu = findExe("qemu-aarch64")
+    if qemu.len == 0:
+      echo "qemu-aarch64 not found — skipping the AArch64 native tests " &
+           "(install: sudo apt-get install qemu-user)"
+    else:
+      var skipA64 = initHashSet[string]()
+      for f in NativeTestSkipA64: skipA64.incl slashed(f.addFileExt(".nim"))
+      for dir in NativeTestDirsA64:
+        var files: seq[string] = @[]
+        for x in walkDir(dir):
+          if x.kind == pcFile and x.path.endsWith(".nim") and
+             not isGeneratedTestFile(x.path) and slashed(x.path) notin skipA64:
+            files.add x.path
+        sort files
+        for f in files:
+          nativeCrossTestFile c, f, "arm64", qemu, nimcacheDir / "arm64"
   reportFailures c
   echo c.total - c.failures, " / ", c.total, " native tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:

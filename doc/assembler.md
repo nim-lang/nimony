@@ -18,14 +18,17 @@ assembler path keeps a portable one beside it:
 
 ```nim
 when defined(nimNativeBackend) and defined(amd64):
-  import std/crypto/private/fe25519x64     # assembler
+  import std/crypto/private/fe25519x64     # assembler, x86-64
+elif defined(nimNativeBackend) and defined(arm64):
+  import std/crypto/private/fe25519a64     # assembler, AArch64
 else:
   ...                                      # portable Nimony
 ```
 
 `nimNativeBackend` is defined whenever arkham compiles the program
-(`nimony n`). Everything below is x86-64; the AArch64, Cortex-M and RV32
-backends implement a subset of the same mode.
+(`nimony n`). The sections below describe x86-64; [AArch64](#aarch64) has its
+own section, and the Cortex-M and RV32 backends implement a subset of the
+same mode.
 
 
 ## Locations
@@ -161,3 +164,76 @@ production uses: 4x64-bit field multiplication with a `mul`/`adc` carry chain
 and reduction by `2^256 = 38 (mod p)`, Poly1305's 130-bit accumulator with
 the final `h >= p` decided by `shr` and acted on with `cmovnz`, and the
 ChaCha20 rounds in 32-bit registers.
+
+
+## AArch64
+
+The same source language, with AArch64's registers and instructions. What
+differs follows from the machine.
+
+**Registers.** `x0`..`x28` except `x8` (the indirect-result register),
+`x16`/`x17` (the linker's veneers) and `x18` (the platform register); `x29`,
+`x30` and `sp` belong to the frame. Callee-saved `x19`..`x28` are saved by the
+prologue. A `uint32` local is the `w` view of its register — the pragma still
+names `x5` — and its declared type is the operand width: `add`/`sub` on it are
+the 32-bit forms, which wrap at 2^32 and leave the value zero-extended.
+`x0` is both the first argument and the result register.
+
+**Load/store.** Memory is reached by an assignment and nothing else: `x = p[i]`
+and `p[i] = x` (`i` a literal or a register). Arithmetic takes registers and
+immediates only, so `add(x, p[i])` is rejected. In a register position the
+literal `0` is the zero register `xzr`: `p[i] = 0`, `adcs3(0, 0)`.
+
+**Three-address rows.** Arm's instructions name their destination, so these
+are value rows — `d = row(a, b)`, one instruction, `d` may be `a` or `b`:
+
+| Row | Instruction |
+|---|---|
+| `adds3`, `subs3` | `adds`/`subs`: add/subtract, setting NZCV; `b` may be a 12-bit immediate |
+| `adcs3`, `sbcs3` | `adcs`/`sbcs`: with carry (`a - b - not C`), setting NZCV |
+| `mul3`, `umulh` | the low and high 64 bits of `a * b` |
+| `cseleq` … `cselhs` | `a` if the condition holds, else `b` — a select without a branch |
+| `ror` | rotate right by a literal or a register (32 or 64 bits) |
+
+```nim
+proc adds(a, b: uint64): uint64 {.instruction: "adds3".}
+proc adcs(a, b: uint64): uint64 {.instruction: "adcs3".}
+proc mulHi(a, b: uint64): uint64 {.instruction: "umulh".}
+proc cselne(a, b: uint64): uint64 {.instruction: "cselne".}
+```
+
+The two-address rows (`add sub and or xor shl shr sar neg`) and `cmp` work as on
+x86-64. The flag-setting rows are assembler-only: their value is `+`, and the
+flags are the reason to use them.
+
+**Flags.** Only `cmp`, `adds3`, `adcs3`, `subs3` and `sbcs3` write NZCV; every
+other instruction leaves it alone — `mul3`/`umulh` included, so a carry chain
+can run straight through a block of products. The liveness rule is x86-64's: a
+read (a `csel`, `adcs3`, an `if zf()`) needs a definition on every path, and
+nothing is known on entry, at a label, at a loop head or after a loop. Mind
+Arm's carry after a subtraction: C is set when nothing was BORROWED, so "it
+borrowed" is the `lo` condition (`csello`). `if` can branch on `zf()`/`nz()`.
+
+```nim
+proc sub2(r {.register: "x0".}: Words; a {.register: "x1".}: Words;
+          b {.register: "x2".}: Words): uint64 {.assembler.} =
+  var x {.register: "x3".}: uint64
+  var y {.register: "x4".}: uint64
+  var one {.register: "x5".}: uint64
+  x = a[0]
+  y = b[0]
+  x = subs(x, y)
+  r[0] = x
+  x = a[1]
+  y = b[1]
+  x = sbcs(x, y)
+  r[1] = x
+  one = 1
+  result = csello(one, 0)    # 1 iff a < b
+```
+
+`tests/nimony/asmarm64/` holds the tests (run under `qemu-aarch64` by
+`hastur native` on an x86-64 Linux host), and `lib/std/crypto/private/*a64.nim`
+the production uses: GF(2^255 - 19) with every operand of the multiplication in
+registers, Poly1305 in the `mul`/`umulh` shape of OpenSSL's `poly1305-armv8`,
+and the ChaCha20 block function with the whole state in `w` registers.

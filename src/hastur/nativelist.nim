@@ -96,6 +96,23 @@ const
     "tests/nimony/crypto"
   ]
 
+  NativeTestDirsA64* = [
+    # The AArch64 twins: `{.assembler.}` programs naming `x0`..`x28`, and the
+    # crypto vectors, which check `std/crypto/private/*a64` on this target. Run
+    # natively on an AArch64 host, and on Linux/x86-64 cross-compiled with
+    # `--cpu:arm64` and run under `qemu-aarch64` (`nativetests` skips that pass,
+    # saying so, when qemu is not installed).
+    "tests/nimony/asmarm64",
+    "tests/nimony/crypto"
+  ]
+
+  NativeTestSkipA64* = [
+    # `include std/tls` pulls in `std/socket` → `std/ioring` → `std/rawthreads`,
+    # which has a freestanding thread start (`clone` in assembler) for
+    # Linux/x86-64 only.
+    "tests/nimony/crypto/ttlskeys"
+  ]
+
   NativeJoinSkip*: array[0, string] = [
     # Directories whose tests each compile and run correctly through `nimony n`
     # — they are in the lists above — but whose JOINED program does not, so the

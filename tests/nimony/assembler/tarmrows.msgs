@@ -1,0 +1,3 @@
+tests/nimony/assembler/tarmrows.nim(17, 1) Error: operand 1 of `umull` is written, so it must be declared `var`
+tests/nimony/assembler/tarmrows.nim(18, 1) Error: operand 1 of `umulh` has a type the instruction cannot take
+tests/nimony/assembler/tarmrows.nim(19, 1) Error: operand 2 of `umlal` is read and written, so it must be declared `var`

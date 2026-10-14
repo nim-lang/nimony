@@ -24,6 +24,13 @@ proc execNimonyNative*(cmd: string): (string, int) =
     else: ""
   result = execLocal("nimony", "n --silentMake --isMain " & cacheArg & cmd)
 
+proc execNimonyNativeCross*(cpu, cache, cmd: string): (string, int) =
+  ## `execNimonyNative` for another CPU (`--cpu:arm64`), into a nimcache of its
+  ## own so the host build of the same test is not overwritten by — and does not
+  ## have to be rebuilt after — the cross one.
+  result = execLocal("nimony", "n --silentMake --isMain --cpu:" & cpu &
+                     " --nimcache:" & quoteShell(cache) & " " & cmd)
+
 proc pathsForFile(file: string): seq[string] =
   result = @[]
   let baseDir = file.splitFile.dir
@@ -41,9 +48,10 @@ proc generatedFile*(orig, ext: string; backendTag = BackendDirC): string =
   result = if ext == ".s.nif": nimcacheDir / name.addFileExt(ext)
            else: nimcacheDir / backendTag / name / name.addFileExt(ext)
 
-proc generatedExeFile*(orig: string; backendTag = BackendDirC): string =
+proc generatedExeFile*(orig: string; backendTag = BackendDirC;
+                       cache = nimcacheDir): string =
   let name = modnames.moduleSuffix(orig, pathsForFile(orig))
-  result = nimcacheDir / backendTag / name / orig.splitFile.name.addFileExt(ExeExt)
+  result = cache / backendTag / name / orig.splitFile.name.addFileExt(ExeExt)
 
 proc removeMakeErrors*(output: string): string =
   result = output.strip
