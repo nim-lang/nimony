@@ -47,6 +47,7 @@ proc main() {.raises.} =
   var fr = openReader(p)
   var mem = openWriter()
   echo copy(mem, fr)
+  fr.close()                    # Windows cannot delete a file that is open
   echo extract(mem)
 
   # a gzip file written through a destructor, no explicit close
@@ -58,6 +59,7 @@ proc main() {.raises.} =
   var zr = openReader(pz)
   zr.setAdapter gzipAdapter(fmtDetect)
   echo zr.readAll() == text
+  zr.close()
 
   # direction is checked
   try:
