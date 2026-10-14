@@ -231,9 +231,11 @@ type
     #    is three-address, and its flag-setting arithmetic is a separate
     #    mnemonic (`adds` versus `add`), so a carry chain is a sequence of
     #    VALUE rows that also define flags. Spelled as nifasm spells them (the
-    #    `3` marks the three-operand form). `targets` is empty until a backend
-    #    lowers them: claiming a target arkham cannot yet emit would turn its
-    #    clean "no lowering" rejection into a crash.
+    #    `3` marks the three-operand form). A row claims a target only once a
+    #    backend lowers it — claiming one arkham cannot yet emit would turn its
+    #    clean "no lowering" rejection into a crash: AArch64 has the carry
+    #    chain, `mul3`, `umulh` and the `csel`s; `umull`, `umlal` and `bic3`
+    #    wait for the Cortex-M port.
     Adds3Op      # d = adds3(a, b): a + b, setting NZCV
     Adcs3Op      # d = adcs3(a, b): a + b + C, setting NZCV
     Subs3Op      # d = subs3(a, b): a - b, setting NZCV (C = NOT borrow, Arm's sense)
@@ -570,7 +572,11 @@ const
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,
                  params: UnCount, roles: AllIn, ret: ptAnyIntW,
                  widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,
+    # `ror` is also AArch64's (`ror`/`extr` for a literal count, `rorv` for a
+    # register one), at 32 and 64 bits only — a narrower rotate there is refused
+    # by the back end rather than emulated. Three-address on a64, so the tie is
+    # x86-64's alone and costs nothing there.
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64}, arity: 2,
                  params: UnCount, roles: AllIn, ret: ptAnyIntW,
                  widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
 
@@ -1063,22 +1069,22 @@ const
                  widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF, mfSF, mfOF},
                  defs: {}),
     # ── Arm: carry chains, products and selects (see the enum) ──
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # adds3
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # adds3
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {}, defs: Nzcv),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # adcs3
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # adcs3
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: Nzcv),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # subs3
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # subs3
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {}, defs: Nzcv),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # sbcs3
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # sbcs3
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: Nzcv),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # mul3
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # mul3
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # umulh
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # umulh
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {}, arity: 4,             # umull
@@ -1090,34 +1096,34 @@ const
     IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # bic3
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # cseleq
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # cseleq
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # cselne
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # cselne
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # csellt
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # csellt
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfSF, mfOF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # cselle
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # cselle
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF, mfSF, mfOF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # cselgt
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # cselgt
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfZF, mfSF, mfOF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # cselge
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # cselge
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfSF, mfOF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # csello
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # csello
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # csells
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # csells
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF, mfZF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # cselhi
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # cselhi
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF, mfZF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {}, arity: 2,             # cselhs
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # cselhs
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: {})
   ]
@@ -1154,13 +1160,20 @@ proc inoutOperand*(r: IntrinsicRow): int =
   for i in 0 ..< r.arity:
     if r.roles[i] == roInout: return i
 
+proc isFlagValue*(r: IntrinsicRow): bool {.inline.} =
+  ## A row with a VALUE that also defines flags, as a separate instruction from
+  ## its non-flag-setting twin: Arm's `adds`/`subs`. The value alone is `+`; the
+  ## row exists for the flags, which only an `{.assembler.}` body can read.
+  r.ret notin {ptVoid, ptNone} and r.defs != {} and r.inoutOperand < 0
+
 proc isAssemblerOnly*(r: IntrinsicRow): bool =
   ## A row no compiled code may contain: it READS a flag (`adc`, `cmovz`), so
-  ## nothing may run between the instruction that set the flag and this one, or
-  ## it writes a result no signature can place (`mul`'s high half, `umull`'s
-  ## pair, `umlal`'s accumulator pair). Only an
-  ## `{.assembler.}` body, where no instruction is ever inserted, can use it.
-  if r.uses != {}: return true
+  ## nothing may run between the instruction that set the flag and this one, it
+  ## exists only to SET flags alongside a value (`adds3`), or it writes a result
+  ## no signature can place (`mul`'s high half, `umull`'s pair, `umlal`'s
+  ## accumulator pair). Only an `{.assembler.}` body, where no instruction is
+  ## ever inserted, can use it.
+  if r.uses != {} or r.isFlagValue: return true
   var written = 0
   for i in 0 ..< r.arity:
     if r.roles[i] == roOut: return true
