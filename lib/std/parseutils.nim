@@ -226,34 +226,27 @@ func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
 # alike and needs no `strtod`, so a float reads the same on every backend,
 # including the libc-free ones.
 
-func parseFloat*(s: openArray[char]; number: var float64;
-                 strict = false): int =
+func parseFloat*(s: openArray[char]; number: var float64): int =
   ## Parses a float and stores the value into `number`, correctly rounded.
   ## Accepts `[sign] digits ['.' digits] [('e'|'E') [sign] digits]` (either
-  ## side of the `.` may be empty, not both; digits may be separated by `_`),
-  ## as well as `nan`, `inf` and `infinity` in any case. Returns the number of
-  ## processed chars, or 0 (leaving `number` unchanged) if `s` does not start
-  ## with a float.
-  ##
-  ## `strict` reads only `['-'] digits ['.' digits] [('e'|'E') [sign] digits]`,
-  ## the shape a data format such as JSON delimits: no `+` sign, no `_`, no
-  ## `nan` or `inf`, and an `e` without digits makes the text no number at all
-  ## (0) rather than ending it before the `e`.
+  ## side of the `.` may be empty, not both), as well as `nan`, `inf` and
+  ## `infinity` in any case. Returns the number of processed chars, or 0
+  ## (leaving `number` unchanged) if `s` does not start with a float. An `e`
+  ## without digits after it is not part of the number.
   runnableExamples:
     var x = 0.0
     doAssert parseFloat("1.5e3 m", x) == 5
     doAssert x == 1500.0
-  result = parseFloat64(s, number, strict)
+  result = parseFloat64(s, number)
 
-func parseFloat*(s: openArray[char]; number: var float32;
-                 strict = false): int =
+func parseFloat*(s: openArray[char]; number: var float32): int =
   ## Like `parseFloat` for `float64`, but rounds directly to `float32`. Parsing
   ## a `float64` and converting it would round twice and can be off by one ulp.
   runnableExamples:
     var x = 0.0'f32
     doAssert parseFloat("16777217", x) == 8
     doAssert x == 16777216.0'f32
-  result = parseFloat32(s, number, strict)
+  result = parseFloat32(s, number)
 
 func parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int =
   ## Parses a float and stores the value into `number`.

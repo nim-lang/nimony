@@ -43,8 +43,8 @@ block: # normal values
   assert bits32("4.35e15") == 0x597744D5'u32
   assert bits64("123e30") == 0x469841E9BD604769'u64
   assert bits32("123e30") == 0x74C20F4E'u32
-  assert bits64("1_000_000.000_1") == 0x412E8480000D1B71'u64
-  assert bits32("1_000_000.000_1") == 0x49742400'u32
+  assert bits64("1000000.0001") == 0x412E8480000D1B71'u64
+  assert bits32("1000000.0001") == 0x49742400'u32
   assert bits64(".5") == 0x3FE0000000000000'u64
   assert bits32(".5") == 0x3F000000'u32
   assert bits64("5.") == 0x4014000000000000'u64
@@ -226,28 +226,23 @@ block: # signed zeros, specials and prefix lengths
   assert parseFloat("0.15625xyz", y) == 7
   assert y == 0.15625'f32
 
-block: # `strict`: the delimited shape only
+block: # `_` is not a digit separator: it ends the number
   var x = 3.0
-  assert parseFloat("1_000.5", x) == 7
-  assert x == 1000.5
-  assert parseFloat("1_000.5", x, strict = true) == 1
+  assert parseFloat("1_000.5", x) == 1
   assert x == 1.0
-  assert parseFloat("2.5_0e1", x, strict = true) == 3
+  assert parseFloat("2.5_0e1", x) == 3
   assert x == 2.5
-  assert parseFloat("2.5e1_0", x, strict = true) == 5
+  assert parseFloat("2.5e1_0", x) == 5
   assert x == 25.0
-  assert parseFloat("-.5e-1x", x, strict = true) == 6
-  assert x == -0.05
   x = 3.0
-  for text in ["+1", "nan", "-inf", "Infinity", "1e", "1e+", "2.5E-", ".", "-", "_1"]:
-    assert parseFloat(text, x, strict = true) == 0, text
+  assert parseFloat("_1", x) == 0
   assert x == 3.0
-  assert parseFloat("1e", x) == 1                # not strict: the `e` is left
   var y = 0.0'f32
-  assert parseFloat("12_5", y, strict = true) == 2
+  assert parseFloat("12_5", y) == 2
   assert y == 12.0'f32
-  assert parseFloat("+1", y, strict = true) == 0
-  # more than 19 digits, with and without separators
-  assert bits64("1234567890123456789012345") == bits64("1_234_567_890_123_456_789_012_345")
-  assert bits64("0.000000000000000000001234567890123456789012345e30") ==
-    bits64("0.000_000_000_000_000_000_001_234_567_890_123_456_789_012_345e30")
+
+block: # more than 19 digits: leading zeros do not count, the rest is re-read
+  assert bits64("0.0000000000000000000000000001234567890123456789") ==
+    bits64("1234567890123456789e-46")
+  assert bits64("12345678901234567890123456789") == 0x45C3F20D99235F65'u64
+  assert bits64("1.0000000000000000000000000001") == 0x3FF0000000000000'u64
