@@ -205,8 +205,8 @@ method run(a: HttpBodyAdapter; src: openArray[char]; used: var int;
     elif final:
       raise EndOfStreamError
 
-method atEnd(a: HttpBodyAdapter): bool =
-  a.framingDone
+method hasMore(a: HttpBodyAdapter): bool =
+  not a.framingDone
 
 # ---------------------------------------------------------------- requests --
 

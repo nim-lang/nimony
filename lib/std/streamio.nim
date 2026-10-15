@@ -28,8 +28,8 @@
 ## Pieces:
 ##
 ## * `Reader` and `Writer` are concrete, move-only values. A pair returned by
-##   one constructor shares a `Core`: the descriptor, the TLS engine if any, and
-##   atomic counts of live readers and writers.
+##   one constructor shares a `Core`, a `ref` to the descriptor and the TLS
+##   engine if any, which closes the descriptor when the last end is gone.
 ## * Each end has ONE adapter slot, `adapter` (compression, HTTP framing, …),
 ##   set with `setAdapter`. Encryption is not an adapter: a `TlsEngine` lives in
 ##   the core, because TLS is a property of the connection, not of a direction.
@@ -45,11 +45,7 @@
 ## `sendfile`/`splice`/kTLS fast paths in `copy`, and cross-thread close of a
 ## descriptor another lane is parked on.
 
-{.feature: "lenientnils".}
-  # `core` is a `ptr` that is nil exactly in a moved-from or closed end, and the
-  # adapter and TLS slots are nil when empty; every access is behind a check.
-
-import std/[ioring, socket, dns, paths, atomics, commonio, strutils]
+import std/[ioring, socket, dns, paths, commonio, strutils]
 import std/compress/gzip
 
 export ioring.Deadline, ioring.never, ioring.afterMs
@@ -135,11 +131,11 @@ method attach*(a: Adapter; reading: bool) {.base, raises.} =
   ## adapter that only works one way raises for the other.
   discard
 
-method atEnd*(a: Adapter): bool {.base.} =
-  ## A read adapter whose stream has ended on its own — an HTTP body after
-  ## `Content-Length` bytes or the last chunk — although the source has not.
-  ## The reader then returns `0`, and the bytes below stay where they are.
-  result = false
+method hasMore*(a: Adapter): bool {.base.} =
+  ## False for a read adapter whose stream has ended on its own — an HTTP body
+  ## after `Content-Length` bytes or the last chunk — although the source has
+  ## not. The reader then returns `0`, and the bytes below stay where they are.
+  result = true
 
 # --------------------------------------------------------------------- core --
 
@@ -149,86 +145,76 @@ type
     ckString,      ## the bytes of a string (read only)
     ckMemory       ## an in-memory sink (write only), see `extract`
 
-  Core = object
+  CoreObj = object
     kind: CoreKind
     fd: cint
     isSocket: bool
     tls: nil TlsEngine
-    readers, writers: int        ## live ends, changed atomically
     data: string                 ## ckString: the source; ckMemory: the sink
     dataPos: int
     peerDone: bool               ## below the reader: the source has ended
     shutDown: bool               ## our direction has been ended
     dl: Deadline
 
-proc newCore(kind: CoreKind; fd: cint; readers, writers: int): ptr Core =
-  result = cast[ptr Core](alloc0(sizeof(Core)))
-  result[] = Core(kind: kind, fd: fd, isSocket: false, tls: nil,
-                  readers: readers, writers: writers, data: "", dataPos: 0,
-                  peerDone: false, shutDown: false, dl: never)
+  Core = ref CoreObj
+    ## Shared by the ends one constructor returns. They are move-only, so the
+    ## (atomic) reference count changes only when an end is created or dies.
 
-proc freeCore(c: ptr Core) =
+proc `=destroy`(c: CoreObj) =
   if c.kind == ckFd and c.fd >= 0:
     closeFd(c.fd)
-    c.fd = -1
-  `=destroy`(c[])
-  dealloc(c)
+  `=destroy`(c.tls)
+  `=destroy`(c.data)
 
-proc endWriting(c: ptr Core) =
+proc newCore(kind: CoreKind; fd: cint): Core =
+  Core(kind: kind, fd: fd, isSocket: false, tls: nil, data: "", dataPos: 0,
+       peerDone: false, shutDown: false, dl: never)
+
+proc endWriting(c: Core) =
   ## Our direction is over: the peer sees end of data and may still answer.
   if c.isSocket and not c.shutDown and c.fd >= 0:
     when defined(posix):
       discard posixShutdown(c.fd, cint(1))      # SHUT_WR
   c.shutDown = true
 
-proc releaseReader(c: ptr Core) =
-  if c == nil: return
-  if atomicFetchSub(c.readers, 1) == 1 and atomicLoad(c.writers) == 0:
-    freeCore(c)
-
-proc releaseWriter(c: ptr Core; endDirection: bool) =
-  if c == nil: return
-  if atomicFetchSub(c.writers, 1) == 1:
-    if endDirection: endWriting(c)
-    if atomicLoad(c.readers) == 0: freeCore(c)
-
 proc toErr(n: int): ErrorCode {.inline.} =
   if n == 0: EndOfStreamError
   elif n == IoTimedOut: TimeoutError
   else: IOError
 
-proc writeFd(c: ptr Core; data: openArray[char]) {.passive, raises.} =
+proc writeFd(c: Core; data: openArray[char]) {.passive, raises.} =
   var sent = 0
   while sent < data.len:
     let n = writeAsync(c.fd, addr data[sent], data.len - sent, c.dl)
     if n <= 0: raise toErr(n)
     sent += n
 
-proc sendRecords(c: ptr Core) {.passive, raises.} =
-  ## Whatever the engine has queued for the network.
+proc sendRecords(c: Core; e: TlsEngine) {.passive, raises.} =
+  ## Whatever the engine `e` (`c.tls`) has queued for the network.
   var recs = ""
-  c.tls.recordsOut(recs)
+  e.recordsOut(recs)
   if recs.len > 0: writeFd(c, recs)
 
-proc coreSend(c: ptr Core; data: openArray[char]) {.passive, raises.} =
+proc coreSend(c: Core; data: openArray[char]) {.passive, raises.} =
   case c.kind
   of ckMemory:
     c.data.addBytes data
   of ckString:
     raise BadOperation
   of ckFd:
-    if c.tls != nil:
+    let e = c.tls
+    if e != nil:
       var pos = 0
       while pos < data.len:
         var used = 0
-        c.tls.appIn(toOpenArray(data, pos, data.len - 1), used)
+        e.appIn(toOpenArray(data, pos, data.len - 1), used)
         if used <= 0: raise ProtocolError
         pos += used
-      sendRecords(c)
+      sendRecords(c, e)
     else:
       writeFd(c, data)
 
-proc readFd(c: ptr Core; dest: var string): int {.passive, raises.} =
+proc readFd(c: Core; dest: var string): int {.passive, raises.} =
   ## Appends one read's worth; `0` at the end of the source. The kernel writes
   ## straight into `dest`'s spare room: no staging buffer, no zero-fill.
   let old = dest.len
@@ -237,7 +223,7 @@ proc readFd(c: ptr Core; dest: var string): int {.passive, raises.} =
   if n < 0: raise toErr(n)
   result = n
 
-proc coreRecv(c: ptr Core; dest: var string): int {.passive, raises.} =
+proc coreRecv(c: Core; dest: var string): int {.passive, raises.} =
   ## Appends bytes from below the adapter; `0` once the source has ended.
   result = 0
   if c.peerDone: return
@@ -251,42 +237,44 @@ proc coreRecv(c: ptr Core; dest: var string): int {.passive, raises.} =
   of ckMemory:
     raise BadOperation
   of ckFd:
-    if c.tls == nil:
+    let e = c.tls
+    if e == nil:
       result = readFd(c, dest)
       if result == 0: c.peerDone = true
     else:
       while true:
         let old = dest.len
-        c.tls.appOut(dest)
+        e.appOut(dest)
         if dest.len > old: return dest.len - old
-        if c.tls.isPeerClosed:
+        if e.isPeerClosed:
           c.peerDone = true
           return 0
-        sendRecords(c)                # e.g. the answer to a KeyUpdate
+        sendRecords(c, e)               # e.g. the answer to a KeyUpdate
         var recs = ""
         if readFd(c, recs) == 0:
           # The connection ended without `close_notify`: a truncation anyone
           # on the path can cause, so it is not the end of the data.
           raise EndOfStreamError
         var used = 0
-        c.tls.recordsIn(recs, used)
+        e.recordsIn(recs, used)
 
-proc tlsHandshake(c: ptr Core; host: string) {.passive, raises.} =
-  let e = c.tls
+proc tlsHandshake(c: Core; e: TlsEngine; host: string) {.passive, raises.} =
   e.start(host)
   while not e.isConnected:
-    sendRecords(c)
+    sendRecords(c, e)
     var recs = ""
     if readFd(c, recs) == 0: raise EndOfStreamError
     var used = 0
     e.recordsIn(recs, used)
-  sendRecords(c)                       # our Finished
+  sendRecords(c, e)                    # our Finished
 
 # ------------------------------------------------------------ Reader, Writer --
 
 type
   Reader* = object
-    core: nil ptr Core
+    ## Move-only: one owner per end, which is what keeps `Core`'s reference
+    ## count still while bytes flow.
+    core: nil Core
     buf: string          ## decoded bytes not yet handed out start at `pos`
     pos: int
     raw: string          ## bytes from below not yet taken by the adapter
@@ -294,23 +282,13 @@ type
     eof: bool            ## the source below has ended
 
   Writer* = object
-    core: nil ptr Core
+    ## Move-only, like `Reader`.
+    core: nil Core
     buf: string          ## caller bytes not yet pushed through the adapter
     adapter: nil Adapter
     finished: bool
 
-proc `=destroy`*(r: Reader) =
-  releaseReader(r.core)
-
-proc `=wasMoved`*(r: var Reader) {.nodestroy, inline.} =
-  r.core = nil
-
-proc `=dup`*(x: Reader): Reader =
-  ## A `Reader` has one owner: "duplicating" one moves it, which is what lets a
-  ## `.raises` constructor hand one back (as `std/socket`'s `Socket` does).
-  result = Reader(core: x.core, buf: x.buf, pos: x.pos, raw: x.raw,
-                  adapter: x.adapter, eof: x.eof)
-  `=wasMoved`(cast[ptr Reader](unsafeAddr x)[])
+proc `=dup`*(x: Reader): Reader {.error.}
 
 proc `=copy`*(dest: var Reader; src: Reader) {.error.}
 
@@ -326,21 +304,18 @@ proc `=destroy`*(w: Writer) =
         finishImpl(wp[], true)
       except:
         discard
-    releaseWriter(w.core, endDirection = false)
+  `=destroy`(w.core)
+  `=destroy`(w.buf)
+  `=destroy`(w.adapter)
 
-proc `=wasMoved`*(w: var Writer) {.nodestroy, inline.} =
-  w.core = nil
-
-proc `=dup`*(x: Writer): Writer =
-  result = Writer(core: x.core, buf: x.buf, adapter: x.adapter, finished: x.finished)
-  `=wasMoved`(cast[ptr Writer](unsafeAddr x)[])
+proc `=dup`*(x: Writer): Writer {.error.}
 
 proc `=copy`*(dest: var Writer; src: Writer) {.error.}
 
-proc initReader(c: ptr Core): Reader =
+proc initReader(c: Core): Reader =
   Reader(core: c, buf: "", pos: 0, raw: "", adapter: nil, eof: false)
 
-proc initWriter(c: ptr Core): Writer =
+proc initWriter(c: Core): Writer =
   Writer(core: c, buf: "", adapter: nil, finished: false)
 
 # ------------------------------------------------------------------ reading --
@@ -350,16 +325,19 @@ proc refill(r: var Reader): bool {.passive, raises.} =
   if r.pos > 0:
     r.buf = if r.pos < r.buf.len: r.buf.substr(r.pos) else: ""
     r.pos = 0
+  let c = r.core
+  if c == nil: raise BadOperation
+  let a = r.adapter
   while true:
-    if r.adapter != nil:
-      if r.adapter.atEnd: return false
+    if a != nil:
+      if not a.hasMore: return false
       if r.raw.len > 0 or r.eof:
         var used = 0
         let before = r.buf.len
-        r.adapter.run(r.raw, used, r.buf, final = r.eof)
+        a.run(r.raw, used, r.buf, final = r.eof)
         if used > 0: r.raw = r.raw.substr(used)
         if r.buf.len > before: return true
-        if r.adapter.atEnd or r.eof: return false
+        if not a.hasMore or r.eof: return false
         if used == 0 and r.raw.len > 0 and r.eof: return false
     else:
       if r.raw.len > 0:
@@ -372,7 +350,7 @@ proc refill(r: var Reader): bool {.passive, raises.} =
         return true
       if r.eof: return false
     if r.eof: return false
-    if coreRecv(r.core, r.raw) == 0: r.eof = true
+    if coreRecv(c, r.raw) == 0: r.eof = true
 
 proc read*(r: var Reader; dest: var openArray[char]): int {.passive, raises.} =
   ## Up to `dest.len` bytes; `0` is the end of the data.
@@ -417,25 +395,27 @@ proc readAll*(r: var Reader): string {.passive, raises.} =
 proc close*(r: var Reader) {.raises.} =
   ## Optional: the destructor does the same.
   if r.core == nil: raise BadOperation
-  releaseReader(r.core)
   r.core = nil
 
 # ------------------------------------------------------------------ writing --
 
 proc push(w: var Writer; final: bool) {.passive, raises.} =
   ## Moves the buffered bytes through the adapter and down.
-  if w.adapter != nil:
+  let c = w.core
+  if c == nil: raise BadOperation
+  let a = w.adapter
+  if a != nil:
     var outb = ""
     var used = 0
-    w.adapter.run(w.buf, used, outb, final)
+    a.run(w.buf, used, outb, final)
     if used >= w.buf.len: w.buf = ""
     elif used > 0: w.buf = w.buf.substr(used)
     elif final and w.buf.len > 0: raise ProtocolError   # an adapter must take all at the end
-    if outb.len > 0: coreSend(w.core, outb)
+    if outb.len > 0: coreSend(c, outb)
   elif w.buf.len > 0:
     let data = move w.buf
     w.buf = ""
-    coreSend(w.core, data)
+    coreSend(c, data)
 
 proc write*(w: var Writer; data: openArray[char]) {.passive, raises.} =
   if w.core == nil or w.finished: raise BadOperation
@@ -455,10 +435,11 @@ proc finishImpl(w: var Writer; clean: bool) {.passive, raises.} =
   if clean:
     push(w, true)
     let c = w.core
-    if c != nil and atomicLoad(c.writers) == 1:
-      if c.tls != nil and c.kind == ckFd:
-        c.tls.close()
-        sendRecords(c)
+    if c != nil:
+      let e = c.tls
+      if e != nil and c.kind == ckFd:
+        e.close()
+        sendRecords(c, e)
       endWriting(c)
 
 proc close*(w: var Writer) {.passive, raises.} =
@@ -467,7 +448,6 @@ proc close*(w: var Writer) {.passive, raises.} =
   ## cannot.
   if w.core == nil or w.finished: raise BadOperation
   finishImpl(w, true)
-  releaseWriter(w.core, endDirection = false)
   w.core = nil
 
 proc abort*(w: var Writer) =
@@ -478,9 +458,7 @@ proc abort*(w: var Writer) =
     w.finished = true
     w.buf = ""
     let c = w.core
-    if c != nil:
-      if atomicLoad(c.writers) == 1: endWriting(c)
-      releaseWriter(c, endDirection = false)
+    if c != nil: endWriting(c)
     w.core = nil
 
 proc extract*(w: sink Writer): string {.raises.} =
@@ -500,8 +478,9 @@ proc setAdapter*(r: var Reader; a: nil Adapter) {.passive, raises.} =
   ## below but not yet handed out become the new adapter's input. Replacing a
   ## adapter that has not reached its end raises: its data would be lost.
   if r.core == nil: raise BadOperation
-  if r.adapter != nil:
-    if not r.adapter.atEnd: raise BadOperation
+  let old = r.adapter
+  if old != nil:
+    if old.hasMore: raise BadOperation
     if r.pos < r.buf.len: raise BadOperation
     r.buf = ""
     r.pos = 0
@@ -551,8 +530,8 @@ method run*(a: GzipAdapter; src: openArray[char]; used: var int;
     if src.len > 0: a.enc.compress(src, dest)
     if final: a.enc.finish(dest)
 
-method atEnd*(a: GzipAdapter): bool =
-  a.reading and a.done
+method hasMore*(a: GzipAdapter): bool =
+  not (a.reading and a.done)
 
 # ------------------------------------------------------------- constructors --
 
@@ -567,25 +546,25 @@ proc openFd(p: Path; mode: FileMode): cint {.passive, raises.} =
 
 proc openReader*(p: Path): Reader {.passive, raises.} =
   ## The file at `p`.
-  result = initReader(newCore(ckFd, openFd(p, fmRead), 1, 0))
+  result = initReader(newCore(ckFd, openFd(p, fmRead)))
 
 proc openReader*(s: sink string): Reader =
   ## The bytes of `s`.
-  let c = newCore(ckString, -1, 1, 0)
+  let c = newCore(ckString, -1)
   c.data = s
   result = initReader(c)
 
 proc openWriter*(p: Path): Writer {.passive, raises.} =
   ## The file at `p`, truncated.
-  result = initWriter(newCore(ckFd, openFd(p, fmWrite), 0, 1))
+  result = initWriter(newCore(ckFd, openFd(p, fmWrite)))
 
 proc openAppending*(p: Path): Writer {.passive, raises.} =
   ## The file at `p`, written at its end.
-  result = initWriter(newCore(ckFd, openFd(p, fmAppend), 0, 1))
+  result = initWriter(newCore(ckFd, openFd(p, fmAppend)))
 
 proc openWriter*(sizeHint = 1024): Writer =
   ## An in-memory writer; `extract` gives its bytes back.
-  let c = newCore(ckMemory, -1, 0, 1)
+  let c = newCore(ckMemory, -1)
   c.data = newStringOfCap(sizeHint)
   result = initWriter(c)
 
@@ -606,23 +585,19 @@ proc isIpLiteral(host: string): bool =
   for ch in host:
     if ch notin {'0'..'9', '.'}: return false
 
-proc connectCore(address: string; tls: nil TlsEngine; readers, writers: int): ptr Core {.
+proc connectCore(address: string; tls: nil TlsEngine): Core {.
     passive, raises.} =
   var host = ""
   var port = 0'u16
   splitAddress(address, host, port)
   let ip = if isIpLiteral(host): host else: resolve(host)
   var s = socket.connect(ip, port)
-  let c = newCore(ckFd, s.fd, readers, writers)
+  let c = newCore(ckFd, s.fd)
   s.fd = -1                         # the core owns the descriptor now
   c.isSocket = true
   if tls != nil:
     c.tls = tls
-    try:
-      tlsHandshake(c, host)
-    except ErrorCode as e:
-      freeCore(c)
-      raise e
+    tlsHandshake(c, tls, host)     # on failure the core closes the socket
   result = c
 
 proc connect*(address: string; tls: nil TlsEngine = nil): (Reader, Writer) {.
@@ -630,7 +605,7 @@ proc connect*(address: string; tls: nil TlsEngine = nil): (Reader, Writer) {.
   ## A connection to `address` (`host:port`); TLS when an engine is given. For
   ## a protocol where the peer speaks first (SMTP, IMAP): the next step is
   ## reading its greeting.
-  let c = connectCore(address, tls, 1, 1)
+  let c = connectCore(address, tls)
   result = (initReader(c), initWriter(c))
 
 proc connect*(address: string; request: string; tls: nil TlsEngine = nil): (Reader, Writer) {.
@@ -638,7 +613,7 @@ proc connect*(address: string; request: string; tls: nil TlsEngine = nil): (Read
   ## For a protocol where we speak first (HTTP, Redis): `request` is written
   ## and FLUSHED before this returns, so the next step is reading the reply —
   ## the forgotten flush that hangs both sides cannot be written.
-  let c = connectCore(address, tls, 1, 1)
+  let c = connectCore(address, tls)
   var w = initWriter(c)
   write(w, request)
   flush(w)
@@ -647,11 +622,11 @@ proc connect*(address: string; request: string; tls: nil TlsEngine = nil): (Read
 proc connectReader*(address: string; tls: nil TlsEngine = nil): Reader {.passive, raises.} =
   ## Only the receiving end, e.g. a feed. The sending direction is left alone
   ## (not shut down) and closes with the reader.
-  result = initReader(connectCore(address, tls, 1, 0))
+  result = initReader(connectCore(address, tls))
 
 proc connectWriter*(address: string; tls: nil TlsEngine = nil): Writer {.passive, raises.} =
   ## Only the sending end, e.g. shipping logs.
-  result = initWriter(connectCore(address, tls, 0, 1))
+  result = initWriter(connectCore(address, tls))
 
 proc detachWriter*(w: var Writer) =
   ## Drops a writer WITHOUT ending its direction: no adapter trailer, no
@@ -660,7 +635,6 @@ proc detachWriter*(w: var Writer) =
   ## the direction would make many servers drop the connection.
   if w.core != nil:
     w.finished = true
-    releaseWriter(w.core, endDirection = false)
     w.core = nil
 
 # --------------------------------------------------------------------- copy --
