@@ -32,7 +32,8 @@
 {.feature: "staticContracts".}
 
 import std/[times, streamio]
-import std/crypto/[sha2, hmac, chacha20poly1305, x25519, x509, ecdsa, rsa, sysrand]
+import std/crypto/[sha2, hmac, chacha20poly1305, x25519, x509, ecdsa, rsa, sysrand,
+                  certstore]
 
 export streamio.TlsEngine
 

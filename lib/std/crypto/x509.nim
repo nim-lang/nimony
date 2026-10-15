@@ -18,7 +18,7 @@
 
 {.feature: "staticContracts".}
 
-import std/[strutils, base64, syncio]
+import std/[strutils, base64]
 import std/crypto/[sha2, rsa, ecdsa]
 
 type
@@ -518,24 +518,7 @@ proc addPem*(store: var TrustStore; pem: string): int =
       store.roots.add c
       inc result
 
-const SystemBundles* = [
-  "/etc/ssl/certs/ca-certificates.crt",        # Debian, Ubuntu, Arch, Gentoo
-  "/etc/pki/tls/certs/ca-bundle.crt",          # Fedora, RHEL
-  "/etc/ssl/ca-bundle.pem",                    # openSUSE
-  "/etc/ssl/cert.pem",                         # Alpine, macOS, BSDs
-  "/usr/local/share/certs/ca-root-nss.crt"]    # FreeBSD
-
-proc loadSystemTrustStore*(): TrustStore =
-  ## The operating system's CA bundle — the first of `SystemBundles` that
-  ## exists and yields at least one certificate.
-  result = TrustStore(roots: @[])
-  for path in SystemBundles:
-    var pem = ""
-    try:
-      pem = readFile(path)
-    except:
-      continue
-    if result.addPem(pem) > 0: return
+# The operating system's roots: `std/crypto/certstore`.
 
 # ------------------------------------------------------------------- chain --
 
