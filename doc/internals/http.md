@@ -534,7 +534,7 @@ Two injection seams, both invisible to the code in §2:
 | `std/http/httpcoding` | content codings: `Accept-Encoding` negotiation, `readContent`. **Done** for gzip and deflate. |
 | `std/compress/*` | DEFLATE, gzip/zlib containers, CRC-32/Adler-32. Pure Nim, streaming both ways. No HTTP. **Done**. |
 | `std/httpserver` | the loop of §2, and the protocol rules above framing. **Done**. |
-| `std/httpclient` | the other direction. |
+| `std/httpclient` | the other direction, on `std/streamio` (#2635): `httpGet`/`httpPost`/`httpPut` return the body as a `Reader`. **Done** for one request per connection. |
 
 Mirrors `std/ioring.nim` plus `std/ioring/`.
 

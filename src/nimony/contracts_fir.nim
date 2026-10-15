@@ -535,7 +535,7 @@ proc endBorrow(c: var FirContext; sym: SymId) =
 template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
 
 proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
-                   olds: Table[string, VarId])
+                   olds: Table[string, VarId]; resultSym = NoSymId)
 proc operandRange(c: var FirContext; n: Cursor; lo, hi: var xint)
 
 proc analyseIfDerived(c: var FirContext; n: Cursor; call: var CallContext) =
@@ -3117,6 +3117,41 @@ proc proveMasked(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
           return Proven
         skip d
 
+proc isLocation(v: VarId): bool {.inline.} =
+  v != VarId(0) and v != InvalidVarId
+
+proc proveIntervalVsLocation(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
+  ## A comparison with a BOUNDED shape on one side and a LOCATION on the other:
+  ## `i * 4 + 3 < len(b)` for `i` in `0 ..< 8` and `len(b) == 32`. Neither half
+  ## of the engine sees it alone — `pureCompare` cannot state a product, and
+  ## `proveByIntervals` gives a location no interval, since what bounds it is a
+  ## flow fact. So the interval's far end is put to the fact engine as a
+  ## question about the location: `[lo, hi] < v + k` holds iff `hi < v + k`.
+  result = Unprovable
+  let xk = n.exprKind
+  if xk notin {LeX, LtX}: return
+  let strict = if xk == LtX: createXint(1'i64) else: zero()
+  var r = n
+  r = sub(r)
+  skip r # the type operand
+  let lhs = r
+  skip r
+  let rhs = r
+  var v = VarId(0)
+  var k = zero()
+  var lo = zero()
+  var hi = zero()
+  if pureOperand(c, rhs, rd, v, k) and v.isLocation and
+      operandInterval(c, lhs, rd, lo, hi):
+    # `hi <= v + k - strict`; an unbounded end makes the question NaN
+    let q = query(VarId(0), v, k - hi - strict)
+    if q.isValid and impliesHere(c, q): result = Proven
+  elif pureOperand(c, lhs, rd, v, k) and v.isLocation and
+      operandInterval(c, rhs, rd, lo, hi):
+    # `v + k <= lo - strict`
+    let q = query(v, VarId(0), lo - k - strict)
+    if q.isValid and impliesHere(c, q): result = Proven
+
 proc proveCond(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   case n.exprKind
   of AndX:
@@ -3153,6 +3188,8 @@ proc proveCond(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
       result = proveMasked(c, n, rd)
       if result == Unprovable:
         result = proveByIntervals(c, n, rd)
+      if result == Unprovable:
+        result = proveIntervalVsLocation(c, n, rd)
     when defined(contractLeaves):
       # `-d:contractLeaves` adds the per-conjunct verdict to `-d:contractStats`,
       # which is what tells "the index has no proven lower bound" apart from
@@ -3216,7 +3253,22 @@ proc assumeCond(c: var FirContext; n: Cursor; rd: Reading) =
         # `lo <= lhs <= v + k`
         c.facts.add query(VarId(0), v, k - lo - strict)
 
-proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo) =
+proc bindResultPaths(c: var FirContext; rd: var Reading;
+                     resultSyms: openArray[SymId]; dest: SymId) =
+  ## `len(result)` and `result.f` in an `.ensures` are paths UNDER `result`,
+  ## so they name locations under whatever `result` is bound to: the local a
+  ## call's value lands in, or the routine's own `result` when its body is
+  ## judged. `rd.results` maps only the bare symbol — a path keyed from the
+  ## proposition's own `result` would match no location anywhere.
+  if dest == NoSymId or resultSyms.len == 0: return
+  var buf = createTokenBuf(1)
+  buf.addSymUse dest, NoLineInfo
+  let cur = c.typeCache.keepAlive(buf)
+  for rs in resultSyms:
+    rd.args[rs] = cur
+
+proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo;
+                   resultSym = NoSymId) =
   ## Prove the routine's own `.ensures` where control leaves it: `result` stands
   ## for `resultVar`, `old(e)` for what `e` held on entry. A postcondition is
   ## the routine's promise to every caller, who takes it without looking; left
@@ -3229,7 +3281,9 @@ proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo) =
       inner = sub(inner)
       if not inner.hasMore: break
       if inner.symKind == ResultY and resultVar != InvalidVarId:
-        rd.results[asLocal(inner).name.symId] = resultVar
+        let rs = asLocal(inner).name.symId
+        rd.results[rs] = resultVar
+        bindResultPaths(c, rd, [rs], resultSym)
       while inner.hasMore and not isLastSon(inner): skip inner
       cond = inner
     let res = proveCond(c, cond, rd)
@@ -3245,7 +3299,7 @@ proc assumeOwnContract(c: var FirContext; n: Cursor) =
   assumeCond(c, n, plainReading())
 
 proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
-                   olds: Table[string, VarId]) =
+                   olds: Table[string, VarId]; resultSym = NoSymId) =
   ## A callee's `.ensures`, read at the call site with its parameters standing
   ## for the arguments and `result` for the location the call was bound to.
   ##
@@ -3298,6 +3352,7 @@ proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
   var rd = Reading(args: subst, results: initTable[SymId, VarId](), olds: olds)
   for rs in resultSyms:
     rd.results[rs] = resultVar
+  bindResultPaths(c, rd, resultSyms, resultSym)
   assumeCond(c, cond, rd)
 
 proc snapshotOlds(c: var FirContext; n: Cursor; rd: var Reading) =
@@ -4040,7 +4095,7 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
     # bookkeeping above may have invalidated its range facts, so restore them.
     seedRangeFacts c, symId, expected
     # ... and whatever the callee promised about what it just returned.
-    assumeEnsures c, valueStart, getVarId(c, symId), call.olds
+    assumeEnsures c, valueStart, getVarId(c, symId), call.olds, symId
 
     skip n
   else:
@@ -4617,7 +4672,7 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
   let info = n.info
   n.into:
     if n.isDotToken:
-      verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), info
+      verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), info, c.resultSym
       inc n
     else:
       var retLoc = plainLocationVarId(c, n)
@@ -4631,7 +4686,7 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
           addAsgnFact c, query(retLoc, v, k)
         elif not sumWithBoundedTerm(c, n, retLoc):
           addBoundFacts c, retLoc, n
-      verifyEnsures c, retLoc, info
+      verifyEnsures c, retLoc, info, (if n.isSymbol: n.symId else: NoSymId)
       let providesResult = c.resultSym != NoSymId and
         not (n.isSymbol and n.symId == c.resultSym)
       if providesResult:
@@ -4893,7 +4948,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   # record that for downstream obligations that reference this symbol.
   if initAccepted:
     seedRangeFacts c, name, localType
-    assumeEnsures c, initStart, getVarId(c, name), call.olds
+    assumeEnsures c, initStart, getVarId(c, name), call.olds, name
 
 proc traverseAssume(c: var FirContext; n: var Cursor) =
   ## `{.assume: cond.}`: the programmer's word, taken. The one statement that
@@ -5044,7 +5099,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   if not isGeneric and not isExternProc and not isAsm:
     traverseStmt c, n, call
     # Falling off the end is an exit too.
-    verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info
+    verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info, c.resultSym
     # Join every `return` into the natural fall-through: the result init-set at
     # proc exit is the intersection over all exit paths. The init-check below
     # then reads `c.flow.inits` — `result`/out-params must be init on every path
