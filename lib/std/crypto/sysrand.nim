@@ -21,8 +21,8 @@
 ## | other POSIX         | `/dev/urandom`                               |
 ##
 ## Linux falls back to `/dev/urandom` on a kernel older than 3.17 (or a
-## seccomp filter that rejects `getrandom` with `ENOSYS`), and always uses it
-## on the libc-free backend, whose syscall table has no `getrandom` row.
+## seccomp filter that rejects `getrandom` with `ENOSYS`). The libc-free
+## backend issues the `getrandom` syscall itself.
 
 {.feature: "staticContracts".}
 
@@ -51,8 +51,7 @@ else:
   import std/posix/posix
 
   const
-    useGetrandom = defined(freebsd) or defined(illumos) or
-                   (defined(linux) and not rawSyscalls)
+    useGetrandom = defined(linux) or defined(freebsd) or defined(illumos)
     useGetentropy = defined(osx)
 
   proc fillFromDevice(p: ptr UncheckedArray[byte]; size: int): bool =
