@@ -31,7 +31,7 @@ backends implement a subset of the same mode.
 ## Locations
 
 Every parameter and local declares its location. A parameter's register is
-its C ABI register — the pragma is an *assertion*, checked:
+its ABI register — the pragma is an *assertion*, checked:
 
 ```nim
 proc feAdd(r {.register: "rdi".}: FePtr; a {.register: "rsi".}: FePtr;
