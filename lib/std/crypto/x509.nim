@@ -66,6 +66,8 @@ type
 
   TrustStore* = object
     roots*: seq[Certificate]
+    system*: bool             ## the OS's own roots (`std/crypto/certstore`),
+                              ## so the OS's chain engine may judge instead
 
 # ------------------------------------------------------------- DER reader ---
 

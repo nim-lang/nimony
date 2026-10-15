@@ -545,7 +545,7 @@ proc onHandshakeMessage(e: NimonyTlsEngine; typ: byte; msg: seq[byte]) {.raises.
       var chain: seq[Certificate] = @[]
       parseCertificates(e, msg, chain)
       e.transcript.update(msg)
-      let verdict = verifyChain(e.store, chain, e.host, getTime().toUnix)
+      let verdict = verifyServerChain(e.store, chain, e.host, getTime().toUnix)
       if verdict != ceNone:
         e.certError = verdict
         e.fail(tfCertificate)
