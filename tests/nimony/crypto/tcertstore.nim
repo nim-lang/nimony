@@ -1,34 +1,28 @@
-import std/[syncio, envvars]
+import std/syncio
 import std/crypto/[x509, certstore]
 
 const Roots = slurp("certs/roots.pem")
 
-proc main() {.raises.} =
+proc main() =
   # whatever the machine trusts: CI runners and desktops alike have roots
   echo loadSystemTrustStore().roots.len > 0
 
-  # SSL_CERT_FILE replaces the defaults
+  # a bundle file (`SSL_CERT_FILE`): exactly its certificates, in order
   var expected = TrustStore(roots: @[])
   let n = expected.addPem(Roots)
-  putEnv("SSL_CERT_FILE", "tests/nimony/crypto/certs/roots.pem")
-  let s = loadSystemTrustStore()
+  let s = loadTrustStore("tests/nimony/crypto/certs/roots.pem", "")
   echo s.roots.len == n
   var same = true
   for i in 0 ..< n:
     if s.roots[i].der != expected.roots[i].der: same = false
   echo same
 
-  # SSL_CERT_DIR adds every file in it, each certificate once
-  putEnv("SSL_CERT_FILE", "")
-  putEnv("SSL_CERT_DIR", "tests/nimony/crypto/certs")
-  let d = loadSystemTrustStore()
+  # a directory (`SSL_CERT_DIR`): every file in it, each certificate once
+  let d = loadTrustStore("", "tests/nimony/crypto/certs")
   var dup = false
   for i in 0 ..< d.roots.len:
     for j in i + 1 ..< d.roots.len:
       if d.roots[i].der == d.roots[j].der: dup = true
   echo d.roots.len > n, " ", dup
 
-try:
-  main()
-except ErrorCode as e:
-  echo "FAILED: ", e
+main()

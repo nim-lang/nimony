@@ -293,20 +293,25 @@ proc verifyServerChain*(store: TrustStore; chain: openArray[Certificate];
       return toCertError(code)
   result = verifyChain(store, chain, host, now)
 
+proc loadTrustStore*(certFile, certDir: string): TrustStore =
+  ## The roots of a PEM bundle `certFile` and of the PEM files in `certDir`
+  ## (a `PATH`-style list of directories); either may be empty. What
+  ## `SSL_CERT_FILE` and `SSL_CERT_DIR` select. Each certificate is kept once.
+  result = TrustStore(roots: @[])
+  if certFile.len > 0: discard result.addFile(certFile)
+  if certDir.len > 0:
+    for d in certDir.split(when defined(windows): ';' else: ':'):
+      if d.len > 0: discard result.addDir(d)
+
 proc loadSystemTrustStore*(): TrustStore =
   ## The operating system's trusted roots; see the module documentation for
   ## where they come from. Empty if none could be found, in which case every
   ## chain fails to verify — never the other way round.
-  result = TrustStore(roots: @[])
   let certFile = getEnv("SSL_CERT_FILE")
   let certDir = getEnv("SSL_CERT_DIR")
   if certFile.len > 0 or certDir.len > 0:
-    if certFile.len > 0: discard result.addFile(certFile)
-    if certDir.len > 0:
-      for d in certDir.split(when defined(windows): ';' else: ':'):
-        if d.len > 0: discard result.addDir(d)
-    return
-  result.system = true
+    return loadTrustStore(certFile, certDir)
+  result = TrustStore(roots: @[], system: true)
   when defined(windows):
     discard result.addSystemStore("ROOT")
     discard result.addCacertPem()
