@@ -21,7 +21,7 @@ Options:
   -h, --help        Show help and exit""",
     @["status", "-v"])
 
-  assert $options.command == "cmdStatus"
+  assert options.command == cmdStatus
   assert options.env == ""
   assert options.target == ""
   assert options.verbose
@@ -43,10 +43,10 @@ Options:
   -h, --help        Show help and exit""",
     @["run", "--mode=safe", "prod", "--verbose", "api"])
 
-  assert $options.command == "cmdRun"
+  assert options.command == cmdRun
   assert options.env == "prod"
   assert options.target == "api"
-  assert $options.mode == "cliModeSafe"
+  assert options.mode == cliModeSafe
   assert options.verbose
 
 block:
@@ -65,7 +65,7 @@ Options:
   -h, --help		Show help and exit""",
     @["--verbose", "run", "prod", "api"])
 
-  assert $options.command == "cmdRun"
+  assert options.command == cmdRun
   assert options.env == "prod"
   assert options.target == "api"
   assert options.verbose
