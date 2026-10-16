@@ -100,3 +100,36 @@ proc tempEscapesScope(b: bool) =
   if g.len > 0: discard g[0]
 
 tempEscapesScope(true)
+
+# 9. `result` is never killed, but the borrow it holds lasts until the proc
+# returns: mutating the source afterwards hands the caller a dangling view.
+proc resultThenMutate(s: var seq[int]): openArray[int] =
+  result = toOpenArray(s)
+  grow(s)
+
+var src = @[1, 2, 3]
+discard resultThenMutate(src)
+
+# 10. `let a = b` for a view `b` takes over `b`'s borrow; rebinding `b` must not
+# release the only borrow on `s` while `a` still points into it.
+proc copiedViewRebind =
+  var s = @[1, 2, 3]
+  var r = @[4, 5]
+  var b = toOpenArray(s)
+  let a = b
+  b = toOpenArray(r)
+  grow(s)
+  discard a[0]
+
+copiedViewRebind()
+
+# 11. A reslice of a view assigned back to itself keeps the original borrow:
+# `a` must not end up borrowing from `a`.
+proc selfReslice =
+  var s = @[1, 2, 3]
+  var a = toOpenArray(s)
+  a = toOpenArray(a, 1, 2)
+  grow(s)
+  discard a[0]
+
+selfReslice()

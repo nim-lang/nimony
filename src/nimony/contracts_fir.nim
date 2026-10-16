@@ -4147,17 +4147,25 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   # is no longer produced, see the `VV` branch of `traverseStmt`)
   let destSymId = extractSymIdForStore(n)
   # `outer = toOpenArray(a)` rebinds what `outer` aliases, exactly as the
-  # `let outer = toOpenArray(a)` form does in `traverseLocal`. Destinations that
-  # outlive the proc are skipped: they are never `kill`ed, so the scope-exit
-  # check below could not judge them anyway, and `checkEscapingBorrow` above
-  # already had the final say on those.
-  if destSymId != NoSymId and not outlivesProc(c, destSymId) and
+  # `let outer = toOpenArray(a)` form does in `traverseLocal`. `result` is
+  # included: it is never `kill`ed, so the scope-exit check below cannot judge
+  # it (`checkEscapingBorrow` above has the final say on that), but the borrow
+  # it holds lasts until the proc returns, and `result = toOpenArray(s); s.add x`
+  # would hand the caller a view into reallocated storage. Globals and `var`
+  # parameters stay out: a global is shared storage this analysis does not
+  # follow, and a `var openArray` parameter cannot be replaced at all.
+  if destSymId != NoSymId and
+     (destSymId == c.resultSym or not outlivesProc(c, destSymId)) and
      canCarryBorrow(c, valueStart):
-    endBorrow(c, destSymId)
+    # What the value carries is asked *before* the destination's own borrow
+    # ends: `a = toOpenArray(a, 1, 2)` is derived from `a` itself, so `a` keeps
+    # what it borrowed instead of ending up borrowing from itself.
     var b = borrowCarriedBy(c, valueStart)
-    if b.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-      b.borrower = destSymId
-      c.activeBorrows.add b
+    if not (b.path.len > 0 and b.path[0] == destSymId):
+      endBorrow(c, destSymId)
+      if b.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+        b.borrower = destSymId
+        c.activeBorrows.add b
   if destSymId != NoSymId:
     let symId = destSymId
     if n.kind == Symbol: checkSharedAccess c, n
@@ -5028,6 +5036,14 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     # precisely, and only for the duration of the call, by the inline-var
     # look-through in `extractBorrowPath`.
     var path = extractPath(c, n)
+    if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      path.borrower = name
+      c.activeBorrows.add path
+  elif not isInline and n.isSymbol and canCarryBorrow(c, n):
+    # `let a = b` for a view `b`: `a` aliases whatever `b` does, so it takes over
+    # `b`'s borrow. Otherwise `b = toOpenArray(r)` would release the only borrow
+    # on `b`'s old source while `a` still points into it.
+    var path = borrowCarriedBy(c, n)
     if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       path.borrower = name
       c.activeBorrows.add path

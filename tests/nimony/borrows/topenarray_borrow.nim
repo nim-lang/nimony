@@ -180,3 +180,38 @@ proc testViewOfTemp =
   assert other[0] == 90
 
 testViewOfTemp()
+
+# `result` holds a borrow like any other view variable, so reassigning it
+# releases the previous source.
+proc resultRebind(a: var seq[int]; b: seq[int]): openArray[int] =
+  result = toOpenArray(a)
+  result = toOpenArray(b)
+  a.add 4
+
+proc testResultRebind =
+  var x = @[1, 2, 3]
+  let y = @[7, 8]
+  assert sum(resultRebind(x, y)) == 15
+  assert x.len == 4
+
+testResultRebind()
+
+# A view copied with `let` keeps the source borrowed only as long as the copy
+# lives; a reslice assigned back keeps what the view borrowed.
+proc testCopiedViewAndReslice =
+  var s = @[1, 2, 3, 4]
+  var r = @[5, 6]
+  block:
+    var b = toOpenArray(s)
+    let a = b
+    b = toOpenArray(r)
+    assert sum(a) == 10
+    assert sum(b) == 11
+  grow(s, 5)
+  var v = toOpenArray(s)
+  v = toOpenArray(v, 1, 2)
+  assert sum(v) == 5
+  grow(r, 7)
+  assert r.len == 3
+
+testCopiedViewAndReslice()
