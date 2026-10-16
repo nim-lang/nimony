@@ -215,6 +215,15 @@ proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
     # calling convention is always nimcall for now:
     dest.copyIntoKind PragmasU, NoLineInfo:
       dest.addParPair Nimcall, NoLineInfo
+      # A `.raises` method returns its error code at the Leng level, and the
+      # slot is called through this type: without the pragma the cast says
+      # `void` while every implementation returns the code (#raises-method).
+      if n.substructureKind == PragmasU:
+        var p = n
+        p.into:
+          while p.hasMore:
+            if p.pragmaKind == RaisesP: dest.addSubtree p
+            skip p
 
 type ClassInfo = object
   root: SymId

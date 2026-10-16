@@ -29,7 +29,7 @@ import std/commonio
 export commonio
 
 when defined(windows):
-  import std/windows/winlean   # Handle, DWORD, WINBOOL, closeHandle
+  import std/windows/winlean   # Handle, DWORD, WINBOOL
 else:
   from std/posix/posix import Off, pcall
 
@@ -56,7 +56,7 @@ proc `=destroy`*(f: File) =
   ## Closing is not something a caller has to remember: a `File` owns its
   ## descriptor, so the descriptor goes when the file does.
   if f.fd != ClosedFile:
-    closeImpl(f.fd)
+    closeFd(f.fd)   # also cancels this lane's in-flight ops on it
 
 proc `=wasMoved`*(f: var File) {.nodestroy, inline.} =
   ## The descriptor went with the destination, so this one must not close it.
@@ -76,17 +76,14 @@ proc `=copy`*(dest: var File; src: File) {.error.}
   ## whichever is destroyed first closes it under the other.
 
 # ------------------------------------------------------- platform arms ---
-# Only close and seek differ: the ring's `open`, `read`
-# and `write` commands are the same on every platform, the backend performs
-# them on its polling thread and the caller only parks.
+# Only seek differs: the ring's `open`, `read` and `write` commands and its
+# `closeFd` are the same on every platform, the backend performs them on its
+# polling thread and the caller only parks.
 
 when defined(windows):
   proc handleOf(fd: cint): Handle {.inline.} =
     ## Widen the ring's narrowed HANDLE back without sign extension.
     cast[Handle](uint(cast[uint32](fd)))
-
-  proc closeImpl(fd: cint) {.inline.} =
-    discard closeHandle(handleOf(fd))
 
   proc setFilePointerEx(hFile: Handle; distance: int64; newPos: ptr int64;
                         moveMethod: DWORD): WINBOOL {.
@@ -100,9 +97,6 @@ when defined(windows):
 
 else:
   proc posixLseek(fd: cint; off: Off; whence: cint): Off {.importc: "lseek", sideEffect.}
-
-  proc closeImpl(fd: cint) {.inline.} =
-    closeFd(fd)   # also cancels this lane's in-flight ops on it
 
   proc seekImpl(fd: cint; off: int64; whence: cint): int64 {.raises.} =
     ## `lseek` is a positioning syscall with nothing for the ring to park on,
@@ -169,7 +163,7 @@ proc close*(f: var File) =
   ## opened, read and closed on one lane — one passive chain, as the
   ## whole-file helpers above are.
   if f.fd != ClosedFile:
-    closeImpl(f.fd)
+    closeFd(f.fd)
     f.fd = ClosedFile
 
 # --------------------------------------------------------- the read side ---

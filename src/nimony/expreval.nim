@@ -1752,6 +1752,10 @@ proc countEnumValues*(n: Cursor): xint =
         result = b.hi - b.lo + createXint(1'i64)
 
 proc getArrayIndexLen*(index: Cursor): xint =
+  # `(array T 32)`: the lowered spelling, with the element count itself. What a
+  # `set` becomes once it is bytes, and what a pass running after that lowering
+  # (the coroutine lifting of a `.passive` proc) hands back here.
+  if index.kind == IntLit: return createXint(index.intVal)
   var index = toTypeImpl index
   case index.typeKind
   of EnumT:

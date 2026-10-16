@@ -3585,13 +3585,19 @@ proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
+  # A template's body is checked where it is DECLARED, but whether it may
+  # raise is a property of where it is EXPANDED: the expansion is checked again
+  # in that routine. An error written into the stored body here would be copied
+  # into every expansion as an extra child of the `raise`.
+  let inTemplate = c.routine.kind == TemplateY
   takeInto dest, it.n:
     if c.routine.kind == NoSym:
       buildErr c, dest, info, "`raise` only allowed within a routine"
-    elif not c.routine.pragmas.contains(RaisesP) and CanRaiseFeature notin c.features:
+    elif not inTemplate and not c.routine.pragmas.contains(RaisesP) and
+        CanRaiseFeature notin c.features:
       buildErr c, dest, info, "`raise` only allowed within a routine with `raises` pragma"
     if it.n.isDotToken:
-      if c.routine.inExcept == 0:
+      if c.routine.inExcept == 0 and not inTemplate:
         buildErr c, dest, info,
           "bare `raise` is only allowed inside an `except` block"
       takeTree dest, it.n

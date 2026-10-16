@@ -543,9 +543,11 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
                    canRaise: hasPragma(r.pragmas, RaisesP),
                    retType: r.retType, resultSym: SymId(0))
 
+  # An `{.assembler.}` body is machine code, passed through verbatim.
+  let isAsm = hasPragma(r.pragmas, AssemblerP)
   copyInto(dest, n):
     let isConcrete = takeRaisingHeader(c2, dest, decl, n)
-    if isConcrete:
+    if isConcrete and not isAsm:
       let symId = r.name.symId
       if isLocalDecl(symId):
         c2.typeCache.registerLocal(symId, r.kind, decl)
