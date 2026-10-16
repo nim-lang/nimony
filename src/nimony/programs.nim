@@ -272,6 +272,31 @@ proc mergeFilter*(f: var ImportFilter; g: ImportFilter) =
     of FromImport:
       f.list = intersection(f.list, g.list)
 
+proc unionFilter*(f: var ImportFilter; g: ImportFilter) =
+  # combines two filters for the same module that were reached through
+  # different export paths: a name passes if either `f` or `g` lets it pass.
+  case g.kind
+  of ImportAll:
+    f = g
+  of ImportExcept:
+    case f.kind
+    of ImportAll: discard
+    of ImportExcept:
+      # hidden only if both paths hide it
+      f.list = intersection(f.list, g.list)
+    of FromImport:
+      # hidden if `g` hides it and `f` does not list it
+      let listed = f.list
+      f = g
+      f.list.excl(listed)
+  of FromImport:
+    case f.kind
+    of ImportAll: discard
+    of ImportExcept:
+      f.list.excl(g.list)
+    of FromImport:
+      f.list.incl(g.list)
+
 proc filterAllows*(f: ImportFilter; name: StrId): bool =
   case f.kind
   of ImportAll: result = true
