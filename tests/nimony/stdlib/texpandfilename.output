@@ -1,0 +1,25 @@
+plain file: <base>/a/b/f.txt
+directory: <base>/a/b
+trailing slash: <base>/a/b
+dot and dotdot: <base>/a/b/f.txt
+doubled slashes: <base>/a/b/f.txt
+relative symlink: <base>/a/b/f.txt
+absolute symlink: <base>/c/g.txt
+chain of links: <base>/a/b/f.txt
+symlinked dir in the middle: <base>/a/b/f.txt
+dotdot after a symlinked dir: <base>/a
+dotdot inside a link target: <base>/c/g.txt
+dotdot past the root: <base>/a
+relative path: <base>/a/b/f.txt
+relative through link: <base>/a/b/f.txt
+relative dotdot: <base>/c/g.txt
+dot: <base>/a
+link loop: raises BadLink
+dangling link: raises NameNotFound
+missing file: raises NameNotFound
+missing dir: raises NameNotFound
+file used as dir: raises NameNotFound
+file with trailing slash: raises NameNotFound
+file then dotdot: raises NameNotFound
+link to file used as dir: raises NameNotFound
+empty: raises NameNotFound
