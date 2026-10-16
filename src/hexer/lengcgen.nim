@@ -1128,7 +1128,10 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if isGeneric:
     skip n, SkipBody
   elif mode != TraverseSig or InlineP in prag.flags:
+    let wasAsm = c.inAsmBody
+    c.inAsmBody = AssemblerP in prag.flags
     trProcBody c, dest, n
+    c.inAsmBody = wasAsm
   else:
     dest.addDotToken()
     skip n
@@ -2182,8 +2185,22 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         trExpr c, dest, n
         takeParRi dest, n, discardStart
     of CaseS: trCase c, dest, n
+    of WhileS, BreakS:
+      if c.inAsmBody:
+        # An `{.assembler.}` body's loop is the machine's: Leng has the same
+        # `(while (true) …)` and `(break)`, which arkham transliterates.
+        if n.stmtKind == BreakS:
+          dest.addParLe(n.cursorTagId, n.info)
+          dest.addParRi()
+          skip n
+        else:
+          takeInto dest, n:
+            trExpr c, dest, n             # the condition, `(true)`
+            trStmt c, dest, n             # the body
+      else:
+        error c, "BUG: not eliminated: ", n
     of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS,
-       BreakS, WhileS, BlockS, IfS:
+       BlockS, IfS:
       error c, "BUG: not eliminated: ", n
     of TryS:
       trTry c, dest, n

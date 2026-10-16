@@ -144,8 +144,10 @@ proc getIdentReplaceParams(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
   of Ident:
     result = false
     var symsBuf = createTokenBuf(4)
-    discard buildSymChoice(c.c[], symsBuf, n.strId, n.info, InnerMost)
+    let count = buildSymChoice(c.c[], symsBuf, n.strId, n.info, InnerMost)
     var sym = cursorAt(symsBuf, 0)
+    # a single candidate still comes wrapped as `(ochoice sym)`
+    if count == 1 and sym.exprKind == OchoiceX: inc sym
     if sym.isSymbol and isTemplParam(c, sym.symId):
       dest.addSubtree sym
       result = true

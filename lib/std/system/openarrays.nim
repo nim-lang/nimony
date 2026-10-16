@@ -12,26 +12,33 @@ func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and
 func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem
 
-# special cased in compiler as "toOpenArray.0.<system suffix>" for empty array type inference:
-converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline, establishesBorrow.} =
-  if len(x) == 0:
-    openArray[T](a: nil, len: 0)
-  else:
-    openArray[T](a: cast[ptr UncheckedArray[T]](addr(x)), len: len(x))
-
-# special cased in compiler as "toOpenArray.1.<system suffix>" for empty seq type inference:
-converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline, establishesBorrow.} =
-  openArray[T](a: rawData(s), len: s.len)
-
-converter toOpenArray*(s {.byref.}: string): openArray[char] {.inline, establishesBorrow.} =
-  openArray[char](a: readRawData(s), len: s.len)
-
 func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
 func low*[T](a: openArray[T]): int {.inline.} = 0
 func len*[T](a: openArray[T]): int {.inline, ensures: (0 <= result).} =
   result = a.len
   # a view is made from a container's non-negative length
   {.assume: 0 <= result.}
+
+# special cased in compiler as "toOpenArray.0.<system suffix>" for empty array type inference:
+converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline, establishesBorrow,
+    ensures: len(result) == len(x).} =
+  if len(x) == 0:
+    result = openArray[T](a: nil, len: 0)
+  else:
+    result = openArray[T](a: cast[ptr UncheckedArray[T]](addr(x)), len: len(x))
+  # the view covers the whole array; the prover does not read constructor fields
+  {.assume: len(result) == len(x).}
+
+# special cased in compiler as "toOpenArray.1.<system suffix>" for empty seq type inference:
+converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline, establishesBorrow,
+    ensures: len(result) == len(s).} =
+  result = openArray[T](a: rawData(s), len: s.len)
+  {.assume: len(result) == len(s).}
+
+converter toOpenArray*(s {.byref.}: string): openArray[char] {.inline, establishesBorrow,
+    ensures: len(result) == len(s).} =
+  result = openArray[char](a: readRawData(s), len: s.len)
+  {.assume: len(result) == len(s).}
 
 type
   Equatable* = concept

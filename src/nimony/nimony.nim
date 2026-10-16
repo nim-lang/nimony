@@ -446,6 +446,12 @@ proc compileProgram(c: var CmdOptions) =
   # a program linking foreign objects (`.compile`/`.link`) needs. The runtime is
   # then the C backend's default one: the native allocator and IO, with libc
   # present (pthreads, so threads and libc's static TLS agree).
+  # `nimNativeBackend`: the code is compiled by arkham, so `{.assembler.}`
+  # procs are available. Stdlib modules use it to pick a hand-written assembler
+  # path over the portable one (`std/crypto` does, for constant time).
+  if nativeBackend:
+    c.config.addDefine "nimNativeBackend"
+    c.commandLineArgs.add " --define:nimNativeBackend"
   let nativeLinksLibc = nativeBackend and optOutAll and c.config.targetOS == osLinux
   if nativeBackend and not nativeLinksLibc:
     c.config.addDefine "nimNoLibc"
