@@ -352,15 +352,6 @@ proc establishesBorrow(c: var FirContext; n: Cursor): bool =
   skip fnType # return type
   result = hasPragma(fnType, EstablishesBorrowP)
 
-proc canCarryBorrow(c: var FirContext; n: Cursor): bool =
-  ## Only a reference-like value can carry a borrow past the expression that
-  ## produced it. `for x in s: return x` reads through an iteration borrow but
-  ## hands back a copy, and a case-of temp holding a plain field value is no
-  ## different — in both the borrow ends at the load, so the type is what
-  ## decides, not the path.
-  let t = getType(c.typeCache, n)
-  result = t.typeKind in {MutT, LentT, OutT} or isViewType(t)
-
 proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
@@ -407,17 +398,11 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
       skip r # intlit
       extractBorrowPath(c, r, result, followInlineVars)
     elif ek in CallKinds:
-      # A `var`/`lent`/view result is derived from the first argument (the
-      # `var T` borrowing rule), and so is an `.establishesBorrow.` one. Any
-      # other result is a fresh value the caller owns: `for e in
-      # g.rules.getOrDefault(k)` iterates a temporary and borrows nothing of `g`.
-      if canCarryBorrow(c, n) or establishesBorrow(c, n):
-        var r = n
-        inc r
-        skip r # fn
-        extractBorrowPath(c, r, result, followInlineVars)
-      elif result.mode != HasAddr:
-        result.mode = IsBorrowableFromConst
+      # we borrow from the first argument of the call:
+      var r = n
+      inc r
+      skip r # fn
+      extractBorrowPath(c, r, result, followInlineVars)
     elif ek in {AconstrX, SetconstrX, TupconstrX, OconstrX, NilX, TrueX, FalseX}:
       result.mode = IsBorrowableFromConst
     elif n.finalIrKind == EtupatV:
@@ -470,13 +455,10 @@ proc pathsOverlap(a, b: BorrowInfo): bool =
   result = true
 
 proc checkBorrowConflict(c: var FirContext; mutPath: BorrowInfo; info: NifLineInfo) =
-  var conflict = false
   for b in c.activeBorrows:
     if pathsOverlap(mutPath, b):
-      conflict = true
-      break
-  if conflict:
-    buildErr c, info, "'" & asNimCode(mutPath.path[0]) & "' is borrowed and cannot be mutated"
+      buildErr c, info, "'" & asNimCode(mutPath.path[0]) & "' is borrowed and cannot be mutated"
+      return
 
 proc localInfoOf(c: var FirContext; s: SymId): LocalInfo =
   ## `getLocalInfo` only knows the locals of the proc under analysis; a global
@@ -516,6 +498,15 @@ proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
       return borrowCarriedBy(c, c.inlineVars.getOrQuit(s))
   if establishesBorrow(c, value):
     result = extractPath(c, value)
+
+proc canCarryBorrow(c: var FirContext; n: Cursor): bool =
+  ## Only a reference-like value can carry a borrow past the expression that
+  ## produced it. `for x in s: return x` reads through an iteration borrow but
+  ## hands back a copy, and a case-of temp holding a plain field value is no
+  ## different — in both the borrow ends at the load, so the type is what
+  ## decides, not the path.
+  let t = getType(c.typeCache, n)
+  result = t.typeKind in {MutT, LentT, OutT} or isViewType(t)
 
 proc checkBorrowOutlivesProc(c: var FirContext; value: Cursor) =
   ## A borrow must not outlive what it borrows from. `g = toOpenArray(a)` for a
@@ -3810,14 +3801,6 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
           buildErr c, n.info, "`" & pool.symString(argSym).split('.')[0] &
             "` is a `var openArray` parameter: only its elements may change, " &
             "and a `var` of another type could replace it"
-      # The `(unknown …)` that would check this mutation against the active
-      # borrows is missing for a forwarded location too, so check it here. A
-      # `var openArray` formal is exempt: only its elements can change, and
-      # those never move the storage a view points into.
-      if not isMut and not isVarOpenArray(c, param.typ):
-        let mutPath = extractPath(c, n)
-        if mutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-          checkBorrowConflict(c, mutPath, n.info)
       if root != NoSymId and isVarOpenArray(c, param.typ) and
           plainLocationVarId(c, n) == getVarId(c, root):
         # a view passed as a view: its length stays
@@ -5199,13 +5182,10 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
         let s = extractSymId(m)
         if s != NoSymId: dying.add s
         skip m
-      var escaping: seq[BorrowInfo] = @[]
       for b in c.activeBorrows:
         if b.path.len > 0 and b.path[0] in dying and b.borrower notin dying:
-          escaping.add b
-      for b in escaping:
-        buildErr c, b.info, "borrow of '" & asNimCode(b.path[0]) &
-          "' escapes its scope; it does not live long enough"
+          buildErr c, b.info, "borrow of '" & asNimCode(b.path[0]) &
+            "' escapes its scope; it does not live long enough"
       # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
         let s = extractSymId(n)

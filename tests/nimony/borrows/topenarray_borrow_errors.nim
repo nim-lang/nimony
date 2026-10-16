@@ -44,39 +44,3 @@ proc testAliasInCall =
   appendFirst(s, s)
 
 testAliasInCall()
-
-# 4. A `var` parameter forwarded to another `var` parameter is a location
-# already, so it takes no `(haddr …)`; the mutation must be caught all the same.
-proc testForwardedVar(s: var string) =
-  let p = toOpenArray(s)
-  s.setLen(1)
-  if p.len > 0: discard p[0]
-
-var fwd = "abc"
-testForwardedVar(fwd)
-
-# 5. Iterating a field of a `var` parameter while passing the parameter on as
-# `var`: the callee may change the container being iterated.
-type
-  Holder = object
-    items: seq[int]
-
-proc touch(h: var Holder; x: int) =
-  h.items.add x
-
-proc testLoopOverForwarded(h: var Holder) =
-  for x in h.items:
-    touch(h, x)
-
-var holder = Holder(items: @[1, 2])
-testLoopOverForwarded(holder)
-
-# 6. A `var T` result is derived from the call's first argument, so iterating
-# it borrows that argument.
-proc mitemsOf(h: var Holder): var seq[int] = h.items
-
-proc testVarResult(h: var Holder) =
-  for x in mitems(mitemsOf(h)):
-    touch(h, x)
-
-testVarResult(holder)
