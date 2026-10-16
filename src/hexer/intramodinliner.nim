@@ -670,8 +670,8 @@ proc isForwardedRet(bnd: Bindings; n: Cursor; targetSym: SymId): bool =
   ## RENAMED symbol may be compared: the callee's own names live in its scope, and
   ## a callee local can share its name with the caller's destination (both procs
   ## have a `canRaise.0`) while being a different variable (#2674).
-  if not n.isSymbol or bnd.subst.hasKey(n.symId): return false
-  result = bnd.rename.getOrDefault(n.symId, n.symId) == targetSym
+  result = n.isSymbol and not bnd.subst.hasKey(n.symId) and
+    bnd.rename.getOrDefault(n.symId, n.symId) == targetSym
 
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
