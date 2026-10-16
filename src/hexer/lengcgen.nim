@@ -2328,7 +2328,10 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
   ## from would die with its globals in DCE; as statements they are roots, and the
   ## library is loaded whether or not anything uses it. Teaching the liveness pass
   ## that an `asgn` to a dead global is dead would restore that.)
-  for key, vals in c.dynlibs:
+  # `getTmpId` and `getCompilerProc` take `c` as `var`, so the table is moved
+  # out of `c` for the loop rather than borrowed; neither of them reads it.
+  var dynlibs = move c.dynlibs
+  for key, vals in dynlibs:
     let dynlib = pool.strings[key]
     var tmp = pool.symId("Dl." & dynlib & "." & $getTmpId(c) & "." & c.main)
 
@@ -2387,6 +2390,7 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
       initDest.addParRi()   # close call
       initDest.addParRi()   # close cast
       initDest.addParRi()   # close asgn
+  c.dynlibs = move dynlibs
 
 proc initProcName(moduleSuffix: string): string =
   "`ini.0." & moduleSuffix

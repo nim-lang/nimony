@@ -628,11 +628,15 @@ proc resolveSummaries(analyses: var Table[SymId, ProcAnalysis]): FunctionSummary
   for _ in 0 ..< MaxIters:
     var changed = false
     for sym, a in analyses.mpairs:
-      for call in a.calls:
+      # `applyCallee` takes `a` as `var`, so the calls are moved out for the
+      # loop rather than borrowed; neither callee reads them.
+      var calls = move a.calls
+      for call in calls:
         if analyses.hasKey(call.callee):
           applyCallee(a, call, result.getOrDefault(call.callee))
         else:
           applyExternalCall(a, call)
+      a.calls = move calls
       let s = finalizeSummary(a)
       if s != result.getOrDefault(sym):
         result[sym] = s
