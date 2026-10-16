@@ -43,8 +43,8 @@ block: # normal values
   assert bits32("4.35e15") == 0x597744D5'u32
   assert bits64("123e30") == 0x469841E9BD604769'u64
   assert bits32("123e30") == 0x74C20F4E'u32
-  assert bits64("1_000_000.000_1") == 0x412E8480000D1B71'u64
-  assert bits32("1_000_000.000_1") == 0x49742400'u32
+  assert bits64("1000000.0001") == 0x412E8480000D1B71'u64
+  assert bits32("1000000.0001") == 0x49742400'u32
   assert bits64(".5") == 0x3FE0000000000000'u64
   assert bits32(".5") == 0x3F000000'u32
   assert bits64("5.") == 0x4014000000000000'u64
@@ -225,3 +225,24 @@ block: # signed zeros, specials and prefix lengths
   assert y.classify == fcNegInf
   assert parseFloat("0.15625xyz", y) == 7
   assert y == 0.15625'f32
+
+block: # `_` is not a digit separator: it ends the number
+  var x = 3.0
+  assert parseFloat("1_000.5", x) == 1
+  assert x == 1.0
+  assert parseFloat("2.5_0e1", x) == 3
+  assert x == 2.5
+  assert parseFloat("2.5e1_0", x) == 5
+  assert x == 25.0
+  x = 3.0
+  assert parseFloat("_1", x) == 0
+  assert x == 3.0
+  var y = 0.0'f32
+  assert parseFloat("12_5", y) == 2
+  assert y == 12.0'f32
+
+block: # more than 19 digits: leading zeros do not count, the rest is re-read
+  assert bits64("0.0000000000000000000000000001234567890123456789") ==
+    bits64("1234567890123456789e-46")
+  assert bits64("12345678901234567890123456789") == 0x45C3F20D99235F65'u64
+  assert bits64("1.0000000000000000000000000001") == 0x3FF0000000000000'u64
