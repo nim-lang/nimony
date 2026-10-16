@@ -1,0 +1,5 @@
+tests/nimony/exceptions/tarbitrary_raises.nim(11, 20) Error: `.raises` takes `ErrorCode` or a `ref` object type, not `Code`
+tests/nimony/exceptions/tarbitrary_raises.nim(12, 20) Error: `.raises` takes `ErrorCode` or a `ref` object type, not `Plain`
+tests/nimony/exceptions/tarbitrary_raises.nim(13, 20) Error: `.raises` takes `ErrorCode` or a `ref` object type, not `Wide`
+tests/nimony/exceptions/tarbitrary_raises.nim(9, 12) Error: `.raises` takes `ErrorCode` or a `ref` object type, not `ref int64 not nil`
+tests/nimony/exceptions/tarbitrary_raises.nim(20, 10) Error: `except` takes `ErrorCode` or a `ref` object type, not `Code`

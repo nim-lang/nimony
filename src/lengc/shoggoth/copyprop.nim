@@ -287,6 +287,7 @@ type
     names: Table[SymId, string]        ## sym -> its textual name (for synthesis)
     delCandidates: Table[SymId, int]   ## deletable local binding -> its decl pos
     scopeDecls: seq[seq[SymId]]        ## locals declared at each open `(scope)`
+    closedLocals: HashSet[SymId]       ## locals of every `(scope)` already left
     patchset: Patchset
     synth: seq[TokenBuf]
     dotBuf: TokenBuf                   ## a single `.` token: replaces a dead decl
@@ -309,6 +310,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           names: initTable[SymId, string](),
           delCandidates: initTable[SymId, int](),
           scopeDecls: @[newSeq[SymId]()],
+          closedLocals: initHashSet[SymId](),
           patchset: initPatchset(orig),
           synth: @[],
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags))
@@ -469,6 +471,7 @@ proc leaveScope(c: var Context) =
   let decls = c.scopeDecls.pop()
   for s in decls:
     invalidate(c, s)
+    c.closedLocals.incl s
 
 # ---- main traversal -------------------------------------------------------
 
@@ -729,6 +732,15 @@ proc trLab(c: var Context; n: var Cursor) =
   let probe = child0(n)
   if probe.kind == SymbolDef:
     landLabel(c, LabelId(uint32(symId(probe))))
+    # A `jmp` out of a `(scope)` snapshotted its state before `leaveScope` ran,
+    # so a copy sourced from that scope's local arrives here intact. The
+    # eraiser's `e = canRaise; jmp exlab` from a void call's own block is the
+    # shape: `e` must not turn into `canRaise` in the handler (#2675).
+    var stale: seq[SymId] = @[]
+    for k, v in c.copyOf.pairs:
+      if v in c.closedLocals: stale.add k
+    for k in stale:
+      c.copyOf[k] = SymId(0)
   skip n
 
 proc trBreakOrRet(c: var Context; n: var Cursor) =
