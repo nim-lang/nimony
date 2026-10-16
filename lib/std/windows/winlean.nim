@@ -407,3 +407,52 @@ when defined(windows):
     importc: "SuspendThread", stdcall, dynlib: "kernel32", sideEffect.}
   proc resumeThread*(hThread: Handle): DWORD {.
     importc: "ResumeThread", stdcall, dynlib: "kernel32", sideEffect.}
+
+  # -------- Console bindings for std/terminal --------
+  const
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING* = 0x0004'u32
+
+  type
+    COORD* {.pure.} = object
+      x*: int16
+      y*: int16
+
+    SMALL_RECT* {.pure.} = object
+      left*: int16
+      top*: int16
+      right*: int16
+      bottom*: int16
+
+    CONSOLE_SCREEN_BUFFER_INFO* {.pure.} = object
+      dwSize*: COORD
+      dwCursorPosition*: COORD
+      wAttributes*: uint16
+      srWindow*: SMALL_RECT
+      dwMaximumWindowSize*: COORD
+
+    CONSOLE_CURSOR_INFO* {.pure.} = object
+      dwSize*: DWORD
+      bVisible*: WINBOOL
+
+  proc setConsoleMode*(hConsoleHandle: Handle; dwMode: DWORD): WINBOOL {.
+    importc: "SetConsoleMode", stdcall, dynlib: "kernel32", sideEffect.}
+  proc getConsoleScreenBufferInfo*(hConsoleOutput: Handle;
+      lpConsoleScreenBufferInfo: ptr CONSOLE_SCREEN_BUFFER_INFO): WINBOOL {.
+    importc: "GetConsoleScreenBufferInfo", stdcall, dynlib: "kernel32", sideEffect.}
+  proc getConsoleCursorInfo*(hConsoleOutput: Handle;
+      lpConsoleCursorInfo: ptr CONSOLE_CURSOR_INFO): WINBOOL {.
+    importc: "GetConsoleCursorInfo", stdcall, dynlib: "kernel32", sideEffect.}
+  proc setConsoleCursorInfo*(hConsoleOutput: Handle;
+      lpConsoleCursorInfo: ptr CONSOLE_CURSOR_INFO): WINBOOL {.
+    importc: "SetConsoleCursorInfo", stdcall, dynlib: "kernel32", sideEffect.}
+  proc setConsoleCursorPosition*(hConsoleOutput: Handle;
+      dwCursorPosition: COORD): WINBOOL {.
+    importc: "SetConsoleCursorPosition", stdcall, dynlib: "kernel32", sideEffect.}
+  proc fillConsoleOutputCharacterW*(hConsoleOutput: Handle; cCharacter: uint16;
+      nLength: DWORD; dwWriteCoord: COORD;
+      lpNumberOfCharsWritten: ptr DWORD): WINBOOL {.
+    importc: "FillConsoleOutputCharacterW", stdcall, dynlib: "kernel32", sideEffect.}
+  proc fillConsoleOutputAttribute*(hConsoleOutput: Handle; wAttribute: uint16;
+      nLength: DWORD; dwWriteCoord: COORD;
+      lpNumberOfAttrsWritten: ptr DWORD): WINBOOL {.
+    importc: "FillConsoleOutputAttribute", stdcall, dynlib: "kernel32", sideEffect.}
