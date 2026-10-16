@@ -613,6 +613,15 @@ proc trAsgn(c: var Context; n: var Cursor) =
   if haveRhs:
     var r = rhs
     trExpr(c, r)                         # propagate inside the value
+  if haveLhs and haveRhs and lhs.kind == Symbol and rhs.kind == Symbol and
+      resolve(c, symId(rhs)) == symId(lhs):
+    # `x = y` where `y` already aliases `x` (#2689): the store rewrites to
+    # `x = x` and changes nothing. Running it through `invalidate` would drop
+    # `y -> x`, and `bindCopy` would then record the reverse `x -> y`: later
+    # reads of `x` become reads of `y`, whose decl is deleted once its last
+    # use was substituted away.
+    c.writeSites.mgetOrPut(symId(lhs), @[]).add asgnPos
+    return
   if haveLhs:
     var l = lhs
     # Storage spine is not substituted (`y = …` still writes `y`); a deref
@@ -1250,6 +1259,16 @@ when isMainModule:
       "(call use.0.M z.0.M))",
       "(stmts (var :x.0.M . . (call f.0.M)) . . " &
       "(call use.0.M x.0.M))")
+
+  block store_back_through_alias:
+    # #2689: `y = x; x = y` is `x = x`; it must not turn `x` into a copy of
+    # the (deleted) `y`.
+    chk(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) (asgn x.0.M y.0.M) " &
+      "(ret x.0.M))",
+      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(asgn x.0.M x.0.M) (ret x.0.M))")
 
   block source_reassigned_blocks:
     # `x` changes after the copy, so `y` may not be propagated past it.
