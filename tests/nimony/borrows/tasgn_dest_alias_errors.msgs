@@ -1,0 +1,3 @@
+tests/nimony/borrows/tasgn_dest_alias_errors.nim(19, 15) Error: the right-hand side may mutate 'p', which the destination's address was taken from; assign the right-hand side to a temporary first [pass --verbose for the Final IR]
+tests/nimony/borrows/tasgn_dest_alias_errors.nim(22, 15) Error: the right-hand side may mutate 'p', which the destination's address was taken from; assign the right-hand side to a temporary first [pass --verbose for the Final IR]
+tests/nimony/borrows/tasgn_dest_alias_errors.nim(31, 13) Error: the right-hand side may mutate 'p', which the destination's address was taken from; assign the right-hand side to a temporary first [pass --verbose for the Final IR]

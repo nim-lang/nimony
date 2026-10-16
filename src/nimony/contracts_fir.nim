@@ -4012,6 +4012,77 @@ proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
     if not hi.isNaN: c.facts.add query(dest, y, hi)    # x <= y + hi
   result = true
 
+proc locationIsComputed(c: var FirContext; n: Cursor): bool =
+  ## Whether the address of the location `n` is read from memory rather than
+  ## fixed by its root: `s[i]` goes through the seq's data pointer, `r.f`
+  ## through the ref. xelim hoists such a destination (`(var x (inline) (mut T)
+  ## ([] s i))`) before the right-hand side runs, so the address is taken first.
+  result = false
+  if n.isSymbol:
+    let s = n.symId
+    if s in c.inlineVars:
+      result = locationIsComputed(c, c.inlineVars.getOrQuit(s))
+  elif n.isTagLit:
+    case n.exprKind
+    of DerefX, DdotX, PatX, AtX, CallKinds:
+      result = true
+    of DotX, TupatX, ArratX, HaddrX, HderefX:
+      result = locationIsComputed(c, n.childCursor)
+    of ConvKinds, BaseobjX:
+      var r = n
+      inc r
+      skip r # type
+      result = locationIsComputed(c, r)
+    else:
+      discard
+
+proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[BorrowInfo]) =
+  ## The paths `n` may mutate through a `var`/`out` argument of a call it
+  ## contains, looking through the inline temps the calls were hoisted into.
+  if n.isSymbol:
+    let s = n.symId
+    if s in c.inlineVars:
+      collectMutatedArgs(c, c.inlineVars.getOrQuit(s), dest)
+  elif n.isTagLit and n.exprKind in CallKinds:
+    var arg = n.childCursor
+    var fnType = skipProcTypeToParams(getType(c.typeCache, arg))
+    collectMutatedArgs(c, arg, dest)
+    skip arg # fn
+    if fnType.isParamsTag:
+      fnType = sub(fnType)
+    while arg.hasMore:
+      var pk = NoType
+      if fnType.isTagLit and fnType.hasMore:
+        let previousFormalParam = fnType
+        let param = takeLocal(fnType, SkipFinalParRi)
+        pk = param.typ.typeKind
+        if pk == VarargsT: fnType = previousFormalParam
+      if arg.exprKind == HaddrX:
+        dest.add extractPath(c, arg.childCursor)
+      elif pk in {MutT, OutT}:
+        dest.add extractPath(c, arg)
+      collectMutatedArgs(c, arg, dest)
+      skip arg
+  elif n.isTagLit:
+    var r = n.childCursor
+    while r.hasMore:
+      collectMutatedArgs(c, r, dest)
+      skip r
+
+proc checkDestAliasesValue(c: var FirContext; dest: Cursor; destPath: BorrowInfo; value: Cursor) =
+  ## `s[0].x = grow(s)`: the address of `s[0]` is taken before `grow` runs, so
+  ## when `grow` reallocates `s` the store goes to freed memory.
+  if destPath.mode != HasAddr and destPath.path.len > 0 and
+      locationIsComputed(c, dest):
+    var mutated: seq[BorrowInfo] = @[]
+    collectMutatedArgs(c, value, mutated)
+    for m in mutated:
+      if pathsOverlap(destPath, m):
+        buildErr c, dest.info, "the right-hand side may mutate '" & asNimCode(m.path[0]) &
+          "', which the destination's address was taken from; " &
+          "assign the right-hand side to a temporary first"
+        break
+
 proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## Handle `(asgn dest value)`. The value is the second operand but the first
   ## thing that runs, so it is analysed first; `n` stays on the destination.
@@ -4028,6 +4099,8 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   let destMutPath = extractPath(c, n)
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
+  if not c.features.contains(LenientAliasingFeature):
+    checkDestAliasesValue(c, n, destMutPath, valueStart)
   if destMutPath.path.len > 0:
     checkEscapingBorrow(c, valueStart, destMutPath.path[0])
 

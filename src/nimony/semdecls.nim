@@ -1224,7 +1224,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         c.genericInnerProcs.incl(symId)
       let beforeParams = dest.len
       semParams c, dest, it.n
-      c.routine.returnType = semReturnType(c, dest, it.n)
+      let returnType = semReturnType(c, dest, it.n)
+      c.routine.returnType = returnType
       var crucial = CrucialPragma(sym: symId)
       let beforePragmas = dest.len
       semPragmas c, dest, it.n, crucial, kind
