@@ -970,7 +970,7 @@ func leadingZeros(x: uint64): int =
   ## For x != 0 (the portable `Clz` intrinsic is undefined at 0).
   result = int(clz64(x))
 
-func fullMul(a, b: uint64; hi: var uint64): uint64 =
+func fullMulPortable(a, b: uint64; hi: var uint64): uint64 =
   ## The 128-bit product a*b: returns the low word, stores the high one.
   let aLo = a and 0xFFFFFFFF'u64
   let aHi = a shr 32
@@ -985,37 +985,35 @@ func fullMul(a, b: uint64; hi: var uint64): uint64 =
   hi = b11 + (mid1 shr 32) + (mid2 shr 32)
   result = (b00 and 0xFFFFFFFF'u64) or (mid2 shl 32)
 
-when false:
-  # Waiting for `{.assembler.}` procs on the native backend: one `mul`/`umulh`
-  # instead of `fullMul`'s four 32-bit products. To enable, drop the
-  # `when false` and route `fullMul` to `fullMulAsm` under the same `when`.
+# On the native backend one `mul` replaces the four 32-bit products. x86-64
+# only, as in `std/crypto`: AArch64's `.assembler` mode does not lower
+# `mul3`/`umulh` yet.
+# TODO: unlike `std/crypto` (`tests/nimony/crypto` in `NativeTestDirsX64`), no
+# native test runs this path: `tests/nimony/stdlib/tparsefloat` is skipped
+# natively until arkham's x86-64 float negation keeps the sign of zero. Add it
+# to the native x86-64 suite once it passes there.
+when defined(nimNativeBackend) and defined(amd64):
   type Words = ptr UncheckedArray[uint64]
 
-  when defined(nimNativeBackend) and defined(amd64):
-    proc mulq(lo: var uint64; hi: var uint64; s: uint64) {.instruction: "mul".}
+  proc mulq(lo: var uint64; hi: var uint64; s: uint64) {.instruction: "mul".}
 
-    proc fullMulAsm(a {.register: "rdi".}: uint64; b {.register: "rsi".}: uint64;
-                    hiOut {.register: "rdx".}: Words): uint64 {.assembler.} =
-      var dst {.register: "rcx".}: Words
-      var lo {.register: "rax".}: uint64
-      dst = hiOut                  # `mul` overwrites rdx
-      var hi {.register: "rdx".}: uint64
-      lo = a
-      mulq(lo, hi, b)              # rdx:rax = rax * b
-      dst[0] = hi
-      result = lo
-  elif defined(nimNativeBackend) and defined(arm64):
-    proc mul3(a, b: uint64): uint64 {.instruction: "mul3".}
-    proc umulh(a, b: uint64): uint64 {.instruction: "umulh".}
+  proc fullMulAsm(a {.register: "rdi".}: uint64; b {.register: "rsi".}: uint64;
+                  hiOut {.register: "rdx".}: Words): uint64 {.assembler.} =
+    var dst {.register: "rcx".}: Words
+    var lo {.register: "rax".}: uint64
+    dst = hiOut                  # `mul` overwrites rdx
+    var hi {.register: "rdx".}: uint64
+    lo = a
+    mulq(lo, hi, b)              # rdx:rax = rax * b
+    dst[0] = hi
+    result = lo
 
-    proc fullMulAsm(a {.register: "x0".}: uint64; b {.register: "x1".}: uint64;
-                    hiOut {.register: "x2".}: Words): uint64 {.assembler.} =
-      var hi {.register: "x3".}: uint64
-      var lo {.register: "x4".}: uint64
-      hi = umulh(a, b)
-      hiOut[0] = hi
-      lo = mul3(a, b)
-      result = lo
+  func fullMul(a, b: uint64; hi: var uint64): uint64 {.inline.} =
+    {.cast(noSideEffect).}:
+      result = fullMulAsm(a, b, cast[Words](addr hi))
+else:
+  func fullMul(a, b: uint64; hi: var uint64): uint64 {.inline.} =
+    result = fullMulPortable(a, b, hi)
 
 func power(q: int): int =
   ## ⌊q * log2(10)⌋ + 63, as ⌊q * 217706 / 2^16⌋ + 63 — exact over the whole
