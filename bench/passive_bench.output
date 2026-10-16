@@ -1,0 +1,9 @@
+passive_bench: 2000 calls per kernel, reps=1
+| kernel | checksum |
+|:-------|---------:|
+| reg3 | 2005000 |
+| pas1 | 2001000 |
+| pas2 | 2003000 |
+| pas2reg | 2005000 |
+| pas4 | 2007000 |
+| **total** | **10021000** |
