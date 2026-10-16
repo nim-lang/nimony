@@ -62,6 +62,68 @@ func spaces*(n: int): string =
   result = newString(n)
   for i in 0 ..< n: result[i] = ' '
 
+func align*(s: string; count: Natural; padding = ' '): string =
+  ## Aligns a string `s` with `padding`, so that it is of length `count`.
+  ##
+  ## `padding` characters (by default spaces) are added before `s` resulting in
+  ## right alignment. If `s.len >= count`, no spaces are added and `s` is
+  ## returned unchanged. If you need to left align a string use the `alignLeft
+  ## func<#alignLeft,string,Natural,char>`_.
+  runnableExamples:
+    assert align("abc", 4) == " abc"
+    assert align("a", 0) == "a"
+    assert align("1232", 6) == "  1232"
+    assert align("1232", 6, '#') == "##1232"
+  if s.len < count:
+    result = newString(count)
+    let fill = count - s.len
+    for i in 0 ..< fill: result[i] = padding
+    for i in fill ..< count: result[i] = s[i - fill]
+  else:
+    result = s
+
+func alignLeft*(s: string; count: Natural; padding = ' '): string =
+  ## Left-aligns a string `s` with `padding`, so that it is of length `count`.
+  ##
+  ## `padding` characters (by default spaces) are added after `s` resulting in
+  ## left alignment. If `s.len >= count`, no spaces are added and `s` is
+  ## returned unchanged. If you need to right align a string use the `align
+  ## func<#align,string,Natural,char>`_.
+  runnableExamples:
+    assert alignLeft("abc", 4) == "abc "
+    assert alignLeft("a", 0) == "a"
+    assert alignLeft("1232", 6) == "1232  "
+    assert alignLeft("1232", 6, '#') == "1232##"
+  if s.len < count:
+    result = newString(count)
+    for i in 0 ..< s.len: result[i] = s[i]
+    for i in s.len ..< count: result[i] = padding
+  else:
+    result = s
+
+func center*(s: string; width: int; fillChar: char = ' '): string =
+  ## Returns the contents of `s` centered in a string `width` long using
+  ## `fillChar` (default: space) as padding. If the padding cannot be split
+  ## evenly, the extra `fillChar` goes on the right.
+  ##
+  ## The original string is returned if `width` is less than or equal
+  ## to `s.len`.
+  runnableExamples:
+    let a = "foo"
+    doAssert a.center(2) == "foo"
+    doAssert a.center(5) == " foo "
+    doAssert a.center(6) == " foo  "
+  if width <= s.len:
+    result = s
+  else:
+    result = newString(width)
+    let leftPadding = (width - s.len) div 2
+    for i in 0 ..< width:
+      if i >= leftPadding and i < leftPadding + s.len:
+        result[i] = s[i - leftPadding]
+      else:
+        result[i] = fillChar
+
 func repeat*(c: char; n: int): string =
   ## Returns a string made of `c` repeated `n` times.
   result = newString(n)
@@ -351,6 +413,70 @@ func splitLines*(s: string; keepEol = false): seq[string] =
 func splitWhitespace*(s: string; maxsplit: int = -1): seq[string] =
   ## The same as the `splitWhitespace` iterator, but returns a sequence of substrings.
   accResult(splitWhitespace(s, maxsplit))
+
+func indent*(s: string; count: Natural; padding: string = " "): string =
+  ## Indents each line in `s` by `count` amount of `padding`.
+  ##
+  ## **Note:** This does not preserve the new line characters used in `s`.
+  runnableExamples:
+    doAssert indent("First line\c\l and second line.", 2) ==
+             "  First line\l   and second line."
+  result = ""
+  var first = true
+  for line in splitLines(s):
+    if not first: result.add '\n'
+    first = false
+    for j in 0 ..< count: result.add padding
+    result.add line
+
+func unindent*(s: string; count: Natural = high(int);
+               padding: string = " "): string =
+  ## Unindents each line in `s` by up to `count` amount of `padding`.
+  ##
+  ## **Note:** This does not preserve the new line characters used in `s`.
+  runnableExamples:
+    doAssert "    Hello\n      There\n".unindent() == "Hello\nThere\n"
+    doAssert "    Hello\n      There\n".unindent(2) == "  Hello\n    There\n"
+  result = ""
+  var first = true
+  for line in splitLines(s):
+    if not first: result.add '\n'
+    first = false
+    var pos = 0
+    var removed = 0
+    while removed < count and substrEq(line, pos, padding):
+      inc pos, padding.len
+      inc removed
+    result.add substr(line, pos)
+
+func indentation*(s: string): Natural =
+  ## Returns the amount of indentation all lines of `s` have in common,
+  ## ignoring lines that consist only of whitespace.
+  result = high(int)
+  for line in splitLines(s):
+    for i in 0 ..< line.len:
+      if i >= result: break
+      elif line[i] != ' ':
+        result = i
+        break
+  if result == high(int):
+    result = 0
+
+func dedent*(s: string; count: Natural): string =
+  ## Unindents each line in `s` by `count` spaces.
+  ##
+  ## **Note:** This does not preserve the new line characters used in `s`.
+  unindent(s, count, " ")
+
+func dedent*(s: string): string =
+  ## Unindents each line in `s` by the amount of indentation that all
+  ## lines of `s` share (see `indentation`). Unlike `unindent`, relative
+  ## indentation is preserved. It only supports spaces as padding.
+  ##
+  ## **Note:** This does not preserve the new line characters used in `s`.
+  runnableExamples:
+    doAssert "    Hello\n      There\n".dedent() == "Hello\n  There\n"
+  unindent(s, indentation(s), " ")
 
 func join*(a: openArray[string]; sep: string = ""): string =
   ## Concatenates all strings in `a`, separating them with `sep`.
