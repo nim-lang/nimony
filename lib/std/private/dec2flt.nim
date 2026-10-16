@@ -908,25 +908,24 @@ func scanNumber(s: openArray[char]; n: var Number): int =
           inc j
         if negative: exponent = -exponent
         result = j
-    if result > 0:
-      n.explicitExp = exponent      # 0 unless an exponent was read
-      if digits > MaxMantissaDigits:
-        # Leading zeros are not significant: the wrapped-around accumulation
-        # above is still exact if at most 19 digits follow them.
-        let start = max(n.digitsStart, 0)
-        let stop = min(n.digitsEnd, s.len)
-        var k = start
-        while k < stop and (s[k] == '0' or s[k] == '.'):
-          if s[k] == '0': dec digits
-          inc k
-      if digits <= MaxMantissaDigits:
-        n.mantissa = mantissa
-        n.exponent = n.explicitExp - fraction
-      else:
-        let taken = takeSignificant(s, n.digitsStart, n.digitsEnd)
-        n.mantissa = taken.mantissa
-        n.manyDigits = taken.manyDigits
-        n.exponent = taken.exponent + n.explicitExp
+    n.explicitExp = exponent      # 0 unless an exponent was read
+    if digits > MaxMantissaDigits:
+      # Leading zeros are not significant: the wrapped-around accumulation
+      # above is still exact if at most 19 digits follow them.
+      let start = max(n.digitsStart, 0)
+      let stop = min(n.digitsEnd, s.len)
+      var k = start
+      while k < stop and (s[k] == '0' or s[k] == '.'):
+        if s[k] == '0': dec digits
+        inc k
+    if digits <= MaxMantissaDigits:
+      n.mantissa = mantissa
+      n.exponent = n.explicitExp - fraction
+    else:
+      let taken = takeSignificant(s, n.digitsStart, n.digitsEnd)
+      n.mantissa = taken.mantissa
+      n.manyDigits = taken.manyDigits
+      n.exponent = taken.exponent + n.explicitExp
 
 func matchesIgnoreCase(s: openArray[char]; i: int; word: string): bool {.
     requires: i >= 0.} =

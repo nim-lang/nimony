@@ -56,6 +56,7 @@ func fmtInner(x: uint64; buf: var array[MaxDecN, char]): Natural {.ensures: resu
   # The last digit, if any; zero is the one number with a leading zero.
   if offset >= 1 and (remain != 0'u64 or x == 0'u64):
     offset = offset - 1
+    # `remain < 10` here; the mask is what lets the prover bound the index.
     let last = int(remain and 15'u64)
     buf[offset] = DecimalPairs[last * 2 + 1]
   result = offset
