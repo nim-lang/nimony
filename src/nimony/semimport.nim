@@ -142,7 +142,7 @@ proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: 
       let forward = importSingleFile(c, dest, file, origin, ex[1], newExports, info)
       let modEntry = addr c.importedModules.getOrQuit(source)
       if modEntry[].exports.hasKey(forward):
-        mergeFilter(modEntry[].exports.getOrQuit(forward), ex[1])
+        unionFilter(modEntry[].exports.getOrQuit(forward), ex[1])
       else:
         modEntry[].exports[forward] = ex[1]
     exports = newExports
