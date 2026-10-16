@@ -39,10 +39,10 @@ proc tryCreateFinalDir*(dir: Path): ErrorCode =
     else:
       result = windowsToErrorCode getLastError()
   else:
-    if mkdir(dirStr.toCString, 0o777) == 0'i32:
-      result = Success
-    else:
-      result = posixToErrorCode(errno())
+    # `pcall`, not `errno()`: a freestanding build has no libc errno, and a
+    # raw syscall reports its error in the result.
+    let r = pcall(mkdir(dirStr.toCString, 0o777))
+    result = if r == 0: Success else: posixToErrorCode(cint(-r))
 
 proc createDir*(dir: Path) {.raises.} =
   ## Creates a new directory `dir`. If the directory already exists, no error is raised.
@@ -75,10 +75,8 @@ proc tryRemoveFinalDir*(dir: Path): ErrorCode =
     else:
       result = windowsToErrorCode getLastError()
   else:
-    if rmdir(dirStr.toCString) == 0'i32:
-      result = Success
-    else:
-      result = posixToErrorCode(errno())
+    let r = pcall(rmdir(dirStr.toCString))
+    result = if r == 0: Success else: posixToErrorCode(cint(-r))
 
 proc removeDir*(dir: Path) {.raises.} =
   ## Removes the directory `dir`. If the directory does not exist, no error is raised.
@@ -96,10 +94,8 @@ proc tryRemoveFile*(file: Path): ErrorCode =
     else:
       result = windowsToErrorCode getLastError()
   else:
-    if unlink(fileStr.toCString) == 0'i32:
-      result = Success
-    else:
-      result = posixToErrorCode(errno())
+    let r = pcall(unlink(fileStr.toCString))
+    result = if r == 0: Success else: posixToErrorCode(cint(-r))
 
 proc removeFile*(file: Path) {.raises.} =
   ## Removes the file `file`.

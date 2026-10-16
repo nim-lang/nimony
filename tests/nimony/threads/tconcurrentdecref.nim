@@ -80,3 +80,5 @@ when not defined(windows):
   main()
 else:
   echo "ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

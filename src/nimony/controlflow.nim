@@ -338,7 +338,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     n.into:
       trIte c, n, tjmp, fjmp
   of ErrX, SufX, AtX, DerefX, DotX, PatX, AddrX, NilX, InfX, NeginfX,
-     NanX, FalseX, TrueX, XorX, NegX, SizeofX, AlignofX, OffsetofX,
+     NanX, FalseX, TrueX, XorX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX,
      KvX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
      MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX,
      EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
@@ -631,7 +631,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
-    of CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:
+    of CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, InternalTypeNameX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       tar.t.addDotToken()
       skip n
@@ -650,7 +650,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
          LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
          MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
-         BreakS, ContinueS, JmpS, LabS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS,
+         BreakS, ContinueS, JmpS, LabS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS,
          PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
          DiscardS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
@@ -813,7 +813,7 @@ proc trBreak(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
   n.into:
     if n.isDotToken:
-      while it != nil and it.kind notin {IsLoop, IsBlock}:
+      while it != nil and it.kind != IsLoop: # blocks are only left by name
         if it.kind == IsRoutine:
           # we cannot cross routine boundaries!
           bug "break outside of loop"
@@ -1031,7 +1031,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trIf c, n, aa
   of WhileS:
     trWhile c, n
-  of StmtsS, UnpackdeclS:
+  of StmtsS, AlwaysS, UnpackdeclS:
     n.into:
       while n.hasMore:
         trStmt c, n

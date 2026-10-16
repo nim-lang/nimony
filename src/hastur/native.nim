@@ -222,6 +222,7 @@ proc nativetests*(overwrite: bool) =
   for f in NativeTestSkip: skip.incl slashed(f.addFileExt(".nim"))
   var dirs: seq[string] = @NativeTestDirs
   when defined(windows): dirs.add @NativeTestDirsWindows
+  when defined(amd64): dirs.add @NativeTestDirsX64
   for dir in dirs:
     var files: seq[string] = @[]
     for x in walkDir(dir):
@@ -281,7 +282,6 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
   ## default `all` sweep leaves this opt-in.
   if not skipBuild:
     buildNimony()
-    buildHexer()
     buildShoggoth()
     buildArkham()
     buildNifasm()

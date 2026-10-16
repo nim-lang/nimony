@@ -1,3 +1,4 @@
+{.feature: "assumeSync".}  # globals shared freely, also by importers
 var
   varInt* = 123
   varAry* = [456, 789]

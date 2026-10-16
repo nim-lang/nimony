@@ -1,0 +1,1 @@
+tests/nimony/cps/tdelayraises.nim(9, 16) Error: `delay` hands `job` to a scheduler, which runs it after this expression is gone; `job` is `.raises`, but nothing can receive the error there. Handle it inside the task instead

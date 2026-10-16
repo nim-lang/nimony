@@ -28,7 +28,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|nifler2|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|jorogumo|native|nifbench]   build selected tools (default: all).
+  build [all|nimony|nifler|nifler2|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|jorogumo|native|nifbench]   build selected tools (default: all).
                        `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
@@ -47,7 +47,7 @@ Commands:
                        `--forward:` is appended to every compile (e.g.
                        `--forward:-d:release`).
   boot [options]       Self-host the *full* nimony toolchain (nimony,
-                       nimsem, hexer, lengc, shoggoth). `bin0/` is a fresh
+                       nimsem, shoggoth, lengc). `bin0/` is a fresh
                        copy of the host-Nim-built toolchain; `binN/` is
                        `binN-1/`'s nimony recompiling all of them. Runs a
                        fixed number of self-compile passes and leaves the
@@ -97,7 +97,7 @@ Commands:
                        `--joined` below). This is what the test pool spawns
                        per directory; by hand it is how you run or debug a
                        single group.
-  bug [file]           build nimony+hexer and compile <file> to fill nimcache/.
+  bug [file]           build nimony+shoggoth and compile <file> to fill nimcache/.
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
@@ -419,7 +419,7 @@ proc handleCmdLine =
     of "nimony":
       buildNimsem(showProgress)
       buildNimony(showProgress)
-      buildHexer(showProgress)
+      buildShoggoth(showProgress)
     of "lengc":
       buildLengc(showProgress)
     of "shoggoth":
@@ -436,15 +436,13 @@ proc handleCmdLine =
       buildJorogumo(showProgress)
     of "native":
       # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
-      # the sibling `../nativenif`) plus shoggoth (the opt-gated Leng optimizer
-      # that also feeds the native path). `all` builds these three too; this
+      # the sibling `../nativenif`) plus shoggoth (hexer and the opt-gated Leng
+      # optimizer, both of which feed the native path). `all` builds these three too; this
       # spelling is the one that rebuilds JUST them, and errors out rather than
       # skip when the sibling checkout is missing.
       buildArkham(showProgress)
       buildNifasm(showProgress)
       buildShoggoth(showProgress)
-    of "hexer":
-      buildHexer(showProgress)
     of "nifmake":
       buildNifmake(showProgress)
     of "nifbench":

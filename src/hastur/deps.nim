@@ -221,34 +221,53 @@ proc hostNimTree(): string =
   # `.git` is a FILE, not a directory, in a worktree or a submodule.
   result = if dirExists(tree / ".git") or fileExists(tree / ".git"): tree else: ""
 
-proc parserFromCheckout(tree, pin: string): bool =
-  ## `git show <pin>:compiler/parser.nim` out of a Nim checkout that already has
-  ## the commit. Deliberately never FETCHES into it: that tree is someone's
-  ## working repo — we read one object out of it and touch nothing else. A
-  ## commit it does not have is not an error here, just a "no".
-  if gitIn(tree, "cat-file -e " & pin & ":" & NimParserInRepo)[1] != 0: return false
-  let (blob, code) = gitIn(tree, "show " & pin & ":" & NimParserInRepo)
+proc nimFileFromCheckout(tree, pin, inRepo, dest: string): bool =
+  ## `git show <pin>:<inRepo>` out of a Nim checkout that already has the
+  ## commit. Deliberately never FETCHES into it: that tree is someone's working
+  ## repo — we read one object out of it and touch nothing else. A commit it
+  ## does not have is not an error here, just a "no".
+  if gitIn(tree, "cat-file -e " & pin & ":" & inRepo)[1] != 0: return false
+  let (blob, code) = gitIn(tree, "show " & pin & ":" & inRepo)
   if code != 0 or blob.len == 0: return false
-  writeFile(NimParserFile, blob)
-  echo "[deps] nifler parser: ", pin[0 ..< min(pin.len, 12)], " from ", tree
+  writeFile(dest, blob)
   result = true
 
-proc downloadParser(pin: string): bool =
+proc downloadNimFile(pin, inRepo, dest: string): bool =
   ## One file over HTTPS, by exact commit — the whole Nim repo is a ~400 MB
   ## clone to reach 90 KB, and `git archive --remote` is not something github.com
   ## serves. Written through a temporary so a failed transfer cannot leave a
-  ## truncated parser behind for the next build to compile.
+  ## truncated file behind for the next build to compile.
   let curl = findExe("curl")
   if curl.len == 0: return false
-  let url = "https://raw.githubusercontent.com/nim-lang/Nim/" & pin & "/" & NimParserInRepo
-  let tmp = NimParserFile & ".tmp"
-  echo "[deps] nifler parser: fetching ", pin[0 ..< min(pin.len, 12)], " from ", NimRepoUrl
+  let url = "https://raw.githubusercontent.com/nim-lang/Nim/" & pin & "/" & inRepo
+  let tmp = dest & ".tmp"
   let code = execCmd(curl.quoteShell & " -sSL --fail -o " & tmp.quoteShell & " " & url.quoteShell)
   if code != 0 or not fileExists(tmp) or getFileSize(tmp) == 0:
     removeFile tmp
     return false
-  moveFile(tmp, NimParserFile)
+  moveFile(tmp, dest)
   result = true
+
+proc fetchNimFiles(what, pin: string; files: openArray[(string, string)]): bool =
+  ## Every `(inRepo, dest)` of `files` at Nim commit `pin`: from a Nim checkout
+  ## on this machine when it has the commit, else over HTTPS. All or nothing as
+  ## far as the caller's stamp is concerned: false if any file is missing.
+  let tree = hostNimTree()
+  var fromTree = tree.len > 0
+  for (inRepo, _) in files:
+    if fromTree and gitIn(tree, "cat-file -e " & pin & ":" & inRepo)[1] != 0:
+      fromTree = false
+  if fromTree:
+    result = true
+    for (inRepo, dest) in files:
+      if not nimFileFromCheckout(tree, pin, inRepo, dest): result = false
+    if result:
+      echo "[deps] ", what, ": ", pin[0 ..< min(pin.len, 12)], " from ", tree
+      return
+  echo "[deps] ", what, ": fetching ", pin[0 ..< min(pin.len, 12)], " from ", NimRepoUrl
+  result = true
+  for (inRepo, dest) in files:
+    if not downloadNimFile(pin, inRepo, dest): result = false
 
 var nimParserChecked = false
 
@@ -269,11 +288,7 @@ proc syncNimParser*() =
   if fileExists(NimParserFile) and readPin(NimParserStampFile) == pin: return
 
   createDir NimParserDir
-  var ok = false
-  let tree = hostNimTree()
-  if tree.len > 0: ok = parserFromCheckout(tree, pin)
-  if not ok: ok = downloadParser(pin)
-  if ok:
+  if fetchNimFiles("nifler parser", pin, [(NimParserInRepo, NimParserFile)]):
     writeFile(NimParserStampFile, pin & "\n")
     return
 
@@ -369,3 +384,47 @@ proc missingNativeTools*(): seq[string] =
   result = @[]
   for tool in BootNativeTools:
     if not fileExists(binDir() / tool.addFileExt(ExeExt)): result.add tool
+
+# ---- Nim's cycle collectors, included by `system/orc` and `system/yrc` ------
+# `--mm:orc` and `--mm:yrc` run Nim's OWN `lib/system/orc.nim` and `yrc.nim`
+# (they say `when defined(nimony)` where the compilers differ), so a fix to
+# either collector lands once, in Nim. They are copied into
+# `lib/std/system/upstream/` (git-ignored) at the commit
+# `lib/std/system/upstream.commit` pins, the same arrangement as the parser
+# above. Moving the pin is a plain edit: point it at a pushed Nim commit.
+
+const
+  NimRuntimeDir* = "lib" / "std" / "system" / "upstream"
+  NimRuntimeCommitFile* = "lib" / "std" / "system" / "upstream.commit"
+    ## Tracked. Next to the directory rather than in it: the directory is
+    ## git-ignored as a whole.
+  NimRuntimeStampFile = NimRuntimeDir / "upstream.fetched"
+  NimRuntimeFiles = ["orc.nim", "yrc.nim", "cellseqs_v2.nim"]
+    ## In `lib/system/` of the Nim tree, under the same names here.
+
+var nimRuntimeChecked = false
+
+proc syncNimRuntime*() =
+  ## Put `lib/std/system/upstream/` on the pinned commit. Called wherever
+  ## nimony is built: the copies are part of the stdlib that build serves, and
+  ## without them `--mm:orc`/`--mm:yrc` programs do not compile.
+  if nimRuntimeChecked: return
+  nimRuntimeChecked = true
+  let pin = readPin(NimRuntimeCommitFile)
+  if pin.len == 0: return # no pin: keep whatever is in the directory
+  var present = readPin(NimRuntimeStampFile) == pin
+  for f in NimRuntimeFiles:
+    if not fileExists(NimRuntimeDir / f): present = false
+  if present: return
+
+  createDir NimRuntimeDir
+  var files: seq[(string, string)] = @[]
+  for f in NimRuntimeFiles:
+    files.add ("lib/system/" & f, NimRuntimeDir / f)
+  if fetchNimFiles("orc/yrc runtime", pin, files):
+    writeFile(NimRuntimeStampFile, pin & "\n")
+  else:
+    # a WARNING, like the parser's: only `--mm:orc`/`--mm:yrc` need the files
+    echo "[deps] WARNING: cannot check out Nim's lib/system/{orc,yrc,cellseqs_v2}.nim @ ",
+         pin, " (no Nim checkout holding it, and `curl` failed or is missing); ",
+         "--mm:orc and --mm:yrc will not compile"

@@ -243,7 +243,8 @@ elif not defined(createNimRtl): # and not(defined(posix) and appType == "lib"):
 
   type cstringArray = ptr UncheckedArray[cstring] # {.importc: "char**", nodecl.}
 
-  var
+  # Written by the generated `main` before any Nim code runs: read-only here.
+  let
     cmdCount {.importc: "cmdCount".}: cint
     cmdLine {.importc: "cmdLine".}: cstringArray
 

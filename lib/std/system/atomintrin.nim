@@ -38,16 +38,16 @@ var ATOMIC_SEQ_CST* {.importc: "__ATOMIC_SEQ_CST", nodecl.}: AtomMemModel
 # native lowerings are sequentially consistent regardless (see `IntrinsicRows`),
 # so they do not evaluate it.
 
-func atomicAddFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
+func atomicAddFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.sync,
   intrinsic: "AtomicAddFetch".}
-func atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
+func atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.sync,
   intrinsic: "AtomicSubFetch".}
-func atomicLoadN*[T](p: ptr T, mem: AtomMemModel): T {.
+func atomicLoadN*[T](p: ptr T, mem: AtomMemModel): T {.sync,
   intrinsic: "AtomicLoad".}
-func atomicStoreN*[T](p: ptr T, val: T, mem: AtomMemModel) {.
+func atomicStoreN*[T](p: ptr T, val: T, mem: AtomMemModel) {.sync,
   intrinsic: "AtomicStore".}
-func atomicExchangeN*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
+func atomicExchangeN*[T](p: ptr T, val: T, mem: AtomMemModel): T {.sync,
   intrinsic: "AtomicExchange".}
 func atomicCompareExchangeN*[T](p: ptr T, expected: ptr T, desired: T,
-    weak: bool, succ, fail: AtomMemModel): bool {.
+    weak: bool, succ, fail: AtomMemModel): bool {.sync,
   intrinsic: "AtomicCompareExchange".}

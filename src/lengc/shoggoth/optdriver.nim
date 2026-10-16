@@ -20,6 +20,7 @@
 import std / [os, assertions, strutils, syncio, sets, envvars]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
+import ".." / ".." / "lib" / lengiface       # writeLengInterface (`.oc.idx.nif`)
 import induction_variables                     # runInductionVariables (live pass)
 import cse                                     # runCSE + collectFunctionSummaries
 import scalarizer                              # runScalarize (object → field scalars / SROA)
@@ -157,6 +158,19 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   if passOn("tailcall"): tailRules.incl trFold
   if tailRules != {}: runTailCalls(buf, tailRules)
 
+proc isAssemblerProc(pragmas: Cursor): bool =
+  ## An `{.assembler.}` body is a one-to-one transcription of machine code
+  ## whose locals are pinned to registers, so the passes' view of it is wrong:
+  ## copy propagation, for one, cannot see that a write to `rdx` clobbers
+  ## another local pinned to `rdx`. Such bodies are left exactly as written.
+  result = false
+  if pragmas.kind != TagLit: return
+  var p = pragmas
+  p.loopInto:
+    if p.kind == TagLit and p.pragmaKind == AssemblerP:
+      result = true
+    skip p
+
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                  eng: Engine = nil; vecMode = vecOff) =
@@ -175,7 +189,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       dest.addSubtree d.params
       dest.addSubtree d.returnType
       dest.addSubtree d.pragmas
-      if d.body.kind == TagLit:
+      if d.body.kind == TagLit and not isAssemblerProc(d.pragmas):
         inc st.bodies
         # Open a typenav scope for this proc and register its params, so the
         # alias pass's `getType` can resolve param/local types (mirrors how the C
@@ -270,6 +284,7 @@ proc processFile*(input, output: string; verify = false;
   var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode)
   checkWellFormed(optimized)
   onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
+  onRaiseQuit writeLengInterface(optimized, output)
   if verify:
     var back = parseFromFile(output, 4000, sharedTags = createLengTagPool())
     checkWellFormed(back)

@@ -454,6 +454,15 @@ proc skipModifier*(a: Cursor): Cursor =
   result = a
   removeModifier(result)
 
+proc skipOwned*(a: Cursor): Cursor {.inline.} =
+  ## `owned T` is a `T` for everything but ownership (RFC #575).
+  result = a
+  if result.isTagLit and result.typeKind == OwnedT:
+    inc result
+
+proc skipModifierAndOwned*(a: Cursor): Cursor {.inline.} =
+  result = skipOwned(skipModifier(a))
+
 const
   LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, PatternvarS, GvarS, TvarS, GletS, TletS}
 
@@ -568,7 +577,7 @@ proc needsTemp*(n: Cursor): bool =
   of TagLit:
     var n = n
     case n.exprKind
-    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
+    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX, CanFormCyclesX:
       result = false
     of ExprX:
       n = sub(n)  # throwaway copy; bounds the probe under vpr

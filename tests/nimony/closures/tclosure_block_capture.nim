@@ -13,3 +13,24 @@ proc main =
     echo inner(3)
 
 main()
+
+# the same at module level, where the block is no proc's body (#2555)
+block:
+  var nums = @[1, 2, 3]
+  let p = proc () {.closure.} =
+    nums.add 4
+  p()
+  echo nums.len
+  iterator counted(): int {.closure.} =
+    yield nums[3]
+  for x in counted(): echo x
+
+proc dummy(): int = 0
+var escaped: proc (): int {.closure.} = dummy
+block:
+  var x = 10
+  escaped = proc (): int {.closure.} =
+    inc x
+    result = x
+echo escaped()
+echo escaped()

@@ -1,0 +1,15 @@
+roots: 4
+example: 4 certs, leaf CN=example.com, key kkEcP256, signed saEcdsaSha256
+  example.com: ok
+github: 3 certs, leaf CN=github.com, key kkEcP256, signed saEcdsaSha256
+  github.com: ok
+google: 3 certs, leaf CN=www.google.com, key kkEcP256, signed saEcdsaSha256
+  www.google.com: ok
+amazon: 3 certs, leaf CN=www.amazon.com, key kkRsa, signed saRsaSha256
+  www.amazon.com: ok
+  evil.com: certificate is not valid for this host name
+  google.com.evil.com: certificate is not valid for this host name
+  in 2040: certificate expired or not yet valid
+  no roots: no chain to a trusted root
+  tampered: no chain to a trusted root
+  leaf only: no chain to a trusted root

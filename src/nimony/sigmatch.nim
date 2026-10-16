@@ -328,6 +328,8 @@ proc isEnumType*(n: Cursor): bool =
 
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
+proc isConceptInvocation*(f: Cursor): bool
+proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool
 proc singleArg(m: var Match; f: var Cursor; arg: CallArg)
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor)
@@ -425,6 +427,13 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     else:
       result = isOrdinalType(a)
     skip f
+  of InvokeT:
+    if isConceptInvocation(f):
+      result = matchConceptInvocation(m, f, a)
+      skip f
+    else:
+      var a = a
+      result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
   else:
     # match as a regular type:
     var a = a
@@ -540,7 +549,10 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
   if f.isDotToken:
     inc f
     return a.typeKind != AutoT
-  let a = errArgForConstraintCheck(a)
+  var a = errArgForConstraintCheck(a)
+  if a.typeKind == OwnedT:
+    # `owned X` satisfies what `X` satisfies (RFC #575)
+    inc a
   if a.isSymbol:
     let res = tryLoadSym(a.symId)
     assert res.status == LacksNothing
@@ -908,6 +920,12 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
   if isConceptType(a):
     return conceptRequirementInBody(routine, actualBody)
   var bindings = m.inferred
+  for k, v in m.inferred:
+    # a container concept's parameter bound to a caller's typevar
+    # (`Findable[T]`, see `matchConceptInvocation`) that an earlier
+    # requirement has inferred by now
+    if v.isSymbol and v.symId != k and m.inferred.hasKey(v.symId):
+      bindings[k] = m.inferred.getOrDefault(v.symId)
   for selfSym in conceptSelfSyms(body, routine):
     bindings[selfSym] = a
   if not conceptRoutineUsesSelf(body, routine):
@@ -978,11 +996,129 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
     storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied, missing: missing))
   satisfied
 
+proc isConceptInvocation*(f: Cursor): bool =
+  result = false
+  if f.typeKind == InvokeT:
+    var h = f
+    inc h
+    result = h.isSymbol and isConceptSym(h.symId)
+
+proc conceptInvocationArgs*(inv: Cursor): (SymId, seq[(SymId, Cursor)]) =
+  ## `inv` is `(at Concept A1 ... An)`: the concept and its type parameters
+  ## paired with `A1 ... An`.
+  result = (SymId(0), @[])
+  var n = inv
+  n.into:
+    result[0] = n.symId
+    skip n
+    let section = getTypeSection(result[0])
+    if section.typevars.substructureKind == TypevarsU:
+      var tv = section.typevars
+      tv.into TypevarsU:
+        while tv.hasMore:
+          if n.hasMore:
+            result[1].add (asLocal(tv).name.symId, n)
+            skip n
+          skip tv
+    while n.hasMore: skip n
+
+proc sameInvocationArgs(m: var Match; f, a: Cursor): bool =
+  ## `f` and `a` invoke the same concept: are their arguments identical? An
+  ## argument of `f` may be a typevar the match has bound already.
+  result = true
+  var f = f
+  var a = a
+  f.into:
+    a.into:
+      skip f # the concept
+      skip a
+      while f.hasMore and a.hasMore:
+        let fa = if f.isSymbol and m.inferred.hasKey(f.symId): m.inferred.getOrDefault(f.symId) else: f
+        if not sameTrees(fa, a):
+          result = false
+        skip f
+        skip a
+      if f.hasMore or a.hasMore:
+        result = false
+      while f.hasMore: skip f
+      while a.hasMore: skip a
+
+proc conceptInvocationExtends(m: var Match; f: Cursor; a: Cursor; depth = 0): bool =
+  ## `a` is `(at Sub B1 ... Bm)`: does it provide `f` = `(at Concept A1 ... An)`
+  ## by inheritance? Sub's parents are phrased in terms of Sub's own type
+  ## parameters (`concept of Indexable[T]`), so they are instantiated with
+  ## `B1 ... Bm` before being compared with `f`.
+  result = false
+  if depth > 20 or not isConceptInvocation(a):
+    return false
+  var fh = f
+  inc fh
+  var ah = a
+  inc ah
+  if fh.symId == ah.symId:
+    return sameInvocationArgs(m, f, a)
+  let (subSym, args) = conceptInvocationArgs(a)
+  var bindings = initTable[SymId, Cursor]()
+  for (s, arg) in args:
+    bindings[s] = arg
+  var p = conceptParentsSlot(getTypeSection(subSym).body)
+  var parents: seq[Cursor] = @[]
+  if p.typeKind == AndT or p.exprKind == ParX:
+    p.into:
+      while p.hasMore:
+        parents.add p
+        skip p
+  elif not p.isDotToken:
+    parents.add p
+  for parent in parents:
+    if parent.typeKind == InvokeT or parent.exprKind == AtX:
+      var buf = createTokenBuf(16)
+      substituteTypevars(buf, parent, bindings)
+      if conceptInvocationExtends(m, f, beginRead(buf), depth+1):
+        return true
+
+proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool =
+  ## `f` is `(at Concept A1 ... An)`, as in `proc find[T; C: Findable[T]]`:
+  ## the concept's parameters stand for `A1 ... An` while its requirements are
+  ## checked against `a`, which is how a caller's open `T` gets inferred (by
+  ## the first requirement that uses it). The verdict depends on the arguments,
+  ## so the per-`(concept, type)` cache is bypassed.
+  if a.isDotToken:
+    # an unconstrained typevar, see `matchConceptBody`
+    result = false
+  elif isOpenTypevar(a):
+    result = true
+  elif conceptInvocationExtends(m, f, a):
+    # `A: MutableIndexable[T]` where `Indexable[T]` is expected
+    result = true
+  else:
+    let (conceptSym, args) = conceptInvocationArgs(f)
+    var saved: seq[(SymId, bool, Cursor)] = @[]
+    for (s, arg) in args:
+      saved.add (s, m.inferred.hasKey(s), m.inferred.getOrDefault(s))
+      if arg.isSymbol and m.inferred.hasKey(arg.symId):
+        m.inferred[s] = m.inferred.getOrDefault(arg.symId)
+      else:
+        m.inferred[s] = arg
+    let actualBody = if isConceptType(a): getTypeSection(a.symId).body else: default(Cursor)
+    result = true
+    for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, getTypeSection(conceptSym).body):
+      if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody):
+        addMissingConstraint(m, routine)
+        result = false
+    for (s, had, v) in saved:
+      if had: m.inferred[s] = v
+      else: m.inferred.del s
+
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  let typevar = asTypevar(res.decl)
-  result = isTypevarLike(typevar.kind)
+  if res.status != LacksNothing:
+    # not a global symbol, e.g. the field `n` of a static object value
+    # `(oconstr Tag (kv n 1))` inside `Box[...]`; typevars always load
+    result = false
+  else:
+    let typevar = asTypevar(res.decl)
+    result = isTypevarLike(typevar.kind)
 
 proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
   if (f.isIntLit or f.kind == InlineInt) and
@@ -1610,9 +1746,13 @@ proc tryNarrowChoice*(context: ptr SemContext; choice, expected: Cursor): SymId 
     result = tryMatchProcChoice(context, choice, t)
 
 proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
-  let a = skipModifier(arg.typ)
+  var a = skipModifier(arg.typ)
   let fs = f.symId
   if isTypevar(fs):
+    # a typevar binds `owned X` as it is, so that `move` and friends keep
+    # the ownership (RFC #575):
+    a = arg.typ
+    if a.isTagLit and a.typeKind in TypeModifiers: inc a
     if isStaticTypevar(fs):
       # a value parameter is not a type; it cannot be a parameter's type
       m.error InvalidMatch, f, a
@@ -1989,6 +2129,33 @@ proc inferableArgTypevar(m: Match; f: Cursor; arg: CallArg): SymId =
         not (f.isSymbol and isTypevar(f.symId)):
       result = a.symId
 
+proc isFreshOwnable(n: Cursor): bool =
+  ## Expressions that produce a reference nobody else holds yet. These may
+  ## initialize an `owned` location even where the expression itself is not
+  ## typed as `owned` (modules without `.feature: "ownedRefs"`, lambdas).
+  var n = n
+  while n.exprKind in {HconvX, ExprX, ParX}:
+    let start = n
+    n = sub(n) # bound the last-son scan
+    if start.exprKind == HconvX: skip n # the type
+    var next = n
+    while next.hasMore:
+      n = next
+      skip next
+  case n.kind
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    result = res.status == LacksNothing and isRoutine(res.decl.symKind)
+  of SymbolDef:
+    result = false
+  of TagLit:
+    case n.exprKind
+    of OconstrX, NewobjX, NewrefX, NilX: result = true
+    else:
+      result = n.stmtKind in {ProcS, FuncS, IteratorS}
+  else:
+    result = false
+
 proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg)
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
@@ -2014,6 +2181,27 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
   of TagLit:
     let fk = f.typeKind
     case fk
+    of OwnedT:
+      # RFC #575: shared cannot be upgraded to unique, except for a fresh
+      # value which has no other owner yet.
+      var a = arg.typ
+      if a.typeKind in {MutT, OutT, SinkT, LentT}:
+        inc a
+      if a.typeKind == OwnedT:
+        inc a
+      elif not isFreshOwnable(arg.n) and a.typeKind != NiltT:
+        m.error InvalidMatch, f, a
+      elif a.typeKind in RoutineTypes and not containsGenericParams(f):
+        # keep the `owned` target visible as a conversion: once lambda lifting
+        # has produced the environment, the duplifier checks that it is
+        # acyclic, which `owned` closures promise:
+        m.args.addParLe HconvX, m.argInfo
+        m.args.addSubtree f
+        inc m.opened
+      let fStart = f
+      f = sub(f)
+      singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig)
+      expectParRi m, f, fStart
     of MutT, OutT, SinkT, LentT:
       var a = arg.typ
       if a.typeKind in {MutT, OutT, SinkT, LentT}:
@@ -2278,8 +2466,16 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
         if not matched:
           m.error InvalidMatch, f, arg.typ
         skip f
+    of TypekindT:
+      # The meta type `typedesc` (nim-lang/nimony#2625): like `typed`, but it
+      # only takes a type. Declarations admit no other bare type class here.
+      let fOrig = f
+      if not matchTypeConstraint(m, f, arg.typ):
+        m.error InvalidMatch, fOrig, arg.typ
+        f = fOrig
+        skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT,
+        DistinctT, StaticT, AutoT, OrdinalT, ConceptT, SymkindT,
         ClosureTupleT:
       # `ClosureTupleT` is a hexer-internal lowering; it never reaches sem.
       m.error UnhandledTypeBug, f, f
@@ -2457,10 +2653,45 @@ proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
     var elemMut = elem
     singleArg(m, elemMut, arg)
 
+proc ownedFormal(m: Match; f: Cursor): bool =
+  ## Does the formal take the `owned` argument as it is? A typevar binds it
+  ## as it is, unless it is already bound to something unowned.
+  var f = f
+  if f.typeKind in {SinkT, LentT, MutT, OutT}: inc f
+  if f.isSymbol and isTypevar(f.symId):
+    if m.inferred.contains(f.symId):
+      f = m.inferred.getOrQuit(f.symId)
+      if f.typeKind in {SinkT, LentT}: inc f
+    else:
+      return true
+  if f.isSymbol:
+    # `type Cb = owned proc ...`
+    let decl = getTypeSection(f.symId)
+    if decl.kind == TypeY: f = decl.body
+  result = f.typeKind == OwnedT
+
 proc singleArgCore(m: var Match; f: var Cursor; arg: CallArg) =
   let fOrig = f
+  var arg = arg
+  var toUnowned = false
+  var a = arg.typ
+  if a.typeKind in {MutT, LentT, SinkT}: inc a
+  if a.typeKind == OwnedT and not ownedFormal(m, f):
+    # RFC #575: `owned X` converts to `X`, producing a counted reference.
+    # A `var X` would allow storing an unowned reference into the owner:
+    if f.typeKind in {MutT, OutT}:
+      m.error InvalidMatch, f, arg.typ
+      return
+    inc a
+    arg.typ = a
+    toUnowned = true
   singleArgImpl(m, f, arg)
   if not m.err:
+    if toUnowned:
+      # visible to the duplifier, which then copies the unowned reference:
+      m.args.addParLe HconvX, m.argInfo
+      m.args.addSubtree arg.typ
+      inc m.opened
     m.useArg arg, fOrig # since it was a match, copy it
     while m.opened > 0:
       m.args.addParRi()

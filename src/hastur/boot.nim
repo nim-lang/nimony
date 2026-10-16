@@ -14,18 +14,18 @@ export binstamps
 
 ## The boot bootstrap rebuilds the *full* toolchain at every stage — not just
 ## `bin/nimony`. nimony is only the driver; the heavy lifting (semantic
-## analysis, hexer lowering) happens in `nimsem` and `hexer`, both reached
+## analysis, hexer lowering) happens in `nimsem` and `shoggoth`, both reached
 ## via `findTool` from each `nimony c` invocation. Iterating only over the
 ## driver therefore exercises self-hosting of nimony alone while the
-## stage-0 nimsem and hexer keep doing all the real work — bugs in their
+## stage-0 nimsem and shoggoth keep doing all the real work — bugs in their
 ## codegen go undetected indefinitely. `tooldirs.binDir` and
 ## `semos.nimonyDir` accept any tail starting with `bin`, so stage-N's
 ## nimony resolves stage-N's tools and the project's stdlib without any
 ## CLI override.
-const BootSelfTools = ["nimsem", "hexer", "lengc", "shoggoth", "nimony"]
+const BootSelfTools = ["nimsem", "shoggoth", "lengc", "nimony"]
   ## Tools rebuilt from source at every stage. The order matters: nimsem,
-  ## hexer, lengc (the C code generator) and shoggoth (the `-d:release`
-  ## optimizer) are all reached by every later `nimony c` call, so they go
+  ## shoggoth (hexer plus the `-d:release` optimizer) and lengc (the C code
+  ## generator) are all reached by every later `nimony c` call, so they go
   ## first; nimony itself goes last because it's the one each *next* stage
   ## will drive with. lengc and shoggoth used to be carried over from `bin/`,
   ## which left a Nimony-built lengc/shoggoth untested by the boot although
@@ -145,7 +145,6 @@ proc bootBackendLine*(withValgrind: bool): string =
 proc bootSourceFor*(tool: string): string =
   case tool
   of "nimony", "nimsem": "src/nimony/" & tool & ".nim"
-  of "hexer": "src/hexer/hexer.nim"
   of "lengc": "src/lengc/lengc.nim"
   of "shoggoth": "src/lengc/shoggoth/shoggoth.nim"
   of "jorogumo": JorogumoSource
@@ -197,7 +196,7 @@ proc bootToolCmd*(compiler, source, outBin, cacheBase, args: string;
                  withValgrind: bool): string =
   ## The `compiler <c|n> --out:outBin source` command line for one boot tool.
   ## `compiler` is the previous stage's nimony, so it transitively drives the
-  ## previous stage's nimsem/hexer (siblings under the same stage's bin dir)
+  ## previous stage's nimsem/shoggoth (siblings under the same stage's bin dir)
   ## for this build. The subcommand is `n` for a native boot (arkham + nifasm,
   ## no C compiler), `c` otherwise.
   let cache = cacheBase / outBin.extractFilename

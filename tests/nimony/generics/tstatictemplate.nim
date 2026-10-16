@@ -61,3 +61,25 @@ proc makeGrid[R, C: static[int]; T](): Grid[R, C, T] = Grid[R, C, T]()
 
 let g2 = makeGrid[2, 3, int]()
 assert sizeof(g2.data) == 56, "makeGrid[2, 3, int]() default-constructs array[7, int]"
+
+# issue #2583: field symbols inside a static object value are not typevars
+type
+  Tag = object
+    n: int
+  Box[S: static[Tag]] = object
+
+template sameBox[S1, S2: static[Tag]](x: Box[S1], y: Box[S2]): bool =
+  when Box[S1] is Box[S2]:
+    true
+  else:
+    false
+
+func wrapped[S1, S2: static[Tag]](x: Box[S1], y: Box[S2]): bool =
+  sameBox(x, y)
+
+const tagA = Tag(n: 1)
+const tagB = Tag(n: 2)
+var boxA: Box[tagA]
+var boxB: Box[tagB]
+assert not wrapped(boxA, boxB)
+assert wrapped(boxA, boxA)

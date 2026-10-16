@@ -20,6 +20,7 @@
 - Multi-methods are gone for good, use single dispatch methods.
 - Cyclic module dependencies are allowed if an explicit `cyclic` import statement is used: `import (path / module) {.cyclic.}`.
 - Nimony is case sensitive. Use the new `{.feature: "ignoreStyle".}` statement to enable Nim 2's partial case sensitivity on a per module basis.
+- An unlabeled `break` only leaves a loop, never a `block`; a block is left via `break <blockname>`. Use `{.feature: "anonBlockBreaks".}` to get Nim 2's behavior back on a per module basis.
 
 - The side-effect system works differently:
   - `func`, `iterator` and `converter` are treated as `noSideEffect` by default.

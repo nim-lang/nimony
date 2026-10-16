@@ -1,0 +1,7 @@
+tests/nimony/errmsgs/tsharedglobals.nim(19, 12) Error: unsynchronized access to global variable 'counter'; pass it to a `.sync` routine or use `{.cast(assumeSync).}` [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsharedglobals.nim(22, 11) Error: unsynchronized access to global variable 'counter'; pass it to a `.sync` routine or use `{.cast(assumeSync).}` [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsharedglobals.nim(25, 3) Error: unsynchronized access to global variable 'pair'; pass it to a `.sync` routine or use `{.cast(assumeSync).}` [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsharedglobals.nim(28, 12) Error: unsynchronized access to global variable 'lock'; pass it to a `.sync` routine or use `{.cast(assumeSync).}` [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsharedglobals.nim(32, 17) Error: unsynchronized access to global variable 'counter'; pass it to a `.sync` routine or use `{.cast(assumeSync).}` [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsharedglobals.nim(35, 22) Error: unsynchronized access to global variable 'p'; pass it to a `.sync` routine or use `{.cast(assumeSync).}` [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsharedglobals.nim(38, 23) Error: unsynchronized access to global variable 'counter'; pass it to a `.sync` routine or use `{.cast(assumeSync).}` [pass --verbose for the Final IR]

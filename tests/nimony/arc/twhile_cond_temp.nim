@@ -32,3 +32,5 @@ proc main =
   assert counter == 3
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

@@ -85,6 +85,20 @@ const
     "tests/nimony/scopes"
   ]
 
+  NativeTestDirsX64* = [
+    # `{.assembler.}` programs. They name x86-64 registers, and only arkham can
+    # compile them at all — the C backend refuses an assembler body by design —
+    # so the tree walk skips the directory (`hastur.mode`) and only the native
+    # suite on an x86-64 host runs it.
+    "tests/nimony/asmnative",
+    # `std/crypto` takes its `{.assembler.}` field and MAC arithmetic on this
+    # backend, so the vectors here are what check that code
+    "tests/nimony/crypto",
+    # streams (#2635) and the HTTP client on them: observed green on x86-64
+    # Linux only so far
+    "tests/nimony/streams"
+  ]
+
   NativeJoinSkip*: array[0, string] = [
     # Directories whose tests each compile and run correctly through `nimony n`
     # — they are in the lists above — but whose JOINED program does not, so the
@@ -124,6 +138,10 @@ const
     "tests/nimony/stdlib/tbitops",
     "tests/nimony/stdlib/tencodings",
     "tests/nimony/stdlib/trandom",
+    # x86-64 float negation is lowered as `0.0 - x`, so `-(+0.0)` is `+0.0` and
+    # `"-0"`, `"-0.0e5"` and `"-1e-400"` parse to a positive zero. Diagnosed:
+    # arkham's `NegC` float branch (`x64/value.nim`); AArch64's `fneg` is right.
+    "tests/nimony/stdlib/tparsefloat",
     # The one test on Windows that drives the ring on real sockets — every other
     # test in `tests/nimony/threads` either stubs itself out here or never
     # reaches `rawthreads.create`. Three native gaps have been found through it;
@@ -171,6 +189,9 @@ const
     "tests/nimony/stdlib/tall"
   ]
   NativeTestFiles* = [
+    # `std/dirs` read libc's `errno` after a failed syscall; a freestanding
+    # build has none, so every failure reported `Success`.
+    "tests/nimony/stdlib/tdir_errors",
     # A constructor that selects a case branch and sets none of its fields. Sem
     # used to leave that branch out of the `oconstr`, which the C back end's
     # compound literal zeroed and arkham, storing only what is listed, did not:
@@ -242,6 +263,11 @@ const
     "tests/nimony/threads/tioringrw",
     "tests/nimony/threads/tpolladd",
     "tests/nimony/threads/ttimers",
+    # Positioned transfers: default io_uring and an explicitly selected epoll
+    # program. The latter reaches pread/pwrite in the libc-free backend
+    # (nativenif #195); Linux runtime validation is still pending.
+    "tests/nimony/threads/tpositioned",
+    "tests/nimony/ioringepoll/tpositionedepoll",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",

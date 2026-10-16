@@ -37,6 +37,9 @@ once per module:
 - `(case sel (of …)* (else …)?)` — the selector forks into the branches
 - `(try body (except …)* (fin …)?)` — body and handlers are all successors
 - `(ret v)` / `(raise v)`    — read `v`, then the path ends
+- `(corofor call body…)`     — `call` once, then `body` zero or more times;
+                               `cps` lowers it, so it is still here for the
+                               duplifier and the destroyer
 
 Reasoning about the same tree the duplifier rewrites also removes a whole class
 of bug: the goto form could impose an evaluation order that a later pass then
@@ -90,7 +93,7 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
       else:
         break
     of NoExpr, ErrX, SufX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX,
-       AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+       AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX,
        AconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
        LeX, LtX, CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX, NewrefX,
@@ -148,46 +151,59 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
     # ParRi/close (classic) or a stray suffix (nifcore); unreachable in a walk.
     result = true
 
-proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
-  ## True if `tree` is a *direct* field/index access of the moved root `r` that
-  ## is statically disjoint from `x`'s own field/index — i.e. `tree` is
-  ## `(dot r other)` while `x` is `(dot r field)` with `other != field`, or the
-  ## tuple equivalent `(tupat r J)` vs `(tupat r K)` with `J != K`. Such a
-  ## location can never alias `x`, so the scan may skip it whole. Only the
-  ## direct shapes off a bare root qualify; anything nested or through a deref
-  ## returns false, so the conservative scan still runs (and still catches
-  ## whole-object reads and deref-of-root).
+proc accessDepth(n: Cursor; r: SymId): int =
+  ## How many `dot`/`tupat` accessors `n` chains off the bare root `r`; -1 for
+  ## any other shape (a deref, an index, a call, a different root, ...).
   ##
-  ## Both `(dot OBJ FIELD …)` and `(tupat OBJ INDEX)` lay out as: token 0 is the
-  ## accessor tag, token 1 is OBJ, token 2 is the selector (the field symbol, or
-  ## the index literal). OBJ here is required to be the bare root symbol `r`, so
-  ## each OBJ is a single token and one `inc` steps tag→OBJ, another OBJ→selector.
+  ## Both `(dot OBJ FIELD …)` and `(tupat OBJ INDEX)` lay out as: the accessor
+  ## tag, then OBJ, then the selector (the field symbol, or the index literal),
+  ## so one `inc` steps from an accessor to its OBJ.
+  var n = n
+  result = 0
+  while n.kind == TagLit and n.exprKind in {DotX, TupatX}:
+    inc result
+    inc n
+  if n.kind != Symbol or n.symId != r: result = -1
+
+proc accessorAt(n: Cursor; depth, level: int): Cursor =
+  ## The accessor `level` steps out from the root in a chain of `depth`.
+  result = n
+  for _ in 0 ..< depth - 1 - level: inc result
+
+proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
+  ## True if `tree` and `x` are field/index paths off the moved root `r` that
+  ## are statically disjoint: walking out from `r`, the first accessor where
+  ## they differ names a different field (`dot`) or tuple index (`tupat`). So
+  ## `(dot r other)` vs `(dot r field)`, and equally the nested
+  ## `(tupat (tupat r 1) 1)` vs `(tupat (tupat r 1) 0)` that unpacking a
+  ## raising call's `(ErrorCode, (A, B))` result produces. Such a location can
+  ## never alias `x`, so the scan may skip it whole. A path that is a prefix of
+  ## the other, or anything through a deref or an array index, returns false,
+  ## so the conservative scan still runs (and still catches whole-object reads
+  ## and deref-of-root).
   result = false
-  if tree.kind == TagLit and x.kind == TagLit and tree.exprKind == x.exprKind:
-    var treeObj = tree
-    inc treeObj                 # tree: accessor tag -> OBJ
-    var xObj = x
-    inc xObj                    # x:    accessor tag -> OBJ
-    let bothRootedAtR =
-      treeObj.kind == Symbol and treeObj.symId == r and
-      xObj.kind == Symbol and xObj.symId == r
-    if bothRootedAtR:
-      var treeSel = treeObj
-      inc treeSel               # tree: OBJ -> selector
-      var xSel = xObj
-      inc xSel                  # x:    OBJ -> selector
-      # An `if` chain rather than a `case`, for the reason `xelim.trExprToLabel`
-      # gives: two kinds are interesting and everything else shares one
-      # fall-back, and here that fall-back is the conservative answer -- an
-      # accessor this does not know stays "may alias" and the full scan runs.
-      if tree.exprKind == DotX:
-        # disjoint iff the two field names differ
-        result = treeSel.kind == Symbol and xSel.kind == Symbol and
-                 treeSel.symId != xSel.symId
-      elif tree.exprKind == TupatX:
-        # disjoint iff the two tuple indices differ
-        result = treeSel.kind == IntLit and xSel.kind == IntLit and
-                 treeSel.intVal != xSel.intVal
+  if tree.kind != TagLit or x.kind != TagLit: return
+  let td = accessDepth(tree, r)
+  let xd = accessDepth(x, r)
+  if td <= 0 or xd <= 0: return
+  for level in 0 ..< min(td, xd):
+    let a = accessorAt(tree, td, level)
+    let b = accessorAt(x, xd, level)
+    if a.exprKind != b.exprKind: return false
+    var sa = a
+    inc sa
+    skip sa                     # accessor -> OBJ -> selector
+    var sb = b
+    inc sb
+    skip sb
+    # An `if` chain rather than a `case`, for the reason `xelim.trExprToLabel`
+    # gives: an accessor whose selector is not static stays "may alias".
+    if a.exprKind == DotX:
+      if sa.kind != Symbol or sb.kind != Symbol: return false
+      if sa.symId != sb.symId: return true
+    else:
+      if sa.kind != IntLit or sb.kind != IntLit: return false
+      if sa.intVal != sb.intVal: return true
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
   ## True if `tree` contains a read whose location can alias `x` (the location
@@ -235,6 +251,8 @@ type
     ncStmtList   ## `stmts`/`scope`: children are consecutive statements
     ncRoutine    ## a routine: its body is a control-flow boundary
     ncLoop       ## `(loop body)`: falling off `body` is the back-edge
+    ncCorofor    ## `(corofor call body…)`: after `call` and after the body,
+                 ## the body may run (again) or the loop may end
     ncIte        ## `(ite cond then else)` / `(itec …)`
     ncCase       ## `(case sel (of …)* (else …)?)`
     ncTry        ## `(try body (except …)* (fin …)?)`
@@ -257,7 +275,7 @@ const
 
 proc classify(n: Cursor): NodeClass =
   case n.stmtKind
-  of BlockLikeKinds: result = ncStmtList
+  of BlockLikeKinds, AlwaysS: result = ncStmtList
   of RoutineKinds: result = ncRoutine
   of CaseS: result = ncCase
   of TryS: result = ncTry
@@ -278,7 +296,8 @@ proc classify(n: Cursor): NodeClass =
     # statement. `jmp`/`lab`/`continue` are transfers `execStmt` resolves by
     # name, not by where they sit, so they need no class of their own.
     result = ncOther
-  of IfS, WhenS, WhileS, ForS, CoroforS, BlockS, BreakS, AsmS, DeferS:
+  of CoroforS: result = ncCorofor
+  of IfS, WhenS, WhileS, ForS, BlockS, BreakS, AsmS, DeferS:
     # `finalir.nim` lowered all of these; `execStmt` `bug`s on one, and until
     # then it is a node like any other.
     result = ncOther
@@ -302,14 +321,15 @@ proc lastChild(base: Cursor; pos: int32): int32 =
     p = endOf(base, p)
 
 proc enclosingLoop(m: MoverContext; base: Cursor; pos: int32): int32 =
-  ## The `(loop …)` a `(continue .)` at `pos` belongs to, or -1.
+  ## The `(loop …)` or `(corofor …)` a `(continue .)` at `pos` belongs to,
+  ## or -1.
   result = -1
   var child = pos
   while true:
     let par = m.parents[child]
     if par < 0: break
     let p = at(base, par)
-    if p.finalIrKind == LoopV:
+    if p.finalIrKind == LoopV or p.stmtKind == CoroforS:
       result = par
       break
     if p.stmtKind in RoutineKinds: break
@@ -391,6 +411,15 @@ proc afterNode(m: MoverContext; base: Cursor; pos: int32; x: Cursor;
     of ncLoop:
       pcs.add firstChild(base, par)   # the back-edge
       return
+    of ncCorofor:
+      let bodyPos = endOf(base, firstChild(base, par))
+      if child != firstChild(base, par) and childEnd < parEnd:
+        pcs.add childEnd              # the next statement of the body
+        return
+      # the iterator call or a pass through the body is over: the iterator
+      # may yield again (run the body) or finish (continue after the loop)
+      if bodyPos < parEnd: pcs.add bodyPos
+      child = par
     of ncIte:
       if childEnd >= parEnd:
         child = par                   # nothing follows the arm
@@ -459,7 +488,7 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
   ## the last read and the whole query is answered.
   let n = at(base, pc)
   case n.stmtKind
-  of StmtListKinds:
+  of StmtListKinds, AlwaysS:
     let fc = firstChild(base, pc)
     if fc < endOf(base, pc):
       pcs.add fc
@@ -494,8 +523,16 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
     result = afterNode(m, base, pc, x, pcs, otherUsage)
   of ContinueS:
     let loop = enclosingLoop(m, base, pc)
-    if loop >= 0: pcs.add firstChild(base, loop)
-    result = true
+    if loop < 0:
+      result = true
+    elif at(base, loop).stmtKind == CoroforS:
+      # the iterator steps: the body runs again, or the loop ends
+      let bodyPos = endOf(base, firstChild(base, loop))
+      if bodyPos < endOf(base, loop): pcs.add bodyPos
+      result = afterNode(m, base, loop, x, pcs, otherUsage)
+    else:
+      pcs.add firstChild(base, loop)
+      result = true
   of AsgnS:
     let lhsPos = firstChild(base, pc)
     let lhs = at(base, lhsPos)
@@ -574,7 +611,14 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
      MixinS, UsingS}:
     # declarative junk we don't care about: it evaluates nothing
     result = afterNode(m, base, pc, x, pcs, otherUsage)
-  of IfS, WhenS, WhileS, ForS, CoroforS, BlockS, BreakS, AsmS, DeferS:
+  of CoroforS:
+    # The iterator call runs first; `afterNode` schedules the body from there.
+    let callPos = firstChild(base, pc)
+    if scanAt(base, callPos, x, otherUsage):
+      result = false
+    else:
+      result = afterNode(m, base, callPos, x, pcs, otherUsage)
+  of IfS, WhenS, WhileS, ForS, BlockS, BreakS, AsmS, DeferS:
     # `finalir.nim` lowered all of these; seeing one means a pass regressed the
     # normal form (see `doc/final_ir.md`).
     bug "statement not eliminated: " & $n.stmtKind

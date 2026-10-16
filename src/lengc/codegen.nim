@@ -149,7 +149,7 @@ proc add*(c: var GeneratedCode; s: string) {.inline.} =
 
 type
   CppFile = object
-    buf: string  # write to buffer, then writeFileIfChanged at end
+    buf: string  # write to buffer, then to the file at the end
 
 proc write(f: var CppFile; s: string) = f.buf.add s
 proc write(f: var CppFile; c: char) = f.buf.add c
@@ -877,10 +877,9 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
 
-  if vfsExists(outp) and vfsRead(outp) == f.buf:
-    discard "unchanged, keep mtime for incremental builds"
-  else:
-    vfsWrite outp, f.buf
+  # Always written: the `.c` file is no interface file, its one consumer is
+  # this module's C compiler (doc/internals/ic.md).
+  vfsWrite outp, f.buf
 
   if c.headerFile.len > 0:
     let selectHeader = outp.changeFileExt(".h")

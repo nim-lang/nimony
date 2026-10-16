@@ -1,0 +1,29 @@
+'gzip, deflate, br' -> ceGzip
+'deflate' -> ceDeflate
+'br, deflate;q=0.5, gzip;q=0.4' -> ceDeflate
+'gzip;q=0, *' -> ceDeflate
+'gzip;q=0, deflate;q=0' -> ceIdentity
+'*;q=0' -> ceIdentity
+'*' -> ceGzip
+'identity' -> ceIdentity
+'' -> ceIdentity
+' GZIP ; Q=1.0 ' -> ceGzip
+'x-gzip' -> ceGzip
+'gzip;q=0.000, deflate;q=0.001' -> ceDeflate
+text/html compressible=true
+text/html; charset=utf-8 compressible=true
+TEXT/CSS compressible=true
+application/json compressible=true
+application/ld+json compressible=true
+image/svg+xml compressible=true
+text/event-stream compressible=false
+image/png compressible=false
+application/octet-stream compressible=false
+application/gzip compressible=false
+ compressible=false
+content-encoding gzip -> ceGzip
+content-encoding deflate -> ceDeflate
+content-encoding identity -> ceIdentity
+content-encoding x-gzip -> ceGzip
+content-encoding br -> ceUnknown
+content-encoding gzip, br -> ceUnknown

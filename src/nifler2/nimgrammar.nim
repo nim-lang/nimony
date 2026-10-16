@@ -864,6 +864,10 @@ grammar:
   # *body*, and the result is fed back into the operator loop, so
   # `SomePointer = ref | ptr | pointer | proc` parses. Reaching it through
   # `primary` is what supplies that loop for free.
+  typeDefValue """whenExpr (NO_IND ^infix[ @'not' primary({pmTypeDesc}) %at ])?"""
+  # nim-lang/Nim#26276: `type T = when c: A else: B`. `parseTypeDefValue`
+  # sends `tkWhen` to `parseExpr`; `when` cannot start a `typeDefExpr`, so
+  # the choice stays LL(1).
   typeDefValue """%else typeDefExpr (NO_IND ^infix[ @'not' primary({pmTypeDesc}) %at ])?"""
   typeDefExpr "simpleExpr({-1}, {pmTypeDef}) (comma exprEqExpr)* postExprBlocks?":
     attachBlocks p, m     # the extra parameters go into the command, too

@@ -1,0 +1,13 @@
+parsed status
+[Error] unexpected argument: extra
+Svc v0.1
+Controls the service.
+
+Usage: svc [options] status|version
+
+Commands:
+  status   Show service status
+  version  Show version and quit
+
+Options:
+  -h, --help  Show help and exit

@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tunlabeledblockbreak.nim(3, 5) Error: `break` without a label only leaves a loop; to leave a `block`, name it and use `break <name>`

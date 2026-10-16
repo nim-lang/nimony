@@ -18,7 +18,7 @@ else:
 
   const
     AF_UNIX = 1.cint
-    SOCK_STREAM = 1.cint
+    SOCK_STREAM = (when defined(illumos): 2.cint else: 1.cint)
 
   proc socketpair(domain, typ, protocol: cint;
                   sv: ptr UncheckedArray[cint]): cint {.importc: "socketpair".}
@@ -258,3 +258,5 @@ else:
   stdout.write serverLog
   stdout.write clientLog
   stdout.flushFile()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

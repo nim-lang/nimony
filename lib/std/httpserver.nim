@@ -60,9 +60,10 @@
 # is no drain event and no "did I check for room" bug class.
 
 import std / [http/httpconn, http/httpmsg, http/httpparse, http/httpwire,
-              http/httpdate, socket, ioring, uri, assertions]
+              http/httpdate, http/httpcoding, compress/gzip, socket, ioring,
+              uri, assertions]
 
-export httpmsg, httpconn.HttpConn, socket.PeerAddr, socket.`$`, socket.ip,
+export httpmsg, httpcoding, httpconn.HttpConn, socket.PeerAddr, socket.`$`, socket.ip,
        socket.port, socket.family, socket.isV4, socket.isV6
 export ioring.Deadline, ioring.never, ioring.afterMs, ioring.after,
        ioring.monoNow, ioring.listenTcp, ioring.setNonBlocking,
@@ -85,6 +86,13 @@ const
     ## resource limit — it is what keeps a fleet's connections rotating, so a
     ## deploy or a DNS change is picked up without waiting for peers to
     ## volunteer.
+  DefaultCompressLevel* = 6
+    ## zlib's default, and the knee of the curve: 7-9 cost several times the
+    ## CPU for a few percent.
+  DefaultCompressMinLen* = 1024
+    ## The smallest body worth compressing. Below about a kilobyte the gzip
+    ## framing and the code tables eat most of what is saved, and the body
+    ## fits in the same packet either way.
   MaxDrain* = 64 * 1024
     ## The most unread request body that is worth reading and discarding to
     ## keep a connection alive. Past it the connection is closed instead:
@@ -109,6 +117,19 @@ type
       ## 400, before the handler sees it. A proxy turns this off and reads
       ## `target` itself; an origin server wants it on, because a target it
       ## cannot make a path of is one it can only mis-serve.
+    compression*: bool
+      ## Compress responses for clients that accept it: gzip or deflate by
+      ## the request's `Accept-Encoding`, only for media types that are
+      ## text underneath (`httpcoding.isCompressible`), and only when that
+      ## makes the body smaller. Off by default, because it is not free in
+      ## two ways: CPU per response, and — for a response that echoes
+      ## attacker-chosen input next to a secret over TLS — BREACH, which
+      ## only the application can know whether it is exposed to.
+    compressLevel*: int
+      ## `1` fastest .. `9` smallest.
+    compressMinLen*: int
+      ## Bodies shorter than this are sent as they are. Streamed responses
+      ## are compressed regardless, since their length is not known.
 
   Phase = enum
     phIdle        ## between requests
@@ -135,6 +156,12 @@ type
     headMs, requestMs, idleMs, maxRequests: int
     serverName: string
     checkTargets: bool
+    compression: bool
+    compressLevel, compressMinLen: int
+    coding: ContentCoding  ## what this request's response may be encoded in
+    codedStream: bool      ## the streamed response is going through `enc`
+    enc: Encoder
+    zbuf: string           ## encoded bytes on their way to the socket
 
 # No explicit `=copy` here: `HttpConn` holds a `Socket`, whose `=copy` is
 # already an error, so this object is move-only by construction. Restating it
@@ -151,7 +178,9 @@ proc listenHttp*(port: uint16; tags: HttpTags; backlog = 128): HttpServer =
   result = HttpServer(fd: listenTcp(port, backlog), tags: tags,
                       headMs: DefaultHeadMs, requestMs: DefaultRequestMs,
                       idleMs: DefaultIdleMs, maxRequests: DefaultMaxRequests,
-                      serverName: "", checkTargets: true)
+                      serverName: "", checkTargets: true,
+                      compression: false, compressLevel: DefaultCompressLevel,
+                      compressMinLen: DefaultCompressMinLen)
 
 proc close*(s: var HttpServer) =
   ## Stop accepting. Connections already handed out are unaffected — they own
@@ -172,7 +201,10 @@ proc initConnection(s: HttpServer; fd: cint; peer: PeerAddr): HttpConnection =
     bodyLeft: 0, chunked: false,
     headMs: s.headMs, requestMs: s.requestMs, idleMs: s.idleMs,
     maxRequests: s.maxRequests, serverName: s.serverName,
-    checkTargets: s.checkTargets)
+    checkTargets: s.checkTargets,
+    compression: s.compression, compressLevel: s.compressLevel,
+    compressMinLen: s.compressMinLen, coding: ceIdentity,
+    codedStream: false, enc: default(Encoder), zbuf: "")
 
 proc accept*(s: var HttpServer): HttpConnection {.passive.} =
   ## The next connection.
@@ -335,6 +367,11 @@ proc next*(c: var HttpConnection): bool {.passive.} =
     return false
   if c.phase == phDone:
     if not c.keepAlive:
+      # Drained even though nothing follows: closing a socket with unread
+      # bytes in its receive buffer makes the kernel answer with a RST,
+      # which can destroy the response before the peer has read it (Windows
+      # does this reliably, for a 415 to an upload the handler refused).
+      discard drainBody(c)
       c.close()
       return false
     if not drainBody(c):
@@ -345,6 +382,7 @@ proc next*(c: var HttpConnection): bool {.passive.} =
       return false
 
   c.phase = phIdle
+  c.codedStream = false
   c.req.reset()
   # The idle budget covers waiting for the request to *start*; once bytes are
   # arriving, the head has its own, shorter one. A peer is allowed to think
@@ -382,6 +420,7 @@ proc next*(c: var HttpConnection): bool {.passive.} =
   c.bodyLeft = if c.chunked: -1 else: (let n = c.req.contentLength; if n < 0: 0 else: n)
   if c.chunked: c.conn.beginBody()
   c.keepAlive = c.req.isKeepAlive
+  c.coding = if c.compression: chooseCoding(c.req) else: ceIdentity
   c.phase = phHead
   result = true
 
@@ -450,6 +489,26 @@ proc readBody*(c: var HttpConnection; limit = 1024 * 1024): string {.
     if result.len + n > limit: raise ContentTooLong
     for i in 0..<n: result.add buf[i]
 
+proc readContent*(c: var HttpConnection; limit = 1024 * 1024): string {.
+    passive, raises.} =
+  ## The whole body with its `Content-Encoding` undone: what a client that
+  ## compressed its upload meant to send. `limit` counts decoded bytes, which
+  ## are the ones that cost memory.
+  ##
+  ## `UnimplementedOperation` for a coding this server cannot undo — the
+  ## handler's cue to answer 415 — and `SyntaxError` for one that is corrupt
+  ## or cut short, plus what `readBody` raises.
+  result = ""
+  let coding = codingOf(c.req)
+  if coding == ceUnknown: raise UnimplementedOperation
+  var cd = initContentDecoder(coding, limit)
+  var buf = default(array[4096, char])
+  while true:
+    let n = readBody(c, buf)
+    if n == 0: break
+    cd.add(toOpenArray(buf, 0, n - 1), result)
+  cd.finish()
+
 # --------------------------------------------------------- responding -----
 
 proc bodyIsForbidden(c: HttpConnection; status: int): bool {.inline.} =
@@ -487,6 +546,34 @@ proc prepareInto(m: var HttpMsg; status: int; closing, isV10: bool;
   elif isV10:
     m.addHeader(hConnection, vKeepAlive)
 
+proc encodeBody(coding: ContentCoding; level, minLen: int; m: var HttpMsg;
+                contentType, body: openArray[char]; zbuf: var string): bool =
+  ## Compress `body` into `zbuf` and say so in `m`'s headers, when this body
+  ## is worth it. `false` leaves the body to be sent as it is.
+  ##
+  ## `Vary` goes on whenever the body *could* have been compressed, not only
+  ## when it was: a cache that stored the identity variant for a client that
+  ## did not ask must not hand it — or the gzip one — to the next client
+  ## without looking at its `Accept-Encoding`.
+  if body.len < minLen or not isCompressible(contentType): return false
+  m.addHeader(hVary, hAcceptEncoding)
+  if coding == ceIdentity: return false
+  zbuf.setLen 0
+  var e = initEncoder(encodeFormat(coding), level)
+  e.compress(body, zbuf)
+  e.finish(zbuf)
+  # Incompressible data that slipped past the media type, which the coding
+  # only makes longer.
+  if zbuf.len >= body.len: return false
+  m.addHeader(hContentEncoding, codingTag(coding))
+  result = true
+
+proc mayEncode(status: int): bool {.inline.} =
+  ## A 206's body is a byte range *of the encoded representation*, so it
+  ## cannot be encoded after the fact; and a status with no body has nothing
+  ## to encode.
+  status != 206 and not lengthIsForbidden(status)
+
 proc emit(conn: var HttpConn; m: var HttpMsg; body: openArray[char];
           dropBody, noLength: bool) {.passive, raises.} =
   ## Serialize and send one complete response. Takes the socket and the
@@ -515,11 +602,20 @@ proc respond*(c: var HttpConnection; m: var HttpMsg;
   ## cannot carry one. Those two rules are why this exists rather than
   ## `sendHead` + `sendBody`: they are invisible when they are missing and
   ## they desynchronize the *next* response, not this one.
+  ##
+  ## A handler that set `Content-Encoding` or `Content-Length` itself has
+  ## taken the body's encoding into its own hands, and it is left alone.
   if c.phase == phClosed: return
   let status = m.statusOf
   let drop = bodyIsForbidden(c, status)
   let noLen = lengthIsForbidden(status)
-  emit(c.conn, m, body, drop, noLen)
+  if c.compression and mayEncode(status) and
+      not m.contains(hContentEncoding) and not m.contains(hContentLength) and
+      encodeBody(c.coding, c.compressLevel, c.compressMinLen, m,
+                 m.getStr(hContentType), body, c.zbuf):
+    emit(c.conn, m, toOpenArray(c.zbuf, 0, c.zbuf.len - 1), drop, noLen)
+  else:
+    emit(c.conn, m, body, drop, noLen)
   c.phase = phDone
 
 proc respond*(c: var HttpConnection; status: int; body: openArray[char];
@@ -531,7 +627,12 @@ proc respond*(c: var HttpConnection; status: int; body: openArray[char];
   if contentType.len > 0: c.res.addHeader(hContentType, contentType)
   let drop = bodyIsForbidden(c, status)
   let noLen = lengthIsForbidden(status)
-  emit(c.conn, c.res, body, drop, noLen)
+  if c.compression and mayEncode(status) and
+      encodeBody(c.coding, c.compressLevel, c.compressMinLen, c.res,
+                 contentType, body, c.zbuf):
+    emit(c.conn, c.res, toOpenArray(c.zbuf, 0, c.zbuf.len - 1), drop, noLen)
+  else:
+    emit(c.conn, c.res, body, drop, noLen)
   c.phase = phDone
 
 proc respond*(c: var HttpConnection; status: int; body: string;
@@ -552,6 +653,18 @@ proc redirect*(c: var HttpConnection; location: string;
 
 # ------------------------------------------------------------ streaming ---
 
+proc beginCoding(coding: ContentCoding; level: int; m: var HttpMsg;
+                 contentType: openArray[char]; enc: var Encoder;
+                 coded: var bool) =
+  ## `encodeBody` for a body whose length is not known yet: no minimum, and
+  ## no "only if smaller" — both would need the body first.
+  if not isCompressible(contentType): return
+  m.addHeader(hVary, hAcceptEncoding)
+  if coding == ceIdentity: return
+  m.addHeader(hContentEncoding, codingTag(coding))
+  enc = initEncoder(encodeFormat(coding), level)
+  coded = true
+
 proc beginStream*(c: var HttpConnection; m: var HttpMsg) {.passive, raises.} =
   ## Start a chunk-framed response whose length is not known yet. Follow with
   ## `write` and then `finish`.
@@ -561,6 +674,10 @@ proc beginStream*(c: var HttpConnection; m: var HttpMsg) {.passive, raises.} =
   ## proxy it costs the client the ability to tell a complete response from a
   ## truncated one.
   if c.phase == phClosed: return
+  if c.compression and mayEncode(m.statusOf) and
+      not m.contains(hContentEncoding):
+    beginCoding(c.coding, c.compressLevel, m, m.getStr(hContentType),
+                c.enc, c.codedStream)
   if not m.contains(hTransferEncoding):
     m.addHeader(hTransferEncoding, vChunked)
   m.finish()
@@ -573,6 +690,9 @@ proc beginStream*(c: var HttpConnection; status: int;
   prepareInto(c.res, status, not c.keepAlive, c.req.versionOf == tag(tV10),
               c.serverName)
   if contentType.len > 0: c.res.addHeader(hContentType, contentType)
+  if c.compression and mayEncode(status):
+    beginCoding(c.coding, c.compressLevel, c.res, contentType, c.enc,
+                c.codedStream)
   if not c.res.contains(hTransferEncoding):
     c.res.addHeader(hTransferEncoding, vChunked)
   c.res.finish()
@@ -587,9 +707,21 @@ proc write*(c: var HttpConnection; data: openArray[char]) {.passive, raises.} =
   ## Nothing is written for a `HEAD`, whose response is the headers a `GET`
   ## would have sent and nothing after them — so a handler streams the same
   ## way for both and does not branch.
+  ##
+  ## Under compression each `write` is flushed through the encoder, so what
+  ## was written is decodable by the peer when this returns — the same
+  ## promise as without it, paid for with a few bytes per call. Write in
+  ## pieces the peer is meant to see, not a byte at a time.
   if c.phase != phStreaming: return
   if c.isHead: return
-  c.conn.sendChunk(data)
+  if c.codedStream:
+    if data.len == 0: return
+    c.zbuf.setLen 0
+    c.enc.compress(data, c.zbuf)
+    c.enc.flush(c.zbuf)
+    c.conn.sendChunk(toOpenArray(c.zbuf, 0, c.zbuf.len - 1))
+  else:
+    c.conn.sendChunk(data)
 
 proc write*(c: var HttpConnection; data: string) {.passive, raises, inline.} =
   write(c, toOpenArray(data, 0, data.len - 1))
@@ -597,5 +729,15 @@ proc write*(c: var HttpConnection; data: string) {.passive, raises, inline.} =
 proc finish*(c: var HttpConnection) {.passive, raises.} =
   ## End a streamed body.
   if c.phase != phStreaming: return
-  if not c.isHead: c.conn.endChunks()
+  if not c.isHead:
+    if c.codedStream:
+      c.zbuf.setLen 0
+      c.enc.finish(c.zbuf)
+      c.conn.sendChunk(toOpenArray(c.zbuf, 0, c.zbuf.len - 1))
+    c.conn.endChunks()
+  if c.codedStream:
+    # The encoder's tables are a quarter of a megabyte; a kept-alive
+    # connection should not hold on to them between streams.
+    c.enc = default(Encoder)
+    c.codedStream = false
   c.phase = phDone

@@ -11,9 +11,10 @@
 ## processes and process communication.
 ##
 ## This is the Nimony port. Compared to the upstream Nim module the POSIX
-## path uses `fork` + `execve` exclusively (no posix_spawn — its attribute
-## types are opaque libc-internal structs, which std/posix no longer binds)
-## and the timeout path of `waitForExit` uses a busy-wait with `nanosleep`.
+## path uses `posix_spawn` on illumos and `fork` + `execve` elsewhere.
+## On illumos, launch errors are reported synchronously as `OSError` rather
+## than as a child exiting with status 127. The timeout path of `waitForExit`
+## uses a busy-wait with `nanosleep`.
 ##
 ## **See also:**
 ## * `os module <os.html>`_
@@ -209,105 +210,176 @@ when not defined(windows):
         start = i + 1
       inc i
 
+  type
+    LaunchState = object
+      pipes: array[3, array[2, cint]]
+      args, env, paths: cstringArray
+
+  proc cleanup(s: var LaunchState) =
+    for i in 0 ..< 3:
+      for j in 0 ..< 2:
+        if s.pipes[i][j] >= 0:
+          discard close(s.pipes[i][j])
+          s.pipes[i][j] = -1
+    deallocCStringArray(s.args, countCStringArray(s.args))
+    deallocCStringArray(s.env, countCStringArray(s.env))
+    deallocCStringArray(s.paths, countCStringArray(s.paths))
+
+  proc createPipes(s: var LaunchState) {.raises.} =
+    for i in 0 ..< 3:
+      when defined(illumos):
+        # Atomic CLOEXEC prevents another concurrent launch inheriting our
+        # parent ends and keeping a stream alive after its owner closes it.
+        let rc = pipe2(addr s.pipes[i][0], O_CLOEXEC)
+      else:
+        let rc = pipe(addr s.pipes[i][0])
+      if rc != 0:
+        raiseOSError(osLastError())
+      when defined(illumos):
+        # File actions must not overwrite a source or later close a dup2
+        # target when the caller started with a standard descriptor closed.
+        for j in 0 ..< 2:
+          if s.pipes[i][j] <= 2:
+            let fd = fcntl(s.pipes[i][j], F_DUPFD_CLOEXEC, 3'i32)
+            if fd < 0:
+              raiseOSError(osLastError())
+            discard close(s.pipes[i][j])
+            s.pipes[i][j] = fd
+
+  when defined(illumos):
+    proc checkSpawn(rc: cint) {.raises.} =
+      if rc != 0:
+        raiseOSError(OSErrorCode(rc))
+
+    proc spawnProcess(s: var LaunchState; workingDir: string;
+                      options: set[ProcessOption]): Pid {.raises.} =
+      result = Pid(-1)
+      var actions = SpawnFileActions()
+      var attr = SpawnAttr()
+      checkSpawn posix_spawn_file_actions_init(actions)
+      try:
+        checkSpawn posix_spawnattr_init(attr)
+        try:
+          if poParentStreams notin options:
+            checkSpawn posix_spawn_file_actions_adddup2(actions, s.pipes[0][readIdx], 0)
+            checkSpawn posix_spawn_file_actions_adddup2(actions, s.pipes[1][writeIdx], 1)
+            let errfd = if poStdErrToStdOut in options: s.pipes[1][writeIdx]
+                        else: s.pipes[2][writeIdx]
+            checkSpawn posix_spawn_file_actions_adddup2(actions, errfd, 2)
+            for i in 0 ..< 3:
+              for j in 0 ..< 2:
+                checkSpawn posix_spawn_file_actions_addclose(actions, s.pipes[i][j])
+          var wd = workingDir
+          if wd.len > 0:
+            checkSpawn posix_spawn_file_actions_addchdir(actions, wd.toCString)
+          if poDaemon in options:
+            checkSpawn posix_spawnattr_setpgroup(attr, Pid(0))
+            checkSpawn posix_spawnattr_setflags(attr, POSIX_SPAWN_SETPGROUP)
+          var rc = ENOENT
+          var denied = false
+          for i in 0 ..< countCStringArray(s.paths):
+            let candidate: cstring = s.paths[i]
+            if candidate != nil:
+              rc = posix_spawn(result, candidate, addr actions, addr attr,
+                               cast[CCharArray](s.args), cast[CCharArray](s.env))
+            if rc == 0:
+              return
+            # Only lookup failures justify trying the next PATH candidate.
+            # No shell fallback on ENOEXEC; use poEvalCommand explicitly.
+            if rc == EACCES:
+              denied = true
+            elif rc != ENOENT and rc != ENOTDIR:
+              checkSpawn(rc)
+          if denied: rc = EACCES
+          checkSpawn(rc)
+        finally:
+          discard posix_spawnattr_destroy(attr)
+      finally:
+        discard posix_spawn_file_actions_destroy(actions)
+  else:
+    proc forkProcess(s: var LaunchState; workingDir: string;
+                     options: set[ProcessOption]): Pid {.raises.} =
+      let argvC = cast[CCharArray](s.args)
+      let envpC = cast[CCharArray](s.env)
+      let nPaths = countCStringArray(s.paths)
+      var wd = workingDir
+      result = fork()
+      if result == Pid(0):
+        # Child: only async-signal-safe work from here to execve/_exit.
+        if poParentStreams notin options:
+          discard dup2(s.pipes[0][readIdx], 0'i32)
+          discard dup2(s.pipes[1][writeIdx], 1'i32)
+          if poStdErrToStdOut in options:
+            discard dup2(s.pipes[1][writeIdx], 2'i32)
+          else:
+            discard dup2(s.pipes[2][writeIdx], 2'i32)
+          for i in 0 ..< 3:
+            for j in 0 ..< 2:
+              discard close(s.pipes[i][j])
+        if poDaemon in options:
+          discard setpgid(Pid(0), Pid(0))
+        if wd.len > 0 and chdir(wd.toCString) != 0'i32:
+          exitnow(127'i32)
+        for k in 0 ..< nPaths:
+          let cand: cstring = s.paths[k]
+          if cand != nil:
+            discard execve(cand, argvC, envpC)
+        exitnow(127'i32)
+      if result.int < 0:
+        raiseOSError(osLastError())
+
   proc startProcess*(command: string; workingDir: string = "";
                      args: openArray[string] = [];
                      env: nil StringTableRef = nil;
                      options: set[ProcessOption] = {poStdErrToStdOut}):
       Process {.raises, tags: [ExecIOEffect, ReadEnvEffect, RootEffect].} =
-    var pStdin {.noinit.}: array[0..1, cint]
-    var pStdout {.noinit.}: array[0..1, cint]
-    var pStderr {.noinit.}: array[0..1, cint]
-
-    if poParentStreams notin options:
-      if pipe(addr pStdin[0]) != 0'i32 or pipe(addr pStdout[0]) != 0'i32 or
-         pipe(addr pStderr[0]) != 0'i32:
-        raiseOSError(osLastError())
-
-    # Build argv
-    var argsRaw: seq[string]
-    var syscmd: string
-    if poEvalCommand in options:
-      const useShPath = "/bin/sh"
-      syscmd = useShPath
-      argsRaw = @[useShPath, "-c", command]
-      assert args.len == 0,
-        "`args` has to be empty when using poEvalCommand."
-    else:
-      syscmd = command
-      argsRaw = @[command]
-      for a in args.items:
-        argsRaw.add a
-
-    let sysArgs = allocCStringArray(argsRaw)
-    let sysEnv =
-      if env == nil: envToCStringArray()
-      else: envToCStringArray(env)
-    # PATH resolution happens pre-fork (see resolveExecPaths); poEvalCommand
-    # always execs /bin/sh directly.
-    let execPaths = resolveExecPaths(syscmd,
-        poUsePath in options and poEvalCommand notin options)
-    let sysPaths = allocCStringArray(execPaths)
-
-    if poEchoCmd in options:
-      echo command, " ", joinArgs(args, " ")
-
-    let argvC = cast[CCharArray](sysArgs)
-    let envpC = cast[CCharArray](sysEnv)
-    let nPaths = execPaths.len
-    var wd = workingDir
-    var pid: Pid = fork()
-    if pid == Pid(0):
-      # --- child: only async-signal-safe calls from here to execve/_exit
-      # (`toCString` borrows the string's existing buffer; no allocation) ---
+    var s = LaunchState(pipes: [[-1'i32, -1'i32], [-1'i32, -1'i32],
+                                [-1'i32, -1'i32]],
+                        args: nil, env: nil, paths: nil)
+    try:
+      var argsRaw: seq[string]
+      var syscmd: string
+      if poEvalCommand in options:
+        syscmd = "/bin/sh"
+        argsRaw = @[syscmd, "-c", command]
+        assert args.len == 0,
+          "`args` has to be empty when using poEvalCommand."
+      else:
+        syscmd = command
+        argsRaw = @[command]
+        for a in args.items:
+          argsRaw.add a
+      s.args = allocCStringArray(argsRaw)
+      s.env = if env == nil: envToCStringArray() else: envToCStringArray(env)
+      # Both backends use the parent's PATH, even with a custom environment.
+      let execPaths = resolveExecPaths(syscmd,
+          poUsePath in options and poEvalCommand notin options)
+      s.paths = allocCStringArray(execPaths)
       if poParentStreams notin options:
-        discard dup2(pStdin[readIdx], 0'i32)
-        discard dup2(pStdout[writeIdx], 1'i32)
-        if poStdErrToStdOut in options:
-          discard dup2(pStdout[writeIdx], 2'i32)
-        else:
-          discard dup2(pStderr[writeIdx], 2'i32)
-        discard close(pStdin[readIdx]); discard close(pStdin[writeIdx])
-        discard close(pStdout[readIdx]); discard close(pStdout[writeIdx])
-        discard close(pStderr[readIdx]); discard close(pStderr[writeIdx])
-      if poDaemon in options:
-        discard setpgid(Pid(0), Pid(0))
-      if wd.len > 0 and chdir(wd.toCString) != 0'i32:
-        exitnow(127'i32)
-      for k in 0 ..< nPaths:
-        let cand: cstring = sysPaths[k]
-        if cand != nil:
-          discard execve(cand, argvC, envpC)  # returns only on failure
-      exitnow(127'i32)   # reached only if every exec failed
-    # --- parent ---
-    deallocCStringArray(sysPaths, execPaths.len)
-    deallocCStringArray(sysArgs, argsRaw.len)
-    deallocCStringArray(sysEnv, countCStringArray(sysEnv))
-    if pid.int < 0:
-      raiseOSError(osLastError())
+        createPipes(s)
+      if poEchoCmd in options:
+        echo command, " ", joinArgs(args, " ")
+      when defined(illumos):
+        let pid = spawnProcess(s, workingDir, options)
+      else:
+        let pid = forkProcess(s, workingDir, options)
 
-    result = Process(options: options, exitFlag: false, id: pid,
-                     inHandle: 0'i32, outHandle: 0'i32, errHandle: 0'i32,
-                     inStream: nil, outStream: nil, errStream: nil,
-                     exitStatus: 0'i32)
-
-    if poParentStreams in options:
-      result.inHandle = 0'i32
-      result.outHandle = 1'i32
+      result = Process(options: options, exitFlag: false, id: pid,
+                       inHandle: 0'i32, outHandle: 1'i32, errHandle: 2'i32,
+                       inStream: nil, outStream: nil, errStream: nil,
+                       exitStatus: 0'i32)
+      if poParentStreams notin options:
+        result.inHandle = s.pipes[0][writeIdx]
+        result.outHandle = s.pipes[1][readIdx]
+        s.pipes[0][writeIdx] = -1
+        s.pipes[1][readIdx] = -1
+        if poStdErrToStdOut notin options:
+          result.errHandle = s.pipes[2][readIdx]
+          s.pipes[2][readIdx] = -1
       if poStdErrToStdOut in options:
         result.errHandle = result.outHandle
-      else:
-        result.errHandle = 2'i32
-    else:
-      result.inHandle = pStdin[writeIdx]
-      result.outHandle = pStdout[readIdx]
-      if poStdErrToStdOut in options:
-        result.errHandle = result.outHandle
-        discard close(pStderr[readIdx])
-      else:
-        result.errHandle = pStderr[readIdx]
-      discard close(pStderr[writeIdx])
-      discard close(pStdin[readIdx])
-      discard close(pStdout[writeIdx])
+    finally:
+      cleanup(s)
 
   proc close*(p: Process) {.raises, tags: [WriteIOEffect].} =
     if poParentStreams notin p.options:
@@ -462,7 +534,7 @@ when not defined(windows):
       tags: [ExecIOEffect, ReadIOEffect, RootEffect].} =
     ## Executes `command` and returns its error code.
     # Run via /bin/sh -c with inherited standard streams and wait — the
-    # semantics of libc `system()`, over the same fork+exec path as
+    # semantics of libc `system()`, over the same launch backend as
     # startProcess (no libc `system` binding needed).
     var p = startProcess(command,
       options = {poEvalCommand, poParentStreams, poUsePath})

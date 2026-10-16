@@ -14,7 +14,7 @@ import std/private/syslocks
 type
   RLock* = SysLock ## Nim lock, re-entrant
 
-func initRLock*(lock: var RLock) {.inline.} =
+func initRLock*(lock: var RLock) {.sync, inline.} =
   ## Initializes the given lock.
   when defined(posix):
     var a: SysLockAttr = default(SysLockAttr)
@@ -25,19 +25,19 @@ func initRLock*(lock: var RLock) {.inline.} =
   else:
     initSysLock(lock)
 
-func deinitRLock*(lock: RLock) {.inline.} =
+func deinitRLock*(lock: var RLock) {.sync, inline.} =
   ## Frees the resources associated with the lock.
   deinitSys(lock)
 
-func tryAcquire*(lock: var RLock): bool {.inline.} =
+func tryAcquire*(lock: var RLock): bool {.sync, inline.} =
   ## Tries to acquire the given lock. Returns `true` on success.
   result = tryAcquireSys(lock)
 
-func acquire*(lock: var RLock) {.inline.} =
+func acquire*(lock: var RLock) {.sync, inline.} =
   ## Acquires the given lock.
   acquireSys(lock)
 
-func release*(lock: var RLock) {.inline.} =
+func release*(lock: var RLock) {.sync, inline.} =
   ## Releases the given lock.
   releaseSys(lock)
 

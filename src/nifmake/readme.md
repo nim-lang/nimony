@@ -24,8 +24,23 @@ they order the node behind that whole phase and they count for staleness.
 Use it when a tool reads a phase's output *as a whole* rather than a
 predictable subset of it — Nimony's `lengc` resolves a foreign symbol by
 loading whichever module happens to define it, which the import graph cannot
-predict, so `lengc` nodes carry `(inputsof optimize)`. Naming the files one by
-one would be N² strings for N modules; this is one token per node.
+predict, so `lengc` nodes carry `(inputsof optimize ".oc.idx.nif")`. Naming
+the files one by one would be N² strings for N modules; this is one token per
+node.
+
+The optional string keeps only the outputs that end in it. A node that has an
+interface file next to its main output (see Nimony's `doc/internals/ic.md`)
+is depended on through the interface alone, so the consumers of the main
+output's unchanged parts stay up to date when only the rest changed.
+
+### `(atomic)`
+
+`(atomic)` in a `(do ...)` block makes the command write to temporary files
+next to the outputs (`<output>.tmp<pid>_<node>`), which replace the outputs
+only once the command succeeded. Use it for outputs that concurrent builds
+share: Nimony's objects of `.compile`d files live in a cross-project cache,
+and without it two builds compiling the same object at once write into the
+same file, and a third one may link a half-written object.
 
 ## Scheduling
 

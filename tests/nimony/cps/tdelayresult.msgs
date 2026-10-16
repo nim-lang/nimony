@@ -1,0 +1,1 @@
+tests/nimony/cps/tdelayresult.nim(9, 16) Error: `delay` hands `calc` to a scheduler, which runs it after this expression is gone; `calc` returns `int64`, but nothing can receive the value there. Handle it inside the task instead

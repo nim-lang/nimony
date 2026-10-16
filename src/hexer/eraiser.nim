@@ -275,7 +275,10 @@ proc emitFinCopy(c: var Context; dest: var TokenBuf; fin: Cursor) =
   var n = beginRead(copied)
   c.exits.add ExitScope(kind: LabelScope, label: NoSymId, exceptVar: NoSymId,
                         fin: default(Cursor), labels: ensureMove copyLabels)
-  tr c, dest, n
+  # `(always …)` marks the copy as "runs on this path whatever happened"
+  # once the `try` it came from is gone; see `doc/tags.md`.
+  copyIntoKind dest, AlwaysS, fin.info:
+    tr c, dest, n
   discard c.exits.pop()
   endRead n
 
@@ -321,6 +324,17 @@ proc emitUnwind(c: var Context; dest: var TokenBuf; code: TokenBuf;
   if target >= 0:
     copyIntoKind dest, JmpS, info:
       dest.addSymUse c.exits[target].label, info
+  elif not isVoidType(c.retType) and c.resultSym != SymId(0):
+    # `result` already IS the tuple: set its code half and hand it back
+    # whole. Rebuilding it as `(code, result[1])` reads the payload, which
+    # the duplifier must answer with a `=dup` — see `trRet`.
+    copyIntoKind dest, AsgnS, info:
+      copyIntoKind dest, TupatX, info:
+        dest.addSymUse c.resultSym, info
+        dest.addIntLit 0, info
+      dest.add code
+    copyIntoKind dest, RetS, info:
+      dest.addSymUse c.resultSym, info
   else:
     copyIntoKind dest, RetS, info:
       produceRaiseTuple c, dest, c.retType, info
@@ -344,20 +358,10 @@ proc addPropagationCheck(c: var Context; dest: var TokenBuf; target: SymId;
 
 proc takeRaisingHeader(c: var Context; dest: var TokenBuf; decl: Cursor;
                        n: var Cursor): bool =
-  ## `typenav.takeRoutineHeader`, plus the signature half of this pass: a
-  ## `.raises` routine RETURNS its success tuple.
-  ##
-  ## The `(raises)` pragma stays: `lengcgen` reads it to decide that a raising
-  ## `.noreturn` proc must NOT get C's `noreturn` attribute, because under goto
-  ## exceptions such a proc does return — it hands back an error code — and
-  ## telling gcc otherwise deletes the callers' error paths. What `lengcgen`
-  ## no longer does from the pragma is rewrite THIS return type; it now does
-  ## that for proctypes only.
-  ##
-  ## This used to happen in `lengcgen`, at the very end, which was fine while
-  ## nothing between here and there had to know a raising routine's real shape.
-  ## `cps` does: it builds a coroutine's frame and its result slot out of the
-  ## return type, and it cannot wait for codegen to tell it what that is.
+  ## `typenav.takeRoutineHeader`. The signature stays nimsem's: a `.raises`
+  ## routine still returns `T` and says so with the pragma, like the imported
+  ## routines every later pass reads from the index. Whoever needs the success
+  ## tuple derives it with `addLengReturnType` (#2642).
   result = true # assume concrete
   let sym = n.symId
   for i in 0..<BodyPos:
@@ -367,9 +371,6 @@ proc takeRaisingHeader(c: var Context; dest: var TokenBuf; decl: Cursor;
     elif i == TypevarsPos:
       result = n.substructureKind != TypevarsU
       takeTree dest, n
-    elif i == ReturnTypePos:
-      addLengReturnType(dest, n, asRoutine(decl, SkipExclBody).pragmas, n.info)
-      skip n
     else:
       takeTree dest, n
 
@@ -542,9 +543,11 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
                    canRaise: hasPragma(r.pragmas, RaisesP),
                    retType: r.retType, resultSym: SymId(0))
 
+  # An `{.assembler.}` body is machine code, passed through verbatim.
+  let isAsm = hasPragma(r.pragmas, AssemblerP)
   copyInto(dest, n):
     let isConcrete = takeRaisingHeader(c2, dest, decl, n)
-    if isConcrete:
+    if isConcrete and not isAsm:
       let symId = r.name.symId
       if isLocalDecl(symId):
         c2.typeCache.registerLocal(symId, r.kind, decl)
@@ -732,19 +735,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = tryStart
   skip n
 
-proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Leaving a `block` or a loop runs the `finally` of every `try` between
-  ## here and it — but not of any `try` further out, which we are still in.
-  let lab = n.childCursor
-  var i = c.exits.len - 1
-  while i >= 0:
-    if c.exits[i].kind == BlockExit and
-       (lab.kind != Symbol or c.exits[i].label == lab.symId):
-      break
-    dec i
-  emitFinsDownTo c, dest, i + 1
-  takeTree dest, n
-
 proc trJmp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## A `jmp` is forward-only, so it leaves exactly the `try` regions that do
   ## not declare its label, and owes their `finally`.
@@ -833,7 +823,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trResultDecl c, dest, n
       of ScopeS:
         trScope c, dest, n
-      of StmtsS:
+      of StmtsS, AlwaysS:
         trStmtList c, dest, n
       of RetS:
         trRet c, dest, n
@@ -842,7 +832,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of TryS:
         trTry c, dest, n
       of BreakS:
-        trBreak c, dest, n
+        bug "`break` reached Hexer: the Final IR lowers every `break` to a `jmp`", n
       of JmpS:
         trJmp c, dest, n
       of BlockS, WhileS, CoroforS:

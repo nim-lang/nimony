@@ -670,3 +670,5 @@ proc main =
   echo "checksum: ", sink
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

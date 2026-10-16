@@ -66,8 +66,9 @@ Options:
   --noSystem                do not auto-import `system.nim`
   --mm:STRATEGY|PATH        select the memory management strategy; a name maps
                             to `system/<strategy>.nim` in the stdlib (possible
-                            values: atomicArc (default), arc), a path selects
-                            a runtime of your own (e.g. `--mm:rt/mygc`)
+                            values: atomicArc (default), arc, orc, yrc), a
+                            path selects a runtime of your own (e.g.
+                            `--mm:rt/mygc`)
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
@@ -91,7 +92,8 @@ Options:
                             nativenif's doc/layout.md
   --nimcache:PATH           set the path used for generated files
   -o, --out:PATH            write the executable to PATH (overrides the
-                            default `<nimcache>/<modhash>/<basename>.exe`).
+                            default `<nimcache>/<backend>/<modhash>/<basename>.exe`,
+                            `<backend>` being the command letter).
                             Splits into directory + filename like Nim;
                             combine with --outdir if you want them set
                             independently.
@@ -387,7 +389,9 @@ proc compileProgram(c: var CmdOptions) =
   # allocator (`nimNativeAlloc`, a ported region allocator over mmap) and
   # raw-syscall IO (`nimNativeIo`). Opt back into the libc-backed versions with
   # `-d:useLibc` (both), `-d:useMimalloc` (allocator only) or `-d:useLibcIo` (IO
-  # only). The native backend links no libc at all, so it is ALWAYS libc-free
+  # only). On illumos the native allocator is mandatory; `useLibc` only
+  # selects libc IO and explicit `useMimalloc` is rejected.
+  # The native backend links no libc at all, so it is ALWAYS libc-free
   # regardless of those opt-outs. The `when defined(...)` gates live in nimsem,
   # which only sees defines forwarded on its command line (config.defines is the
   # cache key but not enough on its own) — so inject them the same way a user's
@@ -416,8 +420,13 @@ proc compileProgram(c: var CmdOptions) =
     c.config.bits = 32
     c.commandLineArgs.add " --cpu:wasm32 --os:standalone --bits:32"
   let nativeBackend = c.config.backend == backendNative
+  if c.config.isDefined("illumos") and (nativeBackend or c.config.isDefined("nimNoLibc")):
+    quit "illumos requires libc; use the C backend without -d:nimNoLibc"
+  let nativeAllocatorRequired = nativeBackend or c.config.isDefined("illumos")
+  if c.config.isDefined("illumos") and c.config.isDefined("useMimalloc"):
+    quit "mimalloc is unsupported on illumos; use the native allocator (also used with -d:useLibc)"
   let optOutAll = c.config.isDefined("useLibc")
-  if nativeBackend or not (optOutAll or c.config.isDefined("useMimalloc")):
+  if nativeAllocatorRequired or not (optOutAll or c.config.isDefined("useMimalloc")):
     c.config.addDefine "nimNativeAlloc"
     c.commandLineArgs.add " --define:nimNativeAlloc"
     c.hostCommandLineArgs.add " --define:nimNativeAlloc"
@@ -437,6 +446,12 @@ proc compileProgram(c: var CmdOptions) =
   # a program linking foreign objects (`.compile`/`.link`) needs. The runtime is
   # then the C backend's default one: the native allocator and IO, with libc
   # present (pthreads, so threads and libc's static TLS agree).
+  # `nimNativeBackend`: the code is compiled by arkham, so `{.assembler.}`
+  # procs are available. Stdlib modules use it to pick a hand-written assembler
+  # path over the portable one (`std/crypto` does, for constant time).
+  if nativeBackend:
+    c.config.addDefine "nimNativeBackend"
+    c.commandLineArgs.add " --define:nimNativeBackend"
   let nativeLinksLibc = nativeBackend and optOutAll and c.config.targetOS == osLinux
   if nativeBackend and not nativeLinksLibc:
     c.config.addDefine "nimNoLibc"

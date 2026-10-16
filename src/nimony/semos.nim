@@ -669,17 +669,80 @@ proc loadPluginOutput(outputFile: string; info: NifLineInfo): PluginOutput =
     rd.close(r)
   peelSidecars result
 
-proc addPluginBody(dest: var TokenBuf; o: var PluginOutput) =
+const GlobalLayoutDecls = {TypeY, ProcY, FuncY, ConverterY, MethodY,
+                           TemplateY, MacroY, IteratorY, ConstY}
+
+proc collectGlobalDecls(c: var SemContext; n: Cursor;
+                        renames: var Table[SymId, SymId]) =
+  ## `genSym()` hands out local names (`tmp.N`), but a type, a routine or a
+  ## const gets a GLOBAL name wherever it is written: the backends lift it to module
+  ## scope, where a local name is neither indexed (#2644) nor unique (#2645).
+  var n = n
+  if n.kind == TagLit:
+    if n.symKind in GlobalLayoutDecls:
+      let def = n.childCursor
+      if def.kind == SymbolDef and pool.symIsLocal(def.symId) and
+          not renames.hasKey(def.symId):
+        var name = pool.symBasename(def.symId)
+        var counter = addr c.globals.mgetOrPut(name, -1)
+        counter[] += 1
+        name.add '.'
+        name.addInt counter[]
+        name.add '.'
+        name.add c.thisModuleSuffix
+        renames[def.symId] = pool.symId(name)
+    n.into:
+      while n.hasMore:
+        collectGlobalDecls(c, n, renames)
+        skip n
+
+proc addRenamed(dest: var TokenBuf; n: Cursor; renames: Table[SymId, SymId]) =
+  var n = n
+  case n.kind
+  of Symbol, SymbolDef:
+    let r = renames.getOrDefault(n.symId)
+    if r == SymId(0):
+      dest.addSubtree n
+    elif n.kind == Symbol:
+      dest.addSymUse r, n.info
+    else:
+      dest.addSymDef r, n.info
+  of TagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        addRenamed(dest, n, renames)
+        skip n
+      dest.addParRi(n.endInfo)
+  else:
+    dest.addSubtree n
+
+proc addPluginBody(c: var SemContext; dest: var TokenBuf; o: var PluginOutput) =
   ## Appends the output proper, everything after the sidecars, to `dest`.
   ## `addSubtree` re-interns a bif's private-pool content into the global pools.
   if o.buf.len > 0:
+    var body = createTokenBuf(o.buf.len)
     var n = beginRead(o.buf)
     while n.hasMore and o.isSidecar(n):
       skip n
     while n.hasMore:
-      addSubtree(dest, n)
+      addSubtree(body, n)
       skip n
     endRead(n)
+    var renames = initTable[SymId, SymId]()
+    n = beginRead(body)
+    while n.hasMore:
+      collectGlobalDecls(c, n, renames)
+      skip n
+    endRead(n)
+    n = beginRead(body)
+    while n.hasMore:
+      if renames.len == 0: addSubtree(dest, n)
+      else: addRenamed(dest, n, renames)
+      skip n
+    endRead(n)
+    for _, r in renames:
+      c.freshSyms.incl r
 
 proc memoIsStale(outputFile: string; deps: seq[string]): bool =
   ## True when a file the cached output depended on has changed or vanished
@@ -748,7 +811,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
     output = loadPluginOutput(outputFile, info)
   for d in output.deps:
     recordFileDep c, d
-  addPluginBody dest, output
+  addPluginBody c, dest, output
   registerGeneratedSymbols(c, firstDisamb, output.nextName)
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
@@ -776,7 +839,7 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
   if result.exitCode != 0: return
 
   let modname = extractModuleSuffix(file)
-  let exe = nimcachePath / modname / splitFile(file).name.addFileExt(ExeExt)
+  let exe = nimcachePath / BackendDirC / modname / splitFile(file).name.addFileExt(ExeExt)
   # The child may start in `sourceDir`; keep the exe path absolute so it
   # still resolves against the outer compile's cwd, not the module dir.
   var exeToRun = exe
@@ -794,30 +857,48 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
 const
   writeNifModuleSuffix* = "wriwhv7qv"
 
+proc buildWriteNifModule(c: var SemContext): string =
+  # Forward the outer compile's CLI args (notably `--cc`) so the inner nimony
+  # emits a build file whose `nimsem` cmd-line MATCHES what the outer build
+  # file uses. Otherwise nifmake's per-cmd staleness check sees a different
+  # argv for `nimsem ... m sysvq0asl.p.nif`, decides the existing
+  # `sysvq0asl.s.nif` is stale, and tries to overwrite it — which on Windows
+  # fails because the outer nimsem (currently paused waiting on this exec)
+  # still has it mmap'd. The outer's args live on `c.commandLineArgs`.
+  let nimonyExe = findTool("nimony")
+  let cmd = quoteShell(nimonyExe) & c.commandLineArgs &
+    " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
+    " c " & quoteShell(stdlibFile("std/writenif.nim"))
+  try:
+    let (output, exitCode) = execCmdEx(cmd)
+    result = if exitCode != 0: output else: ""
+  except:
+    result = "failed to run: " & cmd
+
+const StaleLockNs = 120'i64 * 1_000_000_000'i64
+  ## A writenif build takes seconds; a lock this old lost its holder.
+
 proc prepareEval*(c: var SemContext): string =
+  ## Precompile `std/writenif` into this nimcache, once. Every module of a
+  ## parallel build that evaluates something at compile time gets here, all
+  ## sharing the nimcache, so the build is done under a lock: two concurrent
+  ## builds of it race on the same outputs, and on Windows the loser cannot
+  ## replace a file the winner's C compiler still has open.
+  result = ""
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
-    if not os.fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
-      # precompile the module.
-      # Forward the outer compile's CLI args (notably `--cc`) so the
-      # inner nimony emits a build file whose `nimsem` cmd-line MATCHES
-      # what the outer build file uses. Otherwise nifmake's per-cmd
-      # staleness check sees a different argv for `nimsem ... m
-      # sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is
-      # stale, and tries to overwrite it — which on Windows fails because
-      # the outer nimsem (currently paused waiting on this exec) still
-      # has it mmap'd. The outer's args live on `c.commandLineArgs`.
-      let nimonyExe = findTool("nimony")
-      var cmd = quoteShell(nimonyExe) & c.commandLineArgs &
-        " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
-        " c " & quoteShell(stdlibFile("std/writenif.nim"))
-      try:
-        let (output, exitCode) = execCmdEx(cmd)
-        if exitCode != 0:
-          return ensureMove(output)
-      except:
-        return "failed to run: " & cmd
-  return ""
+    let target = c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"
+    let lock = c.g.config.nifcachePath / writeNifModuleSuffix & ".lock"
+    while not os.fileExists(target):
+      if vfsTryLock(lock):
+        if not os.fileExists(target):   # built while we waited
+          result = buildWriteNifModule(c)
+        vfsUnlock(lock)
+        break
+      if vfsNow() - vfsMtime(lock) > StaleLockNs:
+        vfsUnlock(lock)
+      else:
+        vfsSleepMs(20)
 
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
                usedModules: HashSet[string]; sourceDir = ""): string =

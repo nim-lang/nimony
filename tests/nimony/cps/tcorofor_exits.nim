@@ -61,6 +61,39 @@ proc consumeEvens() {.passive.} =
   for e in evens(6):
     echo "evens ", e
 
+# The move analysis (`mover`) runs while `corofor` is still a statement. It
+# used to `bug` on one ("statement not eliminated: corofor") once a walk
+# reached it — a destructor-carrying tuple pattern followed by another loop —
+# and never took the loop's back-edge, so a value consumed in the body was
+# moved on the first pass and the later passes saw it empty.
+
+iterator pairsOf(xs: seq[string]): (int, string) {.passive.} =
+  var i = 0
+  while i < xs.len:
+    yield (i, xs[i])
+    inc i
+
+proc sinkIt(s: sink string) = echo "sunk '", s, "'"
+
+proc twoLoops() {.passive.} =
+  for (i, s) in pairsOf(@["a", "b"]):
+    echo "pair ", i, " ", s
+  for x in count(2):
+    echo "then ", x
+
+proc backEdge() {.passive.} =
+  var z = "z"
+  for x in count(3):
+    sinkIt(z)              # read again on the next pass: must not move
+  var t = "t"
+  for x in count(3):
+    if x == 1: continue
+    sinkIt(t)              # likewise after a `continue`
+  var u = "u"
+  for x in count(2):
+    discard
+  sinkIt(u)                # the last read: may move
+
 regularBreak()
 echo "regularReturn ", regularReturn()
 passiveBreak()
@@ -68,3 +101,5 @@ echo "passiveReturn ", passiveReturn()
 passiveBody()
 nested()
 consumeEvens()
+twoLoops()
+backEdge()

@@ -6,6 +6,9 @@
 
 ## Logic for mapping a (file, line, col) key to the file's content.
 
+when defined(nimony):
+  {.feature: "assumeSync".}  # compiler-internal globals; single threaded
+
 import std / syncio
 import std/[tables, hashes, strutils]
 

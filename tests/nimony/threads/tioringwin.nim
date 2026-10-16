@@ -201,3 +201,5 @@ else:
 
   discard wsClosesocket(client)
   echo "close ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

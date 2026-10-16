@@ -49,7 +49,7 @@ proc bugCmd*(args: seq[string]; forward: string) =
   if not fileExists("bin/nimony".addFileExt(ExeExt)):
     buildNimsem()
     buildNimony()
-    buildHexer()
+    buildShoggoth()
   var cmd = "c"
   if forward.len != 0:
     cmd.add ' '

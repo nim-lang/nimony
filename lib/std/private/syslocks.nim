@@ -103,7 +103,7 @@ elif defined(genode):
   func broadcastSysCond*(cond: var SysCond) {.
     noSideEffect, importcpp.}
 
-elif defined(nimNativeIo):
+elif defined(nimNativeIo) and not defined(illumos):
   # Freestanding, libc-header-free locks built directly on the kernel futex
   # primitive instead of pthread. `SysLock`/`SysCond` are plain 32-bit words, so
   # there is no opaque libc struct to `importc` and no fixed ABI layout to track.
@@ -201,6 +201,22 @@ elif defined(nimNativeIo):
       let op = if all: UL_COMPARE_AND_WAIT or ULF_WAKE_ALL or ULF_NO_ERRNO
                else: UL_COMPARE_AND_WAIT or ULF_NO_ERRNO
       discard ulock_wake(op, addr p, 0'u64)
+
+  elif defined(freebsd):
+    # FreeBSD's `_umtx_op(2)` — the primitive its own libthr builds on, and an
+    # exported libc symbol, so it binds header-free. The `_PRIVATE` ops are the
+    # process-local variants, like Linux's FUTEX_*_PRIVATE.
+    const
+      UMTX_OP_WAIT_UINT_PRIVATE = cint(15)
+      UMTX_OP_WAKE_PRIVATE = cint(16)
+    proc umtx_op(obj: pointer; op: cint; val: culong;
+                 uaddr, uaddr2: nil pointer): cint {.importc: "_umtx_op", sideEffect.}
+
+    proc futexWait(p: var uint32; expected: uint32) {.inline.} =
+      discard umtx_op(addr p, UMTX_OP_WAIT_UINT_PRIVATE, culong(expected), nil, nil)
+    proc futexWake(p: var uint32; all: bool) {.inline.} =
+      let count = if all: culong(high(int32)) else: culong(1)
+      discard umtx_op(addr p, UMTX_OP_WAKE_PRIVATE, count, nil, nil)
 
   # ---- mutex3 core (non-reentrant) ----
   proc lockSlow(L: var SysLock; c: var uint32) {.inline.} =
@@ -310,6 +326,12 @@ else:
         abi: array[8, int64]
       SysCondObj {.pure, final, byref.} = object ## pthread_cond_t (48 B)
         abi: array[6, int64]
+  elif defined(illumos):
+    type
+      SysLockObj {.pure, final, byref.} = object # pthread_mutex_t: 24 B
+        abi: array[3, int64]
+      SysCondObj {.pure, final, byref.} = object # pthread_cond_t: 16 B
+        abi: array[2, int64]
   elif defined(arm64):
     type
       SysLockObj {.pure, final, byref.} = object ## pthread_mutex_t: 48 B on
@@ -398,7 +420,7 @@ else:
 
   # rlocks
   const SysLockType_Reentrant* = SysLockType(
-    when defined(osx): 2 else: 1)  ## PTHREAD_MUTEX_RECURSIVE
+    when defined(osx) or defined(freebsd): 2 elif defined(illumos): 4 else: 1)  ## PTHREAD_MUTEX_RECURSIVE
   func initSysLockAttr*(a: var SysLockAttr) {.
     importc: "pthread_mutexattr_init", noSideEffect.}
   func setSysLockType*(a: var SysLockAttr, t: SysLockType) {.

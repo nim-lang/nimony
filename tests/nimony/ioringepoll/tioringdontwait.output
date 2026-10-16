@@ -1,0 +1,9 @@
+readiness backend: true
+two reads, one byte: completions=1 res=1
+two reads, second byte: completions=1 res=1
+two writes, drained: completions=1 partial=true
+two writes, drained again: completions=1 partial=true
+two accepts, one connection: completions=1 ok=true
+two accepts, second connection: completions=1 ok=true
+pipe read: n=2 buf=hi
+pipe write: n=3 buf=abc

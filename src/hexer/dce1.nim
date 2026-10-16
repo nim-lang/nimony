@@ -88,8 +88,9 @@ proc cmpSyms(a, b: SymId): int = cmpNames(pool.symString(a), pool.symString(b))
 proc sortedSyms*(syms: HashSet[SymId]): seq[SymId] =
   ## A `SymId` is a pool index handed out in interning order, so an edit that
   ## interns one more symbol (a local, say) renumbers every one after it. The
-  ## `.x.nif` carrying this section is written `OnlyIfChanged`, so its bytes
-  ## must depend on the content alone — hence name order, not `SymId` order.
+  ## `.live.nif` files `dceLive` derives from this section are interface files,
+  ## written only when they change, so their bytes must depend on the content
+  ## alone — hence name order, not `SymId` order.
   result = newSeq[SymId](0)
   for s in syms: result.add s
   sort result, cmpSyms

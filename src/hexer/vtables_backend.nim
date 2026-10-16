@@ -22,6 +22,7 @@ import passes
 import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, decls, programs, typenav, renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
+from coro_transform import coroHelperName, publishWrapperSignature
 
 type
   VTableState = enum
@@ -39,6 +40,7 @@ type
     cls: SymId
     name: SymId
     params: Cursor  # the routine's `(params …)` node
+    passive: bool   # `name` is a `.passive` method's `init` wrapper
 
   Context* = object
     tmpCounter: int
@@ -104,7 +106,7 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
 
   let info = n.info
   var takeAddr = not constructsValue(n) and n.exprKind notin {AddrX, HaddrX}
-  let argType = getType(c.typeCache, n)
+  let argType = skipModifier getType(c.typeCache, n)
   if argType.typeKind in {RefT, PtrT}:
     takeAddr = false
   c.needsXelim = true
@@ -139,6 +141,29 @@ proc isMethod(c: var Context; s: SymId): bool =
     let info = getLocalInfo(c.typeCache, s)
     result = info.kind == MethodY
 
+proc isPassiveMethod(fn: SymId): bool =
+  let res = tryLoadSym(fn)
+  result = res.status == LacksNothing and
+    res.decl.symKind in {MethodY, ProcY} and
+    hasPragma(asRoutine(res.decl).pragmas, PassiveP)
+
+proc slotTarget(fn: SymId): SymId =
+  ## What a vtable slot holds for the method `fn`. After `cps` a `.passive`
+  ## method is two routines: the state proc, which kept the method's name but
+  ## takes the frame as well, and its `init` wrapper, which takes the
+  ## method's own arguments plus the caller's continuation. Dispatch has to
+  ## reach the wrapper — every passive call site is lowered to call it — so
+  ## that is what the slot holds, in every module that builds this vtable.
+  ## The slot's KEY stays the method's frontend key, the one sem writes into
+  ## the class's `(methods)` pragma, so a foreign module that only sees the
+  ## pragma arrives at the same slot. A foreign wrapper is published here so
+  ## the vtable constant can name it.
+  if isPassiveMethod(fn):
+    publishWrapperSignature(fn, "")
+    result = coroHelperName(fn, "init", "")
+  else:
+    result = fn
+
 proc loadVTable(c: var Context; cls: SymId) =
   # Interface files only store the "diff" of the vtable so we need to
   # compute it properly here.
@@ -158,12 +183,13 @@ proc loadVTable(c: var Context; cls: SymId) =
 
   for entry in diff:
     let sig = pool.strings[entry.signature]
+    let fn = slotTarget(entry.fn)
     let idx = dest.signatureToIndex.getOrDefault(sig, -1)
     if idx == -1:
-      dest.methods.add entry.fn
+      dest.methods.add fn
       dest.signatureToIndex[sig] = dest.methods.len - 1
     else:
-      dest.methods[idx] = entry.fn
+      dest.methods[idx] = fn
 
   c.vtables[cls] = ensureMove dest
 
@@ -189,6 +215,15 @@ proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
     # calling convention is always nimcall for now:
     dest.copyIntoKind PragmasU, NoLineInfo:
       dest.addParPair Nimcall, NoLineInfo
+      # A `.raises` method returns its error code at the Leng level, and the
+      # slot is called through this type: without the pragma the cast says
+      # `void` while every implementation returns the code (#raises-method).
+      if n.substructureKind == PragmasU:
+        var p = n
+        p.into:
+          while p.hasMore:
+            if p.pragmaKind == RaisesP: dest.addSubtree p
+            skip p
 
 type ClassInfo = object
   root: SymId
@@ -203,7 +238,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert fnType.typeKind != AutoT
   let fn = n.symId
   inc n # skip fn
-  let typ = getType(c.typeCache, n)
+  let typ = skipModifier getType(c.typeCache, n)
   # We assume "object slicing" here:
   let canUseStaticCall = (typ.typeKind notin {RefT, PtrT} and isLocalVar(c, n)) or typ.isFinal
   let cls = getClass(typ)
@@ -223,7 +258,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     assert paramList.substructureKind == ParamsU
     inc paramList
     let param = takeLocal(paramList, SkipFinalParRi)
-    if param.typ.typeKind in {RefT, PtrT}:
+    if param.typ.skipModifier.typeKind in {RefT, PtrT}:
       # nil check
       if not temp.needsParRi:
         c.needsXelim = true
@@ -425,7 +460,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
   let vtabTempSym = pool.symId("`vtableTemp." & $c.tmpCounter)
   inc c.tmpCounter
 
-  var xt = getType(c.typeCache, x)
+  var xt = skipModifier getType(c.typeCache, x)
   let xk = xt.typeKind
   if xk in {RefT, PtrT}:
     inc xt
@@ -545,7 +580,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
         of UsesSelf:
           discard "nothing to do"
         of UsesTempVal:
-          let xt = getType(c.typeCache, x)
+          let xt = skipModifier getType(c.typeCache, x)
           copyIntoKind dest, VarS, info:
             dest.addSymDef tmp.sym, info
             dest.addEmpty2 info # export marker, pragma
@@ -555,7 +590,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
           # register so trInstanceofImpl's getType on the temp resolves
           c.typeCache.registerLocal(tmp.sym, VarY, xt)
         of UsesTempPtr:
-          let xt = getType(c.typeCache, x)
+          let xt = skipModifier getType(c.typeCache, x)
           copyIntoKind dest, VarS, info:
             dest.addSymDef tmp.sym, info
             dest.addEmpty2 info # export marker, pragma
@@ -643,7 +678,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of InstanceofX:
       trInstanceof c, dest, n
     of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-       FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, AconstrX,
+       FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, AconstrX,
        BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
        BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
@@ -666,7 +701,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
       of NoStmt, CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS,
-         ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
+         ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, AlwaysS, PragmasS, PragmaxS,
          InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
          ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
@@ -677,8 +712,23 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     raiseAssert "BUG: unexpected ParRi in vtables_backend.tr" # classic ParRi only
 
+proc wrapperKey(c: Context; cls, wrapper: SymId): string =
+  ## The key sem recorded in `cls`'s `(methods)` pragma for the passive method
+  ## whose `init` wrapper is `wrapper`, or "". Sem names the method, `cps`
+  ## named the wrapper after it, so the entry is found by the same rule.
+  result = ""
+  for entry in vtables_frontend.loadVTable(cls):
+    if coroHelperName(entry.fn, "init", c.moduleSuffix) == wrapper:
+      return pool.strings[entry.signature]
+
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
-  let sig = methodKey(methodName, m.params)
+  var sig = ""
+  if m.passive:
+    # The wrapper's params are not the method's — they end in the caller's
+    # continuation — but sem's record of the method's signature still is.
+    sig = wrapperKey(c, m.cls, m.name)
+  if sig.len == 0:
+    sig = methodKey(methodName, m.params)
   # see if this is an override:
   for inh in inheritanceChain(m.cls):
     let methodIndex = c.vtables.getOrQuit(inh).signatureToIndex.getOrDefault(sig, -1)
@@ -697,7 +747,8 @@ proc processMethods(c: var Context) =
   # that we need to know the base class's entire vtable so that we know
   # which slots to inherit and which to override. This means we need to
   # load an entire vtable from the module that declares the base class.
-  for entry in c.classes:
+  for i in 0 ..< c.classes.len:
+    let entry = c.classes[i]
     if entry[1]:
       let cls = entry[0]
       # inherit methods from parent class:
@@ -710,8 +761,9 @@ proc processMethods(c: var Context) =
         let mine = addr c.vtables.getOrQuit(cls)
         mine[].methods = parentMethods
         mine[].signatureToIndex = parentSig
-      for m in c.methodDecls:
-        if m.cls == cls:
+      for j in 0 ..< c.methodDecls.len:
+        if c.methodDecls[j].cls == cls:
+          let m = c.methodDecls[j] # copies a `Cursor`: only the matches pay
           var methodName = pool.symBasename(m.name)
           # The synthesized virtual `=destroy`/`=trace` object hooks are named
           # `=destroy_<mangledType>` / `=trace_<mangledType>`. Normalize to the
@@ -731,13 +783,14 @@ proc processMethods(c: var Context) =
       let diff = vtables_frontend.loadVTable(cls)
       for entry in diff:
         let sig = pool.strings[entry.signature]
+        let fn = slotTarget(entry.fn)
         let vt = addr c.vtables.getOrQuit(cls)
         let idx = vt[].signatureToIndex.getOrDefault(sig, -1)
         if idx == -1:
-          vt[].methods.add entry.fn
+          vt[].methods.add fn
           vt[].signatureToIndex[sig] = vt[].methods.len - 1
         else:
-          vt[].methods[idx] = entry.fn
+          vt[].methods[idx] = fn
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:
@@ -780,7 +833,7 @@ proc collectClass(c: var Context; n: var Cursor) =
 proc collectMethods(c: var Context; n: var Cursor) =
   # we only care about top level methods
   case n.stmtKind
-  of StmtsS:
+  of StmtsS, AlwaysS:
     n.into:
       while n.hasMore:
         collectMethods c, n
@@ -796,8 +849,11 @@ proc collectMethods(c: var Context; n: var Cursor) =
         if cls == SymId(0):
           error "cannot attach method to type " & typeToString(param.typ)
         else:
-          # we might not have registered the class yet, so we use a single flat `methodDecls` list:
-          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, params: r.params)
+          # we might not have registered the class yet, so we use a single flat `methodDecls` list.
+          # A `.passive` method reaches here as its `init` wrapper: `cps`
+          # turned the state proc into a plain `proc`; see `slotTarget`.
+          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, params: r.params,
+                                       passive: hasPragma(r.pragmas, PassiveP))
       else:
         error "method needs a first parameter of the class type: " & toString(orig, false)
   of TypeS:
@@ -814,8 +870,10 @@ proc collectMethods(c: var Context; n: var Cursor) =
     skip n
 
 proc emitVTables(c: var Context; dest: var TokenBuf) =
-  # Used the `mpairs` and `mitems` here to avoid copies.
-  for cls, vtab in mpairs c.vtables:
+  # Used the `mpairs` and `mitems` here to avoid copies. The table is moved out
+  # of `c` for the loop: `getVTableName` takes `c` as `var`.
+  var vtables = move c.vtables
+  for cls, vtab in mpairs vtables:
     if vtab.state != Mine: continue
     var displayName = SymId(0)
     if vtab.display.len > 0:
@@ -880,6 +938,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
             dest.addParPair PointerT, NoLineInfo
             dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
+  c.vtables = move vtables
 
 proc transformVTables*(pass: var Pass; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally

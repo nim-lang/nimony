@@ -51,3 +51,5 @@ var b = Base()
 var x: seq[Base] = @[d, b]
 for i in x:
   i.mysupermethod()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

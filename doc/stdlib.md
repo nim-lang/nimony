@@ -77,8 +77,10 @@ are copy-on-write internally.
   quitting is the more robust solution — set a handler that calls `quit`.
 - `new` is not covered by that policy and cannot be: `ref T` is not-nil, so
   there is no value to hand back. A failed allocation raises `OutOfMemError`
-  inside a `{.raises.}` routine and panics anywhere else. See
-  `doc/internals/failure_modes.md` for why the two allocators differ.
+  inside a `{.raises.}` routine and panics anywhere else — unless the destination
+  asks for the `nil` by declaring itself `nil T`, which is then narrowed like any
+  other nilable reference. See `doc/internals/failure_modes.md` for why the two
+  allocators differ.
 - `-d:nimMaxHeap=N` caps the heap at `N` megabytes, with Nim's name, unit and
   default, and Nim's consequence: exceeding it is **unrecoverable**, and
   `raiseOutOfMem` aborts.
@@ -103,10 +105,40 @@ under `lib/std/system/`; nothing in `system.nim` enumerates them.
 | --- | --- | --- |
 | `atomicArc` | `system/atomicarc.nim` | default; the reference count is updated atomically, so a `ref` may be shared between threads |
 | `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread |
+| `orc` | `system/orc.nim` | `arc` plus a cycle collector: cyclic garbage is freed too; a `ref` must stay on one thread |
+| `yrc` | `system/yrc.nim` | thread-safe `orc`: refs may be shared between threads, and threads collect cycles concurrently with each other and with the mutators |
 
 A strategy module defines exactly three primitives — `arcInc`, `arcDec` (true
 when the count reached zero) and `arcIsUnique`. What is built on top of them
 (`GC_ref` / `GC_unref`) is strategy independent and lives in `system/refops`.
+
+Cycle collection needs more than three primitives, so a strategy opts into it:
+`orc`'s `nimTraceRef` says `{.enableTrace.}` in its body, and a runtime of your
+own that does the same gets the same compiler support. A cell carries a second
+header word
+(`rootIdx`), and for a `ref T` whose `T` can form a cycle (it can reach a
+`ref T` again through owned fields, or is a class, or holds a closure) the
+compiler generates a *cell operation* — `proc (cell, env: pointer)` that traces
+the payload or, with `env == nil`, destroys it and frees the cell — and hands it
+to `nimDecRefCyclic` (`=destroy`) and `nimTraceRef` (`=trace`). `=trace` visits
+the owned refs that can be part of a cycle and nothing else: never a `.cursor`
+field, never a raw pointer — unless the type has a hand-written `=trace`, as
+`seq` has. `{.acyclic.}` on a type exempts it. The collector itself is Nim's
+(trial deletion after Bacon & Rajan); `GC_fullCollect`, `GC_runOrc`,
+`GC_enableOrc` and `GC_disableOrc` control it, and it also runs on its own once
+enough candidate roots piled up.
+
+`yrc` is Nim's concurrent cycle collector on the same protocol. A decrement of
+a cell that can be part of a cycle is deferred into a lock-free queue, so such
+a cell is only ever freed by a collection -- its destructor runs then, not on
+the last decrement; cells that cannot be part of a cycle are freed promptly as
+with `arc`. Collections capture the graph without writing to it, decide what
+is dead on the captured data and validate against what mutators did in the
+meantime before freeing anything, so they run concurrently with the mutators
+and with each other. `seq` fences structural changes of buffers the collector
+traces (`typetraits.canFormCycles(T)`, answered by the compiler; a runtime that declares
+`nimSeqFenceEnter`/`nimSeqFenceExit` gets the fence), and a thread that exits
+hands its queued decrements and candidates over (`nimThreadTeardown`).
 
 `--mm:NAME` also defines `gcName`, so `--mm:arc` makes `defined(gcArc)` true and
 `--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes
@@ -192,6 +224,9 @@ available.
 - `tryWriteFile` is a convenience that opens, writes, and closes
   in one call.
 - `quit(msg)` writes to stderr and exits — useful for fatal errors.
+- `FileMode`, `FileSeekPos` and `FilePermission` live in
+  [`std/commonio`](../lib/std/commonio.nim), which `syncio` and the ring-based
+  `std/asyncio` both export, so importing both is not ambiguous.
 
 [Examples: file I/O](../examples/io_basics.nim)
 
@@ -407,6 +442,30 @@ Windows.
   breaking them mid-word.
 
 
+## logging
+
+[Source](../lib/std/logging.nim)
+
+A port of Nim's `std/logging` whose log entries are lines of NIF in the
+line-based syntax, so a log file can be read back with
+`nifreader.open(file, lineBased = true)`:
+
+```nif
+info 2026-09-29T09:14:03Z "myapp" "server started on port 8080"
+```
+
+- The tag is the level (`debug`, `info`, `notice`, `warn`, `error`,
+  `fatal`); the message comes last as a string literal, escaped so that
+  an entry never spans more than one line.
+- `fmtStr` is not Nim's free-form prefix but a whitespace separated list of
+  fields between the tag and the message: `$date`, `$time`, `$datetime`,
+  `$app`, `$appname`, `$appdir`, `$levelid`, `$levelname`, or literal
+  words, which are written as strings. The default is `""`: no fields.
+- Times are UTC, like the rest of `std/times`, and `$datetime` says so
+  with a `Z`.
+- Handlers are thread-local, as in Nim.
+
+
 ## rawthreads
 
 [Source](../lib/std/rawthreads.nim)
@@ -449,3 +508,108 @@ handler wants so its own frame does not head the trace.
 How it works — nifasm lays a per-proc table (code range, frame size, name)
 at the end of `.text`, and the walk is a binary search per frame. See
 `nativenif/doc/tracetable.md`.
+
+## streamio
+
+[Source](../lib/std/streamio.nim)
+
+Streams as in nim-lang/nimony#2635: one `Reader`, one `Writer`, the same
+interface for files, strings, memory and connections.
+
+```nim
+var r = openReader(path"log.gz")
+r.setAdapter gzipAdapter(fmtDetect)
+echo r.readLine()
+
+let (r, w) = connect("cache.local:6379", "PING\r\n")   # written AND flushed
+echo r.readLine()
+
+var w = openWriter()                 # in memory
+w.write data
+let bytes = extract(w)
+```
+
+- `Reader`/`Writer` are move-only values; a pair from one constructor shares
+  a core (descriptor, TLS engine, atomic end counts).
+- `read` returning `0` is the end of the data; everything else raises.
+- One adapter slot per end (`setAdapter`, an `Adapter` subclass: `gzipAdapter`,
+  HTTP framing, your own). TLS is not a adapter: a `TlsEngine` lives in the
+  core, so compression can only sit above encryption.
+- A writer's destructor finishes it (adapter trailer, `close_notify`, end of
+  data for the peer) and swallows errors; call `close` to see them, `abort` on
+  error paths to avoid a complete-looking truncated stream.
+- Not yet: `openReadWrite`, `pipe`/channels, `startTls`, deadlines, the
+  `sendfile`/`splice`/kTLS paths of `copy`.
+
+## tls
+
+[Source](../lib/std/tls.nim)
+
+A TLS 1.3 client as a `TlsEngine`: a state machine over buffers, no I/O of
+its own. X25519 key exchange, `TLS_CHACHA20_POLY1305_SHA256`, server
+authentication by `std/crypto/x509` (ECDSA P-256/P-384 and RSA-PSS
+`CertificateVerify`, a chain to a root, the host name). No TLS 1.2, no
+session resumption, no client certificates.
+
+```nim
+let e = newTlsEngine()                         # system roots
+let (r, w) = connect("example.com:443", request, tls = e)
+```
+
+- There is no "insecure" switch. A caller that must talk to a self-signed
+  server passes `newTlsEngine(store)` with that certificate in the store.
+- On a failure the engine keeps the reason: `e.failure`, `e.certError`,
+  `e.alert`.
+- A connection that ends WITHOUT `close_notify` raises `EndOfStreamError`
+  from `read`: that is a truncation an attacker can cause. Framed protocols
+  (HTTP) know where their data ends and never get there.
+- A server that offers neither X25519 nor ChaCha20-Poly1305 (some FIPS-mode
+  servers) fails with `tfUnsupported`.
+
+## httpclient
+
+[Source](../lib/std/httpclient.nim)
+
+`httpGet`, `httpPost`, `httpPut`: the constructor sends the request, reads the
+status and headers, and returns the BODY as a `Reader`.
+
+```nim
+var page = httpGet("https://example.com/")
+var r = httpPost(url, openReader(path"big.bin"))     # streamed, chunked
+var resp = HttpHeaders("")
+var r2 = httpGet(url, headers"Accept: application/json\r\n", resp)
+```
+
+- A status outside 2xx raises `httpToErrorCode(status)` (404 is
+  `NameNotFound`), so a returned `Reader` always carries a successful body.
+- Bodies are de-framed (length, chunked, until close) and decoded (gzip,
+  deflate) by an adapter in the adapter slot.
+- `HttpHeaders` is the wire format itself. `add` raises `BadOperation` on a
+  CR/LF in a value (header injection); `Host`, `Content-Length`,
+  `Transfer-Encoding` and `Connection` are the library's and raise as user
+  headers. `headers"..."` is a compiler plugin (`lib/std/deps/httpheaders.nim`):
+  a malformed literal — a missing `\r\n`, a bad name, a lone line break —
+  is a compile-time error at the literal, judged by the same rules
+  (`std/http/httpheaders`) that `add` applies at run time.
+- One request per connection; redirects raise `RedirectError`.
+
+## crypto
+
+[Sources](../lib/std/crypto/)
+
+`sha2` (SHA-256/384/512), `hmac` (HMAC and HKDF), `chacha20poly1305`
+(RFC 8439), `x25519` (RFC 7748), `ecdsa` and `rsa` (signature
+*verification*), `x509` (certificates, chains, host names, PEM trust stores),
+`sysrand` (OS randomness). Every module is compiled under
+`{.feature: "staticContracts".}`: each index and contract in them is proven,
+not checked.
+
+- `bignum`, `ecdsa` and `rsa` are variable time and only ever see public
+  values (signatures, keys, digests). Do not hand them a secret.
+- `x25519` and `chacha20poly1305` handle secrets and are constant time. On
+  the native backend (x86-64) their arithmetic is `{.assembler.}` code in
+  `crypto/private/`, so the instructions that run cannot depend on a key; the
+  portable versions avoid secret-dependent branches and indices by
+  construction. See [assembler.md](assembler.md).
+- Compare MACs with `hmac.constantTimeEquals`, never `==`.
+- Key material comes from `sysrand.urandom`, never `std/random`.

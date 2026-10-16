@@ -8,6 +8,10 @@
 # submit/re-arm pick the right verb; an ADD that loses that race falls back
 # to MOD below.
 
+# Ring/backend state guarded by the core's locks and stripes, which the
+# shared-global check cannot see yet (no `.guard` support).
+{.feature: "assumeSync".}
+
 import ../../posix/epoll
 import ../../posix/posix
 
@@ -77,6 +81,9 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
         discard            # nothing to arm on: the deadline heap is the wait
       of opNop:
         complete(idx, 0)   # nothing to wait for either
+      of opRead, opWrite:
+        if buf[i].positioned: submitPositioned(idx)
+        else: submitForPoll(buf[i].fd, alreadyRegistered)
       of opConnect:
         # Start the attempt here, on the polling thread, so the fd is already
         # connecting by the time we watch it. A connect that finished at once
@@ -84,7 +91,8 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
         if startConnect(buf[i].fd, idx):
           submitForPoll(buf[i].fd, alreadyRegistered)
       else:
-        submitForPoll(buf[i].fd, alreadyRegistered)
+        if not completeCommand(idx, buf[i]):
+          submitForPoll(buf[i].fd, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
   # Sleep no longer than the earliest deadline in this lane.
   let waitMs = waitMillis(lane, timeoutMs)

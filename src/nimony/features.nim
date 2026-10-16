@@ -37,23 +37,6 @@ type
       ## site in this module is judged statically. The opt-out for code the
       ## prover gets *wrong* — or that simply wants no compile-time diagnostics
       ## about contracts at all.
-    StrictNewFeature
-      ## Report the result of an allocating object construction as NILABLE when
-      ## the enclosing routine is not `.raises`, so the contract pass makes the
-      ## caller narrow it before use. This is tier 3 of
-      ## `doc/internals/failure_modes.md` and where the language is headed: a
-      ## failed allocation has no value to hand back, and a `.raises` routine is
-      ## the only place that can report it without the caller's help.
-      ##
-      ## Off by default for a measured reason: every diagnostic it produces is
-      ## correct, but it is the constructor shape `result = T(...)` that trips,
-      ## and that shape is everywhere -- ~170 diagnostics across 15 test
-      ## directories, ~46 tests. Neither escape is satisfying yet either:
-      ## `.raises` puts a `try` on every call site, and `lenientnils` opts out of
-      ## the checking wholesale. The likely answer is for such a constructor to
-      ## DECLARE a `nil T` result so each site narrows once, which `system.new`
-      ## needs regardless -- being generic, its `out T` takes its nilability from
-      ## the instantiation, so no module-level opt-out can reach it.
     StaticContractsFeature
       ## Every `.requires` a call site in this module carries must be *proven*,
       ## not merely not-disproven. This is where contracts are headed. It is not
@@ -62,6 +45,22 @@ type
       ## followed by `s[0]` is undecided and demanding proof everywhere still
       ## rejects a seventh of the test suite. Loops are no longer the obstacle.
       ## `runtimeContracts` wins over it if both are given.
+    AnonBlockBreaksFeature
+      ## Nim-2-style `break`: without a label it leaves the innermost loop *or*
+      ## `block`. Without the feature an unlabeled `break` only ever leaves a
+      ## loop; a `block` is left via `break <blockname>` (RFC #576), which is
+      ## what makes a `block` usable as a plain scope inside a loop.
+    AssumeSyncFeature
+      ## Turn off the shared-global check for the whole module, as if every
+      ## routine body sat in `{.cast(assumeSync).}:`. Without it a mutable
+      ## global may only be passed to a `var`/`ptr` parameter of a `.sync`
+      ## routine (an atomic operation, `acquire` and the like).
+    OwnedRefsFeature
+      ## RFC #575: object constructors yield `owned`, so that the creator of
+      ## a cell is its owner. `owned ref T` / `owned proc` themselves are
+      ## always a statically checked unique ownership annotation; this only
+      ## opts a module into the discipline for values it never wrote `owned`
+      ## for.
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -86,9 +85,11 @@ proc parseFeatures*(s: string): set[Feature] =
   of "lenientaliasing": {LenientAliasingFeature}
   of "runtimecontracts": {RuntimeContractsFeature}
   of "staticcontracts": {StaticContractsFeature}
-  of "strictnew": {StrictNewFeature}
+  of "anonblockbreaks": {AnonBlockBreaksFeature}
+  of "assumesync": {AssumeSyncFeature}
+  of "ownedrefs": {OwnedRefsFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,
-            RuntimeContractsFeature}
+            RuntimeContractsFeature, AnonBlockBreaksFeature, AssumeSyncFeature}
   else: {}

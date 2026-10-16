@@ -44,3 +44,5 @@ assert s.len == 3
 assert s2.len == 4
 
 echo "ok"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

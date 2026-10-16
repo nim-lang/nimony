@@ -30,3 +30,6 @@ _hastur_joined.nim
 src/nifler/nimparser/parser.nim
 src/nifler/nimparser/parser.nim.tmp
 src/nifler/nimparser/parser.fetched
+# Nim's own cycle collectors (`orc.nim`, `yrc.nim`, `cellseqs_v2.nim`), which
+# `system/orc` and `system/yrc` include: copied in by hastur at a pinned commit
+lib/std/system/upstream/

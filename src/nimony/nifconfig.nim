@@ -39,6 +39,7 @@ when defined(nimony):
     hostOS =
       when defined(windows): "windows"
       elif defined(macosx): "macosx"
+      elif defined(android): "android"
       elif defined(linux): "linux"
       elif defined(freebsd): "freebsd"
       elif defined(netbsd): "netbsd"
@@ -47,7 +48,6 @@ when defined(nimony):
       elif defined(illumos): "illumos"
       elif defined(solaris): "solaris"
       elif defined(haiku): "haiku"
-      elif defined(android): "android"
       elif defined(ios): "ios"
       else: "linux"
 
@@ -120,6 +120,9 @@ type
                  ## strategies under `MmDir`, or the path of a runtime of the
                  ## user's own, verbatim. `expandMM` turns it into the module
                  ## `system.nim` includes.
+    cycles*: bool  ## `--cycles`: the runtime collects cycles. The driver finds
+                   ## `{.enableTrace.}` in it (`deps.processDep`) and passes
+                   ## this on to nimsem and hexer, which then lift `=trace`.
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
@@ -159,7 +162,8 @@ type
                          # requested runtime checks (empty = none).
     parallelBuild*: int  # --parallelBuild:N: at most N processes at once per
                          # nifmake run; 0 = one per core. Not an option of the
-                         # generated files, so no part of `getOptionsAsOneString`.
+                         # generated files, so no part of the cache memos
+                         # (`deps.addFrontendKey`).
     inlineFrames*: bool  # --inlineframes:on: record which template an expansion
                          # came from, so a debug backend can emit DWARF inlined
                          # frames for it (#1987). Off by default: it costs work
@@ -218,7 +222,9 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     bits: sizeof(int)*8,
     targetCPU: platform.nameToCPU(hostCPU),
     targetOS: platform.nameToOS(hostOS),
-    cc: "gcc",
+    # FreeBSD's base system ships clang as its only C compiler; elsewhere
+    # `gcc` is either GCC or (macOS) a clang alias.
+    cc: (when defined(freebsd): "clang" else: "gcc"),
     linker: "",
     appType: appConsole, # console is the default
     checkFlags: "br"     # = genFlags(DefaultSettings) (BoundCheck + RangeCheck);
@@ -294,18 +300,6 @@ proc parseNifConfig*(configFile: string; result: var NifConfig) =
   nifreader.close(r)
   var c = beginRead(buf)
   parseConfig(c, result)
-proc getOptionsAsOneString*(config: NifConfig): string =
-  ## Returns the concatenation of options that affects generated files.
-  result = ""
-
-  for i in config.defines:
-    result.add(" -d:" & i)
-
-  result.add " --mm:" & config.mm
-  result.add " --bits:" & $config.bits
-  result.add " --cpu:" & platform.CPU[config.targetCPU].name
-  result.add " --os:" & platform.OS[config.targetOS].name
-
 proc expandMM*(config: NifConfig; path: string): string =
   ## Expands the `$MM` placeholder in an `include` path to the module implementing
   ## the selected memory management strategy: `"$MM"` -> `"system/atomicarc"` for

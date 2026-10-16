@@ -172,7 +172,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       update c, ptrSize, ptrSize
   of RefT, PtrT, MutT, OutT, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
-  of SinkT, DistinctT:
+  of SinkT, OwnedT, DistinctT:
     getSize c, cache, n.childCursor, ptrSize
   of EnumT, HoleyEnumT, AnumT:
     let b = enumBounds(n)
@@ -229,7 +229,16 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     let size0 = bitsetSizeInBytes(n.childCursor)
     let size1 = int asSigned(size0, c.overflow)
     update c, size1, 1
-  of TupleT, ClosureTupleT:
+  of ClosureTupleT:
+    # The lowered (fn, env) pair. Its fn slot keeps the `closure` pragma but is
+    # a bare function pointer (`closuretypes.addClosureTuple`), so walking the
+    # slot as a `.closure` proctype would count the pair as three words and
+    # disagree with the still-unlowered spelling (two words) that an importing
+    # module sees: the defining module would pass an object holding the pair
+    # to its `=destroy` by pointer and the importer by value.
+    if c.strict: c.overflow = true
+    update c, 2 * ptrSize, ptrSize
+  of TupleT:
     if c.strict:
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true

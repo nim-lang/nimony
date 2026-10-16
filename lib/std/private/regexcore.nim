@@ -13,9 +13,9 @@
 ##
 ## This module is shared by two very different consumers:
 ##
-## * `std/regex` compiles a pattern at **runtime** and walks the resulting DFA
+## * `std/rex` compiles a pattern at **runtime** and walks the resulting DFA
 ##   as bytecode;
-## * `std/deps/regex`, the plugin behind `std/regex`'s `lex` construct, runs the
+## * `std/deps/regex`, the plugin behind `std/rex`'s `lex` construct, runs the
 ##   very same pipeline at **compile time** and emits the DFA as straight-line
 ##   Nimony code.
 ##
@@ -926,7 +926,7 @@ proc regexToDfa*(pattern: string; flags: set[RegexFlag]; dfa: var Dfa;
 # The DFA is walked as a tiny program rather than as a table: a state is a run
 # of test/jump pairs ended by a `ret` carrying the rule it accepts. That keeps
 # the common step — "test the character against a set, jump" — two adjacent
-# instructions, and it is what lets `std/regex`'s `re` emit a finished automaton
+# instructions, and it is what lets `std/rex`'s `re` emit a finished automaton
 # as a literal instead of building tables at run time.
 
 type
@@ -943,7 +943,7 @@ type
     opcBackref      ## `\1`
 
   RegexInstr* = object
-    ## One instruction. Public only because `std/regex`'s `re` emits these as a
+    ## One instruction. Public only because `std/rex`'s `re` emits these as a
     ## literal; write `re"…"` rather than one of these by hand.
     opc*: RegexOpcode
     arg*: int32

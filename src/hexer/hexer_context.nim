@@ -18,7 +18,7 @@ include ".." / lib / compat2
 import lifter
 import ".." / nimony / [nimony_model, typenav, langmodes, sizeof]
 
-export RcField, DataField
+export RcField, DataField, RootIdxField
 
 type
   EContext* = object
@@ -33,6 +33,8 @@ type
     sizeofCache*: SizeofCache  ## shared size-by-symbol memoization
     bits*: int
     bigEndian*: bool
+    inAsmBody*: bool      ## inside an `{.assembler.}` body: its `while true` and
+                          ## `break` are the back end's, passed through as Leng
     nativeBackend*: bool  ## targeting arkham+nifasm (no C): the synthesized
                           ## `main` terminates through `cExit`, and see
                           ## `dynlibIsStaticImport` below.
@@ -48,8 +50,6 @@ type
     resultSym*: SymId
 
     localDeclCounters*: int
-    hoistedConsts*: Table[SymId, SymId]  ## proc-level const -> its hoisted,
-                                         ## module-suffixed top-level name
     activeChecks*: set[CheckMode]
     liftingCtx*: ref LiftingCtx
     importedModuleSuffixes*: seq[string]

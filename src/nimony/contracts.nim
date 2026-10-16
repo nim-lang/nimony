@@ -221,7 +221,7 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   # See contracts_njvl.markedAs — sink/mut/lent/out wrappers don't
   # change nilability, only how the value is passed.
   var t = t
-  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+  while t.typeKind in {SinkT, MutT, LentT, OutT, OwnedT}:
     inc t
   result = false
   case t.typeKind
@@ -744,7 +744,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
           return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
-        of StmtsS, ScopeS, BlockS, ContinueS, BreakS, LabS, JmpS:
+        of StmtsS, AlwaysS, ScopeS, BlockS, ContinueS, BreakS, LabS, JmpS:
           # `lab`/`jmp` cannot actually reach here: `controlflow.trJmp`/`trLab`
           # consume them into the goto instructions this walker reads.
           inc pc
@@ -917,7 +917,7 @@ proc traverseProc(c: var Context; n: var Cursor) =
 
 proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind
-  of StmtsS:
+  of StmtsS, AlwaysS:
     c.toplevelStmts.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:

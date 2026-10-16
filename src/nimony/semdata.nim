@@ -26,10 +26,17 @@ type
     kind*: SymKind
     hasDefer*: bool
     inGeneric*, inLoop*, inBlock*, inInst*, inExcept*: int
+    breakTargets*: seq[SymId]
+      ## What an unlabeled `break` can leave, innermost last: `SymId(0)` for a
+      ## loop, the label for a `block` (only under `anonBlockBreaks`).
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma (e.g., ErrorCode, MyError)
     resId*: SymId
+    conceptBounds*: seq[TypeCursor]
+      ## `(at Concept ...)` invocations constraining the signature's typevars,
+      ## as in `C: Findable[T]`: their requirements are available on the
+      ## typevars passed to them.
     parent*: SemRoutine
 
 proc createSemRoutine*(kind: SymKind; parent: SemRoutine): SemRoutine =

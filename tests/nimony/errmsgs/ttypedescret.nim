@@ -6,3 +6,6 @@ type Box[T] = object
   value: T
 
 proc make(T: typedesc): Box[T] = discard
+
+# A bare type class is no parameter type for any routine kind (#2625).
+template t(x: object) = discard

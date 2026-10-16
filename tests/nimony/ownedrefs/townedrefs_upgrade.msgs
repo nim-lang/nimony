@@ -1,0 +1,1 @@
+tests/nimony/ownedrefs/townedrefs_upgrade.nim(7, 12) Error: type mismatch: got: ref Node.Obj not nil but wanted: owned ref Node.Obj

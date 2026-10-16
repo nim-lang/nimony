@@ -113,6 +113,13 @@ proc tempSymName(c: var Context): string {.inline.} =
 proc getType(c: var Context; n: Cursor): Cursor =
   result = getType(c.typeCache, n)
   assert result.typeKind != AutoT, "cannot compute type of: " & toString(n, false)
+  if c.goal == LowerCasts and n.exprKind in CallKinds and
+      procHasPragma(getType(c.typeCache, n.childCursor, {SkipAliases}), RaisesP):
+    # Signatures are nimsem's (`T` plus `.raises`), but exceptions are lowered
+    # by now: the call's value is the success tuple (#2642).
+    var buf = createTokenBuf(6)
+    addSuccessTupleType(buf, result, n.info)
+    result = c.typeCache.keepAlive(buf)
 
 proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info
@@ -147,6 +154,12 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
     # input is a standalone buffer (e.g. the hoisted RHS of `and`/`or`
     # short-circuit lowering) `n` lands at end-of-buffer and reading
     # `n.info` afterwards would assert in `nifcursors.load`.
+  if typ.typeKind == VoidT and n.stmtKind == StmtsS:
+    # A branch without a value (it ends in `return`/`raise`) is a statement
+    # list: lowering it as an expression would let a nested void `if` switch
+    # the shared target to `IsIgnored` for its successors (#2612).
+    trStmt c, dest, n
+    return
   trExpr c, dest, n, tar
 
   if typ.typeKind in {VoidT, AutoT}:
@@ -1336,7 +1349,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.hasMore:
         trStmt c, dest, n
     c.typeCache.closeScope()
-  of StmtsS, UnpackdeclS:
+  of StmtsS, AlwaysS, UnpackdeclS:
     copyInto(dest, n):
       while n.hasMore:
         trStmt c, dest, n
@@ -1471,7 +1484,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trAggregate c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
        InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
+       SizeofX, CanFormCyclesX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
        BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
@@ -1509,7 +1522,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
          IteratorS, ConverterS, MethodS, MacroS, TemplateS,
          TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
-         ForS, WhileS, CoroforS, RetS, YldS, StmtsS, PragmasS,
+         ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
          PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,

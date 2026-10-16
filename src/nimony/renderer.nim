@@ -893,7 +893,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       putWithSpace(g, tkOut, "out")
       n.into:
         gtype(g, n, c)
-    of LentT, SinkT, DistinctT:
+    of LentT, SinkT, OwnedT, DistinctT:
       putWithSpace(g, tkSymbol, $n.typeKind)
       n.into:
         gtype(g, n, c)
@@ -1570,7 +1570,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcall(g, n)
 
     of HighX, LowX, TypeofX,
-       SizeofX, AlignofX, OffsetofX,
+       SizeofX, AlignofX, OffsetofX, CanFormCyclesX,
        CardX, UnpackX, FieldsX, CompilesX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX:
       gcallsystem(g, n, $n.exprKind)

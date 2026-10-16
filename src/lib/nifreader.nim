@@ -71,6 +71,12 @@ type
     pendingLeft, pendingTotal: int32
     pendingFlags: set[TokenFlag]
     pendingHasDisamb, pendingHasModule: bool
+    # The optional line-based syntax (see `open`). `depth` counts the open `(`
+    # of the current top-level node; `inLineNode` is true while that node is a
+    # `LineNode`, whose `)` is the newline that ends it.
+    lineBased: bool
+    inLineNode: bool
+    depth: int32
 
 proc `$`*(t: ExpandedToken): string =
   case t.tk
@@ -547,6 +553,90 @@ proc nextSymbolPart(r: var Reader; result: var ExpandedToken) =
   else:
     r.pending = StringView(p: r.pending.p +! (n+1), len: r.pending.len - (n+1))
 
+# ── Line-based syntax (optional NIF extension) ────────────────────────────
+#
+# A top-level line that does not start with `(` is read as `(tag arg1 ...)`,
+# and a number, identifier or symbol that continues with `-`, `/` or `:`
+# extends up to the next whitespace, parenthesis or suffix and is a string
+# literal instead. The reader produces the very same tokens as for the
+# parenthesized form: a `ParLe` for the tag and a `ParRi` (with empty `data`)
+# for the newline that ends the node.
+
+const
+  IdentStartChars = {'a'..'z', 'A'..'Z', '_', '\\', '\x80'..'\xFF'}
+  IdentChars = IdentStartChars + Digits
+  LineStrStart = {'-', '/', ':'}
+  LineStrEnd = {' ', '\t', '\n', '\r', '(', ')', '@', '~', '#'}
+  # where an identifier or symbol ends in line mode: `-` and `/` are no
+  # control characters, but they start a string
+  LineWordEnd = ControlCharsOrWhite + {'-', '/'}
+
+template continuesAsStr(r: Reader): bool =
+  ## Line mode: the number, identifier or symbol just read continues with
+  ## `-`, `/` or `:` and so is the start of a string literal.
+  r.lineBased and r.p < r.eof and ^r.p in LineStrStart
+
+proc lineStr(r: var Reader; result: var ExpandedToken) =
+  ## Extend the token that starts at `result.data.p` up to the next whitespace,
+  ## parenthesis or suffix (`@`, `~`, `#`) and turn it into a string literal.
+  useCpuRegisters:
+    while p < eof and ^p notin LineStrEnd:
+      if ^p == '\\': result.flags.incl TokenHasEscapes
+      inc p
+    result.data.len = p -! result.data.p
+  result.tk = StringLit
+  result.flags.excl TokenHasModuleSuffixExpansion
+  handleSuffix(r, result)
+
+proc lineHead(r: var Reader; result: var ExpandedToken) =
+  ## The `TagHead` that starts a `LineNode`. A line that does not start with
+  ## an identifier is surfaced as one `UnknownToken` spanning the rest of it.
+  useCpuRegisters:
+    result.data.p = p
+    if ^p in IdentStartChars:
+      while p < eof and ^p in IdentChars:
+        # an escape's body may be a shortcut such as `\|`
+        let n = if ^p == '\\' and p +! 1 < eof: 2 else: 1
+        inc result.data.len, n
+        inc p, n
+    if result.data.len > 0 and (p >= eof or ^p in ControlCharsOrWhite):
+      result.tk = ParLe
+    else:
+      while p < eof and ^p != '\n':
+        inc p
+      result.data.len = p -! result.data.p
+  if result.tk == ParLe:
+    r.inLineNode = true
+    handleSuffix(r, result)
+
+proc linePrelude(r: var Reader; tok: var ExpandedToken): bool =
+  ## The line-based syntax's part of `next`, run instead of skipping the
+  ## whitespace. Returns true when it produced the token itself; otherwise the
+  ## ordinary tokenizer takes over at `r.p`.
+  if r.inLineNode and r.depth == 0:
+    # the newline is significant here
+    useCpuRegisters:
+      while p < eof and ^p in {' ', '\t', '\r'}: inc p
+    if r.p >= r.eof or ^r.p == '\n':
+      # the `)` of the line node; the newline itself is skipped next time
+      tok.tk = ParRi
+      tok.data = StringView(p: r.p, len: 0)
+      r.inLineNode = false
+      return true
+  else:
+    skipWhitespace r
+    if r.p >= r.eof: return false
+  result = false
+  case ^r.p
+  of '(':
+    inc r.depth
+  of ')':
+    if r.depth > 0: dec r.depth
+  else:
+    if not r.inLineNode and r.depth == 0:
+      lineHead(r, tok)
+      result = true
+
 proc next*(r: var Reader; result: var ExpandedToken) =
   if r.pendingLeft > 0:
     nextSymbolPart(r, result)
@@ -556,7 +646,10 @@ proc next*(r: var Reader; result: var ExpandedToken) =
   # classification branches below rely on `tk` starting out as "unknown"
   # (e.g. the char-literal branch leaves it untouched on a lex error).
   result.tk = UnknownToken
-  skipWhitespace r
+  if r.lineBased:
+    if linePrelude(r, result): return
+  else:
+    skipWhitespace r
   if r.p >= r.eof:
     result.tk = EofToken
     return
@@ -644,7 +737,8 @@ proc next*(r: var Reader; result: var ExpandedToken) =
     inc r.p
     inc result.data.len
     handleNumber r, result
-    handleSuffix(r, result)
+    if continuesAsStr(r): lineStr(r, result)
+    else: handleSuffix(r, result)
 
   of '0'..'9':
     # bare-digit number (NIF27): no sign prefix on positives.
@@ -652,19 +746,25 @@ proc next*(r: var Reader; result: var ExpandedToken) =
       result.data.p = p
       result.data.len = 0
     handleNumber r, result
-    handleSuffix(r, result)
+    if continuesAsStr(r): lineStr(r, result)  # `2024-08-12`, `14:05`
+    else: handleSuffix(r, result)
 
   else:
-    useCpuRegisters:
-      result.data.p = p
-      var hasDot = false
-      while p < eof and ^p notin ControlCharsOrWhite:
-        if ^p == '\\': result.flags.incl TokenHasEscapes
-        elif ^p == '.': hasDot = true
-        inc result.data.len
-        inc p
+    var hasDot = false
+    template scanWord(wordEnd: set[char]) =
+      useCpuRegisters:
+        result.data.p = p
+        while p < eof and ^p notin wordEnd:
+          if ^p == '\\': result.flags.incl TokenHasEscapes
+          elif ^p == '.': hasDot = true
+          inc result.data.len
+          inc p
+    if r.lineBased: scanWord(LineWordEnd)
+    else: scanWord(ControlCharsOrWhite)
 
-    if result.data.len > 0:
+    if continuesAsStr(r):
+      lineStr(r, result)  # `a/b.txt`, `x-y`, `https://x`, `/usr/bin`
+    elif result.data.len > 0:
       if hasDot:
         result.tk = Symbol
         if result.data[result.data.len-1] == '.':
@@ -741,18 +841,26 @@ proc extractModuleSuffix*(filename: string): string =
     elif not skip:
       result.add c
 
-proc open*(filename: string): Reader =
+proc open*(filename: string; lineBased = false): Reader =
+  ## With `lineBased`, the reader accepts NIF's optional line-based syntax:
+  ## a top-level line not starting with `(` is a node `(tag args...)` that ends
+  ## at the newline, and a number, identifier or symbol that continues with
+  ## `-`, `/` or `:` is a string literal (`a/b.txt`, `2024-08-12`, `14:05`).
+  ## Such a module is a flat list of top-level nodes; `next` returns them one
+  ## after another until `EofToken`.
   let f = try:
       vfsOpenMmap(filename)
     except:
       when defined(debug) and not defined(nimony): writeStackTrace()
       quit "[Error] cannot open: " & filename
-  result = Reader(f: f, p: nil, thisModule: extractModuleSuffix(filename))
+  result = Reader(f: f, p: nil, thisModule: extractModuleSuffix(filename),
+                  lineBased: lineBased)
   result.p = cast[pchar](result.f.data)
   result.eof = result.p +! result.f.size
   readDirectives result
 
-proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
+proc openFromBuffer*(buf: sink string; thisModule: sink string;
+                     lineBased = false): Reader =
   ## The Reader keeps `buf` alive as the owner of the source bytes. `buf` may be
   ## a short SSO string whose chars live *inline* in the string object; a plain
   ## `readRawData` pointer into it would dangle the moment the Reader is moved
@@ -760,7 +868,9 @@ proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
   ## with the object. `readRawDataStable` pins `buf` to its heap representation,
   ## whose payload address survives those moves, so the cached `r.p`/`r.eof`
   ## stay valid for as long as the Reader (and thus `buf`) is alive.
-  result = Reader(buf: ensureMove buf, thisModule: ensureMove thisModule)
+  ## See `open` for `lineBased`.
+  result = Reader(buf: ensureMove buf, thisModule: ensureMove thisModule,
+                  lineBased: lineBased)
   let n = result.buf.len
   result.p = readRawDataStable(result.buf)
   result.eof = result.p +! n
@@ -783,6 +893,9 @@ proc jumpTo*(r: var Reader; offset: int) {.inline.} =
   # components of a split symbol that were not asked for.
   r.pendingLeft = 0
   r.pending = StringView(p: nil, len: 0)
+  # In the line-based syntax, a jump target is taken to be a top-level node.
+  r.inLineNode = false
+  r.depth = 0
 
 proc indexStartsAt*(r: Reader): int =
   r.indexAt
@@ -870,5 +983,96 @@ when isMainModule and not defined(nimony):
     r.next(tok)
     assert tok.tk == ExtendedSuffix and tok.part == SymDisamb
     close r
+
+  proc lineTokens(input: string): seq[string] =
+    ## Like `tokens`, for the line-based syntax; string literals are quoted.
+    var r = openFromBuffer(input, "ThisMod", lineBased = true)
+    result = @[]
+    var tok = default(ExpandedToken)
+    while true:
+      r.next(tok)
+      case tok.tk
+      of EofToken: break
+      of ParLe: result.add "(" & $tok.data
+      of ParRi: result.add ")"
+      of StringLit: result.add "\"" & r.decodeStr(tok) & "\""
+      of UnknownToken: result.add "?" & $tok.data
+      else: result.add r.decodeStr(tok)
+    close r
+
+  block: # line-based syntax
+    assert lineTokens("copy a/b.txt dest/b.txt\nwarn 2024-08-12 \"permission denied\"") ==
+      @["(copy", "\"a/b.txt\"", "\"dest/b.txt\"", ")",
+        "(warn", "\"2024-08-12\"", "\"permission denied\"", ")"]
+    # the same AST as the parenthesized form
+    assert lineTokens("copy a/b.txt dest/b.txt\n") ==
+      lineTokens("(copy \"a/b.txt\" \"dest/b.txt\")")
+    # both forms mix; directives keep their form and are skipped as usual
+    assert lineTokens("(.nif27)\ninfo 2024-08-12T09:14:03Z \"server started\" (port 8080)\n") ==
+      @["(info", "\"2024-08-12T09:14:03Z\"", "\"server started\"", "(port", "8080", ")", ")"]
+    assert lineTokens("(a x) b c\n(d)") == @["(a", "x", ")", "(b", "c", ")", "(d", ")"]
+    # a parenthesized argument (and a string) continues the line
+    assert lineTokens("a (b\n  c) \"x\ny\"\n  d") ==
+      @["(a", "(b", "c", ")", "\"x\ny\"", ")", "(d", ")"]
+    # empty and blank lines, indentation, CRLF, a line with just a tag
+    assert lineTokens("\n  \t\n  ls\r\n\r\nls x\r\n") == @["(ls", ")", "(ls", "x", ")"]
+    assert lineTokens("") == newSeq[string]()
+    # the string rule applies at every nesting level of a line-based module
+    assert lineTokens("a (b x/y)\n(c x/y)") ==
+      @["(a", "(b", "\"x/y\"", ")", ")", "(c", "\"x/y\"", ")"]
+    # a number that continues with `-`, `/` or `:` extends to the whitespace
+    assert lineTokens("t 2024-08-12 2024-08-12T14:05:09.25+02:00 2024-08-12x 1/2 14:05 12:00Z") ==
+      @["(t", "\"2024-08-12\"", "\"2024-08-12T14:05:09.25+02:00\"",
+        "\"2024-08-12x\"", "\"1/2\"", "\"14:05\"", "\"12:00Z\"", ")"]
+    # other numbers stay numbers
+    assert lineTokens("t 42 -7 1.5 1.5E-3 x.1") ==
+      @["(t", "42", "-7", "1.5", "1.5E-3", "x.1", ")"]
+    # so do identifiers and symbols; once one continues with `-`, `/` or `:`,
+    # control characters other than parentheses and suffix introducers are
+    # part of the string
+    assert lineTokens("get x-y /usr/bin a/b.txt my\\20dir/a.txt dest/x. a/b:c\"d#e# (p a/b)") ==
+      @["(get", "\"x-y\"", "\"/usr/bin\"", "\"a/b.txt\"", "\"my dir/a.txt\"",
+        "\"dest/x.\"", "\"a/b:c\"d\"", "(p", "\"a/b\"", ")", ")"]
+    assert lineTokens("get https://nim-lang.org C:/tmp/x.txt key: a.b:c") ==
+      @["(get", "\"https://nim-lang.org\"", "\"C:/tmp/x.txt\"", "\"key:\"",
+        "\"a.b:c\"", ")"]
+    # an auto string carries a suffix like every other atom
+    block:
+      var r = openFromBuffer("t src/main.nim@0,3#c# 2024-08-12~2 12@3,4", "ThisMod", lineBased = true)
+      var tok = default(ExpandedToken)
+      r.next(tok)
+      r.next(tok)
+      assert tok.tk == StringLit and r.decodeStr(tok) == "src/main.nim"
+      assert tok.pos.line == 3 and decodeComment(tok) == "c"
+      r.next(tok)
+      assert tok.tk == StringLit and r.decodeStr(tok) == "2024-08-12" and tok.pos.col == -2
+      r.next(tok)
+      assert tok.tk == IntLit and tok.pos.col == 3 and tok.pos.line == 4
+      close r
+    # `-` without digits is an empty number: `--color` continues with `-`
+    assert lineTokens("ls --color -3") == @["(ls", "\"--color\"", "-3", ")"]
+    # `..` alone is still two empty nodes
+    assert lineTokens("up ..") == @["(up", ".", ".", ")"]
+    # the tag carries a suffix
+    block:
+      var r = openFromBuffer("warn@0,1#disk#  2024-08-12", "ThisMod", lineBased = true)
+      var tok = default(ExpandedToken)
+      r.next(tok)
+      assert tok.tk == ParLe and tok.data == "warn" and tok.pos.line == 1
+      assert decodeComment(tok) == "disk"
+      close r
+    # a line that does not start with an identifier is one error token
+    assert lineTokens("./run.sh x\nok") == @["?./run.sh x", "(ok", ")"]
+    # line tracking is unaffected
+    block:
+      var r = openFromBuffer("a\n\nb\n", "ThisMod", lineBased = true)
+      var tok = default(ExpandedToken)
+      while true:
+        r.next(tok)
+        if tok.tk == EofToken: break
+      assert r.line == 3
+      close r
+    # off by default: plain NIF is read exactly as before
+    assert tokens("(a) b", false) == @["(a", ")", "Ident:b"]
 
   echo "nifreader: OK"

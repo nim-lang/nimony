@@ -115,7 +115,7 @@ else:
     # `environ` nor Darwin's `_NSGetEnviron` is needed. Windows never comes
     # here: its entry point receives no `envp` at all, so the block is read
     # from `GetEnvironmentStringsW` above instead.
-    var gEnv {.importc: "nimEnviron".}: cstringArray
+    let gEnv {.importc: "nimEnviron".}: cstringArray
 
     proc getEnvVarsC() =
       # retrieves the variables of char** env of C's main proc

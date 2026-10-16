@@ -62,3 +62,5 @@ proc main() {.passive.} =
 s.add add10
 s.add add10
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

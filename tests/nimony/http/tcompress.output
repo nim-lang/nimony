@@ -1,0 +1,11 @@
+gzip:     200 ce=gzip vary=accept-encoding chunked=false wire=1074 content=20290 same=true
+deflate:  200 ce=deflate vary=accept-encoding chunked=false wire=1062 content=20290 same=true
+q=0:      200 ce=deflate vary=accept-encoding chunked=false wire=1062 content=20290 same=true
+none:     200 ce= vary=accept-encoding chunked=false wire=20290 content=20290 same=true
+identity: 200 ce= vary=accept-encoding chunked=false wire=20290 content=20290 same=true
+small:    200 ce= vary= chunked=false wire=4 content=4 text=tiny
+png:      200 ce= vary= chunked=false wire=20290 content=20290 same=true
+head:     200 ce=gzip vary=accept-encoding chunked=false length=1074
+stream:   200 ce=gzip vary=accept-encoding chunked=true content=2040
+upload:   200 ce= vary= chunked=false wire=26 content=26 text=got 20290 bytes, same=true
+badcode:  415 ce= vary= chunked=false wire=0 content=0 text=

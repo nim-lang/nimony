@@ -435,6 +435,14 @@ proc emitOptionDispatch(dest: var NifBuilder; rawSpec: string; spec: CliSpec; sh
       dest.withTree StmtsS, NoLineInfo:
         emitUnknownOption dest, rawSpec, shortOption
 
+# (call cliUnexpectedArgument SPEC (dot p key))
+proc emitUnexpectedArgument(dest: var NifBuilder; rawSpec: string)
+    {.ensuresNif: addedStmt(dest).} =
+  dest.withTree CallS, NoLineInfo:
+    dest.bindSym("cliUnexpectedArgument")
+    dest.addStrLit(rawSpec)
+    emitDotExpr dest, "p", "key"
+
 # (case (dot p key)
 #   (of COMMAND (stmts (asgn (dot result command) COMMAND_ENUM)))+
 #   (else (stmts (call cliUnexpectedArgument SPEC (dot p key))))
@@ -447,10 +455,7 @@ proc emitCommandChoice(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
         emitAssignResultFieldIdent dest, "command", commandEnumName(command.name)
     dest.withTree ElseU, NoLineInfo:
       dest.withTree StmtsS, NoLineInfo:
-        dest.withTree CallS, NoLineInfo:
-          dest.bindSym("cliUnexpectedArgument")
-          dest.addStrLit(rawSpec)
-          emitDotExpr dest, "p", "key"
+        emitUnexpectedArgument dest, rawSpec
 
 # (case argSlot
 #   (of INT (stmts SLOT_BODY (cmd inc argSlot)))+
@@ -466,10 +471,7 @@ proc emitArgumentSlots(dest: var NifBuilder; rawSpec: string; argumentNames: seq
         emitCallStmt1 dest, "inc", "argSlot"
     dest.withTree ElseU, NoLineInfo:
       dest.withTree StmtsS, NoLineInfo:
-        dest.withTree CallS, NoLineInfo:
-          dest.bindSym("cliUnexpectedArgument")
-          dest.addStrLit(rawSpec)
-          emitDotExpr dest, "p", "key"
+        emitUnexpectedArgument dest, rawSpec
 
 # (case (dot result command)
 #   (of COMMAND_ENUM (stmts (call cliUnexpectedArgument SPEC (dot p key))))?
@@ -482,22 +484,16 @@ proc emitCommandArgumentDispatch(dest: var NifBuilder; rawSpec: string; spec: Cl
     for command in spec.commands:
       dest.withOfIdent commandEnumName(command.name):
         if command.argumentNames.len == 0:
-          dest.withTree CallS, NoLineInfo:
-            dest.bindSym("cliUnexpectedArgument")
-            dest.addStrLit(rawSpec)
-            emitDotExpr dest, "p", "key"
+          emitUnexpectedArgument dest, rawSpec
         else:
           emitArgumentSlots dest, rawSpec, command.argumentNames, 1
     dest.withTree ElseU, NoLineInfo:
       dest.withTree StmtsS, NoLineInfo:
-        dest.withTree CallS, NoLineInfo:
-          dest.bindSym("cliUnexpectedArgument")
-          dest.addStrLit(rawSpec)
-          emitDotExpr dest, "p", "key"
+        emitUnexpectedArgument dest, rawSpec
 
 # (case argSlot ARGUMENT_SLOTS)?
 # (if (elif (infix "<" argSlot 1) (stmts COMMAND_CHOICE (cmd inc argSlot)))
-#   (else (stmts ARGUMENT_SLOTS_OR_COMMAND_ARGUMENT_DISPATCH)))?
+#   (else (stmts COMMAND_ARGUMENT_DISPATCH_OR_UNEXPECTED_ARGUMENT_OR_ARGUMENT_SLOTS)))?
 proc emitArgumentDispatch(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
     {.ensuresNif: addedAny(dest).} =
   let mode = spec.positionalMode()
@@ -515,10 +511,12 @@ proc emitArgumentDispatch(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
           emitCallStmt1 dest, "inc", "argSlot"
       dest.withTree ElseU, NoLineInfo:
         dest.withTree StmtsS, NoLineInfo:
-          if mode == pmSharedCommand:
-            emitArgumentSlots dest, rawSpec, spec.argumentNames, 1
-          else:
+          if mode == pmInlineCommand:
             emitCommandArgumentDispatch dest, rawSpec, spec
+          elif spec.argumentNames.len == 0:
+            emitUnexpectedArgument dest, rawSpec
+          else:
+            emitArgumentSlots dest, rawSpec, spec.argumentNames, 1
 
 # (case (dot result command)
 #   (of COMMAND_ENUM (stmts (if (elif (infix "<" argSlot REQUIRED) (stmts (call cliMissingArguments SPEC))))))+
@@ -611,10 +609,7 @@ proc emitParseProc(dest: var NifBuilder; rawSpec: string; spec: CliSpec;
               if mode != pmNone:
                 emitArgumentDispatch dest, rawSpec, spec
               else:
-                dest.withTree CallS, NoLineInfo:
-                  dest.bindSym("cliUnexpectedArgument")
-                  dest.addStrLit(rawSpec)
-                  emitDotExpr dest, "p", "key"
+                emitUnexpectedArgument dest, rawSpec
             dest.withOfBindSym "cmdLongOption":
               emitOptionDispatch dest, rawSpec, spec, false
             dest.withOfBindSym "cmdShortOption":
@@ -655,13 +650,12 @@ proc generate(rawSpec: string; spec: CliSpec; info: LineInfo;
               argsNode: NifCursor; hasArgs: bool): NifBuilder =
   result = createTree()
   result.withTree StmtsS, info:
-    result.withTree BlockS, info:
-      result.addEmptyNode()
-      result.withTree StmtsS, info:
-        emitOptionsDecl result, spec
-        emitParseProc result, rawSpec, spec, argsNode, hasArgs
-        result.withTree CallS, NoLineInfo:
-          result.addIdent("parseCli")
+    # Everything is declared at the call site's scope so user code can name
+    # the generated enum values (`options.command == cmdStatus`).
+    emitOptionsDecl result, spec
+    emitParseProc result, rawSpec, spec, argsNode, hasArgs
+    result.withTree CallS, NoLineInfo:
+      result.addIdent("parseCli")
 
 let root = loadPluginInput()
 let specNode = extractSpecNode(root)

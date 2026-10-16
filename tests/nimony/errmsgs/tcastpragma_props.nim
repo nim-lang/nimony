@@ -13,3 +13,5 @@ func ok() =
 func bad() =
   {.cast(uncheckedAccess).}:
     bumps()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

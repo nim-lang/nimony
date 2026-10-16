@@ -197,7 +197,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
         ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
         TemplateS, TypeS, BlockS, EmitS, AsgnS, ScopeS, IfS,
         WhenS, BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS,
-        RetS, YldS, StmtsS, PragmaxS, InclS, ExclS,
+        RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS,
         IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
         ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
@@ -339,11 +339,15 @@ proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
   ## A fresh name for every local and label `n` declares. Labels have to be
   ## known up front: a `jmp` comes before its `lab`. A nested routine gets a
   ## fresh name too (one definition per copy), but what it declares inside is
-  ## its own and keeps its names.
+  ## its own and keeps its names. A routine's name is global (sem gives a nested
+  ## one `inner.0.<suffix>` too), so the copy's name stays global: a local name
+  ## would reach module scope unqualified and collide with another module's
+  ## copies (#2645, #2681).
   if n.isTagLit and n.stmtKind in NestedRoutines:
     let d = n.childCursor
     if d.kind == SymbolDef:
-      mapping[d.symId] = pool.symId("`ii." & $e.getTmpId)
+      mapping[d.symId] = pool.symId("`iir." & $e.localDeclCounters & "." & e.main)
+      inc e.localDeclCounters
   elif n.isTagLit and n.stmtKind notin {MacroS, TemplateS, TypeS, PragmasS}:
     if n.stmtKind in {VarS, LetS, CursorS, PatternvarS, ResultS, LabS}:
       let d = n.childCursor
@@ -379,11 +383,20 @@ proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymI
       # the body's locals, which this copy renames, so its uses must follow.
       # `mapping` holds only the enclosing body's names, so the routine's
       # own declarations are copied unchanged.
+      let start = dest.len
+      let routineSym =
+        if c.stmtKind in NestedRoutines and c.childCursor.kind == SymbolDef:
+          mapping.getOrDefault(c.childCursor.symId)
+        else:
+          SymId(0)
       dest.addParLe(c.cursorTagId, c.info)
       c.into:
         while c.hasMore:
           copyFreshened(dest, c, mapping)
         dest.addParRi(c.endInfo)
+      if routineSym != SymId(0):
+        # the copy's name is a fresh global: later passes look it up
+        publish routineSym, dest, start
   of Symbol:
     dest.addSymUse(mapping.getOrDefault(c.symId, c.symId), c.info)
     inc c
@@ -436,21 +449,36 @@ proc emitForBody(e: var EContext; dest: var TokenBuf; body: Cursor;
     inlineForBody(e, dest, b, mapping)
   dest.addParRi()
 
+type
+  IterExit = object
+    lab: SymId   ## where the iterator's `return` goes: past the expansion
+    used: bool
+
 proc inlineIteratorBodyFir(e: var EContext; dest: var TokenBuf;
-                           c: var Cursor; forStmt: ForStmt; yieldType: Cursor) =
+                           c: var Cursor; forStmt: ForStmt; yieldType: Cursor;
+                           exit: var IterExit) =
   if c.isTagLit:
     if c.stmtKind == YldS:
       c.into: # skips yield
         var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
         collectDefs(e, forStmt.body, mapping)
         emitForBody(e, dest, forStmt.body, mapping, createTokenBuf(0))
+    elif c.stmtKind == RetS:
+      # The iterator's own `return` ends the loop; one in the loop body is
+      # the caller's and was copied by `emitForBody`, not walked here.
+      if exit.lab == SymId(0):
+        exit.lab = pool.symId("`ii." & $e.getTmpId)
+      exit.used = true
+      dest.copyIntoKind JmpS, c.info:
+        dest.addSymUse exit.lab, c.info
+      skip c, SkipFull # replaced by the `jmp`
     elif c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
                         TemplateS, TypeS}:
       dest.takeTree c
     else:
       takeInto dest, c:
         while c.hasMore:
-          inlineIteratorBodyFir(e, dest, c, forStmt, yieldType)
+          inlineIteratorBodyFir(e, dest, c, forStmt, yieldType, exit)
   else:
     takeTree(dest, c)
 
@@ -564,9 +592,13 @@ proc expandInlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
   var fc = beginRead(freshBuf)
   transformStmt(e, inner, fc) # the iterator's own `for`s
   var ic = beginRead(inner)
+  var exit = IterExit()
   ic.into: # the wrapper's `stmts`: its children go straight into the scope
     while ic.hasMore:
-      inlineIteratorBodyFir(e, dest, ic, forStmt, routine.retType)
+      inlineIteratorBodyFir(e, dest, ic, forStmt, routine.retType, exit)
+  if exit.used:
+    dest.copyIntoKind LabS, forStmt.iter.info:
+      dest.addSymDef exit.lab, forStmt.iter.info
 
 proc inlineIteratorFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   var iter = forStmt.iter
@@ -602,7 +634,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
     inc c
   of TagLit:
     case c.stmtKind
-    of StmtsS:
+    of StmtsS, AlwaysS:
       takeInto dest, c:
         while c.hasMore:
           transformStmt(e, dest, c)

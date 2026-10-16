@@ -159,7 +159,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     result = true
   of NoStmt, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS, CursorS, PatternvarS,
      ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
-     AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, PragmasS,
+     AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, AlwaysS, PragmasS,
      PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
      ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, StaticstmtS,
      BindS, MixinS, UsingS, AsmS, DeferS:
@@ -266,7 +266,10 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
       semCall c, dest, call, {}
     else:
       dest.add m.args
-    it.typ = expected
+    # a bare type class such as `typedesc` only checks the argument; it must
+    # not replace the argument's concrete type (`typedesc[int]`)
+    if expected.typeKind != TypekindT:
+      it.typ = expected
 
 # -------------------- declare `result` -------------------------
 
@@ -904,7 +907,14 @@ proc isCastableType(t: TypeCursor): bool =
     # operation that says "skip the range check". `system/setops`'s `items`
     # iterator needs this to walk a `set[range[…]]` at all.
     inc t # past the tag, to the base type
-  result = t.typeKind in IntegralTypes or isEnumType(t)
+  if t.typeKind == SetT:
+    # a set that fits a machine word is a bit field (`uintN` in the backend),
+    # so `cast[set[E]](someInt)` and back is the usual flags idiom:
+    var err = false
+    let size = asSigned(bitsetSizeInBytes(t.childCursor), err)
+    result = not err and size <= 8
+  else:
+    result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
@@ -1212,7 +1222,7 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
         return FailedDot
       semExprSym c, dest, it, s, exprStart, flags
       return
-    let t = skipModifier(lhs.typ)
+    let t = skipModifierAndOwned(lhs.typ)
     var root = t
     var doDeref = false # maybe arbitrary number of derefs for compat mode
     if root.typeKind in {RefT, PtrT}:
@@ -1360,8 +1370,10 @@ proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
   takeInto dest, it.n:
     semBoolExpr c, dest, it.n
     inc c.routine.inLoop
+    c.routine.breakTargets.add SymId(0)
     withNewScope c:
       semStmt c, dest, it.n, true
+    discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   producesVoid c, dest, info, it.typ
 
@@ -1369,16 +1381,33 @@ proc semBlock(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   takeInto dest, it.n:
     inc c.routine.inBlock
+    let anonBreaks = AnonBlockBreaksFeature in c.features
     withNewScope c:
-      if it.n.isDotToken:
+      if it.n.isDotToken and not anonBreaks:
         takeTree dest, it.n
       else:
-        let declStart = dest.len
-        let delayed = handleSymDef(c, dest, it.n, BlockY)
+        # Under `anonBlockBreaks` an unlabeled `break` can leave this block, so
+        # an anonymous one gets a label nobody can spell for it to name.
+        var anonLabel = createTokenBuf(1)
+        var label = it.n
+        if label.isDotToken:
+          anonLabel.addIdent "`blk", label.info
+          label = beginRead(anonLabel)
+        let delayed = handleSymDef(c, dest, label, BlockY)
         c.addSym dest, delayed
-        publish c, dest, delayed.s.name, declStart
+        # A label that is already a symbol (a re-checked or template-expanded
+        # block) is not in scope, so `break` finds it through this entry: it
+        # has to be a `(block :label (stmts))` for its kind to be `BlockY` (#2640).
+        var decl = createTokenBuf(3)
+        decl.buildTree BlockS, delayed.info:
+          decl.addSymDef delayed.s.name, delayed.info
+          decl.buildTree StmtsS, delayed.info: discard # the body is not part of the entry
+        programs.publish delayed.s.name, decl, c.phase
+        skip it.n # the label (or the dot it replaced)
+        if anonBreaks: c.routine.breakTargets.add delayed.s.name
 
       semStmtBranch c, dest, it, true
+      if anonBreaks: discard c.routine.breakTargets.pop()
     dec c.routine.inBlock
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
@@ -1387,11 +1416,23 @@ proc semBreak(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   takeInto dest, it.n:
     if c.routine.inLoop+c.routine.inBlock == 0:
-      buildErr c, dest, info, "`break` only possible within a `while` or `block` statement"
+      buildErr c, dest, info, "`break` only possible within a loop or a `block` statement"
       skip it.n
     else:
       if it.n.isDotToken:
-        wantDot c, dest, it.n
+        # An unlabeled `break` leaves the innermost loop; the Final IR reads
+        # `(break .)` that way. Under `anonBlockBreaks` the innermost `block`
+        # may come first and is then named explicitly.
+        let targets = addr c.routine.breakTargets
+        if targets[].len > 0 and targets[][^1] != SymId(0):
+          dest.addSymUse targets[][^1], it.n.info
+          inc it.n
+        elif c.routine.inLoop > 0:
+          wantDot c, dest, it.n
+        else:
+          buildErr c, dest, info,
+            "`break` without a label only leaves a loop; to leave a `block`, name it and use `break <name>`"
+          skip it.n
       else:
         let labelInfo = it.n.info
         var a = Item(n: it.n, typ: c.types.autoType)
@@ -1601,7 +1642,7 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
     discard
   of NoType, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT, TemplateT,
      ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, UntypedT, TypedT,
      CstringT, PointerT, OrdinalT, PluginCallT:
     # otherwise, is a static value
@@ -1917,7 +1958,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
             buildErr c, dest, vInfo, "value already handled"
           dest.takeTree value
   of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
@@ -2049,7 +2090,12 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
       inc c.usedTypevars
     let res = declToCursor(c, dest, s)
     if KeepMagics notin flags:
-      let info = readonlyCursorAt(dest, dest.len-1).info
+      # Released before `maybeInlineMagic` rewrites `dest`: a temporary cursor
+      # lives to the end of the scope, and a live one turns that rewrite into
+      # a copy of the whole buffer.
+      var last = readonlyCursorAt(dest, dest.len-1)
+      let info = last.info
+      endRead last
       if maybeInlineMagic(c, dest, res):
         c.expanded.addSymUse s.name, info
     if res.status == LacksNothing:
@@ -2223,7 +2269,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   of DotX, DdotX:
     semDotAsgn c, dest, it, info, asgnStart
   of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
@@ -2373,6 +2419,20 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
 
+proc semUnresolvedWhenBranch(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode) =
+  ## A branch of a `when` whose condition depends on generic parameters. In a
+  ## checked generic its body is type-checked at definition time like an `if`
+  ## branch, so the `when` has the branches' common type and a tail `when` is
+  ## classified as the result expression or as statements right here. Only
+  ## the fields of a generic object stay untyped until instantiation.
+  case mode
+  of NormalWhen:
+    withNewScope c:
+      semStmtBranch c, dest, it, true
+  of ObjectWhen:
+    var ctx = createUntypedContext(addr c, UntypedGeneric)
+    semTemplBody ctx, dest, it.n
+
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
                  state: var SemObjectState) =
   let start = dest.len
@@ -2409,8 +2469,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
           leaveUnresolved = true
       if leaveUnresolved:
         # might have been set above
-        var ctx = createUntypedContext(addr c, UntypedGeneric)
-        semTemplBody ctx, dest, it.n
+        semUnresolvedWhenBranch c, dest, it, mode
       else:
         takeTree dest, it.n
       dest.addParRi(it.n.endInfo)
@@ -2433,8 +2492,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       it.n = whenStart; skip it.n
       return
     else:
-      var ctx = createUntypedContext(addr c, UntypedGeneric)
-      semTemplBody ctx, dest, it.n
+      semUnresolvedWhenBranch c, dest, it, mode
     dest.addParRi(it.n.endInfo)
     it.n = elseStart; skip it.n
   dest.addParRi(it.n.endInfo)
@@ -2443,8 +2501,10 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
     # none of the branches evaluated, output nothing
     dest.shrink start
     producesVoid c, dest, info, it.typ
-  else:
+  elif mode == ObjectWhen:
     it.typ = c.types.untypedType
+  elif typeKind(it.typ) == AutoT:
+    producesVoid c, dest, info, it.typ
 
 proc semWhen(c: var SemContext; dest: var TokenBuf; it: var Item) =
   case c.phase
@@ -3339,7 +3399,9 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       buildErr c, vb, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
     inc c.routine.inLoop
+    c.routine.breakTargets.add SymId(0)
     semStmt c, vb, it.n, true
+    discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   it.n = forStart; skip it.n # skip the for's closing ')'
 
@@ -3487,7 +3549,9 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
       takeTree dest, it.n # don't touch the body
     else:
       inc c.routine.inLoop
+      c.routine.breakTargets.add SymId(0)
       semStmt c, dest, it.n, true
+      discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
 
   dest.addParRi(it.n.endInfo)
@@ -3502,8 +3566,9 @@ proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
     if it.n.isDotToken:
       # Templates have no `result` symbol — the `return` is text-substituted
       # into the caller, so the meaning depends on the caller's signature.
-      # Preserve the dot and let template expansion resolve it.
-      if c.routine.kind != TemplateY and c.routine.returnType.typeKind != VoidT:
+      # Preserve the dot and let template expansion resolve it. An iterator's
+      # return type is what it yields: it has no `result` to return either.
+      if c.routine.kind notin {TemplateY, IteratorY} and c.routine.returnType.typeKind != VoidT:
         dest.addSymUse c.routine.resId, info
         inc it.n # skips the dot
       else:
@@ -3520,13 +3585,19 @@ proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
+  # A template's body is checked where it is DECLARED, but whether it may
+  # raise is a property of where it is EXPANDED: the expansion is checked again
+  # in that routine. An error written into the stored body here would be copied
+  # into every expansion as an extra child of the `raise`.
+  let inTemplate = c.routine.kind == TemplateY
   takeInto dest, it.n:
     if c.routine.kind == NoSym:
       buildErr c, dest, info, "`raise` only allowed within a routine"
-    elif not c.routine.pragmas.contains(RaisesP) and CanRaiseFeature notin c.features:
+    elif not inTemplate and not c.routine.pragmas.contains(RaisesP) and
+        CanRaiseFeature notin c.features:
       buildErr c, dest, info, "`raise` only allowed within a routine with `raises` pragma"
     if it.n.isDotToken:
-      if c.routine.inExcept == 0:
+      if c.routine.inExcept == 0 and not inTemplate:
         buildErr c, dest, info,
           "bare `raise` is only allowed inside an `except` block"
       takeTree dest, it.n
@@ -3543,7 +3614,7 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
         # `makeLocalSym` only guarantees per-module uniqueness, so naming
         # this `expectedType` would share its `pool.syms` ID with that
         # parameter and the borrow check would resolve to the wrong decl.
-        var raisedRefT = skipModifier(a.typ)
+        var raisedRefT = skipModifierAndOwned(a.typ)
         var raisesRefT = skipModifier(c.routine.raisesType)
         if raisedRefT.typeKind == RefT and raisesRefT.typeKind == RefT:
           inc raisedRefT
@@ -3638,7 +3709,23 @@ proc literalB(c: var SemContext; dest: var TokenBuf; it: var Item; literalType: 
   commonType c, dest, it, beforeExpr, expected
 
 proc semNil(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  let beforeExpr = dest.len
   literalB c, dest, it, c.types.nilType
+  # A `nil` that `commonType` resolved against a pointer-like type is emitted
+  # as `(nil T)`: later passes compute the type of an `if` or `case`
+  # expression from its branches and must not see `nilt` there (#2605).
+  let t = typeForNil(it.typ)
+  if not cursorIsNil(t) and beforeExpr < dest.len:
+    var lit = cursorAt(dest, beforeExpr)
+    if lit.exprKind == NilX and not lit.childCursor.hasMore:
+      var typed = createTokenBuf(8)
+      typed.addParLe(NilX, lit.info)
+      typed.addSubtree t
+      typed.addParRi()
+      endRead lit
+      dest.replace cursorAt(typed, 0), beforeExpr
+    else:
+      endRead lit
 
 proc semTypedUnaryArithmetic(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
@@ -3673,6 +3760,27 @@ proc escapingDelayParam(c: var SemContext; dest: var TokenBuf; fn: Cursor): Loca
       return p
     skip params
 
+proc undelayableResult(c: var SemContext; dest: var TokenBuf; fn: Cursor): string =
+  ## What `f` hands back that a delayed call has nowhere to put: the
+  ## continuation runs later, often on a worker, after the expression that
+  ## built it is gone. A result or an error must be handled inside the task.
+  ## Answers "" when there is none.
+  result = ""
+  if not fn.isSymbol: return
+  let res = declToCursor(c, dest, fetchSym(c, fn.symId))
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
+  let r = asRoutine(res.decl, SkipExclBody)
+  if not isVoidType(r.retType):
+    result = "returns `" & typeToString(r.retType) & "`, but nothing can receive the value"
+  elif hasPragma(r.pragmas, RaisesP):
+    result = "is `.raises`, but nothing can receive the error"
+
+proc delayResultErr(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
+                    fn: Cursor; what: string) =
+  buildErr c, dest, info,
+    "`delay` hands `" & asNimCode(fn.symId) & "` to a scheduler, which runs it after this expression is gone; `" &
+      asNimCode(fn.symId) & "` " & what & " there. Handle it inside the task instead"
+
 proc delayEscapeErr(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                     fn: Cursor; p: Local) =
   buildErr c, dest, info,
@@ -3698,8 +3806,12 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # delay(call): the call is delay's sole child, the shape before flattening.
     let fn = childCursor(it.n)
     let escaping = escapingDelayParam(c, dest, fn)
+    let unreceived = undelayableResult(c, dest, fn)
     if not cursorIsNil(escaping.name):
       delayEscapeErr c, dest, info, fn, escaping
+      it.n = delayStart; skip it.n
+    elif unreceived.len > 0:
+      delayResultErr c, dest, info, fn, unreceived
       it.n = delayStart; skip it.n
     else:
       dest.addParLe(DelayX, info)
@@ -3725,8 +3837,11 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     var semmed = cursorAt(callDest, 0)
     let fn = childCursor(semmed)
     let escaping = escapingDelayParam(c, dest, fn)
+    let unreceived = undelayableResult(c, dest, fn)
     if not cursorIsNil(escaping.name):
       delayEscapeErr c, dest, info, fn, escaping
+    elif unreceived.len > 0:
+      delayResultErr c, dest, info, fn, unreceived
     else:
       dest.addParLe(DelayX, info)
       semmed.into:                     # strip the (call …) wrapper
@@ -3826,7 +3941,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
       it.n = bracketStart; skip it.n
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       # unknown expected type, give empty literal auto type, then match it
@@ -3850,7 +3965,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   of AutoT: discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     discard
@@ -3893,7 +4008,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     var convMatch = createMatch(addr c)
@@ -3932,7 +4047,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
       it.n = curlyStart; skip it.n
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       # unknown expected type, give empty literal auto type, then match it
@@ -3956,7 +4071,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
   of AutoT: discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     buildErr c, dest, info, "invalid expected type for set constructor: " & typeToString(it.typ)
@@ -4719,19 +4834,39 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
-proc nilableAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): TypeCursor =
-  ## Tier 3 of `doc/internals/failure_modes.md`, behind
-  ## `{.feature: "strictnew".}`: outside a `.raises` routine an allocation has no
-  ## channel to report failure on, so `new`'s result is reported as NILABLE and
-  ## the contract pass makes the caller narrow it before use. Tier 1
-  ## needs nothing here -- the raise hexer inserts is what lets the body treat the
-  ## result as not-nil -- and tier 2 needs nothing either: a `lenientnils` module's
-  ## `ref` is already `unchecked`, which is left alone, so the consequences stay
-  ## the programmer's without this site knowing about the feature.
+proc asksForNil(typ: TypeCursor): bool =
+  ## Whether a destination type spells `nil T`, i.e. asks to be handed the `nil`
+  ## an allocation answers with rather than the panic. Shaped like
+  ## `contracts_fir.markedAs` and for its reason: the value-passing wrappers do
+  ## not change a value's nilability, only how it is passed, and `system.new`
+  ## reaches here as `out T`.
+  var t = typ
+  while t.typeKind in {SinkT, MutT, LentT, OutT, OwnedT}:
+    inc t
+  if t.typeKind != RefT: return false
+  var marker = t.childCursor
+  skip marker # the element type
+  result = marker.hasMore and marker.substructureKind == NilU
+
+proc nilableAllocResult(c: var SemContext; typ, expected: TypeCursor;
+                        info: NifLineInfo): TypeCursor =
+  ## An allocation panics on out-of-memory (`doc/internals/failure_modes.md`)
+  ## unless the DESTINATION asked to be handed the `nil` instead by declaring
+  ## itself `nil T`. Stamping the marker onto the constructed type here is what
+  ## carries that request to `trNewobj`, which reads it off the `newobj`'s type to
+  ## choose between panicking and guarding its stores, and to `wantNotNilDeref`,
+  ## which then makes every dereference narrow.
+  ##
+  ## `.raises` overrides an explicit `nil` destination for now: tier 1 maps the
+  ## failure to `ErrorCode.OutOfMemError` and raises it, so the body may go on
+  ## treating the result as not-nil. A `lenientnils` module needs nothing here --
+  ## its `ref` is already `unchecked`, which `trNewobj` reads the same way as
+  ## `nil` and the prover reads as "do not ask" -- so the consequences stay the
+  ## programmer's without this site knowing about the feature.
   result = typ
-  if StrictNewFeature notin c.features: return
   if typ.typeKind != RefT: return
   if c.routine.pragmas.contains(RaisesP) or CanRaiseFeature in c.features: return
+  if not asksForNil(expected): return
   var marker = typ.childCursor
   skip marker # the element type
   if not (marker.hasMore and marker.substructureKind == NotnilU): return
@@ -4745,6 +4880,17 @@ proc nilableAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): 
     if ch.substructureKind in {NotnilU, NilU, UncheckedU}: skip ch
     else: takeTree buf, ch
   buf.addParPair(NilU, info)
+  buf.addParRi()
+  result = typeToCursor(c, buf, 0)
+
+proc ownedAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): TypeCursor =
+  ## RFC #575: under `.feature: "ownedRefs"` an object construction yields the
+  ## owning edge to the new cell.
+  result = typ
+  if OwnedRefsFeature notin c.features or typ.typeKind != RefT: return
+  var buf = createTokenBuf(8)
+  buf.addParLe(OwnedT, info)
+  buf.addSubtree typ
   buf.addParRi()
   result = typeToCursor(c, buf, 0)
 
@@ -4883,8 +5029,9 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   # `buildDefaultObjConstr` emits a `newobj` exactly when the type is a `ref`, so
   # testing the type here is testing "does this allocate". The source node is an
   # `oconstr` either way.
-  it.typ = nilableAllocResult(c, it.typ, info)
+  it.typ = nilableAllocResult(c, it.typ, expected, info)
   buildDefaultObjConstr(c, dest, it.typ, setFields, info, bindings)
+  it.typ = ownedAllocResult(c, it.typ, info)
   commonType c, dest, it, exprStart, expected
 
 proc semObjDefault(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -4907,7 +5054,10 @@ proc semNewref(c: var SemContext; dest: var TokenBuf; it: var Item) =
     dest.shrink beforeTypeArg
     if it.typ.typeKind == TypedescT:
       inc it.typ
-    it.typ = nilableAllocResult(c, it.typ, info)
+    if it.typ.typeKind == OwnedT:
+      # fresh, so it may initialize the owned location (RFC #575):
+      inc it.typ
+    it.typ = nilableAllocResult(c, it.typ, expected, info)
     dest.addSubtree it.typ
     assert it.typ.typeKind == RefT
     let typeForDefault = it.typ.childCursor
@@ -5257,7 +5407,7 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
       it.typ = c.types.uint8Type
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT,
        PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
@@ -5548,7 +5698,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
           buildErr c, dest, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymkindT,
-            PtrT, RefT, MutT, OutT, LentT, SinkT, UarrayT, SetT, StaticT, TypedescT,
+            PtrT, RefT, MutT, OutT, LentT, SinkT, OwnedT, UarrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangetypeT, VarargsT, UntypedT, TypedT,
             CstringT, PointerT, TypekindT, OrdinalT, RoutineTypes:
           # every valid local type expression
@@ -5597,7 +5747,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of CoroforS:
         buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
         skip it.n
-      of LabS, JmpS:
+      of LabS, JmpS, AlwaysS:
         buildErr c, dest, it.n.info, "`" & $stmtKind(it.n) &
           "` is a hexer-internal shape and must not appear in source"
         skip it.n
@@ -5874,6 +6024,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semAddr c, dest, it
     of SizeofX:
       semSizeof c, dest, it
+    of CanFormCyclesX:
+      semCanFormCycles c, dest, it
     of TypeofX:
       semTypeof c, dest, it
     of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:

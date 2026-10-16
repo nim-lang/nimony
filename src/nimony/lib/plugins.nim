@@ -9,6 +9,7 @@
 ## See `doc/plugins.md` for the full guide.
 
 {.feature: "untyped".}
+{.feature: "assumeSync".}  # compiler-internal globals; single threaded
 
 import std / [assertions, hashes, syncio, cmdline, os]
 import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse, addSymDef
@@ -134,6 +135,10 @@ proc symText*(n: NifCursor): string {.inline.} =
 proc symText*(s: SymId): string {.inline.} =
   ## Resolves a plugin-pool symbol handle to its name.
   pluginPool.symString(s)
+
+proc symBasename*(s: SymId): string {.inline.} =
+  ## Source identifier of `s` without module suffix (Nim spellings for error messages).
+  pluginPool.symBasename(s)
 
 proc identText*(n: NifCursor): string {.inline.} =
   ## Returns the current `Ident` text.

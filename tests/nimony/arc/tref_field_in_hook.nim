@@ -45,3 +45,5 @@ proc scoped =
 scoped()
 assert freed == 1000
 
+
+{.feature: "assumeSync".}  # test program: globals shared freely

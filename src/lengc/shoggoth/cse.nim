@@ -1332,11 +1332,15 @@ proc licmHoistPos(c: var Context; expr: Cursor): int =
   ## loop does not survive an outer body that writes the same location, and
   ## a load in an inner loop / branch is not a must-execute of the outer.
   result = -1
-  for frame in c.loopStack:
+  # `invariantIn` takes `c` as `var`, which may not happen while `c.loopStack`
+  # is borrowed by the loop; nothing it calls reads the stack, so lend it out.
+  var stack = move c.loopStack
+  for frame in stack:
     if invariantIn(c, expr, frame) and not controlDependentIn(c, frame.pos):
       if result < 0: result = frame.pos
     else:
       result = -1
+  c.loopStack = move stack
 
 proc anchorsForHoist(c: Context; loopPos: int): seq[int] =
   ## Anchor stack of the pre-header: enclosing blocks minus the loop we insert

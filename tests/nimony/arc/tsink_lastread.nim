@@ -17,3 +17,5 @@ proc main() =
   echo "OK"
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

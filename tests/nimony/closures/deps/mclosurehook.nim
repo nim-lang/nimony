@@ -1,3 +1,4 @@
+{.feature: "assumeSync".}  # globals shared freely, also by importers
 {.feature: "lenientnils".}
 import std/syncio
 

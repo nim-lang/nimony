@@ -39,3 +39,5 @@ when not defined(windows):
 else:
   echo "other"
   echo "all threads found"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

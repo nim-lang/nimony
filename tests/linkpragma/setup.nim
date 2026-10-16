@@ -26,7 +26,9 @@ createDir work
 copyFile dir / "deps" / "tlink.nim", work / "tlink.nim"
 copyFile dir / "deps" / "tprintf.nim", work / "tprintf.nim"
 
-let ccCmd = cc.quoteShell & " -c " & quoteShell(dir / "deps" / "answer.c") &
+# The illumos/Solaris compiler defaults to ILP32; Nimony targets LP64 here.
+let abiFlags = when defined(sunos) and defined(amd64): " -m64" else: ""
+let ccCmd = cc.quoteShell & abiFlags & " -c " & quoteShell(dir / "deps" / "answer.c") &
             " -o " & quoteShell(work / "answer.o")
 let (ccOut, ccCode) = execCmdEx(ccCmd)
 if ccCode != 0:

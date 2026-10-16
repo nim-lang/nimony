@@ -347,7 +347,24 @@ proc collectConceptMethodsFor(fn: StrId; conceptSym: SymId; concpt: Cursor): seq
         result.add FnCandidate(kind: routine.symKind, sym: prc.symId,
                                typ: routine, fromConcept: true)
 
-proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
+proc conceptMethodsForInvocation(c: var SemContext; fn: StrId; typ: Cursor): seq[FnCandidate] =
+  ## `typ` is `(at Concept A1 ... An)`: the requirements of a container concept
+  ## with the concept's own type parameters replaced by `A1 ... An`, so that
+  ## `iterator items(x: Self): T` of `Findable[T]` yields the caller's `T` and
+  ## `proc ==(a, b: T)` accepts it.
+  result = @[]
+  if isConceptInvocation(typ):
+    let (conceptSym, args) = conceptInvocationArgs(typ)
+    var bindings = initTable[SymId, Cursor]()
+    for (s, arg) in args:
+      bindings[s] = arg
+    for cand in collectConceptMethodsFor(fn, conceptSym, getTypeSection(conceptSym).body):
+      var buf = createTokenBuf(32)
+      substituteTypevars(buf, cand.typ, bindings)
+      result.add FnCandidate(kind: cand.kind, sym: cand.sym,
+                             typ: typeToCursor(c, buf, 0), fromConcept: true)
+
+proc conceptMethodsForConstraint(c: var SemContext; fn: StrId; typ: Cursor): seq[FnCandidate] =
   ## Candidate routines named `fn` that are *guaranteed* to be available on a
   ## type variable constrained by `typ`. `and` exposes the union of its
   ## operands' operations; `or` exposes only their intersection: an operation is
@@ -359,11 +376,13 @@ proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
     let section = getTypeSection typ.symId
     if section.body.typeKind == ConceptT:
       result = collectConceptMethodsFor(fn, typ.symId, section.body)
+  elif typ.typeKind == InvokeT:
+    result = conceptMethodsForInvocation(c, fn, typ)
   elif typ.typeKind == AndT:
     var t = typ
     t.into:
       while t.hasMore:
-        for cand in conceptMethodsForConstraint(fn, t):
+        for cand in conceptMethodsForConstraint(c, fn, t):
           var dup = false
           for ex in result:
             if sameConceptMethod(cand, ex):
@@ -377,7 +396,7 @@ proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
     var first = true
     t.into:
       while t.hasMore:
-        let branch = conceptMethodsForConstraint(fn, t)
+        let branch = conceptMethodsForConstraint(c, fn, t)
         if first:
           result = branch
           first = false
@@ -397,9 +416,32 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
   assert res.status == LacksNothing
   let local = asLocal(res.decl)
   if local.kind == TypevarY and not local.typ.isDotToken:
-    for cand in conceptMethodsForConstraint(fn, local.typ):
+    for cand in conceptMethodsForConstraint(c, fn, local.typ):
       if not conceptMethodAlreadyListed(cands, cand.typ):
         cands.addUnique cand
+
+proc invocationMentions(inv: Cursor; s: SymId): bool =
+  result = false
+  var n = inv
+  n.into:
+    skip n # the concept
+    while n.hasMore:
+      if n.isSymbol and n.symId == s:
+        result = true
+      skip n
+
+proc addConceptBoundMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
+  ## `proc find[T; C: Findable[T]](x: C; elem: T)`: `Findable[T]`'s
+  ## requirements that are phrased in terms of `T` (`proc ==(a, b: T)`) are
+  ## available on `T` inside the body.
+  var r = c.routine
+  while r != nil:
+    for bound in r.conceptBounds:
+      if invocationMentions(bound, typevar):
+        for cand in conceptMethodsForInvocation(c, fn, bound):
+          if not conceptMethodAlreadyListed(cands, cand.typ):
+            cands.addUnique cand
+    r = r.parent
 
 proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   result = false
@@ -453,6 +495,7 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
         c.cachedTypeboundOps[(s, fn)] = ops
   elif decl.kind == TypevarY:
     maybeAddConceptMethods c, fn, s, cands
+    addConceptBoundMethods c, fn, s, cands
 
 type
   CallState = object
@@ -507,11 +550,11 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
   let info = cs.callNodeInfo
   var destType = cs.fn.typ
   if destType.typeKind == TypedescT: inc destType
-  if destType.typeKind in {SinkT, LentT} and cs.args[0].typ.typeKind == TypedescT:
+  if destType.typeKind in {SinkT, LentT, OwnedT} and cs.args[0].typ.typeKind == TypedescT:
     var nullary = destType
     inc nullary
     if not nullary.hasMore:
-      # sink T/lent T call
+      # sink T/lent T/owned T call
       var typeBuf = createTokenBuf(16)
       typeBuf.addParLe(destType.cursorTagId, destType.info)
       typeBuf.addSubtree cs.args[0].n
@@ -1067,7 +1110,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         let sym = f.symId
         let s = fetchSym(c, sym)
         let typ = fetchCallableType(c, dest, f, s)
-        let maybeProc = typ.skipModifier
+        let maybeProc = typ.skipModifierAndOwned
         if maybeProc.typeKind in RoutineTypes:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: maybeProc)
           m.add createMatch(addr c, it.typ)
@@ -1102,7 +1145,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     # Keep in mind that proc vars are a thing:
     let sym = if cs.fn.n.isSymbol: cs.fn.n.symId else: SymId(0)
     let typ = cs.fn.typ
-    let maybeProc = typ.skipModifier
+    let maybeProc = typ.skipModifierAndOwned
     if maybeProc.typeKind in RoutineTypes:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: maybeProc)
       m.add createMatch(addr c, it.typ)
@@ -1199,6 +1242,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           newArgs.add CallArg(n: beginRead(newArgBufs[bufPos]), typ: convMatch.returnType)
         else:
           newArgs.add arg
+        inc ai
+      # surplus arguments must still reach `sigmatch` so that it reports
+      # "too many arguments" (#2617)
+      while ai < cs.args.len:
+        newArgs.add cs.args[ai]
         inc ai
       if anyConverters:
         sigmatch(newMatch, m[mi].fn, newArgs, genericArgs)
@@ -1562,7 +1610,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       return
     elif dotState == FailedDot or
         # also ignore non-proc fields:
-        (dotState == MatchedDotField and cs.fn.typ.typeKind notin RoutineTypes):
+        (dotState == MatchedDotField and skipOwned(cs.fn.typ).typeKind notin RoutineTypes):
       cs.source = MethodCall
       # turn a.b(...) into b(a, ...)
       # first, delete the output of `tryBuiltinDot`:

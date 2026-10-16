@@ -73,8 +73,7 @@ type
     labels: seq[SymId]
       ## The `(lab :L)`s declared directly in this scope's statement list. A
       ## `(jmp L)` nested inside must run the destructors of every scope it
-      ## leaves on the way out to the one that owns `L` — the same walk
-      ## `leaveNamedBlock` does for `break`, minus the final `leaveScope`
+      ## leaves on the way out to the one that owns `L`, but not that one's
       ## (the jump lands *inside* the owning scope, it does not exit it).
     kind: ScopeKind
     isTopLevel: bool
@@ -91,8 +90,8 @@ type
     flow: Tracker[SymId, bool]
       ## Path bookkeeping: **has control already left this statement list?**
       ##
-      ## `return`/`raise`/`break` run every enclosing scope's destructors on
-      ## their way out (`trReturn`/`trRaise`/`trBreak`), so `trScope` must not
+      ## `return`/`raise` run every enclosing scope's destructors on
+      ## their way out (`trReturn`/`trRaise`), so `trScope` must not
       ## append the scope's destructor sequence after one of them — it would be
       ## dead code, and the CPS pass makes dead tails reachable again (see
       ## `trScope`). The same holds for `jmp`.
@@ -121,7 +120,7 @@ proc collectLabelsInto(result: var seq[SymId]; body: Cursor) =
       let sym = b.childCursor
       if sym.kind in {Symbol, SymbolDef}:
         result.add sym.symId
-    elif b.stmtKind == StmtsS:
+    elif b.stmtKind in {StmtsS, AlwaysS}:
       # transparent: its labels are this scope's
       collectLabelsInto result, b
     skip b
@@ -174,45 +173,6 @@ proc leaveScope(c: var Context; sptr: ptr Scope) =
   ## `jmp`/`lab`/`ret`, which this walk already handled.
   for i in countdown(sptr.destroyOps.high, 0):
     callDestroy c, sptr.destroyOps[i].destroyProc, sptr.destroyOps[i].arg
-
-proc leaveNamedBlock(c: var Context; label: SymId) =
-  #[ Consider:
-
-  var x = f()
-  block:
-    break # do we want to destroy x here? No.
-
-  ]#
-  var it = addr(c.currentScope)
-  while it != nil and it.label != label:
-    leaveScope(c, it)
-    it = it.parent
-  if it != nil and it.label == label:
-    leaveScope(c, it)
-  else:
-    bug "do not know which block to leave"
-
-proc leaveAnonBlock(c: var Context) =
-  var it = addr(c.currentScope)
-  while it != nil and it.kind != WhileOrBlock:
-    leaveScope(c, it)
-    it = it.parent
-  if it != nil and it.kind == WhileOrBlock:
-    leaveScope(c, it)
-  else:
-    bug "do not know which block to leave"
-
-proc trBreak(c: var Context; n: var Cursor) =
-  if c.terminates:
-    # unreachable: an earlier jump already left these scopes
-    takeTree c.dest, n
-    return
-  let lab = n.childCursor
-  if lab.kind == Symbol:
-    leaveNamedBlock(c, lab.symId)
-  else:
-    leaveAnonBlock(c)
-  takeTree c.dest, n
 
 proc trReturn(c: var Context; n: var Cursor) =
   if c.terminates:
@@ -272,9 +232,9 @@ proc trScope(c: var Context; body: var Cursor) =
           tr c, body
     else:
       tr c, body
-    #[ A scope whose statement list ends in `return`/`raise`/`break` has
-       already had its destructors emitted by `trReturn`/`trRaise`/
-       `trBreak`, which walk the whole scope chain before the jump.
+    #[ A scope whose statement list ends in `return`/`raise` has
+       already had its destructors emitted by `trReturn`/`trRaise`,
+       which walk the whole scope chain before the jump.
        Appending the sequence again here used to be merely dead code in
        straight-line output — but the CPS pass runs `eliminateJumps` AFTER
        us, and that rewrites `return` into `(jtrue ´r)` plus fallthrough,
@@ -309,11 +269,17 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
-    if hasPragma(r.pragmas, NodestroyP):
+    # an `{.assembler.}` body owns nothing: there is nothing to destroy, and its
+    # `break`s are the back end's
+    if hasPragma(r.pragmas, NodestroyP) or hasPragma(r.pragmas, AssemblerP):
       copyTree c.dest, r.body
     else:
       var s2 = createEntryScope(r.body.info)
       s2.isTopLevel = false
+      # The body's own labels too: the eraiser puts a `try`'s `exlab` at the
+      # top of the routine body when the `try` is, and a `jmp` there must run
+      # the destructors of the scopes it leaves like any other.
+      s2.labels = collectLabels(r.body)
       swap c.currentScope, s2
       # A nested routine's body is a path of its own: its divergence must not
       # leak into the enclosing statement list.
@@ -366,9 +332,9 @@ proc trBlock(c: var Context; n: var Cursor) =
   c.currentScope = createNestedScope(WhileOrBlock, oldScope, n.info, labelId)
   copyInto(c.dest, n):
     takeTree c.dest, n
-    # A `break` targeting this block makes its end a join, and `trBreak` has
-    # already marked that path diverged — so the block as a whole is modelled
-    # as one non-exhaustive branch: live afterwards.
+    # A `jmp` to a label after this block makes its end a join — so the
+    # block as a whole is modelled as one non-exhaustive branch: live
+    # afterwards.
     c.flow.openBranches()
     c.flow.openBranch()
     trScope c, n
@@ -492,8 +458,7 @@ proc tr(c: var Context; n: var Cursor) =
       trRaise(c, n)
       c.flow.markDiverged()
     of BreakS:
-      trBreak(c, n)
-      c.flow.markDiverged()
+      bug "`break` reached Hexer: the Final IR lowers every `break` to a `jmp`", n
     of IfS:
       trIf c, n
     of CaseS:
@@ -557,13 +522,13 @@ proc tr(c: var Context; n: var Cursor) =
     of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
     of IteratorS:
-      # iterinliner passes only `.closure` iterators through to here. Their
-      # bodies need destroyer treatment (scope tracking, =destroy injection
-      # on locals) when the closure flag is actually set; non-closure iters
-      # would have been stripped by iterinliner.
+      # iterinliner passes only `.closure` and `.passive` iterators through
+      # to here. Their bodies need destroyer treatment (scope tracking,
+      # =destroy injection on locals); non-coroutine iters would have been
+      # stripped by iterinliner.
       var probe = n
       let routine = asRoutine(probe, SkipExclBody)
-      if hasPragma(routine.pragmas, ClosureP):
+      if hasPragma(routine.pragmas, ClosureP) or hasPragma(routine.pragmas, PassiveP):
         trProcDecl c, n
       else:
         takeTree c.dest, n
@@ -572,7 +537,7 @@ proc tr(c: var Context; n: var Cursor) =
       # bodies don't participate in lowering.
       takeTree c.dest, n
     of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
-        WhenS, ForS, YldS, StmtsS, PragmasS,
+        WhenS, ForS, YldS, StmtsS, AlwaysS, PragmasS,
         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,
@@ -601,6 +566,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     anonBlock: pool.symId("`anonblock.0"),
     dest: move(pass.dest), flow: initTracker[SymId, bool]())
   assert n.stmtKind == StmtsS
+  c.currentScope.labels = collectLabels(n)   # a module-level `try`'s labels
   c.dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:

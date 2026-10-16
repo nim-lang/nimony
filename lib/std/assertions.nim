@@ -27,6 +27,12 @@ template assert*(cond: bool; msg = "") =
     # is judged at compile time and cannot be switched off.
     discard
 
+template rcOf[T](r: ref T): int =
+  ## The zero-based count in the header word at offset 0. A runtime that keeps
+  ## flags in its low bits (Nim's `orc`) says how many with `nimRcShift`.
+  when declared(nimRcShift): cast[ptr int](r)[] shr nimRcShift
+  else: cast[ptr int](r)[]
+
 template assertRc*[T](r: ref T; expected: int; tag: string = "") =
   ## Diagnostic for ref-count tracking. `r` is a `ref T`, internally a
   ## pointer to `{rc: int, d: T}` (see `arc.nim`); reads the rc field at
@@ -36,7 +42,7 @@ template assertRc*[T](r: ref T; expected: int; tag: string = "") =
   ## `assertRc(myRef, 0)` after construction or `assertRc(myRef, n)` after
   ## n duplications to catch over- or under-counting before the symptom
   ## (UAF, double-free, leak) drifts far from the cause.
-  let actualRc = cast[ptr int](r)[]
+  let actualRc = rcOf(r)
   if actualRc != expected:
     echo "[assertRc] ", tag, " rc=", actualRc, " expected=", expected,
          " ptr=", cast[int](r)
@@ -50,7 +56,7 @@ template assertRcAlive*[T](r: ref T; tag: string = "") =
   ## absolute rc) since arcDec'd-into-positive-billions still indicates the
   ## block was reused for an unrelated allocation.
   if r != nil:
-    let actualRc = cast[ptr int](r)[]
+    let actualRc = rcOf(r)
     # Plausible rc values are in [-1, ~10000]. Anything else is corruption.
     if actualRc < -1 or actualRc > 10_000:
       echo "[assertRcAlive] ", tag, " rc=", actualRc, " (corrupt)",

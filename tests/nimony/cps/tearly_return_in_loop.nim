@@ -53,3 +53,5 @@ proc main() {.passive.} =
   echo ensure()
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely

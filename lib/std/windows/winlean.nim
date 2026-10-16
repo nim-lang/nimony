@@ -11,12 +11,13 @@ when defined(windows):
 
   # See https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
   type
-    # TODO: typedef PVOID HANDLE;
-    Handle* {.importc: "HANDLE", header: "<windef.h>", nodecl.} = distinct int
-    LONG* {.importc: "LONG", header: "<windef.h>".} = int32
+    # Plain Nim types, no `header: "<windef.h>"`: the Win API procs here are
+    # `dynlib` imports that nimony declares itself, so no Windows header is needed.
+    Handle* = distinct int
+    LONG* = int32
     WINBOOL* = distinct int32
       ## `WINBOOL` uses opposite convention as posix, !=0 meaning success.
-    DWORD* {.importc: "DWORD", header: "<windef.h>", nodecl.} = uint32
+    DWORD* = uint32
 
   let
     INVALID_HANDLE_VALUE* = cast[Handle](-1)

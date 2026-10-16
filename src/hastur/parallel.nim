@@ -210,7 +210,11 @@ proc prebuildSharedObjects(forward: string) =
     stderr.writeLine "prebuild: shared object compile failed: " & cmd
 
 proc copyPreservingMtime(src, dst: string) =
-  ## Copy `src` to `dst` and stamp `dst` with `src`'s mtime. Mtime
+  ## Copy `src` to `dst` with its permissions and stamp `dst` with `src`'s
+  ## mtime. The permissions matter for a `{.plugin.}` executable the warmup
+  ## built: a plain `copyFile` leaves it non-executable on POSIX, and its
+  ## preserved mtime keeps every staleness check from rebuilding it, so the
+  ## first plugin call fails with "Permission denied". Mtime
   ## preservation is load-bearing: `nifmake.needsRebuild` keys off
   ## output-mtime > input-mtime ordering, so a fresh "now" mtime on every
   ## prefilled file would scramble the DAG-order mtimes the warmup set
@@ -221,7 +225,7 @@ proc copyPreservingMtime(src, dst: string) =
   ## sees the truncated/partial content and crashes. Copying gives each
   ## test an independent inode, paid for once at prefill.
   try:
-    copyFile(src, dst)
+    copyFileWithPermissions(src, dst)
     try: setLastModificationTime(dst, getLastModificationTime(src))
     except: discard
   except OSError, IOError:
@@ -235,6 +239,10 @@ proc prefillFromWarmup*(warmupCache, cacheDir: string) =
   if warmupCache.len == 0 or not dirExists(warmupCache):
     return
   for path in walkDirRec(warmupCache, yieldFilter = {pcFile}, relative = true):
+    # A plugin's sub-compile caches are only read to rebuild the plugin, which
+    # the prefilled executable makes unnecessary: copying them would multiply
+    # the prefill for nothing.
+    if isPluginScratchDir(warmupCache, path.split({DirSep, AltSep})[0]): continue
     let dst = cacheDir / path
     try: createDir(dst.parentDir)
     except OSError: discard

@@ -25,3 +25,5 @@ drive(delay main())  # parks; a plain `main()` would wait for the resume below
 echo "4. after main"
 drive(resumeCont)
 echo "6. done"
+
+{.feature: "assumeSync".}  # test program: globals shared freely

@@ -1,0 +1,2 @@
+caught: inner code=1
+top: wrapped: inner code=101

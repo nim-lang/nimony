@@ -10,8 +10,8 @@ else:
 
   const
     AF_UNIX = 1.cint
-    SOCK_STREAM = 1.cint
-    MSG_NOSIGNAL = 0x4000.cint
+    SOCK_STREAM = (when defined(illumos): 2.cint else: 1.cint)
+    MSG_NOSIGNAL = (when defined(illumos): 0x200.cint else: 0x4000.cint)
 
   proc socketpair(domain, typ, protocol: cint;
                   sv: ptr UncheckedArray[cint]): cint {.importc: "socketpair".}

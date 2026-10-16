@@ -48,3 +48,5 @@ proc k(c: bool; i: int): int =
   result = x + y
 
 echo k(true, 0), " ", k(false, 1)
+
+{.feature: "assumeSync".}  # test program: globals shared freely

@@ -122,3 +122,5 @@ proc main =
   echo "float32 ok"
 
 main()
+
+{.feature: "assumeSync".}  # test program: globals shared freely
