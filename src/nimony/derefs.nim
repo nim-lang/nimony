@@ -894,6 +894,9 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
     elif borrowsFromReadonly(c, n):
       cannotPassToVar c.dest, n.info, n
       skip n
+    elif e == WantMutableT:
+      # a `var openArray` is passed by value, like the view it is
+      trSonsLocation c, n, WantT
     else:
       c.dest.addParLe(HaddrX, n.info)
       trSonsLocation c, n, WantT
