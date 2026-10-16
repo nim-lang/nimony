@@ -100,10 +100,46 @@ when defined(nimNativeIo):
         if exp == 0x7FF'u64: (if mant == 0'u64: c_fpInfinite else: c_fpNan)
         elif exp == 0'u64: (if mant == 0'u64: c_fpZero else: c_fpSubnormal)
         else: c_fpNormal
-  {.push header: CMathHeader.}
-  func c_frexp(x: float32; exponent: ptr cint): float32 {.importc: "frexpf".}
-  func c_frexp(x: float64; exponent: ptr cint): float64 {.importc: "frexp".}
-  {.pop.}
+
+  func c_frexp(x: float32; exponent: ptr cint): float32 =
+    var y: uint32 = cast[uint32](x)
+    let ee = (y shr 23) and 0xFF'u32
+
+    if ee == 0:
+      if x != 0.0'f32:
+        let scaled = c_frexp(x * (1'u64 shl 63).float32 * 2.0, exponent)
+        exponent[] = exponent[] - 64
+        return scaled
+      else:
+        exponent[] = 0
+        return x
+    elif ee == 0xFF'u32:
+      return x
+
+    exponent[] = cast[cint](ee) - 0x7E'i32
+    y = y and 0x807FFFFF'u32
+    y = y or 0x3F000000'u32
+    return cast[float32](y)
+
+  func c_frexp(x: float64; exponent: ptr cint): float64 =
+    var y: uint64 = cast[uint64](x)
+    let ee = (y shr 52) and 0x7FF'u64
+
+    if ee == 0:
+      if x != 0.0:
+        let scaled = c_frexp(x * (1'u64 shl 63).float64 * 2.0, exponent)
+        exponent[] = exponent[] - 64
+        return scaled
+      else:
+        exponent[] = 0
+        return x
+    elif ee == 0x7FF'u64:
+      return x
+
+    exponent[] = cast[cint](ee) - 0x3FE'i32
+    y = y and 0x800FFFFFFFFFFFFF'u64
+    y = y or 0x3FE0000000000000'u64
+    return cast[float64](y)
 else:
   {.push header: CMathHeader.}
   # These are C macros and can take both float and double type values.
