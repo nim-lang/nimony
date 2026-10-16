@@ -1,0 +1,4 @@
+tests/nimony/exceptions/texcept_type_mismatch.nim(13, 16) Error: `ref ErrorA.Obj not nil` raised here is not caught by any `except` arm, and the routine is not `.raises`
+tests/nimony/exceptions/texcept_type_mismatch.nim(23, 7) Error: `ErrorCode` raised here cannot leave a routine that raises `ref ErrorA.Obj not nil`, and nothing converts one into the other
+tests/nimony/exceptions/texcept_type_mismatch.nim(26, 14) Error: `ref ErrorA.Obj not nil` raised here cannot leave a routine that raises `ErrorCode`, and nothing converts one into the other
+tests/nimony/exceptions/texcept_type_mismatch.nim(31, 16) Error: `ref ErrorA.Obj not nil` raised here is not caught by any `except` arm, and the routine is not `.raises`

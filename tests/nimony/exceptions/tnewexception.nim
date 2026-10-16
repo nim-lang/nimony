@@ -12,3 +12,5 @@ try:
   p()
 except ref ValueError as e:
   echo "caught: ", e.msg
+except:
+  echo "some other exception"

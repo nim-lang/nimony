@@ -1,7 +1,7 @@
 import std/[assertions, sets]
 from std/strutils import startsWith
 include ".." / lib / nifprelude
-import nimony_model, decls, xints, semdata, programs, nifconfig
+import nimony_model, decls, xints, semdata, programs, nifconfig, builtintypes
 import ".." / models / tags
 
 const
@@ -422,6 +422,39 @@ proc isInheritable*(n: Cursor; skipPtrs = false): bool =
       # well it has a parent and is not final so it is inheritable:
       return true
   return false
+
+type
+  RaisesFamily* = enum
+    NotRaisable   ## neither `ErrorCode` nor a `ref` object type
+    CodeRaises    ## `ErrorCode`: the code travels in the result's error slot
+    RefRaises     ## a `ref` object: the slot says `Failure`, `exc` holds it
+    UnknownRaises ## a type variable or an unresolvable symbol: judged later
+
+proc raisesFamily*(t: Cursor): RaisesFamily =
+  ## What `.raises: T` and `except T` may name. Nothing translates one kind
+  ## into the other, so the family is also what a raise and the handler or
+  ## routine it reaches have to agree on.
+  var t = t
+  var refSeen = false
+  for _ in 0 ..< 20:
+    if t.isSymbol:
+      if not refSeen and t.symId == pool.symId(ErrorCodeName): return CodeRaises
+      let res = tryLoadSym(t.symId)
+      if res.status != LacksNothing or res.decl.stmtKind != TypeS:
+        return UnknownRaises
+      t = asTypeDecl(res.decl).body
+    elif t.typeKind == InvokeT:
+      inc t # the generic type it instantiates
+    elif t.typeKind == RefT and not refSeen:
+      refSeen = true
+      inc t
+    elif t.typeKind == ObjectT and refSeen:
+      return RefRaises
+    elif t.typeKind == AutoT:
+      return UnknownRaises
+    else:
+      return NotRaisable
+  result = UnknownRaises
 
 proc isPure*(n: Cursor): bool =
   typeHasPragma(n, PureP)
