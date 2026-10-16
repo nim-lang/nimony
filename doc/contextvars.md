@@ -42,11 +42,12 @@ proc worker() {.passive.} =
 ```
 
 So the chain head lives in the coroutine frame (`CoroutineBase.ctx`), and
-`currentCoroutine` — the frame the running thread is executing, which
-`runStep` installs around every continuation step — is how running code reaches
-it. Code that is not part of a coroutine (top-level statements, and a regular
-proc that nothing called from a `.passive` one) uses a per-thread chain
-instead, which is exactly right for it: none of that can park.
+`currentCoroutine` — the frame the running thread is executing, installed by
+`runStep` as it resumes a frame and put back by the driver once its batch of
+steps is done — is how running code reaches it. Code that is not part of a
+coroutine (top-level statements, and a regular proc that nothing called from a
+`.passive` one) uses a per-thread chain instead, which is exactly right for it:
+none of that can park.
 
 ## Inheritance
 

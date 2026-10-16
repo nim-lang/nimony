@@ -17,9 +17,9 @@
 # coroutine, `system.threadCtx` when it is not — and passes it as the
 # coroutine's hidden `ctx` argument, so a coroutine holds the chain it was
 # spawned in from the start. `currentCoroutine` -- the frame of the coroutine
-# this thread is running, which `runStep` installs around every continuation
-# step -- is how the running code reaches it. `doc/contextvars.md` has the
-# whole story.
+# this thread is running, installed by `runStep` as it resumes a frame and put
+# back by the driver once its batch of steps is done -- is how the running code
+# reaches it. `doc/contextvars.md` has the whole story.
 
 {.feature: "lenientnils".}
 ## Load-bearing. A chain ends in a nil `parent`, and the nil checks that say so

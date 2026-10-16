@@ -349,7 +349,18 @@ proc emitCtxArg*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
 proc emitEntryArcInc*(c: var Context; init: var TokenBuf; info: NifLineInfo) =
   ## The +1 that pays for the `ctx` reference a passive frame's constructor
   ## stores: `if \`ctx.0 != nil: arcInc(addr (deref \`ctx.0).r.00 0)`, emitted
-  ## at the head of `init`, before the constructor opens.
+  ## into `init` AFTER the constructor is closed.
+  ##
+  ## The placement is deliberate. The frame's storage is `memset` to zero by
+  ## the allocator call that precedes this statement, and the C back end can
+  ## only drop that memset as dead if every store into the frame follows it
+  ## in the same function. An atomic `arcInc` called *before* the constructor
+  ## is an opaque call sitting between the memset and the constructor's
+  ## stores, which pins the memset back in — a whole zeroing of the frame per
+  ## entry, purely to zero what the constructor overwrites. After the
+  ## constructor, the two are adjacent and the memset goes dead again. Nothing
+  ## is published between the two: the +1 only has to land before the frame
+  ## is handed on, and `init` is one straight-line statement.
   ##
   ## Only for routines transformed AFTER the duplifier (`.passive` procs and
   ## `.passive` iters, at pass 7): their constructor's `(kv ctx.0 \`ctx.0)`
@@ -2144,6 +2155,10 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   var n = beginRead(c.currentProc.cf)
   escapingLocals(c, n)
   completeFrameConstr(c, init)
+  if not c.currentProc.isClosureIter:
+    # After the constructor, so the C back end can still see the frame's
+    # memset as dead — see `emitEntryArcInc`.
+    emitEntryArcInc(c, init, NoLineInfo)
 
   assert n.stmtKind in {StmtsS, ScopeS}
   dest.addParLe(n.cursorTagId, n.info)
@@ -2496,11 +2511,11 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
 
   dest.shrink paramsBegin
   let thisParam = pool.symId(EnvParamName)
-  # The constructor about to open stores `ctx`; for a routine whose ctor the
+  # The constructor opened here stores `ctx`; for a routine whose ctor the
   # duplifier will never see (transformed at pass 7), the +1 for that stored
-  # reference is taken here instead. See `emitEntryArcInc`.
-  if not c.currentProc.isClosureIter:
-    emitEntryArcInc(c, init, info)
+  # reference is taken once `completeFrameConstr` has closed the constructor
+  # — `treIteratorBody` does it, and `emitEntryArcInc`'s comment explains why
+  # after, not before, is what the C back end needs.
   dest.copyIntoKind ParamsU, info:
     init.addParLe AsgnS, info
     init.copyIntoKind DerefX, info:

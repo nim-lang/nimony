@@ -9,11 +9,13 @@
 ##
 ## The `feature/contextvars` branch changed the shape of every coroutine it
 ## compiles: the CPS pass now hands a hidden context argument to every spawn,
-## `CoroutineBase` grew a `ctx` field, and `runStep` saves and restores the
-## `runningCoro` thread variable around each `c.fn(c.env)`. This file never
-## names a `ContextVar` and does not import `std/contextvars` (which does not
-## exist before the feature), so every difference it reports is the tax that
-## support puts on ordinary `.passive` code.
+## and `CoroutineBase` grew a `ctx` field. `runStep` installs the resumed frame
+## as `runningCoro` and leaves it installed (a tail call, so a chain leg is not
+## two saves and a restore); the driver -- `advance`, or `run`/the threadpool
+## around a whole batch -- puts the previous frame back. This file never names
+## a `ContextVar` and does not import `std/contextvars` (which does not exist
+## before the feature), so every difference it reports is the tax that support
+## puts on ordinary `.passive` code.
 ##
 ## ## Two modes
 ##
