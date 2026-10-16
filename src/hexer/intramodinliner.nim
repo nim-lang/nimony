@@ -664,6 +664,15 @@ proc isSelfAsgn(bnd: Bindings; n: Cursor): bool =
   if a.hasMore: return false                 # a 3rd child: not the shape
   result = lhs == rhs
 
+proc isForwardedRet(bnd: Bindings; n: Cursor; targetSym: SymId): bool =
+  ## Is `n`, the value of a callee `(ret n)`, the splice destination itself once
+  ## renamed — so the `targetSym = n` copy would be a self-assignment? Only the
+  ## RENAMED symbol may be compared: the callee's own names live in its scope, and
+  ## a callee local can share its name with the caller's destination (both procs
+  ## have a `canRaise.0`) while being a different variable (#2674).
+  result = n.isSymbol and not bnd.subst.hasKey(n.symId) and
+    bnd.rename.getOrDefault(n.symId, n.symId) == targetSym
+
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
   ## spliced at every use instead of bound to a parameter copy. (Symbol args are
@@ -1041,9 +1050,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
       let info = body.info
       into body:                            # enter (ret …)
         if body.hasMore and not body.isDotToken and targetSym != SymId(0):
-          if body.isSymbol and
-             (body.symId == targetSym or
-              bnd.rename.getOrDefault(body.symId) == targetSym):
+          if bnd.isForwardedRet(body, targetSym):
             skip body                       # `ret result`: dest IS result (forwarded)
           else:
             dest.addParLe TagId(AsgnS), info
@@ -1124,9 +1131,7 @@ proc emitTailStmt(dest: var TokenBuf; body: var Cursor; bnd: Bindings;
     let rinfo = body.info
     into body:
       if body.hasMore and not body.isDotToken and targetSym != SymId(0):
-        if body.isSymbol and
-           (body.symId == targetSym or
-            bnd.rename.getOrDefault(body.symId) == targetSym):
+        if bnd.isForwardedRet(body, targetSym):
           skip body                          # `ret result`: dest IS result (forwarded)
         else:
           dest.addParLe TagId(AsgnS), rinfo
