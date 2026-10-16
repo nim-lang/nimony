@@ -27,7 +27,7 @@ Options:
   assert options.input == "input.txt"
   assert options.output == "out.txt"
   assert options.verbose
-  assert $options.command == "cmdGreet"
+  assert options.command == cmdGreet
 
 block:
   let options = cliapp("""Greeter v0.1
@@ -50,7 +50,7 @@ Options:
     @["--mode=slow", "greet", "input.txt"])
 
   assert options.input == "input.txt"
-  assert $options.mode == "cliModeSlow"
+  assert options.mode == cliModeSlow
 
 block:
   let options = cliapp("""Greeter v0.1
@@ -75,4 +75,4 @@ Options:
   assert options.input == "input.txt"
   assert options.output == "late.txt"
   assert options.verbose
-  assert $options.command == "cmdGreet"
+  assert options.command == cmdGreet
