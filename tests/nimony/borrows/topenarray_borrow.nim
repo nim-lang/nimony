@@ -140,3 +140,43 @@ proc testRebind =
 testRebind()
 
 {.feature: "assumeSync".}  # test program: globals shared freely
+
+# A call that returns a fresh value hands the loop a temporary it owns: the
+# loop borrows nothing of the call's first argument, so that argument may be
+# passed on as `var` in the body.
+type
+  Registry = object
+    entries: seq[int]
+    hits: int
+
+proc snapshot(r: Registry): seq[int] = r.entries
+
+proc record(r: var Registry; x: int) =
+  r.hits += x
+  r.entries.add x
+
+proc testOwnedCallResult =
+  var r = Registry(entries: @[1, 2, 3])
+  for x in snapshot(r):
+    record(r, x)
+  assert r.hits == 6
+  assert r.entries.len == 6
+
+testOwnedCallResult()
+
+# A view of a temporary is fine for as long as the temporary lives: until the
+# end of the scope that evaluated it.
+proc freshSeq(base: int): seq[int] =
+  result = @[]
+  for i in 0 ..< 4: result.add base + i
+
+proc testViewOfTemp =
+  var g = toOpenArray(freshSeq(1))
+  g = toOpenArray(freshSeq(10))
+  let p = toOpenArray(freshSeq(20))
+  let other = freshSeq(90)
+  assert g[0] == 10
+  assert p[0] == 20
+  assert other[0] == 90
+
+testViewOfTemp()
