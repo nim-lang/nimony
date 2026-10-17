@@ -10,7 +10,7 @@ import std/[contextvars, syncio]
 
 var requestId = newContextVar("no request")
 
-proc handler() =
+proc handler() {.passive.} =
   echo requestId.get()        # "no request" -- nobody bound it
   requestId.set("abc123")
   withCtx(requestId, "nested"):
@@ -24,6 +24,9 @@ proc serve() {.passive.} =
 Nothing needs undoing, because a `set` never touches the chain it extends — it
 puts a node in front of it. `withCtx` is the one operation that does undo, by
 putting the old chain back at the end of the block.
+
+Every proc above is `{.passive.}` on purpose: a context belongs to a coroutine,
+so a regular proc cannot hold one. See below.
 
 ## Why not a `{.threadvar.}`
 
@@ -41,23 +44,25 @@ proc worker() {.passive.} =
     echo counter.get()        # 2, on a thread that never ran the `set`
 ```
 
-So the chain head lives in the coroutine frame (`CoroutineBase.ctx`), and
-`currentCoroutine` — the frame the running thread is executing, installed by
-`runStep` as it resumes a frame and put back by the driver once its batch of
-steps is done — is how running code reaches it. Code that is not part of a
-coroutine (top-level statements, and a regular proc that nothing called from a
-`.passive` one) uses a per-thread chain instead, which is exactly right for it:
-none of that can park.
+So the chain head lives in the coroutine frame (`CoroutineBase.ctx`), and the
+running code reaches it through `ctxSlot()` — a compiler primitive that lowers
+to `addr (*this).ctx`, the address of the `ctx` slot of the frame the code owns.
+It is the one way in, and it is legal only inside a `.passive` proc: a regular
+proc owns no frame, so there is nothing for it to name, and using `get`, `set`,
+`withCtx`, or `ctxSlot()` there is a compile error. There is no thread-wide
+fallback — the module refuses to invent a home for a context that a coroutine's
+value could not have.
 
 ## Inheritance
 
 A coroutine's chain is handed over at the *call*, not discovered later: the
 spawn passes the callee the chain head of whatever spawned it. The compiler
-chooses that head statically — the spawning coroutine's own frame chain head
-when the caller is a coroutine, the thread's chain (`system.threadCtx`) when it
-is not — and passes it as the callee's hidden `ctx` argument. The frame stores
-it beside `caller`, so the chain follows the coroutine from creation, across
-parks, and across hops to other threads.
+chooses that head statically — the spawning `.passive` proc's own frame slot
+when the caller is a `.passive` proc, `nil` when it is not — and passes it as
+the callee's hidden `ctx` argument. The frame stores it beside `caller`, so the
+chain follows the coroutine from creation, across parks, and across hops to
+other threads. A coroutine spawned from a regular proc starts with an empty
+slot and builds a chain for itself if it `set`s.
 
 The rule that buys is: a coroutine sees the chain its caller held at the moment
 of the call. A `set` in the caller *after* the call does not reach back into
@@ -73,10 +78,9 @@ proc caller() {.passive.} =
   v.set(2)            # too late for `callee`
 ```
 
-Every coroutine construct takes that same argument from the code it appears
-in: a `for` loop over a `.closure` iterator, a `delay`, an iter value built in
-a proc — inside a coroutine they all inherit the frame's chain head, and in
-active code they all inherit the thread's.
+Every coroutine a `.passive` proc starts — a `delay`, a call to another
+`.passive` proc, a `for` loop over a `.closure` iterator — is handed that
+proc's frame head; a coroutine started from regular code is handed `nil`.
 
 ## Scope of a `set`
 
@@ -94,17 +98,16 @@ proc caller() {.passive.} =
   echo v.get()        # 1
 ```
 
-A *regular* proc is not a coroutine and has no such boundary, so a `set` in one
-lasts to the end of the thread's chain. Mark it `{.passive.}` when the binding
-is meant to stay local to the call.
+A *regular* proc has no chain at all, so it cannot `set` — or `get` — in the
+first place. Mark it `{.passive.}` when it needs a context of its own.
 
 ## `get` raises
 
 A bare `var` has no default, so `get` raises `KeyError` until something `set`s
 one — the same rule Python's `ContextVar` follows. `get` is therefore
-`{.raises.}`, and a top-level statement cannot call it without a handler.
-`getOrDefault` answers instead of raising, and its argument wins over the
-variable's own default:
+`{.raises.}`, and the handler belongs in whatever drives the `.passive` proc
+that calls it. `getOrDefault` answers instead of raising, and its argument wins
+over the variable's own default:
 
 ```nim
 var v: ContextVar[int]        # no default

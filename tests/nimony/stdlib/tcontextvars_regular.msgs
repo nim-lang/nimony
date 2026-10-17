@@ -1,0 +1,2 @@
+tests/nimony/stdlib/tcontextvars_regular.nim(11, 16) Trace: instantiation from here
+lib/std/contextvars.nim(204, 18) Error: `ctxSlot` is only allowed inside a `.passive` proc

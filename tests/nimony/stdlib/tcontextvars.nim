@@ -5,6 +5,11 @@
 ## context lives on its frame. Every case below that goes through `withCtx` and
 ## then parks, or is resumed on a different thread than it started on, fails if
 ## the context is kept in a `.threadvar.` instead.
+##
+## Every proc that touches a context var is `.passive.`: the compiler only
+## lowers `ctxSlot()` inside one, so a `get`/`set` in a regular proc is a
+## compile error (see `tcontextvars_regular`). There is no thread-wide chain
+## for such a proc to fall back on.
 
 import std / [contextvars, syncio, threadpool, atomics]
 
@@ -13,7 +18,7 @@ var untyped1: ContextVar[int]  ## a bare `var`: no default, `get` raises
 var untyped2: ContextVar[int]  ## a second bare `var`, to keep the ids apart
 var name = newContextVar("nobody")
 
-proc show(tag: string; v: ContextVar[int]; alt: int) =
+proc show(tag: string; v: ContextVar[int]; alt: int) {.passive.} =
   ## `v` in the running context, or `alt` where it is bound nowhere.
   ##
   ## The value is worked out before it is printed rather than in the `echo`
@@ -28,7 +33,7 @@ proc show(tag: string; v: ContextVar[int]; alt: int) =
     else: text = "unexpected " & $e
   echo tag, text
 
-proc showName(tag: string) =
+proc showName(tag: string) {.passive.} =
   var text: string
   try:
     text = name.get()
@@ -36,9 +41,9 @@ proc showName(tag: string) =
     text = "unexpected " & $e
   echo tag, text
 
-# --- plain scoping, no coroutine involved ---
+# --- plain scoping, all inside one coroutine ---
 
-proc regular =
+proc scoping() {.passive.} =
   show("default: ", plain, -1)
   plain.set(20)
   show("after set: ", plain, -1)
@@ -143,26 +148,17 @@ proc completeLeaf() {.passive.} =
   viaComplete.set(61)
   show("complete after set: ", viaComplete, -1)
 
-proc startedByComplete =
-  ## `complete` hands its continuation a `Join` as the caller rather than a real
-  ## frame, and a `Join` carries no chain of its own. So the chain has to be
-  ## found from further up than the immediate caller. `startedByComplete` is a
-  ## regular proc, so its `set` landed on the thread's chain, and it has to be
-  ## visible in the callee.
-  ##
-  ## A `Join` of its own gets a context var that no other test reads, so that
-  ## the `set` here cannot reach back into the cases above.
+proc startedByComplete() {.passive.} =
+  ## `complete` runs the continuation to the end on this thread. The callee
+  ## inherits this proc's chain through the hidden `ctx` argument, the same way
+  ## any `.passive` spawn does, so the `set` here is visible in the callee and
+  ## not to anyone else.
   viaComplete.set(60)
   complete(delay completeLeaf())
   show("after complete: ", viaComplete, -1)
 
 proc main =
-  regular()
-  # `regular` is not part of any coroutine, so its `set` landed on the thread's
-  # own chain and outlives it. `getOrDefault` answers instead of raising, which
-  # is what a top-level statement can afford.
-  echo "after regular: ", plain.getOrDefault(-1)
-
+  drive(delay scoping())
   drive(delay callerOfSetter())
   drive(delay callerOfReader())
   drive(delay distinctVars())
@@ -178,7 +174,7 @@ proc main =
   echo "after resume, on the worker: ", seenAfterResume
   echo "after the block, on the worker: ", seenAfterBlock
   echo "resumed and finished"
-  startedByComplete()
+  drive(delay startedByComplete())
 
 main()
 

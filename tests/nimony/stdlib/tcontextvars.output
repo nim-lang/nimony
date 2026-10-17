@@ -4,7 +4,6 @@ in block: 30
 in nested: 40
 back one: 30
 after block: 20
-after regular: -1
 callee sees: 99
 caller still sees: 50
 before call: -1

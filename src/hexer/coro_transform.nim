@@ -76,18 +76,14 @@ const
   CtxFieldName* = "ctx.0"
     ## `CoroutineBase.ctx`: where a coroutine frame keeps the dynamic context of
     ## the code running in it. On the base class, so `std/contextvars` reaches
-    ## it through the `ptr CoroutineBase` every reader already has, and no
-    ## frame type has to grow a field of its own. See `CtxParamName`.
+    ## it through `ctxSlot()`, and no frame type has to grow a field of its own.
+    ## See `CtxParamName`.
   CtxParamName* = "`ctx.0"
     ## The hidden `.passive` ABI parameter: the context to start this coroutine
     ## in, stored into the frame by its constructor. This is how a context
-    ## crosses a call boundary, and there are exactly two forms of crossing —
-    ## `emitCtxArg` spells both.
-  ThreadCtxName* = "threadCtx.0." & SystemModuleSuffix
-    ## `system.threadCtx`: the active world's context. Active code passes
-    ## this, because there is no frame between the two to take it from; code
-    ## inside a coroutine passes its own `ctx` field instead, and never has to
-    ## look further up.
+    ## crosses from one `.passive` proc to another; anywhere else `emitCtxArg`
+    ## hands over a nil, because no coroutine outside the `.passive` world has a
+    ## context to inherit.
   ArcIncProcName* = "arcInc.0." & SystemModuleSuffix
     ## `system.arcInc`, the `=dup` for a `(ref RootObj)`. The frame's `ctx`
     ## field owns a reference and the entry arcInc is the one +1 that pays
@@ -314,11 +310,6 @@ proc addCtxParam*(dest: var TokenBuf; info: NifLineInfo) =
     dest.addRootRef info
     dest.addDotToken() # default value
 
-proc emitThreadCtx*(dest: var TokenBuf; info: NifLineInfo) =
-  ## `system.threadCtx` — the context of active code: there is no frame to
-  ## take it from, and the thread's variable is what the active world holds.
-  dest.addSymUse pool.symId(ThreadCtxName), info
-
 proc emitFrameCtx*(dest: var TokenBuf; info: NifLineInfo) =
   ## `(*this).ctx` — the chain head sitting in the caller's own frame. Only
   ## emitted where `this.0` exists: inside an already-transformed coroutine
@@ -330,21 +321,34 @@ proc emitFrameCtx*(dest: var TokenBuf; info: NifLineInfo) =
     dest.addSymUse pool.symId(CtxFieldName), info
     dest.addIntLit 1, info # field is in the CoroutineBase superclass
 
+proc emitFrameCtxSlot*(dest: var TokenBuf; info: NifLineInfo) =
+  ## `addr (*this).ctx` — the address of the chain-head slot in the caller's
+  ## own frame, i.e. the value `ctxSlot()` yields. The address rather than the
+  ## value so `std/contextvars` can put the old head back into exactly the slot
+  ## a `withCtx` pushed onto, without resolving the owner a second time. Only
+  ## emitted where `this.0` exists; `sem` has already rejected `ctxSlot()`
+  ## outside a `.passive` proc.
+  dest.copyIntoKind AddrX, info:
+    emitFrameCtx dest, info
+
 proc emitCtxArg*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   ## Emit the value a coroutine call hands to the callee's `ctx` — the whole
   ## of how a dynamic context crosses a call boundary.
   ##
-  ## Inside a coroutine, `(*this).ctx`: the caller IS its own frame, so there
-  ## is nothing to look up and nothing to walk. From active code,
-  ## `system.threadCtx`.
+  ## Inside a `.passive` proc, `(*this).ctx`: the caller IS its own frame, so
+  ## there is nothing to look up and nothing to walk. From anywhere else —
+  ## active code, or a `.closure` iter — `nil`: only a `.passive` proc carries
+  ## a context, so only a `.passive` proc has one to hand on. A coroutine
+  ## spawned from a regular proc therefore starts with no chain of its own and
+  ## builds one if it `set`s.
   ##
   ## The two answers are a compile-time fact about the call site, not a runtime
   ## question, which is the point: the callee is handed the context it is to
   ## work in and never has to discover it. See `CtxParamName`.
-  if c.currentProc.kind == IsNormal:
-    emitThreadCtx dest, info
-  else:
+  if c.currentProc.kind == IsPassive:
     emitFrameCtx dest, info
+  else:
+    dest.addParPair NilX, info
 
 proc emitEntryArcInc*(c: var Context; init: var TokenBuf; info: NifLineInfo) =
   ## The +1 that pays for the `ctx` reference a passive frame's constructor
@@ -2806,6 +2810,10 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         c.hooks.trDelay0(c, dest, n)
       of SuspendX:
         c.hooks.trSuspend(c, dest, n)
+      of CtxSlotX:
+        let info = n.info
+        skip n
+        emitFrameCtxSlot dest, info
       of TypeofX:
         takeTree dest, n
       of DotX, DdotX:

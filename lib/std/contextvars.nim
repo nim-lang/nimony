@@ -12,19 +12,30 @@
 # module. A `.passive` proc can park mid-call and resume on a different
 # thread, so "the context of the code running here" is a property of the
 # coroutine, not of the thread. The chain head therefore lives in
-# `CoroutineBase.ctx`, and every spawn hands it over: the compiler chooses
-# statically — the caller's own frame chain head when the caller is a
-# coroutine, `system.threadCtx` when it is not — and passes it as the
-# coroutine's hidden `ctx` argument, so a coroutine holds the chain it was
-# spawned in from the start. `currentCoroutine` -- the frame of the coroutine
-# this thread is running, installed by `runStep` as it resumes a frame and put
-# back by the driver once its batch of steps is done -- is how the running code
-# reaches it. `doc/contextvars.md` has the whole story.
+# `CoroutineBase.ctx`, and `ctxSlot()` — the compiler primitive this module is
+# built on — is the address of that slot: inside a `.passive` proc the
+# compiler lowers it to `addr (*this).ctx`, the slot of the frame the running
+# code owns. A context crosses from one `.passive` proc to another through the
+# hidden `ctx` argument the compiler passes at every spawn, so a coroutine
+# holds the chain it was spawned in from the start. A coroutine spawned from a
+# regular proc starts with an empty slot.
+#
+# Using this module — or `ctxSlot()` directly — outside a `.passive` proc is a
+# compile error. There is no thread-wide fallback: a regular proc owns no
+# frame, so there is no chain for it to read or extend. `doc/contextvars.md`
+# has the whole story.
 
 {.feature: "lenientnils".}
 ## Load-bearing. A chain ends in a nil `parent`, and the nil checks that say so
 ## are the whole algorithm, so the module's own node types have to be allowed
 ## nil.
+
+{.feature: "untyped".}
+## Load-bearing too. The public entry points are templates whose first act is
+## to call `ctxSlot()`, and that call has to be semchecked where it lands -- a
+## `.passive` proc -- rather than here, where there is no frame to name. The
+## feature defers a template's body to its instantiation sites, so the same
+## `get` is fine in a `.passive` proc and rejected in a regular one.
 
 import std/[atomics, ticketlocks]
 
@@ -121,49 +132,27 @@ proc ensureId[T](v: var ContextVar[T]): int {.inline.} =
 
 # --- The chain ---
 
-proc ctxSlot*(): ptr RootRef =
+proc ctxSlot*(): ptr RootRef {.magic: "CtxSlot".}
   ## The address of the chain head belonging to the running code.
   ##
-  ## Outside a coroutine that is `system.threadCtx` — the thread's own chain,
-  ## because active code cannot park. Inside one it is the frame's `ctx`
-  ## slot: the spawn handed it the caller's chain head when the frame was
-  ## built, so the chain follows the coroutine from creation, across parks,
-  ## and across hops to other threads. Nothing is discovered here; the
-  ## compiler picked the answer at the call site, which is also why a `set`
-  ## in the caller after the call does not reach back into the callee.
-  ##
-  ## A frame with no chain of its own — a `Join`, which is a trampoline
-  ## marker rather than a coroutine — adopts the thread's, which is what a
-  ## caller-walk used to find for it: both read as "the thread's chain" at
-  ## run time. Adopting into the frame rather than reading through to
-  ## `threadCtx` each time is what keeps a later `set` inside that frame off
-  ## the thread's chain — two coroutines sharing a slot must not be able to
-  ## see each other's bindings.
+  ## A compiler primitive, legal only inside a `.passive` proc: the compiler
+  ## lowers it to `addr (*this).ctx`, the `ctx` slot of the frame the running
+  ## code owns. The spawn that built the frame filled that slot from the
+  ## caller's own chain head, so the chain follows the coroutine from creation,
+  ## across parks, and across hops to other threads. Nothing is discovered at
+  ## run time; the compiler picked the answer at the call site, which is also
+  ## why a `set` in a `.passive` caller after the call does not reach back into
+  ## the callee.
   ##
   ## An address rather than a value, so that a `withCtx` can hold on to the one
   ## slot its block pushed onto and put the old head back into exactly that
-  ## slot, without resolving the owner a second time. `RootRef` for both the
-  ## thread's chain and the frame field, so the two addresses have one type:
-  ## `addr` of a `CtxNode` and `addr` of a `RootRef` are not the same type and
-  ## neither converts to the other.
-  let coro = currentCoroutine()
-  if coro == nil:
-    result = addr threadCtx
-  elif coro.ctx != nil:
-    result = addr coro.ctx
-  else:
-    coro.ctx = threadCtx
-    result = addr coro.ctx
+  ## slot, without resolving the owner a second time. `RootRef` because that is
+  ## the slot's type: every owner is a `CoroutineBase`, whose `ctx` field is a
+  ## `RootRef`.
 
-proc currentCtx*(): CtxNode {.inline.} =
-  ## The head of the chain the running code reads and extends.
-  cast[CtxNode](ctxSlot()[])
-
-proc setCurrentCtx*(head: CtxNode) {.inline.} =
-  ## Puts `head` at the front of the running code's chain.
-  ctxSlot()[] = head
-
-# --- Reading and writing ---
+proc currentCtx(slot: ptr RootRef): CtxNode {.inline.} =
+  ## The head of the chain in `slot`'s frame.
+  cast[CtxNode](slot[])
 
 proc findNode(head: CtxNode; id: int): CtxNode =
   ## The node for `id` in `head`'s chain, innermost first, or nil when the
@@ -175,23 +164,31 @@ proc findNode(head: CtxNode; id: int): CtxNode =
     n = n.parent
   result = n
 
-proc push[T](id: int; val: T) =
-  ## Extends the running code's chain with a binding for `id`.
+proc push[T](head: CtxNode; ident: int; value: T): CtxNode {.inline.} =
+  ## Extends `head`'s chain with a binding for `ident` and returns the new head.
   ##
   ## The new node is the only thing that changes. The chain it extends is left
   ## exactly as it was, so the coroutine that set the value and every coroutine
   ## sharing that chain still read what they read before -- which is why a
   ## `set` in a `.passive` proc is invisible to whoever called it, with no
   ## unwinding to arrange.
-  let n = CtxBinding[T](id: id, val: val, parent: cast[CtxNode](ctxSlot()[]))
-  ctxSlot()[] = cast[RootRef](n)
+  ##
+  ## The parameters deliberately do not reuse the field names `id`/`val`: a
+  ## parameter in scope shadows the constructor's field key, and `id` and
+  ## `parent` live in `CtxNode`, so a shadowed key would be placed against the
+  ## wrong base and the C backend would not find it.
+  result = cast[CtxNode](CtxBinding[T](id: ident, val: value, parent: head))
 
-proc get*[T](v: ContextVar[T]): T {.raises.} =
-  ## The value of `v` for the running code: the nearest binding outwards in its
-  ## chain -- the one `set` most recently pushed on it -- or `v`'s own default.
-  ## Raises `KeyError` when `v` is bound nowhere in the chain and has no
-  ## default.
-  let n = findNode(currentCtx(), v.id)
+# --- Reading and writing ---
+#
+# The public entry points are templates, so that `ctxSlot()` is lowered in
+# whoever called them: the primitive is legal only inside a `.passive` proc,
+# and a `get` written in a regular proc has to be rejected at that proc, not
+# hidden inside this module. The templates take the slot and hand it to the
+# plain procs below, which carry the whole algorithm.
+
+proc getImpl[T](slot: ptr RootRef; v: ContextVar[T]): T {.raises.} =
+  let n = findNode(currentCtx(slot), v.id)
   if n != nil:
     result = cast[CtxBinding[T]](n).val
   elif v.hasDefault:
@@ -199,35 +196,46 @@ proc get*[T](v: ContextVar[T]): T {.raises.} =
   else:
     raise KeyError
 
-proc getOrDefault*[T](v: ContextVar[T]; dflt: T): T =
-  ## The value of `v` for the running code, or `dflt` when it is bound nowhere.
-  ## `v`'s own default is *not* consulted: the argument is what the caller
-  ## asked for.
-  let n = findNode(currentCtx(), v.id)
+template get*[T](v: ContextVar[T]): T =
+  ## The value of `v` for the running code: the nearest binding outwards in its
+  ## chain -- the one `set` most recently pushed on it -- or `v`'s own default.
+  ## Raises `KeyError` when `v` is bound nowhere in the chain and has no
+  ## default.
+  getImpl(ctxSlot(), v)
+
+proc getOrDefaultImpl[T](slot: ptr RootRef; v: ContextVar[T]; dflt: T): T =
+  let n = findNode(currentCtx(slot), v.id)
   if n != nil:
     result = cast[CtxBinding[T]](n).val
   else:
     result = dflt
 
-proc isSet*[T](v: ContextVar[T]): bool =
+template getOrDefault*[T](v: ContextVar[T]; dflt: T): T =
+  ## The value of `v` for the running code, or `dflt` when it is bound nowhere.
+  ## `v`'s own default is *not* consulted: the argument is what the caller
+  ## asked for.
+  getOrDefaultImpl(ctxSlot(), v, dflt)
+
+proc isSetImpl[T](slot: ptr RootRef; v: ContextVar[T]): bool {.inline.} =
+  findNode(currentCtx(slot), v.id) != nil
+
+template isSet*[T](v: ContextVar[T]): bool =
   ## Whether `v` is bound in the running code's chain. Says nothing about a
   ## default: a variable with one always has a value as far as `get` is
   ## concerned.
-  findNode(currentCtx(), v.id) != nil
+  isSetImpl(ctxSlot(), v)
 
 template set*[T](v: var ContextVar[T]; val: T) =
   ## Binds `v` to `val` for everything the running proc calls, directly or
   ## through a suspension.
   ##
   ## A `.passive` caller does not see the binding: it is a different coroutine
-  ## with a chain of its own, so the value cannot leak back out the way it came
-  ## in. A *regular* proc is not a coroutine and has no such boundary, so a
-  ## `set` in one lasts to the end of the thread's chain -- mark it `{.passive.}`
-  ## when the binding is meant to stay local.
+  ## with a frame and a chain of its own, so the value cannot leak back out the
+  ## way it came in. There is no thread-wide chain to leak into.
   let slot = ctxSlot()
   let ctxBefore = cast[CtxNode](slot[])
-  push(ensureId(v), val)
-  defer: slot[] = ctxBefore
+  slot[] = cast[RootRef](push(ctxBefore, ensureId(v), val))
+  defer: slot[] = cast[RootRef](ctxBefore)
 
 template withCtx*[T](v: var ContextVar[T]; val: T; body: untyped): untyped =
   ## Runs `body` with `v` bound to `val`, then puts the previous chain back.

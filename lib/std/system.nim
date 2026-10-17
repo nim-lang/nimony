@@ -302,62 +302,17 @@ type
       ## that made it went out of scope, and hand the same memory to the next
       ## one.
 
-var threadCtx* {.threadvar.}: RootRef
-  ## The chain of code that is not part of any coroutine: top-level statements
-  ## and a regular proc that nothing coroutine called. The compiler hands this
-  ## as the hidden `ctx` argument at every spawn from such code, and
-  ## `std/contextvars` reads it through `ctxSlot` when no frame is running.
-  ## A thread's own chain, because none of that can park.
-
-var runningCoro {.threadvar.}: ptr CoroutineBase
-  ## The frame of the coroutine whose state function this thread is running, or
-  ## nil when none is. `runStep` installs the frame it resumes and leaves it
-  ## installed; every DRIVER puts the previous value back -- `advance` around
-  ## each step, `run` and the threadpool's trampolines around a batch -- so
-  ## code that runs between steps sees the context it was itself running in.
-  ## Read through `currentCoroutine`: stepping a continuation is the only thing
-  ## that can put a coroutine on a thread, so the handful of places that do it
-  ## cannot miss one.
-
-proc currentCoroutine*(): ptr CoroutineBase {.inline.} =
-  ## The frame of the coroutine running on this thread, or nil outside one.
-  ##
-  ## This is the runtime's answer to "which `.passive` proc am I in", and it is
-  ## what `delay` would hand over if `delay` were free: the frame `c.env` of
-  ## the continuation being stepped. Unlike `delay` it splits no state and
-  ## suspends nothing, so it costs nothing and may be called as often as you
-  ## like -- and, unlike a frame-pointer magic, it also answers for a *regular*
-  ## proc, which runs inside the state function of whichever coroutine called
-  ## it.
-  runningCoro
-
-proc setCurrentCoroutine*(frame: ptr CoroutineBase) {.inline.} =
-  ## Puts `frame` in `currentCoroutine`'s place -- usually the answer
-  ## `currentCoroutine` gave before a batch of steps, put back once the batch
-  ## is over. The pair brackets a trampoline that drives `runStep` directly;
-  ## `advance` brackets each step for you.
-  runningCoro = frame
-
-proc runStep*(c: Continuation): Continuation {.inline.} =
-  ## Steps `c` with `currentCoroutine` naming the frame `c` resumes.
-  ##
-  ## Every continuation runs through here, and this is the whole of what a
-  ## coroutine-local context needs on the runtime side: `c.env` *is* the frame,
-  ## so installing it around the step is what makes a context follow its
-  ## coroutine across a park and across a hop to another thread.
-  ##
-  ## The frame STAYS installed when the step returns, and that is deliberate:
-  ## a step is one state function call, and keeping the install/restore pair
-  ## out of here is what keeps `runStep` a tail call -- every leg of every
-  ## `.passive` chain pays this line, so it has to cost one store. Putting the
-  ## previous frame back is the driver's job: `advance` does it around each
-  ## step, `run` and the threadpool's trampolines around a batch, so code that
-  ## runs BETWEEN steps reads the context of whoever drove the batch.
-  runningCoro = c.env
-  result = c.fn(c.env)
-
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
+
+proc runStep*(c: Continuation): Continuation {.inline.} =
+  ## Steps `c`: one state function call, returning the continuation to run next.
+  ##
+  ## Every continuation runs through here. It used to also install the frame
+  ## into a thread variable so active code could read the running coroutine's
+  ## context; that is gone -- a `.passive` proc reads its own frame's `ctx` slot
+  ## directly (see `std/contextvars`), so stepping is a plain tail call again.
+  result = c.fn(c.env)
 
 func delay*(): Continuation {.magic: "Delay".}
   ## Creates a continuation for the current coroutine's own continuation from the point
@@ -389,16 +344,9 @@ proc setScheduler*(handler: Scheduler) {.inline.} =
 
 proc advance*(c: Continuation): Continuation =
   ## Single steps through a list of continuations. Usually this does not need
-  ## to be called directly. Used by the compiler to run a coroutine.
-  ##
-  ## The step itself goes through `scheduler` (and so through `runStep`); this
-  ## is the DRIVER side: `currentCoroutine` gets its previous answer back
-  ## before the step's continuation is handed to the caller, because the code
-  ## that receives it -- a `for`-loop body, the statement after the loop -- is
-  ## not part of the coroutine that just ran.
-  let up = runningCoro
+  ## to be called directly. Used by the compiler to run a coroutine. The step
+  ## goes through `scheduler` (and so through `runStep`).
   result = scheduler(c)
-  runningCoro = up
 
 type
   Join = object of CoroutineBase
@@ -446,15 +394,8 @@ proc run(j: ptr Join) =
   var c = j.resume
   j.resume = Continuation(fn: nil, env: nil)
   if j.done != -1: j.done = 0 # a cancelled run stays cancelled
-  let up = runningCoro
   while not stopping(c):
     c = scheduler(c)
-  # Steps leave their frame installed; this thread is about to stop stepping
-  # -- and may wait on a parked coroutine for a long while -- so the frame of
-  # whoever called `run` (which is on this thread's stack, or nil) goes back
-  # before the wait loop, not after it: `passiveWaitHook` runs between here
-  # and the caller's next line.
-  runningCoro = up
   while atomicLoadN(addr j.done, ATOMIC_ACQUIRE) <= 0:
     if passiveWaitHook != nil: passiveWaitHook()
     else: builtinCpuRelax()
@@ -808,8 +749,8 @@ proc deallocFrame*(frame: ptr CoroutineBase) =
     # A stack-allocated frame is an ordinary local of its caller and the
     # compiler destroys it like any other object, but a heap frame is freed
     # here and nothing else ever runs its destructor. So the one managed field
-    # `CoroutineBase` has -- the coroutine's context chain, see
-    # `currentCoroutine` -- is released on the way out. Frames the front end
+    # `CoroutineBase` has -- the coroutine's context chain, read through
+    # `ctxSlot` -- is released on the way out. Frames the front end
     # allocated for closure iterators are the ref's business, and that
     # destructor does destroy the fields.
     if frame.ctx != nil:

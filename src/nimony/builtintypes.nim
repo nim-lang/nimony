@@ -20,6 +20,7 @@ type
     cstringType*: Cursor
     vtableType*: Cursor # UncheckedArray[pointer]
     continuationType*: Cursor
+    ptrRootRefType*: Cursor # ptr (ref RootObj) — the type of `ctxSlot()`
 
 const
   sso* = true ## set to true to enable SSO string implementation
@@ -232,6 +233,13 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   let continuationPos = result.mem.len
   result.mem.addSymUse(pool.symId(ContinuationName), NoLineInfo)
 
+  let ptrRootRefPos = result.mem.len
+  result.mem.addParLe "ptr"
+  result.mem.addParLe "ref"
+  result.mem.addSymUse(pool.symId(BareRootObjName), NoLineInfo)
+  result.mem.addParRi() # close ref
+  result.mem.addParRi() # close ptr
+
 
   result.autoType = result.mem.cursorAt(autoPos)
   result.stringType = result.mem.cursorAt(stringPos)
@@ -257,6 +265,7 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result.cstringType = result.mem.cursorAt(cstringPos)
   result.vtableType = result.mem.cursorAt(vtablePos)
   result.continuationType = result.mem.cursorAt(continuationPos)
+  result.ptrRootRefType = result.mem.cursorAt(ptrRootRefPos)
 
 proc isStringType*(a: Cursor): bool {.inline.} =
   result = a.isSymbol and a.symId == pool.symId(StringName)

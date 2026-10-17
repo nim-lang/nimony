@@ -105,13 +105,11 @@ proc submit*(t: Task; h = 0) =
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
   # `fn` is nil when the task completes or parks (I/O will resume a parked one).
   var c = t.con
-  let up = currentCoroutine()
   while true:
     let next = runStep(c)
     if next.fn == nil: break
     if tryEnqueue(h, toTask(next)): break
     c = next
-  setCurrentCoroutine(up)
 
 # --- Per-worker staging ring ---
 
@@ -205,13 +203,11 @@ proc drainOnce(startStripe: int): bool =
   for attempt in 0 ..< workerCount:
     let n = tryBulkDequeue(startStripe + attempt, buf)
     if n > 0:
-      let up = currentCoroutine()
       for i in 0 ..< n:
         let c = buf[i].con
         let next = runStep(c)
         if next.fn != nil:
           submit(next, startStripe)
-      setCurrentCoroutine(up)
       workerMetrics[threadIdx].tasksHandled += n.uint
       if attempt != 0:
         workerMetrics[threadIdx].tasksStealed += n.uint

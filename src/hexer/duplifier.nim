@@ -163,7 +163,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
-        SuspendX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX,
+        SuspendX, CtxSlotX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX,
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
@@ -191,7 +191,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
-        DelayX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
+        DelayX, Delay0X, SuspendX, CtxSlotX, ExprX, DoX, PlussetX, MinussetX,
         MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
         EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
@@ -434,7 +434,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
-        DelayX, Delay0X, SuspendX, DoX, ArratX, TupatX, PlussetX,
+        DelayX, Delay0X, SuspendX, CtxSlotX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX,
         CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX,
         TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
@@ -979,7 +979,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
         UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
-        Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
+        Delay0X, SuspendX, CtxSlotX, ExprX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
         InsetX, CardX, EmoveX, InternalTypeNameX,
         InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX, PluginCallX:
@@ -1718,7 +1718,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       bug "envp should have been eliminated in lambdalifting.nim"
     of DefaultobjX, DefaulttupX, DefaultdistinctX, BracketX, CurlyX, TupX:
       bug "nodekind should have been eliminated in sem.nim"
-    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX, Delay0X, SuspendX:
+    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX, Delay0X, SuspendX, CtxSlotX:
       trSons c, n, e
     of KvX:
       copyInto c.dest, n:
