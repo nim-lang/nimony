@@ -26,12 +26,12 @@ type
 proc getdents64(fd: cint; dirp: pointer; count: int): clong {.importc: "getdents64", sideEffect.}
 
 proc opendir*(name: cstring): nil ptr DIR {.sideEffect.} =
-  let fd = open(name, O_RDONLY or O_DIRECTORY or O_CLOEXEC)
+  let fd = pcall(open(name, O_RDONLY or O_DIRECTORY or O_CLOEXEC))
   if fd < 0:
     setErrno cint(-fd)
     return nil
   result = cast[ptr DIR](alloc0(sizeof(DIR)))
-  result.fd = fd
+  result.fd = cint(fd)
   result.bpos = 0
   result.nread = 0
 

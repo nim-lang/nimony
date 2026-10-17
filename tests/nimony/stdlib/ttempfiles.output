@@ -1,0 +1,7 @@
+base dir created
+genTempPath ok
+createTempDir ok
+createTempFile ok
+permissions ok
+missing dir raises
+cleanup ok
