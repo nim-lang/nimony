@@ -713,7 +713,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       n = sub(n)
       skipNilAnnotation n
       takeParRi dest, n, ptrStart
-    of StaticT, SinkT, DistinctT:
+    of StaticT, SinkT, OwnedT, DistinctT:
       n.into:
         trType c, dest, n, flags
     of TupleT, ClosureTupleT:
@@ -848,16 +848,9 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
   skip n
   # n is now at the pragmas position:
   if rewriteRaises and hasPragma(n, RaisesP):
-    # PROCTYPES only. A raising routine's DECLARATION gets its success tuple
-    # from the `eraiser`, which has to run before `cps` — a coroutine's frame
-    # and result slot are built out of the return type, and that cannot wait
-    # for codegen. Imported routines included: `transformInlineRoutines` runs
-    # the whole pipeline over those too.
-    #
-    # A proctype is different. `(type :Fn . . . (proctype ... (raises)))` in
-    # another module is pulled in as a type DECLARATION, not as code, so this
-    # is the only pass that ever looks at one. Hence the mapping lives in
-    # `builtintypes.addLengReturnType`: several sites, one definition.
+    # Declarations and proctypes alike: the passes before this one keep
+    # nimsem's signatures, `.raises` and all, so the Leng return type is
+    # decided here, by `builtintypes.addLengReturnType`.
     var ret = createTokenBuf(6)
     addLengReturnType(ret, retType, n, NoLineInfo)
     retType = cursorAt(ret, 0)
@@ -1001,36 +994,6 @@ template moveToTopLevel(c: var EContext; dest: var TokenBuf; mode: TraverseMode;
   else:
     body
 
-proc makeLocalDeclName(c: var EContext; s: SymId): string =
-  # for proc and type decls
-  result = pool.symBasename(s)
-  result.add "."
-  result.addInt c.localDeclCounters
-  inc c.localDeclCounters
-  result.add "."
-  result.add c.main
-
-proc makeLocalSymId(c: var EContext; s: SymId): SymId =
-  let newName = makeLocalDeclName(c, s)
-  result = pool.symId(newName)
-
-proc trHoistedConst(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMode) =
-  ## A const that still exists inside a proc body HERE has an aggregate value
-  ## — the simple-literal ones were inlined at their use sites by `trExpr`.
-  ## Leng keeps no proc-level consts: hoist the decl to the top level (the
-  ## `c.pending` tail, like synthesized type decls) under a module-suffixed
-  ## name, so the embedded index can serve it — single-dot locals are never
-  ## indexed, and whole-program consumers (arkham's foreign loading, jorogumo)
-  ## resolve foreign declarations through the index.
-  var peek = n
-  inc peek                                  # into (const, at the SymbolDef
-  let oldSym = peek.symId
-  let newSym = makeLocalSymId(c, oldSym)
-  c.hoistedConsts[oldSym] = newSym          # decl precedes every use in Nim
-  var temp = createTokenBuf(30)
-  trLocal c, temp, n, ConstY, mode, newSym
-  c.pending.add temp
-
 proc buildProcType(c: var EContext; dest: var TokenBuf; thisProc: Cursor): SymId =
   var thisProc = asRoutine(thisProc)
   var procTypeBuf = createTokenBuf()
@@ -1099,7 +1062,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
           while n.hasMore: skip n
     skip n, SkipType # return type
   else:
-    trParams c, dest, n
+    trParams c, dest, n, rewriteRaises = true
 
   let pinfo = n.info
   let procRaises = hasPragma(n, RaisesP)
@@ -1165,7 +1128,10 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if isGeneric:
     skip n, SkipBody
   elif mode != TraverseSig or InlineP in prag.flags:
+    let wasAsm = c.inAsmBody
+    c.inAsmBody = AssemblerP in prag.flags
     trProcBody c, dest, n
+    c.inAsmBody = wasAsm
   else:
     dest.addDotToken()
     skip n
@@ -1920,13 +1886,13 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addSubtree n
     inc n
   of Symbol:
-    if c.hoistedConsts.hasKey(n.symId):
-      dest.addSymUse c.hoistedConsts.getOrQuit(n.symId), n.info
-      inc n
-      return
     var inlineValue = getInitValue(c.typeCache, n.symId)
     var inlineValueCopy = inlineValue
-    if not cursorIsNil(inlineValue) and not inlineValue.isDotToken and isSimpleLiteral(inlineValueCopy):
+    # A `string` const is not inlined: its value would be a temporary whose
+    # inline (SSO) bytes die with the enclosing block, and a coroutine frame
+    # keeps a `toOpenArray` of it across a suspension point.
+    if not cursorIsNil(inlineValue) and not inlineValue.isDotToken and
+        inlineValue.kind != StrLit and isSimpleLiteral(inlineValueCopy):
       trExpr(c, dest, inlineValue)
     else:
       dest.addSubtree n
@@ -2182,10 +2148,8 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of TvarS, TletS:
       trLocal c, dest, n, TvarY, mode, SymId(0)
     of ConstS:
-      if mode == TraverseTopLevel:
-        trLocal c, dest, n, ConstY, mode, SymId(0)
-      else:
-        trHoistedConst c, dest, n, mode
+      # always at module level: `finalir.toFinalIr` moves every const there
+      trLocal c, dest, n, ConstY, mode, SymId(0)
     of CallKindsS:
       dest.addParLe(applicationTag(n), n.info)
       n.into:
@@ -2221,8 +2185,22 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         trExpr c, dest, n
         takeParRi dest, n, discardStart
     of CaseS: trCase c, dest, n
+    of WhileS, BreakS:
+      if c.inAsmBody:
+        # An `{.assembler.}` body's loop is the machine's: Leng has the same
+        # `(while (true) …)` and `(break)`, which arkham transliterates.
+        if n.stmtKind == BreakS:
+          dest.addParLe(n.cursorTagId, n.info)
+          dest.addParRi()
+          skip n
+        else:
+          takeInto dest, n:
+            trExpr c, dest, n             # the condition, `(true)`
+            trStmt c, dest, n             # the body
+      else:
+        error c, "BUG: not eliminated: ", n
     of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS,
-       BreakS, WhileS, BlockS, IfS:
+       BlockS, IfS:
       error c, "BUG: not eliminated: ", n
     of TryS:
       trTry c, dest, n
@@ -2350,7 +2328,10 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
   ## from would die with its globals in DCE; as statements they are roots, and the
   ## library is loaded whether or not anything uses it. Teaching the liveness pass
   ## that an `asgn` to a dead global is dead would restore that.)
-  for key, vals in c.dynlibs:
+  # `getTmpId` and `getCompilerProc` take `c` as `var`, so the table is moved
+  # out of `c` for the loop rather than borrowed; neither of them reads it.
+  var dynlibs = move c.dynlibs
+  for key, vals in dynlibs:
     let dynlib = pool.strings[key]
     var tmp = pool.symId("Dl." & dynlib & "." & $getTmpId(c) & "." & c.main)
 
@@ -2409,6 +2390,7 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
       initDest.addParRi()   # close call
       initDest.addParRi()   # close cast
       initDest.addParRi()   # close asgn
+  c.dynlibs = move dynlibs
 
 proc initProcName(moduleSuffix: string): string =
   "`ini.0." & moduleSuffix

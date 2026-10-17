@@ -220,7 +220,10 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     var pragmas = default(Cursor)
     let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
-    if isConcrete and n.stmtKind == StmtsS:
+    # An `{.assembler.}` body is machine code, passed through verbatim (its
+    # `while true`/`break` are the back end's, not lowered constructs).
+    let isAsm = hasPragma(asRoutine(decl, SkipExclBody).pragmas, AssemblerP)
+    if isConcrete and n.stmtKind == StmtsS and not isAsm:
       dest.addParLe(n.cursorTagId, n.info) # (stmts)
       # the guards are statements of the body: what they need first goes in
       # front of them, not in front of the routine
@@ -1328,7 +1331,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
             ConverterT, MethodT, MacroT, TemplateT, ObjectT,
             EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT,
             PtrT, ArrayT, VarargsT, StaticT, TupleT, ClosureTupleT, OnumT,
-            AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT,
+            AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT,
             ConceptT, DistinctT, ItertypeT, RangetypeT, UarrayT,
             AutoT, SymkindT, TypekindT, TypedescT, UntypedT,
             TypedT, CstringT, PointerT, OrdinalT, PluginCallT, NoType:

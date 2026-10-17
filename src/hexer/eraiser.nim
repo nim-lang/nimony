@@ -104,6 +104,9 @@ type
     exits: seq[ExitScope]
       ## The constructs a `raise`/`break`/`return` has to unwind through,
       ## innermost last. See `ExitScope`.
+    errorCodeType: TokenBuf
+      ## `ErrorCode`, the type of a synthesized handler binding: it has to
+      ## outlive the `TypeCache` entries that point into it.
 
   ExitKind = enum
     TryExit     ## the BODY of a `try` (never its handler or its finally:
@@ -124,6 +127,9 @@ type
       ## CATCHES is the one that gets the code, which is why this lives on the
       ## frame instead of on a separate stack: an inner `except:` with no
       ## binding must not hand the value to an outer `except e:`.
+    reraise: SymId
+      ## The handler of a `try`: the variable holding the code that reached
+      ## it, which a bare `raise` in the handler raises again.
     fin: Cursor
       ## This `try`'s `(fin ...)` body, to replicate on every way out.
     labels: HashSet[SymId]
@@ -358,20 +364,10 @@ proc addPropagationCheck(c: var Context; dest: var TokenBuf; target: SymId;
 
 proc takeRaisingHeader(c: var Context; dest: var TokenBuf; decl: Cursor;
                        n: var Cursor): bool =
-  ## `typenav.takeRoutineHeader`, plus the signature half of this pass: a
-  ## `.raises` routine RETURNS its success tuple.
-  ##
-  ## The `(raises)` pragma stays: `lengcgen` reads it to decide that a raising
-  ## `.noreturn` proc must NOT get C's `noreturn` attribute, because under goto
-  ## exceptions such a proc does return — it hands back an error code — and
-  ## telling gcc otherwise deletes the callers' error paths. What `lengcgen`
-  ## no longer does from the pragma is rewrite THIS return type; it now does
-  ## that for proctypes only.
-  ##
-  ## This used to happen in `lengcgen`, at the very end, which was fine while
-  ## nothing between here and there had to know a raising routine's real shape.
-  ## `cps` does: it builds a coroutine's frame and its result slot out of the
-  ## return type, and it cannot wait for codegen to tell it what that is.
+  ## `typenav.takeRoutineHeader`. The signature stays nimsem's: a `.raises`
+  ## routine still returns `T` and says so with the pragma, like the imported
+  ## routines every later pass reads from the index. Whoever needs the success
+  ## tuple derives it with `addLengReturnType` (#2642).
   result = true # assume concrete
   let sym = n.symId
   for i in 0..<BodyPos:
@@ -381,9 +377,6 @@ proc takeRaisingHeader(c: var Context; dest: var TokenBuf; decl: Cursor;
     elif i == TypevarsPos:
       result = n.substructureKind != TypevarsU
       takeTree dest, n
-    elif i == ReturnTypePos:
-      addLengReturnType(dest, n, asRoutine(decl, SkipExclBody).pragmas, n.info)
-      skip n
     else:
       takeTree dest, n
 
@@ -554,11 +547,14 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
                    hoisted: createTokenBuf(16),
                    tupleVars: initHashSet[SymId](),
                    canRaise: hasPragma(r.pragmas, RaisesP),
-                   retType: r.retType, resultSym: SymId(0))
+                   retType: r.retType, resultSym: SymId(0),
+                   errorCodeType: move(c.errorCodeType))
 
+  # An `{.assembler.}` body is machine code, passed through verbatim.
+  let isAsm = hasPragma(r.pragmas, AssemblerP)
   copyInto(dest, n):
     let isConcrete = takeRaisingHeader(c2, dest, decl, n)
-    if isConcrete:
+    if isConcrete and not isAsm:
       let symId = r.name.symId
       if isLocalDecl(symId):
         c2.typeCache.registerLocal(symId, r.kind, decl)
@@ -579,6 +575,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeTree dest, n
   c.typeCache = move(c2.typeCache)
+  c.errorCodeType = move(c2.errorCodeType)
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Leaving the routine runs every enclosing `finally` first.
@@ -614,15 +611,20 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## call are built by `addPropagationCheck` and never come back through here.
   let info = n.info
   if n.childCursor.kind == DotToken:
-    # Bare `(raise .)` (re-raise) reaches us when derefs lowers a heap-based
-    # exception's no-match fall-through. In a `.raises` context we propagate
-    # the in-flight exception by signalling `Failure` to the caller; the caller
-    # consults the threadvar `exc` for the actual value. Outside a raises proc
-    # there is no error channel, so we degrade to a bare `(ret .)`.
+    # Bare `(raise .)`: raise again the code that reached the innermost
+    # handler — for a `ref` exception that is `Failure`, the exception itself
+    # stays in the threadvar `exc`. Outside a raises proc and outside any
+    # `try` there is no error channel, so we degrade to a bare `(ret .)`.
     skip n # the whole bare `(raise .)`
-    if c.canRaise:
+    var reraise = NoSymId
+    for i in countdown(c.exits.len - 1, 0):
+      if c.exits[i].reraise != NoSymId:
+        reraise = c.exits[i].reraise
+        break
+    if c.canRaise or catchingFrame(c) >= 0:
       var code = createTokenBuf(2)
-      code.addSymUse pool.symId(FailureName), info
+      if reraise != NoSymId: code.addSymUse reraise, info
+      else: code.addSymUse pool.symId(FailureName), info
       emitUnwind c, dest, code, info
     else:
       emitFinsDownTo c, dest, 0
@@ -697,6 +699,17 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         assert h.isDotToken
         dest.addSubtree h
         inc h
+    else:
+      # No binding, but a bare `raise` in the handler still needs the code.
+      excVar = pool.symId("`exc." & $c.tmpCounter)
+      inc c.tmpCounter
+      let errorCode = pool.symId(ErrorCodeName)
+      copyIntoKind dest, VarS, info:
+        dest.addSymDef excVar, info
+        dest.addEmpty2 info # export marker, pragmas
+        dest.addSymUse errorCode, info
+        dest.addDotToken()
+      c.typeCache.registerLocal(excVar, VarY, cursorAt(c.errorCodeType, 0))
 
   # --- the guarded body, and the fall-through path ----------------------
   var bodyLabels = initHashSet[SymId]()
@@ -734,7 +747,8 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
       var handlerLabels = initHashSet[SymId]()
       collectLabels hh, handlerLabels
       c.exits.add ExitScope(kind: TryExit, label: NoSymId, exceptVar: NoSymId,
-                            fin: fin, labels: ensureMove handlerLabels)
+                            reraise: excVar, fin: fin,
+                            labels: ensureMove handlerLabels)
       trScopeOf c, dest, hh, hinfo
       discard c.exits.pop()
       emitFinCopy c, dest, fin
@@ -867,7 +881,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc injectRaisingCalls*(pass: var Pass; ptrSize: int) =
   var n = pass.n  # Extract cursor locally
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(pass.bits),
-                  hoisted: createTokenBuf(16), tupleVars: initHashSet[SymId]())
+                  hoisted: createTokenBuf(16), tupleVars: initHashSet[SymId](),
+                  errorCodeType: createTokenBuf(1))
+  c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
   c.retType = c.typeCache.builtins.voidType
   c.typeCache.openScope()
   tr(c, pass.dest, n)  # Write to pass.dest

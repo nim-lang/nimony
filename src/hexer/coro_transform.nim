@@ -443,9 +443,8 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
           buf.takeTree p # pragmas
           buf.takeTree p # type
           buf.takeTree p # default value
-    # `fn` is the NIMONY declaration — this is the foreign case, so nothing
-    # has lowered it — hence the mapping is applied here rather than read off
-    # an already-lowered return type the way `generateCoroutineHelpers` does.
+    # `fn` is the nimsem declaration, as every signature is; the mapping is
+    # applied here as in `generateCoroutineHelpers`.
     let raises = hasPragma(fn.pragmas, RaisesP)
     var ret = fn.retType
     if raises or not isVoidType(ret):
@@ -2100,7 +2099,12 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
   ## the constructor lacks is the bug above, and a field the constructor
   ## has and the type lacks does not compile.
   const info = NoLineInfo
-  for key, value in c.currentProc.localToEnv.pairs:
+  # `coroTr` takes `c` as `var`, so the table is moved out of `c` for the loop
+  # rather than borrowed. `coroTr` looks every symbol up in it, but it only
+  # translates field types here, and a type never names a lifted local: the
+  # lookups miss either way.
+  var localToEnv = move c.currentProc.localToEnv
+  for key, value in localToEnv.pairs:
     if (value.def != value.use or key == c.currentProc.resultSym) and
        value.field notin c.currentProc.constrFields:
       # The default's type has to be the field's own, and the field got
@@ -2123,6 +2127,7 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
               init.addSubtree fieldType
         else:
           addDefaultValue(init, fieldType, info, c.ptrSize)
+  c.currentProc.localToEnv = move localToEnv
   init.addParRi() # object constructor
   init.addParRi() # assignment
 
@@ -2189,7 +2194,9 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
     copyIntoKind dest, ObjectT, info:
       # we inherit from CoroutineBase:
       dest.addSymUse pool.symId(RootObjName), info
-      for key, value in c.currentProc.localToEnv.pairs:
+      # Moved out for the loop, as in the constructor above.
+      var localToEnv = move c.currentProc.localToEnv
+      for key, value in localToEnv.pairs:
         if value.def != value.use or key == c.currentProc.resultSym:
           let beforeField = dest.len
           copyIntoKind dest, FldU, info:
@@ -2213,6 +2220,7 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
               coroTr c, dest, typ
             dest.addDotToken() # default value
           programs.publish(value.field, dest, beforeField)
+      c.currentProc.localToEnv = move localToEnv
       if c.currentProc.resultSym == SymId(0) and
          pool.symId(ResultFieldName) in c.currentProc.constrFields:
         # A result slot with no `result` local for `escapingLocals` to lift
@@ -2309,17 +2317,18 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
             c.typeCache.registerLocal(paramSym, ParamY, n)
             coroTr c, dest, n # type
             dest.takeTree n # default value
-    hasResult = not isVoidType(n)
+    var pragmas = n
+    skip pragmas # the return type
+    hasResult = hasPragma(pragmas, RaisesP) or not isVoidType(n)
     if hasResult:
       dest.copyIntoKind ParamU, info:
         dest.addSymDef pool.symId(ResultParamName), info
         dest.addDotToken() # export
         dest.addDotToken() # pragmas
         dest.copyIntoKind PtrT, info:
-          dest.takeTree n
+          addLengReturnType(dest, n, pragmas, info)
         dest.addDotToken() # default value
-    else:
-      skip n
+    skip n
     dest.copyIntoKind ParamU, info:
       dest.addSymDef pool.symId(CallerParamName), info
       dest.addDotToken() # export
@@ -2498,15 +2507,17 @@ proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) 
         skip n, SkipValue # default value
 
 proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
-                     paramsBegin, paramsEnd: int; origParams: Cursor) =
+                     paramsBegin, paramsEnd: int; origParams, pragmas: Cursor) =
   let info = readonlyCursorAt(dest, paramsBegin).info
   var retType = createTokenBuf(4)
-  # balanced span: raw copy keeps its seals
-  for i in paramsEnd..<dest.len: retType.add dest[i]
-  # No success-tuple wrapping here. the `eraiser` has already put it in the
-  # signature, which is why a `.raises` routine that returns nothing still
-  # arrives with a return type — its `ErrorCode` — and so still gets a result
-  # slot to hand it back through.
+  # The signature is nimsem's, so the result slot holds the Leng return type:
+  # a `.raises` routine hands back its success tuple through it — or, when it
+  # returns nothing, its `ErrorCode`, so it still gets a slot.
+  block:
+    var nimonyRet = createTokenBuf(4)
+    # balanced span: raw copy keeps its seals
+    for i in paramsEnd..<dest.len: nimonyRet.add dest[i]
+    addLengReturnType(retType, beginRead(nimonyRet), pragmas, info)
   c.currentProc.resultIsTuple = beginRead(retType).typeKind == TupleT
   block:
     var t = createTokenBuf(8)
@@ -2674,7 +2685,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
             # A method's state proc is never dispatched to — its `init`
             # wrapper is what the vtable slot holds — so it stops being one.
             setTagAt(dest, procStart, cast[TagId](ProcS))
-          patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
+          patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams, n
       if isCoroutine and isConcrete:
         # The state machine returns a `Continuation` and cannot fail; the
         # error, if there is one, went into the frame's result slot.

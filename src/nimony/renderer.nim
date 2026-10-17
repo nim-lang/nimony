@@ -893,7 +893,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       putWithSpace(g, tkOut, "out")
       n.into:
         gtype(g, n, c)
-    of LentT, SinkT, DistinctT:
+    of LentT, SinkT, OwnedT, DistinctT:
       putWithSpace(g, tkSymbol, $n.typeKind)
       n.into:
         gtype(g, n, c)

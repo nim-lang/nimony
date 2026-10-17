@@ -195,6 +195,7 @@ type
     OutTagId
     LentTagId
     SinkTagId
+    OwnedTagId
     NiltTagId
     ConceptTagId
     DistinctTagId

@@ -339,11 +339,15 @@ proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
   ## A fresh name for every local and label `n` declares. Labels have to be
   ## known up front: a `jmp` comes before its `lab`. A nested routine gets a
   ## fresh name too (one definition per copy), but what it declares inside is
-  ## its own and keeps its names.
+  ## its own and keeps its names. A routine's name is global (sem gives a nested
+  ## one `inner.0.<suffix>` too), so the copy's name stays global: a local name
+  ## would reach module scope unqualified and collide with another module's
+  ## copies (#2645, #2681).
   if n.isTagLit and n.stmtKind in NestedRoutines:
     let d = n.childCursor
     if d.kind == SymbolDef:
-      mapping[d.symId] = pool.symId("`ii." & $e.getTmpId)
+      mapping[d.symId] = pool.symId("`iir." & $e.localDeclCounters & "." & e.main)
+      inc e.localDeclCounters
   elif n.isTagLit and n.stmtKind notin {MacroS, TemplateS, TypeS, PragmasS}:
     if n.stmtKind in {VarS, LetS, CursorS, PatternvarS, ResultS, LabS}:
       let d = n.childCursor
@@ -379,11 +383,20 @@ proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymI
       # the body's locals, which this copy renames, so its uses must follow.
       # `mapping` holds only the enclosing body's names, so the routine's
       # own declarations are copied unchanged.
+      let start = dest.len
+      let routineSym =
+        if c.stmtKind in NestedRoutines and c.childCursor.kind == SymbolDef:
+          mapping.getOrDefault(c.childCursor.symId)
+        else:
+          SymId(0)
       dest.addParLe(c.cursorTagId, c.info)
       c.into:
         while c.hasMore:
           copyFreshened(dest, c, mapping)
         dest.addParRi(c.endInfo)
+      if routineSym != SymId(0):
+        # the copy's name is a fresh global: later passes look it up
+        publish routineSym, dest, start
   of Symbol:
     dest.addSymUse(mapping.getOrDefault(c.symId, c.symId), c.info)
     inc c

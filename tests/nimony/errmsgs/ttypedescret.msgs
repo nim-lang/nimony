@@ -1,1 +1,3 @@
+tests/nimony/errmsgs/ttypedescret.nim(8, 14) Error: a bare 'typedesc' parameter is only valid for templates and macros; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`
+tests/nimony/errmsgs/ttypedescret.nim(11, 15) Error: type class 'object' cannot be used as a parameter type; use an explicit generic parameter such as `proc f[T: object](x: T)`
 tests/nimony/errmsgs/ttypedescret.nim(8, 20) Error: 'typedesc' without a concrete type cannot be used as a type; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`

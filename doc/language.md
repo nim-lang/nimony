@@ -858,6 +858,90 @@ matching classic Nim behavior:
   ```
 
 
+## Owned references
+
+The `owned` type constructor is a statically checked *unique ownership*
+annotation for the two reference counted handles, `ref T` and closures
+(RFC #575). Code that never writes `owned` is unaffected by it.
+
+`owned X` means: this location holds the unique *owning* edge to the cell.
+Any number of ordinary (counted) references to the same cell may exist; they
+keep the cell alive when the owner goes away. The runtime representation is
+the same as that of `X`, so modules with and without the feature interoperate.
+
+| operation                          | meaning                                  |
+| ---------------------------------- | ---------------------------------------- |
+| `owned X` to `X`                   | implicit, produces a counted reference   |
+| `X` to `owned X`                   | error, unless the value is fresh         |
+| copy of an `owned` location        | error: move it, or convert to unowned    |
+| object construction                | yields `owned ref T` under `ownedRefs`   |
+| value type with an `owned` field   | move-only                                |
+| `owned` parameter                  | borrowed, like any other `ref` parameter |
+| `sink owned` parameter             | takes over the ownership                 |
+
+Fresh values (object constructions, `new`, lambdas, `nil`) have no other
+owner yet and so may initialize an `owned` location. With
+`{.feature: "ownedRefs".}` an object construction is moreover *typed* `owned`,
+so `let a = Node()` makes `a` the owner and `let b = a` is a copy error unless
+it is the last read of `a`. Without the feature `a` is an ordinary counted
+reference, and so is the element type inferred for `@[Node()]`.
+
+  ```nim
+  type
+    Node = ref object
+      next: owned nil Node
+      data: int
+
+  proc sum(list: nil Node): int =
+    result = 0
+    var it = list           # counted; keeps the node alive
+    while it != nil:
+      result += it.data
+      it = it.next
+  ```
+
+An `owned` parameter is an ordinary parameter of an owned type: the callee can
+read it and write through it, but cannot reassign it, and the caller remains
+the owner. Ownership is only transferred to a `sink owned` parameter, so
+storing the parameter into another owned location requires `sink`:
+
+  ```nim
+  proc rename(n: owned Node; data: int) =
+    n.data = data            # ok: writes through the reference
+    let u: Node = n          # ok: a counted reference
+
+  proc append(list: Node; n: sink owned Node) =
+    list.next = n            # ok: `n` owns the cell and passes that on
+  ```
+
+Without the `sink`, `list.next = n` would be a copy of an `owned` location
+and is rejected.
+
+`owned` is rejected on `seq` and `string`, which are already unique.
+
+Owned edges are move-only and so form a forest: a cycle must contain at least
+one edge that is not `owned`. Hence a type whose references are all `owned` or
+`.cursor` cannot be part of a cycle and stays out of the cycle collector under
+`--mm:orc` and `--mm:yrc`. An `owned` closure promises that its environment is
+acyclic; this is checked where the closure is formed:
+
+  ```nim
+  type
+    Widget = ref object
+      onChange: owned proc () {.closure.}  # does not make `Widget` cyclic
+
+  proc label(w: Widget; s: string) =
+    w.onChange = proc () {.closure.} = echo s   # ok: captures a string only
+  ```
+
+The check can be defeated by writing an owning edge through an unowned alias
+into the owned subtree; the result is a leak, not memory corruption.
+
+`-d:nimOwnedStrict` turns an unowned reference that outlives its owner into a
+fatal runtime error ("dangling references exist"). Without it such a reference
+keeps the object alive, which is safe.
+
+
 ## Proc type
 
 A procedural type is internally a pointer to a proc. Like other pointer types,
@@ -3766,6 +3850,36 @@ except ErrorCode as e:
   echo "Error: ", e
 ```
 
+### Raises types
+
+`{.raises.}` means `{.raises: ErrorCode.}`. The only other type a routine may
+raise is a `ref` object type, usually one inheriting from `Exception`:
+
+```nim
+type ParseError = ref object of Exception
+  pos: int
+
+proc parse(s: string): int {.raises: ParseError.} =
+  raise ParseError(msg: "unexpected end", pos: s.len)
+```
+
+An `except` arm is a type filter: `except ErrorCode` catches only `ErrorCode`
+values, `except T` for a `ref` type `T` catches `T` and its subtypes, and a bare
+`except:` catches everything. The arms are tried in order. Whatever a call
+raises must be caught by an enclosing `except` arm or be what the calling
+routine itself raises (for a `ref` type: a subtype of it). Nothing converts an
+`ErrorCode` into a `ref` exception or back; that has to be written out:
+
+```nim
+proc lookup(t: Table[string, int]; key: string): int {.raises: ParseError.} =
+  try:
+    result = t[key]           # raises `KeyError`, an `ErrorCode`
+  except ErrorCode:
+    raise ParseError(msg: "unknown key " & key)
+```
+
+A bare `raise` inside an `except` arm raises again what that arm caught.
+
 ### Try statement
 
 A try statement has the general form: `try <statements> except <statements> finally <statements>`.
@@ -4113,6 +4227,13 @@ The "types" of templates can be the symbols `untyped`,
 `typed` or `typedesc`. These are "meta types", they can only be used in certain
 contexts. Regular types can be used too; this implies that `typed` expressions
 are expected.
+
+A parameter of the meta type `typedesc` (written without a type argument)
+accepts any type; such a parameter is only valid for templates and macros.
+Routines name the type with an explicit generic parameter instead:
+`proc f[T](x: typedesc[T])`. Other bare type classes such as `object` or
+`enum` cannot be used as parameter types of any routine kind; they are only
+valid as constraints of generic parameters (`proc f[T: object](x: T)`).
 
 
 
@@ -4579,6 +4700,7 @@ The following features are available:
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
 | `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
 | `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
+| `"ownedRefs"` | Object constructors yield `owned`, so the creator of a cell is its owner. See [Owned references](#owned-references). |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
 

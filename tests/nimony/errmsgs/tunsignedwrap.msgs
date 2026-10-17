@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tunsignedwrap.nim(11, 7) Error: assertion violated: 260 <= at [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tunsignedwrap.nim(17, 7) Error: cannot prove assertion: i < 1 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tunsignedwrap.nim(23, 7) Error: cannot prove assertion: 6 < i [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tunsignedwrap.nim(29, 7) Error: cannot prove assertion: i < 1 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tunsignedwrap.nim(38, 7) Error: cannot prove assertion: 3 < i [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tunsignedwrap.nim(45, 7) Error: cannot prove assertion: 256 <= result [pass --verbose for the Final IR]

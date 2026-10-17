@@ -28,8 +28,8 @@ Options:
   assert options.source == "src"
   assert options.dest == "dst"
   assert options.output == "backup.log"
-  assert $options.mode == "cliModeDelta"
-  assert $options.command == "cmdRun"
+  assert options.mode == cliModeDelta
+  assert options.command == cmdRun
 
 block:
   let options = cliapp("""Backup v0.1
@@ -56,5 +56,5 @@ Options:
   assert options.dest == "dst"
   assert options.output == "after.log"
   assert options.verbose
-  assert $options.mode == "cliModeFull"
-  assert $options.command == "cmdRun"
+  assert options.mode == cliModeFull
+  assert options.command == cmdRun

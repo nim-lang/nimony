@@ -241,7 +241,7 @@ func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint
   (s.data[int i]) = elem
   {.assume: s.len == old(s.len).}
 
-func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
+func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
   ## Copies an array into a new sequence (`@[1,2]` builds `seq` literals via array constructors).
   result = newSeqUninit[T](a.len)
   if result.data != nil:

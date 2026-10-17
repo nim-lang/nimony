@@ -72,6 +72,8 @@ type
     callExprs: Table[SymId, TokenBuf] ## whole init call of a local, so a `for`
                                       ## whose iterator xelim hoisted into a
                                       ## temp can still be read (see `trFor`)
+    hoistedConsts: TokenBuf ## the consts of routines and blocks, moved to
+                            ## module level; see `toFinalIr`
 
 proc openScope(c: var Context) =
   c.typeCache.openScope()
@@ -729,6 +731,11 @@ proc trAsmStmt(dest: var TokenBuf; n: var Cursor) =
     copyInto dest, n:
       while n.hasMore:
         trAsmStmt dest, n
+  of WhileS:
+    # `while true: …` — the condition stays, the body may hold `if`s
+    copyInto dest, n:
+      dest.takeTree n
+      trAsmStmt dest, n
   else:
     dest.takeTree n
 
@@ -788,7 +795,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhile c, dest, n
   of ForS:
     trFor c, dest, n
-  of LocalDecls:
+  of ConstS:
+    var consts = move c.hoistedConsts
+    trLocal c, consts, n
+    c.hoistedConsts = ensureMove consts
+  of LocalDecls - {ConstS}:
     trLocal c, dest, n
   of ProcS, FuncS, MethodS, ConverterS, IteratorS:
     trProcDecl c, dest, n
@@ -885,9 +896,20 @@ proc toFinalIr*(pass: var Pass; analysisFacts = true) =
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.addParLe(n.cursorTagId, n.info)
   c.openScope()
+  # Every const ends up at module level, in front of the statement that
+  # declared it: its value is a compile-time constant and sem gave it a global
+  # name (`RoutineLikeSyms`), so no later pass has to care about a const in a
+  # routine (a nested routine that lambdalifting lifts, an inline iterator body
+  # that another module copies, ...).
+  c.hoistedConsts = createTokenBuf(16)
+  var stmt = createTokenBuf(300)
   n.into:
     while n.hasMore:
-      trStmt c, pass.dest, n
+      trStmt c, stmt, n
+      pass.dest.add c.hoistedConsts
+      c.hoistedConsts.shrink 0
+      pass.dest.add stmt
+      stmt.shrink 0
     closeScope c, pass.dest, n.endInfo
   pass.dest.addParRi()
 

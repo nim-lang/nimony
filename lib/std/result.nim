@@ -39,11 +39,11 @@ type
     of Err:
       errVal: E
 
-proc ok*[T, E](v: T): Result[T, E] =
+proc ok*[T, E](v: sink T): Result[T, E] =
   ## A success `Result` (the `Ok` case). `E` is inferred from the expected type.
   result = Ok(okVal: v)
 
-proc err*[T, E](e: E): Result[T, E] =
+proc err*[T, E](e: sink E): Result[T, E] =
   ## A failure `Result` (the `Err` case). `T` is inferred from the expected type.
   result = Err(errVal: e)
 

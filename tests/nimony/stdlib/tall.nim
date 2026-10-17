@@ -25,6 +25,7 @@ import std/asyncio
 import std/base64
 import std/bitops
 import std/cmdline
+import std/colors
 import std/commonio
 import std/compilation
 import std/complex
@@ -33,6 +34,16 @@ import std/compress/checksums
 import std/compress/deflate
 import std/compress/gzip
 import std/cpuinfo
+import std/crypto/bignum
+import std/crypto/certstore
+import std/crypto/chacha20poly1305
+import std/crypto/ecdsa
+import std/crypto/hmac
+import std/crypto/rsa
+import std/crypto/sha2
+import std/crypto/sysrand
+import std/crypto/x25519
+import std/crypto/x509
 import std/deques
 import std/dirs
 import std/dns
@@ -46,9 +57,11 @@ import std/heapqueue
 import std/http/httpcoding
 import std/http/httpconn
 import std/http/httpdate
+import std/http/httpheaders
 import std/http/httpmsg
 import std/http/httpparse
 import std/http/httpwire
+import std/httpclient
 import std/httpserver
 import std/intsets
 import std/ioring
@@ -87,6 +100,7 @@ import std/sha1
 import std/smartcli
 import std/socket
 import std/stacktraces
+import std/streamio
 import std/streams
 import std/stripes
 import std/strtabs
@@ -98,6 +112,7 @@ import std/terminal
 import std/threadpool
 import std/ticketlocks
 import std/times
+import std/tls
 import std/typetraits
 import std/unicode
 import std/uri

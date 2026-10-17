@@ -1,0 +1,1 @@
+tests/nimony/ownedrefs/townedrefs_param_err.nim(9, 15) Error: '=dup' is not available for type <owned ref Node.Obj>

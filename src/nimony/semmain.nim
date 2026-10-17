@@ -533,7 +533,8 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest.addParRi()
 
   instantiateGenerics c, dest
-  for val in c.typeInstDecls:
+  for i in 0 ..< c.typeInstDecls.len:
+    let val = c.typeInstDecls[i]
     let s = fetchSym(c, val)
     let res = declToCursor(c, dest, s)
     if res.status == LacksNothing:
@@ -623,7 +624,8 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     dest.addParRi()
 
   instantiateGenerics c, dest
-  for val in c.typeInstDecls:
+  for i in 0 ..< c.typeInstDecls.len:
+    let val = c.typeInstDecls[i]
     let s = fetchSym(c, val)
     let res = declToCursor(c, dest, s)
     if res.status == LacksNothing:

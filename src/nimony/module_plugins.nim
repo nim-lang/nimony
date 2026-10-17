@@ -16,7 +16,10 @@ import ".." / gear2 / modnames
 proc handleTypePlugins*(c: var SemContext; dest: var TokenBuf) =
   var inp = move dest
 
-  for k, p in c.pendingTypePlugins:
+  # `runPlugin` takes `c` as `var`, so the pending lists are moved out rather
+  # than borrowed while it runs.
+  var typePlugins = move c.pendingTypePlugins
+  for k, p in typePlugins:
     c.pluginBlacklist.incl(p.path)
 
     var types = createTokenBuf(30)
@@ -28,7 +31,8 @@ proc handleTypePlugins*(c: var SemContext; dest: var TokenBuf) =
     runPlugin(c, destB, p.info, pool.strings[p.path], inp, types)
     inp = ensureMove destB
 
-  for p in c.pendingModulePlugins:
+  var modulePlugins = move c.pendingModulePlugins
+  for p in modulePlugins:
     c.pluginBlacklist.incl(p.path)
     var destB = createTokenBuf(3000)
     runPlugin(c, destB, p.info, pool.strings[p.path], inp)

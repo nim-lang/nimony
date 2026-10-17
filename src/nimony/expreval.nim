@@ -169,9 +169,12 @@ proc constSourceDir(info: NifLineInfo): string =
   except:
     result = ""
 
-proc emptySeqValue(c: var EvalContext; seqType: Cursor; info: NifLineInfo): Cursor =
-  ## Builds the constant value for an empty `seq[T]` (`@[]`), i.e.
-  ## `(oconstr seq[T] (kv len 0) (kv data (nil)))`. The object-constructor
+proc seqValue(c: var EvalContext; seqType, elems: Cursor; info: NifLineInfo): Cursor =
+  ## Builds the constant value for a `seq[T]`. With `elems` nil it is the empty
+  ## seq (`@[]`), `(oconstr seq[T] (kv len 0) (kv data (nil)))`. Otherwise
+  ## `elems` is an evaluated `(aconstr (array T …) e1 … eN)` and the value is
+  ## `(oconstr seq[T] (kv len N) (kv data (addr (aconstr (uarray T) e1 … eN))))`,
+  ## the shape exprexec's sub-compile would serialise. The object-constructor
   ## type slot is later replaced by `annotateConstantType`, but the field
   ## symbols (`len`, `data`) must match the concrete `seq[T]` object so that
   ## `findObjectField` resolves them; they are read from the type itself.
@@ -194,7 +197,7 @@ proc emptySeqValue(c: var EvalContext; seqType: Cursor; info: NifLineInfo): Curs
   elif t.typeKind == ObjectT:
     objBody = t
   if cursorIsNil(objBody) or objBody.typeKind != ObjectT:
-    return c.error("cannot evaluate empty seq at compile time", info)
+    return c.error("cannot evaluate seq at compile time", info)
   var lenSym = SymId(0)
   var dataSym = SymId(0)
   var walk = sub(objBody)
@@ -206,18 +209,52 @@ proc emptySeqValue(c: var EvalContext; seqType: Cursor; info: NifLineInfo): Curs
       if lenSym == SymId(0): lenSym = r.name.symId
       elif dataSym == SymId(0): dataSym = r.name.symId
   if lenSym == SymId(0) or dataSym == SymId(0):
-    return c.error("cannot evaluate empty seq at compile time", info)
+    return c.error("cannot evaluate seq at compile time", info)
+  var count = 0
+  if not cursorIsNil(elems):
+    var e = elems
+    e.into:
+      skip e # array type
+      while e.hasMore:
+        inc count
+        skip e
   var buf = createTokenBuf(16)
   buf.addParLe(OconstrX, info)
   buf.addSubtree seqType # type slot, replaced by `annotateConstantType`
   buf.copyIntoKind(KvU, info):
     buf.addSymUse(lenSym, info)
-    buf.addIntLit(0, info)
+    buf.addIntLit(count, info)
   buf.copyIntoKind(KvU, info):
     buf.addSymUse(dataSym, info)
-    buf.copyIntoKind(NilX, info): discard
+    if count == 0:
+      buf.copyIntoKind(NilX, info): discard
+    else:
+      var e = elems
+      buf.copyIntoKind(AddrX, info):
+        buf.copyIntoKind(AconstrX, info):
+          e.into:
+            var arrType = e
+            inc arrType # past the `array` tag to the element type
+            buf.copyIntoKind(UarrayT, info):
+              buf.addSubtree arrType
+            skip e # array type
+            while e.hasMore:
+              buf.takeTree e
   buf.addParRi() # oconstr
   result = cursorAt(buf, 0)
+
+proc isPlainArrayValue(n: Cursor): bool =
+  ## True for an evaluated `(aconstr (array T …) e1 … eN)` without indexed
+  ## `(kv i e)` entries, the only array shape `seqValue` turns into a seq.
+  result = n.exprKind == AconstrX
+  if result:
+    var e = n
+    e.peekInto:
+      result = e.typeKind == ArrayT
+      skip e
+      while result and e.hasMore:
+        if e.substructureKind == KvU: result = false
+        skip e
 
 proc executeRetType(c: EvalContext; routineRetType: TypeCursor): Cursor =
   ## Pick the result type passed to `executeExpr`. A concrete routine return
@@ -374,7 +411,17 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       var probe = args
       let sz = eval(c, probe)
       if isConstIntValue(sz) and sz.intVal == 0 and not probe.hasMore:
-        result = emptySeqValue(c, skipModifier(routine.retType), n.info)
+        result = seqValue(c, skipModifier(routine.retType), default(Cursor), n.info)
+      else:
+        result = forwardToExecute(c, n, routine, args)
+    of "arrayToSeq":
+      # `@[a, b, …]` on a constant array: build the seq value in-process.
+      # A sub-compile per `@` costs a full native build, which made const
+      # tables of seqs take minutes.
+      var probe = args
+      let arr = eval(c, probe)
+      if isPlainArrayValue(arr) and not probe.hasMore:
+        result = seqValue(c, skipModifier(routine.retType), arr, n.info)
       else:
         result = forwardToExecute(c, n, routine, args)
     else:
@@ -1705,6 +1752,10 @@ proc countEnumValues*(n: Cursor): xint =
         result = b.hi - b.lo + createXint(1'i64)
 
 proc getArrayIndexLen*(index: Cursor): xint =
+  # `(array T 32)`: the lowered spelling, with the element count itself. What a
+  # `set` becomes once it is bytes, and what a pass running after that lowering
+  # (the coroutine lifting of a `.passive` proc) hands back here.
+  if index.kind == IntLit: return createXint(index.intVal)
   var index = toTypeImpl index
   case index.typeKind
   of EnumT:

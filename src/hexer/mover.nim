@@ -151,46 +151,59 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
     # ParRi/close (classic) or a stray suffix (nifcore); unreachable in a walk.
     result = true
 
-proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
-  ## True if `tree` is a *direct* field/index access of the moved root `r` that
-  ## is statically disjoint from `x`'s own field/index — i.e. `tree` is
-  ## `(dot r other)` while `x` is `(dot r field)` with `other != field`, or the
-  ## tuple equivalent `(tupat r J)` vs `(tupat r K)` with `J != K`. Such a
-  ## location can never alias `x`, so the scan may skip it whole. Only the
-  ## direct shapes off a bare root qualify; anything nested or through a deref
-  ## returns false, so the conservative scan still runs (and still catches
-  ## whole-object reads and deref-of-root).
+proc accessDepth(n: Cursor; r: SymId): int =
+  ## How many `dot`/`tupat` accessors `n` chains off the bare root `r`; -1 for
+  ## any other shape (a deref, an index, a call, a different root, ...).
   ##
-  ## Both `(dot OBJ FIELD …)` and `(tupat OBJ INDEX)` lay out as: token 0 is the
-  ## accessor tag, token 1 is OBJ, token 2 is the selector (the field symbol, or
-  ## the index literal). OBJ here is required to be the bare root symbol `r`, so
-  ## each OBJ is a single token and one `inc` steps tag→OBJ, another OBJ→selector.
+  ## Both `(dot OBJ FIELD …)` and `(tupat OBJ INDEX)` lay out as: the accessor
+  ## tag, then OBJ, then the selector (the field symbol, or the index literal),
+  ## so one `inc` steps from an accessor to its OBJ.
+  var n = n
+  result = 0
+  while n.kind == TagLit and n.exprKind in {DotX, TupatX}:
+    inc result
+    inc n
+  if n.kind != Symbol or n.symId != r: result = -1
+
+proc accessorAt(n: Cursor; depth, level: int): Cursor =
+  ## The accessor `level` steps out from the root in a chain of `depth`.
+  result = n
+  for _ in 0 ..< depth - 1 - level: inc result
+
+proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
+  ## True if `tree` and `x` are field/index paths off the moved root `r` that
+  ## are statically disjoint: walking out from `r`, the first accessor where
+  ## they differ names a different field (`dot`) or tuple index (`tupat`). So
+  ## `(dot r other)` vs `(dot r field)`, and equally the nested
+  ## `(tupat (tupat r 1) 1)` vs `(tupat (tupat r 1) 0)` that unpacking a
+  ## raising call's `(ErrorCode, (A, B))` result produces. Such a location can
+  ## never alias `x`, so the scan may skip it whole. A path that is a prefix of
+  ## the other, or anything through a deref or an array index, returns false,
+  ## so the conservative scan still runs (and still catches whole-object reads
+  ## and deref-of-root).
   result = false
-  if tree.kind == TagLit and x.kind == TagLit and tree.exprKind == x.exprKind:
-    var treeObj = tree
-    inc treeObj                 # tree: accessor tag -> OBJ
-    var xObj = x
-    inc xObj                    # x:    accessor tag -> OBJ
-    let bothRootedAtR =
-      treeObj.kind == Symbol and treeObj.symId == r and
-      xObj.kind == Symbol and xObj.symId == r
-    if bothRootedAtR:
-      var treeSel = treeObj
-      inc treeSel               # tree: OBJ -> selector
-      var xSel = xObj
-      inc xSel                  # x:    OBJ -> selector
-      # An `if` chain rather than a `case`, for the reason `xelim.trExprToLabel`
-      # gives: two kinds are interesting and everything else shares one
-      # fall-back, and here that fall-back is the conservative answer -- an
-      # accessor this does not know stays "may alias" and the full scan runs.
-      if tree.exprKind == DotX:
-        # disjoint iff the two field names differ
-        result = treeSel.kind == Symbol and xSel.kind == Symbol and
-                 treeSel.symId != xSel.symId
-      elif tree.exprKind == TupatX:
-        # disjoint iff the two tuple indices differ
-        result = treeSel.kind == IntLit and xSel.kind == IntLit and
-                 treeSel.intVal != xSel.intVal
+  if tree.kind != TagLit or x.kind != TagLit: return
+  let td = accessDepth(tree, r)
+  let xd = accessDepth(x, r)
+  if td <= 0 or xd <= 0: return
+  for level in 0 ..< min(td, xd):
+    let a = accessorAt(tree, td, level)
+    let b = accessorAt(x, xd, level)
+    if a.exprKind != b.exprKind: return false
+    var sa = a
+    inc sa
+    skip sa                     # accessor -> OBJ -> selector
+    var sb = b
+    inc sb
+    skip sb
+    # An `if` chain rather than a `case`, for the reason `xelim.trExprToLabel`
+    # gives: an accessor whose selector is not static stays "may alias".
+    if a.exprKind == DotX:
+      if sa.kind != Symbol or sb.kind != Symbol: return false
+      if sa.symId != sb.symId: return true
+    else:
+      if sa.kind != IntLit or sb.kind != IntLit: return false
+      if sa.intVal != sb.intVal: return true
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
   ## True if `tree` contains a read whose location can alias `x` (the location

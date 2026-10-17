@@ -60,6 +60,22 @@ when defined(posix):
     src.add "#include <sys/stat.h>\n"
     src.add "#include <sys/types.h>\n"
     src.add "#include <sys/wait.h>\n"
+    when defined(illumos):
+      src.add "#include <spawn.h>\n"
+      type
+        AttrAlignment = object
+          prefix: char
+          value: SpawnAttr
+        ActionsAlignment = object
+          prefix: char
+          value: SpawnFileActions
+      let attr = cast[ptr AttrAlignment](addr scratch[0])
+      let actions = cast[ptr ActionsAlignment](addr scratch[0])
+      ck("sizeof(posix_spawnattr_t)", int64(sizeof(SpawnAttr)))
+      ck("sizeof(posix_spawn_file_actions_t)", int64(sizeof(SpawnFileActions)))
+      ck("_Alignof(posix_spawnattr_t)", off(attr, addr attr.value))
+      ck("_Alignof(posix_spawn_file_actions_t)", off(actions, addr actions.value))
+      ck("POSIX_SPAWN_SETPGROUP", int64(POSIX_SPAWN_SETPGROUP))
     src.add "#include <netinet/in.h>\n"
     when defined(linux):
       src.add "#include <sys/epoll.h>\n"

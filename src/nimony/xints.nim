@@ -30,7 +30,8 @@ proc asSigned*(x: xint; err: var bool): int64 =
       if x.val > uint64(high(int64))+1:
         err = true
       else:
-        result = -int64(x.val)
+        # not `-int64(x.val)`: the magnitude of `low(int64)` is not an int64
+        result = cast[int64](0'u64 - x.val)
     else:
       if x.val > uint64(high(int64)):
         err = true

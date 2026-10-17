@@ -1090,7 +1090,8 @@ proc emitSlot(e: var Emitter; byteOff: int) =
   ## the partial-sum accumulators outlive a slot.
   for k in 0 ..< e.ptrs.len:
     if e.ptrs[k].hasLoad:
-      e.ptrs[k].loadName = e.freshName("l")
+      let loadName = e.freshName("l")
+      e.ptrs[k].loadName = loadName
       # (var :l (f 128) (instr fldrq p byteOff))
       e.b.addVarDeclHead e.ptrs[k].loadName
       e.b.addF(128)

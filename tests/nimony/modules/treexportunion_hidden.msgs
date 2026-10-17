@@ -1,0 +1,2 @@
+tests/nimony/modules/treexportunion_hidden.nim(5, 21) Error: undeclared identifier in module: 'ud'
+tests/nimony/modules/treexportunion_hidden.nim(6, 23) Error: undeclared identifier in module: 'ua'

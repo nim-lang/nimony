@@ -1,0 +1,12 @@
+1 2
+destroy R 0
+destroy W 0
+3 4
+destroy W 4
+destroy R 3
+destroy R 0
+destroy W 0
+destroy W 2
+destroy R 1
+destroy R 0
+destroy W 0

@@ -132,7 +132,10 @@ proc dbgLocationId(c: var LLVMCode; info: NifLineInfo): int =
     ", column: " & $(rawInfo.col + 1) &
     ", scope: !" & $scopeInProc(c, fileId) & ")")
   var scopeId = 0
-  for origin in c.currentProc.frameStack:
+  # `getOrCreateInlineSP` takes `c` as `var`, so the stack is moved out for the
+  # loop rather than borrowed; nothing it calls reads the stack.
+  var frames = move c.currentProc.frameStack
+  for origin in frames:
     let spId = getOrCreateInlineSP(c, origin, fileId, rawInfo.line)
     if spId == 0: continue
     if scopeId != 0:
@@ -142,6 +145,7 @@ proc dbgLocationId(c: var LLVMCode; info: NifLineInfo): int =
         ", scope: !" & $scopeId &
         ", inlinedAt: !" & $inlinedAt & ")")
     scopeId = spId
+  c.currentProc.frameStack = move frames
   if scopeId == 0:
     result = inlinedAt
   else:
@@ -254,9 +258,11 @@ proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
   # drift: the innermost origin names the SP that `dbgLocationId` will scope to.
   let inFrame = c.currentProc.frameStack.len > 0
   var varScopeId = c.currentProc.subprogramId
-  for origin in c.currentProc.frameStack:
+  var frames = move c.currentProc.frameStack # as in `dbgLocationId`
+  for origin in frames:
     let spId = getOrCreateInlineSP(c, origin, fileId, rawInfo.line)
     if spId != 0: varScopeId = spId
+  c.currentProc.frameStack = move frames
   var varMetadata = "!DILocalVariable(name: \"" & debugName & "\""
   if argNo > 0:
     varMetadata.add ", arg: " & $argNo

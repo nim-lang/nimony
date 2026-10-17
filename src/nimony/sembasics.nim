@@ -465,10 +465,11 @@ proc hasErrorSince*(dest: TokenBuf; start: int): bool =
     inc i
 
 const RoutineLikeSyms* = {TypevarY, StaticTypevarY, ProcY, FuncY, ConverterY,
-                          MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}
+                          MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY,
+                          ConstY}
   ## The kinds that get GLOBAL symbol layout wherever they are written, because
   ## the backends lift every one of them out to module scope regardless of the
-  ## scope it was declared in. `identToSym` and `makeTemplateSym` must agree on
+  ## scope it was declared in (a const: `finalir.toFinalIr`). `identToSym` and `makeTemplateSym` must agree on
   ## this set or the same declaration is named two different ways depending on
   ## whether a template introduced it.
 
