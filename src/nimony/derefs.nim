@@ -458,7 +458,9 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   of Symbol, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     inc n
   of TagLit:
-    if isDeclarative(n):
+    if isDeclarative(n) or n.symKind in RoutineKinds:
+      # a routine's body is checked on its own, in `trProcDecl`; a generic
+      # one is not instantiated and must not be checked at all:
       skip n
     elif n.stmtKind == AsgnS:
       n.into:
