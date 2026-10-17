@@ -91,6 +91,12 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.paths.add val
   of "define", "d":
     config.addDefine val
+    # The plugin is compiled by the C backend, never by arkham, so it cannot
+    # take the `{.assembler.}` paths this define selects (`std/crypto`,
+    # `private/dec2flt`). `nimony` keeps it off the host args itself, but it
+    # reaches `nimsem` as a plain `--define`.
+    if cmpIgnoreStyle(val, "nimNativeBackend") == 0:
+      forwardArgHost = false
   of "nosystem":
     moduleFlags.incl SkipSystem
   of "issystem":
