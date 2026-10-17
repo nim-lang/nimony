@@ -1029,8 +1029,14 @@ proc floatValue(tok: Token): float64 =
   ## in that base at all -- `0x3F800000'f32` names the *bit pattern* -- which
   ## is why the two cases do not share a parser.
   if tok.base == 10:
+    # The literal's digit separators go before parsing: `parseBiggestFloat`
+    # (std/private/dec2flt since #2671) stops at the first `_`, which made
+    # `360_000.0` read as 360.0.
+    var digits = newStringOfCap(tok.s.len)
+    for c in tok.s:
+      if c != '_': digits.add c
     var f = 0.0
-    discard parseBiggestFloat(tok.s, f)
+    discard parseBiggestFloat(digits, f)
     result = f
   else:
     let shiftBy = if tok.base == 16: 4 elif tok.base == 8: 3 else: 1
