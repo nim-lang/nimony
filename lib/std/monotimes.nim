@@ -88,7 +88,7 @@ elif defined(windows):
     importc: "QueryPerformanceFrequency", stdcall, dynlib: "kernel32".}
 
 when defined(wasm32) and defined(standalone):
-  var gWasmTickFallback: int64 = 0
+  var gWasmTickFallback {.threadvar.}: int64
   proc wasmMonoTicks(): int64 =
     # Strictly-increasing counter: ordering holds, durations are ~zero. A
     # real host clock (performance.now via an env import) arrives with the
