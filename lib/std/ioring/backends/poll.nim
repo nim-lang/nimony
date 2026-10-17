@@ -161,12 +161,20 @@ when defined(posix):
   proc posixSetsockopt(s: cint; level, optname: cint; val: nil pointer;
                        vlen: SockLen): cint {.importc: "setsockopt".}
   proc posixBind(s: cint; name: pointer; namelen: SockLen): cint {.importc: BindName.}
-  proc posixFcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
-    ## FIXED arity with a defaulted third argument, not `varargs`: the same
-    ## shape and the same reason as iouring.nim's `fcntl` — nimony collapses
-    ## same-named importc stubs, so a varargs fcntl would mono-morph into
-    ## arities that fight over one register-signature stub. `F_GETFL` ignores
-    ## the third argument, so passing `0` costs nothing.
+  when defined(osx):
+    proc variadicFcntl(fd: cint; cmd: cint): cint {.varargs, importc: "fcntl", sideEffect.}
+    proc posixFcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.inline.} =
+      ## Apple arm64 passes a variadic argument on the stack, so libc's
+      ## `fcntl` needs a variadic prototype there; all three arguments are
+      ## always passed, so there is still only one arity.
+      variadicFcntl(fd, cmd, arg)
+  else:
+    proc posixFcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
+      ## FIXED arity with a defaulted third argument, not `varargs`: the same
+      ## shape and the same reason as iouring.nim's `fcntl` — nimony collapses
+      ## same-named importc stubs, so a varargs fcntl would mono-morph into
+      ## arities that fight over one register-signature stub. `F_GETFL` ignores
+      ## the third argument, so passing `0` costs nothing.
   proc posixRecvfrom(s: cint; buf: nil pointer; count: int; flags: cint;
                      `addr`: pointer; addrlen: ptr SockLen): int {.importc: "recvfrom".}
   proc posixSendto(s: cint; buf: nil pointer; count: int; flags: cint;
