@@ -16,7 +16,7 @@ when defined(windows):
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
-import std / [parseopt, sets, strutils, os, assertions, syncio, dirs, paths]
+import std / [parseopt, sets, strutils, os, envvars, assertions, syncio, dirs, paths]
 import ".." / lib / [tooldirs, argsfinder, nimversion, platform]
 
 import ".." / gear2 / modnames
@@ -78,6 +78,12 @@ Options:
                             complete stdout/stderr lines go to
                             console.log/console.error, and the export surface
                             lands on globalThis.NIF.
+  --hostImports[:on|off]    wasm backend: a bodyless `importc` proc becomes an
+                            `env` import under its C name, for the host page
+                            to provide (default off: it is refused). Part of
+                            the backend's cache key.
+  --exportAll[:on|off]      wasm backend: also export every function as
+                            `dbg$<name>` (debugging)
   --silentMake              suppresses make output
   --parallelBuild:N         run at most N build processes at once;
                             0 (the default) = one per core
@@ -322,6 +328,15 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             # and forwarded to jorogumo as --target:browser (see deps.nim).
             c.config.jsBrowser = true
             forwardArg = false
+          of "hostimports", "exportall":
+            var enable = false
+            case normalize(val)
+            of "", "on": enable = true
+            of "off": enable = false
+            else: quit "invalid value for --" & key & " (on|off)"
+            if normalize(key) == "hostimports": c.config.hostImports = enable
+            else: c.config.exportAll = enable
+            forwardArg = false
           of "target":
             case normalize(val)
             of "browser": c.config.jsBrowser = true
@@ -396,6 +411,10 @@ proc compileProgram(c: var CmdOptions) =
   # which only sees defines forwarded on its command line (config.defines is the
   # cache key but not enough on its own) — so inject them the same way a user's
   # `-d:` does, and record them in config.defines so the cache key tracks them.
+  if c.config.backend == backendWasm and not c.config.hostImports and
+      getEnv("ITHAQUA_HOST_IMPORTS") == "1":
+    echo "nimony: ITHAQUA_HOST_IMPORTS is deprecated; pass --hostImports"
+    c.config.hostImports = true
   if c.config.backend in {backendWasm, backendJs}:
     # The wasm and JS backends have exactly one target each, and they are the
     # same target: 32-bit, freestanding, wasm32 word size. Imply it here —
