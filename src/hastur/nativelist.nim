@@ -138,6 +138,10 @@ const
     "tests/nimony/stdlib/tbitops",
     "tests/nimony/stdlib/tencodings",
     "tests/nimony/stdlib/trandom",
+    # x86-64 float negation is lowered as `0.0 - x`, so `-(+0.0)` is `+0.0` and
+    # `"-0"`, `"-0.0e5"` and `"-1e-400"` parse to a positive zero. Diagnosed:
+    # arkham's `NegC` float branch (`x64/value.nim`); AArch64's `fneg` is right.
+    "tests/nimony/stdlib/tparsefloat",
     # The one test on Windows that drives the ring on real sockets — every other
     # test in `tests/nimony/threads` either stubs itself out here or never
     # reaches `rawthreads.create`. Three native gaps have been found through it;

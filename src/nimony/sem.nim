@@ -2371,8 +2371,11 @@ proc semIf(c: var SemContext; dest: var TokenBuf; it: var Item) =
     producesVoid c, dest, info, it.typ
 
 proc semExceptionType(c: var SemContext; dest: var TokenBuf; it: var Item): TypeCursor =
+  let info = it.n.info
   result = semLocalType(c, dest, it.n)
-  # Allow any exception type - validation for "x != default(T)" semantics can come later
+  if raisesFamily(result) == NotRaisable:
+    buildErr c, dest, info, "`except` takes `ErrorCode` or a `ref` object type, not `" &
+      typeToString(result) & "`"
 
 proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info

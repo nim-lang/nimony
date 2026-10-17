@@ -1,1 +1,1 @@
-tests/nimony/exceptions/tsubtype_fail.nim(13, 3) Error: type mismatch: got: BaseError but wanted: DerivedError
+tests/nimony/exceptions/tsubtype_fail.nim(13, 3) Error: type mismatch: got: ref BaseError.Obj not nil but wanted: ref DerivedError.Obj not nil

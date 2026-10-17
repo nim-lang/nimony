@@ -43,8 +43,8 @@ block: # normal values
   assert bits32("4.35e15") == 0x597744D5'u32
   assert bits64("123e30") == 0x469841E9BD604769'u64
   assert bits32("123e30") == 0x74C20F4E'u32
-  assert bits64("1_000_000.000_1") == 0x412E8480000D1B71'u64
-  assert bits32("1_000_000.000_1") == 0x49742400'u32
+  assert bits64("1000000.0001") == 0x412E8480000D1B71'u64
+  assert bits32("1000000.0001") == 0x49742400'u32
   assert bits64(".5") == 0x3FE0000000000000'u64
   assert bits32(".5") == 0x3F000000'u32
   assert bits64("5.") == 0x4014000000000000'u64
@@ -225,3 +225,40 @@ block: # signed zeros, specials and prefix lengths
   assert y.classify == fcNegInf
   assert parseFloat("0.15625xyz", y) == 7
   assert y == 0.15625'f32
+
+block: # `_` after a digit is a separator and ignored, as in Nim's literals
+  var x = 3.0
+  assert parseFloat("1_000.5", x) == 7
+  assert x == 1000.5
+  assert parseFloat("2.5_0e1", x) == 7
+  assert x == 25.0
+  assert parseFloat("2.5e1_0", x) == 7
+  assert x == 2.5e10
+  assert parseFloat("1__0_", x) == 5   # runs and a trailing `_` too
+  assert x == 10.0
+  assert parseFloat("-0.000_1", x) == 8
+  assert x == -0.0001
+  x = 3.0
+  assert parseFloat("_1", x) == 0      # but not before the first digit
+  assert x == 3.0
+  assert parseFloat("1._5", x) == 2    # ... nor right after the `.`
+  assert x == 1.0
+  assert parseFloat("1e_5", x) == 1    # ... nor the `e`
+  assert x == 1.0
+  var y = 0.0'f32
+  assert parseFloat("12_5", y) == 4
+  assert y == 125.0'f32
+  assert bits32("16_777_217") == bits32("16777217")
+  # more than 19 digits, and the exact slow path
+  assert bits64("1_2345_6789_0123_4567_8901_2345_6789") ==
+    bits64("12345678901234567890123456789")
+  assert bits64("0.000_000_000_000_000_000_000_000_000_123_456_789_012_345_678_9") ==
+    bits64("1234567890123456789e-46")
+  assert bits64("2.225_073_858_507_201_136_057_409_796_709_131_975_934_819_546_351_645_648e-308") ==
+    bits64("2.225073858507201136057409796709131975934819546351645648e-308")
+
+block: # more than 19 digits: leading zeros do not count, the rest is re-read
+  assert bits64("0.0000000000000000000000000001234567890123456789") ==
+    bits64("1234567890123456789e-46")
+  assert bits64("12345678901234567890123456789") == 0x45C3F20D99235F65'u64
+  assert bits64("1.0000000000000000000000000001") == 0x3FF0000000000000'u64

@@ -25,6 +25,7 @@ import std/asyncio
 import std/base64
 import std/bitops
 import std/cmdline
+import std/colors
 import std/commonio
 import std/compilation
 import std/complex

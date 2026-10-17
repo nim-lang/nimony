@@ -228,15 +228,18 @@ func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
 
 func parseFloat*(s: openArray[char]; number: var float64): int =
   ## Parses a float and stores the value into `number`, correctly rounded.
-  ## Accepts `[sign] digits ['.' digits] [('e'|'E') [sign] digits]` (digits
-  ## may be separated by `_`; either side of the `.` may be empty, not both),
-  ## as well as `nan`, `inf` and `infinity` in any case. Returns the number of
-  ## processed chars, or 0 (leaving `number` unchanged) if `s` does not start
-  ## with a float.
+  ## Accepts `[sign] digits ['.' digits] [('e'|'E') [sign] digits]` (either
+  ## side of the `.` may be empty, not both), as well as `nan`, `inf` and
+  ## `infinity` in any case. Underscores after a digit are allowed and
+  ## ignored, as in `1_000.5`. Returns the number of processed chars, or 0
+  ## (leaving `number` unchanged) if `s` does not start with a float. An `e`
+  ## without digits after it is not part of the number.
   runnableExamples:
     var x = 0.0
     doAssert parseFloat("1.5e3 m", x) == 5
     doAssert x == 1500.0
+    doAssert parseFloat("1_000.25", x) == 8
+    doAssert x == 1000.25
   result = parseFloat64(s, number)
 
 func parseFloat*(s: openArray[char]; number: var float32): int =

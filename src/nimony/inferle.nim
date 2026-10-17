@@ -208,21 +208,19 @@ proc variableChangedByDiff*(f: var Facts; x: VarId; diff: xint) =
 proc variableMovedWithin*(f: var Facts; x: VarId; lo, hi: xint) =
   ## After `x += d` with `lo <= d <= hi` (either end may be unknown, NaN):
   ## an upper bound on `x` loosens by `hi`, a lower bound by `lo`, and a bound
-  ## whose end is unknown is gone.
+  ## whose end is unknown is gone. So is one whose shifted constant overflows
+  ## `xint` (NaN), as in `variableChangedByDiff` (#2672).
   var i = 0
   while i < f.x.len:
     let v = f.x[i]
     if v.a == x and v.b == x:
       inc i
-    elif v.a == x:
-      if hi.isNaN: f.jSwapRemove i
+    elif v.a == x or v.b == x:
+      var w = v
+      w.c = if v.a == x: v.c + hi else: v.c - lo
+      if w.c.isNaN: f.jSwapRemove i
       else:
-        var w = v; w.c = w.c + hi; f.jSet i, w
-        inc i
-    elif v.b == x:
-      if lo.isNaN: f.jSwapRemove i
-      else:
-        var w = v; w.c = w.c - lo; f.jSet i, w
+        f.jSet i, w
         inc i
     else:
       inc i

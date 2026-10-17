@@ -3850,6 +3850,36 @@ except ErrorCode as e:
   echo "Error: ", e
 ```
 
+### Raises types
+
+`{.raises.}` means `{.raises: ErrorCode.}`. The only other type a routine may
+raise is a `ref` object type, usually one inheriting from `Exception`:
+
+```nim
+type ParseError = ref object of Exception
+  pos: int
+
+proc parse(s: string): int {.raises: ParseError.} =
+  raise ParseError(msg: "unexpected end", pos: s.len)
+```
+
+An `except` arm is a type filter: `except ErrorCode` catches only `ErrorCode`
+values, `except T` for a `ref` type `T` catches `T` and its subtypes, and a bare
+`except:` catches everything. The arms are tried in order. Whatever a call
+raises must be caught by an enclosing `except` arm or be what the calling
+routine itself raises (for a `ref` type: a subtype of it). Nothing converts an
+`ErrorCode` into a `ref` exception or back; that has to be written out:
+
+```nim
+proc lookup(t: Table[string, int]; key: string): int {.raises: ParseError.} =
+  try:
+    result = t[key]           # raises `KeyError`, an `ErrorCode`
+  except ErrorCode:
+    raise ParseError(msg: "unknown key " & key)
+```
+
+A bare `raise` inside an `except` arm raises again what that arm caught.
+
 ### Try statement
 
 A try statement has the general form: `try <statements> except <statements> finally <statements>`.
