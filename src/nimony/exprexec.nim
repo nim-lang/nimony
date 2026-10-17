@@ -789,5 +789,12 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
     result = ensureMove c.errorMsg
   else:
     let sourceDir = absoluteParentDir(getFile(info))
+    # The sub-compile links the code of these modules as it is NOW, so the
+    # result depends on their bodies, which no interface file covers: a
+    # changed body behind a compile-time call must semcheck this module again.
+    # Recorded like a `slurp`ed file; `deps.nim` extends the dependency to each
+    # module's import closure, which is what the sub-compile links.
+    for m in c.usedModules:
+      recordFileDep s, m & ".s.nif"
     result = runEval(s, dest, c.newModuleSuffix, c.dest, c.usedModules, sourceDir)
 

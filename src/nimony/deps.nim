@@ -1812,6 +1812,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           b.withTree "output":
             b.addStrLit moduleHexedFile(c, backendDir, i, v)
 
+proc semmedModule(c: DepContext; path: string): int =
+  ## The node whose `.s.nif` `path` is, or -1 when it is some other file or
+  ## the module is no longer part of the program.
+  const ext = ".s.nif"
+  if path.endsWith(ext):
+    let modname = splitModulePath(path.substr(0, path.len - ext.len - 1)).name
+    result = c.processedModules.getOrDefault(modname, -1)
+  else:
+    result = -1
+
 proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: bool) =
   b.withTree "do":
     b.addIdent "nimsem"
@@ -1852,7 +1862,23 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     # looking current.
     var lostFileDep = false
     for f in v.fileDeps:
-      if not semos.fileExists(f):
+      let bodyOwner = semmedModule(c, f)
+      if bodyOwner >= 0:
+        # The module ran code of `bodyOwner` at compile time (`exprexec`).
+        # The helper program it built links the bodies of that module's whole
+        # import closure, so its result depends on every `.s.nif` in it; those
+        # are rewritten on every re-sem (doc/internals/ic.md, rule 1), which is
+        # exactly the signal "a body in there may have changed".
+        var stack = @[bodyOwner]
+        while stack.len > 0:
+          let n = c.nodes[stack.pop()]
+          if n.plugin.len > 0: continue
+          let sf = c.config.semmedFile(n.files[0], n.plugin, c.cmd == DoDoc)
+          if not seenDeps.containsOrIncl(sf):
+            b.withTree "input":
+              b.addStrLit sf
+            for d in n.deps: stack.add d
+      elif not semos.fileExists(f):
         lostFileDep = true
       elif not seenDeps.containsOrIncl(f):
         b.withTree "input":

@@ -51,8 +51,18 @@ The other modules depend on the interface, never on the main output.
 | `M.oc.nif` | `M.oc.idx.nif` | `optimize` (Shoggoth) | `lengc`, `arkham` |
 
 * `M.s.idx.nif` is the module's index plus a checksum of its interface and
-  of the bodies of its `.inline` procs (`nifindexes.createIndex`). A changed
-  non-inline proc body leaves it alone, so no importer is re-semmed.
+  of the bodies that other modules' sem copies: templates, macros,
+  iterators, `.inline` procs and generic routines, which are instantiated
+  into the importing module's `.s.nif` (`nifindexes.createIndex`). A
+  changed body of a plain proc leaves it alone, so no importer is re-semmed.
+* A module that evaluates a call at compile time (`exprexec`) builds and
+  runs a helper program that links the callee's module and its import
+  closure as they are at that moment. Its result depends on bodies the
+  interface does not cover, so nimsem records the callee modules in
+  `M.s.deps.nif` and the driver makes the `.s.nif` of their import closure
+  inputs of the module's nimsem node (rule 1 makes a re-sem of any of them
+  visible). Same depfile pattern as `slurp`: the first build runs regardless,
+  every later one is exact.
 * `M.live.nif` is the module's share of the whole-program DCE result.
   `dceLive` reads every module's `.x.nif` and runs whenever one of them
   changed; the live files it writes change only for the modules whose live

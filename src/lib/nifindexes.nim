@@ -83,6 +83,11 @@ proc processDeclForChecksum(dest: var Sha1State; n: var Cursor) =
           updateLoop(dest, n, inlineT, dummy) # SymbolDef
           updateLoop(dest, n, inlineT, dummy) # Export marker
           updateLoop(dest, n, inlineT, dummy) # pattern
+          # A generic routine is instantiated into the importing module's
+          # `.s.nif`, so its body is part of the interface exactly like a
+          # template's: an importer that instantiated it must be semchecked
+          # again when the body changes.
+          if n.isTagLit: foundInline = true
           updateLoop(dest, n, inlineT, dummy) # typevars
           updateLoop(dest, n, inlineT, dummy) # params
           updateLoop(dest, n, inlineT, dummy) # retType
