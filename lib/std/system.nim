@@ -257,15 +257,6 @@ type
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
 
-proc runStep*(c: Continuation): Continuation {.inline.} =
-  ## Steps `c`: one state function call, returning the continuation to run next.
-  ##
-  ## Every continuation runs through here. It used to also install the frame
-  ## into a thread variable so active code could read the running coroutine's
-  ## context; that is gone -- a `.passive` proc reads its own frame's `ctx` slot
-  ## directly (see `std/contextvars`), so stepping is a plain tail call again.
-  result = c.fn(c.env)
-
 func delay*(): Continuation {.magic: "Delay".}
   ## Creates a continuation for the current coroutine's own continuation from the point
   ## of the call to `suspend` forward. Think of it as a reification of the "semicolon": To split up `a; b` use
@@ -280,7 +271,7 @@ proc suspend*() {.magic: "Suspend".}
   ## `return Continuation(fn: nil, env: this)`.
 
 proc trivialTick(c: Continuation): Continuation =
-  runStep(c)
+  result = c.fn(c.env)
 
 
 
@@ -296,8 +287,7 @@ proc setScheduler*(handler: Scheduler) {.inline.} =
 
 proc advance*(c: Continuation): Continuation =
   ## Single steps through a list of continuations. Usually this does not need
-  ## to be called directly. Used by the compiler to run a coroutine. The step
-  ## goes through `scheduler` (and so through `runStep`).
+  ## to be called directly. Used by the compiler to run a coroutine.
   result = scheduler(c)
 
 type
