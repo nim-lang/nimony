@@ -560,7 +560,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX,
         LowX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
-        DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,
+        DefaultdistinctX, Delay0X, SuspendX, CtxSlotX, ExprX, DoX,
         ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
         EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
@@ -1082,6 +1082,11 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
                         dest.addIntLit 1, valInfoForEnv
         else:
           coro_transform.emitStopContinuation(dest, info)
+        # The hidden ctx argument, last: a `.closure` iter carries no dynamic
+        # context, so it hands the fresh frame a nil and the frame's `ctx`
+        # slot stays empty. Only a `.passive` proc has a context to pass on;
+        # see `coro_transform.emitCtxArg`.
+        dest.addParPair NilX, info
 
     # `myEnv` snapshot + try/while/finally — shared with cps's
     # `.passive` expansion via `coro_transform.emitWhileBegin`/
@@ -2004,7 +2009,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
         HighX, LowX, UnpackX, FieldsX, FieldpairsX,
         EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
-        DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,
+        DefaultdistinctX, Delay0X, SuspendX, CtxSlotX, ExprX, DoX,
         ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
         EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,

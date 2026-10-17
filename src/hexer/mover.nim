@@ -101,7 +101,7 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
        HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
-       DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
+       DefaultdistinctX, Delay0X, SuspendX, CtxSlotX, ExprX, DoX, PlussetX, MinussetX,
        MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX,
        InternalFieldPairsX, FailedX, IsX, EnvpX, ToClosureX, PluginCallX:

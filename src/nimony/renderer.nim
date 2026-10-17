@@ -1557,6 +1557,13 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         put(g, tkParLe, "(")
         put(g, tkParRi, ")")
 
+    of CtxSlotX:
+      # (ctxSlot) -> ctxSlot()
+      n.into:
+        put(g, tkSymbol, "ctxSlot")
+        put(g, tkParLe, "(")
+        put(g, tkParRi, ")")
+
     of EmoveX:
       n.into:
         put(g, tkSymbol, "ensureMove")

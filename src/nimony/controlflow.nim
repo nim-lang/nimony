@@ -347,7 +347,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
      CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
      AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
      FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
-     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX,
+     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, CtxSlotX, ExprX,
      DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX,
      LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
      WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
@@ -625,7 +625,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, Delay0X, SuspendX, ToClosureX, PluginCallX:
+       FailedX, IsX, EnvpX, Delay0X, SuspendX, CtxSlotX, ToClosureX, PluginCallX:
       # `PluginCallX` is frontend-only: it is resolved by every instantiation
       # and never reaches the control-flow graph. Listed to stay exhaustive.
       trExprLoop c, n, tar

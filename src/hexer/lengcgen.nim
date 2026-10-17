@@ -1484,7 +1484,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
-        Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+        Delay0X, SuspendX, CtxSlotX, ExprX, DoX, ArratX, TupatX,
         PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
         LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
         WasmovedX, SinkhX, TraceX, InternalTypeNameX,
@@ -1840,7 +1840,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
        InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
-       InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX,
+       InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, CtxSlotX, ToClosureX,
        PluginCallX:
       error c, "BUG: not eliminated: ", n
       #skip n

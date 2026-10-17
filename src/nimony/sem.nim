@@ -1965,7 +1965,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
-     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, CtxSlotX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
      FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
@@ -2276,7 +2276,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
-     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, CtxSlotX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
      FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
@@ -3879,6 +3879,26 @@ proc semSuspend(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # a Continuation-typed result would fail the discard check.
   it.typ = c.types.voidType
   commonType c, dest, it, beforeExpr, expected
+
+proc semCtxSlot(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(ctxSlot)` — the address of the `ctx` slot of the `.passive` routine this
+  ## call appears in.
+  ##
+  ## Only a `.passive` proc has such a frame; anywhere else there is no slot to
+  ## name, so a use is rejected here rather than left for the hexer to trip
+  ## over. `std/contextvars` reaches a dynamic chain through `ctxSlot()` and is
+  ## restricted with it: its entry points are templates, so a call to them
+  ## expands this call into the CALLER's routine and the check below sees where
+  ## a context is really being read or written.
+  let info = it.n.info
+  if not c.routine.pragmas.contains(PassiveP):
+    buildErr c, dest, info,
+      "`ctxSlot` is only allowed inside a `.passive` proc"
+    it.n.into:
+      while it.n.hasMore: skip it.n
+  else:
+    dest.takeTree it.n
+  it.typ = c.types.ptrRootRefType
 
 type ArrayConstrContext = object
   firstKeyType: TypeCursor
@@ -5940,6 +5960,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semDelay c, dest, it
     of SuspendX:
       semSuspend c, dest, it
+    of CtxSlotX:
+      semCtxSlot c, dest, it
     of InsetX:
       semInSet c, dest, it
     of CardX:
