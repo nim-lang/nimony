@@ -39,6 +39,14 @@ else:
   import posix/posix
   import errorcodes / errorcodes_posix
 
+  when defined(osx):
+    proc createOpen(path: cstring; flags: cint): cint {.varargs, importc: "open", sideEffect.}
+      ## `posix.open` with a variadic C prototype, like libc's. `posix.open` is
+      ## fixed-arity, and on Apple arm64 a variadic argument goes on the stack
+      ## rather than in a register, so libc would read a garbage `mode`.
+  else:
+    template createOpen(path: cstring; flags: cint; mode: Mode): cint = open(path, flags, mode)
+
 const
   maxRetry = 10000
   letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -129,8 +137,8 @@ proc safeOpen(filename: Path; f: var File): ErrorCode =
       else:
         result = Success
   else:
-    let r = pcall(open(name.toCString, O_RDWR or O_CREAT or O_EXCL or O_CLOEXEC,
-                       Mode(0o600)))
+    let r = pcall(createOpen(name.toCString, O_RDWR or O_CREAT or O_EXCL or O_CLOEXEC,
+                             Mode(0o600)))
     if r < 0: return posixToErrorCode(cint(-r))
     let fd = cint(r)
     when defined(nimNativeIo):

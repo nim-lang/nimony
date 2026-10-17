@@ -30,6 +30,14 @@ when defined(posix):
   const PermBits: array[FilePermission, uint32] = [
     0o100'u32, 0o200, 0o400, 0o010, 0o020, 0o040, 0o001, 0o002, 0o004]
 
+  when defined(osx):
+    proc createOpen(path: cstring; flags: cint): cint {.varargs, importc: "open", sideEffect.}
+      ## `posix.open` with a variadic C prototype, like libc's. `posix.open` is
+      ## fixed-arity, and on Apple arm64 a variadic argument goes on the stack
+      ## rather than in a register, so libc would read a garbage `mode`.
+  else:
+    template createOpen(path: cstring; flags: cint; mode: Mode): cint = open(path, flags, mode)
+
   template posixError(r: clong): ErrorCode =
     ## The `ErrorCode` for a negative `pcall` result.
     posixToErrorCode(cint(-r))
@@ -161,8 +169,8 @@ when defined(posix):
       # Refuse before `dest` is created or truncated.
       result = posixToErrorCode(EISDIR)
     else:
-      r = pcall(open(d.toCString, O_WRONLY or O_CREAT or O_TRUNC or O_CLOEXEC,
-                     Mode(0o666)))
+      r = pcall(createOpen(d.toCString, O_WRONLY or O_CREAT or O_TRUNC or O_CLOEXEC,
+                           Mode(0o666)))
       if r < 0:
         result = posixError(r)
       else:
