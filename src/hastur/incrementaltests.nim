@@ -412,6 +412,88 @@ proc incrementalTests*() =
     writeFile(pluginData, originalPluginData)
     writeFile(slurpData, originalSlurpData)
 
+  # Phases 12-16: bodies that are compiled in the IMPORTER, not where they
+  # are written. A generic routine is instantiated into the importer's
+  # `.s.nif`; a proc called at compile time is linked into the helper program
+  # the importer's sem builds and runs. Neither body is a signature, so the
+  # callee's `.s.idx.nif` checksum has to cover the one and the importer's
+  # `(dependency …)` list the other (doc/internals/ic.md), or the importer is
+  # never re-semmed and the program keeps the old value.
+  let bodiesSrc = "tests/incremental/bodies.nim"
+  let bodiesDep = "tests/incremental/bodiesdep.nim"
+  let bodiesCache = "nimcache" / "incremental-bodies"
+  if fileExists(bodiesSrc) and fileExists(bodiesDep):
+    phases += 5
+    let originalBodiesDep = readFile(bodiesDep)
+    removeDir bodiesCache
+    let bodiesCmd = nimony.quoteShell & " c -r --silentMake --report --nimcache:" &
+                    bodiesCache.quoteShell & " " & bodiesSrc.quoteShell
+
+    var bodiesOutput = ""
+    proc runBodies(label: string): seq[seq[ReportEntry]] =
+      let (output, ec) = execCmdEx(bodiesCmd)
+      bodiesOutput = output
+      if ec != 0:
+        stdout.write output
+        writeFile(bodiesDep, originalBodiesDep)
+        restoreSources()
+        quit "incremental: '" & label & "' compile failed"
+      parseNifmakeReports(output)
+
+    # Phase 12: cold build; records the compile-time dependency.
+    block:
+      discard runBodies("bodies-cold")
+      expect bodiesOutput.contains("generic 1") and bodiesOutput.contains("folded 7"),
+             "bodies-cold: expected 'generic 1' and 'folded 7'"
+
+    # Phase 13: nothing changed. The `.s.nif` inputs the dependency added are
+    # outputs of nodes of the same build, so they must not keep the importer
+    # stale.
+    block:
+      let r = runBodies("bodies-noop")
+      if r.len == 2:
+        expect reportField(r[0], "total") == 0,
+               "bodies-noop: frontend re-ran " & $reportField(r[0], "total") & " commands"
+        expect reportField(r[1], "total") == 0,
+               "bodies-noop: backend re-ran " & $reportField(r[1], "total") & " commands"
+
+    # Phase 14: edit the GENERIC's body. The callee's interface changed, so
+    # the importer is re-semmed and re-instantiates: two nimsem runs.
+    block:
+      writeFile(bodiesDep, originalBodiesDep.replace("result = 1", "result = 2"))
+      let r = runBodies("generic-body")
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") == 2,
+               "generic-body: nimsem ran " & $reportField(r[0], "nimsem") &
+               " times (expected the callee's and the importer's)"
+      expect bodiesOutput.contains("generic 2"),
+             "generic-body: ran a stale instance; expected the program to print 'generic 2'"
+
+    # Phase 15: edit the body of the proc called at COMPILE TIME. Not an
+    # interface change — the importer re-sems because the callee's `.s.nif`
+    # is one of its recorded inputs.
+    block:
+      writeFile(bodiesDep, originalBodiesDep.replace("result = 7", "result = 8"))
+      let r = runBodies("folded-body")
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") == 2,
+               "folded-body: nimsem ran " & $reportField(r[0], "nimsem") &
+               " times (expected the callee's and the importer's)"
+      expect bodiesOutput.contains("folded 8"),
+             "folded-body: folded a stale body; expected the program to print 'folded 8'"
+
+    # Phase 16: restore and settle; the build after that is a no-op.
+    block:
+      writeFile(bodiesDep, originalBodiesDep)
+      discard runBodies("bodies-restore")
+      expect bodiesOutput.contains("generic 1") and bodiesOutput.contains("folded 7"),
+             "bodies-restore: expected the original values back"
+      let r = runBodies("bodies-settle")
+      if r.len == 2:
+        expect reportField(r[0], "total") == 0 and reportField(r[1], "total") == 0,
+               "bodies-settle: re-ran " & $(reportField(r[0], "total") + reportField(r[1], "total")) &
+               " commands (expected 0)"
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f
