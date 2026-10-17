@@ -2,6 +2,7 @@
 # back with `nifreader` and check that each entry is the node it should be.
 
 import std / [syncio, assertions, logging, dirs, paths]
+from std / os import getAppFilename, splitFile
 import ".." / ".." / ".." / src / lib / nifreader
 
 assert substituteLog(defaultFmtStr, lvlInfo, "a message") == "info \"a message\""
@@ -70,7 +71,8 @@ for e in entries:
   assert e.fields.len == 6
   assert e.fields[0].len == len("s:2026-09-29T09:14:03Z")
   assert e.fields[0][len("s:2026-09-29")] == 'T'
-  assert e.fields[1] == "s:tlogging"
+  # the executable's name: `tlogging`, or the joined group's when run in one
+  assert e.fields[1] == "s:" & getAppFilename().splitFile.name
   assert e.fields[2].len == len("s:2026-09-29")
   assert e.fields[3].len == len("s:09:14:03")
   assert e.fields[4][0 .. 1] == "s:"

@@ -47,7 +47,7 @@ proc main() {.raises.} =
     show collect(src, yieldFilter = {pcLinkToFile, pcLinkToDir})
     show collect(src, followFilter = {pcDir, pcLinkToDir})
   else:
-    echo "flink dlink"
+    echo "dlink flink"
     echo "a/b/f2 a/f1 dlink/x top"
 
   # relative = false yields paths joined with `dir`
