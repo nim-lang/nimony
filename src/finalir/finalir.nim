@@ -731,6 +731,11 @@ proc trAsmStmt(dest: var TokenBuf; n: var Cursor) =
     copyInto dest, n:
       while n.hasMore:
         trAsmStmt dest, n
+  of WhileS:
+    # `while true: …` — the condition stays, the body may hold `if`s
+    copyInto dest, n:
+      dest.takeTree n
+      trAsmStmt dest, n
   else:
     dest.takeTree n
 

@@ -1060,3 +1060,48 @@ block rfindTests:
   assert s.rfind("") == 11
   assert s.rfind("foo.bar.baz!") == -1
   assert s[0 ..< s.rfind('.')] == "foo.bar"
+
+block alignTests:
+  assert align("abc", 4) == " abc"
+  assert align("a", 0) == "a"
+  assert align("", 3) == "   "
+  assert align("1232", 6) == "  1232"
+  assert align("1232", 6, '#') == "##1232"
+  assert align("toolong", 3) == "toolong"
+  assert alignLeft("abc", 4) == "abc "
+  assert alignLeft("a", 0) == "a"
+  assert alignLeft("", 2) == "  "
+  assert alignLeft("1232", 6) == "1232  "
+  assert alignLeft("1232", 6, '#') == "1232##"
+  assert alignLeft("toolong", 3) == "toolong"
+
+block centerTests:
+  let a = "foo"
+  assert a.center(2) == "foo"
+  assert a.center(3) == "foo"
+  assert a.center(5) == " foo "
+  assert a.center(6) == " foo  "
+  assert a.center(7, '*') == "**foo**"
+  assert "".center(2) == "  "
+
+block indentTests:
+  assert indent("First line\c\l and second line.", 2) ==
+         "  First line\l   and second line."
+  assert indent("a\nb", 1, "--") == "--a\n--b"
+  assert indent("", 2) == "  "
+  assert indent("x", 0) == "x"
+
+  let block1 = "    Hello\n      There\n"
+  assert block1.unindent() == "Hello\nThere\n"
+  assert block1.unindent(2) == "  Hello\n    There\n"
+  assert unindent("--a\n----b\nc", 1, "--") == "a\n--b\nc"
+  assert unindent("--a\n----b", padding = "--") == "a\nb"
+
+  assert indentation(block1) == 4
+  assert indentation("no indent\n  some") == 0
+  assert indentation("   \n  x\n    y") == 2
+  assert indentation("") == 0
+
+  assert block1.dedent() == "Hello\n  There\n"
+  assert block1.dedent(1) == "   Hello\n     There\n"
+  assert "  a\n    b".dedent() == "a\n  b"

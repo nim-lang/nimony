@@ -24,7 +24,7 @@ import ".." / lib / [symparser, intrinsics]
 import nimony_model, builtintypes, decls, asthelpers, programs,
   magics, nifconfig, semdata, sembasics,
   semchecks, semconst, semos, renderer, features, pragmacanon, identstyle,
-  symtabs
+  symtabs, typeprops
 
 # --- thin shims forwarding into the sem core via SemContext callbacks ---
 # (const-eval entry points — semBoolExpr, semConstIntExpr, … — come directly
@@ -548,8 +548,11 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       var nn = n
       let typeStart = dest.len
       # Sem-check the type properly
+      let typeInfo = n.info
       crucial.raisesType = semLocalType(c, dest, n)
-      # TODO: validate that type supports "x != default(T)" interpretation
+      if raisesFamily(crucial.raisesType) == NotRaisable:
+        buildErr c, dest, typeInfo, "`.raises` takes `ErrorCode` or a `ref` object type, not `" &
+          typeToString(crucial.raisesType) & "`"
       dest.addParRi()
       var emptyRaises = false
       if nn.exprKind == BracketX:
@@ -904,11 +907,12 @@ proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
       # what makes the call site emit `(haddr d)`, the tag that tells the back end
       # to bind d's location instead of materialising a pointer to it.
       var ptyp = param.typ
-      let wantsVar = row.roles[i] == roInout
+      let wantsVar = row.roles[i] in {roInout, roOut}
       let isVar = ptyp.kind == TagLit and ptyp.typeKind == MutT
       if wantsVar and not isVar:
-        result = "operand " & $(i + 1) & " of `" & opName & "` is read and " &
-                 "written, so it must be declared `var`"
+        result = "operand " & $(i + 1) & " of `" & opName & "` is " &
+                 (if row.roles[i] == roOut: "written" else: "read and written") &
+                 ", so it must be declared `var`"
         break
       if isVar and not wantsVar:
         result = "operand " & $(i + 1) & " of `" & opName & "` is only read, " &

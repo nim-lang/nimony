@@ -14,6 +14,31 @@ Socket declarations use the X/Open ABI and its `__xnet_*` entry points.
 Directory entries are copied from libc records into a synthetic `Dirent`:
 illumos has no native `d_type`, so `std/dirs` uses its existing `lstat` fallback.
 
+## Process spawning
+
+`std/osproc.startProcess` and `std/os.execShellCmd` always use libc
+`posix_spawn` on illumos; there is no fork/exec fallback. The supported
+baseline must provide `pipe2`, `F_DUPFD_CLOEXEC`, and
+`posix_spawn_file_actions_addchdir` (the unsuffixed POSIX.1-2024 interface).
+Working-directory changes happen in the child through file actions, never
+by changing the parent's directory. `poDaemon` retains the existing
+new-process-group behavior, not full daemonization.
+
+`startProcess` reports spawn/setup failures synchronously using the returned
+error number. In particular, a missing executable, an invalid working
+directory, or an unexecutable image raises an OS error rather than returning
+a process that exits 127. PATH lookup uses the parent's PATH, including when
+a custom child environment is supplied; only lookup failures advance to the
+next candidate. There is no implicit shell fallback for an unexecutable
+image: use `poEvalCommand` to request a shell. `execShellCmd` retains its `-1`
+return on launch failure.
+
+The public spawn handles each contain one private libc pointer; the bindings
+do not expose or allocate libc's internal structures. `tposixabi.nim` checks
+the handle sizes/alignment and process-group flag. `tosprocspawn.nim` checks
+launch options, errors, descriptor ownership, and child lifecycle. It runs
+separately because it temporarily closes standard descriptors.
+
 ## I/O ring
 
 The illumos backend combines `PORT_SOURCE_FD` readiness with `PORT_SOURCE_AIO`

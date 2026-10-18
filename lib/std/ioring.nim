@@ -53,6 +53,8 @@ import ./ioring/platform
 when defined(windows):
   when not defined(nimIoringWsaPoll):
     import ./ioring/backends/iocp   # iocpOwnerLane / iocpWake — lane routing
+  import ./ioring/backends/files    # isFileHandle — `closeFd` on a file
+  from std/windows/winlean import Handle, closeHandle
 when defined(posix):
   from std/posix/posix import F_GETFL, F_SETFL, O_NONBLOCK,
                               SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
@@ -685,6 +687,14 @@ when defined(windows):
     ## issued them — and the drain reports each as `ECancelled`, freeing the
     ## slot; only the lane association is dropped here (backends/iocp.nim,
     ## "Cancellation").
+    ##
+    ## A file `fd` (a narrowed `CreateFileW` HANDLE from `submitOpen`) is
+    ## closed with `CloseHandle`: `closesocket` fails on it and would leak the
+    ## handle. Its ops complete in place on the polling thread (backends/files),
+    ## so none are left in flight to cancel.
+    if isFileHandle(fd):
+      discard closeHandle(cast[Handle](uint(cast[uint32](fd))))
+      return
     when hasIocp:
       if backendRelays.forgetFd != nil:
         backendRelays.forgetFd(fd)

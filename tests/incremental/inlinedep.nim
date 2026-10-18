@@ -17,3 +17,10 @@ proc scaled*(x: int): int =
     acc = acc + x * 3
     inc i
   result = acc div x
+
+proc genericBase[T](x: T): int =
+  ## Private, yet instantiated in the importer through `twice`: the
+  ## `generic-dep` phase edits this body and nothing else.
+  400
+
+proc twice*[T](x: T): int = genericBase(x) * 2

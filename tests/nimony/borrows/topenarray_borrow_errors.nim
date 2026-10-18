@@ -44,3 +44,92 @@ proc testAliasInCall =
   appendFirst(s, s)
 
 testAliasInCall()
+
+# 4. A `var` parameter forwarded to another `var` parameter is a location
+# already, so it takes no `(haddr …)`; the mutation must be caught all the same.
+proc testForwardedVar(s: var string) =
+  let p = toOpenArray(s)
+  s.setLen(1)
+  if p.len > 0: discard p[0]
+
+var fwd = "abc"
+testForwardedVar(fwd)
+
+# 5. Iterating a field of a `var` parameter while passing the parameter on as
+# `var`: the callee may change the container being iterated.
+type
+  Holder = object
+    items: seq[int]
+
+proc touch(h: var Holder; x: int) =
+  h.items.add x
+
+proc testLoopOverForwarded(h: var Holder) =
+  for x in h.items:
+    touch(h, x)
+
+var holder = Holder(items: @[1, 2])
+testLoopOverForwarded(holder)
+
+# 6. A `var T` result is derived from the call's first argument, so iterating
+# it borrows that argument.
+proc mitemsOf(h: var Holder): var seq[int] = h.items
+
+proc testVarResult(h: var Holder) =
+  for x in mitems(mitemsOf(h)):
+    touch(h, x)
+
+testVarResult(holder)
+
+# 7. A fresh call result lives in a temporary that dies with the scope that
+# evaluated it: a view of it must not be returned ...
+proc freshSeq(n: int): seq[int] =
+  result = @[]
+  for i in 0 ..< n: result.add i
+
+proc viewOfTemp(): openArray[int] =
+  result = toOpenArray(freshSeq(3))
+
+discard viewOfTemp()
+
+# 8. ... nor outlive the scope it was created in.
+proc tempEscapesScope(b: bool) =
+  var g = toOpenArray(freshSeq(1))
+  if b:
+    g = toOpenArray(freshSeq(3))
+  if g.len > 0: discard g[0]
+
+tempEscapesScope(true)
+
+# 9. `result` is never killed, but the borrow it holds lasts until the proc
+# returns: mutating the source afterwards hands the caller a dangling view.
+proc resultThenMutate(s: var seq[int]): openArray[int] =
+  result = toOpenArray(s)
+  grow(s)
+
+var src = @[1, 2, 3]
+discard resultThenMutate(src)
+
+# 10. `let a = b` for a view `b` takes over `b`'s borrow; rebinding `b` must not
+# release the only borrow on `s` while `a` still points into it.
+proc copiedViewRebind =
+  var s = @[1, 2, 3]
+  var r = @[4, 5]
+  var b = toOpenArray(s)
+  let a = b
+  b = toOpenArray(r)
+  grow(s)
+  discard a[0]
+
+copiedViewRebind()
+
+# 11. A reslice of a view assigned back to itself keeps the original borrow:
+# `a` must not end up borrowing from `a`.
+proc selfReslice =
+  var s = @[1, 2, 3]
+  var a = toOpenArray(s)
+  a = toOpenArray(a, 1, 2)
+  grow(s)
+  discard a[0]
+
+selfReslice()

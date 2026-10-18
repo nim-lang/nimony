@@ -713,7 +713,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       n = sub(n)
       skipNilAnnotation n
       takeParRi dest, n, ptrStart
-    of StaticT, SinkT, DistinctT:
+    of StaticT, SinkT, OwnedT, DistinctT:
       n.into:
         trType c, dest, n, flags
     of TupleT, ClosureTupleT:
@@ -1128,7 +1128,10 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if isGeneric:
     skip n, SkipBody
   elif mode != TraverseSig or InlineP in prag.flags:
+    let wasAsm = c.inAsmBody
+    c.inAsmBody = AssemblerP in prag.flags
     trProcBody c, dest, n
+    c.inAsmBody = wasAsm
   else:
     dest.addDotToken()
     skip n
@@ -2182,8 +2185,22 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         trExpr c, dest, n
         takeParRi dest, n, discardStart
     of CaseS: trCase c, dest, n
+    of WhileS, BreakS:
+      if c.inAsmBody:
+        # An `{.assembler.}` body's loop is the machine's: Leng has the same
+        # `(while (true) …)` and `(break)`, which arkham transliterates.
+        if n.stmtKind == BreakS:
+          dest.addParLe(n.cursorTagId, n.info)
+          dest.addParRi()
+          skip n
+        else:
+          takeInto dest, n:
+            trExpr c, dest, n             # the condition, `(true)`
+            trStmt c, dest, n             # the body
+      else:
+        error c, "BUG: not eliminated: ", n
     of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS,
-       BreakS, WhileS, BlockS, IfS:
+       BlockS, IfS:
       error c, "BUG: not eliminated: ", n
     of TryS:
       trTry c, dest, n
@@ -2311,7 +2328,10 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
   ## from would die with its globals in DCE; as statements they are roots, and the
   ## library is loaded whether or not anything uses it. Teaching the liveness pass
   ## that an `asgn` to a dead global is dead would restore that.)
-  for key, vals in c.dynlibs:
+  # `getTmpId` and `getCompilerProc` take `c` as `var`, so the table is moved
+  # out of `c` for the loop rather than borrowed; neither of them reads it.
+  var dynlibs = move c.dynlibs
+  for key, vals in dynlibs:
     let dynlib = pool.strings[key]
     var tmp = pool.symId("Dl." & dynlib & "." & $getTmpId(c) & "." & c.main)
 
@@ -2370,6 +2390,7 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
       initDest.addParRi()   # close call
       initDest.addParRi()   # close cast
       initDest.addParRi()   # close asgn
+  c.dynlibs = move dynlibs
 
 proc initProcName(moduleSuffix: string): string =
   "`ini.0." & moduleSuffix

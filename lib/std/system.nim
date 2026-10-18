@@ -73,56 +73,7 @@ func compiles*(x: untyped): bool {.magic: Compiles.}
   ##   ```
 
 
-const
-  # Use string literals for one digit numbers to avoid the allocations as they are so common.
-  NegTen = [
-    "-0", "-1", "-2", "-3", "-4",
-    "-5", "-6", "-7", "-8", "-9"]
-
-func `$`*(x: uint64): string =
-  result = ""
-  if x < 10:
-    result = NegTen[int x].substr(1, 1)
-  else:
-    var y = x
-    while true:
-      result.add char((y mod 10'u) + uint('0'))
-      y = y div 10'u
-      if y == 0'u: break
-    # Reverse in place. Two converging indices rather than `i` and `last-i`:
-    # `lo < hi <= len-1` is what proves both accesses, and `len div 2` is not a
-    # bound the contract prover can follow.
-    var lo = 0
-    var hi = result.len-1
-    while lo < hi:
-      let ch = result[lo]
-      result[lo] = result[hi]
-      result[hi] = ch
-      inc lo
-      dec hi
-
-func `$`*(x: int64): string =
-  if x < 0:
-    if x > -10:
-      result = NegTen[int(-x)]
-    elif x == -9223372036854775808:
-      result = "-" & $cast[uint64](x)
-    else:
-      result = "-" & $(0-x)
-  elif x < 10:
-    result = ""
-    result.add char(x + int64('0'))
-  else:
-    result = $cast[uint64](x)
-
-func `$`*(x: int32): string =
-  $(int64(x))
-
-func addInt*(s: var string; x: int64) {.inline.} =
-  s.add $x
-
-func addInt*(s: var string; x: uint64) {.inline.} =
-  s.add $x
+include "system/formatint"
 
 func `$`*(b: bool): string =
   if b: "true" else: "false"
@@ -241,6 +192,7 @@ template ord*[T: Ordinal|enum](x: T): int =
   int(x)
 
 include "system/panics"
+include "system/ownedrefs"
 
 include "system/dyncalls"
 
@@ -540,7 +492,7 @@ func addEscapedChar*(s: var string, c: char) {.noSideEffect, inline.} =
     s.add(HexChars[int((n and 0xF0) shr 4)])
     s.add(HexChars[int(n and 0xF)])
 
-func addQuoted*[T](s: var string, x: T) =
+func addQuoted*[T](s: var string, x: T) {.untyped.} =
   ## Appends `x` to string `s` in place, applying quoting and escaping
   ## if `x` is a string or char.
   ##

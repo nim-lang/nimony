@@ -1,27 +1,21 @@
-import std/[assertions, syncio]
-
-# Test that arbitrary types can be used in .raises pragma
+# `.raises` and `except` take `ErrorCode` or a `ref` object type: an error
+# travels in a one byte `ErrorCode` slot, a `ref` one in the threadvar `exc`.
 
 type
-  MyError = distinct int32
+  Code = enum none, bad, worse = 256     # would be truncated (#2676)
+  Plain = object                         # has no "no error" value (#2677)
+    pos: int
+  Wide = distinct int32
+  RefInt = ref int
 
-# Test 1: .raises without type defaults to ErrorCode
-proc foo1() {.raises.} =
-  discard
+proc a() {.raises: Code.} = discard
+proc b() {.raises: Plain.} = discard
+proc c() {.raises: Wide.} = discard
+proc d() {.raises: RefInt.} = discard
 
-# Test 2: .raises with custom type
-proc foo2(): int {.raises: MyError.} =
-  result = 42
+proc e() {.raises.} = raise IOError
 
-# Test 3: Calling raises proc
-proc callsRaises() {.raises: MyError.} =
-  let x = foo2()
-  assert x == 42
-
-echo "Testing arbitrary types in .raises pragma"
-try:
-  callsRaises()
-  echo "Success: arbitrary types work in .raises"
-except:
-  echo "FAIL: unexpected exception"
-  assert false
+proc f() =
+  try: e()
+  except Code: discard
+  except: discard

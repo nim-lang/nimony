@@ -1,10 +1,11 @@
 import std/syncio
 
 type
-  MyError = distinct int32
+  MyError = ref object of Exception
+    code: int
 
 proc foo(): int {.raises: MyError.} =
-  raise MyError(1)
+  raise MyError(code: 1)
   result = 42
 
 echo "Type checking works correctly!"

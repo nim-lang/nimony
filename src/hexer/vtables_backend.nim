@@ -215,6 +215,15 @@ proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
     # calling convention is always nimcall for now:
     dest.copyIntoKind PragmasU, NoLineInfo:
       dest.addParPair Nimcall, NoLineInfo
+      # A `.raises` method returns its error code at the Leng level, and the
+      # slot is called through this type: without the pragma the cast says
+      # `void` while every implementation returns the code (#raises-method).
+      if n.substructureKind == PragmasU:
+        var p = n
+        p.into:
+          while p.hasMore:
+            if p.pragmaKind == RaisesP: dest.addSubtree p
+            skip p
 
 type ClassInfo = object
   root: SymId
@@ -738,7 +747,8 @@ proc processMethods(c: var Context) =
   # that we need to know the base class's entire vtable so that we know
   # which slots to inherit and which to override. This means we need to
   # load an entire vtable from the module that declares the base class.
-  for entry in c.classes:
+  for i in 0 ..< c.classes.len:
+    let entry = c.classes[i]
     if entry[1]:
       let cls = entry[0]
       # inherit methods from parent class:
@@ -751,8 +761,9 @@ proc processMethods(c: var Context) =
         let mine = addr c.vtables.getOrQuit(cls)
         mine[].methods = parentMethods
         mine[].signatureToIndex = parentSig
-      for m in c.methodDecls:
-        if m.cls == cls:
+      for j in 0 ..< c.methodDecls.len:
+        if c.methodDecls[j].cls == cls:
+          let m = c.methodDecls[j] # copies a `Cursor`: only the matches pay
           var methodName = pool.symBasename(m.name)
           # The synthesized virtual `=destroy`/`=trace` object hooks are named
           # `=destroy_<mangledType>` / `=trace_<mangledType>`. Normalize to the
@@ -859,8 +870,10 @@ proc collectMethods(c: var Context; n: var Cursor) =
     skip n
 
 proc emitVTables(c: var Context; dest: var TokenBuf) =
-  # Used the `mpairs` and `mitems` here to avoid copies.
-  for cls, vtab in mpairs c.vtables:
+  # Used the `mpairs` and `mitems` here to avoid copies. The table is moved out
+  # of `c` for the loop: `getVTableName` takes `c` as `var`.
+  var vtables = move c.vtables
+  for cls, vtab in mpairs vtables:
     if vtab.state != Mine: continue
     var displayName = SymId(0)
     if vtab.display.len > 0:
@@ -925,6 +938,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
             dest.addParPair PointerT, NoLineInfo
             dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
+  c.vtables = move vtables
 
 proc transformVTables*(pass: var Pass; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally

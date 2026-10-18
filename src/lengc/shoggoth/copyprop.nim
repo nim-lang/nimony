@@ -287,6 +287,7 @@ type
     names: Table[SymId, string]        ## sym -> its textual name (for synthesis)
     delCandidates: Table[SymId, int]   ## deletable local binding -> its decl pos
     scopeDecls: seq[seq[SymId]]        ## locals declared at each open `(scope)`
+    closedLocals: HashSet[SymId]       ## locals of every `(scope)` already left
     patchset: Patchset
     synth: seq[TokenBuf]
     dotBuf: TokenBuf                   ## a single `.` token: replaces a dead decl
@@ -309,6 +310,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           names: initTable[SymId, string](),
           delCandidates: initTable[SymId, int](),
           scopeDecls: @[newSeq[SymId]()],
+          closedLocals: initHashSet[SymId](),
           patchset: initPatchset(orig),
           synth: @[],
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags))
@@ -466,9 +468,10 @@ proc leaveScope(c: var Context) =
   ## here; the outer destination keeps its own storage and later uses stay
   ## as that outer name. Literal snapshots are values, not names, and survive
   ## (`invalidate` does not clear an alias's `litOf`).
-  for s in c.scopeDecls[^1]:
+  let decls = c.scopeDecls.pop()
+  for s in decls:
     invalidate(c, s)
-  c.scopeDecls.setLen c.scopeDecls.len - 1
+    c.closedLocals.incl s
 
 # ---- main traversal -------------------------------------------------------
 
@@ -613,6 +616,15 @@ proc trAsgn(c: var Context; n: var Cursor) =
   if haveRhs:
     var r = rhs
     trExpr(c, r)                         # propagate inside the value
+  if haveLhs and haveRhs and lhs.kind == Symbol and rhs.kind == Symbol and
+      resolve(c, symId(rhs)) == symId(lhs):
+    # `x = y` where `y` already aliases `x` (#2689): the store rewrites to
+    # `x = x` and changes nothing. Running it through `invalidate` would drop
+    # `y -> x`, and `bindCopy` would then record the reverse `x -> y`: later
+    # reads of `x` become reads of `y`, whose decl is deleted once its last
+    # use was substituted away.
+    c.writeSites.mgetOrPut(symId(lhs), @[]).add asgnPos
+    return
   if haveLhs:
     var l = lhs
     # Storage spine is not substituted (`y = …` still writes `y`); a deref
@@ -729,6 +741,15 @@ proc trLab(c: var Context; n: var Cursor) =
   let probe = child0(n)
   if probe.kind == SymbolDef:
     landLabel(c, LabelId(uint32(symId(probe))))
+    # A `jmp` out of a `(scope)` snapshotted its state before `leaveScope` ran,
+    # so a copy sourced from that scope's local arrives here intact. The
+    # eraiser's `e = canRaise; jmp exlab` from a void call's own block is the
+    # shape: `e` must not turn into `canRaise` in the handler (#2675).
+    var stale: seq[SymId] = @[]
+    for k, v in c.copyOf.pairs:
+      if v in c.closedLocals: stale.add k
+    for k in stale:
+      c.copyOf[k] = SymId(0)
   skip n
 
 proc trBreakOrRet(c: var Context; n: var Cursor) =
@@ -1250,6 +1271,16 @@ when isMainModule:
       "(call use.0.M z.0.M))",
       "(stmts (var :x.0.M . . (call f.0.M)) . . " &
       "(call use.0.M x.0.M))")
+
+  block store_back_through_alias:
+    # #2689: `y = x; x = y` is `x = x`; it must not turn `x` into a copy of
+    # the (deleted) `y`.
+    chk(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) (asgn x.0.M y.0.M) " &
+      "(ret x.0.M))",
+      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(asgn x.0.M x.0.M) (ret x.0.M))")
 
   block source_reassigned_blocks:
     # `x` changes after the copy, so `y` may not be propagated past it.

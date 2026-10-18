@@ -221,7 +221,7 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   # See contracts_njvl.markedAs — sink/mut/lent/out wrappers don't
   # change nilability, only how the value is passed.
   var t = t
-  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+  while t.typeKind in {SinkT, MutT, LentT, OutT, OwnedT}:
     inc t
   result = false
   case t.typeKind

@@ -1,9 +1,9 @@
 import std/assertions
 
-# `const c: seq[T] = @[...]` is compile-time evaluable via the sub-compile
-# in `exprexec`. The runtime `@` runs in the sub-compile, then the
-# resulting `seq[T]` is serialised back into NIF using the ptr-to-nif rule
-# for the `data: ptr UncheckedArray[T]` field — emitted as
+# `const c: seq[T] = @[...]` is folded in-process by `expreval` (`@` on an
+# array carries `semantics: "arrayToSeq"`); anything it cannot fold falls
+# back to the sub-compile in `exprexec`. Either way the `data: ptr
+# UncheckedArray[T]` field is emitted as
 # `(addr (aconstr (uarray T) e1 ... eN))`. Hexer's nifcgen hoists the
 # aconstr to an anonymous module-level static array and rewrites the
 # `addr` to a `cast` pointing at it.

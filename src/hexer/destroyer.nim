@@ -269,7 +269,9 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
-    if hasPragma(r.pragmas, NodestroyP):
+    # an `{.assembler.}` body owns nothing: there is nothing to destroy, and its
+    # `break`s are the back end's
+    if hasPragma(r.pragmas, NodestroyP) or hasPragma(r.pragmas, AssemblerP):
       copyTree c.dest, r.body
     else:
       var s2 = createEntryScope(r.body.info)

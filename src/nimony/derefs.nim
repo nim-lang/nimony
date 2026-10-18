@@ -58,7 +58,18 @@ type
     WantForwarding
 
   RoutineProp = enum
-    CanRaise, IsNoSideEffect, IsClosure
+    IsNoSideEffect, IsClosure
+
+  RaisedType = object
+    family: RaisesFamily
+    typ: Cursor
+
+  TryFrame = object
+    ## What the `except` arms of one `try` catch, and what reached them.
+    catchAll, catchesCode: bool
+    refArms: seq[Cursor]       # the type of every typed `ref` arm
+    reachesRef: bool           # a `ref` raise arrives at this `try`
+    toCatchAll: seq[RaisedType] # what only the catch-all takes
 
   CurrentRoutine = object
     returnExpects: Expects
@@ -68,6 +79,10 @@ type
     firstParam: SymId
     resultSym: SymId
     dangerousLocations: Table[SymId, NifLineInfo]
+    raisesType: Cursor  # nil unless the routine is `.raises`
+    tries: seq[TryFrame] # the `try` bodies being translated, innermost last
+    armRaises: seq[seq[RaisedType]] # what a bare `raise` re-raises in each
+                                    # `except` arm being translated
 
   Context = object
     dest: TokenBuf
@@ -78,6 +93,7 @@ type
     lifter: ref LiftingCtx
     typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
     tmpCounter: int  # for fresh symbols in exception lowering
+    errorCodeType: TokenBuf # `ErrorCode`, what a bare `(raises)` raises
     handlerStack: seq[tuple[errSym, eSym: SymId]]
       # stack of (`err`, `_e`) syms for synthesized ref-exception handlers; used to
       # rewrite bare `raise` into `exc = err; raise _e` so the original error code
@@ -442,7 +458,9 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   of Symbol, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     inc n
   of TagLit:
-    if isDeclarative(n):
+    if isDeclarative(n) or n.symKind in RoutineKinds:
+      # a routine's body is checked on its own, in `trProcDecl`; a generic
+      # one is not instantiated and must not be checked at all:
       skip n
     elif n.stmtKind == AsgnS:
       n.into:
@@ -473,6 +491,8 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   else:
     bug "checkForDangerousLocations: ParRi"
 
+proc raisesTypeOf(c: var Context; value: Cursor): Cursor
+
 proc trProcPragmas(c: var Context; n: var Cursor) =
   # we also need to traverse the `requires` pragmas!
   if n.isDotToken:
@@ -484,7 +504,9 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
         if pk == RequiresP:
           tr c, n, WantT
         elif pk == RaisesP:
-          c.r.props.incl CanRaise
+          var value = n
+          inc value, SkipTag
+          c.r.raisesType = c.raisesTypeOf(value)
           takeTree c.dest, n
         elif pk == NoSideEffectP:
           c.r.props.incl IsNoSideEffect
@@ -545,13 +567,79 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   swap c.r, r
   c.typeCache.closeScope()
 
-proc callCanRaise(c: var Context; info: NifLineInfo) {.inline.} =
-  if CanRaise notin c.r.props:
-    buildLocalErr c.dest, info, "cannot call a routine marked as `.raises` outside of a `try`..`except` block"
+proc objKeyOf(s: SymId): SymId =
+  ## The object type behind a `ref` exception type: `E = ref object of B`
+  ## is its own key, `ref Exception` and an alias of either lead to theirs.
+  var s = s
+  for _ in 0 ..< 20:
+    let res = tryLoadSym(s)
+    if res.status != LacksNothing or res.decl.stmtKind != TypeS: return s
+    var body = asTypeDecl(res.decl).body
+    if body.typeKind == RefT: inc body
+    if body.isSymbol: s = body.symId
+    else: return s
+  result = s
 
-proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
-  let info = n.endInfo # `n` sits at the first arg — or already at the
-                       # call's (possibly elided) close when there are none
+proc objKeyOf(t: Cursor): SymId =
+  var t = t
+  if t.typeKind == RefT: inc t
+  result = if t.isSymbol: objKeyOf(t.symId) else: NoSymId
+
+proc isRefSubtype(x, t: Cursor): bool =
+  ## Whether every value of the `ref` type `x` is also a `t`.
+  let xs = objKeyOf(x)
+  let ts = objKeyOf(t)
+  if xs == NoSymId or ts == NoSymId: return true # a generic instance: sem's call
+  if xs == ts: return true
+  for p in inheritanceChain(xs):
+    if objKeyOf(p) == ts: return true
+  result = false
+
+proc raisesTypeOf(c: var Context; value: Cursor): Cursor =
+  ## The type a `(raises T)` pragma names, given its value position (what
+  ## `extractPragma` returns); a bare `(raises)` is `ErrorCode`.
+  result = if value.hasMore: value else: cursorAt(c.errorCodeType, 0)
+
+proc checkRaise(c: var Context; x: RaisedType; info: NifLineInfo; reachesRoutine: bool) =
+  ## `x` is raised here. The innermost `try` with an arm for it catches it; an
+  ## `ErrorCode` arm takes only `ErrorCode`, a `ref` arm only its subtypes and
+  ## the catch-all everything. What no arm catches leaves the routine, and must
+  ## be what the routine raises: nothing translates one kind of error into the
+  ## other. `reachesRoutine` is false for a `raise` statement, which sem has
+  ## already compared with the routine.
+  if x.family notin {CodeRaises, RefRaises}: return
+  var i = c.r.tries.len - 1
+  while i >= 0:
+    if x.family == RefRaises:
+      c.r.tries[i].reachesRef = true
+      for t in c.r.tries[i].refArms:
+        if isRefSubtype(x.typ, t): return
+    elif c.r.tries[i].catchesCode:
+      return
+    if c.r.tries[i].catchAll:
+      c.r.tries[i].toCatchAll.add x
+      return
+    dec i
+  if not reachesRoutine: return
+  if cursorIsNil(c.r.raisesType):
+    if c.r.tries.len == 0 and c.r.armRaises.len == 0:
+      buildLocalErr c.dest, info, "cannot call a routine marked as `.raises` outside of a `try`..`except` block"
+    else:
+      buildLocalErr c.dest, info, "`" & typeToString(x.typ) &
+        "` raised here is not caught by any `except` arm, and the routine is not `.raises`"
+  else:
+    let rf = raisesFamily(c.r.raisesType)
+    if rf == UnknownRaises: return
+    if rf != x.family or (rf == RefRaises and not isRefSubtype(x.typ, c.r.raisesType)):
+      buildLocalErr c.dest, info, "`" & typeToString(x.typ) &
+        "` raised here cannot leave a routine that raises `" &
+        typeToString(c.r.raisesType) & "`, and nothing converts one into the other"
+
+proc callCanRaise(c: var Context; raisesValue: Cursor; info: NifLineInfo) =
+  let t = c.raisesTypeOf(raisesValue)
+  checkRaise c, RaisedType(family: raisesFamily(t), typ: t), info, true
+
+proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor; info: NifLineInfo) =
   var fnType = skipProcTypeToParams(fnType)
   assert fnType.isParamsTag
   fnType.into:
@@ -577,8 +665,9 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   # skip return type:
   skip fnType
   # now at the pragmas position:
-  if hasPragma(fnType, RaisesP):
-    callCanRaise(c, info)
+  let raisesValue = extractPragma(fnType, RaisesP)
+  if not cursorIsNil(raisesValue):
+    callCanRaise(c, raisesValue, info)
 
 proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   assert n.exprKind in CallKinds
@@ -659,7 +748,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   # template-body identifiers eagerly, so a template referencing a
   # later-declared local fails to self-host.
   template finishCallArgs() =
-    trCallArgs(c, n, fnType)
+    trCallArgs(c, n, fnType, info)
     c.dest.addParRi(n.endInfo)
     n = callStart; skip n
   var retType = fnType
@@ -807,6 +896,9 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
     elif borrowsFromReadonly(c, n):
       cannotPassToVar c.dest, n.info, n
       skip n
+    elif e == WantMutableT:
+      # a `var openArray` is passed by value, like the view it is
+      trSonsLocation c, n, WantT
     else:
       c.dest.addParLe(HaddrX, n.info)
       trSonsLocation c, n, WantT
@@ -953,104 +1045,104 @@ proc parseExceptArm(armCur: Cursor): ExceptArm =
   return ExceptArm(isCatchAll: false, isRef: isRefTypeFollow(typ),
                    declType: typ, bindSym: NoSymId, bodyStart: bodyN)
 
-proc shouldCollapseTry(c: var Context; tryAfterTag: Cursor): bool =
-  ## Decide whether to do the ref-exception collapsing lowering. Yes iff
-  ## at least one `(except ...)` arm declares a ref-typed exception AND no
-  ## arm uses a non-ref non-catchall type (we leave such legacy tries alone).
-  var n = tryAfterTag
-  skip n  # body
-  var anyRef = false
-  while n.substructureKind == ExceptU:
-    var arm = n
-    arm = sub(arm)  # past 'except' tag
-    let info = parseExceptArm(arm)
-    if info.isCatchAll:
-      discard
-    elif info.isRef:
-      anyRef = true
-    else:
-      return false
-    skip n  # past the whole `(except ...)`
-  result = anyRef
-
 proc emitRefExceptionType(dest: var TokenBuf; info: NifLineInfo) =
   ## Emits `(ref Exception)` into `dest`.
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.symId(ExceptionName), info
 
-proc trTryCollapsed(c: var Context; n: var Cursor) =
-  ## Lower a try with ref-typed except arms into a single catchall
-  ## `(except . (stmts (let :err ...) (if ...)))`, leaving any `(fin ...)`
-  ## clause intact. The if-chain dispatches via `(of err T)`; for non-Failure
-  ## error codes `exc` is nil and every arm falls through to the else, where
-  ## we re-raise so the original `errorTracker` value is preserved.
-  let info = n.info
-  c.dest.addParLe(n.cursorTagId, n.info)
-  n.into:  # take '(try' tag
+proc trArmBody(c: var Context; body: Cursor) =
+  var bodyCur = body
+  if bodyCur.isTagLit and bodyCur.stmtKind == StmtsS:
+    bodyCur.into:
+      while bodyCur.hasMore:
+        tr c, bodyCur, WantT
+  else:
+    while bodyCur.hasMore:
+      tr c, bodyCur, WantT
 
-    # Allow raises inside the try body — there is at least one except arm:
-    let oldProps = c.r.props
-    c.r.props.incl CanRaise
+proc armRaise(arm: ExceptArm; frame: TryFrame): seq[RaisedType] =
+  ## What a bare `raise` in `arm` re-raises.
+  if arm.isCatchAll: frame.toCatchAll
+  else: @[RaisedType(family: raisesFamily(arm.declType), typ: arm.declType)]
 
-    # Body
-    tr c, n, WantT
+proc errIsNil(c: var Context; kind: ExprKind; errSym: SymId; info: NifLineInfo) =
+  ## `(eq err nil)` or `(neq err nil)`.
+  c.dest.copyIntoKind kind, info:
+    emitRefExceptionType(c.dest, info)
+    c.dest.addSymUse errSym, info
+    c.dest.copyIntoKind NilX, info:
+      discard
 
-    c.r.props = oldProps
+proc emitDispatcher(c: var Context; arms: seq[ExceptArm]; frame: TryFrame;
+                    info: NifLineInfo) =
+  ## The `except` arms of a `try` that a `ref` raise can reach, as the one
+  ## catch-all arm the eraiser lowers:
+  ##
+  ##   (except (let :`code ErrorCode)      # every raise lands here
+  ##     (let `err = exc) (asgn exc nil)
+  ##     (if (elif (and (neq err nil) (instanceof err T1)) <arm 1>) …
+  ##         (elif (eq err nil) <the ErrorCode arm>)
+  ##         (else <the catch-all, or the re-raise>)))
+  ##
+  ## A `ref` raise signals `Failure` and leaves the exception in `exc`; an
+  ## `ErrorCode` raise leaves `exc` nil. That is all it takes to tell them apart,
+  ## so a plain code never reaches an `of` test (#2679).
+  inc c.tmpCounter
+  let errSym = pool.symId("`err." & $c.tmpCounter)
+  let codeSym = pool.symId("`code." & $c.tmpCounter)
+  let excSym = pool.symId(ExcThreadVarName)
+  let errorCode = cursorAt(c.errorCodeType, 0)
 
-    # Mint a fresh symbol for `err` (moved-out exc).
-    inc c.tmpCounter
-    let errSym = pool.symId("`err." & $c.tmpCounter)
-    let excSym = pool.symId(ExcThreadVarName)
+  c.dest.addParLe ExceptU, info
+  c.typeCache.registerLocal(codeSym, LetY, errorCode)
+  c.dest.copyIntoKind LetS, info:
+    c.dest.addSymDef codeSym, info
+    c.dest.addDotToken()
+    c.dest.addDotToken()
+    c.dest.addSubtree errorCode
+    c.dest.addDotToken()
+  c.dest.addParLe StmtsS, info
 
-    # Open the synthesized `(except . (stmts ...))`
-    c.dest.addParLe ExceptU, info
-    c.dest.addDotToken()  # catchall: no type / no binding
+  # `let err = exc` followed by `exc = nil` — equivalent to a move but
+  # expressed without `(emove ...)` so the duplifier does not have to reason
+  # about moving from a thread-local global.
+  c.dest.copyIntoKind LetS, info:
+    c.dest.addSymDef errSym, info
+    c.dest.addDotToken()
+    c.dest.addDotToken()
+    emitRefExceptionType(c.dest, info)
+    c.dest.addSymUse excSym, info
+  c.dest.copyIntoKind AsgnS, info:
+    c.dest.addSymUse excSym, info
+    c.dest.copyIntoKind NilX, info:
+      discard
 
-    c.dest.addParLe StmtsS, info  # arm body stmts
+  # Push handler stack so that bare `raise` inside arm bodies restores `exc = err`.
+  c.handlerStack.add (errSym: errSym, eSym: NoSymId)
 
-    # `let err = exc` followed by `exc = nil` — equivalent to a move but
-    # expressed without `(emove ...)` so the duplifier does not have to reason
-    # about moving from a thread-local global.
-    c.dest.copyIntoKind LetS, info:
-      c.dest.addSymDef errSym, info
-      c.dest.addDotToken()
-      c.dest.addDotToken()
-      emitRefExceptionType(c.dest, info)
-      c.dest.addSymUse excSym, info
-    c.dest.copyIntoKind AsgnS, info:
-      c.dest.addSymUse excSym, info
-      c.dest.copyIntoKind NilX, info:
-        discard
-
-    # Push handler stack so that bare `raise` inside arm bodies restores `exc = err`.
-    c.handlerStack.add (errSym: errSym, eSym: NoSymId)
-
-    # Open if-chain
-    c.dest.addParLe IfS, info
-
-    # Iterate arms, collecting any catchall body.
-    var catchallBody: Cursor = default(Cursor)
-    var hasCatchall = false
-
-    while n.substructureKind == ExceptU:
-      var armCur = n
-      armCur = sub(armCur)  # past `(except`
-      let arm = parseExceptArm(armCur)
-      if arm.isCatchAll:
-        catchallBody = arm.bodyStart
-        hasCatchall = true
-        # We will consume this arm later; for now skip the cursor past it.
-        skip n
-        continue
-
-      # Ref arm — emit `(elif (instanceof err T) <body>)`.
-      c.dest.addParLe ElifU, info
-      c.dest.copyIntoKind InstanceofX, info:
-        c.dest.addSymUse errSym, info
-        c.dest.addSubtree arm.declType  # type cursor
-      # Branch body
-      c.dest.addParLe StmtsS, info
-      if arm.bindSym != NoSymId:
+  var catchAll = -1
+  var branches = 0
+  for i in 0 ..< arms.len:
+    let arm = arms[i]
+    if arm.isCatchAll:
+      if catchAll < 0: catchAll = i
+      continue
+    let fam = raisesFamily(arm.declType)
+    if fam notin {RefRaises, CodeRaises}: continue
+    if branches == 0: c.dest.addParLe IfS, info
+    inc branches
+    c.dest.addParLe ElifU, info
+    if fam == RefRaises:
+      c.dest.copyIntoKind AndX, info:
+        errIsNil(c, NeqX, errSym, info)
+        c.dest.copyIntoKind InstanceofX, info:
+          c.dest.addSymUse errSym, info
+          c.dest.addSubtree arm.declType
+    else:
+      errIsNil(c, EqX, errSym, info)
+    c.dest.addParLe StmtsS, info
+    if arm.bindSym != NoSymId:
+      if fam == RefRaises:
         # `cursor e = (hconv T err)` — non-owning view of `err` typed as the
         # user's declared T. The dynamic type was just proven by the
         # surrounding `(instanceof err T)` check, so the narrowing is sound.
@@ -1066,80 +1158,100 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
           c.dest.copyIntoKind HconvX, info:
             c.dest.addSubtree arm.declType
             c.dest.addSymUse errSym, info
-      # Recursively transform the original arm body
-      var bodyCur = arm.bodyStart
-      if bodyCur.isTagLit and bodyCur.stmtKind == StmtsS:
-        bodyCur.into:
-          while bodyCur.hasMore:
-            tr c, bodyCur, WantT
       else:
-        while bodyCur.hasMore:
-          tr c, bodyCur, WantT
-      c.dest.addParRi()  # close inner stmts
-      c.dest.addParRi()  # close elif
+        c.typeCache.registerLocal(arm.bindSym, LetY, arm.declType)
+        c.dest.copyIntoKind LetS, info:
+          c.dest.addSymDef arm.bindSym, info
+          c.dest.addDotToken()
+          c.dest.addDotToken()
+          c.dest.addSubtree arm.declType
+          c.dest.addSymUse codeSym, info
+    c.r.armRaises.add armRaise(arm, frame)
+    trArmBody c, arm.bodyStart
+    discard c.r.armRaises.pop()
+    c.dest.addParRi() # stmts
+    c.dest.addParRi() # elif
 
-      # Advance n past this whole `(except ...)`.
-      skip n
-
-    # Else branch: catchall body, or re-raise.
-    c.dest.addParLe ElseU, info
+  # What no typed arm took: the catch-all, or on to the next handler. Without
+  # one to reach — no enclosing `try` and a routine that does not raise — the
+  # checks at the raise sites have proven this path dead.
+  let reraise = catchAll < 0 and
+    (c.r.tries.len > 0 or c.r.armRaises.len > 0 or not cursorIsNil(c.r.raisesType))
+  if catchAll >= 0 or reraise:
+    if branches > 0:
+      c.dest.addParLe ElseU, info
     c.dest.addParLe StmtsS, info
-    if hasCatchall:
-      var bodyCur = catchallBody
-      if bodyCur.isTagLit and bodyCur.stmtKind == StmtsS:
-        bodyCur.into:
-          while bodyCur.hasMore:
-            tr c, bodyCur, WantT
-      else:
-        while bodyCur.hasMore:
-          tr c, bodyCur, WantT
+    if catchAll >= 0:
+      c.r.armRaises.add armRaise(arms[catchAll], frame)
+      trArmBody c, arms[catchAll].bodyStart
+      discard c.r.armRaises.pop()
     else:
-      # `(asgn exc err)`
       c.dest.copyIntoKind AsgnS, info:
         c.dest.addSymUse excSym, info
         c.dest.addSymUse errSym, info
-      # Bare re-raise: `(raise .)`. finalir is expected to lower this into
-      # propagation that preserves the current `errorTracker` value.
+      # Bare re-raise: the eraiser re-raises `code`, the code that got here.
       c.dest.copyIntoKind RaiseS, info:
         c.dest.addDotToken()
-    c.dest.addParRi()  # close else stmts
-    c.dest.addParRi()  # close else
+    c.dest.addParRi() # stmts
+    if branches > 0:
+      c.dest.addParRi() # else
+  if branches > 0:
+    c.dest.addParRi() # if
 
-    c.dest.addParRi()  # close if
-    c.dest.addParRi()  # close arm body stmts
-    c.dest.addParRi()  # close synthesized except
-
-    discard c.handlerStack.pop()
-
-    # Pass through `(fin ...)` if present.
-    if n.substructureKind == FinU:
-      tr c, n, WantT
-
-    c.dest.addParRi(n.endInfo)  # close try
-
+  discard c.handlerStack.pop()
+  c.dest.addParRi() # arm body stmts
+  c.dest.addParRi() # except
 
 proc trTry(c: var Context; n: var Cursor) =
-  var prescan = n
-  prescan = sub(prescan)  # past `(try` tag
-  if shouldCollapseTry(c, prescan):
-    trTryCollapsed(c, n)
-    return
-  takeInto c.dest, n:
-    var nn = n
-    skip nn
-    let oldProps = c.r.props
-    # Only an `except` clause catches and thus permits raising calls in the body.
-    # A bare `finally` (e.g. from `defer`) does NOT catch — a raise still escapes —
-    # so a try/finally must not grant `CanRaise`, otherwise a raising call slips
-    # through in a proc not declared `.raises`. `except` always precedes `fin` in
-    # the NIF, so the first post-body clause being `ExceptU` means "has an except".
-    if nn.substructureKind == ExceptU:
-      c.r.props.incl CanRaise
-    # now can raise in the `try` block:
-    tr c, n, WantT
-    c.r.props = oldProps
-    while n.hasMore:
+  ## The body is translated first: the raises that reach this `try` decide its
+  ## lowering. Only `ErrorCode` arms, and only `ErrorCode` raises reaching
+  ## them, keep their shape; the eraiser jumps to the first arm. Otherwise the
+  ## arms become one dispatcher (see `emitDispatcher`).
+  let info = n.info
+  var frame = TryFrame()
+  var arms: seq[ExceptArm] = @[]
+  var probe = n
+  probe = sub(probe) # past `(try`
+  skip probe         # the body
+  while probe.substructureKind == ExceptU:
+    var a = probe
+    a = sub(a)
+    let arm = parseExceptArm(a)
+    if arm.isCatchAll:
+      frame.catchAll = true
+    else:
+      case raisesFamily(arm.declType)
+      of RefRaises: frame.refArms.add arm.declType
+      of CodeRaises: frame.catchesCode = true
+      of NotRaisable, UnknownRaises: discard # sem reported it
+    arms.add arm
+    skip probe
+
+  c.dest.addParLe(n.cursorTagId, info)
+  n.into:
+    # A `try` without `except` (what `defer` lowers to) catches nothing.
+    if arms.len > 0:
+      c.r.tries.add frame
+      tr c, n, WantT # the body
+      frame = c.r.tries.pop()
+    else:
       tr c, n, WantT
+    if frame.refArms.len > 0 or frame.reachesRef:
+      emitDispatcher c, arms, frame, info
+      while n.substructureKind == ExceptU: skip n
+    else:
+      var i = 0
+      while n.substructureKind == ExceptU:
+        takeInto c.dest, n:
+          tr c, n, WantT # the `E as e` binding, the type, or `.`
+          c.r.armRaises.add armRaise(arms[i], frame)
+          while n.hasMore:
+            tr c, n, WantT
+          discard c.r.armRaises.pop()
+        inc i
+    if n.substructureKind == FinU:
+      tr c, n, WantT
+    c.dest.addParRi(n.endInfo) # close try
 
 proc trRaise(c: var Context; n: var Cursor) =
   ## Lowers `(raise <ref-expr>)` to `(stmts (asgn exc <expr>) (raise Failure))`
@@ -1152,6 +1264,10 @@ proc trRaise(c: var Context; n: var Cursor) =
   inc lookahead  # past `(raise` tag
 
   if lookahead.isDotToken:
+    if c.r.armRaises.len > 0:
+      let reraised = c.r.armRaises[^1]
+      for x in reraised:
+        checkRaise c, x, info, true
     if c.handlerStack.len > 0:
       let h = c.handlerStack[^1]
       let excSym = pool.symId(ExcThreadVarName)
@@ -1171,6 +1287,7 @@ proc trRaise(c: var Context; n: var Cursor) =
     return
 
   let opType = getType(c.typeCache, lookahead, {SkipAliases})
+  checkRaise c, RaisedType(family: raisesFamily(opType), typ: opType), info, false
   if opType.typeKind == RefT:
     let excSym = pool.symId(ExcThreadVarName)
     let failureSym = pool.symId(FailureName)
@@ -1687,6 +1804,8 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
     hooks: ensureMove(hooks),
     classes: ensureMove(classes),
     lifter: nil) # set below after hooks is moved
+  c.errorCodeType = createTokenBuf(1)
+  c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
   # Pass address of hooks to lifter so it can look up hooks from current module
   c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks,
                               cycles = cycles)
