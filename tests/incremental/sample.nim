@@ -10,3 +10,4 @@ import livedep
 echo "incremental sample"
 echo bump(10)
 echo scaled(7)
+echo twice(7)

@@ -197,7 +197,25 @@ proc incrementalTests*() =
   restoreSources()
   discard run("body-dep-settle")
 
-  # Phase 5c: options. nifmake sees files, not flags, so the driver records
+  # Phase 5c: edit the body of an imported generic proc. The importer
+  # instantiates it from that body, so the callee's interface checksum covers
+  # generic bodies — private ones too: the edited `genericBase` is reached only
+  # through the exported `twice`. Without that the importer is not re-semmed
+  # and keeps its stale instance.
+  block:
+    writeFile(dep, originalDep.replace("  400\n", "  4000\n"))
+    let r = run("generic-dep")
+    if r.len == 2:
+      expect reportField(r[0], "nimsem") >= 2,
+             "generic-dep: nimsem ran " & $reportField(r[0], "nimsem") &
+             " times (expected the callee's and the importer's)"
+    expect lastOutput.contains("8000"),
+           "generic-dep: ran a stale generic instance; expected the program to print 8000"
+
+  restoreSources()
+  discard run("generic-dep-settle")
+
+  # Phase 5d: options. nifmake sees files, not flags, so the driver records
   # the options a stage's artifacts were made with (`<nimcache>/config.nif`
   # for the frontend, `<nimcache>/<backend>/<main>/config.nif` for the
   # backend) and reruns the stage when they differ. A define reaches sem, so
@@ -296,7 +314,7 @@ proc incrementalTests*() =
   # `deps.backendDirName` keeps the two populations apart; assert that both
   # exist afterwards, that they disagree, and that the C build the native one
   # ran on top of came through untouched.
-  var phases = 9  # cold, noop, touch, edit, inline-dep, body-dep, options, dce-local, live-edit
+  var phases = 10  # cold, noop, touch, edit, inline-dep, body-dep, generic-dep, options, dce-local, live-edit
   let arkham = "bin" / "arkham".addFileExt(ExeExt)
   let nifasm = "bin" / "nifasm".addFileExt(ExeExt)
   if fileExists(arkham) and fileExists(nifasm):
