@@ -46,3 +46,9 @@ echo twiceT(c + 1)
 
 template show(x: static[int]) {.plugin: "deps/mstaticarg".}
 show(3)
+
+# a closure captures a `static` parameter like any other parameter
+proc captured(x: static[int]): int =
+  proc next(): int {.closure.} = x + 1
+  next()
+echo captured(9)
