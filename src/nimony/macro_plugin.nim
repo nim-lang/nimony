@@ -122,7 +122,7 @@ proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
   var n = params
   copyInto dest, n:
     while n.hasMore:
-      if n.substructureKind == ParamU:
+      if isParamLike(n.substructureKind):
         copyInto dest, n:
           # Slot 0: name (SymbolDef or Ident)
           dest.takeTree n
@@ -224,7 +224,7 @@ proc countParams(macroDecl: Cursor): int =
     return 0
   var p = r.params
   p.loopInto:
-    if p.substructureKind == ParamU:
+    if isParamLike(p.substructureKind):
       inc result
     skip p
 

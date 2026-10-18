@@ -66,6 +66,7 @@
 | `(patternvar D E P T .X)` | NimonySym, NimonyStmt | pattern variable declaration |
 | `(typevar D E P .T .X)` | NimonySym, LengOther, NimonyOther, NiflerKind | type variable declaration; constraint `.T` is optional |
 | `(staticTypevar D E P T .X)` | NimonySym, LengOther, NimonyOther | value generic parameter: a generic parameter that is a compile-time *value*; the type slot holds the value's plain element type (e.g. `int` for `N: static[int]`), never a `static` wrapper |
+| `(staticParam D E P T .X)` | NimonySym, NimonyOther | constant parameter restriction: a term parameter whose call-site argument must be a tier-1 constant expression (literal, `const`, `staticParam`/`staticTypevar` reference, primitive arithmetic); the type slot holds the plain element type (e.g. `int` for `x: static[int]`), never a `static` wrapper. Hexer lowers it to an ordinary `param` |
 | `(efld D .X P T .X)`; `(efld D X)` | NimonySym, LengSym, LengOther, NimonyOther, NiflerKind | enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`) |
 | `(fld D E P T .X)`; `(fld D P T)` | LengOther, NimonyOther, NimonySym, LengSym, NiflerKind | field declaration |
 | `(gfld D E P T .X)` | NimonySym, NimonyOther | guarded field declaration, cannot be accessed outside an `of` branch |
@@ -102,7 +103,7 @@
 | `(ret .X)` | LengStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
 | `(stmts S*)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | list of statements |
-| `(params (param...)*)` | LengType, NimonyOther, NiflerKind | list of proc parameters, also used as a "proc type" |
+| `(params (param...)*)` | LengType, NimonyOther, NiflerKind | list of proc parameters, also used as a "proc type"; after sem an entry may also be a `(staticParam ...)` |
 | `(union (fld ...)*)`; `(union (of ...)+)`; `(union)` | LengType, NimonyPragma | first two are Leng union declarations (untagged, and discriminated from a case object - see `doc/internals/leng-spec.md`), third is the Nimony union pragma |
 | `(object .T (fld ...)*)` | LengType, NimonyType, NiflerKind | object type declaration |
 | `(enum (efld...)*)` | LengType, NimonyType, NiflerKind | enum type declaration |
@@ -161,7 +162,7 @@
 | `(onerr S X+)` | LengStmt | error handling statement |
 | `(raises ...)` | LengPragma, NimonyPragma | proc annotation; optional list of exception types the proc may raise |
 | `(errs)` | LengPragma | proc annotation |
-| `(static T)`; `(static)` | LengPragma, NimonyType, NiflerKind | `static` type or annotation |
+| `(static T)`; `(static)`; `(static X)` | LengPragma, NimonyType, NimonyExpr, NiflerKind | `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time |
 | `(ite X S .S S? STR_LIT?)` | ControlFlowKind, FinalIrKind, LengStmt | if-then-else, optionally followed by `join` information and by a label. The Final IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's |
 | `(itec X S S)` | FinalIrKind, LengStmt | if-then-else (that was a `case`) |
 | `(loop S)` | FinalIrKind, LengStmt | infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)` |

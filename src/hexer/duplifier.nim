@@ -113,7 +113,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   if r != NoSymId:
     var canAnalyse = false
     let v = c.typeCache.getLocalInfo(r)
-    if v.kind == ParamY:
+    if isParamLike(v.kind):
       # an `owned` parameter is borrowed like any other parameter, only
       # `sink owned` takes over the ownership (RFC #575)
       canAnalyse = v.typ.typeKind == SinkT
@@ -162,7 +162,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, CallstrlitX, InfixX, PrefixX,
-        HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
+        HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
@@ -190,7 +190,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
-        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
+        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
@@ -433,7 +433,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         NeqX, LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
         TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX,
-        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
+        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
@@ -991,7 +991,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
-        InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+        InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
         UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
@@ -1787,7 +1787,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        OchoiceX, CchoiceX, XorX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
-       EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, DeclaredX,
+       EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, StaticX, DeclaredX,
        DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
        InternalFieldPairsX, IsX, ToClosureX, PluginCallX:

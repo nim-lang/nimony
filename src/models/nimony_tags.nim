@@ -56,6 +56,7 @@ type
     CchoiceX = (ord(CchoiceTagId), "cchoice")  ## closed choice
     OchoiceX = (ord(OchoiceTagId), "ochoice")  ## open choice
     PragmaxX = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
+    StaticX = (ord(StaticTagId), "static")  ## `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time
     QuotedX = (ord(QuotedTagId), "quoted")  ## name in backticks
     HderefX = (ord(HderefTagId), "hderef")  ## hidden pointer deref operation
     DdotX = (ord(DdotTagId), "ddot")  ## deref dot: expression, field symbol, field index; optional trailing `STRLIT` is the same *access token* described on `(dot ...)` — names the module the private-field access was written in, which is what a re-check judges it against.
@@ -127,7 +128,7 @@ type
     CanFormCyclesX = (ord(CanFormCyclesTagId), "canFormCycles")  ## `canFormCycles(T)`: does the cycle collector trace through a value of type `T` (it owns a ref that can be part of a cycle)? Folded to `(true)`/`(false)` by `derefs`, with the lifter's own `needsTrace`; always false unless the runtime says `{.enableTrace.}`. Containers that own their buffer through a raw pointer use it to fence structural changes against a concurrent collector (`seq`, `--mm:yrc`)
 
 proc rawTagIsNimonyExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {ErrTagId, SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, XorTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, BracketTagId, CurlyTagId, CurlyatTagId, KvTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, CmdTagId, CchoiceTagId, OchoiceTagId, PragmaxTagId, QuotedTagId, HderefTagId, DdotTagId, HaddrTagId, NewrefTagId, NewobjTagId, TupTagId, TupconstrTagId, SetconstrTagId, TabconstrTagId, AshrTagId, BaseobjTagId, HconvTagId, DconvTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, CompilesTagId, DeclaredTagId, DefinedTagId, AstToStrTagId, BindSymTagId, BindSymNameTagId, InstanceofTagId, ProccallTagId, HighTagId, LowTagId, TypeofTagId, UnpackTagId, FieldsTagId, FieldpairsTagId, EnumtostrTagId, IsmainmoduleTagId, InstantiationinfoTagId, DefaultobjTagId, DefaulttupTagId, DefaultdistinctTagId, DelayTagId, Delay0TagId, SuspendTagId, ExprTagId, DoTagId, ArratTagId, TupatTagId, PlussetTagId, MinussetTagId, MulsetTagId, XorsetTagId, EqsetTagId, LesetTagId, LtsetTagId, InsetTagId, CardTagId, EmoveTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId, InternalTypeNameTagId, InternalFieldPairsTagId, FailedTagId, IsTagId, EnvpTagId, ToClosureTagId, PluginCallTagId, CanFormCyclesTagId}
+  raw in {ErrTagId, SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, XorTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, BracketTagId, CurlyTagId, CurlyatTagId, KvTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, CmdTagId, CchoiceTagId, OchoiceTagId, PragmaxTagId, StaticTagId, QuotedTagId, HderefTagId, DdotTagId, HaddrTagId, NewrefTagId, NewobjTagId, TupTagId, TupconstrTagId, SetconstrTagId, TabconstrTagId, AshrTagId, BaseobjTagId, HconvTagId, DconvTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, CompilesTagId, DeclaredTagId, DefinedTagId, AstToStrTagId, BindSymTagId, BindSymNameTagId, InstanceofTagId, ProccallTagId, HighTagId, LowTagId, TypeofTagId, UnpackTagId, FieldsTagId, FieldpairsTagId, EnumtostrTagId, IsmainmoduleTagId, InstantiationinfoTagId, DefaultobjTagId, DefaulttupTagId, DefaultdistinctTagId, DelayTagId, Delay0TagId, SuspendTagId, ExprTagId, DoTagId, ArratTagId, TupatTagId, PlussetTagId, MinussetTagId, MulsetTagId, XorsetTagId, EqsetTagId, LesetTagId, LtsetTagId, InsetTagId, CardTagId, EmoveTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId, InternalTypeNameTagId, InternalFieldPairsTagId, FailedTagId, IsTagId, EnvpTagId, ToClosureTagId, PluginCallTagId, CanFormCyclesTagId}
 
 type
   NimonyStmt* = enum
@@ -229,7 +230,7 @@ type
     PtrT = (ord(PtrTagId), "ptr")  ## `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref
     ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor (element type, index type/range)
     VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); Leng keeps only the element type
-    StaticT = (ord(StaticTagId), "static")  ## `static` type or annotation
+    StaticT = (ord(StaticTagId), "static")  ## `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time
     TupleT = (ord(TupleTagId), "tuple")  ## `tuple` type
     ClosureTupleT = (ord(ClosureTupleTagId), "closureTuple")  ## internal lifted-closure tuple type: `(closureTuple <proctype> (ref RootObj))`. Structurally a two-element tuple — a function pointer plus its environment — but tagged distinctly so lambda lifting and the coroutine transform can recognize an *already lifted* closure/iterator value by its tag instead of by probing a plain `(tuple ...)`. Produced by `hexer`'s `lambdalifting`/`coro_transform`/`cps` only; `lengcgen` lowers it to an ordinary Leng `(tuple ...)`
     OnumT = (ord(OnumTagId), "onum")  ## enum with holes type
@@ -274,6 +275,7 @@ type
     ParamU = (ord(ParamTagId), "param")  ## parameter declaration
     TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
     StaticTypevarU = (ord(StaticTypevarTagId), "staticTypevar")  ## value generic parameter: a generic parameter that is a compile-time *value*; the type slot holds the value's plain element type (e.g. `int` for `N: static[int]`), never a `static` wrapper
+    StaticParamU = (ord(StaticParamTagId), "staticParam")  ## constant parameter restriction: a term parameter whose call-site argument must be a tier-1 constant expression (literal, `const`, `staticParam`/`staticTypevar` reference, primitive arithmetic); the type slot holds the plain element type (e.g. `int` for `x: static[int]`), never a `static` wrapper. Hexer lowers it to an ordinary `param`
     EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
     GfldU = (ord(GfldTagId), "gfld")  ## guarded field declaration, cannot be accessed outside an `of` branch
@@ -284,7 +286,7 @@ type
     CaseU = (ord(CaseTagId), "case")  ## `case` statement
     OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement, or of a Leng discriminated `union`
     StmtsU = (ord(StmtsTagId), "stmts")  ## list of statements
-    ParamsU = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
+    ParamsU = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"; after sem an entry may also be a `(staticParam ...)`
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
     EitherU = (ord(EitherTagId), "either")  ## `either` construct to combine location versions
     JoinU = (ord(JoinTagId), "join")  ## `join` construct inside `ite`
@@ -298,7 +300,7 @@ type
     NeedtypesU = (ord(NeedtypesTagId), "needtypes")  ## emitted by a template *plugin* as its entire output to ask the compiler for the declarations of the named symbols. The compiler appends them to the plugin's second input (`loadTypeDefinitions()`) and runs the plugin again. This is how a plugin resolves a nominal type: it arrives in the main input as an opaque `Symbol`, and a plugin runs in its own process with no way to look it up. Only what is asked for is shipped, so a plugin that never asks pays nothing. Requesting a symbol that was already provided is a hard error, which is what bounds the loop
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, StaticTypevarTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, CallargsTagId, ForcallTagId, ExceptTagId, FinTagId, DeferexpansionTagId, NeedtypesTagId}
+  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, StaticTypevarTagId, StaticParamTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, CallargsTagId, ForcallTagId, ExceptTagId, FinTagId, DeferexpansionTagId, NeedtypesTagId}
 
 type
   NimonyPragma* = enum
@@ -413,6 +415,7 @@ type
     PatternvarY = (ord(PatternvarTagId), "patternvar")  ## pattern variable declaration
     TypevarY = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
     StaticTypevarY = (ord(StaticTypevarTagId), "staticTypevar")  ## value generic parameter: a generic parameter that is a compile-time *value*; the type slot holds the value's plain element type (e.g. `int` for `N: static[int]`), never a `static` wrapper
+    StaticParamY = (ord(StaticParamTagId), "staticParam")  ## constant parameter restriction: a term parameter whose call-site argument must be a tier-1 constant expression (literal, `const`, `staticParam`/`staticTypevar` reference, primitive arithmetic); the type slot holds the plain element type (e.g. `int` for `x: static[int]`), never a `static` wrapper. Hexer lowers it to an ordinary `param`
     EfldY = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldY = (ord(FldTagId), "fld")  ## field declaration
     GfldY = (ord(GfldTagId), "gfld")  ## guarded field declaration, cannot be accessed outside an `of` branch
@@ -430,7 +433,7 @@ type
     LabY = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
 
 proc rawTagIsNimonySym*(raw: TagEnum): bool {.inline.} =
-  raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, TypevarTagId, StaticTypevarTagId, EfldTagId, FldTagId, GfldTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, ModuleTagId, CchoiceTagId, LabTagId}
+  raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, TypevarTagId, StaticTypevarTagId, StaticParamTagId, EfldTagId, FldTagId, GfldTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, ModuleTagId, CchoiceTagId, LabTagId}
 
 type
   HookKind* = enum

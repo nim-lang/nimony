@@ -321,7 +321,7 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
     if p.kind != DotToken:
       p = sub(p) # peek walk, never left
       while p.hasMore:
-        assert p.substructureKind == ParamU
+        assert isParamLike(p.substructureKind)
         takeInto buf, p:
           buf.takeTree p # name
           buf.takeTree p # exported
@@ -385,7 +385,7 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType: Cursor; info: NifLin
           var p = params
           p = sub(p) # peek walk, never left
           while p.hasMore:
-            assert p.substructureKind == ParamU
+            assert isParamLike(p.substructureKind)
             takeInto dest, p:     # param tag
               dest.takeTree p       # name
               dest.takeTree p       # exported
@@ -2140,7 +2140,7 @@ proc emitFreshFrameCall(c: var Context; d: var TokenBuf; sym: SymId; params: Cur
       if p.kind != DotToken:
         p = sub(p) # peek walk, never left
         while p.hasMore:
-          assert p.substructureKind == ParamU
+          assert isParamLike(p.substructureKind)
           p.into:
             d.addSymUse p.symId, info
             skip p, SkipName # name
@@ -2183,7 +2183,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
     else:
       n.into:
         while n.hasMore:
-          assert n.substructureKind == ParamU
+          assert isParamLike(n.substructureKind)
           takeInto dest, n:
             let paramSym = n.symId
             dest.takeTree n # name
@@ -2258,7 +2258,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
           if p.isTagLit:
             p = sub(p)  # throwaway copy; bounds the walk under vpr
             while p.hasMore:
-              assert p.substructureKind == ParamU
+              assert isParamLike(p.substructureKind)
               p.into:
                 let paramSym = p.symId
                 let field = c.currentProc.localToEnv.getOrDefault(paramSym)
@@ -2360,7 +2360,7 @@ proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) 
   if n.isTagLit:
     n = sub(n)  # throwaway copy; bounds the walk under vpr
     while n.hasMore:
-      assert n.substructureKind == ParamU
+      assert isParamLike(n.substructureKind)
       n.into:
         let paramSym = n.symId
         skip n, SkipName # name
@@ -2400,7 +2400,7 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
     if n.kind != DotToken:
       n = sub(n) # peek walk, never left
       while n.hasMore:
-        assert n.substructureKind == ParamU
+        assert isParamLike(n.substructureKind)
         var field = SymId(0)
         var paramSym = SymId(0)
         takeInto dest, n:
@@ -2697,7 +2697,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           CchoiceX, OchoiceX, PragmaxX, QuotedX,
           HderefX, HaddrX, NewrefX, NewobjX,
           TupX, TupconstrX, SetconstrX, TabconstrX,
-          AshrX, BaseobjX, DconvX, CompilesX,
+          AshrX, BaseobjX, DconvX, CompilesX, StaticX,
           DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
           HighX, LowX, UnpackX, FieldsX, FieldpairsX,
           EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,

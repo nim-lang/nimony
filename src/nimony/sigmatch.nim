@@ -49,6 +49,7 @@ type
     NameNotFound
     ParamAlreadyGiven
     ExplicitGenericArgNotAType
+    NotAConstantArg
 
   MatchError* = object
     info: NifLineInfo
@@ -90,6 +91,8 @@ type
     argInfo: NifLineInfo
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
+    staticArgs: int ## how many arguments went to a `staticParam`; consulted
+                    ## only by the `staticOverloads` tiebreaker in `cmpMatches`
     returnType*: Cursor
     expected*: TypeCursor ## the type the CALL SITE wants, or a nil/`auto`
                           ## cursor when it wants nothing in particular. The
@@ -269,6 +272,9 @@ proc getErrorMsg*(m: Match): string =
     "parameter already given"
   of ExplicitGenericArgNotAType:
     "not a type: " & typeToString(m.error.got)
+  of NotAConstantArg:
+    "argument for a `static` parameter must be a constant expression; " &
+      "write `static(expr)` to evaluate it at compile time"
 
 proc errorInfo*(m: Match): NifLineInfo = m.error.info
 
@@ -1494,8 +1500,8 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     while f.hasMore and a.hasMore:
       var fParam = takeLocal(f, SkipFinalParRi)
       var aParam = takeLocal(a, SkipFinalParRi)
-      assert fParam.kind == ParamY
-      assert aParam.kind == ParamY
+      assert isParamLike(fParam.kind)
+      assert isParamLike(aParam.kind)
       linearMatch m, fParam.typ, aParam.typ
     if not f.hasMore:
       if not a.hasMore:
@@ -2095,7 +2101,7 @@ proc isMutableLvalue(n: Cursor): bool =
   case local.kind
   of VarY, GvarY, TvarY, ResultY, CursorY, PatternvarY:
     result = true
-  of ParamY:
+  of ParamY, StaticParamY:
     # plain-`T` params are immutable copies; `var`/`out`/`lent` aren't
     result = local.typ.typeKind in {MutT, OutT, LentT}
   else:
@@ -2789,7 +2795,7 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   while f.hasMore:
     m.skippedMod = NoType
 
-    assert f.symKind == ParamY
+    assert isParamLike(f.symKind)
     let param = asLocal(f)
     var ftyp = param.typ
     # This is subtle but only this order of `i >= args.len` checks
@@ -2830,6 +2836,14 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
       m.argInfo = args[i].n.info
       singleArg m, ftyp, args[i]
       if m.err: break
+      if param.kind == StaticParamY:
+        # matching used the plain element type; the static-ness is only the
+        # restriction that the argument is a tier-1 constant
+        if isConstantArg(args[i].n):
+          inc m.staticArgs
+        else:
+          m.error0 NotAConstantArg
+          break
     inc m.pos
     inc i
 
@@ -2864,7 +2878,7 @@ iterator typeVars(fn: SymId): SymId {.sideEffect.} =
 proc collectDefaultValues(m: var Match; f: Cursor): seq[CallArg] =
   var f = f
   result = @[]
-  while f.symKind == ParamY:
+  while isParamLike(f.symKind):
     let param = asLocal(f)
     if param.val.isDotToken: break
     m.insertedParam = true
@@ -3165,6 +3179,15 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
         result = mutualGenericMatch(a, b)
       else:
         result = NobodyWins
+      if result == NobodyWins and a.context != nil and
+          StaticOverloadsFeature in a.context.features:
+        # Nim 2's preference for the more-constant candidate. Applied last so
+        # it only breaks otherwise-exact ties; without the feature candidates
+        # that differ only in static-ness stay ambiguous.
+        if a.staticArgs > b.staticArgs:
+          result = FirstWins
+        elif a.staticArgs < b.staticArgs:
+          result = SecondWins
 
 type
   ParamsInfo = object
@@ -3178,7 +3201,7 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
   assert f.isParamsTag
   f = sub(f) # bound the param walk
   while f.hasMore:
-    assert f.symKind == ParamY
+    assert isParamLike(f.symKind)
     var param = takeLocal(f, SkipFinalParRi)
     let isVarargs = param.typ.tagEnum == VarargsTagId
     result.isVarargs.add isVarargs

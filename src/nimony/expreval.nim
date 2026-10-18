@@ -901,6 +901,15 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
           return symCursor
         inc local.val # takes the first counter field
         return eval(c, local.val)
+      of StaticParamY:
+        # a `static` parameter restricts the call site only; the routine is
+        # not specialized per value, so the body has no value to fold
+        let name = pool.symBasename(symId)
+        error "cannot evaluate `static` parameter '" & name &
+          "' at compile time: it only requires a constant argument at the " &
+          "call site; use a generic value parameter `[" & name &
+          ": static[T]]` for a compile-time value", info
+        return
       else: discard
     error "cannot evaluate symbol at compile time: " & pool.symString(symId), info
   of StrLit, CharLit, IntLit, UIntLit, FloatLit:

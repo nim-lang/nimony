@@ -152,17 +152,17 @@ proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial:
 
 proc isStaticConstraint(n: Cursor): bool =
   ## Detects the `static[T]` / `static T` / bare `static` constraint forms of a
-  ## generic parameter before semchecking: nifler keeps `static` as a plain
-  ## identifier in `static[T]` (giving `(at static T)`) but produces a
-  ## `(static T)` type for the prefix form `static T`.
+  ## parameter before semchecking: nifler keeps `static` as a plain identifier,
+  ## giving `(at static T)` for `static[T]` and `(cmd static T)` for the prefix
+  ## form `static T`. A `(static T)` type is accepted as well.
   if n.typeKind == StaticT: return true
   var n = n
-  if n.exprKind == AtX: inc n
+  if n.exprKind in {AtX, CmdX}: inc n
   n.isIdent and pool.strings[n.strId] == "static"
 
 proc isStaticSugarHead(n: Cursor): bool =
-  ## True when the `AtX` cursor `n` is the `static[T]` sugar `(at static T)`,
-  ## i.e. its head is the literal `static` identifier — as opposed to an
+  ## True when the `AtX`/`CmdX` cursor `n` is the `static[T]` / `static T`
+  ## sugar, i.e. its head is the literal `static` identifier — as opposed to an
   ## already-desugared element type that is itself an invocation such as
   ## `Shape[N]` (`(at Shape N)`).
   var head = n
@@ -180,7 +180,7 @@ proc semStaticTypevarType(c: var SemContext; dest: var TokenBuf; n: var Cursor) 
         c.buildErr dest, info, "`static` requires an explicit element type, e.g. `static[int]`"
       else:
         discard semLocalType(c, dest, n)
-  elif n.exprKind == AtX and isStaticSugarHead(n):
+  elif n.exprKind in {AtX, CmdX} and isStaticSugarHead(n):
     # the `static[T]` sugar: nifler renders it as `(at static T)`. An `AtX` whose
     # head is *not* the `static` identifier is an already-desugared element type
     # that is itself a generic instantiation (e.g. `Shape[N]` -> `(at Shape N)`),
@@ -293,6 +293,17 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
     skip constraint # pragmas
     if isStaticConstraint(constraint):
       kind = StaticTypevarY
+  elif kind == ParamY:
+    # `x: static[int]` declares a *constant parameter*: the call-site argument
+    # must be a constant expression. The type slot holds the plain element
+    # type; the static-ness lives in the `staticParam` tag.
+    var typ = n
+    inc typ # tag
+    skip typ # name
+    skip typ # export marker
+    skip typ # pragmas
+    if isStaticConstraint(typ):
+      kind = StaticParamY
   let declStart = dest.len
   let entryCursor = n  # saved for the signature-phase rollback below
   dest.addParLe(n.cursorTagId, n.info)
@@ -319,6 +330,21 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
     of StaticTypevarY:
       semStaticTypevarType c, dest, n
       wantDot c, dest, n
+    of StaticParamY:
+      beforeType = dest.len
+      semStaticTypevarType c, dest, n
+      if n.isDotToken:
+        takeTree dest, n
+      else:
+        # a default value: it is substituted at the call site, so it has to
+        # satisfy the same constant-argument restriction as an explicit one
+        var it = Item(n: n, typ: typeToCursor(c, dest, beforeType))
+        let valueStart = dest.len
+        semLocalValue c, dest, it, crucial
+        n = it.n
+        if not isConstantArg(readonlyCursorAt(dest, valueStart)):
+          dest.shrink valueStart
+          c.buildErr dest, delayed.info, "default value of a `static` parameter must be a constant expression"
     of ParamY, LetY, VarY, ConstY, CursorY, PatternvarY, ResultY, FldY, GfldY, GletY, TletY, GvarY, TvarY:
       beforeType = dest.len
       if n.isDotToken:
@@ -450,6 +476,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
     # the input tree used the `typevar` tag; the declaration's static-ness
     # lives in the tag, so retag it
     setTagAt(dest, declStart, TagId(StaticTypevarY))
+  elif kind == StaticParamY:
+    setTagAt(dest, declStart, TagId(StaticParamY))
   if kind notin {FldY, GfldY}:
     publish c, dest, delayed.s.name, declStart
 
@@ -694,6 +722,9 @@ proc semGenericParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
 proc semParam(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   if n.substructureKind == ParamU:
     semLocal c, dest, n, ParamY
+  elif n.substructureKind == StaticParamU:
+    # re-semming an already desugared constant parameter
+    semLocal c, dest, n, StaticParamY
   else:
     buildErr c, dest, n.info, "expected 'param'"
 
@@ -742,7 +773,7 @@ proc getParamsType(c: var SemContext; dest: var TokenBuf; paramsAt: int): seq[Ty
     if n.substructureKind == ParamsU:
       inc n
       while n.hasMore:
-        if n.symKind == ParamY:
+        if isParamLike(n.symKind):
           var local = takeLocal(n, SkipFinalParRi)
           result.add local.typ
         else:
@@ -899,7 +930,7 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
   var hasFirstParam = false
   if params.isTagLit:
     inc params
-    if params.substructureKind == ParamU:
+    if isParamLike(params.substructureKind):
       hasFirstParam = true
       inc params
       skip params, SkipName # name
@@ -937,7 +968,7 @@ proc hookThatShouldBeMethod(c: var SemContext; dest: var TokenBuf; hk: HookKind;
     var params = cursorAt(dest, beforeParams)
     if params.isTagLit:
       inc params
-      if params.substructureKind == ParamU:
+      if isParamLike(params.substructureKind):
         inc params
         skip params, SkipName # name
         skip params, SkipExport # export marker
@@ -1010,7 +1041,7 @@ proc hasUntypedOrTypedParam(dest: var TokenBuf; beforeParams: int): bool =
   if n.substructureKind != ParamsU:
     return
   n.loopInto:
-    if n.substructureKind == ParamU:
+    if isParamLike(n.substructureKind):
       var p = n
       inc p
       # Skip name, exported marker, pragmas to land on the type slot.

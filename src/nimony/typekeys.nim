@@ -170,7 +170,7 @@ proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
       n.into:  # (params …)
         while n.hasMore:
           let pa = takeLocal(n, SkipFinalParRi)
-          assert pa.kind == ParamY
+          assert isParamLike(pa.kind)
           mangle b, pa.typ, mm
     else:
       inc n, AnyType  # the `.` placeholder for missing params

@@ -97,7 +97,7 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
        AconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
        LeX, LtX, CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX, NewrefX,
-       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX, CompilesX,
+       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX, CompilesX, StaticX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
        HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,

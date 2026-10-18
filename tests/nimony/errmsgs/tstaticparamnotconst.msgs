@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tstaticparamnotconst.nim(9, 14) Error: Type mismatch at [position]
+twice(v)
+[1] argument for a `static` parameter must be a constant expression; write `static(expr)` to evaluate it at compile time (declared in tests/nimony/errmsgs/tstaticparamnotconst.nim(5, 1))
+tests/nimony/errmsgs/tstaticparamnotconst.nim(10, 14) Error: Type mismatch at [position]
+twice(sq(3))
+[1] argument for a `static` parameter must be a constant expression; write `static(expr)` to evaluate it at compile time (declared in tests/nimony/errmsgs/tstaticparamnotconst.nim(5, 1))
