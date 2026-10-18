@@ -277,6 +277,7 @@
 | `(delay X X*)` | NimonyExpr | `delay(fn args)` builtin for delayed continuation creation |
 | `(delay0)` | NimonyExpr | `delay()` no-arg: capture current coroutine's own continuation |
 | `(suspend)` | NimonyExpr | `suspend()` magic proc: parks the coroutine and returns Continuation(nil, env) |
+| `(ctxSlot)` | NimonyExpr | `ctxSlot()` magic proc: the address of the `ctx` slot of the `.passive` routine it appears in. Legal only there — a use outside a `.passive` proc is a compile error — because that slot is what the hidden `ctx` argument was stored into, and `ctxSlot()` is the only way `std/contextvars` reaches a dynamic context. `coro_transform` replaces it with `(addr (*this).ctx)`. |
 | `(expr XS+ X)` | NimonyExpr, NiflerKind | |
 | `(do (params...)+ T X)` | NimonyExpr, NiflerKind | `do` expression |
 | `(arrat X X X? X?)` | NimonyExpr | two optional exprs: `high` boundary and the `low` boundary (if != 0) |

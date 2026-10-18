@@ -29,6 +29,7 @@ import std/colors
 import std/commonio
 import std/compilation
 import std/complex
+import std/contextvars
 import std/compress/checksums
 import std/compress/deflate
 import std/compress/gzip

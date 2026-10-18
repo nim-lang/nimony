@@ -237,6 +237,22 @@ type
   CoroutineBase* = object of RootObj
     caller*: Continuation
     callee*: ptr CoroutineBase
+    ctx*: RootRef
+      ## Slot for a dynamic context, private to `std/contextvars`.
+      ##
+      ## It lives on the frame because the frame is the only thing that
+      ## identifies a coroutine for its whole life: allocated with the
+      ## coroutine, reached through the `env` field of every continuation that
+      ## resumes it, carried to whichever thread resumes it, freed with it.
+      ## A context therefore needs no table and no bookkeeping to follow its
+      ## coroutine around, and nothing outlives the coroutine that set it.
+      ##
+      ## A `RootRef`, not a `pointer`: the chain is a tree of nodes that must
+      ## stay alive for as long as anything can reach it, and only a real
+      ## reference says so. Storing the head as a `pointer` would leave the
+      ## whole chain unrooted -- ORC would free a node the moment the `push`
+      ## that made it went out of scope, and hand the same memory to the next
+      ## one.
 
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
@@ -672,6 +688,15 @@ proc allocFrame*(size: int): ptr CoroutineBase =
 proc deallocFrame*(frame: ptr CoroutineBase) =
   ## Frees a coroutine frame previously allocated by `allocFrame`.
   if frame.callee != nil:
+    # A stack-allocated frame is an ordinary local of its caller and the
+    # compiler destroys it like any other object, but a heap frame is freed
+    # here and nothing else ever runs its destructor. So the one managed field
+    # `CoroutineBase` has -- the coroutine's context chain, read through
+    # `ctxSlot` -- is released on the way out. Frames the front end
+    # allocated for closure iterators are the ref's business, and that
+    # destructor does destroy the fields.
+    if frame.ctx != nil:
+      frame.ctx = nil
     dealloc(frame)
 
 type
