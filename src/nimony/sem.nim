@@ -190,26 +190,13 @@ proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; f
 
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
 
-proc isStaticExprCall(n: Cursor): bool =
-  ## `static(expr)` / `static expr` in an expression: `static` is a keyword, so
-  ## a call headed by the bare identifier can only mean explicit CTFE.
-  result = false
-  if n.exprKind in {CallX, CmdX}:
-    var n = n
-    inc n
-    if n.isIdent and pool.strings[n.strId] == "static":
-      skip n
-      if n.hasMore:
-        skip n
-        result = not n.hasMore
-
 proc semStaticExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  ## Explicit general CTFE: evaluate the operand at compile time and use the
-  ## resulting value. This is the only way an arbitrary call reaches a
-  ## `static` parameter; general CTFE is never triggered implicitly.
+  ## `(static x)`, the `static` magic: explicit general CTFE. Evaluate the
+  ## operand at compile time and use the resulting value. This is the only way
+  ## an arbitrary call reaches a `static` parameter; general CTFE is never
+  ## triggered implicitly.
   var n = it.n
   inc n # tag
-  skip n # `static`
   var inner = Item(n: n, typ: it.typ)
   semConstExpr c, dest, inner
   it.typ = inner.typ
@@ -1988,7 +1975,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
+     PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -2299,7 +2286,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
+     PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -5940,10 +5927,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
         semExpr c, dest, it
     of CallX, CmdX, CallstrlitX, InfixX, PrefixX, HcallX:
       toplevelGuard c:
-        if isStaticExprCall(it.n):
-          semStaticExpr c, dest, it
-        else:
-          semCall c, dest, it, flags
+        semCall c, dest, it, flags
     of ProccallX:
       toplevelGuard c:
         semProccall c, dest, it
@@ -6082,6 +6066,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
         semDo c, dest, it, whichPass(c)
     of CompilesX:
       semCompiles c, dest, it
+    of StaticX:
+      semStaticExpr c, dest, it
     of CurlyatX:
       semCurlyat c, dest, it
     of AlignofX, OffsetofX:

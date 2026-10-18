@@ -66,6 +66,11 @@ func astToStr*[T](x: T): string {.magic: AstToStr.}
 func compiles*(x: untyped): bool {.magic: Compiles.}
   ## Special compile-time procedure that checks whether `x` can be compiled
   ## without any semantic error.
+
+func `static`*(x: untyped): untyped {.magic: Static.}
+  ## Evaluates `x` at compile time, like a `const` initializer, and yields its
+  ## value: `static(fib(10))`. The only way to pass an arbitrary call to a
+  ## `static` parameter; compile-time evaluation is never implicit.
   ## This can be used to check whether a type supports some operation:
   ##   ```nim
   ##   when compiles(3 + 4):

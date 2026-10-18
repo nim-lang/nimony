@@ -149,7 +149,7 @@ type
     NodeclP = (ord(NodeclTagId), "nodecl")  ## `nodecl` annotation
     RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation; optional list of exception types the proc may raise
     ErrsP = (ord(ErrsTagId), "errs")  ## proc annotation
-    StaticP = (ord(StaticTagId), "static")  ## `static` type or annotation
+    StaticP = (ord(StaticTagId), "static")  ## `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time
     ImportcP = (ord(ImportcTagId), "importc")  ## `importc` pragma
     ImportcppP = (ord(ImportcppTagId), "importcpp")  ## `importcpp` pragma
     DynlibP = (ord(DynlibTagId), "dynlib")  ## `dynlib` pragma; on a Leng decl: static import library of an `importc` proc (native backend): the declaration binds through the image's import table instead of a runtime loader stub

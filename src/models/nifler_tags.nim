@@ -72,7 +72,7 @@ type
     DiscardL = (ord(DiscardTagId), "discard")  ## `discard` statement; optional expression to discard
     TryL = (ord(TryTagId), "try")  ## `try` statement
     RaiseL = (ord(RaiseTagId), "raise")  ## `raise` statement; bare `(raise .)` re-raises the in-flight exception (only valid inside an `except` block)
-    StaticL = (ord(StaticTagId), "static")  ## `static` type or annotation
+    StaticL = (ord(StaticTagId), "static")  ## `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time
     UnpackflatL = (ord(UnpackflatTagId), "unpackflat")  ## unpack into flat variable list
     UnpacktupL = (ord(UnpacktupTagId), "unpacktup")  ## unpack tuple
     UnpackdeclL = (ord(UnpackdeclTagId), "unpackdecl")  ## unpack var/let/const declaration
