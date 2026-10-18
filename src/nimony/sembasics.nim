@@ -395,7 +395,10 @@ proc ptrTypeOf*(c: var SemContext; dest: var TokenBuf; typ: TypeCursor): TypeCur
 proc declToCursor*(c: var SemContext; dest: var TokenBuf; s: Sym): LoadResult =
   if knowsSym(s.name) or s.pos == ImportedPos:
     result = tryLoadSym(s.name)
-  elif s.pos > 0:
+  elif s.pos > 0 and s.pos <= dest.len:
+    # `pos` is an offset into the buffer the declaration was emitted into; a
+    # scratch `dest` (a type expression, say) that is shorter cannot hold it,
+    # e.g. a routine named inside its own still unfinished signature
     var buf = createTokenBuf(10)
     # XXX optimize this for non-generic procs. No need to
     # copy their bodies here.
