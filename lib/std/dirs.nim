@@ -205,13 +205,19 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry; skipSpecial = false): bool =
             break
 
 proc tryCloseDir*(w: var DirWalker): ErrorCode =
+  ## Closes `w`. A walker whose `tryOpenDir` failed holds no handle, so there
+  ## is nothing to close: libc's `closedir(NULL)` crashes on macOS.
   when defined(windows):
-    if findClose(w.handle).isSuccess:
+    if w.handle == INVALID_HANDLE_VALUE:
+      result = Success
+    elif findClose(w.handle).isSuccess:
       result = Success
     else:
       result = windowsToErrorCode getLastError()
   else:
-    if closedir(w.pimpl) == 0'i32:
+    if w.pimpl == nil:
+      result = Success
+    elif closedir(w.pimpl) == 0'i32:
       result = Success
     else:
       result = posixToErrorCode(errno())
