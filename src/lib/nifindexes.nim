@@ -74,8 +74,9 @@ proc processDeclForChecksum(dest: var Sha1State; n: var Cursor) =
         updateLoop(dest, n, inlineT, dummy) # SymbolDef
         updateLoop(dest, n, inlineT, dummy) # Export marker
         updateLoop(dest, n, inlineT, dummy) # pattern
-        # an importer instantiates a generic routine from its body:
-        let isGeneric = not n.isDotToken
+        # an importer instantiates a generic routine from its body; an
+        # instance holds `(at …)` here and was compiled in this module:
+        let isGeneric = n.isTagLit and n.cursorTagId == TagId(TypevarsTagId)
         updateLoop(dest, n, inlineT, dummy) # typevars
         updateLoop(dest, n, inlineT, dummy) # params
         updateLoop(dest, n, inlineT, dummy) # retType
