@@ -17,15 +17,9 @@ when freebsdRaw:
   proc stat*(a1: cstring, a2: var Stat): cint {.inline, sideEffect.} =
     fstatat(AT_FDCWD, a1, a2, cint(0))
 
-  # The `__getcwd` trap answers 0 on success rather than the buffer.
+  # The `__getcwd` trap answers 0 on success rather than the buffer; see
+  # `tryGetcwd`.
   proc sysGetcwd(buf: cstring; size: int): cint {.importc: "__getcwd", sideEffect.}
-  proc getcwd*(a1: cstring, a2: int): nil cstring {.sideEffect.} =
-    let r = pcall(sysGetcwd(a1, a2))
-    if r < 0:
-      setErrno cint(-r)
-      result = nil
-    else:
-      result = a1
 
 else:
   proc open*(a1: cstring; a2: cint; mode: Mode = 0): cint {.importc: "open", sideEffect.}

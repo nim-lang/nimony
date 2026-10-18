@@ -18,26 +18,25 @@ when defined(illumos):
   assert open(name.toCString, O_RDONLY) == -1
   assert errno() == ENOENT
   assert pcall(open(name.toCString, O_RDONLY)) == -clong(ENOENT)
-  assert opendir(name.toCString) == nil
-  assert errno() == ENOENT
-  assert readdir(nil) == nil
-  assert errno() == EBADF
-  assert closedir(nil) == -1
-  assert errno() == EBADF
+  var missing = default(DirStream)
+  assert openDirStream(missing, name.toCString) == -clong(ENOENT)
+  var ename: cstring = ""
+  var etype = DT_UNKNOWN
+  assert nextDirEntry(missing, ename, etype) == -clong(EBADF)
+  assert closeDirStream(missing) == 0 # never opened: nothing to close
   assert posix_fallocate(-1, Off(0), Off(4096)) == EBADF
 
-  let dir = opendir(cstring("/tmp"))
-  assert dir != nil
+  var dir = default(DirStream)
+  assert openDirStream(dir, cstring("/tmp")) == 0
   var entries = 0
   while true:
-    let entry = readdir(dir)
-    if entry == nil:
-      assert errno() == 0
-      break
-    assert entry.d_type == DT_UNKNOWN
+    let r = nextDirEntry(dir, ename, etype)
+    assert r >= 0
+    if r == 0: break
+    assert etype == DT_UNKNOWN # illumos records carry no d_type
     inc entries
   assert entries >= 2 # . and ..
-  assert closedir(dir) == 0
+  assert closeDirStream(dir) == 0
 
   let child = fork()
   assert child >= 0

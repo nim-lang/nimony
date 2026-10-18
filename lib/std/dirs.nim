@@ -90,7 +90,7 @@ type
       wimpl: WIN32_FIND_DATA
       handle: Handle
     else:
-      pimpl: ptr DIR
+      stream: DirStream
     dir: Path
     status: ErrorCode
 
@@ -106,11 +106,8 @@ proc tryOpenDir*(dir: sink Path): DirWalker =
       result.status = Success
   else:
     var dirStr = $result.dir
-    result.pimpl = opendir(dirStr.toCString)
-    if result.pimpl == nil:
-      result.status = posixToErrorCode(errno())
-    else:
-      result.status = Success
+    let r = openDirStream(result.stream, dirStr.toCString)
+    result.status = if r < 0: posixToErrorCode(cint(-r)) else: Success
 
 proc fillDirEntry(w: var DirWalker; e: var DirEntry) =
   when defined(windows):
@@ -182,22 +179,24 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry; skipSpecial = false): bool =
   else:
     result = false
     while w.status == Success:
-      let entry = readdir(w.pimpl)
-      if entry == nil:
-        if w.status == Success:
-          w.status = posixToErrorCode(errno())
+      var cname: cstring = ""
+      var dType = DT_UNKNOWN
+      let r = nextDirEntry(w.stream, cname, dType)
+      if r <= 0:
+        # 0 is the end of the directory; it leaves `w.status` alone
+        if r < 0:
+          w.status = posixToErrorCode(cint(-r))
         result = false
         break
       else:
         result = true
-        let cstr = cast[cstring](addr entry.d_name[0])
-        let name = fromCString cstr
+        let name = fromCString cname
         # Skip "." and ".."
         if name == "." or name == "..":
           discard "skip"
         else:
           var special = false
-          e.kind = pathComponentFromEntry(w, name, entry.d_type, special)
+          e.kind = pathComponentFromEntry(w, name, dType, special)
           if special and skipSpecial:
             discard "skip"
           else:
@@ -206,7 +205,7 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry; skipSpecial = false): bool =
 
 proc tryCloseDir*(w: var DirWalker): ErrorCode =
   ## Closes `w`. A walker whose `tryOpenDir` failed holds no handle, so there
-  ## is nothing to close: libc's `closedir(NULL)` crashes on macOS.
+  ## is nothing to close.
   when defined(windows):
     if w.handle == INVALID_HANDLE_VALUE:
       result = Success
@@ -215,12 +214,8 @@ proc tryCloseDir*(w: var DirWalker): ErrorCode =
     else:
       result = windowsToErrorCode getLastError()
   else:
-    if w.pimpl == nil:
-      result = Success
-    elif closedir(w.pimpl) == 0'i32:
-      result = Success
-    else:
-      result = posixToErrorCode(errno())
+    let r = closeDirStream(w.stream)
+    result = if r < 0: posixToErrorCode(cint(-r)) else: Success
 
 iterator walkDir*(dir: Path,
                   relative = false,
@@ -459,8 +454,9 @@ proc getCurrentDir*(): Path {.raises.} =
   else:
     const bufSize = 1024
     var buffer = newString(bufSize)
-    if getcwd(buffer.toCString(), bufSize) == nil:
-      raiseOSError(osLastError())
+    let r = tryGetcwd(buffer.toCString(), bufSize)
+    if r < 0:
+      raiseOSError(OSErrorCode(-r))
     var i = 0
     while i < buffer.len and buffer[i] != '\0': inc i
     shrink(buffer, i)
