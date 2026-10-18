@@ -5511,6 +5511,19 @@ proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; v: Verdicts;
   of TagLit:
     if n.exprKind == ArratX and cursorToPosition(v.base, n) in v.dischargedIndexes:
       copyArrat dest, n, v, ren
+    elif n.exprKind in {DotX, DdotX}:
+      # a field shares its name with a parameter, not its identity:
+      copyInto dest, n:
+        copyWithVerdicts dest, n, v, ren # object expression
+        while n.hasMore:
+          dest.takeTree n # field selector + optional depth/access token
+    elif n.substructureKind == KvU:
+      copyInto dest, n:
+        dest.takeTree n # field name
+        while n.hasMore:
+          copyWithVerdicts dest, n, v, ren
+    elif n.stmtKind == TypeS:
+      dest.takeTree n
     else:
       copyInto dest, n:
         while n.hasMore:
