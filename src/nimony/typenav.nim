@@ -80,10 +80,33 @@ proc openScope*(c: var TypeCache; kind = OtherScope) =
 proc closeScope*(c: var TypeCache) =
   c.current = c.current.parent
 
+const
+  ScopedLocals = {VarY, TvarY, GvarY, LetY, TletY, GletY, CursorY, PatternvarY}
+    ## the locals whose lifetime a scope bounds
+
 iterator currentScopeLocals*(c: var TypeCache): SymId =
   for s, k in c.current.locals:
-    if k.kind in {VarY, TvarY, GvarY, LetY, TletY, GletY}:
+    if k.kind in ScopedLocals:
       yield s
+
+proc scopeDepth*(c: TypeCache): int =
+  result = 0
+  var sc = c.current
+  while sc != nil:
+    inc result
+    sc = sc.parent
+
+iterator localsOfScopesAbove*(c: var TypeCache; depth: int): SymId =
+  ## The locals of every scope opened while `scopeDepth` exceeded `depth`:
+  ## what a jump out to a construct entered at `depth` leaves behind.
+  var sc = c.current
+  var d = scopeDepth(c)
+  while d > depth:
+    for s, k in sc.locals:
+      if k.kind in ScopedLocals:
+        yield s
+    sc = sc.parent
+    dec d
 
 proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   if params.isTagLit:

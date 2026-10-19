@@ -56,3 +56,13 @@ proc iterateThenMutate =
   echo s.len
 
 iterateThenMutate()
+
+proc breakOut =
+  var s = @[1, 2, 3]
+  for x in mitems(s):
+    if x == 2: break
+    x = 0
+  s.add 4   # the binder died on the `break` edge too
+  echo s.len
+
+breakOut()
