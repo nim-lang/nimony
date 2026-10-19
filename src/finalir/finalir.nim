@@ -80,42 +80,30 @@ type
 proc openScope(c: var Context) =
   c.typeCache.openScope()
 
-proc emitKill(c: var Context; dest: var TokenBuf; locals: var seq[SymId];
-              info: NifLineInfo) =
-  # sort by name: the scope table iterates in SymId-hash order, which follows
-  # pool interning order and is not stable across toolchain changes — the
-  # golden files need deterministic output (kill order is a set)
-  for i in 1 ..< locals.len:
-    var j = i
-    while j > 0 and pool.symString(locals[j-1]) > pool.symString(locals[j]):
-      swap locals[j-1], locals[j]
-      dec j
-  var i = 0
-  if not c.analysisFacts: locals.setLen 0
-  for s in locals:
-    if i == 0:
-      dest.addParLe("kill", info)
-    dest.addSymUse s, info
-    inc i
-  if i > 0:
-    dest.addParRi()
+template emitKill(c: var Context; dest: var TokenBuf; info: NifLineInfo;
+                  locals: untyped) =
+  ## `(kill …)` for the symbols `locals` yields, if any. A scope yields its
+  ## locals in declaration order, so the output is deterministic as it is.
+  if c.analysisFacts:
+    var first = true
+    for s in locals:
+      if first:
+        dest.addParLe("kill", info)
+        first = false
+      dest.addSymUse s, info
+    if not first:
+      dest.addParRi()
 
 proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   # insert kill instructions for the locals that go out of scope:
-  var locals: seq[SymId] = @[]
-  for s in c.typeCache.currentScopeLocals:
-    locals.add s
-  emitKill c, dest, locals, info
+  emitKill c, dest, info, c.typeCache.currentScopeLocals
   c.typeCache.closeScope()
 
 proc killLocalsAbove(c: var Context; dest: var TokenBuf; depth: int;
                      info: NifLineInfo) =
   ## A forward jump leaves every scope above `depth`; their locals die on that
   ## edge exactly as they do at the scopes' ends.
-  var locals: seq[SymId] = @[]
-  for s in c.typeCache.localsOfScopesAbove(depth):
-    locals.add s
-  emitKill c, dest, locals, info
+  emitKill c, dest, info, c.typeCache.localsOfScopesAbove(depth)
 
 proc freshLabel(c: var Context; prefix: string): SymId =
   result = pool.symId(prefix & $c.current.tmpCounter)

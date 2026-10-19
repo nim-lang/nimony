@@ -47,7 +47,8 @@ type
   ScopeKind* = enum
     OtherScope, ProcScope, UnusedScope
   TypeScope* {.acyclic.} = ref object
-    locals: Table[SymId, LocalInfo]
+    locals: OrderedTable[SymId, LocalInfo]  ## in declaration order, which is
+                                            ## the order of a scope's `kill`
     parent: TypeScope
     kind: ScopeKind
 
@@ -75,7 +76,7 @@ proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;
   c.current.locals[s] = LocalInfo(kind: kind, typ: typ, val: val)
 
 proc openScope*(c: var TypeCache; kind = OtherScope) =
-  c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: kind)
+  c.current = TypeScope(locals: initOrderedTable[SymId, LocalInfo](), parent: c.current, kind: kind)
 
 proc closeScope*(c: var TypeCache) =
   c.current = c.current.parent
@@ -119,7 +120,7 @@ proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
 
 proc openProcScope*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   registerLocal(c, routine, ProcY, decl)
-  c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: ProcScope)
+  c.current = TypeScope(locals: initOrderedTable[SymId, LocalInfo](), parent: c.current, kind: ProcScope)
 
 proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
   ## Returns the init value for a constant. Restricted to `ConstY` for callers
