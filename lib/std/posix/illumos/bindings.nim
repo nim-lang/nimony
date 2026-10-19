@@ -9,6 +9,8 @@ proc fstat*(fd: cint; buf: var Stat): cint {.importc: "fstat", sideEffect.}
 proc mmap*(a1: nil pointer; a2: csize_t; a3, a4, a5: cint; a6: Off): pointer {.importc: "mmap".}
 proc readlink*(path, buf: cstring; size: int): int {.importc: "readlink".}
 proc symlink*(target, path: cstring): cint {.importc: "symlink".}
+proc link*(existing, path: cstring): cint {.importc: "link", sideEffect.}
+proc rename*(oldpath, newpath: cstring): cint {.importc: "rename", sideEffect.}
 proc chmod*(path: cstring; mode: Mode): cint {.importc: "chmod", sideEffect.}
 proc mkdir*(path: cstring; mode: Mode): cint {.importc: "mkdir", sideEffect.}
 proc rmdir*(path: cstring): cint {.importc: "rmdir", sideEffect.}

@@ -530,15 +530,24 @@ proc htons(x: uint16): uint16 {.inline.} =
 
 when defined(posix):
   proc posixClose(fd: cint): cint {.importc: "close".}
-  proc fcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
-    ## FIXED arity with a defaulted third argument, not `varargs` — the same
-    ## shape and the same reason as `posix.open`: sem monomorphizes a `varargs`
-    ## importc into one variant per arity, all of them `importc "fcntl"`, and
-    ## `nimony n` lowers an importc syscall to ONE register-signature stub keyed
-    ## by the C name. Two arities would collapse into that single stub and the
-    ## two-argument call would leave a declared argument unbound.
-    ##
-    ## `F_GETFL` ignores the third argument, so passing `0` costs nothing.
+  when defined(osx):
+    proc variadicFcntl(fd: cint; cmd: cint): cint {.varargs, importc: "fcntl", sideEffect.}
+    proc fcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.inline.} =
+      ## Apple arm64 passes a variadic argument on the stack, not in a
+      ## register, so libc's variadic `fcntl` needs a variadic prototype; every
+      ## call goes through here with all three arguments, so there is still
+      ## only one arity.
+      variadicFcntl(fd, cmd, arg)
+  else:
+    proc fcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
+      ## FIXED arity with a defaulted third argument, not `varargs` — the same
+      ## shape and the same reason as `posix.open`: sem monomorphizes a `varargs`
+      ## importc into one variant per arity, all of them `importc "fcntl"`, and
+      ## `nimony n` lowers an importc syscall to ONE register-signature stub keyed
+      ## by the C name. Two arities would collapse into that single stub and the
+      ## two-argument call would leave a declared argument unbound.
+      ##
+      ## `F_GETFL` ignores the third argument, so passing `0` costs nothing.
   proc setNonBlocking*(fd: cint) =
     var flags = fcntl(fd, F_GETFL)
     discard fcntl(fd, F_SETFL, flags or O_NONBLOCK)

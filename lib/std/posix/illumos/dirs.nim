@@ -1,55 +1,18 @@
-# Private include. libc dirent records have variable-length names and no
-# d_type. Present the same synthetic entry interface as Linux; std/dirs
-# already uses lstat for DT_UNKNOWN. Never overlay this on libc's record.
-type
-  NativeDirent {.pure.} = object
-    ino: uint64
-    offset: int64
-    reclen: uint16
-    name: array[1, char]
-  Dirent* {.pure.} = object
-    d_type*: uint8
-    d_name*: array[256, char]
-  DIR* {.pure.} = object
-    stream: pointer
-    entry: Dirent
+# Private implementation included by std/posix/posix; not a standalone module.
 
-proc nativeOpendir(path: cstring): nil pointer {.importc: "opendir", sideEffect.}
-proc nativeReaddir(stream: pointer): nil ptr NativeDirent {.importc: "readdir", sideEffect.}
-proc nativeClosedir(stream: pointer): cint {.importc: "closedir", sideEffect.}
+# illumos `getdents(2)`, the call libc's `readdir` is built on. Each record is
+# the LP64 `struct dirent`: d_ino @0 (u64), d_off @8 (s64), d_reclen @16 (u16),
+# d_name @18 (NUL-terminated). There is no d_type: `std/dirs` falls back to
+# `lstat` for `DT_UNKNOWN`.
+proc getdents(fd: cint; buf: pointer; nbyte: csize_t): cint {.importc: "getdents", sideEffect.}
 
-proc opendir*(path: cstring): nil ptr DIR {.sideEffect.} =
-  let stream = nativeOpendir(path)
-  if stream == nil: return nil
-  result = cast[ptr DIR](alloc0(sizeof(DIR)))
-  result.stream = stream
+proc readDirRecords(fd: cint; buf: pointer; size: int; cookie: ptr Off): clong {.sideEffect.} =
+  pcall(getdents(fd, buf, csize_t(size)))
 
-proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.sideEffect.} =
-  if dirp == nil:
-    errnoLocation()[] = EBADF
-    return nil
-  errnoLocation()[] = 0
-  let native = nativeReaddir(dirp.stream)
-  if native == nil: return nil
-  # d_name starts at byte 18 on the supported LP64 ABI. Bound the scan by
-  # both the native record length and the public buffer, including its NUL.
-  let available = int(native.reclen) - 18
-  let name = cast[ptr UncheckedArray[char]](addr native.name[0])
-  var i = 0
-  while i < available and i < dirp.entry.d_name.len:
-    dirp.entry.d_name[i] = name[i]
-    if name[i] == '\0':
-      dirp.entry.d_type = 0 # DT_UNKNOWN (an interface tag, not a native macro)
-      return addr dirp.entry
-    inc i
-  errnoLocation()[] = EOVERFLOW
-  result = nil
+const
+  direntReclenAt* = 16
+  direntTypeAt* = -1
+  direntNameAt* = 18
+  direntSkipsZeroIno* = false
 
-proc closedir*(dirp: nil ptr DIR): cint {.sideEffect.} =
-  if dirp == nil:
-    errnoLocation()[] = EBADF
-    return -1
-  result = nativeClosedir(dirp.stream)
-  let saved = errno()
-  dealloc(dirp)
-  errnoLocation()[] = saved
+include "../dirbuf"

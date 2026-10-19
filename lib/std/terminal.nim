@@ -130,14 +130,29 @@ proc setBackgroundColor*(f: File; bg: BackgroundColor; bright = false) =
 
 when defined(nimNativeIo) and defined(posix):
   # Libc-free: a `File` carries a raw fd (no `FILE*`, so no `fileno`), and `isatty`
-  # is itself a libc helper — implement it as `ioctl(fd, TCGETS)` (== 0 ⇒ a tty),
-  # the same probe glibc's `isatty` uses. TCGETS is 0x5401 on x86-64 and AArch64.
-  proc nativeIoctl(fd: cint; request: uint; arg: pointer): cint {.
-    importc: "ioctl", sideEffect.}
+  # is itself a libc helper — implement it as the "get terminal attributes" ioctl
+  # (== 0 ⇒ a tty), the same probe libc's `isatty` uses.
+  when defined(osx):
+    proc variadicIoctl(fd: cint; request: uint): cint {.varargs, importc: "ioctl", sideEffect.}
+    proc nativeIoctl(fd: cint; request: uint; arg: pointer): cint {.inline.} =
+      # Apple arm64 passes a variadic argument on the stack, not in a register,
+      # so libc's variadic `ioctl` needs a variadic prototype to find `arg`.
+      variadicIoctl(fd, request, arg)
+  else:
+    proc nativeIoctl(fd: cint; request: uint; arg: pointer): cint {.
+      importc: "ioctl", sideEffect.}
+  when defined(linux):
+    const TCGETS = 0x5401'u          # x86-64 and AArch64
+  elif defined(solaris) or defined(illumos):
+    const TCGETS = 0x540D'u          # ('T' shl 8) or 13
+  elif defined(osx):
+    const TCGETS = 0x40487413'u      # TIOCGETA: _IOR('t', 19, struct termios), 72 bytes
+  else: # the BSDs
+    const TCGETS = 0x402C7413'u      # TIOCGETA: _IOR('t', 19, struct termios), 44 bytes
   proc c_fileno(f: File): cint = getFileHandle(f)
   proc c_isatty(fildes: cint): cint =
-    var termbuf {.noinit.}: array[64, byte]   # holds a `struct termios` (~60B)
-    if nativeIoctl(fildes, 0x5401'u, addr termbuf) == 0'i32: 1'i32 else: 0'i32
+    var termbuf {.noinit.}: array[128, byte]   # holds any `struct termios` (at most 72B)
+    if nativeIoctl(fildes, TCGETS, addr termbuf) == 0'i32: 1'i32 else: 0'i32
 elif defined(nimNativeIo) and defined(windows):
   # Libc-free: a `File` wraps a Win32 `HANDLE`, not an msvcrt `FILE*`, so there is
   # no `_fileno`/`_isatty` to call. `GetConsoleMode` succeeds only for console

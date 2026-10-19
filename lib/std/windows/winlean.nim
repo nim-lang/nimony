@@ -253,8 +253,23 @@ when defined(windows):
                         flags: DWORD): int32 {.
     importc:"CreateSymbolicLinkW", dynlib: "kernel32", stdcall, sideEffect.}
   proc createHardLinkW*(lpFileName, lpExistingFileName: WideCString,
-                        security: pointer=nil): int32 {.
+                        security: nil pointer=nil): int32 {.
     importc:"CreateHardLinkW", dynlib: "kernel32", stdcall, sideEffect.}
+
+  # -------- Reparse points (symlinks / junctions) for std/private/ossymlinks --------
+  const
+    IO_REPARSE_TAG_MOUNT_POINT* = 0xA0000003'u32
+    IO_REPARSE_TAG_SYMLINK* = 0xA000000C'u32
+    MAXIMUM_REPARSE_DATA_BUFFER_SIZE* = 16 * 1024
+    SYMLINK_FLAG_RELATIVE* = 0x1'u32
+    FSCTL_GET_REPARSE_POINT* = 0x000900A8'u32
+
+  proc deviceIoControl*(hDevice: Handle, dwIoControlCode: DWORD,
+                        lpInBuffer: nil pointer, nInBufferSize: DWORD,
+                        lpOutBuffer: nil pointer, nOutBufferSize: DWORD,
+                        lpBytesReturned: var DWORD,
+                        lpOverlapped: nil pointer): WINBOOL {.
+    importc: "DeviceIoControl", dynlib: "kernel32", stdcall, sideEffect.}
 
   # -------- Process / pipe / synchronization bindings for std/osproc --------
   const

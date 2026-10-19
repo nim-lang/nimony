@@ -16,7 +16,23 @@ else:
 
 when not linuxA64Raw:
   proc readlink*(a1, a2: cstring, a3: int): int {.importc: "readlink".}
-  proc symlink*(a1, a2: cstring): cint {.importc: "symlink".}
+  when defined(nimNoLibc) and not defined(i386):
+    # The native backend's x86-64 syscall table has `symlinkat`, not
+    # `symlink`; an unknown name fails the static link.
+    proc symlinkat(target: cstring; dirfd: cint; linkpath: cstring): cint {.
+      importc: "symlinkat".}
+    proc symlink*(a1, a2: cstring): cint {.inline.} =
+      symlinkat(a1, cint(-100), a2)  # AT_FDCWD
+    # Likewise `renameat` rather than `rename`.
+    proc renameat(oldDirfd: cint; oldpath: cstring;
+                  newDirfd: cint; newpath: cstring): cint {.
+      importc: "renameat", sideEffect.}
+    proc rename*(a1, a2: cstring): cint {.inline, sideEffect.} =
+      renameat(cint(-100), a1, cint(-100), a2)  # AT_FDCWD
+  else:
+    proc symlink*(a1, a2: cstring): cint {.importc: "symlink".}
+    proc rename*(a1, a2: cstring): cint {.importc: "rename", sideEffect.}
+  proc link*(a1, a2: cstring): cint {.importc: "link", sideEffect.}
 
   proc chmod*(path: cstring, mode: Mode): cint {.importc: "chmod", sideEffect.}
   proc mkdir*(path: cstring, mode: Mode): cint {.importc: "mkdir", sideEffect.}

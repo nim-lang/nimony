@@ -103,13 +103,10 @@ when defined(posix):
   # sys/mman.h in the same C unit.
   proc munmap*(a1: nil pointer, a2: csize_t): cint {.importc: "munmap".}
 
-  # Only truly freestanding builds use native errno. The C backend still
-  # links libc even with nimNativeIo, and libc writes its own errno slot.
-  when rawSyscalls:
-    var errnoVar {.threadvar.}: cint
-      ## Maintained by our directory wrappers; raw calls return -errno.
-    proc errno*(): cint {.inline.} = errnoVar
-  else:
+  # errno is libc's: a freestanding build has none, and every raw call returns
+  # its error as -errno instead (`pcall`). The C backend still links libc even
+  # with nimNativeIo, and libc writes its own errno slot.
+  when not rawSyscalls:
     when defined(osx):
       include "macos/errno"
     elif defined(linux):
@@ -120,13 +117,6 @@ when defined(posix):
       include "illumos/errno"
     proc errno*(): cint {.inline.} = errnoLocation()[]
       ## The last error code (libc's errno).
-
-  template setErrno(e: cint) =
-    ## Write the same thread-local slot errno() reads, including under libc.
-    when rawSyscalls:
-      errnoVar = e
-    else:
-      errnoLocation()[] = e
 
   template pcall*(x: untyped): clong {.untyped.} =
     ## Normalize a syscall-style call: non-negative result or -errno.
@@ -149,8 +139,8 @@ when defined(posix):
     else: errno()
 
   proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.importc: "clock_gettime", sideEffect.}
-  when not freebsdRaw:
-    proc getcwd*(a1: cstring, a2: int): cstring {.importc: "getcwd", sideEffect.}
+  when not rawSyscalls:
+    proc getcwd*(a1: cstring, a2: int): nil cstring {.importc: "getcwd", sideEffect.}
   proc chdir*(path: cstring): cint {.importc: "chdir", sideEffect.}
   proc realpath*(path, resolved: cstring): cstring {.importc: "realpath", sideEffect.}
 
@@ -166,6 +156,18 @@ when defined(posix):
   # On i386 every symbol that touches a 64-bit `Off` binds the glibc LFS
   # variant (`open64`/`stat64`/...): the plain names there speak the legacy
   # 32-bit-off_t ABI, and our `Off` is int64 on every architecture.
+  # Directory entry type constants shared by the supported ABIs.
+  const
+    DT_UNKNOWN* = 0'u8
+    DT_FIFO* = 1'u8
+    DT_CHR* = 2'u8
+    DT_DIR* = 4'u8
+    DT_BLK* = 6'u8
+    DT_REG* = 8'u8
+    DT_LNK* = 10'u8
+    DT_SOCK* = 12'u8
+    DT_WHT* = 14'u8
+
   when defined(linux):
     include "linux/bindings"
     include "linux/dirs"
@@ -179,17 +181,18 @@ when defined(posix):
     include "illumos/bindings"
     include "illumos/dirs"
 
-  # Directory entry type constants shared by the supported ABIs.
-  const
-    DT_UNKNOWN* = 0'u8
-    DT_FIFO* = 1'u8
-    DT_CHR* = 2'u8
-    DT_DIR* = 4'u8
-    DT_BLK* = 6'u8
-    DT_REG* = 8'u8
-    DT_LNK* = 10'u8
-    DT_SOCK* = 12'u8
-    DT_WHT* = 14'u8
+  when rawSyscalls and defined(linux):
+    proc sysGetcwd(buf: cstring; size: int): clong {.importc: "getcwd", sideEffect.}
+      ## The syscall, not libc's: the length of the path written, or -errno.
+
+  proc tryGetcwd*(buf: cstring; size: int): clong {.sideEffect.} =
+    ## Writes the current directory, NUL-terminated, into `buf`. Returns 0, or
+    ## -errno (-ERANGE when `size` is too small).
+    when rawSyscalls:
+      let r = clong(sysGetcwd(buf, size))
+      result = if r < 0: r else: 0
+    else:
+      result = if getcwd(buf, size) == nil: -clong(errno()) else: 0
 
   proc sysconf*(a1: cint): int {.importc: "sysconf".}
 
