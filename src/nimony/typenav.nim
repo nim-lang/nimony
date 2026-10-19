@@ -89,7 +89,7 @@ iterator currentScopeLocals*(c: var TypeCache): SymId =
     if k.kind in ScopedLocals:
       yield s
 
-proc scopeDepth*(c: TypeCache): int =
+func scopeDepth*(c: TypeCache): int =
   result = 0
   var sc = c.current
   while sc != nil:
