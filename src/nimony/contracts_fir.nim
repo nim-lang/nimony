@@ -204,6 +204,8 @@ type
     syncArgs: HashSet[int]             # positions of global symbols passed to a
                                        # `.sync` routine's `var`/`ptr` parameter
     activeBorrows: seq[BorrowInfo]
+    scopeLocals: seq[SymId]            # locals of the open scopes, innermost
+                                       # last; see `leaveScope`
     verbose: bool                      # --verbose: dump final IR on init/contract
                                        # failures for easier debugging
     bits: int                          # target `int` width for compile-time folding
@@ -575,6 +577,15 @@ proc endBorrow(c: var FirContext; sym: SymId) =
       inc i
 
 template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
+
+proc leaveScope(c: var FirContext; mark: int) =
+  ## The borrows held by a scope's locals end with the scope. Not every local
+  ## gets a `kill` — a `case` arm's pattern variables do not — and once the
+  ## borrow states of branches are joined, such a borrow would otherwise
+  ## survive its arm.
+  for i in mark ..< c.scopeLocals.len:
+    endBorrow(c, c.scopeLocals[i])
+  c.scopeLocals.setLen mark
 
 proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
                    olds: Table[string, VarId]; resultSym = NoSymId)
@@ -4702,17 +4713,21 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
       c.prescanning = false
       restrictFactsToLoopInvariants(c, w)
     let cp = c.flow.checkpoint()
-    let savedBorrows = c.activeBorrows.len
+    let borrowsBefore = c.activeBorrows   # see `traverseIte` for why a copy
+    let mark = c.scopeLocals.len
     traverseStmt c, n, call        # the body `(stmts ...)`; ends by leaving
+    leaveScope c, mark             # the body's locals do not outlive it
     dropContinue(c.tr)       # the loop header consumes the back-edge
     # The loop never falls through; reset the working state to the pre-loop base.
     # A following `(lab loopExit)` installs the join of the states its exits
     # jumped with (`bindLoopExit`).
     c.flow.rollbackTo cp
-    # Borrows taken *inside* the body are loop-local (a `var p = addr coll[i]`
-    # cannot outlive the iteration), so drop them — otherwise a later mutation of
-    # the borrowed container after the loop is wrongly seen as still-borrowed.
-    c.activeBorrows.setLen(savedBorrows)
+    # The body may run zero or more times, so after the loop a borrow is held
+    # if it was held before it or by the end of the body. Borrows of the body's
+    # own locals are already gone (`leaveScope` above).
+    var joined = borrowsBefore
+    joinBorrows(joined, c.activeBorrows)
+    c.activeBorrows = ensureMove joined
 
 proc recordLoopExitLabel(c: var FirContext; n: Cursor) =
   ## The trailing `(lab loopExit)` is this loop's exit; record it so
@@ -4764,6 +4779,7 @@ proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor) =
     let local = asLocal(vars)
     let name = local.name.symId
     c.typeCache.registerLocal(name, vars.symKind, local.typ)
+    c.scopeLocals.add name
     markInit c, name
     c.forBinders.incl name
     if local.typ.typeKind in {MutT, LentT} and not cursorIsNil(firstArg):
@@ -4780,9 +4796,13 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
   n.into: # for tag
     let firstArg = forIterFirstArg(c, n)
     traverseExpr c, n, call
+    # The loop variables are the loop's own locals: what they borrow is held
+    # through the body, and ends with the loop.
+    let mark = c.scopeLocals.len
     declareForVars c, n, firstArg
     skip n # the loop variables
     analyseLoopBody c, n
+    leaveScope c, mark
 
   recordLoopExitLabel c, n
 
@@ -5018,6 +5038,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   let isInline = hasPragma(n, InlineP)
   skip n # pragmas
   c.typeCache.registerLocal(name, kind, n)
+  c.scopeLocals.add name
   let localType = n
   skip n # type
   let initStart = n
@@ -5188,6 +5209,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
   let oldBorrows = move c.activeBorrows
+  let oldScopeLocals = c.scopeLocals.len
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
   # Start this routine's statement context at its own head, so an error in
@@ -5283,6 +5305,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
+  c.scopeLocals.setLen oldScopeLocals
   c.currentProcStart = oldProcStart
   c.stmtContext = oldStmtContext
   c.ownEnsures = oldOwnEnsures
@@ -5394,10 +5417,16 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     traverseExpr c, n, call
   of NoVTag:
     case n.stmtKind
-    of StmtsS, ScopeS, BlockS:
+    of StmtsS, BlockS:
       n.into:
         while n.hasMore:
           traverseStmt c, n, call
+    of ScopeS:
+      let mark = c.scopeLocals.len
+      n.into:
+        while n.hasMore:
+          traverseStmt c, n, call
+      leaveScope c, mark
     of AsgnS:
       traverseAsgn c, n, call
     of ForS:

@@ -46,3 +46,14 @@ proc reassignInTry(c: bool) =
   discard v.len
 
 reassignInTry(false)
+
+proc reassignInLoop(n: int) =
+  var s = @[1, 2, 3]
+  var t = @[4]
+  var v: openArray[int] = toOpenArray(t)
+  for i in 0..<n:
+    v = toOpenArray(s)
+  t.add 5   # the loop may run zero times
+  discard v.len
+
+reassignInLoop(0)

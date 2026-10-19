@@ -37,3 +37,22 @@ proc otherSource(c: bool) =
   echo u.len
 
 otherSource(true)
+
+proc viewLocalToLoop(n: int) =
+  var s = @[1, 2, 3]
+  for i in 0..<n:
+    let w = toOpenArray(s)
+    echo w[0]
+  s.add 4   # `w` died with the loop body
+  echo s.len
+
+viewLocalToLoop(2)
+
+proc iterateThenMutate =
+  var s = @[1, 2, 3]
+  for x in mitems(s):
+    x = x * 2
+  s.add 4   # the iteration borrow ended with the loop
+  echo s.len
+
+iterateThenMutate()
