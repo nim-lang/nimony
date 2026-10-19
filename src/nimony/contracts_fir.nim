@@ -494,6 +494,17 @@ proc checkBorrowConflict(c: var FirContext; mutPath: BorrowInfo; info: NifLineIn
   if conflict:
     buildErr c, info, "'" & asNimCode(mutPath.path[0]) & "' is borrowed and cannot be mutated"
 
+proc joinBorrows(dest: var seq[BorrowInfo]; src: seq[BorrowInfo]) =
+  ## Where control flow meets, a borrow held on any incoming path is held:
+  ## `if c: v = toOpenArray(s)` leaves `v` borrowing `s` *or* its old source.
+  for b in src:
+    var known = false
+    for d in dest:
+      if d.borrower == b.borrower and d.path == b.path:
+        known = true
+        break
+    if not known: dest.add b
+
 proc localInfoOf(c: var FirContext; s: SymId): LocalInfo =
   ## `getLocalInfo` only knows the locals of the proc under analysis; a global
   ## carries a module suffix and has to be loaded from disk.
@@ -4269,7 +4280,11 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   let iteStart = n # skip ite/itec tag
   n = sub(n)
 
-  let savedBorrowsLen = c.activeBorrows.len
+  # Each arm starts from the borrows held before the `if` and the arms that
+  # fall through are joined afterwards. Truncating to the old length is not
+  # enough: an arm that rebinds a view ends the old borrow (a swap-delete) and
+  # adds the new one, which would then survive as if it held on every path.
+  let borrowsBefore = c.activeBorrows
   # Split BEFORE the condition facts so they belong to the then-branch's delta
   # (the then-branch runs under `assume(cond)`); `commitThen` rolls them back.
   # `assert false` and `when`-style constants reach here as a literal condition.
@@ -4298,11 +4313,13 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   let liveBeforeThen = c.tr.live
   if constCond == 0: c.tr.live = false
   traverseStmt c, n, call
+  let thenLive = c.tr.live
+  var joined = if thenLive: move c.activeBorrows else: @[]
   # `commitThen` captures the then-branch (its init delta, facts, and exits) and
   # rolls `c.flow` back to the split baseline — which drops the condition facts,
   # since the split was taken before them.
   commitThen(c.tr, c.flow, b)
-  c.activeBorrows.setLen(savedBorrowsLen)
+  c.activeBorrows = borrowsBefore
 
   # else-branch (under assume(¬c)):
   if constCond == 1: c.tr.live = false
@@ -4313,10 +4330,13 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
     inc n
   else:
     traverseStmt c, n, call
+  let elseLive = c.tr.live
+  if elseLive:
+    joinBorrows(joined, c.activeBorrows)
   # `mergeBranches` joins the then-branch (in `b`) with the current else-branch,
   # merging both the init-set and the facts; a leaving arm drops out.
   mergeBranches(c.tr, c.flow, b)
-  c.activeBorrows.setLen(savedBorrowsLen)
+  c.activeBorrows = if thenLive or elseLive: joined else: borrowsBefore
 
   n = iteStart; skip n
 
@@ -4882,7 +4902,8 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
   n = caseStart; skip n # close 'case'
 
   let cp = c.flow.checkpoint()
-  let savedBorrows = c.activeBorrows.len
+  let borrowsBefore = c.activeBorrows   # see `traverseIte` for why a copy
+  var joinedBorrows: seq[BorrowInfo] = @[]
   let baseLive = c.tr.live
 
   var merged = default(FlowSnap)   # join of the fall-through arms (see joinSnap)
@@ -4892,7 +4913,7 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
     # Each branch resumes from the pre-case state (the selector chose this arm).
     c.flow.rollbackTo cp
     c.tr.live = baseLive
-    c.activeBorrows.setLen(savedBorrows)
+    c.activeBorrows = borrowsBefore
     if not cursorIsNil(br.ranges):
       addCaseFacts(c, selSym, br.ranges)
     var bc = br.body
@@ -4900,6 +4921,7 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
     if c.tr.live:
       merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
       haveMerged = true
+      joinBorrows(joinedBorrows, c.activeBorrows)
 
   # A case with no `else` is exhaustive (sem guarantees this), so the selector
   # always matches some branch — there is no implicit fall-through to add.
@@ -4909,7 +4931,7 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
   else:
     c.tr.live = false
     c.flow.rollbackTo cp
-  c.activeBorrows.setLen(savedBorrows)
+  c.activeBorrows = if haveMerged: joinedBorrows else: borrowsBefore
 
 proc traverseTry(c: var FirContext; n: var Cursor) =
   ## `(try body (except ...)* (fin ...)?)`. Conservative: an `except` handler
@@ -4920,15 +4942,23 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
   let tryStart = n # skip 'try'
   n = sub(n)
   let cp = c.flow.checkpoint()
-  let savedBorrows = c.activeBorrows.len
+  let borrowsBefore = c.activeBorrows   # see `traverseIte` for why a copy
   let baseLive = c.tr.live
 
   traverseStmt c, n, call # try body
 
   var merged = default(FlowSnap)   # join of the fall-through of body + handlers
   var haveMerged = false
+  var joinedBorrows: seq[BorrowInfo] = @[]
   if c.tr.live:
     merged = snapshot(c.flow); haveMerged = true
+    joinedBorrows = c.activeBorrows
+  # A handler may run after any point of the body, so it starts with what was
+  # held before the `try` or by the end of the body. (A borrow both taken and
+  # ended inside the body is not seen; that only matters for a view rebound
+  # twice there.)
+  var handlerBorrows = borrowsBefore
+  joinBorrows(handlerBorrows, c.activeBorrows)
 
   if n.substructureKind == ExceptU:
     # The excepts catch the body's raises.
@@ -4946,7 +4976,7 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
       # handler entry = pre-try state (a raise may interrupt the body anywhere):
       c.flow.rollbackTo cp
       c.tr.live = baseLive
-      c.activeBorrows.setLen(savedBorrows)
+      c.activeBorrows = handlerBorrows
       # The bound exception value is initialized *in the handler* — mark it after
       # resetting to the pre-try state, which would otherwise discard the init.
       if boundExc != NoSymId:
@@ -4956,6 +4986,7 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
       if c.tr.live:
         merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
         haveMerged = true
+        joinBorrows(joinedBorrows, c.activeBorrows)
 
   if haveMerged:
     c.tr.live = true
@@ -4963,7 +4994,7 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
   else:
     c.tr.live = false
     c.flow.rollbackTo cp
-  c.activeBorrows.setLen(savedBorrows)
+  c.activeBorrows = if haveMerged: joinedBorrows else: borrowsBefore
 
   if n.substructureKind == FinU:
     n.into:
