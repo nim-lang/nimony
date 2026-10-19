@@ -2,11 +2,7 @@
 import std/oserrors
 
 import oscommons
-# Unlike Nim's version this module does not `export symlinkExists`: `std/os`
-# re-exports both this module and `oscommons`, and a second, *filtered* export
-# path to `oscommons` would narrow `os`'s qualified view of it (sem intersects
-# the filters of a module reached by two export paths), making e.g.
-# `os.fileExists` undeclared. Import `std/os` or `oscommons` for it instead.
+export symlinkExists
 
 import ../[syncio, assertions, widestrs]
 
