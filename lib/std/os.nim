@@ -3,12 +3,13 @@ import posix/posix
 import cmdline
 import envvars
 import oserrors
-import private/[ospaths2, osappdirs, oscommons]
+import private/[ospaths2, osappdirs, oscommons, ossymlinks]
 
 export cmdline
 export ospaths2
 export osappdirs
 export oscommons
+export ossymlinks
 
 when not defined(posix):
   # POSIX replaces libc's `system()` with the native fork+exec path in
@@ -17,18 +18,86 @@ when not defined(posix):
       importc: "system", header: "<stdlib.h>", dynlib: "msvcrt".}
 
 when defined(posix):
+  when defined(nimNativeIo):
+    const maxSymlinkFollows = 40
+      ## Link expansions allowed per call before failing with `ELOOP`; the
+      ## `MAXSYMLINKS` value of Linux and of musl's `realpath`.
+
+    proc readLinkTarget(path: var string; info: string): string {.raises.} =
+      ## The target of the symlink `path`. `pcall`, not `osLastError`: a
+      ## freestanding build has no libc errno to read the failure from.
+      var bufLen = 256
+      while true:
+        result = newString(bufLen)
+        let r = pcall(readlink(path.toCString, result.toCString, bufLen))
+        if r < 0:
+          raiseOSError(OSErrorCode(-r), info)
+        if r < bufLen:
+          result.setLen(int(r))
+          break
+        bufLen = bufLen shl 1
+
+    proc nativeRealpath(filename: string): string {.raises.} =
+      ## Libc-free `realpath`: walks `filename` one component at a time from
+      ## the root (absolute input) or the cwd, `lstat`ing each new component
+      ## and splicing in the target of every symlink met, so the result names
+      ## the file itself rather than a path to it. `..` pops the resolved
+      ## prefix, which is right because that prefix holds no symlinks: as in
+      ## `realpath`, `link/..` is the parent of the link's TARGET. Errors are
+      ## `realpath`'s: ENOENT for a missing component, ENOTDIR for a
+      ## non-directory followed by more path, ELOOP after too many links.
+      if filename.len == 0:
+        raiseOSError(OSErrorCode(ENOENT), filename)
+      # `rest` is what is still to be walked; `pos` the walk's place in it.
+      var rest = filename
+      var pos = 0
+      # getcwd yields the physical path: it needs no resolving of its own.
+      result = if filename[0] == '/': "/" else: getCurrentDir()
+      var follows = 0
+      while pos < rest.len:
+        if rest[pos] == '/':
+          inc pos
+          continue
+        var e = pos
+        while e < rest.len and rest[e] != '/': inc e
+        let comp = substr(rest, pos, e - 1)
+        pos = e
+        if comp == ".":
+          discard
+        elif comp == "..":
+          let slash = rfind(result, '/')
+          result.setLen(max(slash, 1))
+        else:
+          var candidate = if result == "/": "/" & comp else: result & "/" & comp
+          var s = default(Stat)
+          let r = pcall(lstat(candidate.toCString, s))
+          if r < 0:
+            raiseOSError(OSErrorCode(-r), filename)
+          if S_ISLNK(s.st_mode):
+            inc follows
+            if follows > maxSymlinkFollows:
+              raiseOSError(OSErrorCode(ELOOP), filename)
+            let target = readLinkTarget(candidate, filename)
+            if target.len == 0:
+              raiseOSError(OSErrorCode(ENOENT), filename)
+            # The target replaces the link in the path still to walk; an
+            # absolute one restarts the walk from the root.
+            rest = target & substr(rest, pos)
+            pos = 0
+            if target[0] == '/':
+              result = "/"
+          elif not S_ISDIR(s.st_mode) and pos < rest.len:
+            # Even a bare trailing `/` asks for a directory.
+            raiseOSError(OSErrorCode(ENOTDIR), filename)
+          else:
+            result = candidate
+
   proc expandFilename*(filename: string): string {.raises.} =
     ## Returns the full (`absolute`) path of an existing file `filename`,
     ## resolving symlinks. Raises `OSError` if `filename` does not exist.
     when defined(nimNativeIo):
-      # Libc-free: there is no `realpath` (it is a libc routine, not a syscall).
-      # Do a LEXICAL canonicalization instead — absolutize against the cwd and
-      # collapse `.`/`..`/`//`. Unlike `realpath` this does NOT follow symlinks,
-      # which is sufficient for the compiler's source-path use. The existence
-      # check is preserved so the documented `OSError`-on-missing contract holds.
-      if not (fileExists(filename) or dirExists(filename)):
-        raiseOSError(osLastError(), filename)
-      result = normalizedPath(absolutePath(filename))
+      # Libc-free: `realpath` is a libc routine, not a syscall.
+      result = nativeRealpath(filename)
     else:
       const PATH_MAX = 4096
       result = newString(PATH_MAX)
@@ -41,7 +110,7 @@ when defined(posix):
         while L < PATH_MAX and result[L] != '\0':
           inc L
         setLen(result, L)
-else:
+elif not defined(windows):
   proc expandFilename*(filename: string): string {.raises.} =
     result = absolutePath(filename)
 
@@ -175,6 +244,60 @@ elif defined(windows):
     # FILETIME is in 100ns intervals since 1601-01-01; rebase to ns since epoch.
     result = (rdFileTime(f.ftLastWriteTime) - winEpochDiff) * 100'i64
     discard findClose(h)
+
+  proc expandFilename*(filename: string): string {.raises.} =
+    ## Returns the full (`absolute`) path of an existing file `filename`,
+    ## with the case of its last component as stored on disk. Raises
+    ## `OSError` if `filename` does not exist.
+    ##
+    ## Unlike the POSIX version this does not resolve symlinks or junctions
+    ## (neither does Nim's): `GetFullPathNameW` is lexical.
+    var name = filename
+    var wName = newWideCString(name)
+    var bufsize = MAX_PATH.int32
+    var res = newWideCString(bufsize)
+    var filePart: WideCString = nil
+    while true:
+      let L = getFullPathNameW(wName.toWideCString, bufsize, res.toWideCString, filePart)
+      if L == 0'i32:
+        raiseOSError(osLastError(), filename)
+      elif L > bufsize:
+        res = newWideCString(L)
+        bufsize = L
+      else:
+        result = $res
+        break
+    # GetFullPathNameW does no case correction; FindFirstFileW reports the
+    # last component as stored. A wildcard would make it a pattern instead.
+    if not result.contains({'*', '?'}):
+      var f {.noinit.}: WIN32_FIND_DATA
+      let h = findFirstFile(result, f)
+      if h != INVALID_HANDLE_VALUE:
+        discard findClose(h)
+        let stored = $cast[ptr UncheckedArray[WinChar]](addr f.cFileName)
+        let (dir, _) = splitPath(result)
+        result = dir / stored
+    if not fileExists(result) and not dirExists(result):
+      raiseOSError(OSErrorCode(2'i32), filename) # ERROR_FILE_NOT_FOUND
+
+proc sleep*(milsecs: int) {.tags: [TimeEffect], sideEffect.} =
+  ## Sleeps `milsecs` milliseconds.
+  ## A negative `milsecs` causes sleep to return immediately.
+  when not supportedSystem:
+    {.error: "sleep is not available on a freestanding target".}
+  elif defined(windows):
+    if milsecs > 0:
+      winlean.sleep(DWORD(milsecs))
+  else:
+    if milsecs > 0:
+      var req = default(Timespec)
+      req.tv_sec = typeof(req.tv_sec)(milsecs div 1000)
+      req.tv_nsec = typeof(req.tv_nsec)((milsecs mod 1000) * 1_000_000)
+      var rem = default(Timespec)
+      # A signal interrupts nanosleep with EINTR and leaves the time still
+      # to sleep in `rem`; resume with it so the full interval elapses.
+      while pcall(nanosleep(req, rem)) == clong(-EINTR):
+        req = rem
 
 proc setFilePermissions*(filename: string; permissions: set[FilePermission]) {.raises.} =
   ## Sets the file permissions for `filename`. Raises `OSError` on failure.

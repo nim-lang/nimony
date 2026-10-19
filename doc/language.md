@@ -3850,6 +3850,36 @@ except ErrorCode as e:
   echo "Error: ", e
 ```
 
+### Raises types
+
+`{.raises.}` means `{.raises: ErrorCode.}`. The only other type a routine may
+raise is a `ref` object type, usually one inheriting from `Exception`:
+
+```nim
+type ParseError = ref object of Exception
+  pos: int
+
+proc parse(s: string): int {.raises: ParseError.} =
+  raise ParseError(msg: "unexpected end", pos: s.len)
+```
+
+An `except` arm is a type filter: `except ErrorCode` catches only `ErrorCode`
+values, `except T` for a `ref` type `T` catches `T` and its subtypes, and a bare
+`except:` catches everything. The arms are tried in order. Whatever a call
+raises must be caught by an enclosing `except` arm or be what the calling
+routine itself raises (for a `ref` type: a subtype of it). Nothing converts an
+`ErrorCode` into a `ref` exception or back; that has to be written out:
+
+```nim
+proc lookup(t: Table[string, int]; key: string): int {.raises: ParseError.} =
+  try:
+    result = t[key]           # raises `KeyError`, an `ErrorCode`
+  except ErrorCode:
+    raise ParseError(msg: "unknown key " & key)
+```
+
+A bare `raise` inside an `except` arm raises again what that arm caught.
+
 ### Try statement
 
 A try statement has the general form: `try <statements> except <statements> finally <statements>`.
@@ -4670,6 +4700,7 @@ The following features are available:
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
 | `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
 | `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
+| `"staticOverloads"` | When two overloads differ only in whether a parameter is `static[T]` or `T`, prefer the `static` one for a constant argument instead of reporting an ambiguity. For compatibility with Nim 2. |
 | `"ownedRefs"` | Object constructors yield `owned`, so the creator of a cell is its owner. See [Owned references](#owned-references). |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 

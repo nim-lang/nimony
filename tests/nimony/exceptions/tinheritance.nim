@@ -1,10 +1,9 @@
 import std/syncio
 
 type
-  BaseError = object of RootObj
-    msg: string
+  BaseError = ref object of Exception
 
-  DerivedError = object of BaseError
+  DerivedError = ref object of BaseError
     code: int
 
 # Should be able to raise DerivedError in a function that declares raises: BaseError

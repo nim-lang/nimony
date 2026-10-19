@@ -520,6 +520,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of FalseX, TrueX, AndX, OrX, XorX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
      EqsetX, LesetX, LtsetX, InsetX, OvfX, CompilesX, InstanceofX, FailedX, IsX:
     result = c.builtins.boolType
+  of StaticX:
+    result = getTypeImpl(c, n.childCursor, flags)
   of NeginfX, NanX, InfX:
     result = c.builtins.floatType
   of EnumtostrX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX,

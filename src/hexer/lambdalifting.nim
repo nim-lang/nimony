@@ -344,7 +344,7 @@ proc noteNestedRef(c: var Context; used: SymId) =
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
     if n.kind == Symbol and
-        c.typeCache.getLocalInfo(n.symId).kind notin {ParamY, LetY, VarY, ResultY}:
+        c.typeCache.getLocalInfo(n.symId).kind notin {ParamY, StaticParamY, LetY, VarY, ResultY}:
       # if a closure proc is called, we don't want to see it as "escaping".
       # But when the callee is a LOCAL holding a closure value, it must still
       # go through `tr`: a cross-proc use in call position is a capture like
@@ -425,7 +425,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # that lives in no scope it can see. The env field is marked `.cursor` (see
     # localToField / genObjectTypes) so hoisting preserves the non-owning
     # semantics rather than re-forming the ref cycle.
-    if loc.kind in {ParamY, LetY, VarY, ResultY, CursorY}:
+    if loc.kind in {ParamY, StaticParamY, LetY, VarY, ResultY, CursorY}:
       let cross = loc.crossedProc.int
       if cross > 0:
         for i in c.procStack.len - cross ..< c.procStack.len:
@@ -556,7 +556,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
-        TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+        TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CompilesX, StaticX,
         DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX,
         LowX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
@@ -803,7 +803,7 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId;
           # exactly as `treParams` does for a proc.
           copyInto result, n:
             while n.hasMore:
-              assert n.substructureKind == ParamU
+              assert isParamLike(n.substructureKind)
               copyInto result, n:
                 let name = n.symId
                 let paramInfo = n.info
@@ -1277,7 +1277,7 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId; ownsEnvLocal: bool) =
   copyInto dest, n:
     while n.hasMore:
-      assert n.substructureKind == ParamU
+      assert isParamLike(n.substructureKind)
       copyInto dest, n:
         let name = n.symId
         let paramInfo = n.info # `n` sits at the scope's end below
@@ -1539,7 +1539,7 @@ proc calleeHasClosureParam(typ: Cursor): bool =
   if t.substructureKind != ParamsU: return false
   inc t # into (params …), at the first param
   while t.hasMore:
-    if t.substructureKind == ParamU:
+    if isParamLike(t.substructureKind):
       var pt = t
       inc pt   # (param -> name
       skip pt  # name -> export
@@ -2001,7 +2001,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
         NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
-        CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
+        CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
         HighX, LowX, UnpackX, FieldsX, FieldpairsX,
         EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
         DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,

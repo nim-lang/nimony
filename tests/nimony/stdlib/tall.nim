@@ -25,6 +25,7 @@ import std/asyncio
 import std/base64
 import std/bitops
 import std/cmdline
+import std/colors
 import std/commonio
 import std/compilation
 import std/complex
@@ -49,6 +50,7 @@ import std/editdistance
 import std/encodings
 import std/envvars
 import std/fenv
+import std/files
 import std/formatfloat
 import std/hashes
 import std/heapqueue
@@ -103,9 +105,11 @@ import std/streams
 import std/stripes
 import std/strtabs
 import std/strutils
+import std/symlinks
 import std/syncio
 import std/system
 import std/tables
+import std/tempfiles
 import std/terminal
 import std/threadpool
 import std/ticketlocks

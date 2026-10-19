@@ -50,6 +50,11 @@ type
       ## `block`. Without the feature an unlabeled `break` only ever leaves a
       ## loop; a `block` is left via `break <blockname>` (RFC #576), which is
       ## what makes a `block` usable as a plain scope inside a loop.
+    StaticOverloadsFeature
+      ## Nim-2-style preference for `static` parameters: when two candidates
+      ## differ only in whether a parameter is `x: static[T]` or `x: T`, prefer
+      ## the one taking more constant arguments. Applied as the very last
+      ## tiebreaker; without it such candidates are ambiguous.
     AssumeSyncFeature
       ## Turn off the shared-global check for the whole module, as if every
       ## routine body sat in `{.cast(assumeSync).}:`. Without it a mutable
@@ -87,9 +92,11 @@ proc parseFeatures*(s: string): set[Feature] =
   of "staticcontracts": {StaticContractsFeature}
   of "anonblockbreaks": {AnonBlockBreaksFeature}
   of "assumesync": {AssumeSyncFeature}
+  of "staticoverloads": {StaticOverloadsFeature}
   of "ownedrefs": {OwnedRefsFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,
-            RuntimeContractsFeature, AnonBlockBreaksFeature, AssumeSyncFeature}
+            RuntimeContractsFeature, AnonBlockBreaksFeature, AssumeSyncFeature,
+            StaticOverloadsFeature}
   else: {}

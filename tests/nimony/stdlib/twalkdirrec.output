@@ -1,0 +1,19 @@
+a/b/f2 a/f1 top
+a a/b empty
+a empty top
+dlink flink
+a/b/f2 a/f1 dlink/x top
+3
+0
+true
+f2
+true
+true
+top
+false
+top
+true
+true
+true
+new
+false

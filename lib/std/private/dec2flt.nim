@@ -56,7 +56,7 @@ type
     negative: bool
     manyDigits: bool      ## a nonzero digit past the 19th was dropped
     digitsStart: int      ## [digitsStart, digitsEnd) is the digit text,
-    digitsEnd: int        ## with its '.', for the slow path
+    digitsEnd: int        ## with its '.' and '_'s, for the slow path
     explicitExp: int      ## the `e` part alone, saturated
 
   DecimalSeq = object
@@ -831,7 +831,7 @@ template isDigit(c: char): bool = c >= '0' and c <= '9'
 func takeSignificant(s: openArray[char]; digitsStart, digitsEnd: int):
     tuple[mantissa: uint64, exponent: int, manyDigits: bool] =
   ## More than 19 significant digits: keep the first 19, as Rust's parser
-  ## re-reads them. The digit text holds only digits and at most one `.`.
+  ## re-reads them. The digit text holds digits, `_`s and at most one `.`.
   var mantissa = 0'u64
   var taken = 0
   var exponent = 0
@@ -844,7 +844,7 @@ func takeSignificant(s: openArray[char]; digitsStart, digitsEnd: int):
     let c = s[k]
     if c == '.':
       inFraction = true
-    else:
+    elif c != '_':
       let d = uint64(ord(c) - ord('0'))
       if seen or d != 0'u64:
         seen = true
@@ -859,14 +859,19 @@ func takeSignificant(s: openArray[char]; digitsStart, digitsEnd: int):
         dec exponent              # a leading zero after the point
   result = (mantissa: mantissa, exponent: exponent, manyDigits: many)
 
-func readDigits(s: openArray[char]; start: int; mantissa: var uint64): int {.
+func readDigits(s: openArray[char]; start: int; mantissa: var uint64;
+                count: var int): int {.
     requires: 0 <= start, ensures: 0 <= result.} =
   ## Reads a run of digits from `start` into `mantissa` (wrapping past 19 of
-  ## them; the caller re-reads those) and returns where it ends.
+  ## them; the caller re-reads those), adds their number to `count` and
+  ## returns where the run ends. Underscores after a digit are allowed and
+  ## ignored, as in Nim's literals.
   var i = start
   while i < s.len and isDigit(s[i]):
     mantissa = mantissa * 10'u64 + uint64(ord(s[i]) - ord('0'))
+    inc count
     inc i
+    while i < s.len and s[i] == '_': inc i
   result = i
 
 func scanNumber(s: openArray[char]; n: var Number): int =
@@ -880,15 +885,12 @@ func scanNumber(s: openArray[char]; n: var Number): int =
     inc i
   n.digitsStart = i
   var mantissa = 0'u64
-  let integerStart = i
-  i = readDigits(s, i, mantissa)
-  var digits = i - integerStart
+  var digits = 0
+  i = readDigits(s, i, mantissa, digits)
   var fraction = 0
   if i < s.len and s[i] == '.':
     inc i
-    let fractionStart = i
-    i = readDigits(s, i, mantissa)
-    fraction = i - fractionStart
+    i = readDigits(s, i, mantissa, fraction)
     digits = digits + fraction
   n.digitsEnd = i
   if digits == 0:
@@ -906,6 +908,7 @@ func scanNumber(s: openArray[char]; n: var Number): int =
         while j < s.len and isDigit(s[j]):
           if exponent < ExpSaturation: exponent = exponent * 10 + (ord(s[j]) - ord('0'))
           inc j
+          while j < s.len and s[j] == '_': inc j
         if negative: exponent = -exponent
         result = j
     n.explicitExp = exponent      # 0 unless an exponent was read
@@ -915,7 +918,7 @@ func scanNumber(s: openArray[char]; n: var Number): int =
       let start = max(n.digitsStart, 0)
       let stop = min(n.digitsEnd, s.len)
       var k = start
-      while k < stop and (s[k] == '0' or s[k] == '.'):
+      while k < stop and (s[k] == '0' or s[k] == '.' or s[k] == '_'):
         if s[k] == '0': dec digits
         inc k
     if digits <= MaxMantissaDigits:

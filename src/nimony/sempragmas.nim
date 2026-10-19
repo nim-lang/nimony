@@ -24,7 +24,7 @@ import ".." / lib / [symparser, intrinsics]
 import nimony_model, builtintypes, decls, asthelpers, programs,
   magics, nifconfig, semdata, sembasics,
   semchecks, semconst, semos, renderer, features, pragmacanon, identstyle,
-  symtabs
+  symtabs, typeprops
 
 # --- thin shims forwarding into the sem core via SemContext callbacks ---
 # (const-eval entry points — semBoolExpr, semConstIntExpr, … — come directly
@@ -548,8 +548,11 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       var nn = n
       let typeStart = dest.len
       # Sem-check the type properly
+      let typeInfo = n.info
       crucial.raisesType = semLocalType(c, dest, n)
-      # TODO: validate that type supports "x != default(T)" interpretation
+      if raisesFamily(crucial.raisesType) == NotRaisable:
+        buildErr c, dest, typeInfo, "`.raises` takes `ErrorCode` or a `ref` object type, not `" &
+          typeToString(crucial.raisesType) & "`"
       dest.addParRi()
       var emptyRaises = false
       if nn.exprKind == BracketX:

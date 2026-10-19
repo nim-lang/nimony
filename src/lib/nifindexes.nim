@@ -37,17 +37,11 @@ proc isImportant(s: string): bool =
     if ch == '.': inc c
   result = c >= 2
 
-proc isExported(n: Cursor): bool =
-  var n = n
-  if n.isSymbolDef:
-    inc n
-    if not n.isDotToken:
-      return true
-  return false
-
 proc processDeclForChecksum(dest: var Sha1State; n: var Cursor) =
-  ## Hashes the single tree/token at `n` — the exported declarations in it,
-  ## to be exact — advancing past it.
+  ## Hashes the single tree/token at `n` — the declarations in it, to be
+  ## exact — advancing past it. Private declarations count too: an importer
+  ## instantiates an exported generic, or expands an exported template, whose
+  ## body can name any of them.
   let inlineT = TagId(InlineIdx)
   if n.isTagLit:
     var foundInline = false
@@ -55,43 +49,43 @@ proc processDeclForChecksum(dest: var Sha1State; n: var Cursor) =
     case k
     of LetIdx, VarIdx, CursorIdx, ConstIdx, TypeIdx, GletIdx, TletIdx, GvarIdx, TvarIdx:
       n.into: # tag
-        if isExported(n):
-          updateLoop(dest, n, inlineT, foundInline) # SymbolDef
-          updateLoop(dest, n, inlineT, foundInline) # Export marker
-          updateLoop(dest, n, inlineT, foundInline) # pragmas
-          updateLoop(dest, n, inlineT, foundInline) # type
-          updateLoop(dest, n, inlineT, foundInline) # value
+        updateLoop(dest, n, inlineT, foundInline) # SymbolDef
+        updateLoop(dest, n, inlineT, foundInline) # Export marker
+        updateLoop(dest, n, inlineT, foundInline) # pragmas
+        updateLoop(dest, n, inlineT, foundInline) # type
+        updateLoop(dest, n, inlineT, foundInline) # value
         while n.hasMore: skip n
     of TemplateIdx, MacroIdx, IteratorIdx:
       # these always have inline semantics
       n.into: # tag
-        if isExported(n):
-          updateLoop(dest, n, inlineT, foundInline) # SymbolDef
-          updateLoop(dest, n, inlineT, foundInline) # Export marker
-          updateLoop(dest, n, inlineT, foundInline) # pattern
-          updateLoop(dest, n, inlineT, foundInline) # typevars
-          updateLoop(dest, n, inlineT, foundInline) # params
-          updateLoop(dest, n, inlineT, foundInline) # retType
-          updateLoop(dest, n, inlineT, foundInline) # pragmas
-          updateLoop(dest, n, inlineT, foundInline) # effects
-          updateLoop(dest, n, inlineT, foundInline) # body
+        updateLoop(dest, n, inlineT, foundInline) # SymbolDef
+        updateLoop(dest, n, inlineT, foundInline) # Export marker
+        updateLoop(dest, n, inlineT, foundInline) # pattern
+        updateLoop(dest, n, inlineT, foundInline) # typevars
+        updateLoop(dest, n, inlineT, foundInline) # params
+        updateLoop(dest, n, inlineT, foundInline) # retType
+        updateLoop(dest, n, inlineT, foundInline) # pragmas
+        updateLoop(dest, n, inlineT, foundInline) # effects
+        updateLoop(dest, n, inlineT, foundInline) # body
         while n.hasMore: skip n
     of ProcIdx, FuncIdx, MethodIdx, ConverterIdx:
       n.into: # tag
-        if isExported(n):
-          var dummy = false
-          updateLoop(dest, n, inlineT, dummy) # SymbolDef
-          updateLoop(dest, n, inlineT, dummy) # Export marker
-          updateLoop(dest, n, inlineT, dummy) # pattern
-          updateLoop(dest, n, inlineT, dummy) # typevars
-          updateLoop(dest, n, inlineT, dummy) # params
-          updateLoop(dest, n, inlineT, dummy) # retType
-          updateLoop(dest, n, inlineT, foundInline) # pragmas
-          updateLoop(dest, n, inlineT, dummy) # effects
-          if foundInline:
-            updateLoop(dest, n, inlineT, dummy) # body
-          else:
-            skip n
+        var dummy = false
+        updateLoop(dest, n, inlineT, dummy) # SymbolDef
+        updateLoop(dest, n, inlineT, dummy) # Export marker
+        updateLoop(dest, n, inlineT, dummy) # pattern
+        # an importer instantiates a generic routine from its body; an
+        # instance holds `(at …)` here and was compiled in this module:
+        let isGeneric = n.isTagLit and n.cursorTagId == TagId(TypevarsTagId)
+        updateLoop(dest, n, inlineT, dummy) # typevars
+        updateLoop(dest, n, inlineT, dummy) # params
+        updateLoop(dest, n, inlineT, dummy) # retType
+        updateLoop(dest, n, inlineT, foundInline) # pragmas
+        updateLoop(dest, n, inlineT, dummy) # effects
+        if foundInline or isGeneric:
+          updateLoop(dest, n, inlineT, dummy) # body
+        else:
+          skip n
         while n.hasMore: skip n
     of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, BundleIdx, IndexIdx, DependencyIdx, LinkIdx,
        ExportIdx, FromexportIdx, ExportexceptIdx:
