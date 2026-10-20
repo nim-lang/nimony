@@ -74,7 +74,8 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   if n > 0:
     for i in 0..<n:
       let alreadyRegistered = gSlots[lane].hasPendingForFd(buf[i].fd)
-      let idx = gSlots[lane].allocSlot(buf[i])
+      let idx = newSlot(lane, buf[i])
+      if idx < 0: continue
       armDeadline(lane, idx)
       case buf[i].kind
       of opTimeout:

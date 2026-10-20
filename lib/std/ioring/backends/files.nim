@@ -108,7 +108,7 @@ when defined(windows):
     ## completion port. The transfer is the readiness, as on POSIX.
     let lane = ioLane()
     for j in gSlots[lane].slotsForFd(fd):
-      let s = addr gSlots[lane].slots[j]
+      let s = gSlots[lane].slot(j)
       case s.op.kind
       of opRead:
         completeFileRead(j, fd, cast[pointer](s.op.read.buf), s.op.read.len)
@@ -134,7 +134,7 @@ when defined(windows):
     ## file pointer, so reopen the file with OVERLAPPED semantics and an
     ## independent position. Wait for physical completion before releasing
     ## the buffer/OVERLAPPED.
-    let op = addr gSlots[ioLane()].slots[idx].op
+    let op = gSlots[ioLane()].op(idx)
     let transfer = if op.kind == opRead: op.read else: op.write
     const ErrorInvalidParameter = 87'i32
     const ErrorIoPending = 997'i32

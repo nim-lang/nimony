@@ -52,7 +52,8 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
   var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
   if n > 0:
     for i in 0..<n:
-      let idx = gSlots[lane].allocSlot(buf[i])
+      let idx = newSlot(lane, buf[i])
+      if idx < 0: continue
       armDeadline(lane, idx)
       case buf[i].kind
       of opTimeout:
