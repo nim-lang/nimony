@@ -541,6 +541,13 @@ let bytes = extract(w)
 - Not yet: `openReadWrite`, `pipe`/channels, `startTls`, deadlines, the
   `sendfile`/`splice`/kTLS paths of `copy`.
 
+For incremental parsing, a `Reader` exposes `buffered`, `peek`, `consume` and
+`fill`, like `Socket`. `peek` views unread decoded bytes without copying, and
+`consume(n)` advances past bytes the parser used. `fill()` preserves the unread
+tail and returns the number of decoded bytes added. Zero means source or
+adapter end; already buffered bytes remain available. Reader mutations
+invalidate views. Callers must consume data or bound its accumulation.
+
 ## tls
 
 [Source](../lib/std/tls.nim)

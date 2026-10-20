@@ -45,7 +45,7 @@
 ## `sendfile`/`splice`/kTLS fast paths in `copy`, and cross-thread close of a
 ## descriptor another lane is parked on.
 
-import std/[ioring, socket, dns, paths, commonio, strutils]
+import std/[ioring, socket, dns, paths, commonio, strutils, assertions]
 import std/compress/gzip
 
 export ioring.Deadline, ioring.never, ioring.afterMs
@@ -320,6 +320,20 @@ proc initWriter(c: Core): Writer =
 
 # ------------------------------------------------------------------ reading --
 
+proc buffered*(r: Reader): int {.inline.} =
+  ## Decoded bytes not yet consumed.
+  r.buf.len - r.pos
+
+proc peek*(r: Reader): openArray[char] =
+  ## A view of the decoded bytes not yet consumed. No I/O or copying.
+  ## Reader mutations invalidate the view.
+  toOpenArray(r.buf, r.pos, r.buf.len - 1)
+
+proc consume*(r: var Reader; n: int) {.inline.} =
+  ## Drop the first `n` bytes of `peek`, without I/O.
+  assert n >= 0 and n <= r.buffered, "consume past what is buffered"
+  r.pos += n
+
 proc refill(r: var Reader): bool {.passive, raises.} =
   ## More decoded bytes in `buf`; `false` at the end of the data.
   if r.pos > 0:
@@ -351,6 +365,17 @@ proc refill(r: var Reader): bool {.passive, raises.} =
       if r.eof: return false
     if r.eof: return false
     if coreRecv(c, r.raw) == 0: r.eof = true
+
+proc fill*(r: var Reader): int {.passive, raises.} =
+  ## Append more decoded bytes, preserving the unread tail and compacting
+  ## consumed bytes first. Returns the number added, or `0` at source or
+  ## adapter end even if unread bytes remain. Raises what `read` raises.
+  ##
+  ## Unlike `read`, this can add bytes while others are still buffered.
+  ## The caller must consume them or bound how much it allows to accumulate.
+  let before = r.buffered
+  discard refill(r)
+  result = r.buffered - before
 
 proc read*(r: var Reader; dest: var openArray[char]): int {.passive, raises.} =
   ## Up to `dest.len` bytes; `0` is the end of the data.
