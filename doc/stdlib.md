@@ -298,8 +298,15 @@ a rune index to a byte index.
   "visible character" may be multiple runes.
 - `toLower` / `toUpper` here handle the full Unicode range,
   unlike `strutils.toLowerAscii`.
-- `validateUtf8` returns -1 if valid, otherwise the byte
-  position of the first invalid byte.
+- `validateUtf8` accepts strings and character or byte views. It returns `-1`
+  for valid UTF-8, otherwise the byte offset of the first invalid sequence's
+  leading byte. It rejects overlong encodings, surrogates, values above
+  U+10FFFF, and incomplete final sequences.
+- `Utf8Validator` validates chunks without allocating, retaining at most three
+  unfinished bytes. `validateUtf8(validator, chunk)` returns `-1` for an
+  accepted prefix; pass `final = true` on the last chunk (possibly empty) to
+  check completeness. Error offsets are relative to the whole input, and an
+  error is retained until `validator = default(Utf8Validator)` resets it.
 
 
 ## hashes

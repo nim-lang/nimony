@@ -1,4 +1,5 @@
 import syncio, assertions, strutils
+from private/utf8 import scanUtf8, utf8CharWidth
 
 #
 #
@@ -229,36 +230,61 @@ func runeAt*(s: openArray[char], i: Natural): Rune =
     assert a.runeAt(3) == "y".runeAt(0)
   fastRuneAt(s, i, result, false)
 
+type Utf8Validator* = object
+  ## Incremental UTF-8 validation with no allocations. Default construction
+  ## starts an empty input; assign `default(Utf8Validator)` to reset it.
+  ## At most three unfinished bytes are retained between calls.
+  pending: array[4, char]
+  pendingLen: int
+  processed: int
+  errorPlusOne: int
+
 func validateUtf8*(s: openArray[char]): int =
-  ## Returns the position of the invalid byte in ``s`` if the string ``s`` does
-  ## not hold valid UTF-8 data. Otherwise ``-1`` is returned.
-  ##
-  ## See also:
-  ## * `toUTF8 func <#toUTF8,Rune>`_
-  ## * `$ func <#$,Rune>`_ alias for `toUTF8`
-  ## * `fastToUTF8Copy template <#fastToUTF8Copy.t,Rune,string,int>`_
-  var i = 0
-  let L = s.len
-  while i < L:
-    if uint(s[i]) <= 127:
-      inc(i)
-    elif uint(s[i]) shr 5 == 0b110:
-      if uint(s[i]) < 0xc2: return i # Catch overlong ascii representations.
-      if i+1 < L and uint(s[i+1]) shr 6 == 0b10: inc(i, 2)
-      else: return i
-    elif uint(s[i]) shr 4 == 0b1110:
-      if i+2 < L and uint(s[i+1]) shr 6 == 0b10 and uint(s[i+2]) shr 6 == 0b10:
-        inc i, 3
-      else: return i
-    elif uint(s[i]) shr 3 == 0b11110:
-      if i+3 < L and uint(s[i+1]) shr 6 == 0b10 and
-                     uint(s[i+2]) shr 6 == 0b10 and
-                     uint(s[i+3]) shr 6 == 0b10:
-        inc i, 4
-      else: return i
-    else:
-      return i
-  return -1
+  ## Returns `-1` for valid UTF-8, or the byte offset of the first invalid
+  ## sequence's leading byte. An incomplete final sequence is invalid too.
+  ## Rejects overlong encodings, surrogates and values above U+10FFFF.
+  scanUtf8(s).validUpTo
+
+func validateUtf8*(s: openArray[byte]): int =
+  ## Byte-view overload of `validateUtf8`, without a string conversion.
+  scanUtf8(s).validUpTo
+
+func validateUtf8*[T: char | byte](v: var Utf8Validator; s: openArray[T];
+                                  final = false): int =
+  ## Validates the next chunk. Returns `-1` for a valid prefix, or the start
+  ## of the first invalid sequence measured from the beginning of the input.
+  ## Pass `final = true` on the last chunk (which may be empty) to reject an
+  ## incomplete suffix. A failure is retained until the validator is reset.
+  ## The total input length must fit in `int`.
+  if v.errorPlusOne != 0: return v.errorPlusOne - 1
+  var pos = 0
+  if v.pendingLen > 0:
+    let start = v.processed - v.pendingLen
+    let width = utf8CharWidth(int(v.pending[0]))
+    while v.pendingLen < width and pos < s.len:
+      v.pending[v.pendingLen] = char(s[pos])
+      inc v.pendingLen
+      inc pos
+    let scan = scanUtf8(toOpenArray(v.pending, 0, v.pendingLen - 1))
+    if scan.validUpTo >= 0:
+      if scan.errorLen != 0 or final:
+        v.errorPlusOne = start + 1
+        return start
+      v.processed += s.len
+      return -1
+    v.pendingLen = 0
+  let scan = scanUtf8(toOpenArray(s, pos, s.len - 1))
+  if scan.validUpTo >= 0:
+    let start = pos + scan.validUpTo
+    if scan.errorLen != 0 or final:
+      let offset = v.processed + start
+      v.errorPlusOne = offset + 1
+      return offset
+    v.pendingLen = s.len - start
+    for i in 0..<v.pendingLen:
+      v.pending[i] = char(s[start + i])
+  v.processed += s.len
+  result = -1
 
 template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untyped {.untyped.} =
   ## Copies UTF-8 representation of ``c`` into the preallocated string ``s``
@@ -1255,14 +1281,22 @@ func runeAt*(s: string, i: Natural): Rune {.inline.} =
   fastRuneAt(s, i, result, false)
 
 func validateUtf8*(s: string): int {.inline.} =
-  ## Returns the position of the invalid byte in ``s`` if the string ``s`` does
-  ## not hold valid UTF-8 data. Otherwise ``-1`` is returned.
-  ##
-  ## See also:
-  ## * `toUTF8 func <#toUTF8,Rune>`_
-  ## * `$ func <#$,Rune>`_ alias for `toUTF8`
-  ## * `fastToUTF8Copy template <#fastToUTF8Copy.t,Rune,string,int>`_
+  ## String overload of `validateUtf8`. Returns `-1` for valid UTF-8 or the
+  ## byte offset of the first invalid or incomplete sequence's leading byte.
   validateUtf8(toOa(s))
+
+func validateUtf8*(v: var Utf8Validator; s: string;
+                   final = false): int {.inline.} =
+  ## String overload of incremental validation. Use `final = true` on the
+  ## last chunk, or on an empty string after the last chunk.
+  runnableExamples:
+    var validator = Utf8Validator()
+    assert validator.validateUtf8("\xe2\x82") == -1
+    assert validator.validateUtf8("\xac", final = true) == -1
+    validator = default(Utf8Validator)
+    assert validator.validateUtf8("ok\xe2") == -1
+    assert validator.validateUtf8("", final = true) == 2
+  validateUtf8(v, toOa(s), final)
 
 func runeOffset*(s: string, pos: Natural, start: Natural = 0): int {.inline.} =
   ## Returns the **byte offset** in ``s`` where **code-point index** ``pos`` begins,
