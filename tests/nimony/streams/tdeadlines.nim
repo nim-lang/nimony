@@ -99,7 +99,7 @@ proc serverChecks() {.passive, raises.} =
     of 4 .. 7:
       # A silent TLS peer: the client must time out its handshake and release.
       var one = default(array[1, char])
-      assert peer.read(one, afterMs(5000)) == 0
+      assert peer.read(one, afterMs(5000)) == 0, "silent TLS peer did not close"
     else:
       # Never drain these requests: even loopback must eventually backpressure.
       waitForRequest(index - 8)
@@ -113,26 +113,26 @@ proc expiredConstruction(address: string) {.passive, raises.} =
     w.abort()
     r.close()
   except ErrorCode as e:
-    assert e == TimeoutError
+    assert e == TimeoutError, "expired connect: " & $e
     inc caught
   try:
     var (r, w) = streamio.connect(address, "request", dl = dl)
     w.abort()
     r.close()
   except ErrorCode as e:
-    assert e == TimeoutError
+    assert e == TimeoutError, "expired request connect: " & $e
     inc caught
   try:
     var r = connectReader(address, dl = dl)
     r.close()
   except ErrorCode as e:
-    assert e == TimeoutError
+    assert e == TimeoutError, "expired reader connect: " & $e
     inc caught
   try:
     var w = connectWriter(address, dl = dl)
     w.abort()
   except ErrorCode as e:
-    assert e == TimeoutError
+    assert e == TimeoutError, "expired writer connect: " & $e
     inc caught
   assert caught == 4
 
@@ -151,9 +151,9 @@ proc clientChecks() {.passive, raises.} =
     var one = default(array[1, char])
     try: discard r.read(one)
     except ErrorCode as e:
-      assert e == TimeoutError
+      assert e == TimeoutError, "shared read deadline: " & $e
       expired = true
-    assert expired
+    assert expired, "shared read deadline did not expire"
     let next = afterMs(5000)
     w.renew(next)
     assert r.deadline == next and w.deadline == next
@@ -203,7 +203,7 @@ proc clientChecks() {.passive, raises.} =
         var w = connectWriter(address, engine, dl)
         w.abort()
     except ErrorCode as e:
-      assert e == TimeoutError
+      assert e == TimeoutError, "TLS constructor " & $index & ": " & $e
       inc caught
   assert caught == 4
   # Large plain requests flush inside write; small TLS requests flush explicitly.
@@ -221,23 +221,23 @@ proc clientChecks() {.passive, raises.} =
         w.abort()
         r.close()
     except ErrorCode as e:
-      assert e == TimeoutError
+      assert e == TimeoutError, "request constructor " & $index & ": " & $e
       expired = true
     atomicStore(requestDone[index], 1, moRelease)
-    assert expired
+    assert expired, "request constructor " & $index & " did not expire"
   assert not engine.cleanFinish, "failed construction must not cleanly finish TLS"
 
 proc server() {.passive.} =
   try: serverChecks()
-  except:
-    echo "server deadline checks failed"
+  except ErrorCode as e:
+    echo "server deadline checks failed: ", e
     atomicStore(failures, 1)
   atomicStore(serverDone, 1, moRelease)
 
 proc client() {.passive.} =
   try: clientChecks()
-  except:
-    echo "client deadline checks failed"
+  except ErrorCode as e:
+    echo "client deadline checks failed: ", e
     atomicStore(failures, 1)
   atomicStore(clientDone, 1, moRelease)
 

@@ -557,7 +557,10 @@ when defined(windows):
       let slot = toSlot(wov.slot)
       let op = addr slot.op
       var res = -1
-      if e.internal == 0'u:
+      # NTSTATUS is 32-bit even though OVERLAPPED_ENTRY stores it in a
+      # pointer-sized field. The upper bits need not be initialized.
+      let status = uint32(e.internal and 0xFFFFFFFF'u)
+      if status == 0'u32:
         case op.kind
         of opAccept:
           var listenSock = socketOf(op.fd)
@@ -607,7 +610,7 @@ when defined(windows):
         # on the closed socket completes with a disconnect status (measured) —
         # ownership is: `closeFd` drops the record before closesocket, and
         # nothing else drops it.
-        if uint32(e.internal and 0xFFFFFFFF'u) == StatusCancelled or
+        if status == StatusCancelled or
             iocpOwnerLane(op.fd) < 0:
           res = ECancelled
         elif op.kind == opConnect:
