@@ -82,7 +82,8 @@ func newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
     if result.data != nil:
       var i = 0
       while i < size:
-        (result.data[i]) = default(T)
+        {.cast(noSideEffect).}:
+          (result.data[i]) = default(T)
         inc i
     else:
       result.len = 0
@@ -136,7 +137,8 @@ func `=dup`*[T](a: seq[T]): seq[T] {.nodestroy.} =
   result = newSeqUninit[T](a.len)
   var i = 0
   while i < a.len:
-    (result.data[i]) = `=dup`(a.data[i])
+    {.cast(noSideEffect).}:
+      (result.data[i]) = `=dup`(a.data[i])
     inc i
 
 func recalcCap(oldCap, addedElements: int): int {.inline.} =
@@ -252,7 +254,8 @@ func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
     # stated so that the index is provable.
     var i = 0
     while i < a.len:
-      (result.data[i]) = `=dup`(a[i])
+      {.cast(noSideEffect).}:
+        (result.data[i]) = `=dup`(a[i])
       inc i
 
 # special cased in compiler as "@.1.<system suffix>" for empty seq type inference:

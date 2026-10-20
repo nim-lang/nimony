@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tfunc_ptr_mutation.nim(12, 25) Error: cannot mutate n.x through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_ptr_mutation.nim(13, 30) Error: cannot mutate p.x through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_ptr_mutation.nim(14, 32) Error: cannot mutate n.x through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_ptr_mutation.nim(17, 9) Error: cannot mutate copy.r.x through a ref/ptr in a `.noSideEffect` context

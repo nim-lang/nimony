@@ -2931,7 +2931,39 @@ iterator literal `iterator(): T {.closure.}`.
 
 A `func` is a `proc` that is treated as `noSideEffect` by default. Likewise, `iterator` and `converter` are treated as `noSideEffect` by default. A plain `proc` is treated as having side effects by default.
 
-A routine is **side-effect free** when it does not access global or thread-local variables and does not call any routine that has side effects.
+A routine is **side-effect free** when it does not access global or thread-local variables, does not call any routine that has side effects and does not mutate memory through a `ref` or `ptr`.
+
+The last rule covers every way a location can be mutated: an assignment to it and passing it to a `var` or `out` parameter. A location is "behind a `ref`/`ptr`" when its access path contains a dereference — `p[]`, `r.field` for a `ref`/`ptr` typed `r`, or `p[i]` for a `ptr UncheckedArray`. The mutation is nonetheless allowed when the head of the access path is already of a `var` type: a `var`/`out` parameter or a call that returns `var T`. The caller handed that state over for mutation explicitly.
+
+```nim
+type
+  Node = ref object
+    x: int
+  Holder = object
+    r: Node
+
+func bad(n: Node) =
+  n.x = 5          # Error: cannot mutate n.x through a ref/ptr in a `.noSideEffect` context
+
+func badLocal(h: Holder) =
+  var copy = h
+  copy.r.x = 5     # Error: `copy` is a local, its `r` still aliases `h.r`
+
+func fine(h: var Holder) =
+  inc h.r.x        # the head `h` is `var Holder`
+```
+
+`result` is not of a `var` type either, so a `func` that returns a fresh `ref` builds it with an object constructor — `Node(x: 5)` — rather than filling in its fields afterwards.
+
+Low-level code that writes through a pointer that is not rooted at a `var` parameter — a freshly allocated block, say — states that the mutation is invisible to the outside world with `{.cast(noSideEffect).}`:
+
+```nim
+func add*[T](s: var seq[T]; elem: sink T) =
+  ...
+  let impl = s.p     # a plain `ptr`, no longer rooted at the `var` parameter
+  {.cast(noSideEffect).}:
+    impl.data[impl.len] = elem
+```
 
 There is no `noSideEffect` inference. The defaults can be overridden with explicit `.noSideEffect` and `.sideEffect` annotations:
 
