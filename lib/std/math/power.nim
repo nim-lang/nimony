@@ -113,9 +113,7 @@ func cbrt*(x: float32): float32 =
 
 func cbrt*(x: float64): float64 =
   ## Cube root for f64, using exponent-scaled Newton iteration.
-  if x.isNaN:
-    return x
-  if x == 0'f64 or classify(x) in {fcInf, fcNegInf}:
+  if x == 0'f64 or classify(x) in {fcInf, fcNegInf, fcNan}:
     return x
 
   # Keep the Newton iteration in a compact range. Starting at abs(x) makes
