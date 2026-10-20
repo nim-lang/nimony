@@ -42,7 +42,8 @@ proc addH(d: Disp, pri: int, fn: proc(e: Ev): bool {.closure.}) =
 
 proc fire(d: Disp, e: Ev): int =
   result = 0
-  for h in d.handlers:
+  for i in 0 ..< d.handlers.len:
+    let h = d.handlers[i]
     if h.fn(e): inc result
 
 proc run() =

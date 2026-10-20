@@ -16,6 +16,7 @@ when defined(nimony):
 
 import std/assertions
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 import std/tables
 from std/strutils import endsWith
@@ -86,7 +87,7 @@ const
     ## the locals whose lifetime a scope bounds
 
 iterator currentScopeLocals*(c: var TypeCache): SymId =
-  for s, k in c.current.locals:
+  for s, k in uncheckedBorrow(c.current.locals):
     if k.kind in ScopedLocals:
       yield s
 
@@ -103,7 +104,7 @@ iterator localsOfScopesAbove*(c: var TypeCache; depth: int): SymId =
   var sc = c.current
   var d = scopeDepth(c)
   while d > depth:
-    for s, k in sc.locals:
+    for s, k in uncheckedBorrow(sc.locals):
       if k.kind in ScopedLocals:
         yield s
     sc = sc.parent

@@ -312,7 +312,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
   let alreadyLoaded = iface.len != 0
   var marker = filter.list
   let negateMarker = filter.kind == FromImport
-  for k, _ in m.public:
+  for k, _ in uncheckedBorrow(m.public):
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
@@ -325,7 +325,8 @@ proc loadInterface*(suffix: string; iface: var Iface;
     if not symMarked:
       # mark that this module contains the identifier `strId`:
       importTab.mgetOrPut(strId, @[]).addUnique(module)
-  for k, v in m.index.converters.items:
+  for i in 0 ..< m.index.converters.len:
+    let (k, v) = m.index.converters[i]
     var name = v
     extractBasename(name)
     let nameId = pool.strings.getOrIncl(name)
@@ -334,7 +335,8 @@ proc loadInterface*(suffix: string; iface: var Iface;
       let key = if k == ".": SymId(0) else: pool.symId(k)
       let val = pool.symId(v)
       converters.mgetOrPut(key, @[]).addUnique(val)
-  for ex in m.index.exports:
+  for i in 0 ..< m.index.exports.len:
+    let ex = m.index.exports[i]
     let (path, kind, names) = ex
     let filterKind =
       case kind
@@ -451,7 +453,7 @@ proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
   # gives top level exported syms of a module
   result = @[]
   var m = load(suffix)
-  for k, _ in m.public:
+  for k, _ in uncheckedBorrow(m.public):
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)

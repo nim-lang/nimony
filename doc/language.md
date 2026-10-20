@@ -2574,6 +2574,70 @@ through a borrow copies it, so it leaves freely:
     return -1
   ```
 
+### Iterating through a `ref`
+
+A borrow is tracked along an access path, but a `ref` can have aliases that
+reach the same location under a different path. A loop over a location
+reached through a `ref` is therefore rejected:
+
+  ```nim
+  type Node = ref object
+    kids: seq[Node]
+
+  proc walk(n, other: Node) =
+    for k in n.kids:     # Error: cannot iterate over a location reached through a `ref`
+      other.kids.add k   # if `other` is `n`, this reallocates what the loop reads
+  ```
+
+A `seq` is iterated by index instead. Every access reads `n.kids` again, so a
+mutation through an alias can make an index check fail but never leaves the
+loop reading freed memory:
+
+  ```nim
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    other.kids.add k
+  ```
+
+For any container, a `Table` included, the entirely memory-safe idiom is to
+move the container out of its location for the duration of the loop and back
+in afterwards. The loop then iterates a local, which the borrow checker tracks
+completely:
+
+  ```nim
+  var kids = move n.kids
+  for k in kids:
+    other.kids.add k     # if `other` is `n`, it adds to an empty `seq`
+  n.kids = move kids
+  ```
+
+While the loop runs, an alias sees the location empty. Moving the container
+back in overwrites whatever was added to the location meanwhile, so code that
+expects the loop body to add to the same container should collect the
+additions separately. If the loop body can raise, put the move back into a
+`finally` section; otherwise the container stays empty, which is not a memory
+error but a loss of data:
+
+  ```nim
+  var kids = move n.kids
+  try:
+    for k in kids: process(k)
+  finally:
+    n.kids = move kids
+  ```
+
+When the loop body is known not to touch the container, `uncheckedBorrow(x)`
+borrows `x` without the borrow checker's protection; the programmer vouches
+that nothing mutates `x` while the loop runs:
+
+  ```nim
+  for key, val in uncheckedBorrow(n.table):
+    echo key
+  ```
+
+`uncheckedBorrow(x)` is `addr(x)[]`: the explicit `addr` is what the borrow
+checker trusts.
+
 
 ## `out` parameters
 

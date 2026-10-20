@@ -14,7 +14,8 @@ let o = Owner(hooks: @[])
 var total = 0
 o.hooks.add(proc(x: int) {.closure.} = total += x)
 
-for h in o.hooks:
+for i in 0 ..< o.hooks.len:
+  let h = o.hooks[i]
   if h != nil: h(21)
 for i in 0 ..< o.hooks.len:
   if o.hooks[i] != nil: o.hooks[i](21)

@@ -364,6 +364,8 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
         result.mode = NotBorrowable
       var r = n
       inc r
+      if ek == DdotX and getType(c.typeCache, r).typeKind == RefT:
+        result.throughRef = true
       extractBorrowPath(c, r, result, followInlineVars)
       skip r # skip object subtree
       if r.isSymbol:
@@ -378,6 +380,8 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
         result.mode = NotBorrowable
       var r = n
       inc r
+      if getType(c.typeCache, r).typeKind == RefT:
+        result.throughRef = true
       extractBorrowPath(c, r, result, followInlineVars)
     elif ek in {HaddrX, HderefX}:
       var r = n
@@ -4728,7 +4732,14 @@ proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor;
     binders.add name
     if local.typ.typeKind in {MutT, LentT} and not cursorIsNil(firstArg):
       var path = extractPath(c, firstArg)
-      if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      if path.throughRef and path.mode != HasAddr:
+        # The borrow would be keyed to this path, but an alias of the `ref`
+        # mutates the same location under a path that does not overlap it:
+        # `for x in r.s: r2.s.add x` reallocates what the loop reads from.
+        buildErr c, firstArg.info, "cannot iterate over a location reached " &
+          "through a `ref`: an alias of the `ref` could mutate it during the " &
+          "loop; iterate by index, or over `uncheckedBorrow(...)` to take that risk"
+      elif path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
         path.borrower = name
         c.flow.borrows.incl path
 

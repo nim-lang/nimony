@@ -143,6 +143,8 @@ type
     mode*: BorrowableCheck
     path*: seq[SymId]  ## root :: field1 :: field2 :: ...
     info*: NifLineInfo
+    throughRef*: bool  ## the path dereferences a `ref`: an alias of it can
+                       ## reach the same location under another path
 
   BorrowJEntry = object
     added: bool
