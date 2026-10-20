@@ -477,18 +477,18 @@ proc cancelPendingOps(fd: cint): int =
   let lane = ioLane()
   if backendRelays.forgetFd != nil:
     backendRelays.forgetFd(fd)
-  for idx in gSlots[lane].slotsForFd(fd):
+  for s in gSlots[lane].slotsForFd(fd):
     # The shared completion path: writes `ECancelled`, resumes the continuation
     # or — for an op without one — pushes a completion-queue entry, then frees
     # the slot. This used to resume continuations only, so a cancelled op that
     # had none (a `waitCompletions` driver) vanished and its waiter hung.
-    cancelOp(lane, idx, ECancelled)
+    cancelOp(lane, s, ECancelled)
     inc result
 
 proc submitPollRemove*(fd: cint): int {.discardable.} =
   ## **Cancel without closing.** Take back every op this lane still has in
   ## flight on `fd` — each completes with `ECancelled`, so its continuation is
-  ## resumed and its slot returned to the arena — and drop the backend's per-fd
+  ## resumed and its slot released — and drop the backend's per-fd
   ## registration. `fd` itself is left open. Returns how many ops were
   ## cancelled; `0` means nothing was armed, which is the common case.
   ##
