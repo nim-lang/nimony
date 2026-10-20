@@ -566,6 +566,33 @@ let (r, w) = connect("example.com:443", request, tls = e)
 - A server that offers neither X25519 nor ChaCha20-Poly1305 (some FIPS-mode
   servers) fails with `tfUnsupported`.
 
+## http/httpheaders
+
+[Source](../lib/std/http/httpheaders.nim)
+
+`HttpHeaders` stores HTTP/1.1 header lines in wire order. Import this module
+directly for header construction and lookup without a client dependency;
+`std/httpclient` also re-exports its helpers.
+
+```nim
+import std/[http/httpheaders, assertions]
+
+proc example() {.raises.} =
+  var h = headers"Accept: application/json\r\n"
+  h.add "X-Trace", "1"
+  assert h.has("accept")
+  assert h.get("X-Trace") == "1"
+  for name, value in h.pairs:
+    discard name
+    discard value
+```
+
+`pairs` preserves duplicate fields and name spelling; `values(name)` returns
+all matching values in wire order. Lookup is case-insensitive. `get` returns
+the first match or `""`; `has` distinguishes an empty value from an absent
+field. The `headers"..."` literal is checked at compile time, and `add` rejects
+invalid field names and CR/LF in values with `BadOperation`.
+
 ## httpclient
 
 [Source](../lib/std/httpclient.nim)
