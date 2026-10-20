@@ -1,0 +1,1 @@
+tests/nimony/borrows/tref_iteration_errors.nim(10, 13) Error: cannot iterate over a location reached through a `ref`: an alias of the `ref` could mutate it during the loop; iterate by index, or over `uncheckedBorrow(...)` to take that risk [pass --verbose for the Final IR]

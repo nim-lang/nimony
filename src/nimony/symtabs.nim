@@ -10,6 +10,7 @@ when defined(nimony):
 
 import std / [tables]
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import nimony_model, identstyle
 
 const
@@ -51,7 +52,7 @@ proc commitShadowScope*(s: Scope) =
 
 proc rollbackShadowScope*(s: Scope) =
   let last = s.undo.len - 1
-  for k, oldLen in pairs(s.undo[last]):
+  for k, oldLen in uncheckedBorrow(s.undo[last]):
     # `k` was recorded here when we shadowed it, so the entry exists; use
     # `mgetOrPut` rather than `[]` to stay non-raising.
     s.tab.mgetOrPut(k, @[]).shrink oldLen

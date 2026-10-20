@@ -354,7 +354,8 @@ proc `$`*(n: NimNode): string =
   else:
     if n.kids.len > 0:
       result.add "("
-      for i, c in n.kids:
+      for i in 0 ..< n.kids.len:
+        let c = n.kids[i]
         if i > 0: result.add ", "
         result.add $c
       result.add ")"
@@ -379,7 +380,8 @@ proc treeRepr*(n: NimNode): string =
     else:
       discard
     if n.kids.len > 0:
-      for c in n.kids:
+      for i in 0 ..< n.kids.len:
+        let c = n.kids[i]
         result.add "\n" & aux(c, indent + 1)
   aux(n, 0)
 
@@ -394,7 +396,8 @@ proc copy*(n: NimNode): NimNode =
     intValField: n.intValField,
     floatValField: n.floatValField
   )
-  for c in n.kids:
+  for i in 0 ..< n.kids.len:
+    let c = n.kids[i]
     result.kids.add copy(c)
 
 proc copyNimTree*(n: NimNode): NimNode =

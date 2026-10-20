@@ -436,7 +436,8 @@ proc addConceptBoundMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
   ## available on `T` inside the body.
   var r = c.routine
   while r != nil:
-    for bound in r.conceptBounds:
+    for i in 0 ..< r.conceptBounds.len:
+      let bound = r.conceptBounds[i]
       if invocationMentions(bound, typevar):
         for cand in conceptMethodsForInvocation(c, fn, bound):
           if not conceptMethodAlreadyListed(cands, cand.typ):

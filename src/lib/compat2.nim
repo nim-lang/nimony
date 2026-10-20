@@ -85,3 +85,8 @@ when not defined(nimony):
     Hashable = concept x
     HasDefault = concept x
     HasWriteErr = concept x
+
+when not defined(nimony):
+  template uncheckedBorrow*(x: untyped): untyped =
+    ## Nimony's escape from its borrow checker; host Nim has none to escape.
+    x

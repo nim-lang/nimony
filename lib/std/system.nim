@@ -695,3 +695,19 @@ proc instantiationInfo*(): tuple[filename: string, line: int, column: int] {.mag
   ## The source position of the call. Inside a template body it is the
   ## position of the template's call site, so a template can report where it
   ## was invoked. `filename` is the file name without directories.
+
+template uncheckedBorrow*(x: untyped): untyped =
+  ## `x`, borrowed without the borrow checker's protection: the programmer
+  ## vouches that nothing mutates `x` while the borrow lasts. Needed to
+  ## iterate a location reached through a `ref`, which an alias of the `ref`
+  ## could otherwise mutate under the loop:
+  ##
+  ##   ```nim
+  ##   for k, v in uncheckedBorrow(node.table):
+  ##     echo k
+  ##   ```
+  ##
+  ## A `seq` is better iterated by index, and any container can be moved out
+  ## of its location for the loop and back in afterwards; neither needs such
+  ## a promise.
+  addr(x)[]
