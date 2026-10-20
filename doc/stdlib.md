@@ -538,7 +538,16 @@ let bytes = extract(w)
 - A writer's destructor finishes it (adapter trailer, `close_notify`, end of
   data for the peer) and swallows errors; call `close` to see them, `abort` on
   error paths to avoid a complete-looking truncated stream.
-- Not yet: `openReadWrite`, `pipe`/channels, `startTls`, deadlines, the
+- `deadline` reads a stream's standing I/O deadline; `renew(deadline)` replaces
+  it, and `renew(never)` clears it. Paired ends share the same deadline. These
+  operations raise `BadOperation` for closed or default-constructed streams.
+  Deadlines bound descriptor I/O; buffered and in-memory work does not wait.
+- `connect`, `connectReader` and `connectWriter` accept `dl = never`. One
+  absolute deadline covers DNS, TCP, TLS and, for the request overload, the
+  initial request flush. Expiry raises `TimeoutError`. Returned streams start
+  with `never`; use `renew` for the next exchange. Renewing does not make a
+  failed partial write resumable.
+- Not yet: `openReadWrite`, `pipe`/channels, `startTls`, the
   `sendfile`/`splice`/kTLS paths of `copy`.
 
 ## tls
