@@ -29,6 +29,7 @@ var clientDone: int
 var requestDone: array[2, int]
 var failures: int
 
+# Catch selectors are types, so bind ErrorCode when checking an exact enum value.
 proc closedAccessors(r: var Reader; w: var Writer) {.raises.} =
   var caught = 0
   try: discard r.deadline
@@ -228,15 +229,15 @@ proc clientChecks() {.passive, raises.} =
 
 proc server() {.passive.} =
   try: serverChecks()
-  except ErrorCode as e:
-    echo "server error: ", e
+  except:
+    echo "server deadline checks failed"
     atomicStore(failures, 1)
   atomicStore(serverDone, 1, moRelease)
 
 proc client() {.passive.} =
   try: clientChecks()
-  except ErrorCode as e:
-    echo "client error: ", e
+  except:
+    echo "client deadline checks failed"
     atomicStore(failures, 1)
   atomicStore(clientDone, 1, moRelease)
 

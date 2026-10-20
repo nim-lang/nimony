@@ -662,9 +662,9 @@ proc connect*(address: string; request: string; tls: nil TlsEngine = nil;
   try:
     write(w, request)
     flush(w)
-  except ErrorCode as e:
+  except:
     w.abort()
-    raise e
+    raise
   c.dl = never
   result = (initReader(c), w)
 
