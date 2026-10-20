@@ -8,6 +8,7 @@ type
   ExpandingTls = ref object of TlsEngine
     pending: string
     cleanFinish: bool
+    failWrite: bool
 
 method start*(e: SilentTls; host: string) {.raises.} = discard
 method recordsOut*(e: SilentTls; dest: var string) {.raises.} = discard
@@ -15,6 +16,7 @@ method recordsOut*(e: SilentTls; dest: var string) {.raises.} = discard
 method start*(e: ExpandingTls; host: string) {.raises.} = discard
 method isConnected*(e: ExpandingTls): bool = true
 method appIn*(e: ExpandingTls; src: openArray[char]; used: var int) {.raises.} =
+  if e.failWrite: raise IOError
   used = src.len
   e.pending = newString(16 * 1024 * 1024)
 method recordsOut*(e: ExpandingTls; dest: var string) {.raises.} =
@@ -75,14 +77,14 @@ proc memoryAccessors() {.raises.} =
 proc waitForRequest(index: int) {.passive.} =
   let limit = afterMs(10_000)
   while atomicLoad(requestDone[index], moAcquire) == 0:
-    assert monoNow() < limit, "request construction did not expire"
+    assert monoNow() < limit, "request constructor did not finish"
     var res = 0
     let c = delay()
     discard submitTimeout(afterMs(1), c, addr res)
     suspend()
 
 proc serverChecks() {.passive, raises.} =
-  for index in 0 ..< 10:
+  for index in 0 ..< 11:
     var peer = listener.accept(afterMs(10_000))
     case index
     of 0:
@@ -96,12 +98,12 @@ proc serverChecks() {.passive, raises.} =
       peer.writeLine("reader", afterMs(5000))
     of 3:
       assert peer.readLine(afterMs(5000)) == "writer"
-    of 4 .. 7:
-      # A silent TLS peer: the client must time out its handshake and release.
+    of 4 .. 7, 10:
+      # A silent handshake or a failed TLS request must release the connection.
       var one = default(array[1, char])
-      assert peer.read(one, afterMs(5000)) == 0, "silent TLS peer did not close"
+      assert peer.read(one, afterMs(5000)) == 0, "TLS construction did not release its peer"
     else:
-      # Never drain these requests: even loopback must eventually backpressure.
+      # Do not drain requests until their constructors have finished.
       waitForRequest(index - 8)
     peer.close()
 
@@ -207,25 +209,38 @@ proc clientChecks() {.passive, raises.} =
       inc caught
   assert caught == 4
   # Large plain requests flush inside write; small TLS requests flush explicitly.
+  # Windows may buffer the entire payload. Both timely success and timeout are
+  # valid; a blocked constructor must still finish under its setup deadline.
   let payload = newString(16 * 1024 * 1024)
   let engine = ExpandingTls(pending: "", cleanFinish: false)
   for index in 0 ..< 2:
-    var expired = false
     try:
       if index == 0:
         var (r, w) = streamio.connect(address, payload, dl = afterMs(100))
+        assert r.deadline == never and w.deadline == never
         w.abort()
         r.close()
       else:
         var (r, w) = streamio.connect(address, "small request", engine, afterMs(100))
+        assert r.deadline == never and w.deadline == never
         w.abort()
         r.close()
     except ErrorCode as e:
       assert e == TimeoutError, "request constructor " & $index & ": " & $e
-      expired = true
     atomicStore(requestDone[index], 1, moRelease)
-    assert expired, "request constructor " & $index & " did not expire"
-  assert not engine.cleanFinish, "failed construction must not cleanly finish TLS"
+  assert not engine.cleanFinish, "request teardown must not cleanly finish TLS"
+  # Exercise failed-request cleanup independently of platform socket buffers.
+  let failing = ExpandingTls(pending: "", cleanFinish: false, failWrite: true)
+  var rejected = false
+  try:
+    var (r, w) = streamio.connect(address, "failed request", failing, afterMs(5000))
+    w.abort()
+    r.close()
+  except ErrorCode as e:
+    assert e == IOError, "injected request failure: " & $e
+    rejected = true
+  assert rejected, "request constructor did not propagate the TLS write failure"
+  assert not failing.cleanFinish, "failed request must not cleanly finish TLS"
 
 proc server() {.passive.} =
   try: serverChecks()
