@@ -45,7 +45,7 @@
 ## `sendfile`/`splice`/kTLS fast paths in `copy`, and cross-thread close of a
 ## descriptor another lane is parked on.
 
-import std/[ioring, socket, dns, paths, commonio, strutils, assertions]
+import std/[ioring, socket, dns, paths, commonio, strutils]
 import std/compress/gzip
 
 export ioring.Deadline, ioring.never, ioring.afterMs
@@ -329,9 +329,9 @@ proc peek*(r: Reader): openArray[char] =
   ## Reader mutations invalidate the view.
   toOpenArray(r.buf, r.pos, r.buf.len - 1)
 
-proc consume*(r: var Reader; n: int) {.inline.} =
+proc consume*(r: var Reader; n: int) {.inline,
+    requires: n >= 0 and n <= r.buffered.} =
   ## Drop the first `n` bytes of `peek`, without I/O.
-  assert n >= 0 and n <= r.buffered, "consume past what is buffered"
   r.pos += n
 
 proc refill(r: var Reader): bool {.passive, raises.} =
