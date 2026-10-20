@@ -16,18 +16,17 @@
 # `iocpWake`s it. The first op for a socket claims it for the submitting lane.
 # Arenas therefore stay per-lane and unlocked, exactly as on POSIX.
 #
-# The OVERLAPPED blocks live in a side arena owned by this module (`gAux`)
-# rather than in `OpContext`: the other platforms pay nothing for them, and the
-# storage is stable because it is sized to `MaxOps` up front (the slot arena's
-# growth beyond MaxOps is a documented cold path the io_uring backend already
-# rules out; asserted here).
+# The OVERLAPPED blocks are side state owned by this module (`Aux`) rather than
+# part of `OpContext`: the other platforms pay nothing for them. Each issued op
+# gets its own heap block, so its address is stable for as long as the kernel
+# writes through it.
 #
-# An Aux block is NOT indexed by slot, and that is load-bearing. A slot can be
+# An Aux block is NOT the slot's, and that is load-bearing. A slot can be
 # freed while the kernel still owns the op's OVERLAPPED — a blown deadline
 # completes the op locally (core/backend.expireDeadlines) and the kernel finds
 # out only later — and the next op into that slot would then overwrite an
-# OVERLAPPED the kernel is still writing through. So blocks come from a free
-# list and go back only when their completion is drained; a block names the
+# OVERLAPPED the kernel is still writing through. So a block is freed only when
+# its completion is drained; a block names the
 # slot AND the generation it was issued for, and a completion whose slot has
 # moved on is dropped, the same shape as io_uring's `user_data` tag.
 #
@@ -96,7 +95,6 @@ when defined(windows):
       ov: Overlapped               ## first: the drain casts lpOverlapped back
       lane: int32
       slot: int32
-      aux: int32                   ## the Aux block this lives in, for the drain
       gen: uint32                  ## the slot's generation when the op was issued
     WsaBuf {.pure.} = object       ## WSABUF
       len: uint32
@@ -111,7 +109,7 @@ when defined(windows):
       data2, data3: uint16
       data4: array[8, uint8]
     Aux = object                   ## per-op side state (stable storage)
-      wov: IocpOv
+      wov: IocpOv                  ## first: the drain casts lpOverlapped back
       wsabuf: WsaBuf
       acceptSock: SocketHandle     ## opAccept: the pre-created socket AcceptEx fills
       acceptBuf: array[2 * (128 + 16), uint8]   ## AcceptEx local+remote address scratch
@@ -148,7 +146,6 @@ when defined(windows):
     POLLWRNORM = 0x0010
     PollFailMask = 0x0001 or 0x0002 or 0x0004   # POLLERR | POLLHUP | POLLNVAL
     AddrLen = 128 + 16             ## AcceptEx: sizeof(sockaddr_storage) + 16
-    NoAux = -1'i32                 ## "holds no OVERLAPPED block"
 
   proc createIoCompletionPort(fileHandle: Handle; port: Handle; key: uint;
                               threads: uint32): Handle {.
@@ -211,9 +208,7 @@ when defined(windows):
 
   var
     gPorts: seq[Handle]            ## one completion port per lane
-    gAux: seq[seq[Aux]]            ## per lane, MaxOps entries
-    gAuxFree: seq[seq[int32]]      ## per lane: Aux blocks the kernel is not using
-    gSlotAux: seq[seq[int32]]      ## per lane, by slot: the block its op was issued in
+    gSlotAux: seq[seq[nil ptr Aux]]  ## per lane, by slot: the block its op was issued in
     gPollAdds: seq[seq[PendingPoll]]  ## per lane: opPollAdd ops awaiting the WSAPoll pass
     gOwner: Table[cint, int]       ## socket → owning lane (port association)
     gOwnerLock: TicketLock
@@ -325,24 +320,25 @@ when defined(windows):
                      addr gConnectEx, uint32(sizeof(gConnectEx)), addr got, nil, nil)
     atomicStore(gConnectExState, 2, moRelease)
 
-  proc allocAux(lane: int): int32 =
-    ## An OVERLAPPED block the kernel is not using. `NoAux` when every block is
-    ## outstanding — see `issue`, which is the only caller and fails the op.
-    if gAuxFree[lane].len == 0: return NoAux
-    result = gAuxFree[lane].pop()
+  proc allocAux(): nil ptr Aux =
+    ## A fresh OVERLAPPED block. `nil` when memory is exhausted — see `issue`,
+    ## which is the only caller and fails the op.
+    result = cast[nil ptr Aux](alloc0(sizeof(Aux)))
+    if result != nil:
+      result.acceptSock = InvalidSocket
 
-  proc freeAux(lane: int; ai: int32) {.inline.} =
+  proc freeAux(ai: nil ptr Aux) {.inline.} =
     ## The kernel is done with this OVERLAPPED — from the drain, or from an
     ## issue that never reached the kernel at all.
-    if ai != NoAux: gAuxFree[lane].add ai
+    if ai != nil: dealloc(ai)
 
-  proc abortIssue(lane, slotIdx: int; ai: int32; res: int) =
+  proc abortIssue(lane, slotIdx: int; ai: nil ptr Aux; res: int) =
     ## An op that never reached the kernel. The slot's binding is cleared
     ## BEFORE the slot is freed: a stale `gSlotAux` entry would let
     ## `iocpCancelInFlight` reach through it later and CancelIoEx an OVERLAPPED
     ## that by then belongs to a live op of somebody else's.
-    gSlotAux[lane][slotIdx] = NoAux
-    freeAux(lane, ai)
+    gSlotAux[lane][slotIdx] = nil
+    freeAux(ai)
     complete(slotIdx, res)
 
   proc clampLen(n: int): uint32 {.inline.} =
@@ -354,7 +350,7 @@ when defined(windows):
     ## Every path that does NOT leave an OVERLAPPED with the kernel must give
     ## the Aux block back before it returns, or the free list bleeds a block
     ## per failed issue.
-    let op = addr gSlots[lane].slots[slotIdx].op
+    let op = gSlots[lane].op(slotIdx)
     case op.kind
     of opNop:
       complete(slotIdx, 0)
@@ -363,7 +359,7 @@ when defined(windows):
       return               # nothing to issue: the lane's deadline heap is the op
     of opPollAdd:
       gPollAdds[lane].add PendingPoll(slot: int32(slotIdx),
-                                      gen: gSlots[lane].slots[slotIdx].gen)
+                                      gen: gSlots[lane].slot(slotIdx).gen)
       return
     of opConnect:
       # A datagram connect is not a handshake: the kernel only records the
@@ -380,22 +376,14 @@ when defined(windows):
         return
     else:
       discard
-    let ai = allocAux(lane)
-    if ai == NoAux:
-      # Every block is with the kernel. Only reachable once more ops are
-      # outstanding-or-orphaned than `MaxOps`, which the arena itself bounds
-      # in the steady state; failing the op is still better than reusing a
-      # block the kernel writes through.
-      complete(slotIdx, -1)
+    let ai = allocAux()
+    if ai == nil:
+      complete(slotIdx, IoNoMemory)
       return
     gSlotAux[lane][slotIdx] = ai
-    let a = addr gAux[lane][ai]
-    a.wov = IocpOv(lane: int32(lane), slot: int32(slotIdx), aux: ai,
-                   gen: gSlots[lane].slots[slotIdx].gen)
-    # Blocks are recycled, so the accept socket is reset here rather than
-    # trusted to be clean: the drain closes a failed accept's socket, and a
-    # stale value would name somebody else's.
-    a.acceptSock = InvalidSocket
+    let a = ai
+    a.wov = IocpOv(lane: int32(lane), slot: int32(slotIdx),
+                   gen: gSlots[lane].slot(slotIdx).gen)
     let s = socketOf(op.fd)
     case op.kind
     of opRead:
@@ -483,8 +471,7 @@ when defined(windows):
     ## Is this entry still the op it was recorded for? A probe can be completed
     ## behind this list's back — a blown deadline expires it, `cancelPendingOps`
     ## does not reach here — and its slot then holds someone else's op.
-    let s = addr gSlots[lane].slots[e.slot.int]
-    s.inUse and s.gen == e.gen
+    gSlots[lane].isLive(e.slot.int, e.gen)
 
   proc servePollAdds(lane: int): bool =
     ## Readiness probes have no IOCP form: one WSAPoll(0) over the pending
@@ -503,7 +490,7 @@ when defined(windows):
     while i < live.len:
       # Every entry here was recorded as an opPollAdd (`issue` is the only
       # producer), so the poll mask lives in that branch of the op.
-      let op = addr gSlots[lane].slots[live[i].slot.int].op
+      let op = gSlots[lane].op(live[i].slot.int)
       case op.kind
       of opPollAdd:
         var ev = 0
@@ -524,9 +511,9 @@ when defined(windows):
       if (re and POLLRDNORM) != 0: fired.incl evRead
       if (re and POLLWRNORM) != 0: fired.incl evWrite
       if (re and PollFailMask) != 0: fired = {evRead, evWrite}
-      case gSlots[lane].slots[slotIdx].op.kind
+      case gSlots[lane].slot(slotIdx).op.kind
       of opPollAdd:
-        let hit = fired * gSlots[lane].slots[slotIdx].op.pollMask
+        let hit = fired * gSlots[lane].slot(slotIdx).op.pollMask
         if hit != {}:
           complete(slotIdx, toEventMask(hit))
           result = true
@@ -542,20 +529,15 @@ when defined(windows):
     var buf {.noinit.}: array[DrainBatch, OpContext]
     let n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
     for i in 0..<n:
-      let slotIdx = gSlots[lane].allocSlot(buf[i])
-      if slotIdx >= MaxOps:
-        # The arena took its documented cold path and grew past the OVERLAPPED
-        # storage sized for it (`gAux`/`gSlotAux` are exactly `MaxOps` long and
-        # never grow, so that pointers into them stay valid while the kernel
-        # writes through one). There is no block for this slot, so the op
-        # cannot be issued and failing it is the only answer left. A CHECK and
-        # not an `assert`: under `-d:danger` the alternative is a silent
-        # out-of-bounds write into `gSlotAux` one line below.
-        complete(slotIdx, -1)
+      let slotIdx = newSlot(lane, buf[i])
+      if slotIdx < 0:
+        discard "already completed with `IoNoMemory`"
       else:
         # The slot is fresh, so whatever its previous op bound here is gone; the
         # kinds `issue` handles without an OVERLAPPED never write it at all.
-        gSlotAux[lane][slotIdx] = NoAux
+        if slotIdx >= gSlotAux[lane].len:
+          gSlotAux[lane].setLen(slotIdx + 1)
+        gSlotAux[lane][slotIdx] = nil
         armDeadline(lane, slotIdx)
         # Three services, and which one an op needs is decided by its kind.
         #
@@ -606,15 +588,12 @@ when defined(windows):
       let wov = cast[ptr IocpOv](e.ov)
       assert int(wov.lane) == lane, "ioring/iocp: completion delivered to a foreign lane"
       let slotIdx = int(wov.slot)
-      let auxIdx = wov.aux
-      assert auxIdx != NoAux, "ioring/iocp: completion for an op that was never issued"
-      let a = addr gAux[lane][auxIdx.int]
+      let a = cast[ptr Aux](wov)
       # A slot outlives its op's time in the kernel: a deadline only asks for
       # the op back (`cancelOp`), and the op completes here.
-      assert gSlots[lane].slots[slotIdx].inUse and
-             gSlots[lane].slots[slotIdx].gen == wov.gen,
+      assert gSlots[lane].isLive(slotIdx, wov.gen),
         "ioring/iocp: completion for a slot the kernel no longer owned"
-      let op = addr gSlots[lane].slots[slotIdx].op
+      let op = gSlots[lane].op(slotIdx)
       var res = -1
       if e.internal == 0'u:
         case op.kind
@@ -678,8 +657,8 @@ when defined(windows):
           discard wsaGetOverlappedResult(socketOf(op.fd), addr a.wov.ov,
                                          addr bytes, 0'i32, addr flags)
           res = -int(wsaGetLastError())
-      gSlotAux[lane][slotIdx] = NoAux
-      freeAux(lane, auxIdx)
+      gSlotAux[lane][slotIdx] = nil
+      freeAux(a)
       completeFromKernel(slotIdx, res)
       result = true
     expireDeadlines(lane)
@@ -698,9 +677,9 @@ when defined(windows):
     ## WSAPoll pass) the kernel does not own.
     let lane = ioLane()
     let ai = gSlotAux[lane][slotIdx]
-    if ai == NoAux: return false
-    let s = socketOf(gSlots[lane].slots[slotIdx].op.fd)
-    discard cancelIoEx(cast[Handle](s), addr gAux[lane][ai.int].wov.ov)
+    if ai == nil: return false
+    let s = socketOf(gSlots[lane].slot(slotIdx).op.fd)
+    discard cancelIoEx(cast[Handle](s), addr ai.wov.ov)
     result = true
 
   proc iocpForgetFd(fd: cint) {.nimcall.} =
@@ -714,24 +693,12 @@ when defined(windows):
   proc initIocpBackendRelays*(): BackendRelays =
     let lanes = ioLanes()
     gPorts = newSeq[Handle](lanes)
-    gAux = newSeq[seq[Aux]](lanes)
-    gAuxFree = newSeq[seq[int32]](lanes)
-    gSlotAux = newSeq[seq[int32]](lanes)
+    gSlotAux = newSeq[seq[nil ptr Aux]](lanes)
     gPollAdds = newSeq[seq[PendingPoll]](lanes)
     var i = 0
     while i < lanes:
       gPorts[i] = createIoCompletionPort(INVALID_HANDLE_VALUE, cast[Handle](0), 0'u, 1'u32)
-      gAux[i] = newSeq[Aux](MaxOps)
-      var free = newSeq[int32](MaxOps)
-      var slotAux = newSeq[int32](MaxOps)
-      var k = 0
-      while k < MaxOps:
-        gAux[i][k].acceptSock = InvalidSocket
-        free[k] = int32(MaxOps - 1 - k)   # popped low-index first
-        slotAux[k] = NoAux
-        k = k + 1
-      gAuxFree[i] = free
-      gSlotAux[i] = slotAux
+      gSlotAux[i] = @[]
       gPollAdds[i] = @[]
       i = i + 1
     gOwner = initTable[cint, int]()

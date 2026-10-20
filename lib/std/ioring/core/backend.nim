@@ -11,7 +11,11 @@ import ./slots
 import std/[threadpool, ticketlocks, stripes, syncio]
 
 const CqSize* = 4096
-const MaxOps* = 8192
+const
+  InitialOpQueue* = 64
+    ## Starting capacity of a lane's deferred-op queue; it doubles when full,
+  MaxOpQueue* = 8192
+    ## up to this. Beyond it a submitter helps drain the queue instead.
 
 type
   BackendRelays* = object
@@ -63,20 +67,20 @@ var gOpQueues*: seq[FifoStripe[OpContext]]
 proc initOpQueues*() =
   gOpQueues = newSeq[FifoStripe[OpContext]](ioLanes())
   for q in gOpQueues:
-    q.init(MaxOps)
+    q.init(InitialOpQueue)
 
 var gSlots*: seq[SlotArena]
 proc initSlots*() =
   gSlots = newSeq[SlotArena](ioLanes())
   for s in gSlots:
-    s.init(MaxOps)
+    s.init()
 
 # ------------------------------------------------------------- deadlines ---
 #
 # Every op carries a deadline, so a per-lane min-heap of them answers two
 # questions the poll loop needs: how long it may wait, and which ops have run
-# out of time. Both in O(1) and O(log n); scanning the arena would be O(MaxOps)
-# on every single poll.
+# out of time. Both in O(1) and O(log n); scanning the slots would be
+# O(ops in flight) on every single poll.
 #
 # Entries are never removed when an op completes normally — finding and
 # deleting one would cost more than leaving it. Instead an entry names the
@@ -140,18 +144,17 @@ proc armDeadline*(lane: int; slotIdx: int) =
   ## Record the deadline of the op just allocated into `slotIdx`. A `never`
   ## deadline arms nothing, so the heap holds only ops that can actually
   ## expire.
-  let d = gSlots[lane].slots[slotIdx].op.deadline
+  let s = gSlots[lane].slot(slotIdx)
+  let d = s.op.deadline
   if d == never: return
-  gTimers[lane].push TimerEntry(at: d, slot: int32(slotIdx),
-                                gen: gSlots[lane].slots[slotIdx].gen)
+  gTimers[lane].push TimerEntry(at: d, slot: int32(slotIdx), gen: s.gen)
 
 proc nextDeadline*(lane: int): Deadline =
   ## The earliest deadline this lane is waiting on, skipping entries whose op
   ## has already completed. `never` when there is nothing to wait for.
   while gTimers[lane].len > 0:
     let e = gTimers[lane].a[0]
-    let s = addr gSlots[lane].slots[e.slot.int]
-    if s.inUse and s.gen == e.gen: return e.at
+    if gSlots[lane].isLive(e.slot.int, e.gen): return e.at
     discard gTimers[lane].popMin()
   result = never
 
@@ -186,12 +189,28 @@ const
   IoTimedOut* = -110
     ## Completion result for an op whose deadline passed. `ETIMEDOUT` on
     ## Linux, and negative like every other failure the ring reports.
+  IoNoMemory* = -12
+    ## Completion result for an op that could not get a slot: `ENOMEM`.
+
+proc deliver(cont: Continuation; resPtr: int; seqnum: SeqNum; kind: IoOp;
+             fd: cint; res: int) =
+  ## Hand `res` to whoever waits for the op: its result pointer, then its
+  ## continuation or, without one, the completion queue.
+  if resPtr != 0:
+    cast[ptr int](resPtr)[] = res
+  if cont.fn != nil:
+    submit(cont, int(fd))
+  else:
+    gCqLock.acquire()
+    if gCqCount < CqSize:
+      gCq[gCqTail] = IoCompletion(id: seqnum, op: kind, fd: fd, result: res)
+      gCqTail = (gCqTail + 1) and (CqSize - 1)
+      inc gCqCount
+    gCqLock.release()
 
 proc complete*(slotIdx: int; res: int) =
   let lane = ioLane()
-  let slot = addr gSlots[lane].slots[slotIdx]
-  if slot.op.res != 0:
-    cast[ptr int](slot.op.res)[] = res
+  let slot = gSlots[lane].slot(slotIdx)
   case slot.op.kind
   of opAccept:
     # The peer out-parameter lives in the address payload of the op, so it is
@@ -212,19 +231,20 @@ proc complete*(slotIdx: int; res: int) =
   else:
     discard
   let cont  = slot.op.cont
+  let resPtr = slot.op.res
   let fd    = slot.op.fd
   let seqnum = slot.op.seqnum
   let kind  = slot.op.kind
   gSlots[lane].freeSlot(slotIdx)
-  if cont.fn != nil:
-    submit(cont, int(fd))
-  else:
-    gCqLock.acquire()
-    if gCqCount < CqSize:
-      gCq[gCqTail] = IoCompletion(id: seqnum, op: kind, fd: fd, result: res)
-      gCqTail = (gCqTail + 1) and (CqSize - 1)
-      inc gCqCount
-    gCqLock.release()
+  deliver(cont, resPtr, seqnum, kind, fd, res)
+
+proc newSlot*(lane: int; op: OpContext): int =
+  ## Allocate the slot for a dequeued `op`. When there is no memory for one,
+  ## the op completes right here with `IoNoMemory` and the result is -1: the
+  ## caller skips it.
+  result = gSlots[lane].allocSlot(op)
+  if result < 0:
+    deliver(op.cont, op.res, op.seqnum, op.kind, op.fd, IoNoMemory)
 
 var gCancelInFlight*: nil proc (slotIdx: int; gen: uint32): bool {.nimcall.}
   ## Set by a backend where the kernel keeps working on an op after this
@@ -238,7 +258,7 @@ var gCancelInFlight*: nil proc (slotIdx: int; gen: uint32): bool {.nimcall.}
 proc cancelOp*(lane, slotIdx: int; res: int) =
   ## Stop waiting for the op in `slotIdx`: complete it with `res` now, or,
   ## when the kernel still owns it, as soon as the kernel gives it back.
-  let s = addr gSlots[lane].slots[slotIdx]
+  let s = gSlots[lane].slot(slotIdx)
   if s.cancelRes != 0: return          # already being taken back
   if gCancelInFlight != nil and s.op.kind != opTimeout and
       gCancelInFlight(slotIdx, s.gen):
@@ -250,7 +270,7 @@ proc completeFromKernel*(slotIdx: int; res: int) =
   ## Complete an op the kernel has just reported. If the ring had already
   ## given up on it, a failure is reported as the reason it gave up; a success
   ## is still a success, since the transfer happened and must not be lost.
-  let c = gSlots[ioLane()].slots[slotIdx].cancelRes
+  let c = gSlots[ioLane()].slot(slotIdx).cancelRes
   complete(slotIdx, if c != 0 and res < 0: c else: res)
 
 proc expireDeadlines*(lane: int) =
@@ -265,12 +285,12 @@ proc expireDeadlines*(lane: int) =
   let now = monoNow()
   while gTimers[lane].len > 0:
     let e = gTimers[lane].a[0]
-    let s = addr gSlots[lane].slots[e.slot.int]
-    if not s.inUse or s.gen != e.gen:
+    if not gSlots[lane].isLive(e.slot.int, e.gen):
       discard gTimers[lane].popMin()      # its op finished in time
       continue
     if now < e.at: break                  # the earliest is still in the future
     discard gTimers[lane].popMin()
+    let s = gSlots[lane].slot(e.slot.int)
     # A timer op reaching its deadline is a success — that is the whole point
     # of it. Anything else has run out of time.
     cancelOp(lane, e.slot.int, if s.op.kind == opTimeout: 0 else: IoTimedOut)

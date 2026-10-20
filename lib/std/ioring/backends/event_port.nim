@@ -22,6 +22,7 @@ import ./poll
 const
   DrainBatch = 128
   MaxAioBytes = 64 * 1024 * 1024 # per lane, including logically cancelled I/O
+  MaxAioRequests = 8192          # per lane, likewise
 
 type
   AioRequest = object
@@ -106,23 +107,23 @@ proc reap(lane: int; event: PortEvent; publish: bool) =
   let value = aio_return(addr req.cb) # exactly once, including cancelled I/O
   let idx = req.slot
   let live = publish and not req.suppressed and
-    gSlots[lane].slots[idx].inUse and gSlots[lane].slots[idx].gen == req.gen
+    gSlots[lane].isLive(idx, req.gen)
   if live:
     # A transfer that happened is reported even past its deadline: the
     # deadline only stops the waiting (`expireDeadlines`), never the I/O.
-    let op = addr gSlots[lane].slots[idx].op
+    let op = gSlots[lane].op(idx)
     if err == 0 and value > 0 and op.kind == opRead:
       copyMem(op.read.buf, req.cb.aio_buf, value)
     completeFromKernel(idx, if err != 0: -int(err) else: value)
   releaseRequest(lane, req)
 
 proc submitAio(lane, idx: int) =
-  let op = addr gSlots[lane].slots[idx].op
+  let op = gSlots[lane].op(idx)
   let transfer = if op.kind == opRead: op.read else: op.write
   if transfer.len < 0 or op.offset < 0:
     complete(idx, -int(EINVAL))
     return
-  if transfer.len > MaxAioBytes - lanes[lane].bytes or lanes[lane].requests >= MaxOps:
+  if transfer.len > MaxAioBytes - lanes[lane].bytes or lanes[lane].requests >= MaxAioRequests:
     complete(idx, -int(EAGAIN))
     return
   var st = default(Stat)
@@ -138,7 +139,7 @@ proc submitAio(lane, idx: int) =
     return
   let req = cast[ptr AioRequest](alloc0(sizeof(AioRequest)))
   req.slot = idx
-  req.gen = gSlots[lane].slots[idx].gen
+  req.gen = gSlots[lane].slot(idx).gen
   req.write = op.kind == opWrite
   req.cb.aio_fildes = ownedFd
   req.cb.aio_nbytes = csize_t(transfer.len)
@@ -162,7 +163,7 @@ proc submitAio(lane, idx: int) =
     complete(idx, -int(err))
 
 proc submitStream(lane, idx: int) =
-  let op = addr gSlots[lane].slots[idx].op
+  let op = gSlots[lane].op(idx)
   # Preserve the shared ring's sequential-file semantics. Positioned file
   # operations bypass this path and use event-port AIO.
   var st = default(Stat)
@@ -181,7 +182,8 @@ proc eventPortPoll(timeoutMs: int): bool {.nimcall.} =
   var pending {.noinit.}: array[DrainBatch, OpContext]
   let n = gOpQueues[lane].tryBulkDequeue(DrainBatch, pending)
   for i in 0..<n:
-    let idx = gSlots[lane].allocSlot(pending[i])
+    let idx = newSlot(lane, pending[i])
+    if idx < 0: continue
     armDeadline(lane, idx)
     if pending[i].deadline != never and pending[i].deadline <= monoNow():
       complete(idx, if pending[i].kind == opTimeout: 0 else: IoTimedOut)

@@ -35,8 +35,8 @@ proc armEventsForFd*(fd: cint): IoEvents =
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
     when defined(illumos):
-      if gSlots[lane].slots[j].op.positioned: continue # AIO owns this op
-    case gSlots[lane].slots[j].op.kind
+      if gSlots[lane].slot(j).op.positioned: continue # AIO owns this op
+    case gSlots[lane].slot(j).op.kind
     of opRead, opAccept, opRecvFrom:
       result.incl evRead
     of opWrite, opSendTo:
@@ -45,7 +45,7 @@ proc armEventsForFd*(fd: cint): IoEvents =
       # Pure readiness probe: exactly the direction(s) the caller asked for.
       # Arming both regardless would wake a read-waiter on writability, and a
       # oneshot op re-armed on every spurious wake is a busy loop.
-      result = result + gSlots[lane].slots[j].op.pollMask
+      result = result + gSlots[lane].slot(j).op.pollMask
     of opConnect:
       # A non-blocking connect reports its outcome as writability.
       result.incl evWrite
@@ -62,7 +62,7 @@ proc failPendingForFd*(fd: cint) =
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
     when defined(illumos):
-      if gSlots[lane].slots[j].op.positioned: continue
+      if gSlots[lane].slot(j).op.positioned: continue
     complete(j, ArmFailed)
 
 proc reArmOrTransfer(fd: cint; alreadyRegistered: bool) {.inline.} =
@@ -135,7 +135,7 @@ when defined(posix):
     ## epoll cannot register regular files. Execute the positioned syscall
     ## directly when draining the queue, rather than waiting for readiness.
     ## This may block the polling lane; a deadline cannot interrupt the call.
-    let op = addr gSlots[ioLane()].slots[idx].op
+    let op = gSlots[ioLane()].op(idx)
     let transfer = if op.kind == opRead: op.read else: op.write
     if op.deadline != never and op.deadline <= monoNow():
       complete(idx, IoTimedOut)
@@ -250,7 +250,7 @@ when defined(posix):
     ## fires again, so an armed file op would park forever on its second read.
     let lane = ioLane()
     for j in gSlots[lane].slotsForFd(fd):
-      let s = addr gSlots[lane].slots[j]
+      let s = gSlots[lane].slot(j)
       when defined(illumos):
         if s.op.positioned: continue
       case s.op.kind
@@ -286,7 +286,7 @@ when defined(posix):
     ## because nothing else will: an op that is never armed gets no readiness
     ## event, so leaving it here would park the caller until its deadline no
     ## matter how the connect actually went.
-    let s = addr gSlots[ioLane()].slots[idx]
+    let s = gSlots[ioLane()].slot(idx)
     case s.op.kind
     of opConnect:
       let r = int pcall(posixConnect(fd, addr s.op.connect.sockAddr, s.op.connect.sockAddrLen))
@@ -315,7 +315,7 @@ when defined(posix):
     # instead of an O(MaxOps) scan of the whole arena.
     let lane = ioLane()
     for j in gSlots[lane].slotsForFd(fd):
-      let s = addr gSlots[lane].slots[j]
+      let s = gSlots[lane].slot(j)
       when defined(illumos):
         if s.op.positioned: continue
       case s.op.kind
@@ -502,7 +502,7 @@ else:
     ## share a numbering with the POSIX arm's, and the ring has no translation
     ## layer. A caller that must tell "refused" from "unreachable" apart on
     ## both platforms has to ask per-platform.
-    let sl = addr gSlots[ioLane()].slots[idx]
+    let sl = gSlots[ioLane()].slot(idx)
     case sl.op.kind
     of opConnect:
       let r = wsConnect(socketOf(fd), addr sl.op.connect.sockAddr, cint(sl.op.connect.sockAddrLen))
@@ -527,7 +527,7 @@ else:
     let lane = ioLane()
     let s = socketOf(fd)
     for j in gSlots[lane].slotsForFd(fd):
-      let sl = addr gSlots[lane].slots[j]
+      let sl = gSlots[lane].slot(j)
       case sl.op.kind
       of opRead:
         if evRead in firedEvents:

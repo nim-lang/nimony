@@ -48,7 +48,7 @@ export types.Deadline, types.never, types.earlier, types.monoNow
 export types.after, types.afterMs, types.millisUntil, types.`<`, types.`<=`
 export types.`==`
 export backend.IoTimedOut
-export backend.BackendRelays, backend.CqSize, backend.MaxOps
+export backend.BackendRelays, backend.CqSize
 import ./ioring/platform
 when defined(windows):
   when not defined(nimIoringWsaPoll):
@@ -147,7 +147,7 @@ proc enqueueOp(op: OpContext) =
       let owner = iocpOwnerLane(op.fd)
       if owner >= 0: lane = owner
     let foreign = lane != ioLane()
-    while not gOpQueues[lane].tryEnqueue(op):
+    while not gOpQueues[lane].tryEnqueue(op, MaxOpQueue):
       # Draining OUR lane cannot make room in someone else's, so the wake goes
       # inside the retry and not only after a successful enqueue: only the owner
       # empties that stripe, and it is asleep in its completion wait. Without
@@ -157,7 +157,7 @@ proc enqueueOp(op: OpContext) =
     if foreign:
       iocpWake(lane)
   else:
-    while not gOpQueues[ioLane()].tryEnqueue(op):
+    while not gOpQueues[ioLane()].tryEnqueue(op, MaxOpQueue):
       discard backendRelays.poll(0)
 
 proc submitNop*(deadline: Deadline; cont = Continuation(fn: nil, env: nil);

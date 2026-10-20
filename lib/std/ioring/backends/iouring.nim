@@ -111,7 +111,7 @@ proc tryInitLocalQueues(): bool =
   return true
 
 proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
-  let slot = addr gSlots[lane].slots[idx]
+  let slot = gSlots[lane].slot(idx)
   let op = addr slot.op
   case op.kind
   of opRead:
@@ -211,17 +211,20 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
     for i in 0..<n:
       if buf[i].kind == opTimeout:
         # No SQE, but it still needs a slot so the heap can complete it.
-        let idx = gSlots[lane].allocSlot(buf[i])
+        let idx = newSlot(lane, buf[i])
+        if idx < 0: continue
         armDeadline(lane, idx)
         continue
       if buf[i].positioned:
         let transfer = if buf[i].kind == opRead: buf[i].read else: buf[i].write
         if buf[i].offset < 0 or transfer.len < 0:
-          let idx = gSlots[lane].allocSlot(buf[i])
+          let idx = newSlot(lane, buf[i])
+          if idx < 0: continue
           complete(idx, -int(EINVAL))
           continue
         if buf[i].deadline != never and buf[i].deadline <= monoNow():
-          let idx = gSlots[lane].allocSlot(buf[i])
+          let idx = newSlot(lane, buf[i])
+          if idx < 0: continue
           complete(idx, IoTimedOut)
           continue
       if buf[i].kind in {opBind, opSetNonBlocking}:
@@ -236,29 +239,32 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # siblings) is non-blocking by construction, so the op succeeds the
         # moment it reaches a poll. socket(2) and setsockopt(2), by contrast,
         # both have ring forms and go through SQEs below.
-        let idx = gSlots[lane].allocSlot(buf[i])
+        let idx = newSlot(lane, buf[i])
+        if idx < 0: continue
         armDeadline(lane, idx)
         if buf[i].kind == opSetNonBlocking:
           complete(idx, 0)
         else:
           discard completeCommand(idx, buf[i])   # bind(2)
         continue
+      # The slot before the SQE: an SQE, once taken, is submitted whether or
+      # not it was filled, while a slot can be given back.
+      let idx = newSlot(lane, buf[i])
+      if idx < 0: continue
       var sqe: nil ptr Sqe
       try:
         sqe = localQueues[lane].getSqe()
       except ErrorCode:
-        # Ops buf[i..<n] were dequeued but never got an SQE/slot; put them
-        # back so the next poll picks them up instead of losing them forever.
-        for k in i..<n:
-          discard gOpQueues[lane].tryEnqueue(buf[k])
-        break
+        sqe = nil
       if sqe == nil:
+        # Ops buf[i..<n] were dequeued but never got an SQE; put them back so
+        # the next poll picks them up instead of losing them forever.
+        gSlots[lane].freeSlot(idx)
         for k in i..<n:
-          discard gOpQueues[lane].tryEnqueue(buf[k])
+          discard gOpQueues[lane].tryEnqueue(buf[k], MaxOpQueue)
         break
-      let idx = gSlots[lane].allocSlot(buf[i])
       armDeadline(lane, idx)
-      let slot = addr gSlots[lane].slots[idx]
+      let slot = gSlots[lane].slot(idx)
       sqe.userData = cast[pointer](tagFor(idx, slot.gen))
       # Fill from the ARENA copy, never from `buf`: an accept SQE stores
       # `addr op.accept.sockAddr`/`addr op.accept.sockAddrLen` (the connect and
@@ -315,9 +321,9 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # So the generation in `user_data` always names the op in the slot.
         let idx = int(cqes[i].userData and 0xffff_ffff'u64)
         let gen = uint32(cqes[i].userData shr 32)
-        let slot = addr gSlots[lane].slots[idx]
-        assert slot.inUse and slot.gen == gen,
+        assert gSlots[lane].isLive(idx, gen),
           "ioring/iouring: CQE for a slot the kernel no longer owned"
+        let slot = gSlots[lane].slot(idx)
         let op = addr slot.op
         if op.kind in {opRecvFrom, opSendTo}:
           let m = takeMsg(lane, cqes[i].userData)
