@@ -245,12 +245,8 @@ func validateUtf8*(s: openArray[char]): int =
   ## Rejects overlong encodings, surrogates and values above U+10FFFF.
   scanUtf8(s).validUpTo
 
-func validateUtf8*(s: openArray[byte]): int =
-  ## Byte-view overload of `validateUtf8`, without a string conversion.
-  scanUtf8(s).validUpTo
-
-func validateUtf8*[T: char | byte](v: var Utf8Validator; s: openArray[T];
-                                  final = false): int =
+func validateUtf8*(v: var Utf8Validator; s: openArray[char];
+                   final = false): int =
   ## Validates the next chunk. Returns `-1` for a valid prefix, or the start
   ## of the first invalid sequence measured from the beginning of the input.
   ## Pass `final = true` on the last chunk (which may be empty) to reject an

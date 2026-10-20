@@ -117,25 +117,25 @@ block incremental:
   for s in ["", "ascii\0text", "eé€\xf0\x90\x80\x80", "ศไทย中华Việt Nam"]:
     checkChunks(s, -1)
 
-block byte_views_and_offsets:
-  let bytes = [0x61'u8, 0xF0, 0x90, 0x80, 0x80, 0x62]
+block character_views_and_offsets:
+  let chars = ['a', '\xf0', '\x90', '\x80', '\x80', 'b']
   var v = Utf8Validator()
-  check validateUtf8(v, toOpenArray(bytes, 1, 2)) == -1
-  check validateUtf8(v, toOpenArray(bytes, 3, 4), final = true) == -1
-  check validateUtf8(toOpenArray(bytes, 1, 4)) == -1
+  check validateUtf8(v, toOpenArray(chars, 1, 2)) == -1
+  check validateUtf8(v, toOpenArray(chars, 3, 4), final = true) == -1
+  check validateUtf8(toOpenArray(chars, 1, 4)) == -1
   v = default(Utf8Validator)
   check validateUtf8(v, "abc\xe2") == -1
-  let invalid = [0x80'u8, 0x61]
+  let invalid = ['\x80', 'a']
   check validateUtf8(v, invalid) == 3
   check validateUtf8(v, "", final = true) == 3
 
 block every_one_and_two_byte_input:
-  var data = default(array[2, byte])
+  var data = default(array[2, char])
   for first in 0..255:
-    data[0] = byte(first)
+    data[0] = char(first)
     check validateUtf8(toOpenArray(data, 0, 0)) == (if first < 128: -1 else: 0)
     for second in 0..255:
-      data[1] = byte(second)
+      data[1] = char(second)
       let expected =
         if first < 128: (if second < 128: -1 else: 1)
         elif first in 0xC2..0xDF and second in 0x80..0xBF: -1
