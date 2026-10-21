@@ -212,6 +212,92 @@ proc lengthOrd*(c: var SemContext; typ: TypeCursor): xint =
   if last.isNaN: return last
   result = last - first + createXint(1.uint64)
 
+proc enumHasZero(body: Cursor): bool =
+  let edecl = asEnumDecl(body)
+  var field = edecl.body
+  result = false
+  field.into:
+    skip field # base type
+    if edecl.kind == AnumT:
+      skip field # owner type sym
+    while field.hasMore:
+      if field.substructureKind == EfldU:
+        var val = asLocal(field).val
+        inc val # skip tuple tag
+        if (val.kind == IntLit and val.intVal == 0) or
+           (val.kind == UIntLit and val.uintVal == 0'u64):
+          return true
+      skip field
+
+proc zeroIsNotAValue*(c: var SemContext; typ: TypeCursor; depth = 0): bool =
+  ## Does zeroed storage spell a value that `typ` rules out? A `range` that
+  ## excludes 0 and an `enum` without a field of ordinal 0 are the leaves;
+  ## arrays, tuples, objects and distinct types inherit the answer. A not-nil
+  ## pointer is not one of them: a type without any default is reported
+  ## elsewhere (`lacksDefaultValue`).
+  ##
+  ## Bounds that cannot be read answer `false`, which keeps the storage zeroed
+  ## as it was.
+  if depth > 20: return false
+  var t = skipModifier(typ)
+  var guard = 0
+  while t.isSymbol and guard < 8:
+    let res = tryLoadSym(t.symId)
+    if res.status != LacksNothing or res.decl.symKind != TypeY:
+      return false
+    let decl = asTypeDecl(res.decl)
+    case decl.body.typeKind
+    of EnumT, HoleyEnumT, AnumT:
+      return not enumHasZero(decl.body)
+    else:
+      t = decl.body
+    inc guard
+  case t.typeKind
+  of RangetypeT:
+    let first = firstOrd(c, t)
+    let last = lastOrd(c, t)
+    result = not first.isNaN and not last.isNaN and
+      (zero() < first or last < zero())
+  of DistinctT:
+    var e = t
+    e = sub(e)
+    result = zeroIsNotAValue(c, e, depth+1)
+  of ArrayT:
+    # `(array T IndexT)`.
+    var e = t
+    e = sub(e)
+    var idx = e
+    skip idx
+    if lengthOrd(c, idx) == zero(): return false
+    result = zeroIsNotAValue(c, e, depth+1)
+  of TupleT:
+    result = false
+    var f = t
+    f = sub(f)
+    while f.hasMore:
+      if zeroIsNotAValue(c, getTupleFieldType(f), depth+1): return true
+      skip f
+  of ObjectT:
+    var f = t
+    f = sub(f)
+    var base = f
+    if base.typeKind in {RefT, PtrT}: inc base
+    skip f # the inheritance slot
+    result = false
+    if base.kind != DotToken and zeroIsNotAValue(c, base, depth+1):
+      return true
+    var iter = initObjFieldIter()
+    while nextField(iter, f):
+      let field = takeLocal(f, SkipFinalParRi)
+      if field.kind in {FldY, GfldY}:
+        # Unlike for `lacksDefaultValue`, a field's own default does not
+        # count: zeroed storage does not hold it either.
+        if zeroIsNotAValue(c, field.typ, depth+1): return true
+      else:
+        skip f
+  else:
+    result = false
+
 proc containsGenericParamsAux(n: var TypeCursor): bool =
   ## Advances `n` past the subtree when the answer is `false`; on `true`
   ## the search stops immediately and `n` is left mid-subtree (every
