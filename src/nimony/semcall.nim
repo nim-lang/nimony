@@ -1271,8 +1271,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # `(call f (hcall toOpenArray.0[I,T] (aconstr …)))` straight into
       # `dest`. Skipped for templates (`firstVarargMatch` substitution
       # needs the flat args) and macros (their plugin reads `cs.args`).
-      let varargsElem = compatVarargsParamElem(m[idx].fn)
+      var varargsElem = compatVarargsParamElem(m[idx].fn)
       if not cursorIsNil(varargsElem):
+        if m[idx].inferred.len != 0:
+          # generic `varargs[T]`: bundle with the inferred element type
+          varargsElem = instantiateType(c, varargsElem, m[idx].inferred)
         compatBundleVarargsInMatch c, m[idx], varargsElem, cs.callNodeInfo
     addArgsInstConverters(c, dest, m[idx], cs.args)
     leaveCall dest, it, cs

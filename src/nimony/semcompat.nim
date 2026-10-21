@@ -145,6 +145,10 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       # (untyped)". Nothing bundles these slots either (`varargsMatch`
       # short-circuits on both), so the hint has no reader.
       discard
+    elif elem.hasMore and containsGenericParams(elem):
+      # generic `varargs[T]`: the openArray instance is only known once T
+      # is; the instance's params come through here again, substituted
+      discard
     elif elem.hasMore:
       # Capture children of the original `(varargs …)` into a fresh buffer so
       # the in-place `replace` can read its source without aliasing `dest`.
