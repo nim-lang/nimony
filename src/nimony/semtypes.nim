@@ -87,11 +87,13 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       takeTree dest, n
     else:
       let beforeType = dest.len
+      let info = n.info
       semLocalTypeImpl c, dest, n, InLocalDecl
       let inheritsFrom = cursorAt(dest, beforeType)
       if c.inGenericDefinition == 0 and not isInheritable(inheritsFrom, true):
+        let msg = "cannot inherit from type: " & asNimCode(inheritsFrom)
         dest.shrink beforeType
-        c.buildErr dest, n.info, "cannot inherit from type: " & asNimCode(inheritsFrom)
+        c.buildErr dest, info, msg
       else:
         # seed the field-name counts from the base chain so a shadowing field
         # continues the numbering (`.1`, …); fresh names start at `.0`.
