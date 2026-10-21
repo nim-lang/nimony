@@ -280,8 +280,6 @@ proc semDefineOverride(c: var SemContext; dest: var TokenBuf; it: var Item;
   it.n = resume
   return true
 
-proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLineInfo)
-
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var kind = kind
   if kind == TypevarY:
@@ -402,20 +400,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
             typ = typeToCursor(c, dest, typeStart)
         if n.isDotToken:
           # empty value
-          if kind in {VarY, GvarY} and c.phase != SemcheckSignatures and
-              (kind == GvarY or GlobalP in crucial.flags or
-               c.currentScope.kind == ToplevelScope) and
-              crucial.flags * {ThreadvarP, NoinitP, ImportcP, ImportcppP} == {} and
-              zeroIsNotAValue(c, typ):
-            # A global's storage is zeroed, and no flow analysis covers a
-            # global. Zero is not a value of this type (`range[1..3]`, an
-            # enum starting at 1), and the contracts engine trusts the type,
-            # so the global starts as `default(T)` instead.
-            let info = n.info
-            inc n
-            callDefault c, dest, typ, info
-          else:
-            takeTree dest, n
+          takeTree dest, n
         elif c.phase == SemcheckSignatures and kind in LocalSigKinds:
           if hasErrorSince(dest, beforeType):
             # The explicit type did not resolve in the signature phase — e.g.
