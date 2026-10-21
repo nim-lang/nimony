@@ -505,14 +505,17 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
 proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   assert orig.typeKind == SetT
   let baseType = orig.childCursor
-  let maxValue = bitsetSizeInBytes(orig) * createXint(8'i64)
+  let maxValue = bitsetSizeInBytes(baseType) * createXint(8'i64)
   genStringCall(c, "writeNifParLe", "setconstr")
   genStringCall(c, "writeNifRaw", toString(orig, false))
 
   let indexVar = pool.symId("idx.0")
   declareIndexVar c, indexVar
-  var indexVarAsBuf = createTokenBuf(1)
-  indexVarAsBuf.addSymUse indexVar, c.info
+  # the element is our int indexVar, converted back to the set's base type
+  var indexVarAsBuf = createTokenBuf(4)
+  copyIntoKind indexVarAsBuf, ConvX, c.info:
+    indexVarAsBuf.addSubtree baseType
+    indexVarAsBuf.addSymUse indexVar, c.info
 
   copyIntoKind c.dest, WhileS, c.info:
     indexVarLowerThanArrayLen c, indexVar, maxValue
@@ -522,8 +525,7 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
           copyIntoKind c.dest, InsetX, c.info:
             c.dest.addSubtree orig
             c.dest.add param # param is the set, so it comes first
-            # the element is our indexVar
-            c.dest.addSymUse indexVar, c.info
+            c.dest.add indexVarAsBuf
           copyIntoKind c.dest, StmtsS, c.info:
            unravel c, baseType, indexVarAsBuf
 
