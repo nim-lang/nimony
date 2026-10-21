@@ -1437,6 +1437,20 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         typ = decl.body
     break
 
+  if typ.typeKind == RangetypeT:
+    # a range constant is spelled as a literal of the range's base type
+    # (case labels need a literal); a value computed by compile-time
+    # execution arrives as a `conv` to the range
+    var val = n
+    if n.isTagLit and n.exprKind in {ConvX, HconvX}:
+      inc val
+      skip val # type
+    annotateConstantType(buf, typ.childCursor, val)
+    while opened > 0:
+      buf.addParRi()
+      dec opened
+    return
+
   var err = false
   case n.kind
   of IntLit, UIntLit, CharLit:
