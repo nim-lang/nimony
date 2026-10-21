@@ -1,0 +1,11 @@
+pipe: 100 lines, last: row 99
+channel: 150 messages, checksum 24645
+stress: true true
+received 1, alive 5
+after the receiver: alive 0
+send without a receiver: false, alive 0
+supportsCopyMem: true false false
+point 0 0
+point 1 10
+point 2 20
+cut short: ProtocolError
