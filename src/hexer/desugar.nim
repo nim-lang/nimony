@@ -211,6 +211,28 @@ proc isCoroutine(n: Cursor): bool =
   result = r.kind == IteratorY and
            (hasPragma(r.pragmas, ClosureP) or hasPragma(r.pragmas, PassiveP))
 
+proc trAsmBody(dest: var TokenBuf; n: var Cursor) =
+  ## An `{.assembler.}` body is taken verbatim except for `p.f`, whose
+  ## `ddot` is a front-end node: it becomes `(dot (deref p) f)` like elsewhere.
+  if n.isTagLit:
+    if n.exprKind == DdotX:
+      dest.addParLe("dot", n.info)
+      dest.addParLe("deref", n.info)
+      n.into:
+        trAsmBody dest, n
+        dest.addParRi() # deref
+        takeTree dest, n # field
+        takeTree dest, n # inheritance depth
+        if n.isStringLit:
+          skip n # access-token marker
+        dest.addParRi(n.endInfo)
+    else:
+      takeInto dest, n:
+        while n.hasMore:
+          trAsmBody dest, n
+  else:
+    takeTree dest, n
+
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   let decl = n
@@ -236,6 +258,8 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       swap outer, c.pre
       trProcBody(c, dest, n)
       dest.addParRi()
+    elif isAsm:
+      trAsmBody dest, n
     else:
       takeTree dest, n
   c.inPassiveIter = wasPassiveIter

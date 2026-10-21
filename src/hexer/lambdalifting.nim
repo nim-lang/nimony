@@ -1966,7 +1966,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)
-      of DotX:
+      of DotX, DdotX:
         takeInto dest, n:
           tre c, dest, n
           takeTree dest, n # don't look up field names here
@@ -1998,7 +1998,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
         SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
         BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CchoiceX,
-        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
+        OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX,
         NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
         CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
