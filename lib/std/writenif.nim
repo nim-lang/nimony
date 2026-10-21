@@ -77,6 +77,7 @@ proc writeNifStr*(s: string) =
   write(outp, "\"")
 
 proc writeNifSymbol*(s: string) =
+  write(outp, " ")
   if s.len > 0:
     let c = s[0]
     if c in {'.', '0'..'9', '+', '-', '~'} or c.needsEscape:
