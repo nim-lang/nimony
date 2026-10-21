@@ -1510,6 +1510,26 @@ proc atHasTypeArgs(c: var SemContext; n: Cursor): bool =
     return typeKind(n) != NoType
   false
 
+proc isGenericRoutineSym(s: SymId): bool =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  result = isRoutine(res.decl.symKind) and isGeneric(asRoutine(res.decl))
+
+proc hasGenericRoutine(n: Cursor): bool =
+  ## True when `n` is a generic routine symbol or a symchoice containing one.
+  ## Every symbol of a choice counts: the choice may start with a non-generic
+  ## overload while a later one is generic.
+  if n.isSymbol:
+    return isGenericRoutineSym(n.symId)
+  result = false
+  if n.exprKind in {OchoiceX, CchoiceX}:
+    var n = n
+    n.into:
+      while n.hasMore:
+        if not result and n.isSymbol and isGenericRoutineSym(n.symId):
+          result = true
+        skip n
+
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
   var cs = CallState(
     beforeCall: dest.len,
@@ -1538,15 +1558,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared, AllowOverloads}
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
-    var maybeRoutine = lhs.n
-    if maybeRoutine.exprKind in {OchoiceX, CchoiceX}:
-      inc maybeRoutine
-    var treatAsGenericInst = false
-    if maybeRoutine.isSymbol:
-      let res = tryLoadSym(maybeRoutine.symId)
-      assert res.status == LacksNothing
-      if isRoutine(res.decl.symKind) and isGeneric(asRoutine(res.decl)):
-        treatAsGenericInst = true
+    var treatAsGenericInst = hasGenericRoutine(lhs.n)
     if not treatAsGenericInst and lhs.kind != TypeY and atHasTypeArgs(c, cs.fn.n):
       treatAsGenericInst = true
     if treatAsGenericInst:
