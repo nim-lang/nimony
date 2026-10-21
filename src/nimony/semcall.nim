@@ -450,7 +450,9 @@ proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   params.into ParamsU:
     while params.hasMore:
       let param = takeLocal(params, SkipFinalParRi)
-      let root = nominalRoot(param.typ)
+      # `skipPtrs`: a `ref object` type is `ref T.Obj` by now, so its routines
+      # have to be found through the `ref`.
+      let root = nominalRoot(param.typ, skipPtrs = true)
       if root != SymId(0) and root == typ:
         while params.hasMore: skip params  # mop-up before early-exit
         return true
@@ -735,7 +737,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; a
         candidates.marker.incl m[i].fn.sym
     # add attached ops for each arg:
     for arg in args:
-      let root = nominalRoot(arg.typ, allowTypevar = true)
+      let root = nominalRoot(arg.typ, allowTypevar = true, skipPtrs = true)
       if root != SymId(0):
         addTypeboundOps c, fnName, root, candidates
     # now match them:
