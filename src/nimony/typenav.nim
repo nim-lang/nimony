@@ -494,6 +494,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = getTypeImpl(c, m, flags)
   of AtX, ArratX:
     result = getTypeImpl(c, n.childCursor, flags)
+    # a `sink array` parameter, say: the modifier only says how it is passed
+    while typeKind(result) in {SinkT, LentT, MutT, OutT}:
+      inc result
     case typeKind(result)
     of ArrayT, SetT:
       inc result # to the element type
