@@ -24,6 +24,7 @@ type
   TypeCursor* = Cursor
   SemRoutine* {.acyclic.} = ref object
     kind*: SymKind
+    sym*: SymId
     hasDefer*: bool
     inGeneric*, inLoop*, inBlock*, inInst*, inExcept*: int
     breakTargets*: seq[SymId]

@@ -3318,6 +3318,18 @@ proc isIteratorCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): boo
     else:
       result = false
 
+proc isRecursiveInlineIterCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool =
+  ## An inline iterator is expanded into its caller, so one that loops over
+  ## itself would be expanded forever.
+  result = false
+  let callee = childCursor(readonlyCursorAt(dest, beforeCall))
+  if callee.isSymbol:
+    var r = c.routine
+    while r != nil:
+      if r.kind == IteratorY and r.sym == callee.symId:
+        return ClosureP notin r.pragmas and PassiveP notin r.pragmas
+      r = r.parent
+
 proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {.inline.} =
   # A call whose fn is unresolved at sem time and needs re-resolution at
   # instantiation: either a bare Ident, or — when the original sem matched
@@ -3469,7 +3481,9 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # expression of type auto" (nim-lang/nimony#2553).
     discard "already produced an error"
   elif isIteratorCall(c, dest, beforeCall):
-    discard "fine"
+    if isRecursiveInlineIterCall(c, dest, beforeCall):
+      dest.shrink beforeCall
+      buildErr c, dest, callInfo, "recursion is not supported in inline iterators"
   elif dest[beforeCall].kind == TagLit and
       (dest[beforeCall].tagId == TagId(FieldsTagId) or
        dest[beforeCall].tagId == TagId(FieldpairsTagId) or
@@ -3519,7 +3533,9 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
       shrink dest, beforeCall
       semCall c, dest, iterCall, {PreferIterators}
       if isIteratorCall(c, dest, beforeCall):
-        discard "fine"
+        if isRecursiveInlineIterCall(c, dest, beforeCall):
+          dest.shrink beforeCall
+          buildErr c, dest, callInfo, "recursion is not supported in inline iterators"
       elif iterCall.typ.typeKind == UntypedT or
           # for iterators from concepts in generic context:
           isIdentCall(c, dest, beforeCall):
