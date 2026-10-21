@@ -236,12 +236,17 @@ when defined(posix):
     ck("offsetof(struct msghdr, msg_controllen)", off(mh, addr mh.msg_controllen))
     ck("offsetof(struct msghdr, msg_flags)", off(mh, addr mh.msg_flags))
 
-    # ---- macOS/FreeBSD struct dirent (our Dirent overlays libc's records) ----
-    when defined(osx) or defined(freebsd):
+    # ---- struct dirent: macOS's Dirent overlays libc's records, FreeBSD's
+    # getdirentries records are read at fixed offsets ----
+    when defined(osx):
       let de = cast[ptr Dirent](addr scratch[0])
       ck("offsetof(struct dirent, d_type)", off(de, addr de.d_type))
       ck("offsetof(struct dirent, d_name)", off(de, addr de.d_name))
       ck("sizeof(((struct dirent*)0)->d_name)", int64(sizeof(de.d_name)))
+    elif defined(freebsd):
+      ck("offsetof(struct dirent, d_reclen)", int64(direntReclenAt))
+      ck("offsetof(struct dirent, d_type)", int64(direntTypeAt))
+      ck("offsetof(struct dirent, d_name)", int64(direntNameAt))
 
     # ---- struct kevent (64 bytes on FreeBSD 12+, 32 on Darwin) ----
     when defined(osx) or defined(freebsd):

@@ -429,11 +429,13 @@ proc restrict(a: var FirstSet; ind: IndSet) =
 proc isNullable(g: Grammar; n: Node): bool =
   case n.kind
   of nSeq:
-    for k in n.kids:
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
       if not isNullable(g, k): return false
     result = true
   of nAlt:
-    for k in n.kids:
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
       if isNullable(g, k): return true
     result = false
   of nOpt, nRep0, nEmpty, nAtPos: result = true
@@ -461,7 +463,8 @@ proc leadMask(g: Grammar; n: Node): IndSet =
     # excuse the indentation, and treating the optional COMMENT as the end of
     # the mask lost `validInd` entirely.
     result = AnyInd
-    for k in n.kids:
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
       result = result * leadMask(g, k)
       if not isNullable(g, k): return result
   of nAlt:
@@ -469,7 +472,8 @@ proc leadMask(g: Grammar; n: Node): IndSet =
     # `(';' | IND{=})` imposes IND{=} exactly when the ';' was absent, so the
     # non-nullable alternative must not widen the mask to AnyInd.
     result = {}
-    for k in n.kids:
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
       if isNullable(g, k): result = result + leadMask(g, k)
   of nRule:
     result = if g.mask.hasKey(n.text): g.mask.getOrDefault(n.text) else: AnyInd
@@ -482,7 +486,8 @@ proc firstOf(g: Grammar; n: Node): FirstSet =
   case n.kind
   of nSeq:
     var carried: IndSet = AnyInd
-    for k in n.kids:
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
       if k.kind in {nPred, nAhead, nDefault}: continue
       var f = firstOf(g, k)
       if f.len > 0:
@@ -495,7 +500,9 @@ proc firstOf(g: Grammar; n: Node): FirstSet =
       # the nullable alternative alone.
       carried = carried * leadMask(g, k)
   of nAlt:
-    for k in n.kids: union(result, firstOf(g, k))
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
+      union(result, firstOf(g, k))
   of nOpt, nRep0, nRep1, nSepRep: result = firstOf(g, n.kids[0])
   of nTerminal: result[tokenKind(n.text)] = AnyInd
   of nClass: result[classKind(n.text)] = AnyInd
@@ -557,11 +564,15 @@ proc render(n: Node): string =
   case n.kind
   of nSeq:
     var parts: seq[string] = @[]
-    for k in n.kids: parts.add render(k)
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
+      parts.add render(k)
     result = parts.join(" ")
   of nAlt:
     var parts: seq[string] = @[]
-    for k in n.kids: parts.add render(k)
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
+      parts.add render(k)
     result = "(" & parts.join(" | ") & ")"
   of nOpt: result = atom(n.kids[0]) & (if n.anchored: "?." else: "?")
   of nEmpty: result = "."
@@ -575,7 +586,9 @@ proc render(n: Node): string =
     if n.kids.len == 0: result = n.text
     else:
       var parts: seq[string] = @[]
-      for k in n.kids: parts.add render(k)
+      for i in 0 ..< n.kids.len:
+        let k = n.kids[i]
+        parts.add render(k)
       result = n.text & "(" & parts.join(", ") & ")"
   of nTag: result = (if n.anchored: "^" else: "") & n.text & "[" & render(n.kids[0]) & "]"
   of nGuard: result = n.text
@@ -587,7 +600,9 @@ proc render(n: Node): string =
   of nWithInd: result = "withInd(" & render(n.kids[0]) & ")"
   of nBinTail:
     var ps: seq[string] = @[]
-    for k in n.kids: ps.add render(k)
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
+      ps.add render(k)
     result = "binaryTail(" & ps.join(", ") & ")"
   of nBinary: result = "binary(...)"
   of nLa2: result = "la2(" & render(n.kids[0]) & ")"
@@ -622,7 +637,9 @@ proc propagate(g: var Grammar; n: Node; after: FirstSet; changed: var bool) =
         acc = f
       dec i
   of nAlt:
-    for k in n.kids: propagate(g, k, after, changed)
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
+      propagate(g, k, after, changed)
   of nOpt:
     propagate(g, n.kids[0], after, changed)
   of nRep0, nRep1:
@@ -640,11 +657,15 @@ proc propagate(g: var Grammar; n: Node; after: FirstSet; changed: var bool) =
     propagate(g, n.kids[0], remapIn(after), changed)
   of nRule:
     give(g, n.text, after, changed)
-    for k in n.kids: propagate(g, k, initTable[string, IndSet](), changed)
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
+      propagate(g, k, initTable[string, IndSet](), changed)
   of nBinTail:
     if n.kids.len > 0: give(g, n.kids[0].text, after, changed)
   of nAhead, nBinary, nLa2:
-    for k in n.kids: propagate(g, k, after, changed)
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
+      propagate(g, k, after, changed)
   else: discard
 
 proc compatible(a, b: string): bool =
@@ -721,7 +742,9 @@ proc subst(n: Node; param: string; arg: Node): Node =
     return arg
   result = Node(kind: n.kind, text: n.text, anchored: n.anchored,
                 ind: n.ind, kids: @[])
-  for k in n.kids: result.kids.add subst(k, param, arg)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    result.kids.add subst(k, param, arg)
 
 type Monomorph = object
   ruleParams: Table[string, int]     # rule -> index of its `: rule` parameter
@@ -749,7 +772,9 @@ proc rewrite(g: var Grammar; mm: var Monomorph; n: Node) =
       for c in copies: rewrite(g, mm, c.body)
     n.text = newName
     n.kids = @[]
-  for k in n.kids: rewrite(g, mm, k)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    rewrite(g, mm, k)
 
 proc monomorphize(g: var Grammar) =
   ## `section(R: rule)` is not a rule the generator can emit: `R` has no FIRST
@@ -783,7 +808,9 @@ proc recordArgs(g: var Grammar; n: Node) =
       var s = g.argsOf.getOrDefault(ps[i])
       s.add n.kids[i]
       g.argsOf[ps[i]] = s
-  for k in n.kids: recordArgs(g, k)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    recordArgs(g, k)
 
 proc reclassify(g: Grammar; n: Node) =
   ## `&name` is a FIRST-set lookahead when `name` is a declared rule
@@ -793,7 +820,9 @@ proc reclassify(g: Grammar; n: Node) =
     n.kind = nAhead
     n.text = ""
     n.kids = @[inner]
-  for k in n.kids: reclassify(g, k)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    reclassify(g, k)
 
 proc collectUsed(n: Node; locals: HashSet[string]; used: var HashSet[string]) =
   if n.kind == nBinary:
@@ -804,7 +833,9 @@ proc collectUsed(n: Node; locals: HashSet[string]; used: var HashSet[string]) =
     return
   if n.kind == nRule and not isClass(n.text) and not locals.contains(n.text):
     used.incl n.text
-  for k in n.kids: collectUsed(k, locals, used)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    collectUsed(k, locals, used)
 
 proc checkArity(g: var Grammar; rule: string; line: int; n: Node;
                 locals: HashSet[string]) =
@@ -823,7 +854,9 @@ proc checkArity(g: var Grammar; rule: string; line: int; n: Node;
     if n.kids.len > 0: checkArity(g, rule, line, n.kids[0], locals)
     return                                   # the rest are Nim procs
   if n.kind == nBinTail: return  # kids[0] names the rule, it does not call it
-  for k in n.kids: checkArity(g, rule, line, k, locals)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    checkArity(g, rule, line, k, locals)
 
 proc sameFirst(a, b: FirstSet): bool =
   if a.len != b.len: return false
@@ -1158,14 +1191,20 @@ proc emitCode(b: var NifBuilder; c: Code; cursors: seq[NifCursor]) =
   of cCall:
     tree "call":
       b.addIdent c.s
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cInfix:
     tree "infix":
       b.addIdent c.s
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cCurly:
     tree "curly":
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cDot:
     tree "dot":
       emitCode(b, c.kids[0], cursors)
@@ -1173,14 +1212,18 @@ proc emitCode(b: var NifBuilder; c: Code; cursors: seq[NifCursor]) =
   of cOconstr:
     tree "oconstr":
       b.addIdent c.s
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cKv:
     tree "kv":
       b.addIdent c.s
       emitCode(b, c.kids[0], cursors)
   of cStmts:
     tree "stmts":
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cLet, cVar:
     tree (if c.kind == cLet: "let" else: "var"):
       b.addIdent c.s
@@ -1188,19 +1231,29 @@ proc emitCode(b: var NifBuilder; c: Code; cursors: seq[NifCursor]) =
       emitCode(b, c.kids[0], cursors)
   of cAsgn:
     tree "asgn":
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cIf:
     tree "if":
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cElif:
     tree "elif":
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cElse:
     tree "else":
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cWhile:
     tree "while":
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cDiscard:
     tree "discard":
       b.addEmptyNode
@@ -1216,7 +1269,9 @@ proc emitCode(b: var NifBuilder; c: Code; cursors: seq[NifCursor]) =
       emitCode(b, c.kids[2], cursors)
   of cParams:
     tree "params":
-      for k in c.kids: emitCode(b, k, cursors)
+      for i in 0 ..< c.kids.len:
+        let k = c.kids[i]
+        emitCode(b, k, cursors)
   of cParam:
     tree "param":
       b.addIdent c.s
@@ -1263,7 +1318,9 @@ proc nodeArg(n: Node): Code =
     if n.kids.len == 0: result = id(n.text)
     else:
       var args: seq[Code] = @[]
-      for k in n.kids: args.add nodeArg(k)
+      for i in 0 ..< n.kids.len:
+        let k = n.kids[i]
+        args.add nodeArg(k)
       result = call(n.text, args)
   else:
     result = id(render(n))
@@ -1405,13 +1462,17 @@ proc predCall(n: Node): Code =
   ## `inTypeDesc(p, mode)`. Without the arguments the generated dispatch drops
   ## exactly the information `parser.nim` decides on.
   var args = @[p()]
-  for k in n.kids: args.add nodeArg(k)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    args.add nodeArg(k)
   result = call(n.text, args)
 
 proc canCall(n: Node): Code =
   ## The `canX` companion takes whatever `pX` takes, because its predicates do.
   var args = @[p()]
-  for k in n.kids: args.add nodeArg(k)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    args.add nodeArg(k)
   result = call("can" & capitalizeAscii(n.text), args)
 
 proc guardsOf(items: seq[Node]): seq[Code] =
@@ -1443,7 +1504,8 @@ proc hasFreeAnchor(n: Node): bool =
   ## so the mark has to cross the rule boundary as a parameter.
   if n.kind == nTag and n.anchored: return true
   if n.kind in {nOpt, nRep0, nRep1, nSepRep}: return false
-  for k in n.kids:
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
     if hasFreeAnchor(k): return true
   result = false
 
@@ -1458,7 +1520,8 @@ proc condOf(e: Emitter; n: Node): Code =
   var head = n
   if n.kind == nSeq:
     head = nil
-    for k in n.kids:
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
       if k.kind notin {nPred, nAhead, nGuard, nDefault}:
         head = k
         break
@@ -1468,7 +1531,8 @@ proc condOf(e: Emitter; n: Node): Code =
     # of X at this call site: `(IND{>} stmt)?` must still require IND{>}.
     let guards = newNode(nSeq)
     if n.kind == nSeq:
-      for k in n.kids:
+      for i in 0 ..< n.kids.len:
+        let k = n.kids[i]
         if k == head: break
         guards.kids.add k
     base = withInd(canCall(head), leadMask(e.g, guards))
@@ -1500,7 +1564,8 @@ proc writesWhenEmpty(n: Node): bool =
   ## item is not "just a guard" and an empty match still needs its branch.
   if n.kind == nEmpty or (n.kind == nOpt and n.anchored): return true
   if n.kind in {nRule, nRep0, nRep1, nSepRep}: return false
-  for k in n.kids:
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
     if writesWhenEmpty(k): return true
   result = false
 
@@ -1710,7 +1775,9 @@ proc terminalArgs(n: Node): seq[Code] =
 proc ruleArgs(e: Emitter; n: Node; anchor: string): seq[Code] =
   result = @[p()]
   if e.needsAnchor.contains(n.text): result.add id(anchor)
-  for k in n.kids: result.add nodeArg(k)
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    result.add nodeArg(k)
 
 proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
   case n.kind
@@ -1720,7 +1787,9 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     let mk = e.mkTmp("m")
     e.line letC(mk, markCall())
     var as2: seq[Alt] = @[]
-    for k in n.kids: as2.add toAlt(k)
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
+      as2.add toAlt(k)
     emitAlts(e, as2, "alternative", mk, anchor)
     e.line call("discardUnused", [id(mk)])
   of nTerminal:

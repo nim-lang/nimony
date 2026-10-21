@@ -11,8 +11,9 @@ consumers should not import the implementation includes directly. A future
 Solaris port can supply a separate implementation behind this facade.
 
 Socket declarations use the X/Open ABI and its `__xnet_*` entry points.
-Directory entries are copied from libc records into a synthetic `Dirent`:
-illumos has no native `d_type`, so `std/dirs` uses its existing `lstat` fallback.
+Directories are read with `getdents(2)` through the shared `DirStream`
+(`posix/dirbuf.nim`), as on Linux and FreeBSD. illumos records have no
+`d_type`, so `std/dirs` uses its existing `lstat` fallback.
 
 ## Process spawning
 

@@ -113,7 +113,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   if r != NoSymId:
     var canAnalyse = false
     let v = c.typeCache.getLocalInfo(r)
-    if v.kind == ParamY:
+    if isParamLike(v.kind):
       # an `owned` parameter is borrowed like any other parameter, only
       # `sink owned` takes over the ownership (RFC #575)
       canAnalyse = v.typ.typeKind == SinkT
@@ -162,7 +162,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, CallstrlitX, InfixX, PrefixX,
-        HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
+        HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
@@ -190,7 +190,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
-        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
+        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
@@ -433,7 +433,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         NeqX, LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
         TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX,
-        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
+        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
@@ -991,7 +991,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
-        InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+        InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
         UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
@@ -1197,18 +1197,14 @@ proc trConvExprImpl(c: var Context; n: var Cursor; e: Expects) =
     while n.hasMore:
       tr c, n, e
 
-proc isCursorField(fieldKey: Cursor): bool =
-  ## A field referenced in a `(kv fieldSym value …)` constructor entry.
-  ## Loads the field's decl and checks for the `.cursor` pragma so the
-  ## value can be moved/bit-copied without an `=dup` — matching the
-  ## non-owning semantics the lifter uses inside auto-derived hooks
-  ## (see `unravelObjField` in `src/hexer/lifter.nim`).
+proc isCursorField(c: var Context; objType, fieldKey: Cursor): bool =
+  ## Whether the field `fieldKey` of a constructor for `objType` is
+  ## `{.cursor.}`. Resolved through the object's type, like
+  ## `writesThroughCursorField`: a field symbol is owned by its type
+  ## declaration, so `tryLoadSym` cannot find it.
   if fieldKey.kind != Symbol: return false
-  let res = tryLoadSym(fieldKey.symId)
-  if res.status != LacksNothing: return false
-  let local = asLocal(res.decl)
-  if local.kind notin {FldY, GfldY}: return false
-  result = hasPragma(local.pragmas, CursorP)
+  let decl = lookupFieldDecl(c.typeCache, objType, fieldKey.symId)
+  result = not cursorIsNil(decl.typ) and hasPragma(decl.pragmas, CursorP)
 
 proc hasStaticPayload(n: Cursor): bool =
   ## True when a field of the object constructor `n` points at static
@@ -1264,14 +1260,14 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
         # `=destroy(typ)` at scope exit would `rc-` — net rc+0, but a
         # mismatched =wasMoved on the source would over-count, exactly
         # the shape of the open stage-2 TypeCache UAF.
-        let kind = if isCursorField(fieldKey): WantNonOwner else: WantOwner
+        let kind = if isCursorField(c, typ, fieldKey): WantNonOwner else: WantOwner
         tr c, n, kind
         if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
   finishOwningTemp c, ow
 
-proc trNewobjFields(c: var Context; n: var Cursor) =
+proc trNewobjFields(c: var Context; n: var Cursor; objType: Cursor) =
   # drains the constructor fields; the enclosing scope's close is consumed
   # by `trNewobj`
   while n.hasMore:
@@ -1279,7 +1275,7 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
       copyInto c.dest, n:
         let fieldKey = n
         takeTree c.dest, n # keep field name
-        let kind = if isCursorField(fieldKey): WantNonOwner else: WantOwner
+        let kind = if isCursorField(c, objType, fieldKey): WantNonOwner else: WantOwner
         tr(c, n, kind)
         if n.hasMore:
           # optional inheritance
@@ -1407,7 +1403,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
           if n.hasMore:
             copyIntoKind c.dest, OconstrX, info:
               c.dest.addSubtree baseType
-              trNewobjFields(c, n)
+              trNewobjFields(c, n, baseType)
           else:
             # A `newobj` that a hexer pass synthesized for a type it invented (a
             # closure environment, a coroutine frame) names no fields. The payload
@@ -1787,7 +1783,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        OchoiceX, CchoiceX, XorX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
-       EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, DeclaredX,
+       EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, StaticX, DeclaredX,
        DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
        InternalFieldPairsX, IsX, ToClosureX, PluginCallX:

@@ -50,9 +50,8 @@ proc epollReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nim
     ev.events = ev.events or EPOLLIN
   if evWrite in events:
     ev.events = ev.events or EPOLLOUT
-  # Store the fd itself (not a slot index) as user data: a slot can be freed
-  # and its index reused for a *different* fd between registration and the
-  # event firing, which previously made `data.ptr` an unreliable — and
+  # Store the fd itself (not a slot) as user data: the registration is per fd
+  # and outlives any one op on it, so a slot would be an unreliable — and
   # occasionally wrong — way to recover the fd on delivery.
   ev.data.`ptr` = cast[pointer](uint(fd))
   let op = if alreadyRegistered: EPOLL_CTL_MOD else: EPOLL_CTL_ADD
@@ -74,24 +73,25 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   if n > 0:
     for i in 0..<n:
       let alreadyRegistered = gSlots[lane].hasPendingForFd(buf[i].fd)
-      let idx = gSlots[lane].allocSlot(buf[i])
-      armDeadline(lane, idx)
+      let s = newSlot(lane, buf[i])
+      if s == nil: continue
+      armDeadline(lane, s)
       case buf[i].kind
       of opTimeout:
         discard            # nothing to arm on: the deadline heap is the wait
       of opNop:
-        complete(idx, 0)   # nothing to wait for either
+        complete(s, 0)   # nothing to wait for either
       of opRead, opWrite:
-        if buf[i].positioned: submitPositioned(idx)
+        if buf[i].positioned: submitPositioned(s)
         else: submitForPoll(buf[i].fd, alreadyRegistered)
       of opConnect:
         # Start the attempt here, on the polling thread, so the fd is already
         # connecting by the time we watch it. A connect that finished at once
         # has completed the slot and there is nothing left to arm.
-        if startConnect(buf[i].fd, idx):
+        if startConnect(buf[i].fd, s):
           submitForPoll(buf[i].fd, alreadyRegistered)
       else:
-        if not completeCommand(idx, buf[i]):
+        if not completeCommand(s, buf[i]):
           submitForPoll(buf[i].fd, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
   # Sleep no longer than the earliest deadline in this lane.

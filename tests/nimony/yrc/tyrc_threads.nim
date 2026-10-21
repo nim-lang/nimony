@@ -43,7 +43,8 @@ proc buildShared() =
 proc walk(n: Node; depth: int): int =
   result = n.id
   if depth > 0:
-    for k in n.kids:
+    for i in 0 ..< n.kids.len:
+      let k = n.kids[i]
       let tmp = k          # dup: atomic inc; scope end: deferred dec
       result = result + walk(tmp, depth - 1)
 

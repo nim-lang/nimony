@@ -18,9 +18,10 @@
 ## and a real two-armed merge copies only the small per-branch *delta* of the
 ## init-set (plus the — normally tiny — fact set).
 ##
-## The two components travel together as one `FlowState`:
+## The three components travel together as one `FlowState`:
 ## - `inits` — journaled definite-assignment set (add/remove + undo).
 ## - `facts` — the `inferle.Facts` engine (already journaled).
+## - `borrows` — the journaled set of borrows that may be active.
 ##
 ## Control flow maps to the same operations the generic tracker documented:
 ## `gotoLabel`/`gotoReturn`/`gotoRaise`/`gotoContinue` record the state at a
@@ -28,7 +29,9 @@
 ## accumulated exit state back into fall-through; `splitBranch`/`commitThen`/
 ## `mergeBranches` drive an `ite`; `takeRaise`/`mapStates` serve `try`/`finally`.
 ## Facts are joined by intersection at every confluence (weakest common bound —
-## `inferle.merge`), matching the init-set's intersection join.
+## `inferle.merge`), matching the init-set's intersection join. Borrows are the
+## one *may* component: a borrow held on any incoming path is held, so they are
+## joined by union.
 
 import std/[tables, hashes, sets]
 include ".." / lib / nifprelude   # SymId (and its `==`/`hash`), like the rest of nimony/
@@ -125,6 +128,92 @@ proc addedSince(x: Inits; cp: int): HashSet[SymId] =
 
 proc snapshot(x: Inits): HashSet[SymId] = x.s   # a plain value copy
 
+# --------------------------------------------------------------- borrows
+
+type
+  BorrowableCheck* = enum
+    IsBorrowable       ## simple path: symbols, dots, array access
+    IsBorrowableFromConst
+    IsBorrowableFromGlobal
+    HasAddr            ## path contains explicit `addr` — unsafe escape hatch
+    NotBorrowable      ## deref in middle of path or function call
+
+  BorrowInfo* = object
+    borrower*: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
+    mode*: BorrowableCheck
+    path*: seq[SymId]  ## root :: field1 :: field2 :: ...
+    info*: NifLineInfo
+    throughRef*: bool  ## the path dereferences a `ref`: an alias of it can
+                       ## reach the same location under another path
+
+  BorrowJEntry = object
+    added: bool
+    b: BorrowInfo
+
+  Borrows* = object
+    ## Journaled set of the borrows that may be active. Two entries are the
+    ## same borrow when they agree on `borrower` and `path`.
+    s: seq[BorrowInfo]
+    journal: seq[BorrowJEntry]
+    journaling: bool
+
+proc sameBorrow(a, b: BorrowInfo): bool {.inline.} =
+  a.borrower == b.borrower and a.path == b.path
+
+proc find(s: seq[BorrowInfo]; b: BorrowInfo): int =
+  result = -1
+  for i in 0 ..< s.len:
+    if sameBorrow(s[i], b): return i
+
+iterator items*(x: Borrows): BorrowInfo =
+  for b in x.s: yield b
+
+proc incl*(x: var Borrows; b: BorrowInfo) =
+  if x.s.find(b) < 0:
+    x.s.add b
+    if x.journaling: x.journal.add BorrowJEntry(added: true, b: b)
+
+proc delAt(x: var Borrows; i: int) =
+  if x.journaling: x.journal.add BorrowJEntry(added: false, b: x.s[i])
+  x.s.del i    # order is irrelevant, so swap-delete is fine
+
+proc endBorrowsOf*(x: var Borrows; borrower: SymId) =
+  ## The borrows held by `borrower` end: it died or was rebound.
+  var i = 0
+  while i < x.s.len:
+    if x.s[i].borrower == borrower: x.delAt i
+    else: inc i
+
+proc checkpoint*(x: Borrows): int {.inline.} = x.journal.len
+
+proc rollbackTo*(x: var Borrows; cp: int) =
+  var i = x.journal.len - 1
+  while i >= cp:
+    let e = x.journal[i]
+    if e.added:
+      let k = x.s.find(e.b)
+      if k >= 0: x.s.del k
+    else:
+      x.s.add e.b
+    dec i
+  x.journal.setLen cp
+
+proc snapshot(x: Borrows): seq[BorrowInfo] = x.s
+
+proc union(a, b: seq[BorrowInfo]): seq[BorrowInfo] =
+  result = a
+  for e in b:
+    if result.find(e) < 0: result.add e
+
+proc setBorrowsTo(x: var Borrows; cp: int; target: seq[BorrowInfo]) =
+  ## Journaled `x := target`, rolled back to `cp` first so the diff stays small.
+  x.rollbackTo cp
+  var i = 0
+  while i < x.s.len:
+    if target.find(x.s[i]) < 0: x.delAt i
+    else: inc i
+  for b in target: x.incl b
+
 # --------------------------------------------------------------- facts helper
 
 proc setFactsTo(f: var Facts; cp: int; target: Facts) =
@@ -154,10 +243,12 @@ type
     ## The whole analysis state, journaled in place.
     inits*: Inits
     facts*: Facts
+    borrows*: Borrows
 
   FlowCp* = object
     initsCp: int
     factsCp: int
+    borrowsCp: int
 
   FlowSnap* = object
     ## A materialized state, stashed at a pending exit or held while the other
@@ -165,21 +256,33 @@ type
     ## accumulator type the driver folds N-way (`case`/`try`) merges into.
     inits: HashSet[SymId]
     facts: Facts
+    borrows: seq[BorrowInfo]
 
 proc initFlowState*(): FlowState =
   result = FlowState(inits: initInits(), facts: createFacts())
   result.inits.enableJournaling()
   result.facts.enableJournaling()
+  result.borrows.journaling = true
 
 proc checkpoint*(fs: FlowState): FlowCp {.inline.} =
-  FlowCp(initsCp: fs.inits.checkpoint, factsCp: fs.facts.checkpoint)
+  FlowCp(initsCp: fs.inits.checkpoint, factsCp: fs.facts.checkpoint,
+         borrowsCp: fs.borrows.checkpoint)
 
 proc rollbackTo*(fs: var FlowState; cp: FlowCp) {.inline.} =
   fs.inits.rollbackTo cp.initsCp
   fs.facts.rollbackTo cp.factsCp
+  fs.borrows.rollbackTo cp.borrowsCp
 
 proc snapshot*(fs: FlowState): FlowSnap =
-  FlowSnap(inits: fs.inits.snapshot, facts: snapshotFacts(fs.facts))
+  FlowSnap(inits: fs.inits.snapshot, facts: snapshotFacts(fs.facts),
+           borrows: fs.borrows.snapshot)
+
+proc borrowsOf*(snap: FlowSnap): seq[BorrowInfo] {.inline.} = snap.borrows
+
+proc inclBorrows*(fs: var FlowState; bs: seq[BorrowInfo]) =
+  ## Add `bs` to the borrows that may be active (journaled): the may-join of
+  ## the current state with a state that reaches the same point.
+  for b in bs: fs.borrows.incl b
 
 proc inheritInits*(dst: var FlowState; src: FlowState) =
   ## Seed `dst`'s init-set with `src`'s — used at a *closure* boundary so a
@@ -199,7 +302,8 @@ proc joinSnap*(a, b: FlowSnap): FlowSnap =
   else:
     for x in b.inits:
       if x in a.inits: inits.incl x
-  FlowSnap(inits: inits, facts: join(a.facts, b.facts))
+  FlowSnap(inits: inits, facts: join(a.facts, b.facts),
+           borrows: union(a.borrows, b.borrows))
 
 proc setTo*(fs: var FlowState; cp: FlowCp; snap: FlowSnap) =
   ## Journaled `fs := snap`, rolled back to `cp` first so the diff stays small.
@@ -211,6 +315,7 @@ proc setTo*(fs: var FlowState; cp: FlowCp; snap: FlowSnap) =
   for k in snap.inits:
     fs.inits.incl k
   setFactsTo(fs.facts, cp.factsCp, snap.facts)
+  setBorrowsTo(fs.borrows, cp.borrowsCp, snap.borrows)
 
 # --------------------------------------------------------------- the tracker
 
@@ -233,6 +338,7 @@ type
     thenLive: bool
     thenInits: HashSet[SymId]         ## the then-branch's init *delta*
     thenFacts: Facts                  ## the then-branch's facts (if it lives)
+    thenBorrows: seq[BorrowInfo]      ## the then-branch's borrows (if it lives)
     thenDelta: seq[ExitJEntry]        ## the then-branch's net exit contributions
 
 proc initFlowTracker*(): FlowTracker =
@@ -354,6 +460,7 @@ proc commitThen*(tr: var FlowTracker; fs: var FlowState; b: var Branch) =
   if b.thenLive:
     b.thenInits = fs.inits.addedSince(b.cp.initsCp)
     b.thenFacts = snapshotFacts(fs.facts)
+    b.thenBorrows = fs.borrows.snapshot
   # distinct exit keys the then-branch touched, with their post-then values
   b.thenDelta = @[]
   var seen = initHashSet[ExitKey[SymId]]()
@@ -390,12 +497,22 @@ proc mergeBranches*(tr: var FlowTracker; fs: var FlowState; b: Branch) =
     for k in elseDelta:
       if k in b.thenInits: fs.inits.incl k
     setFactsTo(fs.facts, b.cp.factsCp, mergedFacts)
+    fs.inclBorrows b.thenBorrows   # `fs` holds the else-branch's borrows
     tr.live = true
   elif b.thenLive:
     # else left; the post-`if` state is the then-branch's.
     fs.rollbackTo b.cp
     for k in b.thenInits: fs.inits.incl k
     setFactsTo(fs.facts, b.cp.factsCp, b.thenFacts)
+    setBorrowsTo(fs.borrows, b.cp.borrowsCp, b.thenBorrows)
     tr.live = true
   else:
     tr.live = elseLive   # `fs` already holds the else-branch state
+
+proc backEdgeBorrows*(tr: FlowTracker): seq[BorrowInfo] =
+  ## The borrows that reach the loop's back-edge. The body is analyzed once,
+  ## from the pre-loop state, but a loop may stop after any iteration: what
+  ## the body leaves borrowed is also borrowed after the loop.
+  let key = ExitKey[SymId](kind: ekContinue)
+  if key in tr.exits: result = getOrDefault(tr.exits, key).borrows
+  else: result = @[]

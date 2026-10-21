@@ -573,7 +573,13 @@ proc gproc(g: var SrcGen, n: var Cursor) =
         putWithSpace(g, tkColon, ":")
 
         var typ = param.typ
-        gtype(g, typ, emptyContext)
+        if param.kind == StaticParamY:
+          put(g, tkSymbol, "static")
+          put(g, tkBracketLe, "[")
+          gtype(g, typ, emptyContext)
+          put(g, tkBracketRi, "]")
+        else:
+          gtype(g, typ, emptyContext)
 
   put(g, tkParRi, ")")
 
@@ -1085,7 +1091,13 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
 
               if not typ.isDotToken:
                 putWithSpace(g, tkColon, ":")
-                gtype(g, typ, c)
+                if decl.kind == StaticParamY:
+                  put(g, tkSymbol, "static")
+                  put(g, tkBracketLe, "[")
+                  gtype(g, typ, c)
+                  put(g, tkBracketRi, "]")
+                else:
+                  gtype(g, typ, c)
 
               if not value.isDotToken:
                 put(g, tkSpaces, Space)
@@ -1571,7 +1583,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
     of HighX, LowX, TypeofX,
        SizeofX, AlignofX, OffsetofX, CanFormCyclesX,
-       CardX, UnpackX, FieldsX, CompilesX,
+       CardX, UnpackX, FieldsX, CompilesX, StaticX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX:
       gcallsystem(g, n, $n.exprKind)
 

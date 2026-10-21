@@ -1,4 +1,4 @@
-import std/[dirs, paths, syncio, assertions]
+import std/[dirs, paths, syncio, assertions, os]
 
 # Regression test: createDir must create a NESTED directory structure in one
 # call (its documented behaviour). It used to walk parentDirs leaf-first, so
@@ -21,13 +21,9 @@ proc main {.raises.} =
   # relative nested creation below an existing dir also works
   createDir(base / path("x") / path("y"))
 
-  # leaf-up cleanup (removeDir removes a single, empty directory)
-  removeFile(nested / path("probe.txt"))
-  removeDir(nested)
-  removeDir(base / path("a"))
-  removeDir(base / path("x") / path("y"))
-  removeDir(base / path("x"))
+  # removeDir is recursive: it takes the file and both subtrees with it
   removeDir(base)
+  assert not dirExists($base)
   echo "ok"
 
 try:

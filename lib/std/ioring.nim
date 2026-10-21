@@ -48,7 +48,7 @@ export types.Deadline, types.never, types.earlier, types.monoNow
 export types.after, types.afterMs, types.millisUntil, types.`<`, types.`<=`
 export types.`==`
 export backend.IoTimedOut
-export backend.BackendRelays, backend.CqSize, backend.MaxOps
+export backend.BackendRelays, backend.CqSize
 import ./ioring/platform
 when defined(windows):
   when not defined(nimIoringWsaPoll):
@@ -147,7 +147,7 @@ proc enqueueOp(op: OpContext) =
       let owner = iocpOwnerLane(op.fd)
       if owner >= 0: lane = owner
     let foreign = lane != ioLane()
-    while not gOpQueues[lane].tryEnqueue(op):
+    while not gOpQueues[lane].tryEnqueue(op, MaxOpQueue):
       # Draining OUR lane cannot make room in someone else's, so the wake goes
       # inside the retry and not only after a successful enqueue: only the owner
       # empties that stripe, and it is asleep in its completion wait. Without
@@ -157,7 +157,7 @@ proc enqueueOp(op: OpContext) =
     if foreign:
       iocpWake(lane)
   else:
-    while not gOpQueues[ioLane()].tryEnqueue(op):
+    while not gOpQueues[ioLane()].tryEnqueue(op, MaxOpQueue):
       discard backendRelays.poll(0)
 
 proc submitNop*(deadline: Deadline; cont = Continuation(fn: nil, env: nil);
@@ -477,18 +477,18 @@ proc cancelPendingOps(fd: cint): int =
   let lane = ioLane()
   if backendRelays.forgetFd != nil:
     backendRelays.forgetFd(fd)
-  for idx in gSlots[lane].slotsForFd(fd):
+  for s in gSlots[lane].slotsForFd(fd):
     # The shared completion path: writes `ECancelled`, resumes the continuation
     # or — for an op without one — pushes a completion-queue entry, then frees
     # the slot. This used to resume continuations only, so a cancelled op that
     # had none (a `waitCompletions` driver) vanished and its waiter hung.
-    cancelOp(lane, idx, ECancelled)
+    cancelOp(lane, s, ECancelled)
     inc result
 
 proc submitPollRemove*(fd: cint): int {.discardable.} =
   ## **Cancel without closing.** Take back every op this lane still has in
   ## flight on `fd` — each completes with `ECancelled`, so its continuation is
-  ## resumed and its slot returned to the arena — and drop the backend's per-fd
+  ## resumed and its slot released — and drop the backend's per-fd
   ## registration. `fd` itself is left open. Returns how many ops were
   ## cancelled; `0` means nothing was armed, which is the common case.
   ##
@@ -530,15 +530,24 @@ proc htons(x: uint16): uint16 {.inline.} =
 
 when defined(posix):
   proc posixClose(fd: cint): cint {.importc: "close".}
-  proc fcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
-    ## FIXED arity with a defaulted third argument, not `varargs` — the same
-    ## shape and the same reason as `posix.open`: sem monomorphizes a `varargs`
-    ## importc into one variant per arity, all of them `importc "fcntl"`, and
-    ## `nimony n` lowers an importc syscall to ONE register-signature stub keyed
-    ## by the C name. Two arities would collapse into that single stub and the
-    ## two-argument call would leave a declared argument unbound.
-    ##
-    ## `F_GETFL` ignores the third argument, so passing `0` costs nothing.
+  when defined(osx):
+    proc variadicFcntl(fd: cint; cmd: cint): cint {.varargs, importc: "fcntl", sideEffect.}
+    proc fcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.inline.} =
+      ## Apple arm64 passes a variadic argument on the stack, not in a
+      ## register, so libc's variadic `fcntl` needs a variadic prototype; every
+      ## call goes through here with all three arguments, so there is still
+      ## only one arity.
+      variadicFcntl(fd, cmd, arg)
+  else:
+    proc fcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
+      ## FIXED arity with a defaulted third argument, not `varargs` — the same
+      ## shape and the same reason as `posix.open`: sem monomorphizes a `varargs`
+      ## importc into one variant per arity, all of them `importc "fcntl"`, and
+      ## `nimony n` lowers an importc syscall to ONE register-signature stub keyed
+      ## by the C name. Two arities would collapse into that single stub and the
+      ## two-argument call would leave a declared argument unbound.
+      ##
+      ## `F_GETFL` ignores the third argument, so passing `0` costs nothing.
   proc setNonBlocking*(fd: cint) =
     var flags = fcntl(fd, F_GETFL)
     discard fcntl(fd, F_SETFL, flags or O_NONBLOCK)

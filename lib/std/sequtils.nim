@@ -223,15 +223,17 @@ func insert*[T](dest: var seq[T]; src: openArray[T]; pos: Natural = 0) {.nodestr
   let p = rawData(dest)
   if p == nil: return
   # Shift the tail `[at ..< oldLen]` up by `n`, back to front to avoid clobber.
-  var i = oldLen
-  while i > at:
-    dec i
-    (p[i + n]) = p[i]
-  # Fill the gap `[at ..< at+n]` with owned copies of `src`.
-  var j = 0
-  while j < n:
-    (p[at + j]) = `=dup`(src[j])
-    inc j
+  # `p` points into `dest`'s own buffer:
+  {.cast(noSideEffect).}:
+    var i = oldLen
+    while i > at:
+      dec i
+      (p[i + n]) = p[i]
+    # Fill the gap `[at ..< at+n]` with owned copies of `src`.
+    var j = 0
+    while j < n:
+      (p[at + j]) = `=dup`(src[j])
+      inc j
 
 # ── `it` / fold templates ────────────────────────────────────────────────────
 #

@@ -50,9 +50,12 @@ The other modules depend on the interface, never on the main output.
 | `M.c.nif` | `M.c.idx.nif` | `dceEmit` | `lengc`, `arkham` |
 | `M.oc.nif` | `M.oc.idx.nif` | `optimize` (Shoggoth) | `lengc`, `arkham` |
 
-* `M.s.idx.nif` is the module's index plus a checksum of its interface and
-  of the bodies of its `.inline` procs (`nifindexes.createIndex`). A changed
-  non-inline proc body leaves it alone, so no importer is re-semmed.
+* `M.s.idx.nif` is the module's index plus a checksum of its declarations
+  and of the bodies an importer reads: those of `.inline` and generic procs,
+  templates, macros and iterators (`nifindexes.createIndex`). Private
+  declarations count too, because an exported generic or template can expand
+  into any of them in the importer. A changed body of a non-inline,
+  non-generic proc leaves it alone, so no importer is re-semmed.
 * `M.live.nif` is the module's share of the whole-program DCE result.
   `dceLive` reads every module's `.x.nif` and runs whenever one of them
   changed; the live files it writes change only for the modules whose live
@@ -77,8 +80,10 @@ What a change costs, then:
 * `touch`, or an edit that changes nothing sem sees: the module's own chain
   runs once (sem, hexer, emit, codegen, C compiler, link); its interface
   files spare every other module.
-* A changed non-inline proc body: the same, one translation unit.
-* A changed `.inline` body or interface: every importer is re-semmed, and
+* A changed body of a non-inline, non-generic proc: the same, one
+  translation unit.
+* A changed `.inline` or generic body, or a changed declaration: every
+  importer is re-semmed, and
   every module that reads the changed declaration is compiled again.
 
 ## Rule 3: the driver's own files are sources

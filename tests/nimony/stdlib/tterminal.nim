@@ -32,7 +32,7 @@ proc main() {.raises.} =
   close(f)
   let got = readFile(path)
   when defined(windows):
-    assert got == "xy\e[0m"
+    assert got == "x\e[1my\e[0m"
   else:
     assert got == "\e[?25l\e[?25h\e[3;5f\e[1G\e[3A\e[1B\e[2C\e[5D\e[2K\e[1G\e[2J" &
                   "x\e[1my\e[0m"

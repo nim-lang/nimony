@@ -16,6 +16,7 @@ when defined(nimony):
 
 import std/assertions
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 import std/tables
 from std/strutils import endsWith
@@ -47,7 +48,8 @@ type
   ScopeKind* = enum
     OtherScope, ProcScope, UnusedScope
   TypeScope* {.acyclic.} = ref object
-    locals: Table[SymId, LocalInfo]
+    locals: OrderedTable[SymId, LocalInfo]  ## in declaration order, which is
+                                            ## the order of a scope's `kill`
     parent: TypeScope
     kind: ScopeKind
 
@@ -75,15 +77,38 @@ proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;
   c.current.locals[s] = LocalInfo(kind: kind, typ: typ, val: val)
 
 proc openScope*(c: var TypeCache; kind = OtherScope) =
-  c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: kind)
+  c.current = TypeScope(locals: initOrderedTable[SymId, LocalInfo](), parent: c.current, kind: kind)
 
 proc closeScope*(c: var TypeCache) =
   c.current = c.current.parent
 
+const
+  ScopedLocals = {VarY, TvarY, GvarY, LetY, TletY, GletY, CursorY, PatternvarY}
+    ## the locals whose lifetime a scope bounds
+
 iterator currentScopeLocals*(c: var TypeCache): SymId =
-  for s, k in c.current.locals:
-    if k.kind in {VarY, TvarY, GvarY, LetY, TletY, GletY}:
+  for s, k in uncheckedBorrow(c.current.locals):
+    if k.kind in ScopedLocals:
       yield s
+
+func scopeDepth*(c: TypeCache): int =
+  result = 0
+  var sc = c.current
+  while sc != nil:
+    inc result
+    sc = sc.parent
+
+iterator localsOfScopesAbove*(c: var TypeCache; depth: int): SymId =
+  ## The locals of every scope opened while `scopeDepth` exceeded `depth`:
+  ## what a jump out to a construct entered at `depth` leaves behind.
+  var sc = c.current
+  var d = scopeDepth(c)
+  while d > depth:
+    for s, k in uncheckedBorrow(sc.locals):
+      if k.kind in ScopedLocals:
+        yield s
+    sc = sc.parent
+    dec d
 
 proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   if params.isTagLit:
@@ -96,7 +121,7 @@ proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
 
 proc openProcScope*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   registerLocal(c, routine, ProcY, decl)
-  c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: ProcScope)
+  c.current = TypeScope(locals: initOrderedTable[SymId, LocalInfo](), parent: c.current, kind: ProcScope)
 
 proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
   ## Returns the init value for a constant. Restricted to `ConstY` for callers
@@ -520,6 +545,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of FalseX, TrueX, AndX, OrX, XorX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
      EqsetX, LesetX, LtsetX, InsetX, OvfX, CompilesX, InstanceofX, FailedX, IsX:
     result = c.builtins.boolType
+  of StaticX:
+    result = getTypeImpl(c, n.childCursor, flags)
   of NeginfX, NanX, InfX:
     result = c.builtins.floatType
   of EnumtostrX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX,

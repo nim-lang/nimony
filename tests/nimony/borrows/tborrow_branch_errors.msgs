@@ -1,0 +1,5 @@
+tests/nimony/borrows/tborrow_branch_errors.nim(9, 3) Error: 't' is borrowed and cannot be mutated [pass --verbose for the Final IR]
+tests/nimony/borrows/tborrow_branch_errors.nim(20, 3) Error: 't' is borrowed and cannot be mutated [pass --verbose for the Final IR]
+tests/nimony/borrows/tborrow_branch_errors.nim(32, 3) Error: 't' is borrowed and cannot be mutated [pass --verbose for the Final IR]
+tests/nimony/borrows/tborrow_branch_errors.nim(45, 3) Error: 't' is borrowed and cannot be mutated [pass --verbose for the Final IR]
+tests/nimony/borrows/tborrow_branch_errors.nim(56, 3) Error: 't' is borrowed and cannot be mutated [pass --verbose for the Final IR]

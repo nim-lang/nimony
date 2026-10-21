@@ -7,7 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-## The `headers"..."` plugin of `std/httpclient`: a header block literal,
+## The `headers"..."` plugin of `std/http/httpheaders`: a header block literal,
 ## checked while the program is compiled. A malformed block — a line without
 ## `\r\n`, a name outside the token characters, a line break inside a value —
 ## is a compile-time error at the literal. A well-formed one becomes

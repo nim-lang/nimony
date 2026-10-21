@@ -55,7 +55,8 @@ proc serialize*(typ: LLType; result: var string) =
       result.add "%" & typ.name
     else:
       result.add "{ "
-      for i, f in typ.structFields:
+      for i in 0 ..< typ.structFields.len:
+        let f = typ.structFields[i]
         if i > 0: result.add ", "
         serialize(f.typ, result)
       result.add " }"
@@ -91,7 +92,8 @@ proc serializeNamedTypeDef*(nt: LLNamedType; result: var string) =
     # function-pointer type definition: `ret (params)*`
     serialize(nt.body.funcRetType, result)
     result.add " ("
-    for i, p in nt.body.funcParamTypes:
+    for i in 0 ..< nt.body.funcParamTypes.len:
+      let p = nt.body.funcParamTypes[i]
       if i > 0: result.add ", "
       serialize(p, result)
     result.add ")*"

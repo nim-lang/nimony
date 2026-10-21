@@ -11,7 +11,11 @@ import ./slots
 import std/[threadpool, ticketlocks, stripes, syncio]
 
 const CqSize* = 4096
-const MaxOps* = 8192
+const
+  InitialOpQueue* = 64
+    ## Starting capacity of a lane's deferred-op queue; it doubles when full,
+  MaxOpQueue* = 8192
+    ## up to this. Beyond it a submitter helps drain the queue instead.
 
 type
   BackendRelays* = object
@@ -63,97 +67,100 @@ var gOpQueues*: seq[FifoStripe[OpContext]]
 proc initOpQueues*() =
   gOpQueues = newSeq[FifoStripe[OpContext]](ioLanes())
   for q in gOpQueues:
-    q.init(MaxOps)
+    q.init(InitialOpQueue)
 
 var gSlots*: seq[SlotArena]
 proc initSlots*() =
   gSlots = newSeq[SlotArena](ioLanes())
   for s in gSlots:
-    s.init(MaxOps)
+    s.init()
 
 # ------------------------------------------------------------- deadlines ---
 #
 # Every op carries a deadline, so a per-lane min-heap of them answers two
 # questions the poll loop needs: how long it may wait, and which ops have run
-# out of time. Both in O(1) and O(log n); scanning the arena would be O(MaxOps)
-# on every single poll.
+# out of time. Both in O(1) and O(log n); scanning the slots would be
+# O(ops in flight) on every single poll.
 #
-# Entries are never removed when an op completes normally — finding and
-# deleting one would cost more than leaving it. Instead an entry names the
-# slot *generation* it was armed for, and a stale entry is dropped when it
-# reaches the top. The heap is therefore bounded by ops-ever-armed between
-# two expiries rather than by ops-in-flight, which is why `arm` skips `never`:
-# an op with no deadline must not leave a permanent entry behind.
+# An op's entry leaves the heap when the op completes (`disarmDeadline`), so
+# the heap holds exactly the in-flight ops that can expire. An op with a
+# `never` deadline has no entry at all.
 
 type
   TimerEntry* = object
     at*: Deadline
-    slot*: int32
-    gen*: uint32
+    slot* {.cursor.}: Slot
 
   TimerHeap* = object
     a*: seq[TimerEntry]
 
 proc len*(h: TimerHeap): int {.inline.} = h.a.len
 
-proc swapEntries(h: var TimerHeap; i, j: int) {.inline.} =
-  ## Both elements are copied out before either is written back: assigning one
-  ## element of a seq straight from another is a mutable/immutable alias of
-  ## the same object, which the compiler refuses — rightly, since it is the
-  ## shape that hides real aliasing bugs.
-  let a = h.a[i]
-  let b = h.a[j]
-  h.a[i] = b
-  h.a[j] = a
+proc put(h: var TimerHeap; i: int; e: TimerEntry) {.inline.} =
+  h.a[i] = e
+  e.slot.timerPos = i
+
+proc siftUp(h: var TimerHeap; i: int) =
+  var i = i
+  let e = h.a[i]
+  while i > 0:
+    let parent = (i - 1) div 2
+    if h.a[parent].at <= e.at: break
+    let up = h.a[parent]
+    h.put(i, up)
+    i = parent
+  h.put(i, e)
+
+proc siftDown(h: var TimerHeap; i: int) =
+  var i = i
+  let e = h.a[i]
+  while true:
+    let l = 2 * i + 1
+    if l >= h.a.len: break
+    var small = l
+    if l + 1 < h.a.len and h.a[l + 1].at < h.a[l].at: small = l + 1
+    if e.at <= h.a[small].at: break
+    let down = h.a[small]
+    h.put(i, down)
+    i = small
+  h.put(i, e)
 
 proc push*(h: var TimerHeap; e: TimerEntry) =
   h.a.add e
-  var i = h.a.len - 1
-  while i > 0:
-    let parent = (i - 1) div 2
-    if h.a[parent].at <= h.a[i].at: break
-    h.swapEntries(parent, i)
-    i = parent
+  h.siftUp(h.a.len - 1)
 
-proc popMin*(h: var TimerHeap): TimerEntry =
-  result = h.a[0]
+proc remove*(h: var TimerHeap; i: int) =
+  ## Remove the entry at `i`.
+  h.a[i].slot.timerPos = -1
   let last = h.a.len - 1
-  let tail = h.a[last]
-  h.a[0] = tail
+  if i != last:
+    let moved = h.a[last]
+    h.put(i, moved)
   h.a.shrink last
-  var i = 0
-  while true:
-    let l = 2 * i + 1
-    let r = l + 1
-    var small = i
-    if l < h.a.len and h.a[l].at < h.a[small].at: small = l
-    if r < h.a.len and h.a[r].at < h.a[small].at: small = r
-    if small == i: break
-    h.swapEntries(small, i)
-    i = small
+  if i < h.a.len:
+    h.siftDown(i)
+    h.siftUp(i)
 
 var gTimers*: seq[TimerHeap]
 proc initTimers*() =
   gTimers = newSeq[TimerHeap](ioLanes())
 
-proc armDeadline*(lane: int; slotIdx: int) =
-  ## Record the deadline of the op just allocated into `slotIdx`. A `never`
+proc armDeadline*(lane: int; s: Slot) =
+  ## Record the deadline of the op just allocated into `s`. A `never`
   ## deadline arms nothing, so the heap holds only ops that can actually
   ## expire.
-  let d = gSlots[lane].slots[slotIdx].op.deadline
+  let d = s.op.deadline
   if d == never: return
-  gTimers[lane].push TimerEntry(at: d, slot: int32(slotIdx),
-                                gen: gSlots[lane].slots[slotIdx].gen)
+  gTimers[lane].push TimerEntry(at: d, slot: s)
+
+proc disarmDeadline(lane: int; s: Slot) {.inline.} =
+  if s.timerPos >= 0:
+    gTimers[lane].remove(s.timerPos)
 
 proc nextDeadline*(lane: int): Deadline =
-  ## The earliest deadline this lane is waiting on, skipping entries whose op
-  ## has already completed. `never` when there is nothing to wait for.
-  while gTimers[lane].len > 0:
-    let e = gTimers[lane].a[0]
-    let s = addr gSlots[lane].slots[e.slot.int]
-    if s.inUse and s.gen == e.gen: return e.at
-    discard gTimers[lane].popMin()
-  result = never
+  ## The earliest deadline this lane is waiting on; `never` when there is
+  ## nothing to wait for.
+  result = if gTimers[lane].len > 0: gTimers[lane].a[0].at else: never
 
 proc waitMillis*(lane: int; requested: int): int =
   ## How long the backend may actually block: what the caller asked for, or
@@ -186,20 +193,38 @@ const
   IoTimedOut* = -110
     ## Completion result for an op whose deadline passed. `ETIMEDOUT` on
     ## Linux, and negative like every other failure the ring reports.
+  IoNoMemory* = -12
+    ## Completion result for an op that could not get a slot: `ENOMEM`.
 
-proc complete*(slotIdx: int; res: int) =
+proc deliver(cont: Continuation; resPtr: int; seqnum: SeqNum; kind: IoOp;
+             fd: cint; res: int) =
+  ## Hand `res` to whoever waits for the op: its result pointer, then its
+  ## continuation or, without one, the completion queue.
+  if resPtr != 0:
+    cast[ptr int](resPtr)[] = res
+  if cont.fn != nil:
+    submit(cont, int(fd))
+  else:
+    gCqLock.acquire()
+    if gCqCount < CqSize:
+      gCq[gCqTail] = IoCompletion(id: seqnum, op: kind, fd: fd, result: res)
+      gCqTail = (gCqTail + 1) and (CqSize - 1)
+      inc gCqCount
+    gCqLock.release()
+
+proc complete*(slot: Slot; res: int) =
+  ## Deliver `res` for the op in `slot` and release the slot: the caller must
+  ## not touch it afterwards.
   let lane = ioLane()
-  let slot = addr gSlots[lane].slots[slotIdx]
-  if slot.op.res != 0:
-    cast[ptr int](slot.op.res)[] = res
+  disarmDeadline(lane, slot)
   case slot.op.kind
   of opAccept:
     # The peer out-parameter lives in the address payload of the op, so it is
     # only readable once the kind says it is there.
     let peerOut = slot.op.accept.peer
     if peerOut != nil and res >= 0:
-      # Before `freeSlot`: the arena reuses the op, so the address the kernel
-      # wrote is only ours until then. Only on success — a failed accept filled
+      # Before `freeSlot`, which releases the op and the address the kernel
+      # wrote with it. Only on success — a failed accept filled
       # nothing, and copying the storage anyway would hand the caller the last
       # peer to use this slot.
       peerOut[] = slot.op.accept.sockAddr
@@ -212,21 +237,22 @@ proc complete*(slotIdx: int; res: int) =
   else:
     discard
   let cont  = slot.op.cont
+  let resPtr = slot.op.res
   let fd    = slot.op.fd
   let seqnum = slot.op.seqnum
   let kind  = slot.op.kind
-  gSlots[lane].freeSlot(slotIdx)
-  if cont.fn != nil:
-    submit(cont, int(fd))
-  else:
-    gCqLock.acquire()
-    if gCqCount < CqSize:
-      gCq[gCqTail] = IoCompletion(id: seqnum, op: kind, fd: fd, result: res)
-      gCqTail = (gCqTail + 1) and (CqSize - 1)
-      inc gCqCount
-    gCqLock.release()
+  gSlots[lane].freeSlot(slot)
+  deliver(cont, resPtr, seqnum, kind, fd, res)
 
-var gCancelInFlight*: nil proc (slotIdx: int; gen: uint32): bool {.nimcall.}
+proc newSlot*(lane: int; op: OpContext): nil Slot =
+  ## Allocate the slot for a dequeued `op`. When there is no memory for one,
+  ## the op completes right here with `IoNoMemory` and the result is `nil`:
+  ## the caller skips it.
+  result = gSlots[lane].allocSlot(op)
+  if result == nil:
+    deliver(op.cont, op.res, op.seqnum, op.kind, op.fd, IoNoMemory)
+
+var gCancelInFlight*: nil proc (s: Slot): bool {.nimcall.}
   ## Set by a backend where the kernel keeps working on an op after this
   ## process has stopped waiting for it (io_uring, IOCP). Asks the kernel for
   ## the op back and answers whether the kernel owns it; if so the op is
@@ -235,23 +261,23 @@ var gCancelInFlight*: nil proc (slotIdx: int; gen: uint32): bool {.nimcall.}
   ## readiness backends leave it `nil`: a registration owns nothing, so
   ## dropping it is the whole of cancelling.
 
-proc cancelOp*(lane, slotIdx: int; res: int) =
-  ## Stop waiting for the op in `slotIdx`: complete it with `res` now, or,
-  ## when the kernel still owns it, as soon as the kernel gives it back.
-  let s = addr gSlots[lane].slots[slotIdx]
+proc cancelOp*(lane: int; s: Slot; res: int) =
+  ## Stop waiting for the op in `s`: complete it with `res` now, or, when the
+  ## kernel still owns it, as soon as the kernel gives it back.
+  disarmDeadline(lane, s)
   if s.cancelRes != 0: return          # already being taken back
   if gCancelInFlight != nil and s.op.kind != opTimeout and
-      gCancelInFlight(slotIdx, s.gen):
+      gCancelInFlight(s):
     s.cancelRes = res
   else:
-    complete(slotIdx, res)
+    complete(s, res)
 
-proc completeFromKernel*(slotIdx: int; res: int) =
+proc completeFromKernel*(s: Slot; res: int) =
   ## Complete an op the kernel has just reported. If the ring had already
   ## given up on it, a failure is reported as the reason it gave up; a success
   ## is still a success, since the transfer happened and must not be lost.
-  let c = gSlots[ioLane()].slots[slotIdx].cancelRes
-  complete(slotIdx, if c != 0 and res < 0: c else: res)
+  let c = s.cancelRes
+  complete(s, if c != 0 and res < 0: c else: res)
 
 proc expireDeadlines*(lane: int) =
   ## Complete every op in this lane whose deadline has passed. Called by each
@@ -263,14 +289,8 @@ proc expireDeadlines*(lane: int) =
   ## `IoTimedOut` rather than being left for the process's lifetime.
   if gTimers[lane].len == 0: return
   let now = monoNow()
-  while gTimers[lane].len > 0:
-    let e = gTimers[lane].a[0]
-    let s = addr gSlots[lane].slots[e.slot.int]
-    if not s.inUse or s.gen != e.gen:
-      discard gTimers[lane].popMin()      # its op finished in time
-      continue
-    if now < e.at: break                  # the earliest is still in the future
-    discard gTimers[lane].popMin()
+  while gTimers[lane].len > 0 and gTimers[lane].a[0].at <= now:
+    let s = gTimers[lane].a[0].slot
     # A timer op reaching its deadline is a success — that is the whole point
-    # of it. Anything else has run out of time.
-    cancelOp(lane, e.slot.int, if s.op.kind == opTimeout: 0 else: IoTimedOut)
+    # of it. Anything else has run out of time. `cancelOp` removes the entry.
+    cancelOp(lane, s, if s.op.kind == opTimeout: 0 else: IoTimedOut)

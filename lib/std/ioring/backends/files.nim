@@ -55,7 +55,7 @@ when defined(windows):
     ## be wrong about a descriptor kind it was not told about.
     getFileType(handleOf(fd)) == FILE_TYPE_DISK
 
-  proc completeFileOpen*(idx: int; path: cstring; mode: FileMode) =
+  proc completeFileOpen*(s: Slot; path: cstring; mode: FileMode) =
     ## The backend half of `submitOpen` on Windows: `CreateFileW` runs here on
     ## the polling thread, exactly as POSIX `opOpen`'s open(2) does. `path` is
     ## a UTF-8 cstring out of the parked caller's frame (the same "read by the
@@ -69,14 +69,14 @@ when defined(windows):
                         DWORD(disposition), FILE_ATTRIBUTE_NORMAL,
                         Handle 0)
     if h == INVALID_HANDLE_VALUE:
-      complete(idx, -int(getLastError()))
+      complete(s, -int(getLastError()))
     elif cast[uint](h) > uint(high(int32)):
       discard closeHandle(h)   # cannot be narrowed to the ring's cint fd space
-      complete(idx, -1)
+      complete(s, -1)
     else:
-      complete(idx, int(uint32(cast[uint](h))))
+      complete(s, int(uint32(cast[uint](h))))
 
-  proc completeFileRead(idx: int; fd: cint; buf: pointer; len: int) =
+  proc completeFileRead(s: Slot; fd: cint; buf: pointer; len: int) =
     ## One synchronous `ReadFile` on the polling thread, completing the op
     ## with the byte count — `0` is end of stream, the buffered layer's signal
     ## for "no more" — or the negated Win32 error. The Win32 file pointer is
@@ -84,11 +84,11 @@ when defined(windows):
     var n = 0'i32
     let nBytes = if len > int(high(int32)): high(int32) else: int32(len)
     if readFile(handleOf(fd), buf, nBytes, addr n, nil) != WINBOOL(0):
-      complete(idx, int(n))
+      complete(s, int(n))
     else:
-      complete(idx, -int(getLastError()))
+      complete(s, -int(getLastError()))
 
-  proc completeFileWrite(idx: int; fd: cint; buf: pointer; len: int) =
+  proc completeFileWrite(s: Slot; fd: cint; buf: pointer; len: int) =
     ## One synchronous `WriteFile` on the polling thread, completing the op
     ## with the byte count or the negated Win32 error. The file pointer is the
     ## position here too — an append handle's FILE_APPEND_DATA makes every
@@ -96,9 +96,9 @@ when defined(windows):
     var n = 0'i32
     let nBytes = if len > int(high(int32)): high(int32) else: int32(len)
     if writeFile(handleOf(fd), buf, nBytes, addr n, nil) != WINBOOL(0):
-      complete(idx, int(n))
+      complete(s, int(n))
     else:
-      complete(idx, -int(getLastError()))
+      complete(s, -int(getLastError()))
 
   proc fileTransfers*(fd: cint) =
     ## Perform, on the polling thread, the I/O of every op pending on a file
@@ -107,13 +107,12 @@ when defined(windows):
     ## IOCP backend must not associate a plain (non-overlapped) handle with a
     ## completion port. The transfer is the readiness, as on POSIX.
     let lane = ioLane()
-    for j in gSlots[lane].slotsForFd(fd):
-      let s = addr gSlots[lane].slots[j]
+    for s in gSlots[lane].slotsForFd(fd):
       case s.op.kind
       of opRead:
-        completeFileRead(j, fd, cast[pointer](s.op.read.buf), s.op.read.len)
+        completeFileRead(s, fd, cast[pointer](s.op.read.buf), s.op.read.len)
       of opWrite:
-        completeFileWrite(j, fd, cast[pointer](s.op.write.buf), s.op.write.len)
+        completeFileWrite(s, fd, cast[pointer](s.op.write.buf), s.op.write.len)
       else:
         discard
 
@@ -128,28 +127,28 @@ when defined(windows):
                            done: ptr int32; wait: WINBOOL): WINBOOL {.
     stdcall, importc: "GetOverlappedResult", dynlib: "kernel32".}
 
-  proc submitPositionedFile*(idx: int) =
+  proc submitPositionedFile*(s: Slot) =
     ## `fd` is the ring's narrowed file HANDLE, as from `submitOpen`. That
     ## handle is synchronous, and an offset given on it would still move its
     ## file pointer, so reopen the file with OVERLAPPED semantics and an
     ## independent position. Wait for physical completion before releasing
     ## the buffer/OVERLAPPED.
-    let op = addr gSlots[ioLane()].slots[idx].op
+    let op = addr s.op
     let transfer = if op.kind == opRead: op.read else: op.write
     const ErrorInvalidParameter = 87'i32
     const ErrorIoPending = 997'i32
     const ErrorHandleEof = 38'i32
     if op.deadline != never and op.deadline <= monoNow():
-      complete(idx, IoTimedOut)
+      complete(s, IoTimedOut)
     elif op.fd < 0 or op.offset < 0 or transfer.len < 0 or not isFileHandle(op.fd):
-      complete(idx, -int(ErrorInvalidParameter))
+      complete(s, -int(ErrorInvalidParameter))
     else:
       let access = if op.kind == opRead: GENERIC_READ else: GENERIC_WRITE
       let h = reopenFile(handleOf(op.fd), access,
                          FILE_SHARE_READ or FILE_SHARE_WRITE or FILE_SHARE_DELETE,
                          FILE_FLAG_OVERLAPPED)
       if h == INVALID_HANDLE_VALUE:
-        complete(idx, -int(getLastError()))
+        complete(s, -int(getLastError()))
       else:
         var ov = PositionedOverlapped(
           offset: uint32(uint64(op.offset) and 0xffff_ffff'u64),
@@ -175,4 +174,4 @@ when defined(windows):
         else:
           value = if err == ErrorHandleEof: 0 else: -int(err)
         discard closeHandle(h)
-        complete(idx, value)
+        complete(s, value)

@@ -901,7 +901,7 @@ proc trIfFlat(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
         dest.addParRi()
         if needEndLab:
           addLab dest, endLab, info
-      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
@@ -962,7 +962,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
               trExprInto c, dest, n, tmp
           else:
             trStmt c, dest, n
-      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
@@ -1006,7 +1006,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
               trExprInto c, dest, n, tmp
           else:
             trStmt c, dest, n
-      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
@@ -1045,7 +1045,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         # The `finally` section never produces a value!
         copyInto(dest, n):
           trStmt c, dest, n
-      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, ElseU, TypevarsU,
          CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
          UnpackflatU, UnpacktupU, UncheckedU, GfldU, CallargsU,
@@ -1489,7 +1489,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
        NewrefX,
-       AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+       AshrX, BaseobjX, HconvX, DconvX, CompilesX, StaticX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX,
        TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,

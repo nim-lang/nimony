@@ -409,7 +409,7 @@ proc trIf(c: var Context; n: var Cursor) =
           c.flow.openFinalBranch()
           trNestedScope c, n
           c.flow.closeBranch()
-      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
           TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
           UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
@@ -433,7 +433,7 @@ proc trCase(c: var Context; n: var Cursor) =
           c.flow.openFinalBranch()
           trNestedScope c, n
           c.flow.closeBranch()
-      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
           TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
           UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:

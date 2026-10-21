@@ -117,14 +117,14 @@ proc onRoutineDeclSem*(c: var SemContext) =
 proc invalidateConceptSymCache(cache: ConceptCacheImpl; conceptSym: SymId) =
   block body:
     var remove: seq[BodyCacheKey] = @[]
-    for k in cache.bodyCache.keys:
+    for k in keys(uncheckedBorrow(cache.bodyCache)):
       if k.conceptSym == conceptSym:
         remove.add k
     for k in remove:
       cache.bodyCache.del k
   block candidates:
     var remove: seq[CandidatesCacheKey] = @[]
-    for k in cache.candidatesCache.keys:
+    for k in keys(uncheckedBorrow(cache.candidatesCache)):
       if k.conceptSym == conceptSym:
         remove.add k
     for k in remove:

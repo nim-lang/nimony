@@ -344,7 +344,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
      EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
      PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
-     CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+     CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX,
      AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
      FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX,
@@ -519,7 +519,9 @@ proc trTry(c: var ControlFlow; n: var Cursor; tar: var Target) =
   n.into:
     trStmtOrExpr c, n, tar
     let tryEnd = c.jmpForw(n.endInfo)
-    for ret in thisBlock.breakInstrs: c.patch ret
+    for i in 0 ..< thisBlock.breakInstrs.len:
+      let ret = thisBlock.breakInstrs[i]
+      c.patch ret
     thisBlock.breakInstrs.shrink 0
 
     var exceptEnds: seq[Label] = @[]
@@ -532,7 +534,9 @@ proc trTry(c: var ControlFlow; n: var Cursor; tar: var Target) =
     # `return` inside an `except` also collects into `thisBlock.breakInstrs`
     # (trReturn targets the innermost `IsTryStmt`); patch those here so they
     # land past all of the except bodies instead of as self-loop gotos.
-    for ret in thisBlock.breakInstrs: c.patch ret
+    for i in 0 ..< thisBlock.breakInstrs.len:
+      let ret = thisBlock.breakInstrs[i]
+      c.patch ret
     thisBlock.breakInstrs.shrink 0
 
     for exceptEnd in exceptEnds: c.patch exceptEnd
@@ -556,7 +560,9 @@ proc trBlock(c: var ControlFlow; n: var Cursor; tar: var Target) =
     else:
       bug "invalid block statement"
     trStmtOrExpr c, n, tar
-    for brk in thisBlock.breakInstrs: c.patch brk
+    for i in 0 ..< thisBlock.breakInstrs.len:
+      let brk = thisBlock.breakInstrs[i]
+      c.patch brk
   c.currentBlock = c.currentBlock.parent
 
 type
@@ -631,7 +637,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
-    of CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, InternalTypeNameX:
+    of CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, InternalTypeNameX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       tar.t.addDotToken()
       skip n
@@ -675,10 +681,14 @@ proc trWhile(c: var ControlFlow; n: var Cursor) =
     for t in tjmp: c.patch t
 
     trStmt(c, n) # transform body
-    for cont in thisBlock.contInstrs: c.patch cont
+    for i in 0 ..< thisBlock.contInstrs.len:
+      let cont = thisBlock.contInstrs[i]
+      c.patch cont
     c.jmpBack(loopStart, info)
 
-    for f in thisBlock.breakInstrs: c.patch f
+    for i in 0 ..< thisBlock.breakInstrs.len:
+      let f = thisBlock.breakInstrs[i]
+      c.patch f
   c.currentBlock = c.currentBlock.parent
 
 proc trCoroFor(c: var ControlFlow; n: var Cursor) =
@@ -697,10 +707,14 @@ proc trCoroFor(c: var ControlFlow; n: var Cursor) =
       c.flush aa
 
     trStmt(c, n) # body
-    for cont in thisBlock.contInstrs: c.patch cont
+    for i in 0 ..< thisBlock.contInstrs.len:
+      let cont = thisBlock.contInstrs[i]
+      c.patch cont
     c.jmpBack(loopStart, info)
 
-    for f in thisBlock.breakInstrs: c.patch f
+    for i in 0 ..< thisBlock.breakInstrs.len:
+      let f = thisBlock.breakInstrs[i]
+      c.patch f
   c.currentBlock = c.currentBlock.parent
 
 proc trFirIte(c: var ControlFlow; n: var Cursor) =
@@ -730,9 +744,13 @@ proc trFirLoop(c: var ControlFlow; n: var Cursor) =
   let loopStart = c.genLabel()
   n.into:
     trStmt c, n
-  for cont in thisBlock.contInstrs: c.patch cont
+  for i in 0 ..< thisBlock.contInstrs.len:
+    let cont = thisBlock.contInstrs[i]
+    c.patch cont
   c.jmpBack(loopStart, info)
-  for f in thisBlock.breakInstrs: c.patch f
+  for i in 0 ..< thisBlock.breakInstrs.len:
+    let f = thisBlock.breakInstrs[i]
+    c.patch f
   c.currentBlock = c.currentBlock.parent
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
@@ -873,9 +891,13 @@ proc trFor(c: var ControlFlow; n: var Cursor) =
     c.dest.addParRi()
     # loop body:
     trStmt c, n
-  for cont in thisBlock.contInstrs: c.patch cont
+  for i in 0 ..< thisBlock.contInstrs.len:
+    let cont = thisBlock.contInstrs[i]
+    c.patch cont
   c.jmpBack(loopStart, info)
-  for brk in thisBlock.breakInstrs: c.patch brk
+  for i in 0 ..< thisBlock.breakInstrs.len:
+    let brk = thisBlock.breakInstrs[i]
+    c.patch brk
   c.currentBlock = c.currentBlock.parent
 
 proc trResult(c: var ControlFlow; n: var Cursor) =
@@ -1001,11 +1023,15 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
     if isConcrete:
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
-      for ret in thisProc.breakInstrs: c.patch ret
+      for i in 0 ..< thisProc.breakInstrs.len:
+        let ret = thisProc.breakInstrs[i]
+        c.patch ret
       addRet c
     else:
       takeTree c.dest, n
-      for ret in thisProc.breakInstrs: c.patch ret
+      for i in 0 ..< thisProc.breakInstrs.len:
+        let ret = thisProc.breakInstrs[i]
+        c.patch ret
     if isConcrete:
       c.dest.addParRi() # StmtsS
   c.currentBlock = c.currentBlock.parent
@@ -1121,7 +1147,9 @@ proc toControlflow*(n: Cursor; bits: int; keepReturns = false): TokenBuf =
     n.into:
       while n.hasMore:
         trStmt c, n
-    for ret in thisModule.breakInstrs: c.patch ret
+    for i in 0 ..< thisModule.breakInstrs.len:
+      let ret = thisModule.breakInstrs[i]
+      c.patch ret
     addRet c
     c.dest.addParRi()
     c.currentBlock = c.currentBlock.parent

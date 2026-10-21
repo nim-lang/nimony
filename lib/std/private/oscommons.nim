@@ -189,8 +189,10 @@ when supportedSystem:
       let access = if writeAccess: GENERIC_WRITE else: 0'u32
 
       var path = path
+      # Bound to a `let` so the buffer outlives the call (see `fileExists`).
+      let w = newWideCString(path)
       result = createFileW(
-        newWideCString(path).toWideCString(), access,
+        w.toWideCString, access,
         FILE_SHARE_DELETE or FILE_SHARE_READ or FILE_SHARE_WRITE,
         nil, OPEN_EXISTING, flags, cast[Handle](0)
         )

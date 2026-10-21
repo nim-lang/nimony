@@ -229,9 +229,13 @@ func runeAt*(s: openArray[char], i: Natural): Rune =
     assert a.runeAt(3) == "y".runeAt(0)
   fastRuneAt(s, i, result, false)
 
+func isUtf8Continuation(c: char): bool {.inline.} =
+  c in '\x80'..'\xbf'
+
 func validateUtf8*(s: openArray[char]): int =
-  ## Returns the position of the invalid byte in ``s`` if the string ``s`` does
-  ## not hold valid UTF-8 data. Otherwise ``-1`` is returned.
+  ## Returns the byte offset of the first invalid sequence's leading byte in
+  ## ``s``, or ``-1`` for valid UTF-8. An incomplete final sequence is invalid.
+  ## Rejects overlong encodings, surrogates and values above U+10FFFF.
   ##
   ## See also:
   ## * `toUTF8 func <#toUTF8,Rune>`_
@@ -240,22 +244,38 @@ func validateUtf8*(s: openArray[char]): int =
   var i = 0
   let L = s.len
   while i < L:
-    if uint(s[i]) <= 127:
-      inc(i)
-    elif uint(s[i]) shr 5 == 0b110:
-      if uint(s[i]) < 0xc2: return i # Catch overlong ascii representations.
-      if i+1 < L and uint(s[i+1]) shr 6 == 0b10: inc(i, 2)
-      else: return i
-    elif uint(s[i]) shr 4 == 0b1110:
-      if i+2 < L and uint(s[i+1]) shr 6 == 0b10 and uint(s[i+2]) shr 6 == 0b10:
-        inc i, 3
-      else: return i
-    elif uint(s[i]) shr 3 == 0b11110:
-      if i+3 < L and uint(s[i+1]) shr 6 == 0b10 and
-                     uint(s[i+2]) shr 6 == 0b10 and
-                     uint(s[i+3]) shr 6 == 0b10:
-        inc i, 4
-      else: return i
+    let first = s[i]
+    if first < '\x80':
+      inc i
+      while i < L and s[i] < '\x80':
+        inc i
+    elif first in '\xc2'..'\xdf':
+      if L - i < 2 or not isUtf8Continuation(s[i+1]):
+        return i
+      inc i, 2
+    elif first in '\xe0'..'\xef':
+      if L - i < 3:
+        return i
+      let second = s[i+1]
+      if not isUtf8Continuation(second) or not isUtf8Continuation(s[i+2]):
+        return i
+      # E0 excludes overlong encodings; ED excludes UTF-16 surrogates.
+      if (first == '\xe0' and second < '\xa0') or
+          (first == '\xed' and second >= '\xa0'):
+        return i
+      inc i, 3
+    elif first in '\xf0'..'\xf4':
+      if L - i < 4:
+        return i
+      let second = s[i+1]
+      if not isUtf8Continuation(second) or not isUtf8Continuation(s[i+2]) or
+          not isUtf8Continuation(s[i+3]):
+        return i
+      # F0 excludes overlong encodings; F4 caps values at U+10FFFF.
+      if (first == '\xf0' and second < '\x90') or
+          (first == '\xf4' and second >= '\x90'):
+        return i
+      inc i, 4
     else:
       return i
   return -1
@@ -1255,8 +1275,8 @@ func runeAt*(s: string, i: Natural): Rune {.inline.} =
   fastRuneAt(s, i, result, false)
 
 func validateUtf8*(s: string): int {.inline.} =
-  ## Returns the position of the invalid byte in ``s`` if the string ``s`` does
-  ## not hold valid UTF-8 data. Otherwise ``-1`` is returned.
+  ## Returns the byte offset of the first invalid sequence's leading byte in
+  ## ``s``, or ``-1`` for valid UTF-8. An incomplete final sequence is invalid.
   ##
   ## See also:
   ## * `toUTF8 func <#toUTF8,Rune>`_

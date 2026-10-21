@@ -25,7 +25,7 @@ proc kqueueReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.ni
   # EV_ADD is idempotent in kqueue (add-or-modify), unlike epoll's ADD/MOD
   # split, so there is no separate "first time vs re-arm" bookkeeping needed
   # here. `ident` (the fd) is what `kqueuePoll` reads back on delivery, not
-  # `udata`, so no slot index needs to travel through the kernel at all.
+  # `udata`, so no slot needs to travel through the kernel at all.
   # Zero-initialised, NOT `{.noinit.}`: `fflags`, `data` and `udata` are read by
   # the kernel too. A stray NOTE_LOWAT in a garbage `fflags` turns the garbage in
   # `data` into a low-water mark, so the registration would fire only after N
@@ -52,24 +52,25 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
   var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
   if n > 0:
     for i in 0..<n:
-      let idx = gSlots[lane].allocSlot(buf[i])
-      armDeadline(lane, idx)
+      let s = newSlot(lane, buf[i])
+      if s == nil: continue
+      armDeadline(lane, s)
       case buf[i].kind
       of opTimeout:
         discard            # nothing to arm on: the deadline heap is the wait
       of opNop:
-        complete(idx, 0)   # nothing to wait for either
+        complete(s, 0)   # nothing to wait for either
       of opRead, opWrite:
-        if buf[i].positioned: submitPositioned(idx)
+        if buf[i].positioned: submitPositioned(s)
         else: submitForPoll(buf[i].fd)
       of opConnect:
         # Start the attempt here, on the polling thread, so the fd is already
         # connecting by the time we watch it. A connect that finished at once
         # has completed the slot and there is nothing left to arm.
-        if startConnect(buf[i].fd, idx):
+        if startConnect(buf[i].fd, s):
           submitForPoll(buf[i].fd)
       else:
-        if not completeCommand(idx, buf[i]):
+        if not completeCommand(s, buf[i]):
           submitForPoll(buf[i].fd)
   var kevents {.noinit.}: array[64, KEvent]
   # Sleep no longer than the earliest deadline in this lane, so a timer fires

@@ -22,15 +22,15 @@ import ./poll
 const
   DrainBatch = 128
   MaxAioBytes = 64 * 1024 * 1024 # per lane, including logically cancelled I/O
+  MaxAioRequests = 8192          # per lane, likewise
 
 type
   AioRequest = object
     cb: AioCb
     notify: PortNotify
-    slot: int
-    gen: uint32
+    slot: nil Slot
+      ## The op to complete, `nil` once the ring no longer wants the result.
     write: bool
-    suppressed: bool
     next: nil ptr AioRequest
   PortLane = object
     fd: cint
@@ -59,15 +59,15 @@ proc portReArm(fd: cint; events: IoEvents; alreadyRegistered: bool): bool {.nimc
                           cast[pointer](cookie)) == 0
   if result: lanes[lane].registrations[fd] = cookie
 
-proc cancelAio(slot: int; gen: uint32): bool {.nimcall.} =
+proc cancelAio(s: Slot): bool {.nimcall.} =
   var req = lanes[ioLane()].head
   while req != nil:
-    if req.slot == slot and req.gen == gen:
+    if req.slot == s:
       discard aio_cancel(req.cb.aio_fildes, addr req.cb)
       # A read may be published now (see the header); a write is ours until
       # its port event says whether it reached the file.
       if req.write: return true
-      req.suppressed = true
+      req.slot = nil
       return false
     req = req.next
   result = false
@@ -92,6 +92,7 @@ proc releaseRequest(lane: int; req: ptr AioRequest) =
   dec lanes[lane].requests
   discard close(req.cb.aio_fildes)
   dealloc(req.cb.aio_buf)
+  req.slot = nil   # `dealloc` runs no destructor
   dealloc(req)
 
 proc reap(lane: int; event: PortEvent; publish: bool) =
@@ -104,41 +105,37 @@ proc reap(lane: int; event: PortEvent; publish: bool) =
   let err = aio_error(addr req.cb)
   assert err != EINPROGRESS, "event port delivered an unfinished AIO request"
   let value = aio_return(addr req.cb) # exactly once, including cancelled I/O
-  let idx = req.slot
-  let live = publish and not req.suppressed and
-    gSlots[lane].slots[idx].inUse and gSlots[lane].slots[idx].gen == req.gen
-  if live:
+  let s = req.slot
+  if publish and s != nil:
     # A transfer that happened is reported even past its deadline: the
     # deadline only stops the waiting (`expireDeadlines`), never the I/O.
-    let op = addr gSlots[lane].slots[idx].op
-    if err == 0 and value > 0 and op.kind == opRead:
-      copyMem(op.read.buf, req.cb.aio_buf, value)
-    completeFromKernel(idx, if err != 0: -int(err) else: value)
+    if err == 0 and value > 0 and s.op.kind == opRead:
+      copyMem(s.op.read.buf, req.cb.aio_buf, value)
+    completeFromKernel(s, if err != 0: -int(err) else: value)
   releaseRequest(lane, req)
 
-proc submitAio(lane, idx: int) =
-  let op = addr gSlots[lane].slots[idx].op
+proc submitAio(lane: int; s: Slot) =
+  let op = addr s.op
   let transfer = if op.kind == opRead: op.read else: op.write
   if transfer.len < 0 or op.offset < 0:
-    complete(idx, -int(EINVAL))
+    complete(s, -int(EINVAL))
     return
-  if transfer.len > MaxAioBytes - lanes[lane].bytes or lanes[lane].requests >= MaxOps:
-    complete(idx, -int(EAGAIN))
+  if transfer.len > MaxAioBytes - lanes[lane].bytes or lanes[lane].requests >= MaxAioRequests:
+    complete(s, -int(EAGAIN))
     return
   var st = default(Stat)
   if fstat(op.fd, st) < 0:
-    complete(idx, -int(errno()))
+    complete(s, -int(errno()))
     return
   if not S_ISREG(st.st_mode):
-    complete(idx, -int(ENOTSUP))
+    complete(s, -int(ENOTSUP))
     return
   let ownedFd = fcntl(op.fd, F_DUPFD_CLOEXEC, cint(0))
   if ownedFd < 0:
-    complete(idx, -int(errno()))
+    complete(s, -int(errno()))
     return
   let req = cast[ptr AioRequest](alloc0(sizeof(AioRequest)))
-  req.slot = idx
-  req.gen = gSlots[lane].slots[idx].gen
+  req.slot = s
   req.write = op.kind == opWrite
   req.cb.aio_fildes = ownedFd
   req.cb.aio_nbytes = csize_t(transfer.len)
@@ -159,21 +156,21 @@ proc submitAio(lane, idx: int) =
   if r < 0:
     let err = errno()
     releaseRequest(lane, req) # rejected synchronously: no event is generated
-    complete(idx, -int(err))
+    complete(s, -int(err))
 
-proc submitStream(lane, idx: int) =
-  let op = addr gSlots[lane].slots[idx].op
+proc submitStream(lane: int; s: Slot) =
+  let op = addr s.op
   # Preserve the shared ring's sequential-file semantics. Positioned file
   # operations bypass this path and use event-port AIO.
   var st = default(Stat)
   if fstat(op.fd, st) < 0:
-    complete(idx, -int(errno()))
+    complete(s, -int(errno()))
   elif S_ISREG(st.st_mode):
     submitForPoll(op.fd)
   else:
     let flags = fcntl(op.fd, F_GETFL)
-    if flags < 0: complete(idx, -int(errno()))
-    elif (flags and O_NONBLOCK) == 0: complete(idx, -int(EINVAL))
+    if flags < 0: complete(s, -int(errno()))
+    elif (flags and O_NONBLOCK) == 0: complete(s, -int(EINVAL))
     else: submitForPoll(op.fd)
 
 proc eventPortPoll(timeoutMs: int): bool {.nimcall.} =
@@ -181,29 +178,30 @@ proc eventPortPoll(timeoutMs: int): bool {.nimcall.} =
   var pending {.noinit.}: array[DrainBatch, OpContext]
   let n = gOpQueues[lane].tryBulkDequeue(DrainBatch, pending)
   for i in 0..<n:
-    let idx = gSlots[lane].allocSlot(pending[i])
-    armDeadline(lane, idx)
+    let s = newSlot(lane, pending[i])
+    if s == nil: continue
+    armDeadline(lane, s)
     if pending[i].deadline != never and pending[i].deadline <= monoNow():
-      complete(idx, if pending[i].kind == opTimeout: 0 else: IoTimedOut)
+      complete(s, if pending[i].kind == opTimeout: 0 else: IoTimedOut)
       continue
     case pending[i].kind
-    of opNop: complete(idx, 0)
+    of opNop: complete(s, 0)
     of opTimeout: discard
     of opRead, opWrite:
-      if pending[i].positioned: submitAio(lane, idx)
-      else: submitStream(lane, idx)
+      if pending[i].positioned: submitAio(lane, s)
+      else: submitStream(lane, s)
     of opConnect:
       let flags = fcntl(pending[i].fd, F_GETFL)
-      if flags < 0: complete(idx, -int(errno()))
-      elif (flags and O_NONBLOCK) == 0: complete(idx, -int(EINVAL))
-      elif startConnect(pending[i].fd, idx): submitForPoll(pending[i].fd)
+      if flags < 0: complete(s, -int(errno()))
+      elif (flags and O_NONBLOCK) == 0: complete(s, -int(EINVAL))
+      elif startConnect(pending[i].fd, s): submitForPoll(pending[i].fd)
     of opAccept, opRecvFrom, opSendTo:
-      submitStream(lane, idx)
+      submitStream(lane, s)
     of opPollAdd:
-      if pending[i].fd < 0: complete(idx, -int(EBADF))
+      if pending[i].fd < 0: complete(s, -int(EBADF))
       else: submitForPoll(pending[i].fd)
     else:
-      if not completeCommand(idx, pending[i]):
+      if not completeCommand(s, pending[i]):
         submitForPoll(pending[i].fd)
   var events = default(array[64, PortEvent])
   var count = cuint(1)
@@ -243,7 +241,7 @@ proc eventPortClose() {.nimcall.} =
   for lane in 0..<lanes.len:
     var req = lanes[lane].head
     while req != nil:
-      req.suppressed = true
+      req.slot = nil
       discard aio_cancel(req.cb.aio_fildes, addr req.cb)
       req = req.next
     while lanes[lane].head != nil:

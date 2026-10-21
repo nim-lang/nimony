@@ -28,10 +28,18 @@ proc readlinkat(dirfd: cint; path, buf: cstring; size: int): int {.
   importc: "readlinkat".}
 proc symlinkat(target: cstring; dirfd: cint; linkpath: cstring): cint {.
   importc: "symlinkat".}
+proc linkat(olddirfd: cint; oldpath: cstring; newdirfd: cint; newpath: cstring;
+            flags: cint): cint {.importc: "linkat", sideEffect.}
 proc readlink*(a1, a2: cstring, a3: int): int {.inline.} =
   readlinkat(AT_FDCWD, a1, a2, a3)
 proc symlink*(a1, a2: cstring): cint {.inline.} =
   symlinkat(a1, AT_FDCWD, a2)
+proc link*(a1, a2: cstring): cint {.inline.} =
+  linkat(AT_FDCWD, a1, AT_FDCWD, a2, cint(0))
+proc renameat(olddirfd: cint; oldpath: cstring; newdirfd: cint;
+              newpath: cstring): cint {.importc: "renameat", sideEffect.}
+proc rename*(a1, a2: cstring): cint {.inline, sideEffect.} =
+  renameat(AT_FDCWD, a1, AT_FDCWD, a2)
 
 proc mkdirat(dirfd: cint; path: cstring; mode: Mode): cint {.
   importc: "mkdirat", sideEffect.}

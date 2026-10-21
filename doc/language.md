@@ -2574,6 +2574,70 @@ through a borrow copies it, so it leaves freely:
     return -1
   ```
 
+### Iterating through a `ref`
+
+A borrow is tracked along an access path, but a `ref` can have aliases that
+reach the same location under a different path. A loop over a location
+reached through a `ref` is therefore rejected:
+
+  ```nim
+  type Node = ref object
+    kids: seq[Node]
+
+  proc walk(n, other: Node) =
+    for k in n.kids:     # Error: cannot iterate over a location reached through a `ref`
+      other.kids.add k   # if `other` is `n`, this reallocates what the loop reads
+  ```
+
+A `seq` is iterated by index instead. Every access reads `n.kids` again, so a
+mutation through an alias can make an index check fail but never leaves the
+loop reading freed memory:
+
+  ```nim
+  for i in 0 ..< n.kids.len:
+    let k = n.kids[i]
+    other.kids.add k
+  ```
+
+For any container, a `Table` included, the entirely memory-safe idiom is to
+move the container out of its location for the duration of the loop and back
+in afterwards. The loop then iterates a local, which the borrow checker tracks
+completely:
+
+  ```nim
+  var kids = move n.kids
+  for k in kids:
+    other.kids.add k     # if `other` is `n`, it adds to an empty `seq`
+  n.kids = move kids
+  ```
+
+While the loop runs, an alias sees the location empty. Moving the container
+back in overwrites whatever was added to the location meanwhile, so code that
+expects the loop body to add to the same container should collect the
+additions separately. If the loop body can raise, put the move back into a
+`finally` section; otherwise the container stays empty, which is not a memory
+error but a loss of data:
+
+  ```nim
+  var kids = move n.kids
+  try:
+    for k in kids: process(k)
+  finally:
+    n.kids = move kids
+  ```
+
+When the loop body is known not to touch the container, `uncheckedBorrow(x)`
+borrows `x` without the borrow checker's protection; the programmer vouches
+that nothing mutates `x` while the loop runs:
+
+  ```nim
+  for key, val in uncheckedBorrow(n.table):
+    echo key
+  ```
+
+`uncheckedBorrow(x)` is `addr(x)[]`: the explicit `addr` is what the borrow
+checker trusts.
+
 
 ## `out` parameters
 
@@ -2931,7 +2995,39 @@ iterator literal `iterator(): T {.closure.}`.
 
 A `func` is a `proc` that is treated as `noSideEffect` by default. Likewise, `iterator` and `converter` are treated as `noSideEffect` by default. A plain `proc` is treated as having side effects by default.
 
-A routine is **side-effect free** when it does not access global or thread-local variables and does not call any routine that has side effects.
+A routine is **side-effect free** when it does not access global or thread-local variables, does not call any routine that has side effects and does not mutate memory through a `ref` or `ptr`.
+
+The last rule covers every way a location can be mutated: an assignment to it and passing it to a `var` or `out` parameter. A location is "behind a `ref`/`ptr`" when its access path contains a dereference — `p[]`, `r.field` for a `ref`/`ptr` typed `r`, or `p[i]` for a `ptr UncheckedArray`. The mutation is nonetheless allowed when the head of the access path is already of a `var` type: a `var`/`out` parameter or a call that returns `var T`. The caller handed that state over for mutation explicitly.
+
+```nim
+type
+  Node = ref object
+    x: int
+  Holder = object
+    r: Node
+
+func bad(n: Node) =
+  n.x = 5          # Error: cannot mutate n.x through a ref/ptr in a `.noSideEffect` context
+
+func badLocal(h: Holder) =
+  var copy = h
+  copy.r.x = 5     # Error: `copy` is a local, its `r` still aliases `h.r`
+
+func fine(h: var Holder) =
+  inc h.r.x        # the head `h` is `var Holder`
+```
+
+`result` is not of a `var` type either, so a `func` that returns a fresh `ref` builds it with an object constructor — `Node(x: 5)` — rather than filling in its fields afterwards.
+
+Low-level code that writes through a pointer that is not rooted at a `var` parameter — a freshly allocated block, say — states that the mutation is invisible to the outside world with `{.cast(noSideEffect).}`:
+
+```nim
+func add*[T](s: var seq[T]; elem: sink T) =
+  ...
+  let impl = s.p     # a plain `ptr`, no longer rooted at the `var` parameter
+  {.cast(noSideEffect).}:
+    impl.data[impl.len] = elem
+```
 
 There is no `noSideEffect` inference. The defaults can be overridden with explicit `.noSideEffect` and `.sideEffect` annotations:
 
@@ -4700,6 +4796,7 @@ The following features are available:
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
 | `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
 | `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
+| `"staticOverloads"` | When two overloads differ only in whether a parameter is `static[T]` or `T`, prefer the `static` one for a constant argument instead of reporting an ambiguity. For compatibility with Nim 2. |
 | `"ownedRefs"` | Object constructors yield `owned`, so the creator of a cell is its owner. See [Owned references](#owned-references). |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 

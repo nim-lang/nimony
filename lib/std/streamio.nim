@@ -40,6 +40,10 @@
 ## * Streams close themselves. A writer's destructor finishes it (adapter
 ##   trailer, TLS `close_notify`, `shutdown(SHUT_WR)`) and swallows errors; call
 ##   `close` to see them. `abort` ends a writer without the clean finish.
+## * `deadline` reads the standing I/O deadline; `renew` replaces it, or clears
+##   it with `never`. A connection's reader and writer share that deadline.
+##   Connection constructors take `dl` for setup only; the returned streams
+##   start with `never`, so setup does not become a connection lifetime limit.
 ##
 ## Not here yet (see the issue): `openReadWrite`, `pipe`/channels, `startTls`,
 ## `sendfile`/`splice`/kTLS fast paths in `copy`, and cross-thread close of a
@@ -318,7 +322,53 @@ proc initReader(c: Core): Reader =
 proc initWriter(c: Core): Writer =
   Writer(core: c, buf: "", adapter: nil, finished: false)
 
+# ----------------------------------------------------------------- deadlines --
+
+proc deadline*(r: Reader): Deadline {.raises.} =
+  ## The standing deadline for I/O on the underlying descriptor. Bytes already
+  ## buffered and in-memory streams do not wait on it. Raises `BadOperation`
+  ## for a closed or default-constructed reader.
+  let c = r.core
+  if c == nil: raise BadOperation
+  result = c.dl
+
+proc deadline*(w: Writer): Deadline {.raises.} =
+  ## The writer's standing I/O deadline, shared with its paired reader.
+  ## Raises `BadOperation` for a closed or default-constructed writer.
+  let c = w.core
+  if c == nil: raise BadOperation
+  result = c.dl
+
+proc renew*(r: var Reader; deadline: Deadline) {.raises.} =
+  ## Replace the standing I/O deadline; `never` clears it. A paired writer
+  ## observes the same deadline. Raises `BadOperation` if the reader is closed
+  ## or default-constructed. This does not resume a failed partial write.
+  let c = r.core
+  if c == nil: raise BadOperation
+  c.dl = deadline
+
+proc renew*(w: var Writer; deadline: Deadline) {.raises.} =
+  ## Replace the shared I/O deadline through the writer. Raises `BadOperation`
+  ## if the writer is closed or default-constructed.
+  let c = w.core
+  if c == nil: raise BadOperation
+  c.dl = deadline
+
 # ------------------------------------------------------------------ reading --
+
+proc buffered*(r: Reader): int {.inline.} =
+  ## Decoded bytes not yet consumed.
+  r.buf.len - r.pos
+
+proc peek*(r: Reader): openArray[char] =
+  ## A view of the decoded bytes not yet consumed. No I/O or copying.
+  ## Reader mutations invalidate the view.
+  toOpenArray(r.buf, r.pos, r.buf.len - 1)
+
+proc consume*(r: var Reader; n: int) {.inline,
+    requires: n >= 0 and n <= r.buffered.} =
+  ## Drop the first `n` bytes of `peek`, without I/O.
+  r.pos += n
 
 proc refill(r: var Reader): bool {.passive, raises.} =
   ## More decoded bytes in `buf`; `false` at the end of the data.
@@ -351,6 +401,17 @@ proc refill(r: var Reader): bool {.passive, raises.} =
       if r.eof: return false
     if r.eof: return false
     if coreRecv(c, r.raw) == 0: r.eof = true
+
+proc fill*(r: var Reader): int {.passive, raises.} =
+  ## Append more decoded bytes, preserving the unread tail and compacting
+  ## consumed bytes first. Returns the number added, or `0` at source or
+  ## adapter end even if unread bytes remain. Raises what `read` raises.
+  ##
+  ## Unlike `read`, this can add bytes while others are still buffered.
+  ## The caller must consume them or bound how much it allows to accumulate.
+  let before = r.buffered
+  discard refill(r)
+  result = r.buffered - before
 
 proc read*(r: var Reader; dest: var openArray[char]): int {.passive, raises.} =
   ## Up to `dest.len` bytes; `0` is the end of the data.
@@ -585,48 +646,69 @@ proc isIpLiteral(host: string): bool =
   for ch in host:
     if ch notin {'0'..'9', '.'}: return false
 
-proc connectCore(address: string; tls: nil TlsEngine): Core {.
+proc connectCore(address: string; tls: nil TlsEngine; dl: Deadline): Core {.
     passive, raises.} =
   var host = ""
   var port = 0'u16
   splitAddress(address, host, port)
-  let ip = if isIpLiteral(host): host else: resolve(host)
-  var s = socket.connect(ip, port)
+  if dl <= monoNow(): raise TimeoutError
+  let ip = if isIpLiteral(host): host else: resolve(host, dl)
+  var s = socket.connect(ip, port, dl)
   let c = newCore(ckFd, s.fd)
   s.fd = -1                         # the core owns the descriptor now
   c.isSocket = true
+  c.dl = dl
   if tls != nil:
     c.tls = tls
     tlsHandshake(c, tls, host)     # on failure the core closes the socket
   result = c
 
-proc connect*(address: string; tls: nil TlsEngine = nil): (Reader, Writer) {.
+proc connect*(address: string; tls: nil TlsEngine = nil;
+              dl = never): (Reader, Writer) {.
     passive, raises.} =
   ## A connection to `address` (`host:port`); TLS when an engine is given. For
   ## a protocol where the peer speaks first (SMTP, IMAP): the next step is
-  ## reading its greeting.
-  let c = connectCore(address, tls)
+  ## reading its greeting. `dl` bounds DNS, TCP and TLS setup together; the
+  ## returned streams have no standing deadline. Raises `TimeoutError` on expiry.
+  let c = connectCore(address, tls, dl)
+  c.dl = never
   result = (initReader(c), initWriter(c))
 
-proc connect*(address: string; request: string; tls: nil TlsEngine = nil): (Reader, Writer) {.
+proc connect*(address: string; request: string; tls: nil TlsEngine = nil;
+              dl = never): (Reader, Writer) {.
     passive, raises.} =
   ## For a protocol where we speak first (HTTP, Redis): `request` is written
   ## and FLUSHED before this returns, so the next step is reading the reply —
   ## the forgotten flush that hangs both sides cannot be written.
-  let c = connectCore(address, tls)
+  ## One `dl` covers DNS, TCP, TLS and that flush; the returned streams start
+  ## with `never`. A failed request write aborts rather than cleanly finishing.
+  let c = connectCore(address, tls, dl)
   var w = initWriter(c)
-  write(w, request)
-  flush(w)
+  try:
+    write(w, request)
+    flush(w)
+  except:
+    w.abort()
+    raise
+  c.dl = never
   result = (initReader(c), w)
 
-proc connectReader*(address: string; tls: nil TlsEngine = nil): Reader {.passive, raises.} =
+proc connectReader*(address: string; tls: nil TlsEngine = nil;
+                    dl = never): Reader {.passive, raises.} =
   ## Only the receiving end, e.g. a feed. The sending direction is left alone
-  ## (not shut down) and closes with the reader.
-  result = initReader(connectCore(address, tls))
+  ## (not shut down) and closes with the reader. `dl` bounds construction only;
+  ## use `renew` to set a deadline for later I/O.
+  let c = connectCore(address, tls, dl)
+  c.dl = never
+  result = initReader(c)
 
-proc connectWriter*(address: string; tls: nil TlsEngine = nil): Writer {.passive, raises.} =
-  ## Only the sending end, e.g. shipping logs.
-  result = initWriter(connectCore(address, tls))
+proc connectWriter*(address: string; tls: nil TlsEngine = nil;
+                    dl = never): Writer {.passive, raises.} =
+  ## Only the sending end, e.g. shipping logs. `dl` bounds construction only;
+  ## use `renew` to set a deadline for later I/O.
+  let c = connectCore(address, tls, dl)
+  c.dl = never
+  result = initWriter(c)
 
 proc detachWriter*(w: var Writer) =
   ## Drops a writer WITHOUT ending its direction: no adapter trailer, no

@@ -719,7 +719,8 @@ proc tryRulesAt(e: Engine; node: Cursor; dest: var TokenBuf): bool =
   for r in accepts:                        # priority (ascending rule id) order
     template rule: untyped = e.rules[r]     # no copy (Rule holds a TokenBuf)
     var ok = true
-    for sc in rule.sideConds:
+    for i in 0 ..< rule.sideConds.len:
+      let sc = rule.sideConds[i]
       var args: seq[Cursor] = @[]
       for s in sc.slots: args.add caps[s]
       let p = e.preds.getOrDefault(sc.pred)

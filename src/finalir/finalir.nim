@@ -56,6 +56,8 @@ type
     used: bool         # did any `jmp`/`break` target this exit?
     cont: SymId        # loops: the `(lab cont)` in front of the back-edge
     contUsed: bool     # did a source-level `continue` target it?
+    scopeDepth: int    # `typeCache.scopeDepth` outside the construct; a jump
+                       # out kills the locals of the scopes above it
 
   CurrentProc = object
     resultSym: SymId
@@ -78,29 +80,30 @@ type
 proc openScope(c: var Context) =
   c.typeCache.openScope()
 
+template emitKill(c: var Context; dest: var TokenBuf; info: NifLineInfo;
+                  locals: untyped) =
+  ## `(kill …)` for the symbols `locals` yields, if any. A scope yields its
+  ## locals in declaration order, so the output is deterministic as it is.
+  if c.analysisFacts:
+    var first = true
+    for s in locals:
+      if first:
+        dest.addParLe("kill", info)
+        first = false
+      dest.addSymUse s, info
+    if not first:
+      dest.addParRi()
+
 proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   # insert kill instructions for the locals that go out of scope:
-  var locals: seq[SymId] = @[]
-  for s in c.typeCache.currentScopeLocals:
-    locals.add s
-  # sort by name: the scope table iterates in SymId-hash order, which follows
-  # pool interning order and is not stable across toolchain changes — the
-  # golden files need deterministic output (kill order is a set)
-  for i in 1 ..< locals.len:
-    var j = i
-    while j > 0 and pool.symString(locals[j-1]) > pool.symString(locals[j]):
-      swap locals[j-1], locals[j]
-      dec j
-  var i = 0
-  if not c.analysisFacts: locals.setLen 0
-  for s in locals:
-    if i == 0:
-      dest.addParLe("kill", info)
-    dest.addSymUse s, info
-    inc i
-  if i > 0:
-    dest.addParRi()
+  emitKill c, dest, info, c.typeCache.currentScopeLocals
   c.typeCache.closeScope()
+
+proc killLocalsAbove(c: var Context; dest: var TokenBuf; depth: int;
+                     info: NifLineInfo) =
+  ## A forward jump leaves every scope above `depth`; their locals die on that
+  ## edge exactly as they do at the scopes' ends.
+  emitKill c, dest, info, c.typeCache.localsOfScopesAbove(depth)
 
 proc freshLabel(c: var Context; prefix: string): SymId =
   result = pool.symId(prefix & $c.current.tmpCounter)
@@ -485,6 +488,7 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
     bug "invalid `break` structure"
   assert target >= 0, "break has no matching loop/block"
   c.current.exits[target].used = true
+  killLocalsAbove c, dest, c.current.exits[target].scopeDepth, info
   emitJmp dest, c.current.exits[target].name, info
   n = breakStart; skip n
 
@@ -498,6 +502,8 @@ proc trContinue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dec target
   assert target >= 0, "continue has no enclosing loop"
   c.current.exits[target].contUsed = true
+  # the loop's own scope is not left: its locals die at the back-edge
+  killLocalsAbove c, dest, c.current.exits[target].scopeDepth + 1, info
   emitJmp dest, c.current.exits[target].cont, info
   skip n
 
@@ -546,7 +552,8 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let blockName = if n.isSymbolDef: n.symId else: NoSymId
   inc n # name or empty
   let exitL = freshLabel(c, "´blk.")
-  c.current.exits.add Exit(name: exitL, blockName: blockName, isLoop: false)
+  c.current.exits.add Exit(name: exitL, blockName: blockName, isLoop: false,
+                           scopeDepth: c.typeCache.scopeDepth)
   trScopedBody c, dest, n
   let used = c.current.exits[^1].used
   c.current.exits.shrink(c.current.exits.len - 1)
@@ -577,7 +584,8 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## trailing `(lab loopExit)`.
   let info = n.info
   let exitL = freshLabel(c, "´lx.")
-  c.current.exits.add Exit(name: exitL, isLoop: true, cont: freshLabel(c, "´lc."))
+  c.current.exits.add Exit(name: exitL, isLoop: true, cont: freshLabel(c, "´lc."),
+                           scopeDepth: c.typeCache.scopeDepth)
   openScope c
   dest.addParLe LoopV, info
   dest.addParLe ScopeS, info # a loop body is a scope: its locals die each iteration
@@ -647,7 +655,8 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   forRangeAssumes(assumeBuf, forStmt, c.callExprs, info)
 
   let exitL = freshLabel(c, "´lx.")
-  c.current.exits.add Exit(name: exitL, isLoop: true, cont: freshLabel(c, "´lc."))
+  c.current.exits.add Exit(name: exitL, isLoop: true, cont: freshLabel(c, "´lc."),
+                           scopeDepth: c.typeCache.scopeDepth)
   openScope c
   dest.addParLe(forTag, info)
   takeTree dest, n # the iterator call, verbatim: xelim already normalized it

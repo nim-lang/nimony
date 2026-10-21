@@ -26,6 +26,7 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "IsMainModule": res IsmainmoduleX
   of "InstantiationInfo": res InstantiationinfoX
   of "Compiles": res CompilesX
+  of "Static": res StaticX
   of "ArrGet": res AtX
   of "ArrAt": res ArratX
   of "Pat": res PatX
