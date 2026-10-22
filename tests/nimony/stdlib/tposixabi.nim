@@ -39,6 +39,10 @@ when defined(posix):
     int64(cast[int](field) - cast[int](base))
 
   proc main =
+    when defined(i386) and defined(linux):
+      # glibc selects the 32-bit `struct stat` unless large-file support is
+      # requested; the bindings always use the LFS layout.
+      src.add "#define _FILE_OFFSET_BITS 64\n"
     when defined(illumos):
       # Match the __xnet_* socket ABI, not the historical msg_accrights ABI.
       src.add "#define _XOPEN_SOURCE 600\n#define __EXTENSIONS__ 1\n"
