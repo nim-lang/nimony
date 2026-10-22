@@ -216,7 +216,25 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   let info = n.info
   let parentName = if n.kind == Ident: pool.strings[n.strId] else: ""
   let before = dest.len
-  if n.exprKind == AtX or n.typeKind == AtT:
+  if n.exprKind == AtX or n.typeKind == AtT or n.typeKind == InvokeT:
+    block concreteParentCheck:
+      var probe = n
+      probe.into:
+        if not probe.isSymbol:
+          break concreteParentCheck
+        let decl = getTypeSection(probe.symId)
+        if decl.kind != TypeY or decl.typevars.substructureKind == TypevarsU:
+          break concreteParentCheck
+        skip probe
+        if not probe.hasMore:
+          break concreteParentCheck
+        hadError = true
+        c.buildErr dest, info, "cannot attempt to instantiate a concrete type"
+        while probe.hasMore:
+          var argBuf = createTokenBuf(8)
+          semLocalTypeImpl c, argBuf, probe, AllowValues
+        skip n
+        return
     semInvoke c, dest, n
   else:
     semLocalTypeImpl c, dest, n, InLocalDecl
