@@ -28,14 +28,15 @@ proc main() {.raises.} =
     assert $expandSymlink(link2) == "target.txt"
     assert readFile($link2) == "hello"
 
-    # hard links
-    let hard1 = base / "hard1"
-    createHardlink(target, hard1)
-    assert not symlinkExists(hard1)
-    assert readFile(hard1) == "hello"
-    let hard2 = path(base) / path("hard2")
-    createHardlink(path(target), hard2)
-    assert readFile($hard2) == "hello"
+    when not defined(android):
+      # Android's SELinux policy can deny `link(2)` in app data directories.
+      let hard1 = base / "hard1"
+      createHardlink(target, hard1)
+      assert not symlinkExists(hard1)
+      assert readFile(hard1) == "hello"
+      let hard2 = path(base) / path("hard2")
+      createHardlink(path(target), hard2)
+      assert readFile($hard2) == "hello"
 
     # failure is reported as an error, not silently ignored
     var failed = false

@@ -2,6 +2,7 @@
 # epoll fallback and kqueue). No shutdown: other joined tests use the pool.
 when defined(posix):
   import std/[ioring, assertions, syncio]
+  from std/os import getTempDir
   from std/posix/posix import unlink, SEEK_SET, SEEK_CUR, EINVAL, EBADF, Off
 
   proc lseek(fd: cint; offset: Off; whence: cint): Off {.importc: "lseek".}
@@ -17,7 +18,7 @@ when defined(posix):
     assert posix.pcall(unlink(name.toCString)) == 0
   else:
     proc mkstemp(path: cstring): cint {.importc: "mkstemp".}
-    var name = "/tmp/nimony-positioned-XXXXXX"
+    var name = getTempDir() & "nimony-positioned-XXXXXX"
     let fd = mkstemp(name.toCString)
     assert fd >= 0
     assert unlink(name.toCString) == 0
