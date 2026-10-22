@@ -22,7 +22,8 @@
 ##
 ## Linux falls back to `/dev/urandom` on a kernel older than 3.17 (or a
 ## seccomp filter that rejects `getrandom` with `ENOSYS`). The libc-free
-## backend issues the `getrandom` syscall itself.
+## backend issues the `getrandom` syscall itself. Android bypasses Bionic's
+## API-28 `getrandom` wrapper and calls the syscall through `syscall()`.
 
 {.feature: "staticContracts".}
 
@@ -72,11 +73,26 @@ else:
     discard close(fd)
 
   when useGetrandom:
-    proc getrandom(buf: pointer; buflen: csize_t; flags: cuint): int {.
-      importc: "getrandom", sideEffect.}
-      ## Without flags: the urandom pool, blocking only until it has been
-      ## initialized once after boot. A request beyond 256 bytes can return
-      ## short when interrupted by a signal, hence the loop below.
+    when defined(android) and not defined(nimNoLibc):
+      # Bionic's `getrandom` starts at API 28; its generic `syscall()` is
+      # available everywhere. Without flags this is the urandom pool.
+      const SYS_getrandom =
+        when defined(amd64): clong(318)
+        elif defined(i386): clong(355)
+        elif defined(arm64) or defined(riscv64): clong(278)
+        elif defined(arm): clong(384)
+        else: clong(318)
+      proc syscall(number: clong): clong {.
+        importc: "syscall", varargs, sideEffect.}
+      proc getrandom(buf: pointer; buflen: csize_t; flags: cuint): clong {.
+        inline.} =
+        syscall(SYS_getrandom, buf, clong(buflen), clong(flags))
+    else:
+      proc getrandom(buf: pointer; buflen: csize_t; flags: cuint): int {.
+        importc: "getrandom", sideEffect.}
+        ## Without flags: the urandom pool, blocking only until it has been
+        ## initialized once after boot. A request beyond 256 bytes can return
+        ## short when interrupted by a signal, hence the loop below.
 
     proc fill(p: ptr UncheckedArray[byte]; size: int): bool =
       result = true
