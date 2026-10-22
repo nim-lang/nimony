@@ -15,6 +15,9 @@ tdoc_smoke.html: <span class="prim">int64</span>
 tdoc_smoke.html: <a class="typeref" href="std/system.html#string.0.sysvq0asl">
 tdoc_smoke.html: id="square.0.
 tdoc_smoke.html: id="shout.0.
+# an instance of a generic type is rendered as its invocation, which loads the
+# instance's declaration from the semchecked modules
+tdoc_smoke.html: >seq</a><span class="op">[</span><span class="prim">int64</span><span class="op">]</span>
 
 # --- Module-level markdown rendered ---
 tdoc_smoke.html: <h1>Markdown smoke test</h1>

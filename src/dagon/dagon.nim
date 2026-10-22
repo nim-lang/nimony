@@ -12,7 +12,7 @@ import std / [parseopt, os, strutils, syncio, assertions, algorithm, tables]
 
 include ".." / lib / nifprelude
 import ".." / lib / [symparser, htmlbuilder, docpaths]
-import ".." / nimony / [nimony_model, decls, renderer]
+import ".." / nimony / [nimony_model, decls, programs, renderer]
 import markdown
 
 const
@@ -537,6 +537,9 @@ proc renderModule(input, htmlOut, docIdxOut: string; format: HtmlOutFormat;
                   projectRoot, stdlibRoot, outdir: string) =
   if not fileExists(input):
     quit "input file not found: " & input
+  # the renderer loads the declaration of a generic instance (`seq[int]`)
+  # from the semchecked modules next to `input`
+  prog.main = splitModulePath(input)
   var buf = parseFromFile(input)
   var n = beginRead(buf)
   let src = sourcePath(n)
