@@ -168,6 +168,87 @@ proc substituteTypevars*(dest: var TokenBuf; typ: Cursor; bindings: Table[SymId,
   else:
     dest.addSubtree n
 
+proc conceptInvocationArgs*(inv: Cursor): (SymId, seq[(SymId, Cursor)]) =
+  ## `inv` is `(at Concept A1 ... An)`: the concept and its type parameters
+  ## paired with `A1 ... An`.
+  result = (SymId(0), @[])
+  if not (inv.typeKind == InvokeT or inv.exprKind == AtX):
+    return
+  var n = inv
+  n.into:
+    if not n.isSymbol:
+      return
+    result[0] = n.symId
+    skip n
+    let section = getTypeSection(result[0])
+    if section.typevars.substructureKind == TypevarsU:
+      var tv = section.typevars
+      tv.into TypevarsU:
+        while tv.hasMore:
+          if n.hasMore:
+            var name = tv
+            inc name
+            if not name.isSymbolDef:
+              return
+            result[1].add (name.symId, n)
+            skip n
+          skip tv
+    while n.hasMore: skip n
+
+proc bindConceptInvocationArg(bindings: var Table[SymId, Cursor]; s: SymId; arg: Cursor;
+                              inferred: Table[SymId, Cursor]) =
+  if arg.isSymbol and inferred.hasKey(arg.symId):
+    bindings[s] = inferred.getOrDefault(arg.symId)
+  else:
+    bindings[s] = arg
+
+proc fillConceptParentTypevarBindings(conceptSym: SymId; ctx: Table[SymId, Cursor];
+                                      checkBindings: var Table[SymId, Cursor];
+                                      scratch: var seq[TokenBuf]; depth = 0) =
+  ## Parent slots from `concept of (at Parent ...)` bind the parent's type
+  ## parameters to the child's parameter space (see semConceptParents).
+  if depth > 20 or conceptSym == SymId(0):
+    return
+  var p = conceptParentsSlot(getTypeSection(conceptSym).body)
+  var parents: seq[Cursor] = @[]
+  if p.typeKind == AndT or p.exprKind == ParX:
+    p.into:
+      while p.hasMore:
+        parents.add p
+        skip p
+  elif not p.isDotToken:
+    parents.add p
+  for parent in parents:
+    if parent.typeKind == InvokeT or parent.exprKind == AtX:
+      scratch.add createTokenBuf(16)
+      substituteTypevars(scratch[scratch.high], parent, ctx)
+      let (parentSym, args) = conceptInvocationArgs(beginRead(scratch[scratch.high]))
+      if parentSym == SymId(0):
+        continue
+      var parentCtx = initTable[SymId, Cursor]()
+      for (s, arg) in args:
+        if arg.isSymbol and checkBindings.hasKey(arg.symId):
+          checkBindings[s] = checkBindings.getOrDefault(arg.symId)
+        else:
+          checkBindings[s] = arg
+        parentCtx[s] = checkBindings.getOrDefault(s)
+      fillConceptParentTypevarBindings(parentSym, parentCtx, checkBindings, scratch, depth+1)
+
+proc conceptCheckBindings*(inferred: Table[SymId, Cursor]; conceptSym: SymId;
+                           invArgs: openArray[(SymId, Cursor)];
+                           scratch: var seq[TokenBuf]): Table[SymId, Cursor] =
+  ## Bindings for checking `(at Concept ...)`: caller inference, invocation
+  ## arguments, and parent concept parameters from the declared parent list.
+  ## `scratch` keeps substituted parent trees alive for cursors in `result`.
+  result = initTable[SymId, Cursor]()
+  for k, v in inferred:
+    result[k] = v
+  for (s, arg) in invArgs:
+    bindConceptInvocationArg(result, s, arg, inferred)
+  scratch.setLen(0)
+  let ctx = result
+  fillConceptParentTypevarBindings(conceptSym, ctx, result, scratch)
+
 iterator visibleNamedSyms*(c: ptr SemContext; basename: StrId): SymId {.sideEffect.} =
   let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
