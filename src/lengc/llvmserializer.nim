@@ -158,8 +158,8 @@ proc serialize*(i: LLInstr; result: var string) =
     operand(i.fcmpLhs, result)
     result.add ", "
     serializeUnqualified(i.fcmpRhs, result)
-  of llZext, llSext, llTrunc, llFpext, llFptrunc, llSitofp, llFptosi,
-     llBitcast, llInttoptr, llPtrtoint:
+  of llZext, llSext, llTrunc, llFpext, llFptrunc, llSitofp, llUitofp,
+     llFptosi, llFptoui, llBitcast, llInttoptr, llPtrtoint:
     resultPrefix(i, result)
     result.add i.castOp & " "
     operand(i.castSrc, result)
