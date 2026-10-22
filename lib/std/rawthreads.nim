@@ -269,8 +269,19 @@ when defined(posix) and not (defined(macosx) or defined(illumos)):
     if cpu >= 0 and int(cpu) < s.abi.len * 64:
       s.abi[int(cpu) shr 6] = s.abi[int(cpu) shr 6] or (1'u64 shl (int(cpu) and 63))
 
-  proc setAffinity(thread: SysThread; setsize: csize_t; s: var CpuSet) {.
-    importc: "pthread_setaffinity_np".}
+  when defined(android):
+    when not nativeThreads:
+      # Bionic only gained `pthread_setaffinity_np` in API 36; before that a
+      # thread's tid plus `sched_setaffinity` is the same operation.
+      proc pthreadGetTid(thread: SysThread): cint {.
+        importc: "pthread_gettid_np".}
+      proc schedSetaffinity(pid: cint; setsize: csize_t; mask: pointer): cint {.
+        importc: "sched_setaffinity".}
+      proc setAffinity(thread: SysThread; setsize: csize_t; s: var CpuSet) =
+        discard schedSetaffinity(pthreadGetTid(thread), setsize, addr s)
+  else:
+    proc setAffinity(thread: SysThread; setsize: csize_t; s: var CpuSet) {.
+      importc: "pthread_setaffinity_np".}
 
 
 type

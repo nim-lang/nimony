@@ -3,6 +3,7 @@ import std/[rawthreads, syncio]
 
 const
   numThreads = 8
+  pinCpu = when defined(android): 0 else: -1
 var
   results: array[numThreads, string]
 
@@ -16,7 +17,9 @@ proc main =
   try:
     for i in 0..<numThreads:
       indexes[i] = i
-      create thr[i], worker, addr(indexes[i])
+      # On Android, pin one thread so the Bionic affinity path is linked.
+      create thr[i], worker, addr(indexes[i]),
+             pinnedToCpu = (if i == 0: pinCpu else: -1)
   except:
     echo "error creating thread"
     return
