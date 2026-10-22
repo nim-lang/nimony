@@ -720,6 +720,18 @@ proc isAddressableExpr(n: Cursor): bool {.inline.} =
   of DerefC, AtC, PatC, DotC, ErrvC, OvfC, BaseobjC: result = true
   else: result = false
 
+proc genIndexLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
+  ## C's integer promotion (`byte` 200 must not become -56).
+  ## Other backends also do it, but integer promotion might be incorrect.
+  let typ = scalarTypeKind(c, getType(c.m, n))
+  genExprLLVM(c, n, result)
+  if typ in {UT, CT, BoolT} and result.typ.kind == llInt and
+      result.typ.intBits < c.bits:
+    let wide = llReg(c.nextTemp(), c.llIntBits(c.bits))
+    c.emit LLInstr(kind: llZext, result: wide, castOp: "zext", castSrc: result,
+                   castDstType: wide.typ)
+    result = wide
+
 proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   var arrType: Cursor
   var arr = LLValue()
@@ -737,7 +749,7 @@ proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emitAlloca(tmp, typ)
       c.emitStore(val, llReg(tmp, c.prim.ptrT))
       arr = llReg(tmp, c.prim.ptrT)
-    genExprLLVM(c, n, idx)
+    genIndexLLVM(c, n, idx)
     while n.hasMore: skip n
   let arrTypeName = genTypeLLVMReadOnly(c, arrType)
   result = c.emitGEP(arrTypeName, arr,
@@ -750,7 +762,7 @@ proc genPatLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   n.into:
     baseType = getType(c.m, n)
     genExprLLVM(c, n, base)
-    genExprLLVM(c, n, idx)
+    genIndexLLVM(c, n, idx)
     while n.hasMore: skip n
   let elemCursor = pointeeType(c, baseType)
   if cursorIsNil(elemCursor):
