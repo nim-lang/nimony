@@ -502,7 +502,8 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
   of ScopeS:
     genScopeLLVM c, n
   of InstrS:
-    error c.m, "the LLVM backend has no lowering for (instr ...) yet: ", n
+    var instrResult = LLValue()
+    genInstrLLVM(c, n, instrResult)
   of CallS:
     var saved = n
     inc saved

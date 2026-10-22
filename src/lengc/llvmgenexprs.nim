@@ -176,7 +176,7 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
   of "__atomic_store_n":
     c.emit LLInstr(kind: llStore, storeValue: args[1], storePtr: args[0],
                    storeAtomic: true, storeOrdering: ordering,
-                       storeAlign: align)
+                   storeAlign: atomicAlign(c, args[1].typ))
     result = llNoneVal()
   of "__atomic_exchange_n":
     let t = c.nextTemp()
@@ -441,6 +441,44 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
     result = args[0]
   else:
     discard
+
+proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
+  # A portable row lowers exactly like the GCC builtin it stands for, and
+  # `genGccBuiltinCall` already emits those: the `llvm.cttz`/`ctlz`/`ctpop`/
+  # `bswap` call, the `i1 is_zero_poison` operand, and the i64→i32 truncation.
+  # It is keyed on the builtin NAME, which is what `cBuiltinFor` returns, so
+  # `(instr …)` needs no lowering of its own — resolve the row and reuse it.
+  # A target-pinned row has no portable spelling by construction, so there
+  # `cBuiltinFor` yields "" and this rejects rather than substituting.
+  let start = n
+  let retType = genTypeLLVMReadOnly(c, getType(c.m, start))    
+  n.into:
+    var bits = 0
+    let op = intrinsicOfCallee(c.m, n, bits)   # `n` is at the callee symbol
+    if op == NoIntrinsicOp:
+      error c.m, "callee of (instr ...) carries no instruction/intrinsic pragma: ", start
+
+    var args: seq[LLValue] = @[]
+    skip n                                  # the callee symbol
+    while n.hasMore:
+      var a = LLValue()
+      genExprLLVM(c, n, a)
+      args.add a
+
+    c.setLoc(start.info)
+    if op.isAtomic:
+      genAtomicCall(c, cBuiltinFor(op, bits), args, retType, result)
+
+    else:
+      let builtin = cBuiltinFor(op, bits)
+      if builtin.len == 0:
+        # We can't find gcc builtin for it, but it means that intrinsic is
+        # target specific and currently unsupported
+
+        error c.m, "the LLVM backend has no lowering for this instruction: ", start
+
+      genGccBuiltinCall(c, builtin, args, retType, result)
+
 
 proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: LLType;
     result: var LLValue) =
@@ -1025,37 +1063,7 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let retType = genTypeLLVMReadOnly(c, retTypeCursor)
     genCallWithType(c, n, retType, result)
   of InstrC:
-    # A portable row lowers exactly like the GCC builtin it stands for, and
-    # `genGccBuiltinCall` already emits those: the `llvm.cttz`/`ctlz`/`ctpop`/
-    # `bswap` call, the `i1 is_zero_poison` operand, and the i64→i32 truncation.
-    # It is keyed on the builtin NAME, which is what `cBuiltinFor` returns, so
-    # `(instr …)` needs no lowering of its own — resolve the row and reuse it.
-    # A target-pinned row has no portable spelling by construction, so there
-    # `cBuiltinFor` yields "" and this rejects rather than substituting.
-    let start = n
-    let retType = genTypeLLVMReadOnly(c, getType(c.m, start))
-    var args: seq[LLValue] = @[]
-    var builtin = ""
-    n.into:
-      var bits = 0
-      let op = intrinsicOfCallee(c.m, n, bits)   # `n` is at the callee symbol
-      builtin = if op == NoIntrinsicOp: "" else: cBuiltinFor(op, bits)
-      if op.isAtomic:
-        # `cBuiltinFor` DOES name a builtin for these, but `genGccBuiltinCall`
-        # below knows only the bit-counting family and its `else` branch emits
-        # NOTHING — an atomic silently dropped, the one failure mode a
-        # concurrency primitive must not have. Reject until the `atomicrmw` /
-        # `cmpxchg` lowering exists. (The same hole swallowed these when they
-        # were `importc` calls; naming them makes it reportable.)
-        error c.m, "the LLVM backend has no lowering for the atomics yet: ", start
-      elif builtin.len == 0:
-        error c.m, "the LLVM backend has no lowering for this instruction: ", start
-      skip n                                  # the callee symbol
-      while n.hasMore:
-        var a = LLValue()
-        genExprLLVM(c, n, a)
-        args.add a
-    genGccBuiltinCall(c, builtin, args, retType, result)
+    genInstrLLVM(c, n, result)
   of AddrC, HaddrC:
     genAddrLLVM(c, n, result)
   of DerefC:
