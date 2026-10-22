@@ -12,26 +12,40 @@ proc openNoRaise(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConver
   except:
     quit "failed to open encoding converter"
 
-var fromGBK = openNoRaise("utf-8", "gbk")
-var toGBK = openNoRaise("gbk", "utf-8")
+when defined(android):
+  # Bionic's iconv only provides the UTF encodings, US-ASCII and WCHAR_T.
+  block:
+    let utf8 = "\xd1\x82\xd0\xb5\xd1\x81\xd1\x82" # "тест"
+    let utf16 = "\x42\x04\x35\x04\x41\x04\x42\x04"
+    noRaise:
+      assert convert(utf8, "UTF-16LE", "UTF-8") == utf16
+      assert convert(utf16, "UTF-8", "UTF-16LE") == utf8
+  block:
+    let c = openNoRaise("UTF-8", "US-ASCII")
+    noRaise:
+      assert c.convert("hello") == "hello"
+    c.close()
+else:
+  var fromGBK = openNoRaise("utf-8", "gbk")
+  var toGBK = openNoRaise("gbk", "utf-8")
 
-var fromGB2312 = openNoRaise("utf-8", "gb2312")
-var toGB2312 = openNoRaise("gb2312", "utf-8")
+  var fromGB2312 = openNoRaise("utf-8", "gb2312")
+  var toGB2312 = openNoRaise("gb2312", "utf-8")
 
-block:
-  let data = "\215\237\186\243\178\187\214\170\204\236\212\218\203\174\163\172\194\250\180\178\208\199\195\206\209\185\208\199\186\211"
-  noRaise:
-    assert fromGBK.convert(data) == "醉后不知天在水，满床星梦压星河"
+  block:
+    let data = "\215\237\186\243\178\187\214\170\204\236\212\218\203\174\163\172\194\250\180\178\208\199\195\206\209\185\208\199\186\211"
+    noRaise:
+      assert fromGBK.convert(data) == "醉后不知天在水，满床星梦压星河"
 
-block:
-  let data = "万两黄金容易得，知心一个也难求"
-  noRaise:
-    assert toGBK.convert(data) == "\205\242\193\189\187\198\189\240\200\221\210\215\181\195\163\172\214\170\208\196\210\187\184\246\210\178\196\209\199\243"
+  block:
+    let data = "万两黄金容易得，知心一个也难求"
+    noRaise:
+      assert toGBK.convert(data) == "\205\242\193\189\187\198\189\240\200\221\210\215\181\195\163\172\214\170\208\196\210\187\184\246\210\178\196\209\199\243"
 
-block:
-  let data = "谁怕？一蓑烟雨任平生"
-  noRaise:
-    assert toGB2312.convert(data) == "\203\173\197\194\163\191\210\187\203\242\209\204\211\234\200\206\198\189\201\250"
+  block:
+    let data = "谁怕？一蓑烟雨任平生"
+    noRaise:
+      assert toGB2312.convert(data) == "\203\173\197\194\163\191\210\187\203\242\209\204\211\234\200\206\198\189\201\250"
 
 
 when defined(windows):
@@ -102,18 +116,19 @@ when defined(windows):
       result = convert(original, "windows-1251", "koi8-r")
       assert(result == "")
 
-block:
-  var cp1252: string = ""
-  var ibm850: string = ""
-  let orig = "öäüß"
-  noRaise:
-    cp1252 = convert(orig, "CP1252", "UTF-8")
-    ibm850 = convert(cp1252, "ibm850", "CP1252")
-  let current = getCurrentEncoding()
-  assert orig == "\195\182\195\164\195\188\195\159"
-  assert ibm850 == "\148\132\129\225"
-  noRaise:
-    assert convert(ibm850, current, "ibm850") == orig
+when not defined(android):
+  block:
+    var cp1252: string = ""
+    var ibm850: string = ""
+    let orig = "öäüß"
+    noRaise:
+      cp1252 = convert(orig, "CP1252", "UTF-8")
+      ibm850 = convert(cp1252, "ibm850", "CP1252")
+    let current = getCurrentEncoding()
+    assert orig == "\195\182\195\164\195\188\195\159"
+    assert ibm850 == "\148\132\129\225"
+    noRaise:
+      assert convert(ibm850, current, "ibm850") == orig
 
 
 # block: # fixes about #23481
