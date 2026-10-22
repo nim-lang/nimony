@@ -538,8 +538,11 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
   of AsgnS:
     let asgnInfo = n.info
     n.into:
+      let slotType = getType(c.m, n)
       var lval = LLValue(); genLvalueLLVM(c, n, lval)
+      let srcType = getType(c.m, n)
       var rval = LLValue(); genExprLLVM(c, n, rval)
+      coerceInPlace(c, rval, srcType, slotType)
       c.setLoc(asgnInfo)
       c.emitStore(rval, lval)
       while n.hasMore: skip n
@@ -578,7 +581,7 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
         let valueType = getType(c.m, valueExpr)
         var val = LLValue(); genExprLLVM(c, n, val)
         var coerced = LLValue()
-        coerceValueLLVM(c, val, valueType, c.currentProc.retTypeCursor, false, coerced)
+        coerceValueLLVM(c, val, valueType, c.currentProc.retTypeCursor, coerced)
         c.setLoc(retInfo)
         c.emit LLInstr(kind: llRet, retVal: coerced)
       else:

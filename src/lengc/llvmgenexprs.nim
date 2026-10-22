@@ -33,13 +33,13 @@ proc pointeeType(c: var LLVMCode; typ: Cursor): Cursor =
 
 
 proc coerceInPlace(c: var LLVMCode; val: var LLValue;
-                   srcTypeCursor, destTypeCursor: Cursor; isCast: bool) =
+                   srcTypeCursor, destTypeCursor: Cursor) =
   ## Coerce `val` to `destTypeCursor`, overwriting it. `coerceValueLLVM` returns
   ## through a `var` out-param, and handing it the same variable as both the
   ## (immutable) input and the output aliases the two -- route it through a
   ## temporary instead.
   var coerced = LLValue()
-  coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, isCast, coerced)
+  coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, coerced)
   val = coerced
 
 proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
@@ -52,9 +52,9 @@ proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
     let srcRhs = getType(c.m, n)
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
     if not typeEq(lhs.typ, typLL):
-      coerceInPlace(c, lhs, srcLhs, typCursor, true)
+      coerceInPlace(c, lhs, srcLhs, typCursor)
     if not typeEq(rhs.typ, typLL):
-      coerceInPlace(c, rhs, srcRhs, typCursor, true)
+      coerceInPlace(c, rhs, srcRhs, typCursor)
     let t = c.nextTemp()
     let res = llReg(t, typLL)
     c.emit newLLBinInstr(res = res, binOp = op,
@@ -73,9 +73,9 @@ proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string;
     let srcRhs = getType(c.m, n)
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
     if not typeEq(lhs.typ, typLL):
-      coerceInPlace(c, lhs, srcLhs, typCursor, true)
+      coerceInPlace(c, lhs, srcLhs, typCursor)
     if not typeEq(rhs.typ, typLL):
-      coerceInPlace(c, rhs, srcRhs, typCursor, true)
+      coerceInPlace(c, rhs, srcRhs, typCursor)
     let op = if isUnsigned: unsignedOp else: signedOp
     let t = c.nextTemp()
     let res = llReg(t, typLL)
@@ -98,9 +98,9 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string;
     # LLVM cmp needs both operands at one type: widen the narrower one.
     if not typeEq(lhs.typ, rhs.typ):
       if typeSizeBits(c, lhsType) < typeSizeBits(c, rhsType):
-        coerceInPlace(c, lhs, lhsType, rhsType, false)
+        coerceInPlace(c, lhs, lhsType, rhsType)
       else:
-        coerceInPlace(c, rhs, rhsType, lhsType, false)
+        coerceInPlace(c, rhs, rhsType, lhsType)
     let t = c.nextTemp()
     if isFloatType(lhs.typ):
       let fpPred = case signedPred
@@ -548,7 +548,7 @@ proc isLengPtr(tk: LengType): bool {.inline.} =
   tk in {PtrT, AptrT, ProctypeT}
 
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
-                     isCast: bool; result: var LLValue) =
+                     result: var LLValue) =
   let destTyp = genTypeLLVMReadOnly(c, destTypeCursor)
   if typeEq(val.typ, destTyp):
     result = val
@@ -584,13 +584,21 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
     result = res
   elif isLengFloat(srcTK) and isLengInt(destTK):
     let res = llReg(t, destTyp)
-    c.emit LLInstr(kind: llFptosi, result: res, castOp: "fptosi", castSrc: val,
-        castDstType: destTyp)
+    if destTK in {UT, CT, BoolT}:
+      c.emit LLInstr(kind: llFptoui, result: res, castOp: "fptoui",
+          castSrc: val, castDstType: destTyp)
+    else:
+      c.emit LLInstr(kind: llFptosi, result: res, castOp: "fptosi",
+          castSrc: val, castDstType: destTyp)
     result = res
   elif isLengInt(srcTK) and isLengFloat(destTK):
     let res = llReg(t, destTyp)
-    c.emit LLInstr(kind: llSitofp, result: res, castOp: "sitofp", castSrc: val,
-        castDstType: destTyp)
+    if srcTK in {UT, CT, BoolT}:
+      c.emit LLInstr(kind: llUitofp, result: res, castOp: "uitofp",
+          castSrc: val, castDstType: destTyp)
+    else:
+      c.emit LLInstr(kind: llSitofp, result: res, castOp: "sitofp",
+          castSrc: val, castDstType: destTyp)
     result = res
   elif isLengInt(srcTK) and isLengInt(destTK):
     # Constant integer casts fold to the target type with no instruction.
@@ -601,7 +609,7 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
     let destBits = typeSizeBits(c, destTypeCursor)
     if srcBits < destBits:
       let res = llReg(t, destTyp)
-      if isCast or srcTK in {UT, CT, BoolT}:
+      if srcTK in {UT, CT, BoolT}:
         c.emit LLInstr(kind: llZext, result: res, castOp: "zext", castSrc: val,
             castDstType: destTyp)
       else:
@@ -622,19 +630,21 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
     if typeEq(anonDestType, val.typ):
       result = val.withType(destTyp)
       return
-    let res = llReg(t, destTyp)
-    c.emit LLInstr(kind: llBitcast, result: res, castOp: "bitcast",
-        castSrc: val, castDstType: destTyp)
-    result = res
+
+    # scalars already checked
+    # This means that frontend forgot to generate memcpy
+    # and old bitcast generation in this branch was wrong
+    error c.m,
+      "the LLVM backend cannot convert " & serialize(val.typ) & " to: ",
+      destTypeCursor
 
 proc genConvOrCast(c: var LLVMCode; n: var Cursor; result: var LLValue) =
-  let isCast = n.exprKind == CastC
   n.into:
     let destTypeCursor = n
     skip n
     let srcTypeCursor = getType(c.m, n)
     var val = LLValue(); genExprLLVM(c, n, val)
-    coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, isCast, result)
+    coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, result)
     while n.hasMore: skip n
 
 proc genAddrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -1194,6 +1204,7 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
           n.into:
             let fldSym = n.symId
             skip n
+            let srcType = getType(c.m, n)
             var fieldVal = LLValue(); genExprLLVM(c, n, fieldVal)
             let inhDepth = if n.hasMore and n.kind == IntLit: (let d = int(
                 intVal(n)); skip n; d) else: 0
@@ -1210,6 +1221,8 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
                 curBody = navigateToObjectBody(c.m, curType)
                 gepType = genTypeLLVMReadOnly(c, curType)
             let fldPtr = genFieldPtrLLVM(c, curBody, fldSym, gepType, gepTarget)
+            let fldType = typeOfField(c.m, curBody, fldSym)
+            coerceInPlace(c, fieldVal, srcType, fldType)
             c.emitStore(fieldVal, fldPtr)
             while n.hasMore: skip n
         else:
