@@ -3,7 +3,9 @@
 ## follow fdlibm as carried by Rust compiler-builtins/libm; the medium reducer
 ## follows `e_rem_pio2.c`. Large-argument reduction is based on the Payne-Hanek
 ## algorithm in fdlibm's `k_rem_pio2.c`; the fixed-point Nim reducer is a new
-## implementation, not a direct code port.
+## implementation, not a direct code port. Both reducers return the remainder
+## as a head + tail pair, which the kernels consume (`k_sin.c`, `k_cos.c`,
+## `k_tan.c`) — collapsing it to one double costs over a ulp.
 ## Sources: [FreeBSD fdlibm k_rem_pio2.c](https://github.com/freebsd/freebsd-src/blob/main/lib/msun/src/k_rem_pio2.c),
 ## [Rust compiler-builtins rem_pio2_large.rs](https://github.com/rust-lang/rust/blob/main/library/compiler-builtins/libm/src/math/rem_pio2_large.rs).
 ## Other original C sources are FreeBSD `/usr/src/lib/msun/src/{s_sin,s_cos,k_sin,k_cos,e_asin,e_acos,s_atan,e_atan2,e_rem_pio2}.c`.
@@ -60,8 +62,10 @@ func isInf64(x: float64): bool {.inline.} =
 func signBit64(x: float64): bool {.inline.} =
   (cast[uint64](x) shr 63) != 0'u64
 
-# fdlibm kernels for arguments in [-pi/4, pi/4].
-func kernelSin(x: float64): float64 =
+# fdlibm kernels for arguments in [-pi/4, pi/4]; `y` is the tail of the
+# reduced argument (x + y), `iy` = 0 when the tail is known to be zero.
+func kernelSin(x, y: float64; iy: int): float64 =
+  # FreeBSD k_sin.c
   const
     S1 = -1.66666666666666324348e-01
     S2 = 8.33333333332248946124e-03
@@ -72,9 +76,12 @@ func kernelSin(x: float64): float64 =
   let z = x * x
   let w = z * z
   let r = S2 + z * (S3 + z * S4) + z * w * (S5 + z * S6)
-  x + (z * x) * (S1 + z * r)
+  let v = z * x
+  if iy == 0: x + v * (S1 + z * r)
+  else: x - ((z * (0.5 * y - v * r) - y) - v * S1)
 
-func kernelCos(x: float64): float64 =
+func kernelCos(x, y: float64): float64 =
+  # FreeBSD k_cos.c
   const
     C1 = 4.16666666666666019037e-02
     C2 = -1.38888888888741095749e-03
@@ -83,23 +90,97 @@ func kernelCos(x: float64): float64 =
     C5 = 2.08757232129817482790e-09
     C6 = -1.13596475577881948265e-11
   let z = x * x
-  let w = z * z
+  var w = z * z
   let r = z * (C1 + z * (C2 + z * C3)) + w * w * (C4 + z * (C5 + z * C6))
-  1.0 - 0.5 * z + z * r
+  let hz = 0.5 * z
+  w = 1.0 - hz
+  w + (((1.0 - w) - hz) + (z * r - x * y))
+
+func withLowWordZero(x: float64): float64 {.inline.} =
+  cast[float64](cast[uint64](x) and 0xffffffff00000000'u64)
+
+func kernelTan(x0, y0: float64; iy: int): float64 =
+  ## tan(x0 + y0) for iy = 1, -1/tan(x0 + y0) for iy = -1 (FreeBSD k_tan.c).
+  const
+    T: array[13, float64] = [
+      3.33333333333334091986e-01, 1.33333333333201242699e-01,
+      5.39682539762260521377e-02, 2.18694882948595424599e-02,
+      8.86323982359930005737e-03, 3.59207910759131235356e-03,
+      1.45620945432529025516e-03, 5.88041240820264096874e-04,
+      2.46463134818469906812e-04, 7.81794442939557092300e-05,
+      7.14072491382608190305e-05, -1.85586374855275456654e-05,
+      2.59073051863633712884e-05]
+    PIO4 = 7.85398163397448278999e-01
+    PIO4LO = 3.06161699786838301793e-17
+  var x = x0
+  var y = y0
+  let hx = cast[int32](cast[uint32](cast[uint64](x) shr 32))
+  let ix = hx and 0x7fffffff'i32
+  let big = ix >= 0x3FE59428'i32           # |x| >= 0.6744
+  if big:
+    if hx < 0'i32:
+      x = -x
+      y = -y
+    x = (PIO4 - x) + (PIO4LO - y)
+    y = 0.0
+  var z = x * x
+  var w = z * z
+  var r = T[1] + w * (T[3] + w * (T[5] + w * (T[7] + w * (T[9] + w * T[11]))))
+  var v = z * (T[2] + w * (T[4] + w * (T[6] + w * (T[8] + w * (T[10] + w * T[12])))))
+  var s = z * x
+  r = y + z * (s * (r + v) + y)
+  r += T[0] * s
+  w = x + r
+  if big:
+    v = float64(iy)
+    let sgn = float64(1 - ((hx shr 30) and 2'i32))
+    return sgn * (v - 2.0 * (x - (w * w / (w + v) - r)))
+  if iy == 1: return w
+  # -1/(x + r), computed accurately
+  z = withLowWordZero(w)
+  v = r - (z - x)                           # z + v = r + x
+  let a = -1.0 / w
+  let t = withLowWordZero(a)
+  s = 1.0 + t * z
+  t + a * (s + t * v)
 
 func productBit(a: array[53, uint64], bit: int): uint64 {.inline.} =
   if bit < 0 or bit >= 53 * 24: return 0'u64
   (a[bit div 24] shr (bit mod 24)) and 1'u64
 
-func fractionValue(a: array[53, uint64], bits: int): float64 =
-  ## Convert the 64 leading fractional bits to binary64. The omitted tail is
-  ## less than 2^-64, including for arguments near the largest finite float.
-  var leading = 0'u64
-  for i in 0..<64:
-    leading = (leading shl 1) or productBit(a, bits - 1 - i)
-  float64(leading) * 5.42101086242752217004e-20 # 2^-64
+func fractionValue(a: array[53, uint64], bits: int): tuple[hi, lo: float64] =
+  ## The fraction as a double-double of 106 SIGNIFICANT bits: leading zero
+  ## bits are skipped first, because an argument near a multiple of pi/2
+  ## leaves a remainder with ~60 of them, and a fixed window would keep only
+  ## the rest. The omitted tail is below 2^-106 of the value.
+  var lz = 0
+  while lz < 1000 and productBit(a, bits - 1 - lz) == 0'u64: inc lz
+  if lz >= 1000: return (hi: 0.0, lo: 0.0)
+  var h = 0'u64
+  var l = 0'u64
+  for i in 0..<53:
+    h = (h shl 1) or productBit(a, bits - 1 - lz - i)
+  for i in 53..<106:
+    l = (l shl 1) or productBit(a, bits - 1 - lz - i)
+  # 2^-(53+lz) and 2^-(106+lz), exact: lz is far below the subnormal range
+  let sh = cast[float64](uint64(1023 - 53 - lz) shl 52)
+  let sl = cast[float64](uint64(1023 - 106 - lz) shl 52)
+  (hi: float64(h) * sh, lo: float64(l) * sl)
 
-func largeReduce(x: float64): tuple[n: int, r: float64] =
+func split27(a: float64): tuple[hi, lo: float64] {.inline.} =
+  ## Veltkamp split: hi holds the top 26 bits, a = hi + lo exactly.
+  let c = 134217729.0 * a                         # 2^27 + 1
+  let hi = c - (c - a)
+  (hi: hi, lo: a - hi)
+
+func twoProd(a, b: float64): tuple[p, e: float64] {.inline.} =
+  ## Dekker: a*b = p + e exactly (no FMA needed).
+  let p = a * b
+  let (ah, al) = split27(a)
+  let (bh, bl) = split27(b)
+  (p: p, e: ((ah * bh - p) + ah * bl + al * bh) + al * bl)
+
+func largeReduce(x: float64): tuple[n: int, y0, y1: float64] =
   ## Multiply the significand by a fixed-point 2/pi expansion, then take the
   ## low quadrant bits and the signed fractional part. No huge floating-point
   ## quotient is formed or converted to an integer.
@@ -143,13 +224,18 @@ func largeReduce(x: float64): tuple[n: int, r: float64] =
     if rem > 0:
       fracLimbs[whole] = (fracLimbs[whole] + carry) and topMask
     floorMod8 = (floorMod8 + 1) and 7
-  let frac = fractionValue(fracLimbs, fractionBits)
-  let negativeRemainder = signBit64(x) xor roundUp
-  let signedFrac = if negativeRemainder: -frac else: frac
+  let (fh, fl) = fractionValue(fracLimbs, fractionBits)
   let n = if signBit64(x): -floorMod8 else: floorMod8
-  (n: n, r: signedFrac * PIO2_HI + signedFrac * PIO2_LO)
+  # r = frac * pi/2 as a double-double: the exact head product plus the
+  # cross terms (fl*PIO2_LO is below 2^-160 and dropped).
+  let (hp, he) = twoProd(fh, PIO2_HI)
+  let t = he + (fh * PIO2_LO + fl * PIO2_HI)
+  let h = hp + t
+  let l = t - (h - hp)
+  if signBit64(x) xor roundUp: (n: n, y0: -h, y1: -l)
+  else: (n: n, y0: h, y1: l)
 
-func reduceQuarter(x: float64): tuple[n: int, r: float64] =
+func reduceQuarter(x: float64): tuple[n: int, y0, y1: float64] =
   ## Cody-Waite for medium arguments and fixed-point Payne-Hanek reduction for
   ## the rest of finite binary64. The medium path's quotient is bounded.
   if (cast[uint64](x) and 0x7fffffffffffffff'u64) >= 0x413921fb00000000'u64:
@@ -175,39 +261,36 @@ func reduceQuarter(x: float64): tuple[n: int, r: float64] =
       r = t2 - nf * PIO2_3
       w = nf * PIO2_3T - ((t2 - r) - w)
       y = r - w
-  let tail = (r - y) - w
-  (n: n, r: y + tail)
+  (n: n, y0: y, y1: (r - y) - w)
 
 func sin64(x: float64): float64 =
   if isNan64(x): return x
   if isInf64(x): return x - x
   if x == 0.0: return x
-  let (n, r) = reduceQuarter(x)
+  let (n, y0, y1) = reduceQuarter(x)
   result = case n and 3
-    of 0: kernelSin(r)
-    of 1: kernelCos(r)
-    of 2: -kernelSin(r)
-    else: -kernelCos(r)
+    of 0: kernelSin(y0, y1, 1)
+    of 1: kernelCos(y0, y1)
+    of 2: -kernelSin(y0, y1, 1)
+    else: -kernelCos(y0, y1)
 
 func cos64(x: float64): float64 =
   if isNan64(x): return x
   if isInf64(x): return x - x
   if x == 0.0: return 1.0
-  let (n, r) = reduceQuarter(x)
+  let (n, y0, y1) = reduceQuarter(x)
   result = case n and 3
-    of 0: kernelCos(r)
-    of 1: -kernelSin(r)
-    of 2: -kernelCos(r)
-    else: kernelSin(r)
+    of 0: kernelCos(y0, y1)
+    of 1: -kernelSin(y0, y1, 1)
+    of 2: -kernelCos(y0, y1)
+    else: kernelSin(y0, y1, 1)
 
 func tan64(x: float64): float64 =
   if isNan64(x): return x
   if isInf64(x): return x - x
   if x == 0.0: return x
-  let (n, r) = reduceQuarter(x)
-  let s = kernelSin(r)
-  let c = kernelCos(r)
-  if (n and 1) == 0: s / c else: -c / s
+  let (n, y0, y1) = reduceQuarter(x)
+  kernelTan(y0, y1, 1 - ((n and 1) shl 1))     # 1 for even n, -1 for odd
 
 # fdlibm rational approximation used by both inverse sine functions.
 func asinR(z: float64): float64 =
