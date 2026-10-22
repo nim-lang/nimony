@@ -347,6 +347,8 @@ proc genScopeLLVM(c: var LLVMCode; n: var Cursor) =
     c.m.openScope()
     while n.hasMore:
       genStmtLLVM c, n
+      if c.currentProc.needsTerminator:
+        while n.hasMore and n.stmtKind != LabS: skip n
     c.m.closeScope()
 
 proc genMflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
