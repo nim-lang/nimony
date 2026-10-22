@@ -507,8 +507,10 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
           idx = i
           break
       if idx >= 0:
+        # In C these are predefined macros, so there is no symbol at all.
+        # But if we made it public, we would get duplicate symbols, so it's private.
         c.module.globals.add LLGlobal(name: extName, typ: typ,
-            initVal: llIntText($idx, typ), isConstant: true)
+            initVal: llIntText($idx, typ), isConstant: true, isPrivate: true)
       skip d.value
       return
 
