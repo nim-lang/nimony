@@ -386,30 +386,41 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ##   discard execShellCmd("ls -la")
   ##   ```
   when defined(posix):
-    # No libc `system()` binding: launch `/bin/sh -c command` and wait,
-    # inheriting the parent's streams. illumos always uses posix_spawn;
-    # other platforms use fork/exec. `os` can't import osproc (circular).
+    # No libc `system()` binding: launch the platform shell with `-c command`
+    # and wait, inheriting the parent's streams. Plain Android app sandboxes
+    # have no `/bin/sh`; their shell is `/system/bin/sh`. Termux also provides
+    # `/bin/sh`, so on Android try that first and fall back to the system shell.
+    # illumos always uses posix_spawn; other platforms use fork/exec. `os` can't
+    # import osproc (circular).
     var sh = "/bin/sh"
+    when defined(android):
+      var systemSh = "/system/bin/sh"
     var dashc = "-c"
     var cmd = command
+    let shC = sh.toCString
+    when defined(android):
+      let systemShC = systemSh.toCString
     # `nil cstring` elements: slot 3 is the NULL terminator `execve` demands,
     # so the element type has to be one that admits nil.
     let argv = cast[ptr UncheckedArray[nil cstring]](alloc0(4 * sizeof(cstring)))
-    argv[0] = sh.toCString
+    argv[0] = shC
     argv[1] = dashc.toCString
     argv[2] = cmd.toCString
     argv[3] = nil.cstring
     var pid = Pid(-1)
     when defined(illumos):
-      let rc = posix_spawn(pid, sh.toCString, nil, nil,
+      let rc = posix_spawn(pid, shC, nil, nil,
                            cast[CCharArray](argv), cast[CCharArray](posix_environ))
       let launchFailed = rc != 0
     else:
       pid = fork()
       if pid == Pid(0):
         # child: exec the shell; only reached past here if exec failed.
-        discard execve(sh.toCString, cast[CCharArray](argv),
+        discard execve(shC, cast[CCharArray](argv),
                        cast[CCharArray](posix_environ))
+        when defined(android):
+          discard execve(systemShC, cast[CCharArray](argv),
+                         cast[CCharArray](posix_environ))
         exitnow(127'i32)
       let launchFailed = pid.int < 0
     dealloc(cast[pointer](argv))

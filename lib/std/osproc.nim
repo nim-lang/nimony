@@ -352,8 +352,13 @@ when not defined(windows):
       s.args = allocCStringArray(argsRaw)
       s.env = if env == nil: envToCStringArray() else: envToCStringArray(env)
       # Both backends use the parent's PATH, even with a custom environment.
-      let execPaths = resolveExecPaths(syscmd,
+      var execPaths = resolveExecPaths(syscmd,
           poUsePath in options and poEvalCommand notin options)
+      when defined(android):
+        if poEvalCommand in options:
+          # Termux provides /bin/sh; plain Android app sandboxes only have
+          # /system/bin/sh, so let the child fall back to the system shell.
+          execPaths.add "/system/bin/sh"
       s.paths = allocCStringArray(execPaths)
       if poParentStreams notin options:
         createPipes(s)
@@ -533,8 +538,8 @@ when not defined(windows):
   proc execCmd*(command: string): int {.raises,
       tags: [ExecIOEffect, ReadIOEffect, RootEffect].} =
     ## Executes `command` and returns its error code.
-    # Run via /bin/sh -c with inherited standard streams and wait — the
-    # semantics of libc `system()`, over the same launch backend as
+    # Run via the platform shell's `-c` with inherited standard streams and
+    # wait — the semantics of libc `system()`, over the same launch backend as
     # startProcess (no libc `system` binding needed).
     var p = startProcess(command,
       options = {poEvalCommand, poParentStreams, poUsePath})
