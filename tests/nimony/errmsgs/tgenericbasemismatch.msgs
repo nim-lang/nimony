@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tgenericbasemismatch.nim(11, 4) Error: Type mismatch at [position]
+foo(s)
+[1] expected: Parent but got: Child (declared in tests/nimony/errmsgs/tgenericbasemismatch.nim(7, 1))

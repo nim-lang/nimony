@@ -1603,6 +1603,12 @@ proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrK
       break
 
     if sameSymbol(fbase, pbase):
+      if f.typeKind != InvokeT and fsym != fbase and psym != pbase and
+          not sameSymbol(fsym, psym):
+        # both are instances of the same generic: `Parent[int]` is not a
+        # `Parent[string]`
+        m.error InvalidMatch, f, a
+        return
       if f.typeKind == InvokeT:
         # infer generic params
         # XXX might need to use something like `bindSubsInvokeArgs` here

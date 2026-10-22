@@ -243,8 +243,9 @@ func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint
   (s.data[int i]) = elem
   {.assume: s.len == old(s.len).}
 
-func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
-  ## Copies an array into a new sequence (`@[1,2]` builds `seq` literals via array constructors).
+func `@`*[I, T](a: sink array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
+  ## Moves an array into a new sequence (`@[1,2]` builds `seq` literals via
+  ## array constructors); the copies, if any, happen at the call site.
   result = newSeqUninit[T](a.len)
   if result.data != nil:
     # The bound is the ARRAY's length, not the seq's: `a.len` is a compile-time
@@ -255,8 +256,11 @@ func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
     var i = 0
     while i < a.len:
       {.cast(noSideEffect).}:
-        (result.data[i]) = `=dup`(a[i])
+        (result.data[i]) = a[i]
       inc i
+  else:
+    # out of memory: what was not moved must still be destroyed
+    `=destroy`(a)
 
 # special cased in compiler as "@.1.<system suffix>" for empty seq type inference:
 template `@`*[T](a: array[0, T]): seq[T] =

@@ -1132,20 +1132,33 @@ algorithm returns true:
   ```
 
 The convertible relation can be relaxed by a user-defined type
-`converter`:idx:.
+`converter`:idx:. A converter is attached to the type it returns, which
+must be a nominal type such as an object, enum or distinct type:
 
   ```nim
+  type
+    Celsius = object
+      degrees: float
+
+  converter toCelsius(x: float): Celsius = Celsius(degrees: x)
+
+  proc show(c: Celsius) = echo c.degrees
+
+  show(21.5)            # implicit conversion
+  show(toCelsius(3.0))  # one can use the explicit form too
+  ```
+
+A converter to a builtin type such as `int` is rejected ("cannot attach
+converter to type"), unless the module enables
+`{.feature: "lenientConverters".}`:
+
+  ```nim
+  {.feature: "lenientConverters".}
   converter toInt(x: char): int = result = ord(x)
 
-  var
-    x: int
-    chr: char = 'a'
-
-  # implicit conversion magic happens here
-  x = chr
-  echo x # => 97
-  # one can use the explicit form too
-  x = chr.toInt
+  var x: int
+  let c = 'a'
+  x = c
   echo x # => 97
   ```
 
@@ -1231,6 +1244,43 @@ Once collected, a choice is resolved in this order:
 Note that shadowing and ambiguity are decided in that order: a declaration
 that shadows removes candidates before any of this runs, so a `let` in an
 inner scope can never be ambiguous against anything outside it.
+
+### Routines attached to argument types
+
+A call also considers the routines that come with its argument types,
+whether or not they are visible in the calling scope. For every argument
+whose type is a nominal type `T` declared in another module (for a generic
+instance `G[A]`, the module that declares `G`), the exported toplevel
+routines of that module with the call's name and a parameter of type `T`
+are added to the candidates. `T` may appear behind `var`, `sink`, `lent`,
+`out`, `ref` or `ptr`. These candidates take part in overload resolution
+like routines imported from that module. This is similar to C++'s
+argument-dependent lookup.
+
+  ```nim
+  # module counters:
+  type Counter* = object
+    n: int
+  proc initCounter*(): Counter = Counter(n: 0)
+  proc inc*(c: var Counter) = c.n = c.n + 1
+  proc value*(c: Counter): int = c.n
+
+  # caller:
+  from counters import nil
+  var c = counters.initCounter()
+  c.inc()          # counters.inc: attached to `Counter`
+  echo value(c)    # counters.value
+  ```
+
+So a module can be imported with `from m import nil` or `from m import T`,
+and the operations of its types still work. The same rule lets a generic
+reach the operations of the types it is instantiated with: `echo x` finds a
+`write` for `x`'s type in the module that declares the type, even if the
+module that instantiates `echo` does not import it.
+
+Routines that do not mention `T` are not added, nor are routines that are
+not exported. Types declared in `system`, and builtin types such as `int`,
+`string` or `cstring`, have no routines attached this way.
 
 
 ## Overload resolution

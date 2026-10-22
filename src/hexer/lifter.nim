@@ -153,6 +153,14 @@ proc isErrorHook(s: SymId): bool =
     return hasPragma(r.pragmas, ErrorP)
   return false
 
+proc hasUserCopyHook(c: var LiftingCtx; s: SymId): bool =
+  ## A user `=copy`/`=dup`/`=sink` makes the type non-trivial even without a
+  ## `=destroy` (a no-op one is lifted), else copies would never reach it.
+  for op in [attachedDup, attachedCopy, attachedSink]:
+    if lookupHookSym(c, op, s) != SymId(0):
+      return true
+  result = false
+
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
   result = c.nominalTypeToHook[c.op].hasKey(s) or
            lookupHookSym(c, c.op, s) != SymId(0)
@@ -165,6 +173,8 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     # through assignment.
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
     result = isErrorHook(lookupHookSym(c, siblingOp, s))
+  elif not result and c.op == attachedDestroy:
+    result = hasUserCopyHook(c, s)
 
 proc siblingHookError(c: var LiftingCtx; typ: TypeCursor;
                       siblingOp: AttachedOp): (bool, NifLineInfo) =
@@ -1402,6 +1412,8 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
             discard "empty hooks are valid for RTTI'ed types"
           elif c.calledErrorHookSet:
             discard "the `.error` hook of an `owned` type"
+          elif c.op == attachedDestroy and t.isSymbol and hasUserCopyHook(c, t.symId):
+            discard "the destructor of a type with only copy hooks"
           else:
             assert false, "empty hook created for " & toString(typ, false)
       maybeAddReturn c, paramA
