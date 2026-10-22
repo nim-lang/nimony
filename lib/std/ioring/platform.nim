@@ -9,12 +9,13 @@ import ./core/backend
 when defined(linux):
   const hasEpoll* = true
   const hasKqueue* = false
-  const hasIouring* = not defined(nimIoringNoUring)
+  const hasIouring* = not defined(nimIoringNoUring) and not defined(android)
     ## `-d:nimIoringNoUring` picks the epoll backend on Linux. io_uring is the
     ## better default, but it also *hides* the epoll path: many container
     ## sandboxes forbid `io_uring_setup`, so the fallback is what actually runs
     ## there and it needs to be reachable deliberately — for testing, and for
-    ## anyone who has to disable io_uring for policy reasons.
+    ## anyone who has to disable io_uring for policy reasons. Android's seccomp
+    ## policy kills `io_uring_setup` with SIGSYS, so it uses epoll too.
 elif defined(macosx) or defined(freebsd) or defined(netbsd) or
      defined(openbsd) or defined(dragonfly):
   const hasEpoll* = false
@@ -45,10 +46,10 @@ const hasIoPoll* = hasEpoll or hasKqueue or hasWsaPoll or hasEventPort
 # literal `defined(...)` expression — a branch guarded by a `const` is always
 # built, so a platform backend would be compiled (and fail) on every other OS.
 when defined(linux):
-  when not defined(nimIoringNoUring):
-    import ./backends/iouring
-  else:
+  when defined(android) or defined(nimIoringNoUring):
     import ./backends/epoll
+  else:
+    import ./backends/iouring
 elif defined(macosx) or defined(freebsd) or defined(netbsd) or
      defined(openbsd) or defined(dragonfly):
   import ./backends/kqueue
@@ -64,10 +65,10 @@ var backendRelays*: BackendRelays
 
 proc initPlatformBackend*() =
   when defined(linux):
-    when not defined(nimIoringNoUring):
-      backendRelays = initIoUringBackendRelays()
-    else:
+    when defined(android) or defined(nimIoringNoUring):
       backendRelays = initEpollBackendRelays()
+    else:
+      backendRelays = initIoUringBackendRelays()
   elif defined(macosx) or defined(freebsd) or defined(netbsd) or
        defined(openbsd) or defined(dragonfly):
     backendRelays = initKqueueBackendRelays()
