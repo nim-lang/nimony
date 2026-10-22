@@ -47,7 +47,7 @@ type
   ZonedTime* = object
     ## A `Time` with the offset and DST state of some zone at that instant.
     time*: Time
-    utcOffset*: int   ## Seconds east of UTC.
+    offsetEast*: int   ## Seconds east of UTC.
     isDst*: bool
 
   Timezone* = ref object
@@ -71,8 +71,8 @@ type
     weekday*: WeekDay
     yearday*: int32      ## 0..365
     # Set only by this module's conversions, so that the zone and the offset
-    # always agree; read through `utcOffset`, `isDst` and `timezone`.
-    utcOffset: int
+    # always agree; read through `offsetEast`, `isDst` and `timezone`.
+    offsetEast: int
     isDst: bool
     timezone: nil Timezone
 
@@ -288,7 +288,7 @@ func civilDateTime(adj: Time): DateTime =
     nanosecond: adj.nanosecond,
     weekday: weekdayFromDays(d),
     yearday: dayOfYear(civil.y, Month(civil.m), civil.d),
-    utcOffset: 0,
+    offsetEast: 0,
     isDst: false,
     timezone: nil)
 
@@ -303,14 +303,14 @@ func toAdjTime(dt: DateTime): Time =
 
 func toTime*(dt: DateTime): Time =
   ## Converts a `DateTime` to the instant it names: its fields, less its
-  ## `utcOffset`.
-  result = toAdjTime(dt) - initDuration(seconds = int64(dt.utcOffset))
+  ## `offsetEast`.
+  result = toAdjTime(dt) - initDuration(seconds = int64(dt.offsetEast))
 
-func utcOffset*(dt: DateTime): int {.inline.} =
+func offsetEast*(dt: DateTime): int {.inline.} =
   ## Seconds east of UTC, DST included: `+12:00` is `43200`, so
-  ## `local = utc + utcOffset`. (Nim 2's `utcOffset` counts west; this one
-  ## follows ISO 8601.)
-  dt.utcOffset
+  ## `local = utc + offsetEast`, as in ISO 8601. Nim 2's `utcOffset` counts
+  ## west; the different name keeps ported code from silently flipping sign.
+  dt.offsetEast
 
 func isDst*(dt: DateTime): bool {.inline.} =
   ## Whether DST was in effect at this instant in `dt`'s zone.
@@ -349,7 +349,7 @@ proc zonedTimeFromAdjTime*(zone: Timezone; adjTime: Time): ZonedTime =
 proc `$`*(zone: Timezone): string = zone.name
 
 proc utcTzInfo(t: Time): ZonedTime =
-  ZonedTime(time: t, utcOffset: 0, isDst: false)
+  ZonedTime(time: t, offsetEast: 0, isDst: false)
 
 when (defined(wasm32) and defined(standalone)) or defined(nimNoLibc):
   proc localZonedTimeFromTime(t: Time): ZonedTime =
@@ -394,7 +394,8 @@ else:
     ## re-encoded as UTC, minus the instant. `(0, false)` when the platform
     ## cannot answer, which degrades to UTC.
     # `localtime_r` need not consult TZ (glibc's does not); `tzset` each time
-    # gives `localtime()` semantics and honours a runtime `putEnv("TZ")`.
+    # gives `localtime()` semantics and honours a runtime `putEnv("TZ")` (not on
+    # Windows, whose `putEnv` bypasses the CRT environment).
     tzsetImpl()
     var tt = CTime(unix)
     var tmv = default(Tm)
@@ -409,7 +410,7 @@ else:
 
   proc localZonedTimeFromTime(t: Time): ZonedTime =
     let (off, dst) = localOffsetAndDst(t.seconds)
-    ZonedTime(time: t, utcOffset: off, isDst: dst)
+    ZonedTime(time: t, offsetEast: off, isDst: dst)
 
   proc localZonedTimeFromAdjTime(adj: Time): ZonedTime =
     ## A wall-clock reading near a DST transition may be ambiguous or
@@ -427,7 +428,7 @@ else:
     let utcUnix = adj.seconds - int64(off)
     let (finalOff, dst) = localOffsetAndDst(utcUnix)
     ZonedTime(time: initTime(utcUnix, int64(adj.nanosecond)),
-              utcOffset: finalOff, isDst: dst)
+              offsetEast: finalOff, isDst: dst)
 
 let utcInstance = newTimezone("Etc/UTC", utcTzInfo, utcTzInfo)
 let localInstance = newTimezone("LOCAL", localZonedTimeFromTime,
@@ -443,8 +444,8 @@ proc local*(): Timezone =
   localInstance
 
 proc initDateTime(zt: ZonedTime; zone: Timezone): DateTime =
-  result = civilDateTime(zt.time + initDuration(seconds = int64(zt.utcOffset)))
-  result.utcOffset = zt.utcOffset
+  result = civilDateTime(zt.time + initDuration(seconds = int64(zt.offsetEast)))
+  result.offsetEast = zt.offsetEast
   result.isDst = zt.isDst
   result.timezone = zone
 
@@ -522,7 +523,7 @@ func `$`*(dt: DateTime): string =
   if isUtc:
     result.add 'Z'
   else:
-    var off = dt.utcOffset
+    var off = dt.offsetEast
     if off < 0:
       result.add '-'
       off = -off

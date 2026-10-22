@@ -1,5 +1,4 @@
-## Regression test: std/times and std/monotimes compile under -d:useLibc
-## (the libc `tzReady` flag is an atomic, not an unsynchronized global) and
+## Regression test: std/times and std/monotimes compile under -d:useLibc and
 ## local-time conversion round-trips.
 
 import std/[assertions, syncio, times, monotimes]
@@ -10,7 +9,7 @@ block:
   let b = local(t)     # second call takes the already-initialised tz path
   assert a.toTime() == t
   assert b.toTime() == t
-  assert a.utcOffset == b.utcOffset
+  assert a.offsetEast == b.offsetEast
   assert utc(t).year == 2023
 
 block:

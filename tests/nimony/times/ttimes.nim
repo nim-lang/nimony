@@ -209,7 +209,7 @@ block:
   # UTC is the default zone, named as in Nim 2, and renders with `Z`.
   let dt = initDateTime(1969, mJan, 2'i32, 3'i32, 4'i32, 5'i32, 0'i32)
   assert dt.timezone == utc()
-  assert dt.utcOffset == 0
+  assert dt.offsetEast == 0
   assert not dt.isDst
   assert $dt == "1969-01-02T03:04:05Z"
   assert utc().name == "Etc/UTC"
@@ -222,10 +222,10 @@ block:
 proc fixedZone(name: string; offset: int): Timezone =
   newTimezone(name,
     proc (t: Time): ZonedTime {.closure.} =
-      ZonedTime(time: t, utcOffset: offset, isDst: false),
+      ZonedTime(time: t, offsetEast: offset, isDst: false),
     proc (adj: Time): ZonedTime {.closure.} =
       ZonedTime(time: adj - initDuration(seconds = int64(offset)),
-                utcOffset: offset, isDst: false))
+                offsetEast: offset, isDst: false))
 
 let nzst = fixedZone("NZST", 43200)
 let india = fixedZone("Asia/Kolkata", 19800)
@@ -235,7 +235,7 @@ block:
   # 1970-01-01T12:00:00+12:00 is the epoch.
   let noonNz = initDateTime(1970, mJan, 1'i32, 12'i32, 0'i32, 0'i32, 0'i32,
                             zone = nzst)
-  assert noonNz.utcOffset == 43200
+  assert noonNz.offsetEast == 43200
   assert noonNz.timezone == nzst
   assert toTime(noonNz).toUnix() == 0'i64
   assert $noonNz == "1970-01-01T12:00:00+12:00"
@@ -259,14 +259,14 @@ block:
     assert toTime(inZone(l, utc())) == t
     assert toTime(local(utc(t))) == t
     # A real zone offset: whole minutes, inside the range the tz database uses.
-    assert l.utcOffset > -18 * 60 * 60
-    assert l.utcOffset < 18 * 60 * 60
-    assert l.utcOffset mod 60 == 0
+    assert l.offsetEast > -18 * 60 * 60
+    assert l.offsetEast < 18 * 60 * 60
+    assert l.offsetEast mod 60 == 0
     # The fields are UTC's shifted by exactly the offset reported: read as
-    # UTC, they name the instant `u + utcOffset`.
+    # UTC, they name the instant `u + offsetEast`.
     let asUtc = initDateTime(l.year, l.month, l.monthday, l.hour, l.minute,
                              l.second, l.nanosecond)
-    assert toTime(asUtc).toUnix() == u + int64(l.utcOffset)
+    assert toTime(asUtc).toUnix() == u + int64(l.offsetEast)
     # A wall-clock reading in the local zone names the instant it came from.
     let back = initDateTime(l.year, l.month, l.monthday, l.hour, l.minute,
                             l.second, l.nanosecond, zone = local())
@@ -278,7 +278,7 @@ block:
     let l = local(fromUnix(u))
     let rendered = $l
     assert rendered[rendered.len - 1] != 'Z'
-    if l.utcOffset >= 0:
+    if l.offsetEast >= 0:
       assert rendered[rendered.len - 6] == '+', "east-positive offset must render +HH:MM"
     else:
       assert rendered[rendered.len - 6] == '-', "east-negative offset must render -HH:MM"
