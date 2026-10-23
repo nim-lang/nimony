@@ -125,6 +125,17 @@ proc main() =
     check kind(t.root), JObject
     check hasError(t), true
 
+  block malformed_is_never_silent:
+    # Input that is not JSON must never parse as a clean (shorter) document.
+    for bad in ["""{"a": 1 "b": 2}""", "[1 2]", """[{"a": 1 "b": 2}, 3]""",
+                "[1] [2]", "{} x", "1 2", """{"a" 1}""", """{"a": 1, 2: 3}""",
+                "[1, 2"]:
+      var t = parseJson(bad)
+      if not hasError(t): echo "accepted silently: ", bad
+    for good in ["{}", "[]", """{"a": [1, {"b": null}], "c": "d"}""", " 1 "]:
+      var t = parseJson(good)
+      if hasError(t): echo "rejected: ", good, " ", errorMsg(t)
+
   block missing_key:
     # `{}` on an absent key (or a non-object root) used to hand back a nil
     # cursor that crashed the first reader; now it is a real `null`.
