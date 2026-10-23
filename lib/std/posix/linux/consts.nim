@@ -164,8 +164,8 @@ const
   SEEK_SET* = cint(0)
   SEEK_CUR* = cint(1)
   SEEK_END* = cint(2)
-  SC_NPROCESSORS_ONLN* = cint(84)  ## _SC_NPROCESSORS_ONLN (glibc; musl uses
-                                   ## the same value)
+  SC_NPROCESSORS_ONLN* = when defined(android): cint(97) else: cint(84)
+    ## _SC_NPROCESSORS_ONLN (Bionic: 97; glibc and musl: 84)
 
 # <stdio.h>
 const

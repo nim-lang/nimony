@@ -2623,24 +2623,51 @@ proc isEmptyArrayRange(idx: Cursor): bool =
   if not r.isIntLit: return false
   result = r.intVal < lo
 
-proc lacksDefaultValue(c: var FirContext; typ: Cursor; depth = 0): bool =
-  ## Is there NO value of `typ` that zeroed memory spells? A not-nil pointer is
-  ## the leaf that answers "none": zeroed storage reads as `nil`, which is the
-  ## one value its type rules out. Everything built out of one inherits the
-  ## answer -- an array element, a tuple slot, an object field without a
-  ## default of its own -- so `array[8, NotNilRef]` states eight non-nil refs
-  ## and zeroed storage gives eight nils.
+type
+  ZeroedStorage = enum
+    ## What zeroed storage of a type reads as.
+    IsAValue       ## a value of the type
+    IsNil          ## `nil` in a not-nil pointer
+    IsOutOfRange   ## 0 in a `range` that excludes it
+    IsNoEnumValue  ## an ordinal 0 that no field of the enum has
+
+proc enumHasZero(body: Cursor): bool =
+  let edecl = asEnumDecl(body)
+  var field = edecl.body
+  result = false
+  field.into:
+    skip field # base type
+    if edecl.kind == AnumT:
+      skip field # owner type sym
+    while field.hasMore:
+      if field.substructureKind == EfldU:
+        var val = asLocal(field).val
+        inc val # skip tuple tag
+        if (val.kind == IntLit and val.intVal == 0) or
+           (val.kind == UIntLit and val.uintVal == 0'u64):
+          return true
+      skip field
+
+proc zeroedStorage(c: var FirContext; typ: Cursor; depth = 0): ZeroedStorage =
+  ## Does zeroed memory spell a value of `typ`? A not-nil pointer reads as
+  ## `nil`, a `range[1..3]` as 0, an enum whose fields start at 1 as an
+  ## ordinal no field has: each is a value its type rules out, and the engine
+  ## trusts the type (a value of `range[1..3]` indexes `a[x - 1]` unchecked).
+  ## Everything built out of one inherits the answer -- an array element, a
+  ## tuple slot, an object field -- so `array[8, NotNilRef]` states eight
+  ## non-nil refs and zeroed storage gives eight nils.
   ##
-  ## Unreachable and over-deep types answer `false`: the question is asked to
-  ## REPORT a violation, and a type we could not read is not evidence of one.
-  if depth > 20: return false
+  ## Unreachable and over-deep types answer `IsAValue`: the question is asked
+  ## to REPORT a violation, and a type we could not read is not evidence of one.
+  result = IsAValue
+  if depth > 20: return
   var t = typ
   while t.typeKind in {MutT, LentT, SinkT, OutT, OwnedT}:
     inc t
   var guard = 0
   while t.isSymbol and guard < 8:
     let body = typeDeclBody(c, t.symId)
-    if cursorIsNil(body): return false
+    if cursorIsNil(body): return
     t = body
     inc guard
   case t.typeKind
@@ -2650,25 +2677,32 @@ proc lacksDefaultValue(c: var FirContext; typ: Cursor; depth = 0): bool =
     # does not read an `itertype`'s marker yet, so an iterator value answers
     # "has a default" here whatever it says; listing the tag keeps the two in
     # step for when it does.)
-    result = markedAs(t, NotnilU)
+    if markedAs(t, NotnilU): result = IsNil
+  of RangetypeT:
+    var lo = zero()
+    var hi = zero()
+    if staticRangeBounds(t, lo, hi) and (zero() < lo or hi < zero()):
+      result = IsOutOfRange
+  of EnumT, HoleyEnumT, AnumT:
+    if not enumHasZero(t): result = IsNoEnumValue
   of ArrayT:
     # `(array T IndexT)`.
     var e = t
     e = sub(e)
     var idx = e
     skip idx
-    if isEmptyArrayRange(idx): return false
-    result = lacksDefaultValue(c, e, depth+1)
+    if isEmptyArrayRange(idx): return
+    result = zeroedStorage(c, e, depth+1)
   of DistinctT:
     var e = t
     e = sub(e)
-    result = lacksDefaultValue(c, e, depth+1)
+    result = zeroedStorage(c, e, depth+1)
   of TupleT:
-    result = false
     var f = t
     f = sub(f)
     while f.hasMore:
-      if lacksDefaultValue(c, getTupleFieldType(f), depth+1): return true
+      result = zeroedStorage(c, getTupleFieldType(f), depth+1)
+      if result != IsAValue: return
       skip f
   of ObjectT:
     var f = t
@@ -2676,24 +2710,24 @@ proc lacksDefaultValue(c: var FirContext; typ: Cursor; depth = 0): bool =
     var base = f
     if base.typeKind in {RefT, PtrT}: inc base
     skip f # the inheritance slot
-    result = false
-    if base.kind != DotToken and lacksDefaultValue(c, base, depth+1):
-      return true
+    if base.kind != DotToken:
+      result = zeroedStorage(c, base, depth+1)
+      if result != IsAValue: return
     var iter = initObjFieldIter()
     while nextField(iter, f):
       let field = takeLocal(f, SkipFinalParRi)
       if field.kind in {FldY, GfldY}:
-        # `x: int = 42` states a default of its own, so the field type's own
-        # answer stops mattering. A variant object is walked branch by branch,
-        # which over-reports rather than under-reports -- the branch that is
-        # not taken still occupies the storage.
-        if field.val.kind == DotToken and
-           lacksDefaultValue(c, field.typ, depth+1):
-          return true
+        # A field's declared default (`x: R = 2`) does not count: a global
+        # without an initializer is zeroed, field defaults included. A variant
+        # object is walked branch by branch, which over-reports rather than
+        # under-reports -- the branch that is not taken still occupies the
+        # storage.
+        result = zeroedStorage(c, field.typ, depth+1)
+        if result != IsAValue: return
       else:
         skip f
   else:
-    result = false
+    discard
 
 proc analysableRoot(c: var FirContext; n: Cursor): SymId =
   var n = n
@@ -4986,20 +5020,24 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   let initStart = n
   if not n.isDotToken or skipInitCheck:
     markInit(c, name)
-  elif kind in {GvarY, GletY, TvarY, TletY} and not isForeignStorage and
-       lacksDefaultValue(c, localType):
+  elif kind in {GvarY, GletY, TvarY, TletY} and not isForeignStorage:
     # A global carries no initialization proof: `traverseExpr` checks `inits`
     # for locals only, because a global is readable from another module and
     # (per `analysableRoot`) from another thread, so its storage is simply
-    # zeroed. Zeroed storage is not a value of a type that contains a not-nil
-    # pointer, so such a global owes an explicit initial value. A LOCAL owes
-    # nothing here: the flow analysis lets `var r: NotNilRef` stand as long as
-    # a write reaches it before any read, which is strictly more permissive
-    # and strictly as safe.
-    buildErr c, localStart.info, "'" & asNimCode(name) & "' is of type '" &
-      typeToString(localType) &
-      "', which has no default value (it contains a not-nil pointer): " &
-      "give it an initial value"
+    # zeroed. When zeroed storage is not a value of the type, such a global
+    # owes an explicit initial value. A LOCAL owes nothing here: the flow
+    # analysis lets `var r: NotNilRef` stand as long as a write reaches it
+    # before any read, which is strictly more permissive and strictly as safe.
+    let zeroed = zeroedStorage(c, localType)
+    if zeroed != IsAValue:
+      let why = case zeroed
+        of IsNil: "it contains a not-nil pointer"
+        of IsOutOfRange: "it contains a range that excludes 0"
+        of IsNoEnumValue: "it contains an enum without a field of ordinal 0"
+        of IsAValue: ""
+      buildErr c, localStart.info, "'" & asNimCode(name) & "' is of type '" &
+        typeToString(localType) & "', which has no default value (" & why &
+        "): give it an initial value"
   if kind == ResultY:
     c.resultSym = name
   if isInline:

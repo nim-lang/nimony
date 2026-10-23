@@ -169,7 +169,12 @@ proc getTempDir*(): string {.tags: [ReadEnvEffect, ReadIOEffect].} =
         let buffer = newWideCString(size.int).toWideCString()
         if getTempPath(size, buffer) > 0:
           result = $buffer
-    elif defined(android): result = "/data/local/tmp"
+    elif defined(android):
+      # Apps cannot write `/data/local/tmp` under SELinux, so honour the
+      # environment (Termux sets `TMPDIR`) and only then use the old default.
+      getTempDirImpl(result)
+      if result.len == 0:
+        result = "/data/local/tmp"
     else:
       getTempDirImpl(result)
 

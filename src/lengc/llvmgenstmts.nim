@@ -347,6 +347,8 @@ proc genScopeLLVM(c: var LLVMCode; n: var Cursor) =
     c.m.openScope()
     while n.hasMore:
       genStmtLLVM c, n
+      if c.currentProc.needsTerminator:
+        while n.hasMore and n.stmtKind != LabS: skip n
     c.m.closeScope()
 
 proc genMflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
@@ -502,7 +504,8 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
   of ScopeS:
     genScopeLLVM c, n
   of InstrS:
-    error c.m, "the LLVM backend has no lowering for (instr ...) yet: ", n
+    var instrResult = LLValue()
+    genInstrLLVM(c, n, instrResult)
   of CallS:
     var saved = n
     inc saved
@@ -535,8 +538,11 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
   of AsgnS:
     let asgnInfo = n.info
     n.into:
+      let slotType = getType(c.m, n)
       var lval = LLValue(); genLvalueLLVM(c, n, lval)
+      let srcType = getType(c.m, n)
       var rval = LLValue(); genExprLLVM(c, n, rval)
+      coerceInPlace(c, rval, srcType, slotType)
       c.setLoc(asgnInfo)
       c.emitStore(rval, lval)
       while n.hasMore: skip n
@@ -575,7 +581,7 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
         let valueType = getType(c.m, valueExpr)
         var val = LLValue(); genExprLLVM(c, n, val)
         var coerced = LLValue()
-        coerceValueLLVM(c, val, valueType, c.currentProc.retTypeCursor, false, coerced)
+        coerceValueLLVM(c, val, valueType, c.currentProc.retTypeCursor, coerced)
         c.setLoc(retInfo)
         c.emit LLInstr(kind: llRet, retVal: coerced)
       else:

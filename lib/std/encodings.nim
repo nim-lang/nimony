@@ -10,6 +10,10 @@
 ## Routines for converting between different character encodings. On UNIX, this uses
 ## the `iconv`:idx: library, on Windows the Windows API.
 ##
+## On Android, `iconv` comes from Bionic's `libc.so` and is available from API
+## 28. It only supports the UTF encodings, US-ASCII and WCHAR_T, so the default
+## `CP1252` source of `open` is not available there.
+##
 ## The following example shows how to change character encodings.
 runnableExamples:
   when defined(windows):
@@ -309,6 +313,8 @@ else:
     const iconvDll = "libiconv.dylib"
   elif defined(illumos):
     const iconvDll = "libc.so.1"
+  elif defined(android):
+    const iconvDll = "libc.so"
   else:
     const iconvDll = "(libc.so.6|libiconv.so)"
 

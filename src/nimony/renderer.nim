@@ -7,7 +7,7 @@
 import ".." / lib / [bitabs, nifpools, filelinecache, symparser]
 import ".." / finalir / finalir_model
 
-import nimony_model, decls
+import nimony_model, decls, programs
 
 
 import std/[strutils, assertions, formatfloat]
@@ -1133,6 +1133,21 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
   of DotToken:
     put(g, tkSymbol, "void")
     inc n
+  of Symbol:
+    # an instance of a generic type is spelled as its invocation, `seq[int]`,
+    # not by the base name it shares with every other instance
+    var inv = default(Cursor)
+    if pool.symIsInstantiation(n.symId):
+      let res = tryLoadSym(n.symId)
+      if res.status == LacksNothing and res.decl.symKind == TypeY:
+        let decl = asTypeDecl(res.decl)
+        if decl.typevars.typeKind == AtT:
+          inv = decl.typevars
+    if cursorIsNil(inv):
+      gsub(g, n, c)
+    else:
+      gtype(g, inv, c)
+      inc n
   else:
     gsub(g, n, c)
 

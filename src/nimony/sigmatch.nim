@@ -918,20 +918,21 @@ proc conceptCandidateMatches(m: var Match; candSym: SymId; candDecl: Cursor;
   if not result:
     undoInferred(m, adopted)
 
-proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool =
+proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor;
+                             checkBindings: Table[SymId, Cursor]): bool =
   ## `conceptSym` is the concept that *declares* `routine`, which for an
   ## inherited requirement is a parent of the concept being checked.
   if m.context == nil:
     return true
   if isConceptType(a):
     return conceptRequirementInBody(routine, actualBody)
-  var bindings = m.inferred
-  for k, v in m.inferred:
+  var bindings = checkBindings
+  for k, v in checkBindings:
     # a container concept's parameter bound to a caller's typevar
     # (`Findable[T]`, see `matchConceptInvocation`) that an earlier
     # requirement has inferred by now
-    if v.isSymbol and v.symId != k and m.inferred.hasKey(v.symId):
-      bindings[k] = m.inferred.getOrDefault(v.symId)
+    if v.isSymbol and v.symId != k and checkBindings.hasKey(v.symId):
+      bindings[k] = checkBindings.getOrDefault(v.symId)
   for selfSym in conceptSelfSyms(body, routine):
     bindings[selfSym] = a
   if not conceptRoutineUsesSelf(body, routine):
@@ -993,7 +994,7 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
   var missing: seq[SymId] = @[]
   for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, body):
-    if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody):
+    if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody, m.inferred):
       addMissingConstraint(m, routine)
       missing.add conceptRequirementSym(routine)
   leaveBodyCheck(m.context, conceptSym, a)
@@ -1009,29 +1010,14 @@ proc isConceptInvocation*(f: Cursor): bool =
     inc h
     result = h.isSymbol and isConceptSym(h.symId)
 
-proc conceptInvocationArgs*(inv: Cursor): (SymId, seq[(SymId, Cursor)]) =
-  ## `inv` is `(at Concept A1 ... An)`: the concept and its type parameters
-  ## paired with `A1 ... An`.
-  result = (SymId(0), @[])
-  var n = inv
-  n.into:
-    result[0] = n.symId
-    skip n
-    let section = getTypeSection(result[0])
-    if section.typevars.substructureKind == TypevarsU:
-      var tv = section.typevars
-      tv.into TypevarsU:
-        while tv.hasMore:
-          if n.hasMore:
-            result[1].add (asLocal(tv).name.symId, n)
-            skip n
-          skip tv
-    while n.hasMore: skip n
-
 proc sameInvocationArgs(m: var Match; f, a: Cursor): bool =
   ## `f` and `a` invoke the same concept: are their arguments identical? An
-  ## argument of `f` may be a typevar the match has bound already.
+  ## argument of `f` may be a typevar the match has bound already. One that is
+  ## still open is inferred from `a`'s argument (`Base[T]` accepts
+  ## `Base[int]`, and `Base[U]` for another typevar `U`), but only once every
+  ## argument has matched.
   result = true
+  var pending = initTable[SymId, Cursor]()
   var f = f
   var a = a
   f.into:
@@ -1039,8 +1025,16 @@ proc sameInvocationArgs(m: var Match; f, a: Cursor): bool =
       skip f # the concept
       skip a
       while f.hasMore and a.hasMore:
-        let fa = if f.isSymbol and m.inferred.hasKey(f.symId): m.inferred.getOrDefault(f.symId) else: f
-        if not sameTrees(fa, a):
+        if f.isSymbol and m.inferred.hasKey(f.symId):
+          if not sameTrees(m.inferred.getOrDefault(f.symId), a):
+            result = false
+        elif f.isSymbol and isOpenTypevar(f):
+          if pending.hasKey(f.symId):
+            if not sameTrees(pending.getOrDefault(f.symId), a):
+              result = false
+          elif not sameTrees(f, a):
+            pending[f.symId] = a
+        elif not sameTrees(f, a):
           result = false
         skip f
         skip a
@@ -1048,6 +1042,9 @@ proc sameInvocationArgs(m: var Match; f, a: Cursor): bool =
         result = false
       while f.hasMore: skip f
       while a.hasMore: skip a
+  if result:
+    for s, v in pending:
+      bindTypevar m, s, v
 
 proc conceptInvocationExtends(m: var Match; f: Cursor; a: Cursor; depth = 0): bool =
   ## `a` is `(at Sub B1 ... Bm)`: does it provide `f` = `(at Concept A1 ... An)`
@@ -1099,22 +1096,16 @@ proc matchConceptInvocation(m: var Match; f: Cursor; a: Cursor): bool =
     result = true
   else:
     let (conceptSym, args) = conceptInvocationArgs(f)
-    var saved: seq[(SymId, bool, Cursor)] = @[]
-    for (s, arg) in args:
-      saved.add (s, m.inferred.hasKey(s), m.inferred.getOrDefault(s))
-      if arg.isSymbol and m.inferred.hasKey(arg.symId):
-        m.inferred[s] = m.inferred.getOrDefault(arg.symId)
-      else:
-        m.inferred[s] = arg
+    let conceptBody = getTypeSection(conceptSym).body
+    var bindingBufs: seq[TokenBuf] = @[]
+    let checkBindings = conceptCheckBindings(m.inferred, conceptSym, args, bindingBufs)
     let actualBody = if isConceptType(a): getTypeSection(a.symId).body else: default(Cursor)
     result = true
-    for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, getTypeSection(conceptSym).body):
-      if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody):
+    for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, conceptBody):
+      if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody, checkBindings):
         addMissingConstraint(m, routine)
         result = false
-    for (s, had, v) in saved:
-      if had: m.inferred[s] = v
-      else: m.inferred.del s
+    discard bindingBufs
 
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)
@@ -1603,6 +1594,12 @@ proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrK
       break
 
     if sameSymbol(fbase, pbase):
+      if f.typeKind != InvokeT and fsym != fbase and psym != pbase and
+          not sameSymbol(fsym, psym):
+        # both are instances of the same generic: `Parent[int]` is not a
+        # `Parent[string]`
+        m.error InvalidMatch, f, a
+        return
       if f.typeKind == InvokeT:
         # infer generic params
         # XXX might need to use something like `bindSubsInvokeArgs` here
@@ -3074,6 +3071,9 @@ type
     SecondWins
 
 proc isTypevarFormal(f: Cursor): bool {.inline.} =
+  ## `var A` is as much a typevar formal as `A`: its constraint must still
+  ## take part in the specificity comparison.
+  let f = skipModifier(f)
   f.isSymbol and isTypevar(f.symId)
 
 proc crosswiseRelation(c: ptr SemContext; formal, otherFormal: Cursor): TypeRelation =

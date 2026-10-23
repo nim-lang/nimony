@@ -1,1 +1,1 @@
-tests/nimony/ownedrefs/townedrefs_seq.nim(4, 13) Error: 'owned' is only valid for 'ref' and closure types, but got 'seq'
+tests/nimony/ownedrefs/townedrefs_seq.nim(4, 13) Error: 'owned' is only valid for 'ref' and closure types, but got 'seq[int64]'

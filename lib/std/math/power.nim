@@ -1,6 +1,6 @@
 ## These implementations are ported from the Rust compiler-builtins libm library.
 ## Original sources:
-##   - sqrt: musl src/math/sqrt.c. Ported to generic Rust algorithm in 2025.
+##   - sqrt: musl src/math/sqrt.c (direct port, correctly rounded)
 ##   - cbrt (f32): FreeBSD /usr/src/lib/msun/src/s_cbrtf.c
 ##   - cbrt (f64): core-math/src/binary64/cbrt/cbrt.c (Copyright (c) 2021-2022 Alexei Sibidanov)
 ##   - pow (f32): FreeBSD /usr/src/lib/msun/src/e_powf.c (Conversion to float by Ian Lance Taylor, Cygnus Support)
@@ -12,49 +12,97 @@ import std/math/frexp  # for isNaN, classify, signbit
 import std/math/exponential  # for exp, ln
 
 # ============================================================================
-# SQRT Implementation
+# SQRT Implementation — musl src/math/sqrt.c (Szabolcs Nagy, 2020)
 # ============================================================================
-# Exponent-scaled Newton iteration: frexp reduces the input to a compact
-# significand range, avoiding overflow and underflow in the iteration.
+# Correctly rounded, as IEEE 754 requires of sqrt: a 7-bit reciprocal square
+# root estimate, two 32-bit and one 64-bit Goldschmidt iteration in fixed
+# point, then an exact choice between the two nearest candidates. musl's
+# FENV_SUPPORT block (rounding modes, inexact flag) is omitted: nimony has no
+# floating-point environment, so the round-to-nearest result is returned.
 
 func powerOfTwo64(exp: int): float64 {.inline.} =
   ## Exact power of two for the bounded exponent ranges used by the roots.
   cast[float64](uint64(exp + 1023) shl 52)
 
-func sqrtFinite64(x: float64): float64 =
-  # Reduce the significand to [0.5, 1) and make its exponent even, keeping
-  # every Newton step in a compact range regardless of the input magnitude.
-  var part = frexp(x)
-  if part.exp mod 2 != 0:
-    part.frac *= 2.0
-    dec part.exp
+const RsqrtTab: array[128, uint16] = [
+    0xb451'u16, 0xb2f0'u16, 0xb196'u16, 0xb044'u16, 0xaef9'u16, 0xadb6'u16, 0xac79'u16, 0xab43'u16,
+    0xaa14'u16, 0xa8eb'u16, 0xa7c8'u16, 0xa6aa'u16, 0xa592'u16, 0xa480'u16, 0xa373'u16, 0xa26b'u16,
+    0xa168'u16, 0xa06a'u16, 0x9f70'u16, 0x9e7b'u16, 0x9d8a'u16, 0x9c9d'u16, 0x9bb5'u16, 0x9ad1'u16,
+    0x99f0'u16, 0x9913'u16, 0x983a'u16, 0x9765'u16, 0x9693'u16, 0x95c4'u16, 0x94f8'u16, 0x9430'u16,
+    0x936b'u16, 0x92a9'u16, 0x91ea'u16, 0x912e'u16, 0x9075'u16, 0x8fbe'u16, 0x8f0a'u16, 0x8e59'u16,
+    0x8daa'u16, 0x8cfe'u16, 0x8c54'u16, 0x8bac'u16, 0x8b07'u16, 0x8a64'u16, 0x89c4'u16, 0x8925'u16,
+    0x8889'u16, 0x87ee'u16, 0x8756'u16, 0x86c0'u16, 0x862b'u16, 0x8599'u16, 0x8508'u16, 0x8479'u16,
+    0x83ec'u16, 0x8361'u16, 0x82d8'u16, 0x8250'u16, 0x81c9'u16, 0x8145'u16, 0x80c2'u16, 0x8040'u16,
+    0xff02'u16, 0xfd0e'u16, 0xfb25'u16, 0xf947'u16, 0xf773'u16, 0xf5aa'u16, 0xf3ea'u16, 0xf234'u16,
+    0xf087'u16, 0xeee3'u16, 0xed47'u16, 0xebb3'u16, 0xea27'u16, 0xe8a3'u16, 0xe727'u16, 0xe5b2'u16,
+    0xe443'u16, 0xe2dc'u16, 0xe17a'u16, 0xe020'u16, 0xdecb'u16, 0xdd7d'u16, 0xdc34'u16, 0xdaf1'u16,
+    0xd9b3'u16, 0xd87b'u16, 0xd748'u16, 0xd61a'u16, 0xd4f1'u16, 0xd3cd'u16, 0xd2ad'u16, 0xd192'u16,
+    0xd07b'u16, 0xcf69'u16, 0xce5b'u16, 0xcd51'u16, 0xcc4a'u16, 0xcb48'u16, 0xca4a'u16, 0xc94f'u16,
+    0xc858'u16, 0xc764'u16, 0xc674'u16, 0xc587'u16, 0xc49d'u16, 0xc3b7'u16, 0xc2d4'u16, 0xc1f4'u16,
+    0xc116'u16, 0xc03c'u16, 0xbf65'u16, 0xbe90'u16, 0xbdbe'u16, 0xbcef'u16, 0xbc23'u16, 0xbb59'u16,
+    0xba91'u16, 0xb9cc'u16, 0xb90a'u16, 0xb84a'u16, 0xb78c'u16, 0xb6d0'u16, 0xb617'u16, 0xb560'u16]
 
-  var guess = 1.0
-  for _ in 0..7:
-    guess = (guess + part.frac / guess) * 0.5
-  # Compensate the final rounded Newton step using its residual.
-  guess += (part.frac - guess * guess) / (2.0 * guess)
-  guess * powerOfTwo64(part.exp div 2)
+func mul32(a, b: uint64): uint64 {.inline.} =
+  ## a*b*2^-32 - e, 0 <= e < 1 (a, b < 2^32)
+  (a * b) shr 32
+
+func mul64(a, b: uint64): uint64 {.inline.} =
+  ## a*b*2^-64 - e, 0 <= e < 3
+  let ahi = a shr 32
+  let alo = a and 0xffffffff'u64
+  let bhi = b shr 32
+  let blo = b and 0xffffffff'u64
+  ahi * bhi + ((ahi * blo) shr 32) + ((alo * bhi) shr 32)
+
+func sqrtBits64(x: float64): float64 =
+  var ix = cast[uint64](x)
+  var top = ix shr 52
+  if top - 0x001'u64 >= 0x7ff'u64 - 0x001'u64:
+    # x < 0x1p-1022 or inf or nan
+    if ix * 2'u64 == 0'u64: return x                 # +-0
+    if ix == 0x7ff0000000000000'u64: return x       # +inf
+    if ix > 0x7ff0000000000000'u64: return (x - x) / (x - x)   # nan, x < 0
+    # subnormal: normalize (unsigned wraparound is intended, as in musl)
+    ix = cast[uint64](x * 4503599627370496.0)       # 0x1p52
+    top = (ix shr 52) - 52'u64
+  # x = 4^e m, m in [1, 4) as fixed point 2.62; 2^e is the result's exponent
+  let even = (top and 1'u64) != 0'u64
+  var m = (ix shl 11) or 0x8000000000000000'u64
+  if even: m = m shr 1
+  top = (top + 0x3ff'u64) shr 1
+  const three = 0xc0000000'u64
+  let i = (ix shr 46) mod 128'u64
+  var r = uint64(RsqrtTab[int(i)]) shl 16
+  var s = mul32(m shr 32, r)
+  var d = mul32(s, r)
+  var u = three - d
+  r = (mul32(r, u) shl 1) and 0xffffffff'u64
+  s = (mul32(s, u) shl 1) and 0xffffffff'u64
+  d = mul32(s, r)
+  u = three - d
+  r = (mul32(r, u) shl 1) and 0xffffffff'u64
+  r = r shl 32
+  s = mul64(m, r)
+  d = mul64(s, r)
+  u = (three shl 32) - d
+  s = mul64(s, u)                                   # repr 3.61
+  s = (s - 2'u64) shr 9                             # repr 12.52
+  # s < sqrt(m) < s + 0x1.09p-52: the nearest result is s or s + 2^-52
+  let d0 = (m shl 42) - s * s
+  let d1 = s - d0
+  s += d1 shr 63
+  s = s and 0x000fffffffffffff'u64
+  s = s or (top shl 52)
+  cast[float64](s)
 
 func sqrt*(x: float32): float32 =
-  ## Square root for f32
-  if x.isNaN or x < 0'f32:
-    return float32(0.0 / 0.0)  # NaN
-  let cls = classify(x)
-  if x == 0'f32 or cls == fcInf:
-    return x
-
-  return float32(sqrtFinite64(float64(x)))
+  ## Square root for f32: the correctly rounded f64 root rounds correctly to
+  ## f32 (binary64 carries more than 2*24 + 2 bits).
+  float32(sqrtBits64(float64(x)))
 
 func sqrt*(x: float64): float64 =
-  ## Square root for f64
-  if x.isNaN or x < 0'f64:
-    return float64(0.0 / 0.0)  # NaN
-  let cls = classify(x)
-  if x == 0'f64 or cls == fcInf:
-    return x
-
-  return sqrtFinite64(x)
+  ## Square root for f64, correctly rounded (musl sqrt.c).
+  sqrtBits64(x)
 
 # ============================================================================
 # CBRT Implementation
@@ -629,7 +677,7 @@ func hypot*(x, y: float32): float32 =
   if large == 0.0:
     return 0'f32
   let ratio = small / large
-  float32(large * sqrtFinite64(1.0 + ratio * ratio))
+  float32(large * sqrtBits64(1.0 + ratio * ratio))
 
 func hypot*(x, y: float64): float64 =
   ## Euclidean distance (hypotenuse) for f64.
@@ -645,4 +693,4 @@ func hypot*(x, y: float64): float64 =
   if large == 0.0:
     return 0.0
   let ratio = small / large
-  large * sqrtFinite64(1.0 + ratio * ratio)
+  large * sqrtBits64(1.0 + ratio * ratio)
