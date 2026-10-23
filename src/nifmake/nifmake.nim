@@ -151,10 +151,13 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
         for i in 0..<args.len:
           addSpace(result)
           result.add quoteShell(args[i])
-        # Add tool-specific arguments (from .args files)
+        # Add tool-specific arguments (from .args files). `processArgsFile`
+        # already split them into argv entries, so each one is quoted like
+        # any other argument: an `.args` file found in some ancestor
+        # directory must not be able to inject shell syntax.
         for arg in toolArgs:
           addSpace(result)
-          result.add arg
+          result.add quoteShell(arg)
         skip n  # advance past the (args …) subtree
       else:
         let L = if tag == "output": outputs.len else: inputs.len
