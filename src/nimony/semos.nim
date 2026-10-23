@@ -6,7 +6,7 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
-from std / strutils import multiReplace, startsWith
+from std / strutils import multiReplace, startsWith, split
 from std / algorithm import sort
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
 from std / osproc import execCmdEx, startProcess, waitForExit, close,
@@ -105,6 +105,18 @@ proc joinPath*(head, tail: string): string = head / tail
 
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
+
+proc shellArgs*(args: string): string =
+  ## `args` -- a forwarded `commandLineArgs` string: raw, space separated
+  ## options -- as shell words, each one quoted. The values are the user's
+  ## (`-d:name=value`) and must reach the sub-compile verbatim, not be
+  ## interpreted by the shell a second time. Split exactly like
+  ## `deps.emitFrontendArgs` splits them for the `.build.nif`.
+  result = ""
+  for arg in args.split(' '):
+    if arg.len > 0:
+      result.add ' '
+      result.add quoteShell(arg)
 
 proc renderCmd(exe: string; args: openArray[string]): string =
   ## Diagnostics only. `execArgs` never hands this string to a shell.
@@ -422,7 +434,7 @@ proc getFile*(info: NifLineInfo): string =
 
 proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
   let nimonyExe = findTool("nimony")
-  exec quoteShell(nimonyExe) & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
+  exec quoteShell(nimonyExe) & shellArgs(c.commandLineArgs) & moreArgs & " --ischild m " & quoteShell(file)
   #exec os.getAppFilename() & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
 
 # ------------------ plugin handling --------------------------
@@ -829,7 +841,7 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
   # to the invoking compile). Only the execution step uses `workingDir` so
   # relative paths like `doc/version.md` resolve next to the caller module.
   let nimonyExe = findTool("nimony")
-  let compileCmd = quoteShell(nimonyExe) & commandLineArgs &
+  let compileCmd = quoteShell(nimonyExe) & shellArgs(commandLineArgs) &
     " --nimcache:" & quoteShell(nimcachePath) &
     " s " & quoteShell(file)
   try:
@@ -866,7 +878,7 @@ proc buildWriteNifModule(c: var SemContext): string =
   # fails because the outer nimsem (currently paused waiting on this exec)
   # still has it mmap'd. The outer's args live on `c.commandLineArgs`.
   let nimonyExe = findTool("nimony")
-  let cmd = quoteShell(nimonyExe) & c.commandLineArgs &
+  let cmd = quoteShell(nimonyExe) & shellArgs(c.commandLineArgs) &
     " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
     " c " & quoteShell(stdlibFile("std/writenif.nim"))
   try:

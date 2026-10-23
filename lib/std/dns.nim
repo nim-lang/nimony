@@ -31,6 +31,7 @@ when defined(windows):
 import std/locks
 import std/atomics
 import std/assertions
+import std/crypto/sysrand
 
 from std/ioring import Sockaddr_storage
 
@@ -444,24 +445,38 @@ proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
   ## bounded by `dl`. `resolve` speaks port 53; the port parameter exists so a
   ## caller can aim a question at an in-process server on an ephemeral port.
   ## Parsed but uninterpreted — the caller applies `resolve`'s rules.
-  ## Raises `TimeoutError` when `dl` arrives first, `ValueError` if the reply
-  ## is not a response to this question, `NameNotFound` for NXDOMAIN.
+  ## Raises `TimeoutError` when `dl` arrives before a reply to this question,
+  ## `NameNotFound` for NXDOMAIN, `IOError` when no random id can be drawn.
+  ##
+  ## The id is drawn from the OS CSPRNG, and a reply counts only if it echoes
+  ## the id *and* the question: with a clock-derived id and nothing else
+  ## checked, an off-path attacker can guess well enough to have a forged
+  ## answer accepted. A datagram that fails either check is dropped and the
+  ## wait for the real one goes on, so a forgery cannot even make the query
+  ## fail early.
+  var id = default(array[2, byte])
+  if not urandom(id): raise IOError
+  let question = Question(name: canon(host), rtype: RTypeA, rclass: 1'u16)
   var wire: seq[char] = @[]
-  var q = Message(id: uint16(int64(monoNow()) and 0xFFFF),
+  var q = Message(id: uint16(id[0]) shl 8 or uint16(id[1]),
                   flags: 0x0100'u16)   # RD
-  q.questions.add Question(name: canon(host), rtype: RTypeA, rclass: 1'u16)
+  q.questions.add question
   encodeMessage(q, wire)
   var sock = openUdp(0, dl)
   var d = budget(sock, dl)
   udpConnect(sock, r.servers[serverIdx], port, d)
   sendDatagram(sock, wire, d)
   var respBuf = newSeq[char](512)
-  let n = recvDatagram(sock, toOpenArray(respBuf, 0, respBuf.len - 1), d)
   var m = Message(id: 0'u16, flags: 0'u16)
-  if not decodeMessage(toOpenArray(respBuf, 0, n - 1), m):
-    raise ValueError
-  if m.id != q.id or (m.flags and 0x8000'u16) == 0:
-    raise ValueError
+  while true:
+    let n = recvDatagram(sock, toOpenArray(respBuf, 0, respBuf.len - 1), d)
+    m = Message(id: 0'u16, flags: 0'u16)
+    if decodeMessage(toOpenArray(respBuf, 0, n - 1), m) and m.id == q.id and
+        (m.flags and 0x8000'u16) != 0 and m.questions.len == 1 and
+        m.questions[0].rtype == question.rtype and
+        m.questions[0].rclass == question.rclass and
+        canon(m.questions[0].name) == question.name:
+      break
   let rcode = m.flags and 0x000F'u16
   if rcode != 0:
     raise NameNotFound          # NXDOMAIN and every other refusal

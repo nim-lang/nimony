@@ -100,7 +100,8 @@ func newSeqOf*[T](size: int; initValue: T): seq[T] {.nodestroy.} =
     if result.data != nil:
       var i = 0
       while i < size:
-        (result.data[i]) = `=dup`(initValue)
+        {.cast(noSideEffect).}:
+          (result.data[i]) = `=dup`(initValue)
         inc i
     else:
       result.len = 0

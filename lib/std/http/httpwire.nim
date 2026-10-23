@@ -20,6 +20,7 @@
 # much room a head needs, so the usual path never has to retry at all.
 
 import ./httpmsg
+from ./httpheaders import isTokenChar
 import ../../../src/lib/nifcore
 import std / assertions
 
@@ -192,9 +193,40 @@ proc writeHeaderNode(tags: HttpTags; dest: var openArray[char]; i: int; c: Curso
     body.skip
   result = writeCrLf(dest, j)
 
+proc strOf(v: Cursor): string {.inline.} =
+  if v.isInlineLit: v.strVal else: poolStr(v.pool, v.strId)
+
+proc isFieldValue(v: Cursor): bool =
+  ## A value that cannot end its line early: no CR, LF or NUL. Anything else
+  ## would let whoever chose the value write headers of their own (response
+  ## splitting).
+  result = true
+  if v.kind == StrLit:
+    for ch in strOf(v):
+      if ch in {'\r', '\n', '\0'}: return false
+
+proc isFieldName(v: Cursor): bool =
+  ## An `xhdr` name: one or more RFC 9110 token characters.
+  if v.kind != StrLit: return false
+  let s = strOf(v)
+  result = s.len > 0
+  for ch in s:
+    if not isTokenChar(ch): return false
+
+proc isRequestTarget(v: Cursor): bool =
+  ## A request target has no whitespace or control characters: a space ends
+  ## it and starts the version, a CR/LF ends the request line.
+  if v.kind != StrLit: return false
+  let s = strOf(v)
+  result = s.len > 0
+  for ch in s:
+    if ch <= ' ' or ch == '\x7F': return false
+
 proc headerNodeLen(tags: HttpTags; c: Cursor): int =
+  ## -1 for a node that would not serialize as one well-formed header line.
   var body = c.sub()
   if c.cursorTagId == tag(tXhdr):
+    if not isFieldName(body): return -1
     result = valueLen(tags, body)
     body.skip
   else:
@@ -202,6 +234,7 @@ proc headerNodeLen(tags: HttpTags; c: Cursor): int =
   result = result + 2                      # ": "
   var first = true
   while body.hasMore:
+    if not isFieldValue(body): return -1
     if not first: result = result + 2      # ", "
     result = result + valueLen(tags, body)
     first = false
@@ -308,11 +341,17 @@ proc headLen*(m: HttpMsg): int =
   ## Exactly how many bytes `writeHead` will produce. One extra walk of a tree
   ## that is already in cache, and it means the common path sizes its buffer
   ## once instead of writing, failing and retrying.
+  ##
+  ## -1 for a head that would not come out well formed: a CR, LF or NUL in a
+  ## header value, an `xhdr` name that is not a token, a request target with
+  ## whitespace or control characters. Those bytes come from whoever chose the
+  ## value, and written out they would be headers (or a request) of their own.
   if m.isRequest:
     var root = m.rootCursor()
     var body = root.sub()
     let meth = body.cursorTagId
     body.skip
+    if not isRequestTarget(body): return -1
     result = spelling(m.tags, meth).len + 1 + valueLen(m.tags, body) + 1 +
              versionText(m.versionOf).len + 2
   elif m.isResponse:
@@ -322,5 +361,7 @@ proc headLen*(m: HttpMsg): int =
   else:
     return 0
   for c in m.headerNodes:
-    result = result + headerNodeLen(m.tags, c)
+    let n = headerNodeLen(m.tags, c)
+    if n < 0: return -1
+    result = result + n
   result = result + 2                      # the blank line

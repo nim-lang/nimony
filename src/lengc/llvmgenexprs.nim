@@ -33,13 +33,13 @@ proc pointeeType(c: var LLVMCode; typ: Cursor): Cursor =
 
 
 proc coerceInPlace(c: var LLVMCode; val: var LLValue;
-                   srcTypeCursor, destTypeCursor: Cursor; isCast: bool) =
+                   srcTypeCursor, destTypeCursor: Cursor) =
   ## Coerce `val` to `destTypeCursor`, overwriting it. `coerceValueLLVM` returns
   ## through a `var` out-param, and handing it the same variable as both the
   ## (immutable) input and the output aliases the two -- route it through a
   ## temporary instead.
   var coerced = LLValue()
-  coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, isCast, coerced)
+  coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, coerced)
   val = coerced
 
 proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
@@ -52,9 +52,9 @@ proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
     let srcRhs = getType(c.m, n)
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
     if not typeEq(lhs.typ, typLL):
-      coerceInPlace(c, lhs, srcLhs, typCursor, true)
+      coerceInPlace(c, lhs, srcLhs, typCursor)
     if not typeEq(rhs.typ, typLL):
-      coerceInPlace(c, rhs, srcRhs, typCursor, true)
+      coerceInPlace(c, rhs, srcRhs, typCursor)
     let t = c.nextTemp()
     let res = llReg(t, typLL)
     c.emit newLLBinInstr(res = res, binOp = op,
@@ -73,9 +73,9 @@ proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string;
     let srcRhs = getType(c.m, n)
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
     if not typeEq(lhs.typ, typLL):
-      coerceInPlace(c, lhs, srcLhs, typCursor, true)
+      coerceInPlace(c, lhs, srcLhs, typCursor)
     if not typeEq(rhs.typ, typLL):
-      coerceInPlace(c, rhs, srcRhs, typCursor, true)
+      coerceInPlace(c, rhs, srcRhs, typCursor)
     let op = if isUnsigned: unsignedOp else: signedOp
     let t = c.nextTemp()
     let res = llReg(t, typLL)
@@ -98,9 +98,9 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string;
     # LLVM cmp needs both operands at one type: widen the narrower one.
     if not typeEq(lhs.typ, rhs.typ):
       if typeSizeBits(c, lhsType) < typeSizeBits(c, rhsType):
-        coerceInPlace(c, lhs, lhsType, rhsType, false)
+        coerceInPlace(c, lhs, lhsType, rhsType)
       else:
-        coerceInPlace(c, rhs, rhsType, lhsType, false)
+        coerceInPlace(c, rhs, rhsType, lhsType)
     let t = c.nextTemp()
     if isFloatType(lhs.typ):
       let fpPred = case signedPred
@@ -176,7 +176,7 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
   of "__atomic_store_n":
     c.emit LLInstr(kind: llStore, storeValue: args[1], storePtr: args[0],
                    storeAtomic: true, storeOrdering: ordering,
-                       storeAlign: align)
+                   storeAlign: atomicAlign(c, args[1].typ))
     result = llNoneVal()
   of "__atomic_exchange_n":
     let t = c.nextTemp()
@@ -442,6 +442,44 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
   else:
     discard
 
+proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
+  # A portable row lowers exactly like the GCC builtin it stands for, and
+  # `genGccBuiltinCall` already emits those: the `llvm.cttz`/`ctlz`/`ctpop`/
+  # `bswap` call, the `i1 is_zero_poison` operand, and the i64→i32 truncation.
+  # It is keyed on the builtin NAME, which is what `cBuiltinFor` returns, so
+  # `(instr …)` needs no lowering of its own — resolve the row and reuse it.
+  # A target-pinned row has no portable spelling by construction, so there
+  # `cBuiltinFor` yields "" and this rejects rather than substituting.
+  let start = n
+  let retType = genTypeLLVMReadOnly(c, getType(c.m, start))    
+  n.into:
+    var bits = 0
+    let op = intrinsicOfCallee(c.m, n, bits)   # `n` is at the callee symbol
+    if op == NoIntrinsicOp:
+      error c.m, "callee of (instr ...) carries no instruction/intrinsic pragma: ", start
+
+    var args: seq[LLValue] = @[]
+    skip n                                  # the callee symbol
+    while n.hasMore:
+      var a = LLValue()
+      genExprLLVM(c, n, a)
+      args.add a
+
+    c.setLoc(start.info)
+    if op.isAtomic:
+      genAtomicCall(c, cBuiltinFor(op, bits), args, retType, result)
+
+    else:
+      let builtin = cBuiltinFor(op, bits)
+      if builtin.len == 0:
+        # We can't find gcc builtin for it, but it means that intrinsic is
+        # target specific and currently unsupported
+
+        error c.m, "the LLVM backend has no lowering for this instruction: ", start
+
+      genGccBuiltinCall(c, builtin, args, retType, result)
+
+
 proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: LLType;
     result: var LLValue) =
   let callInfo = n.info
@@ -510,7 +548,7 @@ proc isLengPtr(tk: LengType): bool {.inline.} =
   tk in {PtrT, AptrT, ProctypeT}
 
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
-                     isCast: bool; result: var LLValue) =
+                     result: var LLValue) =
   let destTyp = genTypeLLVMReadOnly(c, destTypeCursor)
   if typeEq(val.typ, destTyp):
     result = val
@@ -546,13 +584,21 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
     result = res
   elif isLengFloat(srcTK) and isLengInt(destTK):
     let res = llReg(t, destTyp)
-    c.emit LLInstr(kind: llFptosi, result: res, castOp: "fptosi", castSrc: val,
-        castDstType: destTyp)
+    if destTK in {UT, CT, BoolT}:
+      c.emit LLInstr(kind: llFptoui, result: res, castOp: "fptoui",
+          castSrc: val, castDstType: destTyp)
+    else:
+      c.emit LLInstr(kind: llFptosi, result: res, castOp: "fptosi",
+          castSrc: val, castDstType: destTyp)
     result = res
   elif isLengInt(srcTK) and isLengFloat(destTK):
     let res = llReg(t, destTyp)
-    c.emit LLInstr(kind: llSitofp, result: res, castOp: "sitofp", castSrc: val,
-        castDstType: destTyp)
+    if srcTK in {UT, CT, BoolT}:
+      c.emit LLInstr(kind: llUitofp, result: res, castOp: "uitofp",
+          castSrc: val, castDstType: destTyp)
+    else:
+      c.emit LLInstr(kind: llSitofp, result: res, castOp: "sitofp",
+          castSrc: val, castDstType: destTyp)
     result = res
   elif isLengInt(srcTK) and isLengInt(destTK):
     # Constant integer casts fold to the target type with no instruction.
@@ -563,7 +609,7 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
     let destBits = typeSizeBits(c, destTypeCursor)
     if srcBits < destBits:
       let res = llReg(t, destTyp)
-      if isCast or srcTK in {UT, CT, BoolT}:
+      if srcTK in {UT, CT, BoolT}:
         c.emit LLInstr(kind: llZext, result: res, castOp: "zext", castSrc: val,
             castDstType: destTyp)
       else:
@@ -584,19 +630,21 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
     if typeEq(anonDestType, val.typ):
       result = val.withType(destTyp)
       return
-    let res = llReg(t, destTyp)
-    c.emit LLInstr(kind: llBitcast, result: res, castOp: "bitcast",
-        castSrc: val, castDstType: destTyp)
-    result = res
+
+    # scalars already checked
+    # This means that frontend forgot to generate memcpy
+    # and old bitcast generation in this branch was wrong
+    error c.m,
+      "the LLVM backend cannot convert " & serialize(val.typ) & " to: ",
+      destTypeCursor
 
 proc genConvOrCast(c: var LLVMCode; n: var Cursor; result: var LLValue) =
-  let isCast = n.exprKind == CastC
   n.into:
     let destTypeCursor = n
     skip n
     let srcTypeCursor = getType(c.m, n)
     var val = LLValue(); genExprLLVM(c, n, val)
-    coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, isCast, result)
+    coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, result)
     while n.hasMore: skip n
 
 proc genAddrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -672,6 +720,18 @@ proc isAddressableExpr(n: Cursor): bool {.inline.} =
   of DerefC, AtC, PatC, DotC, ErrvC, OvfC, BaseobjC: result = true
   else: result = false
 
+proc genIndexLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
+  ## C's integer promotion (`byte` 200 must not become -56).
+  ## Other backends also do it, but integer promotion might be incorrect.
+  let typ = scalarTypeKind(c, getType(c.m, n))
+  genExprLLVM(c, n, result)
+  if typ in {UT, CT, BoolT} and result.typ.kind == llInt and
+      result.typ.intBits < c.bits:
+    let wide = llReg(c.nextTemp(), c.llIntBits(c.bits))
+    c.emit LLInstr(kind: llZext, result: wide, castOp: "zext", castSrc: result,
+                   castDstType: wide.typ)
+    result = wide
+
 proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   var arrType: Cursor
   var arr = LLValue()
@@ -689,7 +749,7 @@ proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emitAlloca(tmp, typ)
       c.emitStore(val, llReg(tmp, c.prim.ptrT))
       arr = llReg(tmp, c.prim.ptrT)
-    genExprLLVM(c, n, idx)
+    genIndexLLVM(c, n, idx)
     while n.hasMore: skip n
   let arrTypeName = genTypeLLVMReadOnly(c, arrType)
   result = c.emitGEP(arrTypeName, arr,
@@ -702,7 +762,7 @@ proc genPatLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   n.into:
     baseType = getType(c.m, n)
     genExprLLVM(c, n, base)
-    genExprLLVM(c, n, idx)
+    genIndexLLVM(c, n, idx)
     while n.hasMore: skip n
   let elemCursor = pointeeType(c, baseType)
   if cursorIsNil(elemCursor):
@@ -1025,37 +1085,7 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let retType = genTypeLLVMReadOnly(c, retTypeCursor)
     genCallWithType(c, n, retType, result)
   of InstrC:
-    # A portable row lowers exactly like the GCC builtin it stands for, and
-    # `genGccBuiltinCall` already emits those: the `llvm.cttz`/`ctlz`/`ctpop`/
-    # `bswap` call, the `i1 is_zero_poison` operand, and the i64→i32 truncation.
-    # It is keyed on the builtin NAME, which is what `cBuiltinFor` returns, so
-    # `(instr …)` needs no lowering of its own — resolve the row and reuse it.
-    # A target-pinned row has no portable spelling by construction, so there
-    # `cBuiltinFor` yields "" and this rejects rather than substituting.
-    let start = n
-    let retType = genTypeLLVMReadOnly(c, getType(c.m, start))
-    var args: seq[LLValue] = @[]
-    var builtin = ""
-    n.into:
-      var bits = 0
-      let op = intrinsicOfCallee(c.m, n, bits)   # `n` is at the callee symbol
-      builtin = if op == NoIntrinsicOp: "" else: cBuiltinFor(op, bits)
-      if op.isAtomic:
-        # `cBuiltinFor` DOES name a builtin for these, but `genGccBuiltinCall`
-        # below knows only the bit-counting family and its `else` branch emits
-        # NOTHING — an atomic silently dropped, the one failure mode a
-        # concurrency primitive must not have. Reject until the `atomicrmw` /
-        # `cmpxchg` lowering exists. (The same hole swallowed these when they
-        # were `importc` calls; naming them makes it reportable.)
-        error c.m, "the LLVM backend has no lowering for the atomics yet: ", start
-      elif builtin.len == 0:
-        error c.m, "the LLVM backend has no lowering for this instruction: ", start
-      skip n                                  # the callee symbol
-      while n.hasMore:
-        var a = LLValue()
-        genExprLLVM(c, n, a)
-        args.add a
-    genGccBuiltinCall(c, builtin, args, retType, result)
+    genInstrLLVM(c, n, result)
   of AddrC, HaddrC:
     genAddrLLVM(c, n, result)
   of DerefC:
@@ -1186,6 +1216,7 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
           n.into:
             let fldSym = n.symId
             skip n
+            let srcType = getType(c.m, n)
             var fieldVal = LLValue(); genExprLLVM(c, n, fieldVal)
             let inhDepth = if n.hasMore and n.kind == IntLit: (let d = int(
                 intVal(n)); skip n; d) else: 0
@@ -1202,6 +1233,8 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
                 curBody = navigateToObjectBody(c.m, curType)
                 gepType = genTypeLLVMReadOnly(c, curType)
             let fldPtr = genFieldPtrLLVM(c, curBody, fldSym, gepType, gepTarget)
+            let fldType = typeOfField(c.m, curBody, fldSym)
+            coerceInPlace(c, fieldVal, srcType, fldType)
             c.emitStore(fieldVal, fldPtr)
             while n.hasMore: skip n
         else:

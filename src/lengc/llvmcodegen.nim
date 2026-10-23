@@ -380,7 +380,7 @@ proc genDITypeReadOnly(c: var LLVMCode; n: Cursor): int
 proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
     declaredType: Cursor): LLValue
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
-                     isCast: bool; result: var LLValue)
+                     result: var LLValue)
 proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: LLType;
     result: var LLValue)
 proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
@@ -507,8 +507,10 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
           idx = i
           break
       if idx >= 0:
+        # In C these are predefined macros, so there is no symbol at all.
+        # But if we made it public, we would get duplicate symbols, so it's private.
         c.module.globals.add LLGlobal(name: extName, typ: typ,
-            initVal: llIntText($idx, typ), isConstant: true)
+            initVal: llIntText($idx, typ), isConstant: true, isPrivate: true)
       skip d.value
       return
 
@@ -583,7 +585,9 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
         if onErrAction.kind != DotToken:
           genOnErrorLLVM(c, onErrAction)
       else:
+        let srcType = getType(c.m, d.value)
         var val = LLValue(); genExprLLVM(c, d.value, val)
+        coerceInPlace(c, val, srcType, d.typ)
         c.setLoc(varInfo)
         c.emit LLInstr(kind: llStore, storeValue: val,
                        storePtr: llReg(name, c.prim.ptrT))
