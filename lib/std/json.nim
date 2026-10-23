@@ -184,6 +184,13 @@ const
 proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId;
                 depth: int)
 
+proc skipRest(p: var JsonParser) =
+  ## After a structural error the parser cannot know where the broken
+  ## container was meant to end, so the rest of the input is dropped. Every
+  ## enclosing level then sees `tkEof` and marks its own truncation: the
+  ## document is cut short *visibly*, never silently.
+  while p.tok != tkEof: discard getTok(p)
+
 proc parseObject(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId;
                  depth: int) =
   t.buf.openTag JKObject.tagId
@@ -193,6 +200,7 @@ proc parseObject(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: F
   while p.tok != tkCurlyRi and p.tok != tkEof:
     if p.tok != tkString:
       emitErrorKv(p, t, mode, file, errStringExpected)   # malformed key
+      skipRest(p)
       truncated = true
       break
     t.buf.openTag JKKv.tagId
@@ -212,6 +220,9 @@ proc parseObject(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: F
       discard getTok(p)
     elif p.tok == tkEof:
       emitErrorKv(p, t, mode, file, errCurlyRiExpected)  # mark truncation in-tree
+    else:
+      emitErrorKv(p, t, mode, file, errCommaExpected)    # `{"a": 1 "b": 2}`
+      skipRest(p)
   t.buf.closeTag()          # close oconstr
 
 proc parseArray(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId;
@@ -227,6 +238,9 @@ proc parseArray(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: Fi
     discard getTok(p)
   elif p.tok == tkEof:
     emitError(p, t, mode, file, errBracketRiExpected)    # mark truncation in-tree
+  else:
+    emitError(p, t, mode, file, errCommaExpected)        # `[1 2]`
+    skipRest(p)
   t.buf.closeTag()
 
 proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId;
@@ -266,7 +280,7 @@ proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: Fi
       # enclosing level then sees `tkEof` and closes with its own
       # truncation marker.
       emitError(p, t, mode, file, errNestingTooDeep)
-      while p.tok != tkEof: discard getTok(p)
+      skipRest(p)
     elif p.tok == tkCurlyLe:
       parseObject(p, t, mode, file, depth)
     else:
@@ -290,7 +304,11 @@ proc parseInto(stream: Stream; filename: string; lineInfo: LineInfoMode;
     file = t.buf.pool.filenames.getOrIncl(filename)
   discard getTok(p)
   parseValue(p, t, lineInfo, file, 0)
-  eat(p, tkEof)
+  if p.tok != tkEof:
+    # Trailing input after the document (`[1] [2]`, `{} x`): recorded as a
+    # second top-level error node, which `errorMsg(tree)` looks at but `root`
+    # never reaches.
+    emitError(p, t, lineInfo, file, errEofExpected)
   close(p)
 
 proc parseJson*(stream: Stream; filename = "";
@@ -439,8 +457,13 @@ proc errorMsg*(t: var JsonTree): string =
   ## The first error message embedded anywhere in the document (depth-first), or
   ## `""` if it parsed cleanly. Ignore it and malformed nodes simply read as
   ## `null`; consult it for the diagnostic and source position of the first
-  ## failure.
-  firstErrorMsg(t.root)
+  ## failure. Trailing input after the document is reported here as well.
+  result = ""
+  var c = t.root
+  while c.hasMore:
+    result = firstErrorMsg(c)
+    if result.len > 0: return
+    c.skip
 
 proc hasError*(t: var JsonTree): bool {.inline.} =
   ## True when the document contains any parse error (see `errorMsg`).
