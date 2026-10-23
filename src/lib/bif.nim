@@ -270,8 +270,15 @@ proc readVarint(f: File): uint64 =
   result = 0'u64
   discard readVu64(buf, result)
 
+proc readCount(f: File; elemSize = 1): int =
+  ## A count or length from the file. A corrupt one must not wrap around when
+  ## it is converted to `int` or multiplied by `elemSize`.
+  let v = readVarint(f)
+  assert v <= uint64(high(int) div elemSize), "bif: corrupt count"
+  result = int(v)
+
 proc readStr(f: File): string =
-  let n = int readVarint(f)
+  let n = readCount(f)
   result = newString(n)
   if n > 0:
     readExact(f, cast[pointer](beginStore(result, n)), n)
@@ -391,7 +398,7 @@ proc checkMagic(f: File) =
 proc readIndex(f: File): seq[IndexEntry] =
   ## Read the self-contained index section (`nIndex` followed by the entries),
   ## assuming `f` is already positioned at its start.
-  let nIndex = int readVarint(f)
+  let nIndex = readCount(f)
   result = newSeq[IndexEntry](nIndex)
   for i in 0 ..< nIndex:
     let sym = SymId readVarint(f)
@@ -440,20 +447,20 @@ proc containsSym*(filename, name: string): bool =
     var m = default(array[MagicLen, char])
     if readBytes(f, addr m[0], MagicLen) != MagicLen or m != magic(): return false
     discard readU64(f)                  # indexOffset (fixed 8 bytes)
-    let tokenCount = int readVarint(f)
-    let nTags      = int readVarint(f)
-    let nStrings   = int readVarint(f)
-    let nSyms      = int readVarint(f)
+    let tokenCount = readCount(f, sizeof(NifToken))
+    let nTags      = readCount(f)
+    let nStrings   = readCount(f)
+    let nSyms      = readCount(f)
     discard readVarint(f)               # nFiles
     # Skip the alignment pad, the token block and the tags/strings tables to reach `syms`.
     let pad = tokenPad(int getPos(f))
     setPos(f, getPos(f) + int64(pad) + int64(tokenCount) * sizeof(NifToken))
     for _ in 1 .. nTags + nStrings:
-      let n = int readVarint(f)         # read length first, THEN skip the bytes
+      let n = readCount(f)              # read length first, THEN skip the bytes
       setPos(f, getPos(f) + n)
     # Scan the syms table; only entries of matching length can be `name`.
     for _ in 1 .. nSyms:
-      let n = int readVarint(f)
+      let n = readCount(f)
       if n == name.len:
         var s = newString(n)
         if n > 0:
@@ -476,11 +483,11 @@ proc loadFromFile*(f: File): BifModule =
   checkMagic(f)
   discard readU64(f)               # indexOffset — only `loadIndex*` follows it;
                                    # a full load reaches the index sequentially.
-  let tokenCount = int readVarint(f)
-  let nTags      = int readVarint(f)
-  let nStrings   = int readVarint(f)
-  let nSyms      = int readVarint(f)
-  let nFiles     = int readVarint(f)
+  let tokenCount = readCount(f, sizeof(NifToken))
+  let nTags      = readCount(f)
+  let nStrings   = readCount(f)
+  let nSyms      = readCount(f)
+  let nFiles     = readCount(f)
   # Skip the alignment pad the writer inserted before the token block.
   let pad = tokenPad(int getPos(f))
   if pad > 0: setPos(f, getPos(f) + int64(pad))
@@ -537,9 +544,17 @@ proc rVarint(r: var BifReader): uint64 =
   result = 0'u64
   discard readVu64(buf, result)
 
+proc rCount(r: var BifReader; elemSize = 1): int =
+  ## A count or length from the file, checked against the bytes that are left:
+  ## every element takes at least `elemSize` of them, so a larger count is a
+  ## corrupt file — and checked by division, not by `pos + n * elemSize`,
+  ## which a corrupt count would overflow.
+  let v = rVarint(r)
+  assert v <= uint64((r.size - r.pos) div elemSize), "bif: count exceeds file"
+  result = int(v)
+
 proc rStr(r: var BifReader): string =
-  let n = int rVarint(r)
-  assert r.pos + n <= r.size, "bif: truncated string"
+  let n = rCount(r)
   # `newString(n)` zeros the payload that we immediately overwrite; GCC DSE's
   # that store, arkham emits both. `newStringOfCap` reserves without zeroing.
   result = newStringOfCap(n)
@@ -562,18 +577,19 @@ proc load*(filename: string): BifModule =
         quit "bif: bad magic / incompatible format or word size"
   r.pos = MagicLen
   discard rU64(r)                  # indexOffset — a full load reaches it linearly
-  let tokenCount = int rVarint(r)
-  let nTags      = int rVarint(r)
-  let nStrings   = int rVarint(r)
-  let nSyms      = int rVarint(r)
-  let nFiles     = int rVarint(r)
+  let tokenCount = rCount(r, sizeof(NifToken))
+  let nTags      = rCount(r)
+  let nStrings   = rCount(r)
+  let nSyms      = rCount(r)
+  let nFiles     = rCount(r)
   # Skip the alignment pad so the borrowed token block is NifToken-aligned. The
   # mapping's base is page-aligned, so aligning `r.pos` aligns the absolute address.
   r.pos += tokenPad(r.pos)
   # token block follows the varint header and is borrowed straight from the mapping.
   result = BifModule()
+  assert r.pos <= r.size and tokenCount <= (r.size - r.pos) div sizeof(NifToken),
+    "bif: truncated token block"
   let tokenBytes = tokenCount * sizeof(NifToken)
-  assert r.pos + tokenBytes <= r.size, "bif: truncated token block"
   result.buf = adoptForeignTokens(cast[pointer](r.base + uint(r.pos)), tokenCount)
   r.pos += tokenBytes
   # pools: append in stored (id) order so ids 1,2,… match the token refs. No
@@ -585,7 +601,7 @@ proc load*(filename: string): BifModule =
     discard result.buf.pool.symbols.addOrdered(symRecord(result.buf.pool, rStr(r)))
   for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(rStr(r))
   # symbol index (we are now positioned exactly at indexOffset).
-  let nIndex = int rVarint(r)
+  let nIndex = rCount(r)
   result.index = newSeq[IndexEntry](nIndex)
   for i in 0 ..< nIndex:
     let sym = SymId rVarint(r)
