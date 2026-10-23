@@ -16,6 +16,7 @@
 ##   - `<projroot>/external/...`    — vendored MinGW+LLVM (Windows only)
 
 import std / [os, osproc, strutils, syncio]
+import ".." / ".." / lib / std / crypto / sha2
 
 const
   WinlibsUrl64* =
@@ -27,6 +28,12 @@ const
     "14.2.0posix-19.1.7-12.0.0-msvcrt-r3/" &
     "winlibs-i686-posix-dwarf-gcc-14.2.0-llvm-19.1.7-mingw-w64msvcrt-12.0.0-r3.7z"
   WindepsUrl* = "https://nim-lang.org/download/windeps.zip"
+  # SHA-256 of each archive, pinned here so a swapped download is caught
+  # before it is unpacked and put on PATH. The winlibs ones are the
+  # `.sha256` files of that release; windeps.zip as served since 2021-03-30.
+  WinlibsSha64 = "4a0fd9b9621c3a82cc4f2700cc07c73fc056da50ff147d63828f2899ca3d7d8e"
+  WinlibsSha32 = "08acfc9cec55bff13e984dba6337264acef8e7e9f263007f78bba249f1e83147"
+  WindepsSha = "fcf5eb0c3b17afc08556211a51efc90fa9affaf83ca8a3e7f082e8527f590476"
 
 # --- activation scripts ----------------------------------------------------
 #
@@ -103,7 +110,20 @@ function global:deactivate {
 
 # --- helpers ---------------------------------------------------------------
 
-proc download(url, dest: string) =
+proc sha256File(path: string): string =
+  var f = open(path, fmRead)
+  defer: close(f)
+  var s = initSha256()
+  var chunk = newSeq[byte](1 shl 20)
+  while true:
+    let n = readBuffer(f, addr chunk[0], chunk.len)
+    if n <= 0: break
+    s.update(toOpenArray(chunk, 0, n - 1))
+  result = toHex(finish(s))
+
+proc download(url, dest, sha256: string) =
+  ## Fetch `url` to `dest` and check it against the pinned `sha256`; a file
+  ## that does not match is deleted, never extracted.
   let curl = findExe("curl")
   if curl.len == 0:
     quit "hastur install: `curl` not found in PATH" &
@@ -113,6 +133,11 @@ proc download(url, dest: string) =
             url.quoteShell
   if execShellCmd(cmd) != 0:
     quit "hastur install: download failed: " & url
+  let got = sha256File(dest)
+  if cmpIgnoreCase(got, sha256) != 0:
+    removeFile(dest)
+    quit "hastur install: checksum mismatch for " & url &
+         "\n  expected " & sha256 & "\n  got      " & got
 
 proc extract7z(archive, outDir: string) =
   let z7 = findExe("7z")
@@ -189,6 +214,7 @@ proc runInstall*(args: seq[string]) =
   when defined(windows):
     let cpu = (when hostCPU == "i386": "i386" else: "amd64")
     let mingwUrl = (if cpu == "i386": WinlibsUrl32 else: WinlibsUrl64)
+    let mingwSha = (if cpu == "i386": WinlibsSha32 else: WinlibsSha64)
     let mingwDir = "external" / ("mingw-" & cpu)
     let dllsDir = "external" / ("dlls-" & cpu)
 
@@ -199,7 +225,7 @@ proc runInstall*(args: seq[string]) =
     else:
       let archive = "external" / ("mingw-" & cpu & ".7z")
       echo "Downloading winlibs MinGW+LLVM (~500MB) -> ", archive
-      download(mingwUrl, archive)
+      download(mingwUrl, archive, mingwSha)
       echo "Extracting -> ", mingwDir
       extract7z(archive, "external")
       # winlibs unpacks to `mingw64/` or `mingw32/` at the top level.
@@ -213,7 +239,7 @@ proc runInstall*(args: seq[string]) =
     else:
       let archive = "external" / "windeps.zip"
       echo "Downloading Nim Windows DLL deps -> ", archive
-      download(WindepsUrl, archive)
+      download(WindepsUrl, archive, WindepsSha)
       echo "Extracting -> ", dllsDir
       extract7z(archive, dllsDir)
       try: removeFile(archive) except: discard
