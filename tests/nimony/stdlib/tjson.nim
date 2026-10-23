@@ -125,6 +125,17 @@ proc main() =
     check kind(t.root), JObject
     check hasError(t), true
 
+  block missing_key:
+    # `{}` on an absent key (or a non-object root) used to hand back a nil
+    # cursor that crashed the first reader; now it is a real `null`.
+    var t = parseJson("""{"a": 1}""")
+    check kind(t{"nope"}), JNull
+    check getInt(t{"nope"}, 7), 7'i64
+    check isError(t{"nope"}), false
+    check len(t{"nope"}), 0
+    var arr = parseJson("[1, 2]")
+    check kind(arr{"a"}), JNull
+
   echo "json self-tests passed"
 
 main()
