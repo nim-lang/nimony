@@ -173,9 +173,19 @@ proc emitErrorKv(p: var JsonParser; t: var JsonTree; mode: LineInfoMode;
   emitError(p, t, mode, file, err)
   t.buf.closeTag()
 
-proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId)
+const
+  JsonMaxDepth* = 1000
+    ## Deepest array/object nesting `parseJson` accepts. The parser and every
+    ## tree walker (`$`, `pretty`, `fromJson`, …) recurse once per level, so
+    ## unbounded nesting in untrusted input would overflow the stack. A deeper
+    ## value is replaced by a `(null "nesting too deep")` error placeholder and
+    ## the rest of the input is discarded.
 
-proc parseObject(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId) =
+proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId;
+                depth: int)
+
+proc parseObject(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId;
+                 depth: int) =
   t.buf.openTag JKObject.tagId
   emitInfo(p, t, mode, file)
   discard getTok(p)
@@ -191,7 +201,7 @@ proc parseObject(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: F
     discard getTok(p)
     if p.tok == tkColon:
       discard getTok(p)
-      parseValue(p, t, mode, file)
+      parseValue(p, t, mode, file, depth + 1)
     else:
       emitError(p, t, mode, file, errColonExpected)      # value slot ← error null
     t.buf.closeTag()        # close kv
@@ -204,12 +214,13 @@ proc parseObject(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: F
       emitErrorKv(p, t, mode, file, errCurlyRiExpected)  # mark truncation in-tree
   t.buf.closeTag()          # close oconstr
 
-proc parseArray(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId) =
+proc parseArray(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId;
+                depth: int) =
   t.buf.openTag JKArray.tagId
   emitInfo(p, t, mode, file)
   discard getTok(p)
   while p.tok != tkBracketRi and p.tok != tkEof:
-    parseValue(p, t, mode, file)
+    parseValue(p, t, mode, file, depth + 1)
     if p.tok != tkComma: break
     discard getTok(p)
   if p.tok == tkBracketRi:
@@ -218,7 +229,8 @@ proc parseArray(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: Fi
     emitError(p, t, mode, file, errBracketRiExpected)    # mark truncation in-tree
   t.buf.closeTag()
 
-proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId) =
+proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId;
+                depth: int) =
   case p.tok
   of tkString:
     t.buf.addStrLit p.a; emitInfo(p, t, mode, file); discard getTok(p)
@@ -247,8 +259,18 @@ proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: Fi
   of tkNull:
     t.buf.openTag JKNull.tagId; emitInfo(p, t, mode, file); t.buf.closeTag()
     discard getTok(p)
-  of tkCurlyLe:   parseObject(p, t, mode, file)
-  of tkBracketLe: parseArray(p, t, mode, file)
+  of tkCurlyLe, tkBracketLe:
+    if depth >= JsonMaxDepth:
+      # Too deep: mark the slot and drop the rest of the input, so neither
+      # this parser nor any later tree walk recurses past the limit. Every
+      # enclosing level then sees `tkEof` and closes with its own
+      # truncation marker.
+      emitError(p, t, mode, file, errNestingTooDeep)
+      while p.tok != tkEof: discard getTok(p)
+    elif p.tok == tkCurlyLe:
+      parseObject(p, t, mode, file, depth)
+    else:
+      parseArray(p, t, mode, file, depth)
   else:
     # no value here — emit a (null "expr expected") placeholder and advance so
     # the caller's loop makes progress instead of spinning on the bad token.
@@ -267,7 +289,7 @@ proc parseInto(stream: Stream; filename: string; lineInfo: LineInfoMode;
   if lineInfo != DiscardLineInfo:
     file = t.buf.pool.filenames.getOrIncl(filename)
   discard getTok(p)
-  parseValue(p, t, lineInfo, file)
+  parseValue(p, t, lineInfo, file, 0)
   eat(p, tkEof)
   close(p)
 

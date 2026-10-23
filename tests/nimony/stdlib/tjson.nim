@@ -136,6 +136,19 @@ proc main() =
     var arr = parseJson("[1, 2]")
     check kind(arr{"a"}), JNull
 
+  block nesting_limit:
+    # Deeply nested input used to overflow the parser's stack.
+    var deep = ""
+    for i in 0..<100_000: deep.add '['
+    var t = parseJson(deep)
+    check kind(t.root), JArray
+    check hasError(t), true
+    var ok = ""
+    for i in 0..<JsonMaxDepth: ok.add '['
+    for i in 0..<JsonMaxDepth: ok.add ']'
+    var t2 = parseJson(ok)
+    check hasError(t2), false
+
   echo "json self-tests passed"
 
 main()
