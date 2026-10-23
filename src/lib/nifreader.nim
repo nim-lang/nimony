@@ -179,13 +179,18 @@ proc handleHex(p: pchar): char =
   else: discard
   result = char(output)
 
-proc decodeEscape(p: var pchar): char {.inline.} =
+proc decodeEscape(p: var pchar; sentinel: pchar): char {.inline.} =
   ## Decode a single NIF27 escape body. Caller has already advanced past the
   ## leading `\`. On return, `p` points just past the escape (advanced by 1
   ## for a shortcut, 2 for a hex pair). The shortcut bodies (`n`, `t`, `r`,
   ## `|`, `^`) are deliberately chosen so that none of them is a hex digit
   ## or a NIF control character, which lets a one-byte look-ahead pick the
   ## form unambiguously.
+  ##
+  ## The body never extends past `sentinel` (the end of the token): a token
+  ## that ends in a `\` or in `\H` keeps the backslash literally and `p`
+  ## stays put, so the remaining byte, if any, decodes as an ordinary one.
+  if p >= sentinel: return '\\'
   case ^p
   of 'n': result = '\x0A'; inc p
   of 't': result = '\x09'; inc p
@@ -193,8 +198,11 @@ proc decodeEscape(p: var pchar): char {.inline.} =
   of '|': result = '\x5C'; inc p
   of '^': result = '\x22'; inc p
   else:
-    result = handleHex(p)
-    inc p, 2
+    if p +! 1 < sentinel:
+      result = handleHex(p)
+      inc p, 2
+    else:
+      result = '\\'
 
 proc decodeChar*(t: ExpandedToken): char =
   assert t.tk == CharLit
@@ -202,7 +210,8 @@ proc decodeChar*(t: ExpandedToken): char =
   if result == '\\':
     var p = t.data.p
     inc p
-    result = decodeEscape(p)
+    # the lexer only accepts `'\HH'` as an escaped CharLit
+    result = decodeEscape(p, p +! 2)
 
 proc decodeStr*(r: Reader; t: ExpandedToken): string =
   if TokenHasEscapes in t.flags:
@@ -212,7 +221,7 @@ proc decodeStr*(r: Reader; t: ExpandedToken): string =
     while p < sentinel:
       if ^p == '\\':
         inc p
-        result.add decodeEscape(p)
+        result.add decodeEscape(p, sentinel)
       else:
         result.add ^p
         inc p
@@ -259,7 +268,7 @@ proc decodeComment*(t: ExpandedToken): string =
   while p < sentinel:
     if ^p == '\\':
       inc p
-      result.add decodeEscape(p)
+      result.add decodeEscape(p, sentinel)
     else:
       result.add ^p
       inc p
@@ -272,7 +281,7 @@ proc decodeFilename*(t: ExpandedToken): string =
     while p < sentinel:
       if ^p == '\\':
         inc p
-        result.add decodeEscape(p)
+        result.add decodeEscape(p, sentinel)
       else:
         result.add ^p
         inc p
@@ -807,19 +816,23 @@ proc next*(r: var Reader; result: var ExpandedToken) =
   of '\'':
     inc r.p
     result.data.p = r.p
-    if ^r.p == '\\':
+    if r.p >= r.eof:
+      discard "keep it as UnknownToken"
+    elif ^r.p == '\\':
       result.flags.incl TokenHasEscapes
-      inc r.p
-      if r.p[0] in HexChars and r.p[1] in HexChars:
-        inc r.p, 2
+      # `\HH'` needs four more bytes
+      if r.p +! 3 < r.eof and r.p[1] in HexChars and r.p[2] in HexChars:
+        inc r.p, 3
         if ^r.p == '\'':
           inc r.p
           result.tk = CharLit # now valid
+      else:
+        inc r.p
     elif ^r.p in ControlChars:
       discard "keep it as UnknownToken"
     else:
       inc r.p
-      if ^r.p == '\'':
+      if r.p < r.eof and ^r.p == '\'':
         inc r.p
         result.tk = CharLit # only now valid
     if result.tk == CharLit:
@@ -1229,5 +1242,25 @@ when isMainModule and not defined(nimony):
       close r
     # off by default: plain NIF is read exactly as before
     assert tokens("(a) b", false) == @["(a", ")", "Ident:b"]
+
+  block: # an escape cut short by the end of its token keeps the backslash
+    assert tokens("ab\\", false) == @["Ident:ab\\"]
+    assert tokens("ab\\4", false) == @["Ident:ab\\4"]
+    assert tokens("ab\\4 x", false) == @["Ident:ab\\4", "Ident:x"]
+    assert tokens("\"ab\\", false) == @["StrLit:ab\\"]
+    assert tokens("\"a\\41\"", false) == @["StrLit:aA"]
+    # a char literal cut short by the end of the input is no CharLit
+    for bad in ["'", "'\\", "'\\4", "'\\41", "'a"]:
+      var r = openFromBuffer(bad, "ThisMod")
+      var tok = default(ExpandedToken)
+      r.next(tok)
+      assert tok.tk != CharLit, bad
+      close r
+    block:
+      var r = openFromBuffer("'\\41'", "ThisMod")
+      var tok = default(ExpandedToken)
+      r.next(tok)
+      assert tok.tk == CharLit and decodeChar(tok) == 'A'
+      close r
 
   echo "nifreader: OK"

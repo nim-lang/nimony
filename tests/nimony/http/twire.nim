@@ -148,6 +148,36 @@ proc testRecycle =
     let s = render(m)
     assert s.len == headLen(m)
 
+proc testInjection =
+  # A CR/LF in a value (or a bad `xhdr` name, or a request target with
+  # whitespace) would let whoever chose it write headers of their own; such a
+  # head has no length, so `sendHead` refuses it.
+  for (name, value) in [("X-Ok", "a\r\nSet-Cookie: x=1"), ("X-Ok", "a\nb"),
+                        ("X-Ok", "a\0b"), ("X-Bad\r\nX-Evil", "1"),
+                        ("X Bad", "1"), ("", "1")]:
+    var m = initHttpMsg(tags)
+    m.startResponse(200)
+    m.addOtherHeader(name, value)
+    m.finish()
+    assert headLen(m) == -1, name & ": " & value
+  block:
+    var m = initHttpMsg(tags)
+    m.startResponse(302)
+    m.addHeader(hLocation, "/next\r\n\r\n<html>")
+    m.finish()
+    assert headLen(m) == -1
+  for target in ["/a b", "/a\r\nHost: evil", "/\t", ""]:
+    var m = initHttpMsg(tags)
+    m.startRequest(tag(mGet), target)
+    m.finish()
+    assert headLen(m) == -1, target
+  block:
+    var m = initHttpMsg(tags)
+    m.startResponse(200)
+    m.addOtherHeader("X-Fine", "tab\tand: colon")
+    m.finish()
+    assert headLen(m) > 0
+
 testResponse()
 testRequest()
 testMultiValue()
@@ -157,6 +187,7 @@ testTooSmall()
 testOffset()
 testRoundTrip()
 testRecycle()
+testInjection()
 echo "httpwire: ok"
 
 {.feature: "assumeSync".}  # test program: globals shared freely

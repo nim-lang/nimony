@@ -125,6 +125,30 @@ proc main() =
     check kind(t.root), JObject
     check hasError(t), true
 
+  block missing_key:
+    # `{}` on an absent key (or a non-object root) used to hand back a nil
+    # cursor that crashed the first reader; now it is a real `null`.
+    var t = parseJson("""{"a": 1}""")
+    check kind(t{"nope"}), JNull
+    check getInt(t{"nope"}, 7), 7'i64
+    check isError(t{"nope"}), false
+    check len(t{"nope"}), 0
+    var arr = parseJson("[1, 2]")
+    check kind(arr{"a"}), JNull
+
+  block nesting_limit:
+    # Deeply nested input used to overflow the parser's stack.
+    var deep = ""
+    for i in 0..<100_000: deep.add '['
+    var t = parseJson(deep)
+    check kind(t.root), JArray
+    check hasError(t), true
+    var ok = ""
+    for i in 0..<JsonMaxDepth: ok.add '['
+    for i in 0..<JsonMaxDepth: ok.add ']'
+    var t2 = parseJson(ok)
+    check hasError(t2), false
+
   echo "json self-tests passed"
 
 main()

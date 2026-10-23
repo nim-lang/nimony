@@ -277,8 +277,9 @@ proc sendHead*(c: var HttpConn; m: var HttpMsg;
   ## this never writes, fails and retries.
   ##
   ## `ValueError` for a message with no head to write — one that was never
-  ## built, or moved from. A `BugError` is what it says: `headLen` and
-  ## `writeHead` disagreed about the same tree.
+  ## built, or moved from — or with one that would not come out well formed:
+  ## a CR/LF in a header value and the like (see `headLen`). A `BugError` is
+  ## what it says: `headLen` and `writeHead` disagreed about the same tree.
   let need = headLen(m)
   if need <= 0: raise ValueError
   var buf = newString(need)

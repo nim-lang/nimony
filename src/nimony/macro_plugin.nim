@@ -17,6 +17,7 @@ import ".." / lib / nifreader
 from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
 import nimony_model, decls, programs
+from semos import shellArgs
 
 type
   MacroPlugin* = object
@@ -354,7 +355,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   except:
     echo "Macro plugin: failed to write ", setupFile
     return ""
-  let setupCmd = quoteShell(nimonyExe) & hostCommandLineArgs &
+  let setupCmd = quoteShell(nimonyExe) & shellArgs(hostCommandLineArgs) &
                  " --path:" & quoteShell(srcLibPath) &
                  " --nimcache:" & quoteShell(pluginCache) &
                  " c " & quoteShell(setupFile)
@@ -376,7 +377,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # and tries to overwrite it — which on Windows fails because the outer
   # nimsem (currently paused waiting on this exec) still has it mmap'd.
   # Same rationale as `semos.runProgram` / `semos.prepareEval`.
-  let cmd = quoteShell(nimonyExe) & hostCommandLineArgs &
+  let cmd = quoteShell(nimonyExe) & shellArgs(hostCommandLineArgs) &
             " --path:" & quoteShell(srcLibPath) &
             " --nimcache:" & quoteShell(pluginCache) &
             " -o:" & quoteShell(exePath) &
