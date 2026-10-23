@@ -1210,6 +1210,19 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       dest.takeTree it.n
     dest.addParRi()
     return
+  if c.inGenericDefinition > 0 and not isPragmaBlock and it.n.pragmaKind == ErrorP:
+    # A generic's `when not supportsCopyMem(T): {.error.}`: the branch is
+    # checked at definition time, but whether it is taken is only known for a
+    # concrete `T`. Re-emit the line for the instantiation to decide.
+    dest.addParLe PragmasS, it.n.info
+    if hasScope:
+      var line = start
+      dest.takeTree line
+      it.n = start; skip it.n
+    else:
+      dest.takeTree it.n
+    dest.addParRi()
+    return
   case it.n.pragmaKind
   of BuildP:
     # Repurposed: `{.build(builder, tool[, args]).}` routes this module's Leng IR
