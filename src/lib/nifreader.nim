@@ -24,6 +24,7 @@ const
   ControlCharsOrWhite = ControlChars + {' ', '\n', '\t', '\r'}
   HexChars = {'0'..'9', 'A'..'F'} # lowercase letters are not in the NIF spec!
   Digits = {'0'..'9'}
+  HexNumberDigits = {'0'..'9', 'A'..'F', 'a'..'f'} # unlike escapes, numbers accept both cases
   B62Digits = {'0'..'9', 'A'..'Z', 'a'..'z'}
 
 type
@@ -41,7 +42,7 @@ type
 
   TokenFlag = enum
     TokenHasEscapes, FilenameHasEscapes, TokenHasModuleSuffixExpansion,
-    CommentHasEscapes
+    CommentHasEscapes, NumberHasBasePrefix
 
   ExpandedToken* = object
     tk*: NifKind
@@ -280,23 +281,72 @@ proc decodeFilename*(t: ExpandedToken): string =
     copyMem(beginStore(result, result.len), t.filename.p, t.filename.len)
     endStore(result)
 
+proc digitValue(c: char): int {.inline.} =
+  case c
+  of '0'..'9': result = ord(c) - ord('0')
+  of 'A'..'F': result = ord(c) - ord('A') + 10
+  of 'a'..'f': result = ord(c) - ord('a') + 10
+  else: result = 0
+
+proc decodeMagnitude(t: ExpandedToken; negative: var bool): BiggestUInt =
+  ## Decodes an integer that has a `0x`, `0o` or `0b` prefix. The lexer
+  ## only produces well-formed spellings, so no validation happens here.
+  ## Overflow of the 64 bit range is an assertion failure, as it is for the
+  ## decimal fast path.
+  result = 0
+  var i = 0
+  negative = false
+  if t.data[i] == '-':
+    negative = true
+    inc i
+  var base = 10'u64
+  if i+1 < t.data.len and t.data[i] == '0':
+    case t.data[i+1]
+    of 'x': base = 16; inc i, 2
+    of 'o': base = 8; inc i, 2
+    of 'b': base = 2; inc i, 2
+    else: discard
+  while i < t.data.len:
+    let c = t.data[i]
+    if c != '_':
+      let d = BiggestUInt(digitValue(c))
+      assert result <= (high(BiggestUInt) - d) div base, "integer literal out of range"
+      result = result * base + d
+    inc i
+
 proc decodeFloat*(t: ExpandedToken): BiggestFloat =
   result = 0.0
   assert t.tk == FloatLit
+  # `_` separators are skipped by `parseutils` itself
   let res = parseutils.parseBiggestFloat(toOpenArray(t.data.p, 0, t.data.len-1), result)
   assert res == t.data.len
 
 proc decodeUInt*(t: ExpandedToken): BiggestUInt =
   result = 0
   assert t.tk == UIntLit
-  let res = parseutils.parseBiggestUInt(toOpenArray(t.data.p, 0, t.data.len-1), result)
-  assert res == t.data.len
+  if NumberHasBasePrefix in t.flags:
+    var negative = false
+    result = decodeMagnitude(t, negative)
+    assert not negative or result == 0, "negative unsigned integer literal"
+  else:
+    let res = parseutils.parseBiggestUInt(toOpenArray(t.data.p, 0, t.data.len-1), result)
+    assert res == t.data.len
 
 proc decodeInt*(t: ExpandedToken): BiggestInt =
   result = 0
   assert t.tk == IntLit
-  let res = parseutils.parseBiggestInt(toOpenArray(t.data.p, 0, t.data.len-1), result)
-  assert res == t.data.len
+  if NumberHasBasePrefix in t.flags:
+    var negative = false
+    let m = decodeMagnitude(t, negative)
+    if negative:
+      assert m <= BiggestUInt(high(BiggestInt)) + 1, "integer literal out of range"
+      result = cast[BiggestInt](0'u64 - m)
+    else:
+      assert m <= BiggestUInt(high(BiggestInt)), "integer literal out of range"
+      result = BiggestInt(m)
+  else:
+    let res = parseutils.parseBiggestInt(toOpenArray(t.data.p, 0, t.data.len-1), result)
+    assert res == t.data.len
 
 proc decodeDisamb*(t: ExpandedToken): int =
   ## The value of a `SymDisamb` component: `abc.12.mod` gives 12. Only the
@@ -308,23 +358,56 @@ proc decodeDisamb*(t: ExpandedToken): int =
     result = result * 10 + (ord(t.data[i]) - ord('0'))
     inc i
 
+proc digitsWithSeparators(p: var pchar; eof: pointer; len: var int;
+                          digitSet: set[char]): bool {.inline.} =
+  ## Consumes `D ('_'? D)*`; false if there is no leading digit or a `_` is
+  ## not followed by a digit.
+  result = p < eof and ^p in digitSet
+  while result and p < eof:
+    if ^p in digitSet:
+      inc p
+      inc len
+    elif ^p == '_':
+      inc p
+      inc len
+      if p >= eof or ^p notin digitSet:
+        result = false
+    else:
+      break
+
+template malformedNumber(p: var pchar; eof: pointer; result: var ExpandedToken) =
+  # consume the rest of the malformed number so it is one error token
+  while p < eof and ^p notin ControlCharsOrWhite:
+    inc p
+    inc result.data.len
+  result.tk = UnknownToken
+
+template unsignedSuffix(p: var pchar; eof: pointer; result: var ExpandedToken) =
+  if p < eof and ^p == 'u':
+    result.tk = UIntLit
+    inc p
+    # ignore the suffix 'u'
+
+template hasBasePrefix(p: pchar; eof: pointer): bool =
+  ## `p` starts `0x`, `0o` or `0b`; see `handlePrefixedNumber`.
+  ^p == '0' and p +! 1 < eof and ^(p +! 1) in {'x', 'o', 'b'}
+
 proc handleNumber(r: var Reader; result: var ExpandedToken) =
+  ## Scans a decimal number atom; `_` may separate two digits. A malformed
+  ## spelling (`1_`, `1__2`, `1._0`, ...) is consumed and reported as
+  ## `UnknownToken`. Base-prefixed integers are `handlePrefixedNumber`'s.
   useCpuRegisters:
     if p < eof and ^p in Digits:
       result.tk = IntLit # overwritten if we detect a float or unsigned
-      while p < eof and ^p in Digits:
-        inc p
-        inc result.data.len
+      var ok = digitsWithSeparators(p, eof, result.data.len, Digits)
 
-      if p < eof and ^p == '.':
+      if ok and p < eof and ^p == '.':
         result.tk = FloatLit
         inc p
         inc result.data.len
-        while p < eof and ^p in Digits:
-          inc p
-          inc result.data.len
+        ok = digitsWithSeparators(p, eof, result.data.len, Digits)
 
-      if p < eof and ^p == 'E':
+      if ok and p < eof and ^p == 'E':
         result.tk = FloatLit
         inc p
         inc result.data.len
@@ -332,14 +415,40 @@ proc handleNumber(r: var Reader; result: var ExpandedToken) =
           if ^p == '-' or ^p == '+':
             inc p
             inc result.data.len
-        while p < eof and ^p in Digits:
-          inc p
-          inc result.data.len
+        ok = digitsWithSeparators(p, eof, result.data.len, Digits)
 
-      if p < eof and ^p == 'u':
-        result.tk = UIntLit
-        inc p
-        # ignore the suffix 'u'
+      if not ok:
+        malformedNumber(p, eof, result)
+      elif result.tk == IntLit:
+        unsignedSuffix(p, eof, result)
+
+proc handlePrefixedNumber(r: var Reader; result: var ExpandedToken) =
+  ## Scans an integer with a `0x`, `0o` or `0b` prefix; the caller has checked
+  ## `hasBasePrefix`. A prefix without digits (`0x`) or a decimal digit outside
+  ## the base (`0b102`) makes the whole spelling an `UnknownToken`.
+  useCpuRegisters:
+    result.tk = IntLit
+    result.flags.incl NumberHasBasePrefix
+    var ok = false
+    case ^(p +! 1)
+    of 'x':
+      inc p, 2
+      inc result.data.len, 2
+      ok = digitsWithSeparators(p, eof, result.data.len, HexNumberDigits)
+    of 'o':
+      inc p, 2
+      inc result.data.len, 2
+      ok = digitsWithSeparators(p, eof, result.data.len, {'0'..'7'})
+    else:
+      inc p, 2
+      inc result.data.len, 2
+      ok = digitsWithSeparators(p, eof, result.data.len, {'0', '1'})
+    if ok and p < eof and ^p in Digits: ok = false
+
+    if not ok:
+      malformedNumber(p, eof, result)
+    else:
+      unsignedSuffix(p, eof, result)
 
 proc decodeB62(c: char): int {.inline.} =
   ## Decode a single base62 digit (0-9, A-Z, a-z) to its numeric value 0..61.
@@ -736,15 +845,22 @@ proc next*(r: var Reader; result: var ExpandedToken) =
     result.data.p = r.p
     inc r.p
     inc result.data.len
-    handleNumber r, result
+    if r.p < r.eof and hasBasePrefix(r.p, r.eof): handlePrefixedNumber r, result
+    else: handleNumber r, result
     if continuesAsStr(r): lineStr(r, result)
     else: handleSuffix(r, result)
 
-  of '0'..'9':
+  of '0':
+    # The only digit that can start `0x`, `0o` or `0b`.
+    result.data.p = r.p
+    if hasBasePrefix(r.p, r.eof): handlePrefixedNumber r, result
+    else: handleNumber r, result
+    if continuesAsStr(r): lineStr(r, result)
+    else: handleSuffix(r, result)
+
+  of '1'..'9':
     # bare-digit number (NIF27): no sign prefix on positives.
-    useCpuRegisters:
-      result.data.p = p
-      result.data.len = 0
+    result.data.p = r.p
     handleNumber r, result
     if continuesAsStr(r): lineStr(r, result)  # `2024-08-12`, `14:05`
     else: handleSuffix(r, result)
@@ -926,6 +1042,45 @@ when isMainModule and not defined(nimony):
       of ParLe: result.add "(" & $tok.data
       of ParRi: result.add ")"
       else: result.add $tok.tk & ":" & r.decodeStr(tok)
+    close r
+
+  proc numbers(input: string): seq[string] =
+    ## Every token of `input`, numbers rendered by their decoded value.
+    var r = openFromBuffer(input, "ThisMod")
+    result = @[]
+    var tok = default(ExpandedToken)
+    while true:
+      r.next(tok)
+      case tok.tk
+      of EofToken: break
+      of IntLit: result.add "i" & $decodeInt(tok)
+      of UIntLit: result.add "u" & $decodeUInt(tok)
+      of FloatLit: result.add "f" & $int64(decodeFloat(tok) * 100.0) # in hundredths
+      of ParLe: result.add "(" & $tok.data
+      of ParRi: result.add ")"
+      else: result.add $tok.tk & ":" & $tok.data
+    close r
+
+  # Numbers: base prefixes and `_` digit separators.
+  assert numbers("(n 0xFF 0xff 0o377 0b1111_1111 -0xFF 0xDEAD_BEEFu 1_000_000)") ==
+    @["(n", "i255", "i255", "i255", "i255", "i-255", "u3735928559", "i1000000", ")"]
+  assert numbers("1_234.5_6E+0_2 1234.56E+02 0x1E3 012 -0o17 0b0u") ==
+    @["f12345600", "f12345600", "i483", "i12", "i-15", "u0"]
+  assert numbers("0x7FFF_FFFF_FFFF_FFFF -0x8000_0000_0000_0000 0xFFFF_FFFF_FFFF_FFFFu") ==
+    @["i9223372036854775807", "i-9223372036854775808", "u18446744073709551615"]
+  # malformed spellings are one error token each
+  for bad in ["0x", "0o8", "0b102", "0x_FF", "1_", "1__2", "1_.0", "1._0",
+              "1E_2", "1E+_2", "1_u"]:
+    assert numbers(bad) == @["UnknownToken:" & bad], bad
+  # `#` and `:` may appear literally inside a string; the comment follows the quote
+  block:
+    var r = openFromBuffer("(tag 0 \"2026-10-11T12:00:00Z\") \"key: value; # text\"#comment#", "ThisMod")
+    var tok = default(ExpandedToken)
+    r.next(tok); r.next(tok); r.next(tok)
+    assert tok.tk == StringLit and r.decodeStr(tok) == "2026-10-11T12:00:00Z"
+    r.next(tok); r.next(tok)
+    assert tok.tk == StringLit and r.decodeStr(tok) == "key: value; # text"
+    assert decodeComment(tok) == "comment"
     close r
 
   # Off by default: a symbol is one token carrying the whole string, exactly
