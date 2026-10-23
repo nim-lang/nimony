@@ -66,7 +66,8 @@ type
     errQuoteExpected,     ## `"` or `'` expected
     errEOC_Expected,      ## `*/` expected
     errEofExpected,       ## EOF expected
-    errExprExpected       ## expr expected
+    errExprExpected,      ## expr expected
+    errNestingTooDeep     ## arrays/objects nested beyond the parser's limit
 
   ParserState = enum
     stateEof, stateStart, stateObject, stateArray, stateExpectArrayComma,
@@ -93,7 +94,8 @@ const
     "'\"' or \"'\" expected",
     "'*/' expected",
     "EOF expected",
-    "expression expected"
+    "expression expected",
+    "nesting too deep"
   ]
   tokToStr: array[TokKind, string] = [
     "invalid token",
