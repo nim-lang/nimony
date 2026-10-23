@@ -2,7 +2,7 @@
 # leaves the process; it must not reach a `Writer` that may: the bytes of its
 # pointers mean nothing anywhere else. The check is `supportsCopyMem(T)` at
 # instantiation, so the generic itself compiles.
-import std/streamio
+import std/[streamio, channels]
 
 let (r, w) = pipe()
 let ok = sender[int](w)

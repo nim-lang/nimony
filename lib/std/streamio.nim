@@ -45,15 +45,15 @@
 ##   Connection constructors take `dl` for setup only; the returned streams
 ##   start with `never`, so setup does not become a connection lifetime limit.
 ##
-## * `pipe` is an in-process `Reader`/`Writer` pair over a ring; `channel[T]`
-##   is a typed view of one, with copyable `Sender[T]`/`Receiver[T]` ends.
-##   Waiting on either parks the task, it does not block a thread.
+## * `pipe` is an in-process `Reader`/`Writer` pair over a ring; waiting on
+##   it parks the task, it does not block a thread. `std/channels` builds
+##   typed channels on its record form, `recordPipe`.
 ##
 ## Not here yet (see the issue): `openReadWrite`, `startTls`, deadlines for
 ## waits on a pipe, `sendfile`/`splice`/kTLS fast paths in `copy`, and
 ## cross-thread close of a descriptor another lane is parked on.
 
-import std/[ioring, socket, dns, paths, commonio, strutils, threadpool, ticketlocks, typetraits]
+import std/[ioring, socket, dns, paths, commonio, strutils, threadpool, ticketlocks]
 import std/compress/gzip
 
 export ioring.Deadline, ioring.never, ioring.afterMs
@@ -147,7 +147,7 @@ method hasMore*(a: Adapter): bool {.base.} =
 
 # --------------------------------------------------------------------- ring --
 #
-# `pipe` and `channel` share one in-process ring. Waiting on it is parking: a
+# `pipe` and `recordPipe` share one in-process ring. Waiting on it is parking: a
 # side that cannot go on leaves its continuation in the ring and suspends, and
 # the side that changes the state takes it out and submits it to the pool. So
 # there is no condition variable and a waiting task costs no thread. The spin
@@ -161,13 +161,13 @@ type
     lock: TicketLock
     data: ptr UncheckedArray[char]   ## `cap` bytes
     cap, head, len: int    ## in bytes
-    recSize: int           ## 1 for a byte pipe, `sizeof(T)` for a channel
+    recSize: int           ## 1 for a byte pipe, else see `recordPipe`
     readerGone, writerGone: bool
     recvWaiters, sendWaiters: seq[Continuation]
     drop: nil DropProc     ## destroys a record left behind; nil for bytes
 
   Ring = ref RingObj
-    ## A channel's capacity is a multiple of `recSize` and every transfer is
+    ## A record ring's capacity is a multiple of `recSize` and every transfer is
     ## a whole record, so a record never wraps around the end.
 
 proc `=destroy`(g: RingObj) =
@@ -312,7 +312,7 @@ type
     ckFd,          ## a file or a socket
     ckString,      ## the bytes of a string (read only)
     ckMemory       ## an in-memory sink (write only), see `extract`
-    ckPipe         ## the in-process ring of `pipe` and `channel`
+    ckPipe         ## the in-process ring of `pipe` and `recordPipe`
 
   CoreObj = object
     kind: CoreKind
@@ -949,197 +949,69 @@ proc pipe*(capacity = 64 * 1024): (Reader, Writer) =
   c.ring = newRing(max(capacity, 1), 1)
   result = (initReader(c), initWriter(c))
 
-# ---------------------------------------------------------------- channels --
+# ----------------------------------------------------------------- records --
 #
-# A `Sender[T]` and a `Receiver[T]` are copyable; all copies share ONE end, a
-# `Writer` or `Reader`, so a core never has more than one of each and its
-# lifecycle stays that of a connection: the last copy gone is the end gone.
-#
-# On a channel's own ring (the end's `ring`), a send or a receive is one whole
-# record under the ring's lock, so copies on different threads need nothing
-# more.
-# Over any other stream, the end's buffer and a partial write would mix up
-# messages, so the copies take turns: `EndLock` parks the ones waiting.
+# Fixed-size records moved through a pipe's ring in one piece each, the
+# building blocks of `std/channels`.
 
-type
-  EndLock = object
-    spin: TicketLock
-    held: bool
-    waiters: seq[Continuation]
-
-proc lockWait(L: ptr EndLock) {.passive.} =
-  let k = delay()
-  var ready = false
-  acquire L.spin
-  if L.held:
-    L.waiters.add k
-  else:
-    L.held = true
-    ready = true
-  release L.spin
-  if ready: submit(k)
-  suspend()
-
-proc lockEnd(L: ptr EndLock) {.passive.} =
-  var got = false
-  acquire L.spin
-  if not L.held:
-    L.held = true
-    got = true
-  release L.spin
-  if not got: lockWait(L)          # `unlockEnd` hands the lock over
-
-proc unlockEnd(L: ptr EndLock) =
-  var wake: seq[Continuation] = @[]
-  acquire L.spin
-  if L.waiters.len > 0: takeWaiters(L.waiters, 1, wake)   # stays held
-  else: L.held = false
-  release L.spin
-  resume wake
-
-type
-  SendEndObj = object
-    lock: EndLock
-    w: Writer
-    ring: nil Ring        ## set when sends go straight into a channel ring
-
-  SendEnd = ref SendEndObj
-
-  RecvEndObj = object
-    lock: EndLock
-    r: Reader
-    ring: nil Ring
-
-  RecvEnd = ref RecvEndObj
-
-  Sender*[T] = object
-    ## The sending end of a channel. Copies share the end.
-    e: nil SendEnd
-
-  Receiver*[T] = object
-    ## The receiving end of a channel. Copies share the end.
-    e: nil RecvEnd
-
-proc newEndLock(): EndLock =
-  EndLock(spin: TicketLock(), held: false, waiters: @[])
-
-proc sendEnd(w: sink Writer; recSize: int): SendEnd {.raises.} =
-  let c = w.core
-  if c == nil or w.finished: raise BadOperation
-  var g = c.ring
-  if g != nil and (g.recSize != recSize or w.adapter != nil or w.buf.len != 0):
-    g = nil
-  result = SendEnd(lock: newEndLock(), w: w, ring: g)
-
-proc recvEnd(r: sink Reader; recSize: int): RecvEnd {.raises.} =
-  let c = r.core
-  if c == nil: raise BadOperation
-  var g = c.ring
-  if g != nil and (g.recSize != recSize or r.adapter != nil or
-      r.buffered != 0 or r.raw.len != 0):
-    g = nil
-  result = RecvEnd(lock: newEndLock(), r: r, ring: g)
-
-proc sendBytes(e: SendEnd; p: pointer; n: int): bool {.passive, raises.} =
-  let msg = toOpenArray(cast[ptr UncheckedArray[char]](p), 0, n - 1)
-  let g = e.ring
-  if g != nil:
-    result = ringWrite(g, msg, true)
-  else:
-    lockEnd(addr e.lock)
-    try:
-      write(e.w, msg)
-      result = true
-    except ErrorCode as err:
-      let c = e.w.core
-      if err == BadDescriptor and c != nil and c.kind == ckPipe:
-        result = false           # a byte pipe whose reader is gone
-      else:
-        unlockEnd(addr e.lock)
-        raise err
-    unlockEnd(addr e.lock)
-
-proc recvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
-  let dest = cast[ptr UncheckedArray[char]](p)
-  let g = e.ring
-  if g != nil:
-    result = ringRead(g, p, n, true) == n
-  else:
-    lockEnd(addr e.lock)
-    var got = 0
-    try:
-      while got < n:
-        var rest = toOpenArray(dest, got, n - 1)
-        let k = read(e.r, rest)
-        if k == 0:
-          if got > 0: raise ProtocolError     # a message cut short
-          break
-        got += k
-    except ErrorCode as err:
-      unlockEnd(addr e.lock)
-      raise err
-    unlockEnd(addr e.lock)
-    result = got == n
-
-proc dropRecord[T](p: pointer) {.nimcall.} =
-  var x {.noinit.}: T
-  copyMem(addr x, p, sizeof(T))       # `x` owns it now and destroys it
-
-proc channel*[T](capacity: int): (Receiver[T], Sender[T]) =
-  ## A channel for up to `capacity` values. Any `T` works: a value moves as
-  ## its bytes, and what it points to stays where it is. The ring underneath
-  ## is never handed out, so nothing can write those pointers to a file.
+proc recordPipe*(capacity, recSize: int;
+                 drop: nil proc (p: pointer) {.nimcall.}): (Reader, Writer) =
+  ## A `pipe` for `capacity` records of `recSize` bytes each. `drop` destroys
+  ## a record that is never read; nil for plain bytes.
   let c = newCore(ckPipe, -1)
-  let g = newRing(max(capacity, 1) * sizeof(T), sizeof(T))
-  when not supportsCopyMem(T):
-    g.drop = dropRecord[T]
+  let g = newRing(max(capacity, 1) * recSize, recSize)
+  g.drop = drop
   c.ring = g
-  result = (Receiver[T](e: RecvEnd(lock: newEndLock(), r: initReader(c), ring: g)),
-            Sender[T](e: SendEnd(lock: newEndLock(), w: initWriter(c), ring: g)))
+  result = (initReader(c), initWriter(c))
 
-proc sender*[T](w: sink Writer): Sender[T] {.raises.} =
-  ## Values of `T` over any `Writer`, as their bytes. Between machines the
-  ## layout and the byte order must match. `send` does not flush; see `flush`.
-  when not supportsCopyMem(T):
-    {.error: "T contains pointers; use channel[T]()".}
-  result = Sender[T](e: sendEnd(w, sizeof(T)))
+proc hasRecordRing*(w: Writer; recSize: int): bool =
+  ## `w` is a `recordPipe` writer for `recSize` with nothing buffered and no
+  ## adapter, so `writeRecord` may bypass it.
+  result = false
+  let c = w.core
+  if c != nil:
+    let g = c.ring
+    result = g != nil and g.recSize == recSize and w.adapter == nil and
+      w.buf.len == 0
 
-proc receiver*[T](r: sink Reader): Receiver[T] {.raises.} =
-  ## Values of `T` from any `Reader`. A message cut short by the end of the
-  ## data raises `ProtocolError`.
-  when not supportsCopyMem(T):
-    {.error: "T contains pointers; use channel[T]()".}
-  result = Receiver[T](e: recvEnd(r, sizeof(T)))
+proc hasRecordRing*(r: Reader; recSize: int): bool =
+  ## Like the writer's: `readRecord` may bypass `r`.
+  result = false
+  let c = r.core
+  if c != nil:
+    let g = c.ring
+    result = g != nil and g.recSize == recSize and r.adapter == nil and
+      r.buffered == 0 and r.raw.len == 0
 
-proc send*[T](s: Sender[T]; x: sink T): bool {.passive, raises.} =
-  ## Parks while the channel is full. False when no receiver is left; `x` is
-  ## consumed either way. Raises what the `Writer` underneath raises.
-  let e = s.e
-  if e == nil: raise BadOperation
-  var v = x
-  result = sendBytes(e, addr v, sizeof(T))
-  if result: `=wasMoved`(v)           # its bytes are the receiver's now
+proc recordRing(c: nil Core): Ring {.raises.} =
+  if c == nil: raise BadOperation
+  let g = c.ring
+  if g == nil: raise BadOperation
+  result = g
 
-proc recv*[T](r: Receiver[T]; dest: var T): bool {.passive, raises.} =
-  ## Parks while the channel is empty. False when no sender is left and
-  ## nothing is buffered; `dest` is then untouched.
-  let e = r.e
-  if e == nil: raise BadOperation
-  var v {.noinit.}: T
-  zeroMem(addr v, sizeof(T))          # a moved-from value until filled
-  result = recvBytes(e, addr v, sizeof(T))
-  if result: dest = move v
+proc writeRecord*(w: Writer; p: pointer): bool {.passive, raises.} =
+  ## One record from `p` straight into the ring, waiting for room; only after
+  ## `hasRecordRing`. False when the reader is gone. Safe from several threads
+  ## at once.
+  let g = recordRing(w.core)
+  result = ringWrite(g, toOpenArray(cast[ptr UncheckedArray[char]](p), 0, g.recSize - 1), true)
 
-proc flush*[T](s: Sender[T]) {.passive, raises.} =
-  ## For a sender over a buffered `Writer`: everything sent goes out. A
-  ## channel's own sends need no flush.
-  let e = s.e
-  if e == nil: raise BadOperation
-  if e.ring == nil:
-    lockEnd(addr e.lock)
-    try:
-      flush(e.w)
-    except ErrorCode as err:
-      unlockEnd(addr e.lock)
-      raise err
-    unlockEnd(addr e.lock)
+proc readRecord*(r: Reader; p: pointer): bool {.passive, raises.} =
+  ## One record from the ring into `p`, waiting for it; only after
+  ## `hasRecordRing`. False once the writer is gone and the ring is empty.
+  ## Safe from several threads at once.
+  let g = recordRing(r.core)
+  result = ringRead(g, p, g.recSize, true) == g.recSize
+
+proc isOpen*(r: Reader): bool =
+  ## Neither closed nor default-constructed.
+  result = r.core != nil
+
+proc isOpen*(w: Writer): bool =
+  ## Neither closed, finished nor default-constructed.
+  result = w.core != nil and not w.finished
+
+proc isPipe*(w: Writer): bool =
+  ## `w` writes into a `pipe` or a `recordPipe`.
+  let c = w.core
+  result = c != nil and c.kind == ckPipe
