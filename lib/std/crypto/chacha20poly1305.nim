@@ -87,7 +87,11 @@ func chachaBlock*(key: ChaChaKey; counter: uint32; nonce: ChaChaNonce;
 func chacha20Xor*(key: ChaChaKey; counter: uint32; nonce: ChaChaNonce;
                   data: var openArray[byte]) =
   ## Encrypts (or, identically, decrypts) `data` in place with the keystream
-  ## starting at block `counter`.
+  ## starting at block `counter`. The 32-bit block counter is all one
+  ## (key, nonce) pair has: `data` longer than the blocks left before it would
+  ## wrap is a bug in the caller and stops the program, because past the wrap
+  ## the keystream repeats -- from block 0, which the AEAD uses as the
+  ## Poly1305 key.
   var ks = default(array[64, byte])
   var ctr = counter
   var pos = 0
@@ -98,6 +102,9 @@ func chacha20Xor*(key: ChaChaKey; counter: uint32; nonce: ChaChaNonce;
       data[pos] = data[pos] xor ks[j]
       inc pos
       inc j
+    if ctr == high(uint32) and pos < data.len:
+      {.cast(noSideEffect).}:
+        panic "chacha20: data too long for one nonce (block counter wraps)\n"
     ctr = ctr + 1'u32
 
 # --------------------------------------------------------------- Poly1305 ---
@@ -345,10 +352,16 @@ func aeadTag(key: ChaChaKey; nonce: ChaChaNonce;
   p.update(le64(uint64(ciphertext.len)))
   result = p.finish()
 
+const
+  MaxAeadData* = (1'i64 shl 32 - 1) * 64
+    ## The most bytes one (key, nonce) pair can seal (RFC 8439 §2.8's P_MAX):
+    ## the data blocks are counted from 1 up to `high(uint32)`.
+
 func chacha20Poly1305Seal*(key: ChaChaKey; nonce: ChaChaNonce;
                            aad: openArray[byte]; data: var openArray[byte]): Poly1305Tag =
   ## Encrypts `data` in place and returns the tag that authenticates it
-  ## together with `aad`.
+  ## together with `aad`. At most `MaxAeadData` bytes; more is a bug that
+  ## stops the program (see `chacha20Xor`).
   chacha20Xor(key, 1'u32, nonce, data)
   result = aeadTag(key, nonce, aad, data)
 
@@ -357,7 +370,9 @@ func chacha20Poly1305Open*(key: ChaChaKey; nonce: ChaChaNonce;
                            tag: openArray[byte]): bool =
   ## Checks `tag` and, only if it is right, decrypts `data` in place. On
   ## `false` the ciphertext is left untouched: nothing derived from an
-  ## unauthenticated message ever reaches the caller.
+  ## unauthenticated message ever reaches the caller. More than
+  ## `MaxAeadData` bytes cannot have been sealed and are refused.
+  if int64(data.len) > MaxAeadData: return false
   let expected = aeadTag(key, nonce, aad, data)
   if not constantTimeEquals(expected, tag): return false
   chacha20Xor(key, 1'u32, nonce, data)
