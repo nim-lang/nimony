@@ -23,12 +23,17 @@ const
 
 func `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 func `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
+func `[]`*[I, T; J: SomeInteger](x: array[I, T], i: J): var T {.magic: "ArrAt".}
+  ## Any integer indexes an array by ordinal value, relative to the array's own
+  ## index range; never via the 0-based openArray `[]` (nim-lang/nimony#2750).
 func `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
 func `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
 func `[]`*[T](x: UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
   (x[i]) = elem
 template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
+  (x[i]) = elem
+template `[]=`*[I, T; J: SomeInteger](x: array[I, T], i: J; elem: T) =
   (x[i]) = elem
 template `[]=`*(x: cstring, i: int; elem: char) =
   (x[i]) = elem
