@@ -45,11 +45,15 @@
 ##   Connection constructors take `dl` for setup only; the returned streams
 ##   start with `never`, so setup does not become a connection lifetime limit.
 ##
-## Not here yet (see the issue): `openReadWrite`, `pipe`/channels, `startTls`,
-## `sendfile`/`splice`/kTLS fast paths in `copy`, and cross-thread close of a
-## descriptor another lane is parked on.
+## * `pipe` is an in-process `Reader`/`Writer` pair over a ring; `channel[T]`
+##   is a typed view of one, with copyable `Sender[T]`/`Receiver[T]` ends.
+##   Waiting on either parks the task, it does not block a thread.
+##
+## Not here yet (see the issue): `openReadWrite`, `startTls`, deadlines for
+## waits on a pipe, `sendfile`/`splice`/kTLS fast paths in `copy`, and
+## cross-thread close of a descriptor another lane is parked on.
 
-import std/[ioring, socket, dns, paths, commonio, strutils]
+import std/[ioring, socket, dns, paths, commonio, strutils, threadpool, ticketlocks, typetraits]
 import std/compress/gzip
 
 export ioring.Deadline, ioring.never, ioring.afterMs
@@ -149,6 +153,166 @@ method hasMore*(a: Adapter): bool {.base.} =
   ## not. The reader then returns `0`, and the bytes below stay where they are.
   result = true
 
+# --------------------------------------------------------------------- ring --
+#
+# `pipe` and `channel` share one in-process ring. Waiting on it is parking: a
+# side that cannot go on leaves its continuation in the ring and suspends, and
+# the side that changes the state takes it out and submits it to the pool. So
+# there is no condition variable and a waiting task costs no thread. The spin
+# lock only guards indices and waiter lists, and it is never held across a
+# park or a `submit` (which may run the continuation inline).
+
+type
+  DropProc = proc (p: pointer) {.nimcall.}
+
+  RingObj = object
+    lock: TicketLock
+    data: ptr UncheckedArray[char]   ## `cap` bytes
+    cap, head, len: int    ## in bytes
+    recSize: int           ## 1 for a byte pipe, `sizeof(T)` for a channel
+    readerGone, writerGone: bool
+    recvWaiters, sendWaiters: seq[Continuation]
+    drop: nil DropProc     ## destroys a record left behind; nil for bytes
+
+  Ring = ref RingObj
+    ## A channel's capacity is a multiple of `recSize` and every transfer is
+    ## a whole record, so a record never wraps around the end.
+
+proc `=destroy`(g: RingObj) =
+  if g.data != nil: dealloc(g.data)
+  `=destroy`(g.recvWaiters)
+  `=destroy`(g.sendWaiters)
+
+proc `=copy`(dest: var RingObj; src: RingObj) {.error.}
+
+proc newRing(capacity, recSize: int): Ring =
+  Ring(lock: TicketLock(), data: cast[ptr UncheckedArray[char]](alloc(capacity)),
+       cap: capacity, head: 0, len: 0, recSize: recSize,
+       readerGone: false, writerGone: false,
+       recvWaiters: @[], sendWaiters: @[], drop: nil)
+
+proc takeWaiters(ws: var seq[Continuation]; n: int; dest: var seq[Continuation]) =
+  ## The `n` longest waiting, oldest first.
+  let k = min(n, ws.len)
+  if k > 0:
+    for i in 0 ..< k: dest.add ws[i]
+    var rest: seq[Continuation] = @[]
+    for i in k ..< ws.len: rest.add ws[i]
+    ws = rest
+
+proc resume(ks: seq[Continuation]) =
+  for k in ks: submit(k)
+
+proc enlist(g: Ring; k: Continuation; sending: bool) =
+  ## Parks `k` until the ring changes in its favour. Between the caller's check
+  ## and this lock the other side may already have acted; then `k` runs at once.
+  var ready = false
+  acquire g.lock
+  if sending:
+    ready = g.readerGone or g.cap - g.len >= g.recSize
+    if not ready: g.sendWaiters.add k
+  else:
+    ready = g.writerGone or g.len >= g.recSize
+    if not ready: g.recvWaiters.add k
+  release g.lock
+  if ready: submit(k)
+
+proc park(g: Ring; sending: bool) {.passive.} =
+  let k = delay()
+  enlist(g, k, sending)
+  suspend()
+
+proc ringWrite(g: Ring; data: openArray[char]; whole: bool): bool {.passive.} =
+  ## Copies `data` into the ring, waiting for room. `whole`: all of it at
+  ## once, as one record. False when the reader is gone; then the bytes that
+  ## did not fit yet are not sent.
+  result = true
+  var pos = 0
+  while result and pos < data.len:
+    var wake: seq[Continuation] = @[]
+    var n = 0
+    acquire g.lock
+    if g.readerGone:
+      result = false
+    else:
+      let cap = g.cap
+      let free = cap - g.len
+      let want = data.len - pos
+      n = if whole: (if free >= want: want else: 0) else: min(free, want)
+      if n > 0:
+        let tail = (g.head + g.len) mod cap
+        let first = min(n, cap - tail)
+        copyMem(addr g.data[tail], addr data[pos], first)
+        if n > first: copyMem(addr g.data[0], addr data[pos + first], n - first)
+        g.len += n
+        takeWaiters(g.recvWaiters, g.len div g.recSize, wake)
+    release g.lock
+    resume wake
+    if n > 0: pos += n
+    elif result: park(g, true)
+
+proc ringRead(g: Ring; p: pointer; maxLen: int; whole: bool): int {.passive.} =
+  ## Up to `maxLen` bytes into `p`, waiting for them; `whole`: exactly one
+  ## record. `0` once the writer is gone and the ring is empty.
+  let dest = cast[ptr UncheckedArray[char]](p)
+  result = -1
+  while result < 0:
+    var wake: seq[Continuation] = @[]
+    acquire g.lock
+    if g.len >= g.recSize:
+      let cap = g.cap
+      let n = if whole: g.recSize else: min(g.len, maxLen)
+      let first = min(n, cap - g.head)
+      copyMem(addr dest[0], addr g.data[g.head], first)
+      if n > first: copyMem(addr dest[first], addr g.data[0], n - first)
+      g.head = (g.head + n) mod cap
+      g.len -= n
+      takeWaiters(g.sendWaiters, (cap - g.len) div g.recSize, wake)
+      result = n
+    elif g.writerGone:
+      result = 0
+    release g.lock
+    resume wake
+    if result < 0: park(g, false)
+
+proc takeLeft(g: Ring): seq[char] =
+  ## What is still in the ring, with the lock held; whole records never wrap.
+  result = newSeq[char](g.len)
+  if g.len > 0: copyMem(addr result[0], addr g.data[g.head], g.len)
+  g.head = 0
+  g.len = 0
+
+proc dropLeft(g: Ring; left: var seq[char]) =
+  ## Destroys the whole records in `left`, which no lock protects any more.
+  if g.drop != nil:
+    var i = 0
+    while i + g.recSize <= left.len:
+      g.drop(addr left[i])
+      i += g.recSize
+
+proc ringReaderGone(g: Ring) =
+  ## Nobody can take what is in the ring, and nothing more gets in: senders
+  ## fail from now on, and what they sent before is destroyed here.
+  var wake: seq[Continuation] = @[]
+  var left: seq[char] = @[]
+  acquire g.lock
+  if not g.readerGone:
+    g.readerGone = true
+    takeWaiters(g.sendWaiters, g.sendWaiters.len, wake)
+    left = takeLeft(g)
+  release g.lock
+  resume wake
+  dropLeft(g, left)
+
+proc ringWriterGone(g: Ring) =
+  ## Readers drain what is left, then see the end.
+  var wake: seq[Continuation] = @[]
+  acquire g.lock
+  g.writerGone = true
+  takeWaiters(g.recvWaiters, g.recvWaiters.len, wake)
+  release g.lock
+  resume wake
+
 # --------------------------------------------------------------------- core --
 
 type
@@ -156,6 +320,7 @@ type
     ckFd,          ## a file or a socket
     ckString,      ## the bytes of a string (read only)
     ckMemory       ## an in-memory sink (write only), see `extract`
+    ckPipe         ## the in-process ring of `pipe` and `channel`
 
   CoreObj = object
     kind: CoreKind
@@ -167,6 +332,7 @@ type
     peerDone: bool               ## below the reader: the source has ended
     shutDown: bool               ## our direction has been ended
     dl: Deadline
+    ring: nil Ring               ## ckPipe only
 
   Core = ref CoreObj
     ## Shared by the ends one constructor returns. They are move-only, so the
@@ -175,18 +341,26 @@ type
 proc `=destroy`(c: CoreObj) =
   if c.kind == ckFd and c.fd >= 0:
     closeFd(c.fd)
+  let g = c.ring
+  if g != nil and g.len > 0:
+    # The reader never existed or never went away properly: last chance.
+    var left = takeLeft(g)
+    dropLeft(g, left)
   `=destroy`(c.tls)
   `=destroy`(c.data)
+  `=destroy`(c.ring)
 
 proc newCore(kind: CoreKind; fd: cint): Core =
   Core(kind: kind, fd: fd, isSocket: false, tls: nil, data: "", dataPos: 0,
-       peerDone: false, shutDown: false, dl: never)
+       peerDone: false, shutDown: false, dl: never, ring: nil)
 
 proc endWriting(c: Core) =
   ## Our direction is over: the peer sees end of data and may still answer.
   if c.isSocket and not c.shutDown and c.fd >= 0:
     when defined(posix):
       discard posixShutdown(c.fd, cint(1))      # SHUT_WR
+  let g = c.ring
+  if g != nil and not c.shutDown: ringWriterGone(g)
   c.shutDown = true
 
 proc toErr(n: int): ErrorCode {.inline.} =
@@ -213,6 +387,9 @@ proc coreSend(c: Core; data: openArray[char]) {.passive, raises.} =
     c.data.addBytes data
   of ckString:
     raise BadOperation
+  of ckPipe:
+    let g = c.ring
+    if g == nil or not ringWrite(g, data, false): raise BadDescriptor
   of ckFd:
     let e = c.tls
     if e != nil:
@@ -248,6 +425,13 @@ proc coreRecv(c: Core; dest: var string): int {.passive, raises.} =
     if result == 0: c.peerDone = true
   of ckMemory:
     raise BadOperation
+  of ckPipe:
+    let g = c.ring
+    if g == nil: raise BadOperation
+    let old = dest.len
+    result = ringRead(g, beginStore(dest, old + ChunkSize, old), ChunkSize, false)
+    dest.setLen old + result
+    if result == 0: c.peerDone = true
   of ckFd:
     let e = c.tls
     if e == nil:
@@ -312,6 +496,16 @@ type
     buf: string          ## caller bytes not yet pushed through the adapter
     adapter: nil Adapter
     finished: bool
+
+proc `=destroy`*(r: Reader) =
+  let c = r.core
+  if c != nil:
+    let g = c.ring
+    if g != nil: ringReaderGone(g)
+  `=destroy`(r.core)
+  `=destroy`(r.buf)
+  `=destroy`(r.raw)
+  `=destroy`(r.adapter)
 
 proc `=dup`*(x: Reader): Reader {.error.}
 
@@ -476,7 +670,10 @@ proc readAll*(r: var Reader): string {.passive, raises.} =
 
 proc close*(r: var Reader) {.raises.} =
   ## Optional: the destructor does the same.
-  if r.core == nil: raise BadOperation
+  let c = r.core
+  if c == nil: raise BadOperation
+  let g = c.ring
+  if g != nil: ringReaderGone(g)
   r.core = nil
 
 # ------------------------------------------------------------------ writing --
@@ -500,9 +697,14 @@ proc push(w: var Writer; final: bool) {.passive, raises.} =
     coreSend(c, data)
 
 proc write*(w: var Writer; data: openArray[char]) {.passive, raises.} =
-  if w.core == nil or w.finished: raise BadOperation
-  w.buf.addBytes data
-  if w.buf.len >= FlushAt: push(w, false)
+  let c = w.core
+  if c == nil or w.finished: raise BadOperation
+  if c.kind == ckPipe and w.adapter == nil and w.buf.len == 0:
+    # A pipe's writer has no buffer: what is written is readable at once.
+    coreSend(c, data)
+  else:
+    w.buf.addBytes data
+    if w.buf.len >= FlushAt: push(w, false)
 
 proc write*(w: var Writer; data: string) {.passive, raises.} =
   write(w, toOpenArray(data, 0, data.len - 1))
@@ -766,8 +968,10 @@ proc detachWriter*(w: var Writer) =
   ## `close_notify`, no `shutdown`. For a protocol layer that has written
   ## its request and keeps only the reader (`std/httpclient`), where ending
   ## the direction would make many servers drop the connection.
-  if w.core != nil:
+  let c = w.core
+  if c != nil:
     w.finished = true
+    if c.ring != nil: endWriting(c)     # a pipe has no peer to confuse
     w.core = nil
 
 # --------------------------------------------------------------------- copy --
@@ -783,3 +987,210 @@ proc copy*(dest: var Writer; src: var Reader): int64 {.passive, raises.} =
       result += int64(src.buf.len - src.pos)
       src.pos = src.buf.len
     if not refill(src): return
+
+# --------------------------------------------------------------------- pipe --
+
+proc pipe*(capacity = 64 * 1024): (Reader, Writer) =
+  ## An in-process byte pipe of `capacity` bytes, e.g. a body produced by
+  ## another task. The writer has no buffer: what is written is readable at
+  ## once. `read` parks while the pipe is empty and returns `0` once the writer
+  ## is gone; `write` parks while it is full and raises `BadDescriptor` once
+  ## the reader is gone.
+  let c = newCore(ckPipe, -1)
+  c.ring = newRing(max(capacity, 1), 1)
+  result = (initReader(c), initWriter(c))
+
+# ---------------------------------------------------------------- channels --
+#
+# A `Sender[T]` and a `Receiver[T]` are copyable; all copies share ONE end, a
+# `Writer` or `Reader`, so a core never has more than one of each and its
+# lifecycle stays that of a connection: the last copy gone is the end gone.
+#
+# On a channel's own ring (the end's `ring`), a send or a receive is one whole
+# record under the ring's lock, so copies on different threads need nothing
+# more.
+# Over any other stream, the end's buffer and a partial write would mix up
+# messages, so the copies take turns: `EndLock` parks the ones waiting.
+
+type
+  EndLock = object
+    spin: TicketLock
+    held: bool
+    waiters: seq[Continuation]
+
+proc lockWait(L: ptr EndLock) {.passive.} =
+  let k = delay()
+  var ready = false
+  acquire L.spin
+  if L.held:
+    L.waiters.add k
+  else:
+    L.held = true
+    ready = true
+  release L.spin
+  if ready: submit(k)
+  suspend()
+
+proc lockEnd(L: ptr EndLock) {.passive.} =
+  var got = false
+  acquire L.spin
+  if not L.held:
+    L.held = true
+    got = true
+  release L.spin
+  if not got: lockWait(L)          # `unlockEnd` hands the lock over
+
+proc unlockEnd(L: ptr EndLock) =
+  var wake: seq[Continuation] = @[]
+  acquire L.spin
+  if L.waiters.len > 0: takeWaiters(L.waiters, 1, wake)   # stays held
+  else: L.held = false
+  release L.spin
+  resume wake
+
+type
+  SendEndObj = object
+    lock: EndLock
+    w: Writer
+    ring: nil Ring        ## set when sends go straight into a channel ring
+
+  SendEnd = ref SendEndObj
+
+  RecvEndObj = object
+    lock: EndLock
+    r: Reader
+    ring: nil Ring
+
+  RecvEnd = ref RecvEndObj
+
+  Sender*[T] = object
+    ## The sending end of a channel. Copies share the end.
+    e: nil SendEnd
+
+  Receiver*[T] = object
+    ## The receiving end of a channel. Copies share the end.
+    e: nil RecvEnd
+
+proc newEndLock(): EndLock =
+  EndLock(spin: TicketLock(), held: false, waiters: @[])
+
+proc sendEnd(w: sink Writer; recSize: int): SendEnd {.raises.} =
+  let c = w.core
+  if c == nil or w.finished: raise BadOperation
+  var g = c.ring
+  if g != nil and (g.recSize != recSize or w.adapter != nil or w.buf.len != 0):
+    g = nil
+  result = SendEnd(lock: newEndLock(), w: w, ring: g)
+
+proc recvEnd(r: sink Reader; recSize: int): RecvEnd {.raises.} =
+  let c = r.core
+  if c == nil: raise BadOperation
+  var g = c.ring
+  if g != nil and (g.recSize != recSize or r.adapter != nil or
+      r.buffered != 0 or r.raw.len != 0):
+    g = nil
+  result = RecvEnd(lock: newEndLock(), r: r, ring: g)
+
+proc sendBytes(e: SendEnd; p: pointer; n: int): bool {.passive, raises.} =
+  let msg = toOpenArray(cast[ptr UncheckedArray[char]](p), 0, n - 1)
+  let g = e.ring
+  if g != nil:
+    result = ringWrite(g, msg, true)
+  else:
+    lockEnd(addr e.lock)
+    try:
+      write(e.w, msg)
+      result = true
+    except ErrorCode as err:
+      let c = e.w.core
+      if err == BadDescriptor and c != nil and c.kind == ckPipe:
+        result = false           # a byte pipe whose reader is gone
+      else:
+        unlockEnd(addr e.lock)
+        raise err
+    unlockEnd(addr e.lock)
+
+proc recvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
+  let dest = cast[ptr UncheckedArray[char]](p)
+  let g = e.ring
+  if g != nil:
+    result = ringRead(g, p, n, true) == n
+  else:
+    lockEnd(addr e.lock)
+    var got = 0
+    try:
+      while got < n:
+        var rest = toOpenArray(dest, got, n - 1)
+        let k = read(e.r, rest)
+        if k == 0:
+          if got > 0: raise ProtocolError     # a message cut short
+          break
+        got += k
+    except ErrorCode as err:
+      unlockEnd(addr e.lock)
+      raise err
+    unlockEnd(addr e.lock)
+    result = got == n
+
+proc dropRecord[T](p: pointer) {.nimcall.} =
+  var x {.noinit.}: T
+  copyMem(addr x, p, sizeof(T))       # `x` owns it now and destroys it
+
+proc channel*[T](capacity: int): (Receiver[T], Sender[T]) =
+  ## A channel for up to `capacity` values. Any `T` works: a value moves as
+  ## its bytes, and what it points to stays where it is. The ring underneath
+  ## is never handed out, so nothing can write those pointers to a file.
+  let c = newCore(ckPipe, -1)
+  let g = newRing(max(capacity, 1) * sizeof(T), sizeof(T))
+  when not supportsCopyMem(T):
+    g.drop = dropRecord[T]
+  c.ring = g
+  result = (Receiver[T](e: RecvEnd(lock: newEndLock(), r: initReader(c), ring: g)),
+            Sender[T](e: SendEnd(lock: newEndLock(), w: initWriter(c), ring: g)))
+
+proc sender*[T](w: sink Writer): Sender[T] {.raises.} =
+  ## Values of `T` over any `Writer`, as their bytes. Between machines the
+  ## layout and the byte order must match. `send` does not flush; see `flush`.
+  when not supportsCopyMem(T):
+    {.error: "T contains pointers; use channel[T]()".}
+  result = Sender[T](e: sendEnd(w, sizeof(T)))
+
+proc receiver*[T](r: sink Reader): Receiver[T] {.raises.} =
+  ## Values of `T` from any `Reader`. A message cut short by the end of the
+  ## data raises `ProtocolError`.
+  when not supportsCopyMem(T):
+    {.error: "T contains pointers; use channel[T]()".}
+  result = Receiver[T](e: recvEnd(r, sizeof(T)))
+
+proc send*[T](s: Sender[T]; x: sink T): bool {.passive, raises.} =
+  ## Parks while the channel is full. False when no receiver is left; `x` is
+  ## consumed either way. Raises what the `Writer` underneath raises.
+  let e = s.e
+  if e == nil: raise BadOperation
+  var v = x
+  result = sendBytes(e, addr v, sizeof(T))
+  if result: `=wasMoved`(v)           # its bytes are the receiver's now
+
+proc recv*[T](r: Receiver[T]; dest: var T): bool {.passive, raises.} =
+  ## Parks while the channel is empty. False when no sender is left and
+  ## nothing is buffered; `dest` is then untouched.
+  let e = r.e
+  if e == nil: raise BadOperation
+  var v {.noinit.}: T
+  zeroMem(addr v, sizeof(T))          # a moved-from value until filled
+  result = recvBytes(e, addr v, sizeof(T))
+  if result: dest = move v
+
+proc flush*[T](s: Sender[T]) {.passive, raises.} =
+  ## For a sender over a buffered `Writer`: everything sent goes out. A
+  ## channel's own sends need no flush.
+  let e = s.e
+  if e == nil: raise BadOperation
+  if e.ring == nil:
+    lockEnd(addr e.lock)
+    try:
+      flush(e.w)
+    except ErrorCode as err:
+      unlockEnd(addr e.lock)
+      raise err
+    unlockEnd(addr e.lock)

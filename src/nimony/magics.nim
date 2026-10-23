@@ -53,6 +53,7 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "Xor": res XorX
   of "SizeOf": res SizeofX
   of "CanFormCycles": res CanFormCyclesX
+  of "SupportsCopyMem": res SupportsCopyMemX
   of "Type", "TypeOf": res TypeofX
   of "Addr": res AddrX
   of "Deref": res DerefX
