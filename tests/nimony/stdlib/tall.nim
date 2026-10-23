@@ -120,6 +120,7 @@ import std/typetraits
 import std/unicode
 import std/uri
 import std/varints
+import std/vectors
 import std/volatile
 import std/widestrs
 import std/wordwrap
