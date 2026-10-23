@@ -1,0 +1,32 @@
+5 bytes:      8105
+126 bytes:    827e007e
+65535 bytes:  827effff
+65536 bytes:  827f0000000000010000
+70000 bytes:  827f0000000000011170
+the 16-bit form: binary 200 bytes, fin: true, masked: false
+the 64-bit form: binary 70000 bytes
+a ping: ping 0 bytes, fin: true
+masked header: 818561626364
+masked hello:  09070f080e
+unmasked:      hello
+the second and third byte, masked from offset 1: 070f
+reserved opcode:  bad
+fragmented ping:  bad
+long ping:        bad
+top bit set:      bad
+16-bit for 5:     bad
+64-bit for 126:   bad
+one byte:         incomplete
+half a length:    incomplete
+half a mask:      incomplete
+a length of 1048576 bytes parses, and its size is the reader's business
+1004 may not be sent: true
+1005 may not be sent: true
+1006 may not be sent: true
+1015 may not be sent: true
+999 may not be sent:  true
+5000 may not be sent: true
+1000 may be sent:     true
+2999 may be sent:     true
+3000 may be sent:     true
+4999 may be sent:     true

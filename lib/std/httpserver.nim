@@ -61,9 +61,10 @@
 
 import std / [http/httpconn, http/httpmsg, http/httpparse, http/httpwire,
               http/httpdate, http/httpcoding, compress/gzip, socket, ioring,
-              uri, assertions]
+              streamio, uri, assertions]
 
-export httpmsg, httpcoding, httpconn.HttpConn, socket.PeerAddr, socket.`$`, socket.ip,
+export httpmsg, httpcoding, httpconn.HttpConn, streamio,
+       socket.PeerAddr, socket.`$`, socket.ip,
        socket.port, socket.family, socket.isV4, socket.isV6
 export ioring.Deadline, ioring.never, ioring.afterMs, ioring.after,
        ioring.monoNow, ioring.listenTcp, ioring.setNonBlocking,
@@ -162,10 +163,12 @@ type
     codedStream: bool      ## the streamed response is going through `enc`
     enc: Encoder
     zbuf: string           ## encoded bytes on their way to the socket
+    error*: ErrorCode      ## what ended a connection `accept` could not set
+                           ## up (a failed TLS handshake, say); `Success` otherwise
 
-# No explicit `=copy` here: `HttpConn` holds a `Socket`, whose `=copy` is
-# already an error, so this object is move-only by construction. Restating it
-# suppresses the generated `=dup` and then `accept` cannot return one.
+# No explicit `=copy` here: `HttpConn` holds move-only streams, so this object
+# is move-only by construction. Restating it suppresses the generated `=dup`
+# and then `accept` cannot return one.
 
 # ------------------------------------------------------------- listening ---
 
@@ -190,9 +193,14 @@ proc close*(s: var HttpServer) =
     closeFd(s.fd)
     s.fd = -1
 
-proc initConnection(s: HttpServer; fd: cint; peer: PeerAddr): HttpConnection =
-  HttpConnection(
-    conn: initHttpConn(fd, afterMs(s.idleMs), s.tags),
+proc initConnection(s: HttpServer; fd: cint; peer: PeerAddr;
+                    tls: nil TlsEngine): HttpConnection {.passive.} =
+  ## The connection's policy fields, and — when `fd` is a real descriptor —
+  ## its streams. A failed TLS handshake closes the descriptor and answers a
+  ## closed connection carrying the reason in `error`; that is the same shape
+  ## `accept` uses when the listener is gone, because a constructor that owns a
+  ## move-only value cannot raise.
+  result = HttpConnection(
     peer: peer,
     req: initHttpMsg(s.tags),
     res: initHttpMsg(s.tags),
@@ -204,9 +212,15 @@ proc initConnection(s: HttpServer; fd: cint; peer: PeerAddr): HttpConnection =
     checkTargets: s.checkTargets,
     compression: s.compression, compressLevel: s.compressLevel,
     compressMinLen: s.compressMinLen, coding: ceIdentity,
-    codedStream: false, enc: default(Encoder), zbuf: "")
+    codedStream: false, enc: default(Encoder), zbuf: "", error: Success)
+  if fd >= 0:
+    result.conn = initHttpConn(cint(fd), afterMs(s.idleMs), s.tags, tls)
+    if not result.conn.isOpen:
+      result.phase = phClosed
+      result.error = result.conn.error
 
-proc accept*(s: var HttpServer): HttpConnection {.passive.} =
+proc accept*(s: var HttpServer; tls: nil TlsEngine = nil): HttpConnection {.
+    passive.} =
   ## The next connection.
   ##
   ## Answers a connection whose `isClosed` is true when the listener is gone,
@@ -226,14 +240,20 @@ proc accept*(s: var HttpServer): HttpConnection {.passive.} =
   ##
   ## No deadline either: a listener with nothing connecting to it is idle, not
   ## stuck, and the thing that ends this wait is `close`.
+  ##
+  ## `tls` is the engine for this one connection, or `nil` for plaintext. An
+  ## engine serves one connection, so a TLS server constructs a new one for
+  ## every `accept`; the handshake runs before `accept` returns and its
+  ## deadline is the server's idle budget. A failed handshake answers a closed
+  ## connection whose `error` says why (`c.isClosed` is then true).
   var peer = PeerAddr(raw: Sockaddr_storage())
   let fd = acceptAsync(s.fd, peer, never)
   if fd < 0:
-    result = initConnection(s, -1.cint, peer)
+    result = initConnection(s, -1.cint, peer, nil)
     result.phase = phClosed
   else:
     setNonBlocking(cint(fd))
-    result = initConnection(s, cint(fd), peer)
+    result = initConnection(s, cint(fd), peer, tls)
 
 # --------------------------------------------------------- reading a head --
 
@@ -244,6 +264,35 @@ proc close*(c: var HttpConnection) =
   if c.phase != phClosed:
     c.phase = phClosed
     c.conn.close()
+
+proc takeStreams*(c: var HttpConnection): (Reader, Writer) =
+  ## The connection's streams, given up.
+  ##
+  ## An upgrade — to WebSocket, say — is exactly this: from here on the bytes
+  ## on the descriptor are not HTTP, and the HTTP layer must not touch them.
+  ## The caller owns the streams from now on, and the connection is closed so
+  ## that a `next` after the upgrade cannot read a second request out of a
+  ## stream that is no longer HTTP.
+  ##
+  ## The bytes the HTTP layer had already read travel with the `Reader` in its
+  ## own buffer: a client that sent its first frame right behind the handshake
+  ## request has them already read, and they are the new protocol's, not the
+  ## old one's.
+  c.phase = phClosed
+  result = c.conn.takeStreams()
+
+proc requestHeader*(c: var HttpConnection; name: string): string =
+  ## The value of the request's header `name`, whatever its spelling; `""` when
+  ## the request does not carry it.
+  ##
+  ## The name is matched case-insensitively, and the headers nobody registered
+  ## are searched too: a protocol that brings its own headers has no tag for
+  ## them, and the handler is the one that knows their names.
+  c.req.findHeader(name)
+
+proc countRequestHeader*(c: var HttpConnection; name: string): int =
+  ## How many times the request carries the header `name`.
+  c.req.countHeaderByName(name)
 
 proc sendStatusOnly(c: var HttpConnection; status: int) {.passive.} =
   ## The last thing said on a connection that is about to be dropped: a bare
@@ -447,6 +496,13 @@ template query*(c: HttpConnection): lent string = c.queryBuf
   ## has to split before it decodes or a `%26` becomes a separator.
 
 proc meth*(c: HttpConnection): TagId {.inline.} = c.req.methodOf
+
+proc version*(c: HttpConnection): TagId {.inline.} =
+  ## The HTTP version of the request.
+  ##
+  ## `tag(tV11)` for HTTP/1.1 — the only version a WebSocket handshake may
+  ## use, since RFC 6455 §4.2.1 says so.
+  c.req.versionOf
 
 proc isHead*(c: HttpConnection): bool {.inline.} =
   c.req.methodOf == tag(mHead)

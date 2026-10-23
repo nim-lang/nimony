@@ -1,0 +1,29 @@
+[1] the handshake: 101
+[1] the accept value of RFC 6455: true
+[2] the echo: hello
+[3] 70000 bytes echoed: true
+[4] 50 messages echoed: true
+[5] the pong: true ping
+[6] three fragments, put back together: one two three
+[7] the pong came first: true, the message: one two
+[8] the close is echoed: 1000
+[9] the server closes: 1000
+[11] a wrong version: 426, and the one to use: true
+[12] no key: 400
+[13] not a GET: 405
+[14] an unmasked frame: 1002
+[15] text that is not text: 1007
+[16] a message that is too big: 1009
+[17] a reserved opcode: 1002
+[18] a reserved bit: 1002
+[19] an origin that is not welcome: 403
+[20] a 64 bit length for two bytes: 1002
+[21] the close code 1005: 1002
+[22] a ping of 126 bytes: 1002
+[23] a fragmented ping: 1002
+[24] a continuation out of nowhere: 1002
+[25] text split mid-sequence: true (2 bytes)
+[26] text that is not text once assembled: 1007
+[27] a frame that claims two megabytes: 1009
+[28] HTTP/1.0: 400
+the server saw the hang-up: EndOfStreamError

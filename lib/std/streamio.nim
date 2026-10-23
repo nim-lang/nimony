@@ -92,7 +92,15 @@ type
     ## the byte stream. Subclass it and override `run`.
 
 method start*(e: TlsEngine; host: string) {.base, raises.} =
-  ## Begin the handshake for `host` (queues the first flight).
+  ## Begin the client handshake for `host` (queues the first flight).
+  raise UnimplementedOperation
+
+method startServer*(e: TlsEngine) {.base, raises.} =
+  ## Begin the server handshake (queues the first flight). The engine's own
+  ## constructor carries the certificate and the parameters; this is the point
+  ## at which a server engine starts reading the client's `ClientHello`.
+  ##
+  ## The stream core does all the I/O, exactly as it does for `start`.
   raise UnimplementedOperation
 
 method recordsIn*(e: TlsEngine; src: openArray[char]; used: var int) {.base, raises.} =
@@ -264,6 +272,19 @@ proc coreRecv(c: Core; dest: var string): int {.passive, raises.} =
 
 proc tlsHandshake(c: Core; e: TlsEngine; host: string) {.passive, raises.} =
   e.start(host)
+  while not e.isConnected:
+    sendRecords(c, e)
+    var recs = ""
+    if readFd(c, recs) == 0: raise EndOfStreamError
+    var used = 0
+    e.recordsIn(recs, used)
+  sendRecords(c, e)                    # our Finished
+
+proc tlsAccept(c: Core; e: TlsEngine) {.passive, raises.} =
+  ## The same handshake loop as `tlsHandshake`, from the server's side: the
+  ## engine speaks first in neither direction, so the loop is identical — only
+  ## whose message comes first differs, and that is the engine's business.
+  e.startServer()
   while not e.isConnected:
     sendRecords(c, e)
     var recs = ""
@@ -662,6 +683,36 @@ proc connectCore(address: string; tls: nil TlsEngine; dl: Deadline): Core {.
     c.tls = tls
     tlsHandshake(c, tls, host)     # on failure the core closes the socket
   result = c
+
+proc fdCore(fd: cint; dl: Deadline): Core =
+  let c = newCore(ckFd, fd)
+  c.isSocket = true
+  c.dl = dl
+  result = c
+
+proc plainFd*(fd: cint; dl = never): (Reader, Writer) =
+  ## The streams over an already connected, non-blocking descriptor, without
+  ## TLS. This does no I/O, so it can be built outside a passive chain; `dl` is
+  ## the streams' standing deadline. The core owns `fd` from here on.
+  let c = fdCore(fd, dl)
+  result = (initReader(c), initWriter(c))
+
+proc acceptFd*(fd: cint; tls: nil TlsEngine = nil; dl = never): (Reader, Writer) {.
+    passive, raises.} =
+  ## The streams over an already accepted, non-blocking descriptor. TLS, when
+  ## an engine is given, is handshaken as the server before this returns; `dl`
+  ## bounds that handshake, and the returned streams start with `never`, like
+  ## the `connect` constructors. The core owns `fd` from here on.
+  ##
+  ## This is the server-side counterpart of `connect`, for a caller that has
+  ## its own listener (`std/httpserver`, `std/dns`). The engine is per
+  ## connection: a server makes a new one for every accepted descriptor.
+  let c = fdCore(fd, dl)
+  if tls != nil:
+    c.tls = tls
+    tlsAccept(c, tls)                 # on failure the core closes the socket
+  c.dl = never
+  result = (initReader(c), initWriter(c))
 
 proc connect*(address: string; tls: nil TlsEngine = nil;
               dl = never): (Reader, Writer) {.
