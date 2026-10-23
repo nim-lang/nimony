@@ -462,18 +462,23 @@ iterator pairs*(n: JsonNode): (string, JsonNode) =
           yield (key, c2)
           c2.skip
 
-proc `{}`*(t: var JsonTree; key: string): JsonNode =
-  ## Object member lookup. Returns a nil-ish node when the root is not an
-  ## object or the key is absent (`kind` of it is `JNull`).
+proc nullNode(): JsonNode =
+  ## A standalone `(null)`. The node's cursor keeps its one-token buffer alive,
+  ## so it is as safe to read, skip and print as any node of a parsed tree.
+  var t = createJsonTree()
+  t.buf.openTag JKNull.tagId
+  t.buf.closeTag()
   result = t.root
-  if kind(result) != JObject:
-    return
+
+proc `{}`*(t: var JsonTree; key: string): JsonNode =
+  ## Object member lookup. Returns a `JNull` node when the root is not an
+  ## object or the key is absent.
   var c = t.root
-  for k, v in pairs(c):
-    if k == key:
-      result = v
-      return
-  result = JsonNode()
+  if kind(c) == JObject:
+    for k, v in pairs(c):
+      if k == key:
+        return v
+  result = nullNode()
 
 # ── Pretty-print ─────────────────────────────────────────────────────────────
 
