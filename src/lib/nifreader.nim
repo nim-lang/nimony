@@ -375,59 +375,80 @@ proc digitsWithSeparators(p: var pchar; eof: pointer; len: var int;
     else:
       break
 
+template malformedNumber(p: var pchar; eof: pointer; result: var ExpandedToken) =
+  # consume the rest of the malformed number so it is one error token
+  while p < eof and ^p notin ControlCharsOrWhite:
+    inc p
+    inc result.data.len
+  result.tk = UnknownToken
+
+template unsignedSuffix(p: var pchar; eof: pointer; result: var ExpandedToken) =
+  if p < eof and ^p == 'u':
+    result.tk = UIntLit
+    inc p
+    # ignore the suffix 'u'
+
+template hasBasePrefix(p: pchar; eof: pointer): bool =
+  ## `p` starts `0x`, `0o` or `0b`; see `handlePrefixedNumber`.
+  ^p == '0' and p +! 1 < eof and ^(p +! 1) in {'x', 'o', 'b'}
+
 proc handleNumber(r: var Reader; result: var ExpandedToken) =
-  ## Scans a number atom: decimal, or an integer with a `0x`, `0o` or `0b`
-  ## prefix; `_` may separate two digits. A malformed spelling (`0x`, `1_`,
-  ## `1__2`, `1._0`, ...) is consumed and reported as `UnknownToken`.
+  ## Scans a decimal number atom; `_` may separate two digits. A malformed
+  ## spelling (`1_`, `1__2`, `1._0`, ...) is consumed and reported as
+  ## `UnknownToken`. Base-prefixed integers are `handlePrefixedNumber`'s.
   useCpuRegisters:
     if p < eof and ^p in Digits:
       result.tk = IntLit # overwritten if we detect a float or unsigned
-      var ok = true
-      var prefixed = false
-      if ^p == '0' and p +! 1 < eof:
-        var digitSet: set[char] = {}
-        case ^(p +! 1)
-        of 'x': digitSet = HexNumberDigits
-        of 'o': digitSet = {'0'..'7'}
-        of 'b': digitSet = {'0', '1'}
-        else: discard
-        if digitSet != {}:
-          prefixed = true
-          result.flags.incl NumberHasBasePrefix
-          inc p, 2
-          inc result.data.len, 2
-          ok = digitsWithSeparators(p, eof, result.data.len, digitSet)
-          # `0b102`: a decimal digit outside the base is not a new token
-          if ok and p < eof and ^p in Digits: ok = false
-      if not prefixed:
+      var ok = digitsWithSeparators(p, eof, result.data.len, Digits)
+
+      if ok and p < eof and ^p == '.':
+        result.tk = FloatLit
+        inc p
+        inc result.data.len
         ok = digitsWithSeparators(p, eof, result.data.len, Digits)
 
-        if ok and p < eof and ^p == '.':
-          result.tk = FloatLit
-          inc p
-          inc result.data.len
-          ok = digitsWithSeparators(p, eof, result.data.len, Digits)
-
-        if ok and p < eof and ^p == 'E':
-          result.tk = FloatLit
-          inc p
-          inc result.data.len
-          if p < eof:
-            if ^p == '-' or ^p == '+':
-              inc p
-              inc result.data.len
-          ok = digitsWithSeparators(p, eof, result.data.len, Digits)
+      if ok and p < eof and ^p == 'E':
+        result.tk = FloatLit
+        inc p
+        inc result.data.len
+        if p < eof:
+          if ^p == '-' or ^p == '+':
+            inc p
+            inc result.data.len
+        ok = digitsWithSeparators(p, eof, result.data.len, Digits)
 
       if not ok:
-        # consume the rest of the malformed number so it is one error token
-        while p < eof and ^p notin ControlCharsOrWhite:
-          inc p
-          inc result.data.len
-        result.tk = UnknownToken
-      elif p < eof and ^p == 'u' and result.tk == IntLit:
-        result.tk = UIntLit
-        inc p
-        # ignore the suffix 'u'
+        malformedNumber(p, eof, result)
+      elif result.tk == IntLit:
+        unsignedSuffix(p, eof, result)
+
+proc handlePrefixedNumber(r: var Reader; result: var ExpandedToken) =
+  ## Scans an integer with a `0x`, `0o` or `0b` prefix; the caller has checked
+  ## `hasBasePrefix`. A prefix without digits (`0x`) or a decimal digit outside
+  ## the base (`0b102`) makes the whole spelling an `UnknownToken`.
+  useCpuRegisters:
+    result.tk = IntLit
+    result.flags.incl NumberHasBasePrefix
+    var ok = false
+    case ^(p +! 1)
+    of 'x':
+      inc p, 2
+      inc result.data.len, 2
+      ok = digitsWithSeparators(p, eof, result.data.len, HexNumberDigits)
+    of 'o':
+      inc p, 2
+      inc result.data.len, 2
+      ok = digitsWithSeparators(p, eof, result.data.len, {'0'..'7'})
+    else:
+      inc p, 2
+      inc result.data.len, 2
+      ok = digitsWithSeparators(p, eof, result.data.len, {'0', '1'})
+    if ok and p < eof and ^p in Digits: ok = false
+
+    if not ok:
+      malformedNumber(p, eof, result)
+    else:
+      unsignedSuffix(p, eof, result)
 
 proc decodeB62(c: char): int {.inline.} =
   ## Decode a single base62 digit (0-9, A-Z, a-z) to its numeric value 0..61.
@@ -824,15 +845,22 @@ proc next*(r: var Reader; result: var ExpandedToken) =
     result.data.p = r.p
     inc r.p
     inc result.data.len
-    handleNumber r, result
+    if r.p < r.eof and hasBasePrefix(r.p, r.eof): handlePrefixedNumber r, result
+    else: handleNumber r, result
     if continuesAsStr(r): lineStr(r, result)
     else: handleSuffix(r, result)
 
-  of '0'..'9':
+  of '0':
+    # The only digit that can start `0x`, `0o` or `0b`.
+    result.data.p = r.p
+    if hasBasePrefix(r.p, r.eof): handlePrefixedNumber r, result
+    else: handleNumber r, result
+    if continuesAsStr(r): lineStr(r, result)
+    else: handleSuffix(r, result)
+
+  of '1'..'9':
     # bare-digit number (NIF27): no sign prefix on positives.
-    useCpuRegisters:
-      result.data.p = p
-      result.data.len = 0
+    result.data.p = r.p
     handleNumber r, result
     if continuesAsStr(r): lineStr(r, result)  # `2024-08-12`, `14:05`
     else: handleSuffix(r, result)
