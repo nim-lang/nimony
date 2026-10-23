@@ -6,3 +6,8 @@
 [6] injection: BadOperation
 [7] reserved header: BadOperation
 [8] 1
+[9.0] request-line injection: BadOperation
+[9.1] request-line injection: BadOperation
+[9.2] request-line injection: BadOperation
+[9.3] request-line injection: BadOperation
+[10] raw header block: BadOperation

@@ -159,6 +159,8 @@ const
   Reserved = ["host", "content-length", "transfer-encoding", "connection"]
 
 proc checkUserHeaders(h: HttpHeaders) {.raises.} =
+  # `HttpHeaders("…")` is a plain conversion that `add`'s checks never saw.
+  if not validHeaderBlock(string(h)): raise BadOperation
   for (n, v) in pairs(h):
     for r in Reserved:
       if cmpIgnoreCase(n, r) == 0: raise BadOperation
@@ -168,8 +170,20 @@ type
     address, host, path: string
     secure: bool
 
+proc checkWireText(s: string) {.raises.} =
+  ## A URL part that is written into the request line or the `Host` header
+  ## verbatim: a space would end the request target, a CR/LF the line, and
+  ## both would let the URL write a request of its own. Such bytes have to
+  ## arrive percent-encoded.
+  for c in s:
+    if c <= ' ' or c == '\x7F': raise BadOperation
+
 proc targetOf(url: string): Target {.raises.} =
   let u = parseUri(url)
+  checkWireText(u.hostname)
+  checkWireText(u.port)
+  checkWireText(u.path)
+  checkWireText(u.query)
   let scheme = toLowerAscii(u.scheme)
   if scheme != "http" and scheme != "https": raise BadOperation
   if u.hostname.len == 0: raise BadOperation
