@@ -1,4 +1,4 @@
-import std/[syncio, streamio, threadpool, atomics, typetraits]
+import std/[syncio, streamio, channels, threadpool, atomics, typetraits]
 
 # --- a byte pipe: another task produces the body --------------------------
 

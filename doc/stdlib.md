@@ -547,8 +547,11 @@ let bytes = extract(w)
   initial request flush. Expiry raises `TimeoutError`. Returned streams start
   with `never`; use `renew` for the next exchange. Renewing does not make a
   failed partial write resumable.
-- Not yet: `openReadWrite`, `pipe`/channels, `startTls`, the
-  `sendfile`/`splice`/kTLS paths of `copy`.
+- `pipe(capacity)` is an in-process `Reader`/`Writer` pair over a ring; a
+  full or empty pipe parks the task instead of blocking a thread.
+  `recordPipe` is its fixed-size-record form, on which `std/channels` builds.
+- Not yet: `openReadWrite`, `startTls`, the `sendfile`/`splice`/kTLS paths of
+  `copy`.
 
 For incremental parsing, a `Reader` exposes `buffered`, `peek`, `consume` and
 `fill`, like `Socket`. `peek` views unread decoded bytes without copying, and
@@ -556,6 +559,29 @@ For incremental parsing, a `Reader` exposes `buffered`, `peek`, `consume` and
 tail and returns the number of decoded bytes added. Zero means source or
 adapter end; already buffered bytes remain available. Reader mutations
 invalidate views. Callers must consume data or bound its accumulation.
+
+## channels
+
+[Source](../lib/std/channels.nim)
+
+Typed channels with copyable `Sender[T]`/`Receiver[T]` ends; waiting parks
+the task, it does not block a thread.
+
+```nim
+let (r, s) = channel[Job](16)       # in-process; any `T`, values move as bytes
+discard s.send Job(id: 1)           # false once no receiver is left
+var j: Job
+while r.recv(j): process j          # false once no sender is left and drained
+
+let pts = sender[Point](openWriter(path"points.bin"))   # over any stream
+```
+
+- `sender[T]`/`receiver[T]` wrap any `Writer`/`Reader` and require
+  `supportsCopyMem(T)`: the bytes of a pointer mean nothing outside the
+  process. Over such a stream `send` does not flush; see `flush`.
+- All copies of an end share one stream; the last copy gone ends it. Over a
+  channel's own ring copies need no extra lock; over any other stream they
+  take turns under a lock that parks its waiters.
 
 ## tls
 
