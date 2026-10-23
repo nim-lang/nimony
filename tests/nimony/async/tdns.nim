@@ -22,7 +22,7 @@ var clientLog = ""
 var failures = 0
 var served = 0
 
-const QueryCount = 4
+const QueryCount = 5
   ## The queries the client sends: hermetic, multi, alias, ghost. The serve
   ## loop is bounded the way http's tserver bounds its accept loop — `main`
   ## lives on a different lane than the server worker, so a cross-thread
@@ -56,6 +56,11 @@ proc server() {.passive.} =
         of "ghost.test":
           r.rcode = 3             ## NXDOMAIN
         else: discard
+      if r.questions.len == 1 and r.questions[0].name == "swapped.test":
+        ## A reply that echoes another question than was asked.
+        r.questions[0].name = "hermetic.test"
+        r.questions[0].answer(name = "hermetic.test", rtype = RTypeA, ttl = 30,
+                              data = "10.6.6.6")
       r.respond()
       inc served
     close(gServer)
@@ -148,6 +153,19 @@ proc client() {.passive.} =
     else:
       inc failures
       clientLog.add "nxdomain not raised\n"
+
+    ## A reply to another question is not an answer to this one: it is
+    ## dropped, and the query runs into its deadline.
+    var swapped = ""
+    try:
+      let ms = query(r, "swapped.test", 0, thePort, afterMs(300))
+      swapped = "accepted " & $ms.answers.len & " answers"
+    except ErrorCode as e:
+      swapped = $e
+    if swapped == "TimeoutError": inc verified
+    else:
+      inc failures
+      clientLog.add "swapped question: " & swapped & "\n"
 
     ## Wire round-trip through the *codec* (the server only ever encodes the
     ## shapes above, so a compressed CNAME is built by hand): one CNAME from a
