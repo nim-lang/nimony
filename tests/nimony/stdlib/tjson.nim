@@ -1,7 +1,7 @@
 when defined(nimony):
   {.feature: "untyped".}   # so the `check` template's `xx != b` resolves to bool
 
-import std/[json, syncio]
+import std/[json, syncio, tables]
 
 type Color = enum red, green, blue
 type Point = object
@@ -16,6 +16,11 @@ template check(a, b) =
   if xx != b:
     echo "test failed ", astToStr(a), ": got ", xx, " expected ", b
     quit 1
+
+proc sliceLifetime(): JsonNode =
+  var t = parseJson("""[10,20,30]""")
+  let c = t.root
+  result = c[0..1]
 
 proc main() =
   block atoms:
@@ -39,6 +44,93 @@ proc main() =
     check elems.len, 2
     check elems[0], 1'i64
     check elems[1], 2'i64
+
+  block read_compat:
+    try:
+      var t = parseJson("""{"a":[1,2,3],"b":"hi"}""")
+      let c = t.root
+      check c["a"].kind, JArray
+      check c["a"][0].getInt(), 1'i64
+      check c["a"][^1].getInt(), 3'i64
+      check $c["a"][0..1], "[1,2]"
+      check $c["a"][0..^1], "[1,2,3]"
+      check $c["a"][^2..^1], "[2,3]"
+      check c{"b"}.getStr(), "hi"
+      check c{"missing"}.kind, JNull
+      check c{0}.kind, JNull
+      check c["a"]{1}.getInt(), 2'i64
+      check hasKey(c, "a"), true
+      check hasKey(c, "z"), false
+      check contains(c, "b"), true
+      check contains(c["a"], c["a"][0]), true
+      check getOrDefault(c, "z").kind, JNull
+      check $getOrDefault(c, "z"), "null"
+      check pretty(getOrDefault(c, "z")), "null"
+      check getBiggestInt(c["a"][0]), 1'i64
+      var raised = false
+      try:
+        discard c["z"]
+      except:
+        raised = true
+      check raised, true
+
+      check $sliceLifetime(), "[10,20]"
+
+      let fields = getFields(c)
+      check fields.len, 2
+      check fields["a"][0].getInt(), 1'i64
+      let elems = getElems(c["a"])
+      check elems.len, 3
+      check elems[1].getInt(), 2'i64
+      check getFields(c, initOrderedTable[string, JsonNode]()).len, 2
+      check getElems(c["a"], @[]).len, 3
+
+      var ks: seq[string] = @[]
+      for k in keys(c):
+        ks.add k
+      check ks.len, 2
+      check ks[0], "a"
+      check ks[1], "b"
+
+      check $c, """{"a":[1,2,3],"b":"hi"}"""
+      var ugly = "prefix:"
+      toUgly(ugly, c)
+      check ugly, "prefix:" & $c
+      check pretty(c), """{
+  "a": [
+    1,
+    2,
+    3
+  ],
+  "b": "hi"
+}"""
+      check escapeJsonUnquoted("\n"), "\\n"
+      check escapeJsonUnquoted("\0"), "\\u0000"
+      check escapeJsonUnquoted("\v"), "\\u000b"
+      check escapeJsonUnquoted("\14"), "\\u000E"
+      check escapeJson("a"), "\"a\""
+      check escapeJsonUnquoted("\""), "\\\""
+      check escapeJsonUnquoted("\\"), "\\\\"
+
+      var nested = parseJson("""{"x":{"y":7}}""")
+      let nc = nested.root
+      check nc{"x", "y"}.getInt(), 7'i64
+      check nc{"x", "missing"}.kind, JNull
+      check nc{0}.kind, JNull
+
+      var empty = parseJson("""{"a":[],"b":{}}""")
+      check pretty(empty.root), """{
+  "a": [],
+  "b": {}
+}"""
+
+      var a = parseJson("""{"x":1,"y":[2,3]}""")
+      var b = parseJson("""{"y":[2,3],"x":1}""")
+      check a.root == b.root, true
+      check hash(a.root) == hash(b.root), true
+      check a.root == c, false
+    except:
+      check false, true
 
   block round_trip:
     var t1 = parseJson("""{"a":[1,2,3],"b":"hi","c":{"x":1.5}}""")

@@ -25,7 +25,9 @@
 ## Three layers, mirroring how `nifply` relates typed Nim to NIF:
 ##
 ## * **parse / read** — `parseJson` / `parseFile` build a `JsonTree`; navigate
-##   with `kind`, `getStr`/`getInt`/…, `len`, `items`, `pairs`, `{}`.
+##   with `kind`, `getStr`/`getInt`/…, `len`, `items`, `pairs`, `keys`,
+##   `hasKey`/`contains`, `[]`/`{}`, `getFields`/`getElems`, and deep
+##   `==`/`hash`. `$`, `toUgly`, `pretty`, and `escapeJson*` render a node.
 ## * **typed map** — `toJson` (typed Nim → JSON) and `fromJson` (JSON → typed
 ##   Nim), the JSON siblings of `nifply`'s `toNif`/`fromNif`. Same reflection
 ##   magics (`internalFieldPairs` / `internalTypeName`), same `oconstr`/`kv`/
@@ -39,7 +41,8 @@ when defined(nimony):
   {.feature: "untyped".}      # generic bodies sem-checked at instantiation
   {.feature: "lenientnils".}  # nifcore returns nil pools for ownerless cursors
 
-import std / [parsejson, streams, parseutils, assertions, formatfloat, syncio]
+import std / [parsejson, streams, parseutils, assertions, formatfloat,
+              syncio, tables, hashes]
 import ../../src/lib/nifcore
 
 export parsejson  # callers may want JsonParser, getTok, etc.
@@ -345,13 +348,16 @@ proc parseFile*(filename: string;
 # `fromJson` instantiates in modules that never imported `nifcore`, so the
 # qualifier would not resolve there. As procs they are sem-checked here, in
 # json.nim's scope, once.
-proc rawKind(n: JsonNode): NifKind {.inline.}   = nifcore.kind(n.c)
+proc rawKind(n: JsonNode): NifKind {.inline.} =
+  if cursorIsNil(n.c): DotToken else: nifcore.kind(n.c)
 proc cursorTagId(n: JsonNode): TagId {.inline.} = nifcore.cursorTagId(n.c)
 proc strVal(n: JsonNode): string {.inline.}     = strVal(n.c)
 proc intVal(n: JsonNode): int64 {.inline.}      = intVal(n.c)
 proc floatVal(n: JsonNode): float64 {.inline.}  = floatVal(n.c)
-proc inc(n: var JsonNode) {.inline.}            = inc n.c
-proc skip(n: var JsonNode) {.inline.}           = skip n.c
+proc inc(n: var JsonNode) {.inline.} =
+  if not cursorIsNil(n.c): inc n.c
+proc skip(n: var JsonNode) {.inline.} =
+  if not cursorIsNil(n.c): skip n.c
 template hasMore(n: JsonNode): bool             = hasMore(n.c)
 template into(n: var JsonNode; body: untyped)   = into(n.c, body)
 
@@ -378,11 +384,11 @@ proc kind*(n: JsonNode): JsonNodeKind =
 proc info*(n: JsonNode): NifLineInfo {.inline.} =
   ## Source position recorded for the node, or `NoNifLineInfo` when the tree was
   ## parsed with `DiscardLineInfo` (or built programmatically).
-  rawLineInfo(n.c)
+  if cursorIsNil(n.c): NoNifLineInfo else: rawLineInfo(n.c)
 
 proc fileName*(n: JsonNode): string {.inline.} =
   ## Source filename for the node, or `""` when no line info is present.
-  lineInfoFile(n.c)
+  if cursorIsNil(n.c): "" else: lineInfoFile(n.c)
 
 proc getStr*(n: JsonNode; default = ""): string =
   if rawKind(n) == StrLit: strVal(n) else: default
@@ -403,6 +409,35 @@ proc getBool*(n: JsonNode; default = false): bool =
     of JKFalse: return false
     else: discard
   default
+
+proc getBiggestInt*(n: JsonNode; default: BiggestInt = 0): BiggestInt =
+  ## Retrieves the integer value as a `BiggestInt`; `getInt` is the
+  ## `int64`-shaped equivalent in this model.
+  if rawKind(n) == IntLit: BiggestInt(intVal(n)) else: default
+
+proc getFields*(n: JsonNode;
+                default: OrderedTable[string, JsonNode]):
+                OrderedTable[string, JsonNode] =
+  ## Materialises a `JObject` into an ordered table. Returns `default` for
+  ## non-objects, matching `std/json`'s fallback contract.
+  if kind(n) != JObject: return default
+  result = initOrderedTable[string, JsonNode]()
+  for k, v in pairs(n):
+    result[k] = v
+
+proc getFields*(n: JsonNode): OrderedTable[string, JsonNode] =
+  getFields(n, initOrderedTable[string, JsonNode]())
+
+proc getElems*(n: JsonNode; default: seq[JsonNode]): seq[JsonNode] =
+  ## Materialises a `JArray` into a sequence. Returns `default` for
+  ## non-arrays, matching `std/json`'s fallback contract.
+  if kind(n) != JArray: return default
+  result = @[]
+  for el in items(n):
+    result.add el
+
+proc getElems*(n: JsonNode): seq[JsonNode] =
+  getElems(n, @[])
 
 # ── Error inspection ──────────────────────────────────────────────────────────
 # A parse error is stored as a `null` carrying a diagnostic string: `(null
@@ -515,6 +550,84 @@ proc nullNode(): JsonNode =
   t.buf.closeTag()
   result = t.root
 
+proc hasKey*(node: JsonNode; key: string): bool =
+  ## Checks whether `key` exists in a `JObject`.
+  assert kind(node) == JObject, "hasKey: not a JObject"
+  result = false
+  for k, v in pairs(node):
+    if k == key: return true
+
+proc contains*(node: JsonNode; key: string): bool =
+  ## Checks whether `key` exists in a `JObject`.
+  assert kind(node) == JObject, "contains: not a JObject"
+  result = hasKey(node, key)
+
+proc getOrDefault*(node: JsonNode; key: string): JsonNode =
+  ## Returns the value for `key`, or a `JNull` node when `node` is not an
+  ## object or the key is absent.
+  if kind(node) != JObject: return nullNode()
+  for k, v in pairs(node):
+    if k == key: return v
+  result = nullNode()
+
+proc `[]`*(node: JsonNode; name: string): JsonNode {.raises.} =
+  ## Gets a field from a `JObject`; raises `KeyError` when absent. Use
+  ## `getOrDefault` or `{}` when a missing field should produce `JNull`.
+  assert kind(node) == JObject, "[]: not a JObject"
+  for k, v in pairs(node):
+    if k == name: return v
+  raise KeyError
+
+proc `[]`*(node: JsonNode; index: int): JsonNode =
+  ## Gets the element at `index` in a `JArray`.
+  assert kind(node) == JArray, "[]: not a JArray"
+  let n = len(node)
+  assert index >= 0 and index < n, "[]: index out of bounds"
+  var i = 0
+  for el in items(node):
+    if i == index: return el
+    inc i
+  result = nullNode()
+
+proc `[]`*(node: JsonNode; index: BackwardsIndex): JsonNode =
+  ## `node[^i]` is `node[node.len - i]`.
+  `[]`(node, node.len - int(index))
+
+proc `[]`*[U, V](node: JsonNode; x: HSlice[U, V]): JsonNode =
+  ## Returns a new `JArray` containing the inclusive slice.
+  assert kind(node) == JArray, "[]: not a JArray"
+  let lo = when x.a is BackwardsIndex: node.len - int(x.a) else: int(x.a)
+  let count = (when x.b is BackwardsIndex: node.len - int(x.b)
+               else: int(x.b)) - lo + 1
+  var t = createJsonTree()
+  t.buf.openTag JKArray.tagId
+  for i in 0 ..< count:
+    t.buf.addSubtree(node[lo + i].c)
+  t.buf.closeTag()
+  result = t.root
+
+# A single-key lookup (`node{"key"}`) is covered by this varargs overload;
+# Nimony reports a separate single-string overload as ambiguous with it.
+proc `{}`*(node: JsonNode; keys: varargs[string]): JsonNode =
+  ## Traverses nested objects; returns a `JNull` node when a step is missing.
+  result = node
+  for key in keys:
+    if kind(result) != JObject: return nullNode()
+    result = result.getOrDefault(key)
+
+proc `{}`*(node: JsonNode; indexes: varargs[int]): JsonNode =
+  ## Traverses nested arrays; returns a `JNull` node when a step is missing.
+  result = node
+  for i in indexes:
+    if kind(result) != JArray or i < 0 or i >= len(result):
+      return nullNode()
+    result = result[i]
+
+iterator keys*(node: JsonNode): string =
+  ## Iterates over the keys of a `JObject`.
+  for k, v in pairs(node):
+    yield k
+
 proc `{}`*(t: var JsonTree; key: string): JsonNode =
   ## Object member lookup. Returns a `JNull` node when the root is not an
   ## object or the key is absent.
@@ -525,21 +638,94 @@ proc `{}`*(t: var JsonTree; key: string): JsonNode =
         return v
   result = nullNode()
 
+func `==`*(a, b: JsonNode): bool =
+  ## Deep JSON value equality. Object member order is irrelevant.
+  {.cast(noSideEffect).}:
+    if kind(a) != kind(b): return false
+    case kind(a)
+    of JNull:  result = true
+    of JBool:  result = getBool(a) == getBool(b)
+    of JInt:   result = getInt(a) == getInt(b)
+    of JFloat: result = getFloat(a) == getFloat(b)
+    of JString: result = getStr(a) == getStr(b)
+    of JArray:
+      if len(a) != len(b): return false
+      for i in 0 ..< len(a):
+        if a[i] != b[i]: return false
+      result = true
+    of JObject:
+      if len(a) != len(b): return false
+      for key, val in pairs(a):
+        if not hasKey(b, key): return false
+        if val != b.getOrDefault(key): return false
+      result = true
+
+func hash*(n: JsonNode): Hash =
+  ## Deep hash matching `==`: object insertion order does not matter.
+  {.cast(noSideEffect).}:
+    case kind(n)
+    of JNull:  result = Hash(0)
+    of JBool:  result = hash(getBool(n))
+    of JInt:   result = hash(getInt(n))
+    of JFloat: result = hash(getFloat(n))
+    of JString: result = hash(getStr(n))
+    of JArray:
+      result = 0'u
+      for el in items(n):
+        result = result !& hash(el)
+      result = !$result
+    of JObject:
+      result = 0'u
+      for key, val in pairs(n):
+        result = result xor (hash(key) !& hash(val))
+      result = !$result
+
+proc contains*(node: JsonNode; val: JsonNode): bool =
+  ## Checks whether `val` exists in a `JArray`.
+  assert kind(node) == JArray, "contains: not a JArray"
+  result = false
+  for el in items(node):
+    if el == val: return true
+
 # ── Pretty-print ─────────────────────────────────────────────────────────────
 
-proc emitEscaped(s: string; r: var string) =
-  r.add '"'
+proc escapeJsonUnquoted*(s: string; result: var string) =
+  ## Appends the JSON representation of `s` without surrounding quotes.
+  const hexChars = "0123456789ABCDEF"
   for c in s:
     case c
-    of '\L': r.add "\\n"
-    of '\b': r.add "\\b"
-    of '\f': r.add "\\f"
-    of '\t': r.add "\\t"
-    of '\r': r.add "\\r"
-    of '"':  r.add "\\\""
-    of '\\': r.add "\\\\"
-    else:    r.add c
-  r.add '"'
+    of '\L': result.add "\\n"
+    of '\b': result.add "\\b"
+    of '\f': result.add "\\f"
+    of '\t': result.add "\\t"
+    of '\v': result.add "\\u000b"
+    of '\r': result.add "\\r"
+    of '"':  result.add "\\\""
+    of '\0'..'\7':
+      result.add "\\u000"
+      result.add $ord(c)
+    of '\14'..'\31':
+      result.add "\\u00"
+      result.add hexChars[ord(c) shr 4]
+      result.add hexChars[ord(c) and 0xF]
+    of '\\': result.add "\\\\"
+    else:    result.add c
+
+proc escapeJsonUnquoted*(s: string): string =
+  ## Returns the JSON representation of `s` without surrounding quotes.
+  result = ""
+  escapeJsonUnquoted(s, result)
+
+proc escapeJson*(s: string; result: var string) =
+  ## Appends the quoted JSON representation of `s`.
+  result.add '"'
+  escapeJsonUnquoted(s, result)
+  result.add '"'
+
+proc escapeJson*(s: string): string =
+  ## Returns the quoted JSON representation of `s`.
+  result = ""
+  escapeJson(s, result)
 
 proc emitUgly(c: var JsonNode; r: var string) =
   case kind(c)
@@ -548,7 +734,7 @@ proc emitUgly(c: var JsonNode; r: var string) =
   of JInt:   r.add $getInt(c);   c.inc
   of JFloat: r.add $getFloat(c); c.inc
   of JString:
-    emitEscaped(getStr(c), r); c.inc
+    escapeJson(getStr(c), r); c.inc
   of JArray:
     r.add '['
     var first = true
@@ -567,16 +753,72 @@ proc emitUgly(c: var JsonNode; r: var string) =
         first = false
         assert jsonKind(c.cursorTagId) == JKKv
         c.into:
-          emitEscaped(strVal(c), r)
+          escapeJson(strVal(c), r)
           r.add ':'
           c.inc
           emitUgly(c, r)
     r.add '}'
 
+proc toUgly*(result: var string, node: JsonNode) =
+  ## Appends the compact JSON representation of `node` to `result`.
+  var c = node
+  emitUgly(c, result)
+
+proc `$`*(node: JsonNode): string =
+  ## Returns the compact JSON representation of `node`.
+  result = newStringOfCap(node.len shl 1)
+  toUgly(result, node)
+
+proc addIndent(r: var string; count: int) =
+  for i in 0 ..< count:
+    r.add ' '
+
+proc toPretty(r: var string; node: JsonNode; indent, currIndent: int;
+              inArray: bool) =
+  case kind(node)
+  of JObject:
+    if inArray: addIndent(r, currIndent)
+    if len(node) == 0:
+      r.add "{}"
+      return
+    r.add "{\n"
+    var first = true
+    for key, val in pairs(node):
+      if not first: r.add ",\n"
+      first = false
+      addIndent(r, currIndent + indent)
+      escapeJson(key, r)
+      r.add ": "
+      toPretty(r, val, indent, currIndent + indent, false)
+    r.add "\n"
+    addIndent(r, currIndent)
+    r.add "}"
+  of JArray:
+    if inArray: addIndent(r, currIndent)
+    if len(node) == 0:
+      r.add "[]"
+      return
+    r.add "[\n"
+    var first = true
+    for el in items(node):
+      if not first: r.add ",\n"
+      first = false
+      toPretty(r, el, indent, currIndent + indent, true)
+    r.add "\n"
+    addIndent(r, currIndent)
+    r.add "]"
+  else:
+    if inArray: addIndent(r, currIndent)
+    toUgly(r, node)
+
+proc pretty*(node: JsonNode; indent = 2): string =
+  ## Returns a multi-line, indented JSON representation of `node`.
+  result = ""
+  toPretty(result, node, indent, 0, false)
+
 proc `$`*(t: var JsonTree): string =
   result = newStringOfCap(64)
-  var c = t.root
-  emitUgly(c, result)
+  toUgly(result, t.root)
 
 # ── Typed map: toJson (typed Nim → JSON) ─────────────────────────────────────
 # Siblings of nifply's `toNif`. Every overload takes `opts` in the same
