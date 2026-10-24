@@ -42,6 +42,8 @@ func similar*[N: static[int], T](a: array[N, T]): array[N, T] {.untyped.} =
   result = default(array[N, T])
 func len*[N: static[int], T](a: array[N, T]): int = N
 
+# Loop fusion operator.
+# This is able to compute expressions like `a +. b *. c +! 5 + map(sin, arr)` in a single loop without temporary allocations
 template `@.`*[T; C:Broadcastable[T]](expr: C): untyped {.untyped, plugin: "deps/broadcast.nim".}
 
 # --- Arithmetic operators (. and !) ---
