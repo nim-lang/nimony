@@ -3735,15 +3735,23 @@ proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
   else:
     inc pc  # ParRi/close (classic) or stray suffix (nifcore)
 
-proc borrowCheckForCall(c: var FirContext; args: Cursor) =
+proc borrowCheckForCall(c: var FirContext; args: Cursor; forwardedMut: seq[bool]) =
+  ## `forwardedMut[i]` marks an argument bound to a `var`/`out` formal that is
+  ## already a location (a forwarded `var` parameter) and so carries no
+  ## `(haddr …)`: it is just as mutable as one that does.
   var mutPaths: seq[BorrowInfo] = @[]
   var immPaths: seq[BorrowInfo] = @[]
   var n = args
+  var i = 0
   while n.hasMore:
     let isMut = n.exprKind == HaddrX
     # Validate borrowable path for haddr arguments (call-scoped borrows)
     var inner = n
-    if isMut:
+    if i < forwardedMut.len and forwardedMut[i]:
+      let m = extractPath(c, n)
+      if m.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+        mutPaths.add m
+    elif isMut:
       inner = n.childCursor
       let m = extractPath(c, inner)
       if m.mode == NotBorrowable:
@@ -3757,6 +3765,7 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor) =
         immPaths.add m
 
     skip n
+    inc i
   # Check aliasing: a mutable argument must not overlap with any other argument:
   for i in 0 ..< mutPaths.len:
     for j in 0 ..< immPaths.len:
@@ -3801,6 +3810,8 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   # Collect argument paths for aliasing check
   let args = n
   var needsBorrowCheck = false
+  var forwardedMut: seq[bool] = @[]
+  var argPos = 0
   var mutatedRoots: seq[SymId] = @[]
   var viewRoots: seq[SymId] = @[]
   var mutatesUnknown = false
@@ -3858,6 +3869,15 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
         let mutPath = extractPath(c, n)
         if mutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
           checkBorrowConflict(c, mutPath, n.info)
+        # ... and against the other arguments of this call. Only a forwarded
+        # parameter: an inline temp holding a `var T` call result (`s[i]`)
+        # was never judged as a location for a local either.
+        if n.kind == Symbol and
+            isParamLike(getLocalInfo(c.typeCache, n.symId).kind) and
+            mutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+          needsBorrowCheck = true
+          while forwardedMut.len < argPos: forwardedMut.add false
+          forwardedMut.add true
       if root != NoSymId and isVarOpenArray(c, param.typ) and
           plainLocationVarId(c, n) == getVarId(c, root):
         # a view passed as a view: its length stays
@@ -3874,8 +3894,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     if syncRoot >= 0: c.syncArgs.incl syncRoot
     traverseExpr c, n, call
     if syncRoot >= 0: c.syncArgs.excl syncRoot
+    inc argPos
   if needsBorrowCheck and not c.features.contains(LenientAliasingFeature):
-    borrowCheckForCall c, args
+    borrowCheckForCall c, args, forwardedMut
   while fnType.hasMore: skip fnType
   fnType = paramsStart; skip fnType
   skip fnType # skip return type
