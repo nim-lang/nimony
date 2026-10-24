@@ -577,7 +577,7 @@ proc needsTemp*(n: Cursor): bool =
   of TagLit:
     var n = n
     case n.exprKind
-    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX, CanFormCyclesX:
+    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX, CanFormCyclesX, SupportsCopyMemX:
       result = false
     of ExprX:
       n = sub(n)  # throwaway copy; bounds the probe under vpr
@@ -609,7 +609,7 @@ proc needsTemp*(n: Cursor): bool =
         ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
         HderefX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, CallstrlitX, InfixX,
-        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
+        PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,

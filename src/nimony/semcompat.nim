@@ -82,7 +82,7 @@ proc compatVarargsParamElem*(fn: FnCandidate): Cursor =
     skipToParams f
   if f.substructureKind == ParamsU:
     loopInto f:
-      if f.symKind == ParamY:
+      if isParamLike(f.symKind):
         let p = asLocal(f)
         let elem = compatVarargsElem(p.typ)
         if not cursorIsNil(elem):
@@ -144,6 +144,10 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       # backend can lower — hexer rejects it with "type expected but got:
       # (untyped)". Nothing bundles these slots either (`varargsMatch`
       # short-circuits on both), so the hint has no reader.
+      discard
+    elif elem.hasMore and containsGenericParams(elem):
+      # generic `varargs[T]`: the openArray instance is only known once T
+      # is; the instance's params come through here again, substituted
       discard
     elif elem.hasMore:
       # Capture children of the original `(varargs …)` into a fresh buffer so

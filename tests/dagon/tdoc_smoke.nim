@@ -37,3 +37,8 @@ proc square*(x: int): int =
 proc shout*(s: string): string =
   ## Uppercases `s`. See also [square](#square.0.) for a numeric counterpart.
   result = s
+
+proc total*(xs: seq[int]): int =
+  ## Sums `xs`; its parameter type is an instance of a generic type.
+  result = 0
+  for x in xs: result += x

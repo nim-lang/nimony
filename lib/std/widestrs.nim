@@ -38,7 +38,9 @@ when not (defined(cpu16) or defined(cpu8)):
     a.data = cast[WideCString](alloc(bytes))
 
   template `[]`*(a: WideCStringObj; idx: int): Utf16Char = a.data[idx]
-  template `[]=`*(a: WideCStringObj; idx: int; val: Utf16Char) = a.data[idx] = val
+  template `[]=`*(a: WideCStringObj; idx: int; val: Utf16Char) =
+    {.cast(noSideEffect).}: # `a` owns `data`
+      a.data[idx] = val
 
   template nullWide(): untyped = WideCStringObj(bytes: 0, data: nil)
 

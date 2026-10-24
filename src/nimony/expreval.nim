@@ -901,6 +901,15 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
           return symCursor
         inc local.val # takes the first counter field
         return eval(c, local.val)
+      of StaticParamY:
+        # a `static` parameter restricts the call site only; the routine is
+        # not specialized per value, so the body has no value to fold
+        let name = pool.symBasename(symId)
+        error "cannot evaluate `static` parameter '" & name &
+          "' at compile time: it only requires a constant argument at the " &
+          "call site; use a generic value parameter `[" & name &
+          ": static[T]]` for a compile-time value", info
+        return
       else: discard
     error "cannot evaluate symbol at compile time: " & pool.symString(symId), info
   of StrLit, CharLit, IntLit, UIntLit, FloatLit:
@@ -1427,6 +1436,20 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         symType = typ
         typ = decl.body
     break
+
+  if typ.typeKind == RangetypeT:
+    # a range constant is spelled as a literal of the range's base type
+    # (case labels need a literal); a value computed by compile-time
+    # execution arrives as a `conv` to the range
+    var val = n
+    if n.isTagLit and n.exprKind in {ConvX, HconvX}:
+      inc val
+      skip val # type
+    annotateConstantType(buf, typ.childCursor, val)
+    while opened > 0:
+      buf.addParRi()
+      dec opened
+    return
 
   var err = false
   case n.kind

@@ -54,7 +54,7 @@ type
     RetL = (ord(RetTagId), "ret")  ## `return` instruction
     YldL = (ord(YldTagId), "yld")  ## yield statement
     StmtsL = (ord(StmtsTagId), "stmts")  ## list of statements
-    ParamsL = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
+    ParamsL = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"; after sem an entry may also be a `(staticParam ...)`
     ObjectL = (ord(ObjectTagId), "object")  ## object type declaration
     EnumL = (ord(EnumTagId), "enum")  ## enum type declaration
     ProctypeL = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. Leng proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
@@ -72,7 +72,7 @@ type
     DiscardL = (ord(DiscardTagId), "discard")  ## `discard` statement; optional expression to discard
     TryL = (ord(TryTagId), "try")  ## `try` statement
     RaiseL = (ord(RaiseTagId), "raise")  ## `raise` statement; bare `(raise .)` re-raises the in-flight exception (only valid inside an `except` block)
-    StaticL = (ord(StaticTagId), "static")  ## `static` type or annotation
+    StaticL = (ord(StaticTagId), "static")  ## `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time
     UnpackflatL = (ord(UnpackflatTagId), "unpackflat")  ## unpack into flat variable list
     UnpacktupL = (ord(UnpacktupTagId), "unpacktup")  ## unpack tuple
     UnpackdeclL = (ord(UnpackdeclTagId), "unpackdecl")  ## unpack var/let/const declaration

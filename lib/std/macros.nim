@@ -154,7 +154,7 @@ template isNilNode*(n: NimNode): bool = cast[pointer](n) == nil
 func kind*(n: NimNode): NimNodeKind {.inline.} =
   n.kindField
 
-func `kind=`*(n: NimNode; k: NimNodeKind) {.inline.} =
+proc `kind=`*(n: NimNode; k: NimNodeKind) {.inline.} =
   n.kindField = k
 
 func len*(n: NimNode): int {.inline.} =
@@ -166,13 +166,13 @@ func `[]`*(n: NimNode; i: int): NimNode {.inline.} =
 func `[]`*(n: NimNode; i: BackwardsIndex): NimNode {.inline.} =
   n.kids[n.kids.len - i.int]
 
-func `[]=`*(n: NimNode; i: int; child: NimNode) {.inline.} =
+proc `[]=`*(n: NimNode; i: int; child: NimNode) {.inline.} =
   n.kids[i] = child
 
-func `[]=`*(n: NimNode; i: BackwardsIndex; child: NimNode) {.inline.} =
+proc `[]=`*(n: NimNode; i: BackwardsIndex; child: NimNode) {.inline.} =
   n.kids[n.kids.len - i.int] = child
 
-func add*(n: NimNode; child: NimNode) {.inline.} =
+proc add*(n: NimNode; child: NimNode) {.inline.} =
   n.kids.add child
 
 iterator items*(n: NimNode): NimNode =
@@ -187,7 +187,7 @@ proc strVal*(n: NimNode): string {.inline.} =
   assert n.kind in {nnkIdent, nnkSym, nnkStrLit, nnkRStrLit, nnkTripleStrLit, nnkCommentStmt}
   n.strValField
 
-func `strVal=`*(n: NimNode; s: string) {.inline.} =
+proc `strVal=`*(n: NimNode; s: string) {.inline.} =
   n.strValField = s
 
 proc intVal*(n: NimNode): BiggestInt {.inline.} =
@@ -196,14 +196,14 @@ proc intVal*(n: NimNode): BiggestInt {.inline.} =
                     nnkCharLit}
   n.intValField
 
-func `intVal=`*(n: NimNode; i: BiggestInt) {.inline.} =
+proc `intVal=`*(n: NimNode; i: BiggestInt) {.inline.} =
   n.intValField = i
 
 proc floatVal*(n: NimNode): BiggestFloat {.inline.} =
   assert n.kind in {nnkFloatLit, nnkFloat32Lit, nnkFloat64Lit}
   n.floatValField
 
-func `floatVal=`*(n: NimNode; f: BiggestFloat) {.inline.} =
+proc `floatVal=`*(n: NimNode; f: BiggestFloat) {.inline.} =
   n.floatValField = f
 
 # Constructors
@@ -214,25 +214,21 @@ func newEmptyNode*(): NimNode =
   newNimNode(nnkEmpty)
 
 func newIdentNode*(ident: string): NimNode =
-  result = newNimNode(nnkIdent)
-  result.strValField = ident
+  NimNode(kindField: nnkIdent, kids: @[], strValField: ident)
 
 func newStrLitNode*(s: string): NimNode =
-  result = newNimNode(nnkStrLit)
-  result.strValField = s
+  NimNode(kindField: nnkStrLit, kids: @[], strValField: s)
 
 func newIntLitNode*(i: BiggestInt): NimNode =
-  result = newNimNode(nnkIntLit)
-  result.intValField = i
+  NimNode(kindField: nnkIntLit, kids: @[], intValField: i)
 
 func newFloatLitNode*(f: BiggestFloat): NimNode =
-  result = newNimNode(nnkFloatLit)
-  result.floatValField = f
+  NimNode(kindField: nnkFloatLit, kids: @[], floatValField: f)
 
 func newNilLit*(): NimNode =
   newNimNode(nnkNilLit)
 
-func newSymNode*(fullName: string): NimNode =
+proc newSymNode*(fullName: string): NimNode =
   ## Construct a `NimNode` of kind `nnkSym` carrying a fully-qualified symbol
   ## name. The serialiser emits this as a NIF Symbol token, which sem treats
   ## as already-resolved — so any name lookup at the macro call site is
@@ -251,7 +247,7 @@ type
                  ## call-site visible overloads (full Nim-style mixin).
     brForceOpen  ## Same as `brOpen` for now; reserved for stricter semantics.
 
-func newSymChoiceNode*(rule: BindSymRule; fullNames: openArray[string]): NimNode =
+proc newSymChoiceNode*(rule: BindSymRule; fullNames: openArray[string]): NimNode =
   ## Multi-symbol bundle: returns a NimNode of kind `nnkClosedSymChoice` or
   ## `nnkOpenSymChoice` whose children are individual `nnkSym` nodes for each
   ## `fullName`. The serialiser emits this as `(cchoice …)` / `(ochoice …)`.
@@ -277,38 +273,38 @@ proc bindSym*(name: string; rule: BindSymRule = brClosed): NimNode {.magic: Bind
   ## candidates; with `brOpen` it will. If multiple symbols match, returns
   ## a `nnkClosedSymChoice` / `nnkOpenSymChoice` accordingly.
 
-func newTree*(kind: NimNodeKind; children: openArray[NimNode]): NimNode =
+proc newTree*(kind: NimNodeKind; children: openArray[NimNode]): NimNode =
   result = newNimNode(kind)
   for c in children:
     result.kids.add c
 
-func newCall*(fn: NimNode; args: openArray[NimNode]): NimNode =
+proc newCall*(fn: NimNode; args: openArray[NimNode]): NimNode =
   result = newNimNode(nnkCall)
   result.add fn
   for a in args:
     result.add a
 
-func newCall*(fn: NimNode): NimNode =
+proc newCall*(fn: NimNode): NimNode =
   result = newNimNode(nnkCall)
   result.add fn
 
-func newCall*(fn: string; args: openArray[NimNode]): NimNode =
+proc newCall*(fn: string; args: openArray[NimNode]): NimNode =
   result = newNimNode(nnkCall)
   result.add newIdentNode(fn)
   for a in args:
     result.add a
 
-func newCall*(fn: string): NimNode =
+proc newCall*(fn: string): NimNode =
   result = newNimNode(nnkCall)
   result.add newIdentNode(fn)
 
-func newDotExpr*(a, b: NimNode): NimNode =
+proc newDotExpr*(a, b: NimNode): NimNode =
   newTree(nnkDotExpr, [a, b])
 
-func newColonExpr*(a, b: NimNode): NimNode =
+proc newColonExpr*(a, b: NimNode): NimNode =
   newTree(nnkExprColonExpr, [a, b])
 
-func newStmtList*(stmts: openArray[NimNode]): NimNode =
+proc newStmtList*(stmts: openArray[NimNode]): NimNode =
   result = newNimNode(nnkStmtList)
   for s in stmts:
     result.add s
@@ -316,25 +312,25 @@ func newStmtList*(stmts: openArray[NimNode]): NimNode =
 func newStmtList*(): NimNode =
   result = newNimNode(nnkStmtList)
 
-func newBlockStmt*(label: NimNode; body: NimNode): NimNode =
+proc newBlockStmt*(label: NimNode; body: NimNode): NimNode =
   newTree(nnkBlockStmt, [label, body])
 
-func newBlockStmt*(body: NimNode): NimNode =
+proc newBlockStmt*(body: NimNode): NimNode =
   newTree(nnkBlockStmt, [newEmptyNode(), body])
 
-func newVarStmt*(name, value: NimNode): NimNode =
+proc newVarStmt*(name, value: NimNode): NimNode =
   newTree(nnkVarSection, [newTree(nnkIdentDefs, [name, newEmptyNode(), value])])
 
-func newLetStmt*(name, value: NimNode): NimNode =
+proc newLetStmt*(name, value: NimNode): NimNode =
   newTree(nnkLetSection, [newTree(nnkIdentDefs, [name, newEmptyNode(), value])])
 
-func newConstStmt*(name, value: NimNode): NimNode =
+proc newConstStmt*(name, value: NimNode): NimNode =
   newTree(nnkConstSection, [newTree(nnkIdentDefs, [name, newEmptyNode(), value])])
 
-func newAssignment*(lhs, rhs: NimNode): NimNode =
+proc newAssignment*(lhs, rhs: NimNode): NimNode =
   newTree(nnkAsgn, [lhs, rhs])
 
-func newIfStmt*(cond, body: NimNode): NimNode =
+proc newIfStmt*(cond, body: NimNode): NimNode =
   ## Construct a single-branch if statement. Add more branches with `add`.
   result = newNimNode(nnkIfStmt)
   result.add newTree(nnkElifBranch, [cond, body])
@@ -358,7 +354,8 @@ proc `$`*(n: NimNode): string =
   else:
     if n.kids.len > 0:
       result.add "("
-      for i, c in n.kids:
+      for i in 0 ..< n.kids.len:
+        let c = n.kids[i]
         if i > 0: result.add ", "
         result.add $c
       result.add ")"
@@ -383,11 +380,12 @@ proc treeRepr*(n: NimNode): string =
     else:
       discard
     if n.kids.len > 0:
-      for c in n.kids:
+      for i in 0 ..< n.kids.len:
+        let c = n.kids[i]
         result.add "\n" & aux(c, indent + 1)
   aux(n, 0)
 
-func copy*(n: NimNode): NimNode =
+proc copy*(n: NimNode): NimNode =
   ## Deep copy a NimNode tree
   if isNilNode(n):
     return nil
@@ -398,10 +396,11 @@ func copy*(n: NimNode): NimNode =
     intValField: n.intValField,
     floatValField: n.floatValField
   )
-  for c in n.kids:
+  for i in 0 ..< n.kids.len:
+    let c = n.kids[i]
     result.kids.add copy(c)
 
-func copyNimTree*(n: NimNode): NimNode =
+proc copyNimTree*(n: NimNode): NimNode =
   copy(n)
 
 func ident*(s: string): NimNode = newIdentNode(s)

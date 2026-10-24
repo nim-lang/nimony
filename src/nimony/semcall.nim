@@ -66,7 +66,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
       if n.isSymbolDef:
         inc n # skip the SymbolDef
         if n.isTagLit:
-          if n.exprKind in {DefinedX, DeclaredX, AstToStrX, CompilesX, TypeofX,
+          if n.exprKind in {DefinedX, DeclaredX, AstToStrX, CompilesX, StaticX, TypeofX,
               LowX, HighX, AddrX, EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX,
               ArratX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX, ProccallX, DelayX,
               BindSymX, BindSymNameX, InstantiationinfoX}:
@@ -87,7 +87,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
               skipToParams paramType
               assert paramType.substructureKind == ParamsU
               inc paramType
-              assert paramType.symKind == ParamY
+              assert isParamLike(paramType.symKind)
               paramType = asLocal(paramType).typ
               if m.inferred.len != 0:
                 paramType = instantiateType(c, paramType, m.inferred)
@@ -436,7 +436,8 @@ proc addConceptBoundMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
   ## available on `T` inside the body.
   var r = c.routine
   while r != nil:
-    for bound in r.conceptBounds:
+    for i in 0 ..< r.conceptBounds.len:
+      let bound = r.conceptBounds[i]
       if invocationMentions(bound, typevar):
         for cand in conceptMethodsForInvocation(c, fn, bound):
           if not conceptMethodAlreadyListed(cands, cand.typ):
@@ -449,7 +450,9 @@ proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   params.into ParamsU:
     while params.hasMore:
       let param = takeLocal(params, SkipFinalParRi)
-      let root = nominalRoot(param.typ)
+      # `skipPtrs`: a `ref object` type is `ref T.Obj` by now, so its routines
+      # have to be found through the `ref`.
+      let root = nominalRoot(param.typ, skipPtrs = true)
       if root != SymId(0) and root == typ:
         while params.hasMore: skip params  # mop-up before early-exit
         return true
@@ -734,7 +737,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; a
         candidates.marker.incl m[i].fn.sym
     # add attached ops for each arg:
     for arg in args:
-      let root = nominalRoot(arg.typ, allowTypevar = true)
+      let root = nominalRoot(arg.typ, allowTypevar = true, skipPtrs = true)
       if root != SymId(0):
         addTypeboundOps c, fnName, root, candidates
     # now match them:
@@ -1270,8 +1273,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # `(call f (hcall toOpenArray.0[I,T] (aconstr …)))` straight into
       # `dest`. Skipped for templates (`firstVarargMatch` substitution
       # needs the flat args) and macros (their plugin reads `cs.args`).
-      let varargsElem = compatVarargsParamElem(m[idx].fn)
+      var varargsElem = compatVarargsParamElem(m[idx].fn)
       if not cursorIsNil(varargsElem):
+        if m[idx].inferred.len != 0:
+          # generic `varargs[T]`: bundle with the inferred element type
+          varargsElem = instantiateType(c, varargsElem, m[idx].inferred)
         compatBundleVarargsInMatch c, m[idx], varargsElem, cs.callNodeInfo
     addArgsInstConverters(c, dest, m[idx], cs.args)
     leaveCall dest, it, cs
@@ -1510,6 +1516,26 @@ proc atHasTypeArgs(c: var SemContext; n: Cursor): bool =
     return typeKind(n) != NoType
   false
 
+proc isGenericRoutineSym(s: SymId): bool =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  result = isRoutine(res.decl.symKind) and isGeneric(asRoutine(res.decl))
+
+proc hasGenericRoutine(n: Cursor): bool =
+  ## True when `n` is a generic routine symbol or a symchoice containing one.
+  ## Every symbol of a choice counts: the choice may start with a non-generic
+  ## overload while a later one is generic.
+  if n.isSymbol:
+    return isGenericRoutineSym(n.symId)
+  result = false
+  if n.exprKind in {OchoiceX, CchoiceX}:
+    var n = n
+    n.into:
+      while n.hasMore:
+        if not result and n.isSymbol and isGenericRoutineSym(n.symId):
+          result = true
+        skip n
+
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
   var cs = CallState(
     beforeCall: dest.len,
@@ -1538,15 +1564,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared, AllowOverloads}
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
-    var maybeRoutine = lhs.n
-    if maybeRoutine.exprKind in {OchoiceX, CchoiceX}:
-      inc maybeRoutine
-    var treatAsGenericInst = false
-    if maybeRoutine.isSymbol:
-      let res = tryLoadSym(maybeRoutine.symId)
-      assert res.status == LacksNothing
-      if isRoutine(res.decl.symKind) and isGeneric(asRoutine(res.decl)):
-        treatAsGenericInst = true
+    var treatAsGenericInst = hasGenericRoutine(lhs.n)
     if not treatAsGenericInst and lhs.kind != TypeY and atHasTypeArgs(c, cs.fn.n):
       treatAsGenericInst = true
     if treatAsGenericInst:

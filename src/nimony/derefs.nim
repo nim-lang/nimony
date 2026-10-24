@@ -160,7 +160,7 @@ proc isAddressable*(n: Cursor): bool =
     let res = tryLoadSym(s)
     assert res.status == LacksNothing
     let local = asLocal(res.decl)
-    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, PatternvarY, ConstY, GletY, TletY, GvarY, TvarY}
+    result = local.kind in {ParamY, StaticParamY, LetY, ResultY, VarY, CursorY, PatternvarY, ConstY, GletY, TletY, GvarY, TvarY}
     # Assignments to `ConstY` are prevented later.
   else:
     # A path rooted at a call returning `var T` / `lent T` is addressable,
@@ -287,7 +287,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
         assert fnType.isParamsTag
         inc fnType
         let firstParam = asLocal(fnType)
-        if firstParam.kind == ParamY:
+        if isParamLike(firstParam.kind):
           let mightForward = firstParam.typ.typeKind in {MutT, OutT, LentT}
           if not mightForward:
             someIndirection = true
@@ -298,7 +298,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     else:
       break
   if n.isSymbol:
-    if c.typeCache.fetchSymKind(n.symId) == ParamY and n.symId == c.r.firstParam:
+    if isParamLike(c.typeCache.fetchSymKind(n.symId)) and n.symId == c.r.firstParam:
       # There is a difference between
       # proc forward(x: var int): var int = x
       # and
@@ -335,6 +335,38 @@ proc skipToRoot(n: Cursor): Cursor =
       break
   result = n
 
+proc mutatesThroughPointer(c: var Context; n: Cursor): bool =
+  ## Is the location `n` reached through a `ref`/`ptr` dereference? Allowed
+  ## nonetheless when the head of the access path is of type `var T`
+  ## (a `var` parameter or a call returning `var T`).
+  result = false
+  var n = n
+  while true:
+    case n.exprKind
+    of DerefX, DdotX, PatX:
+      result = true
+      inc n
+    of DotX, AtX, ArratX, TupatX, ParX, HderefX:
+      inc n
+    of DconvX:
+      inc n
+      skip n # skip the type
+    of BaseobjX:
+      inc n
+      skip n # skip intlit
+      skip n # skip type
+    else: break
+  if result and getType(c.typeCache, n).typeKind in {MutT, OutT}:
+    result = false
+
+proc checkPointerMutation(c: var Context; n: Cursor): bool =
+  ## A `.noSideEffect` routine must not mutate state behind a `ref`/`ptr`;
+  ## `{.cast(noSideEffect).}` lifts the restriction.
+  result = IsNoSideEffect in c.r.props and mutatesThroughPointer(c, n)
+  if result:
+    buildLocalErr c.dest, n.info, "cannot mutate " & asNimCode(n) &
+      " through a ref/ptr in a `.noSideEffect` context", n
+
 proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   result = false
   let n = skipToRoot(n)
@@ -366,7 +398,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
     of PatternvarY:
       if not cursorIsNil(local.val):
         result = borrowsFromReadonly(c, local.val)
-    of ParamY:
+    of ParamY, StaticParamY:
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
       result = false
@@ -538,7 +570,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
         var params = n
         inc params
         let firstParam = asLocal(params)
-        if firstParam.kind == ParamY:
+        if isParamLike(firstParam.kind):
           c.r.firstParam = firstParam.name.symId
           c.r.firstParamKind = firstParam.typ.typeKind
         takeTree c.dest, n
@@ -660,7 +692,10 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor; info: NifLineInfo
       elif pk == VarargsT:
         # do not advance formal parameter:
         fnType = previousFormalParam
-      tr c, n, e, param.typ
+      if pk in {MutT, OutT} and checkPointerMutation(c, n):
+        skip n
+      else:
+        tr c, n, e, param.typ
     while fnType.hasMore: skip fnType
   # skip return type:
   skip fnType
@@ -830,6 +865,10 @@ proc trAsgn(c: var Context; n: var Cursor) =
             # already emitted an error:
             errAlreadyEmitted = true
             skip n
+    elif checkPointerMutation(c, le):
+      errAlreadyEmitted = true
+      skip n
+      tr c, n, WantT
     elif borrowsFromReadonly(c, n, allowLet = le.isSymbol):
       # A bare-symbol destination is a whole-variable (re)assignment, handled by
       # the definite-assignment pass in contracts_fir; a projection (`a.field`,

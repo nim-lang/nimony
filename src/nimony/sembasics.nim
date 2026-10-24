@@ -77,7 +77,7 @@ proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: Str
     dest.addIdent(identifier, info)
 
 proc isNonOverloadable*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ParamY, TypevarY, StaticTypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
+  t in {LetY, VarY, ParamY, StaticParamY, TypevarY, StaticTypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
 
 proc buildSymChoiceForSelfModule*(c: var SemContext; dest: var TokenBuf;
                                   identifier: StrId; info: NifLineInfo): int =
@@ -395,7 +395,10 @@ proc ptrTypeOf*(c: var SemContext; dest: var TokenBuf; typ: TypeCursor): TypeCur
 proc declToCursor*(c: var SemContext; dest: var TokenBuf; s: Sym): LoadResult =
   if knowsSym(s.name) or s.pos == ImportedPos:
     result = tryLoadSym(s.name)
-  elif s.pos > 0:
+  elif s.pos > 0 and s.pos <= dest.len:
+    # `pos` is an offset into the buffer the declaration was emitted into; a
+    # scratch `dest` (a type expression, say) that is shorter cannot hold it,
+    # e.g. a routine named inside its own still unfinished signature
     var buf = createTokenBuf(10)
     # XXX optimize this for non-generic procs. No need to
     # copy their bodies here.
@@ -609,7 +612,7 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
   elif n.isSymbolDef:
     discard "ok, and no need to re-add it to the symbol table ... or is there?"
     let status =
-      if c.phase == SemcheckBodies and kind in {ParamY, TypevarY, StaticTypevarY}: OkNew
+      if c.phase == SemcheckBodies and kind in {ParamY, StaticParamY, TypevarY, StaticTypevarY}: OkNew
       elif not c.freshSyms.missingOrExcl(n.symId): OkExistingFresh
       else: OkExisting
 

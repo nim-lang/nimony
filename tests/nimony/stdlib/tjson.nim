@@ -125,6 +125,41 @@ proc main() =
     check kind(t.root), JObject
     check hasError(t), true
 
+  block malformed_is_never_silent:
+    # Input that is not JSON must never parse as a clean (shorter) document.
+    for bad in ["""{"a": 1 "b": 2}""", "[1 2]", """[{"a": 1 "b": 2}, 3]""",
+                "[1] [2]", "{} x", "1 2", """{"a" 1}""", """{"a": 1, 2: 3}""",
+                "[1, 2"]:
+      var t = parseJson(bad)
+      if not hasError(t): echo "accepted silently: ", bad
+    for good in ["{}", "[]", """{"a": [1, {"b": null}], "c": "d"}""", " 1 "]:
+      var t = parseJson(good)
+      if hasError(t): echo "rejected: ", good, " ", errorMsg(t)
+
+  block missing_key:
+    # `{}` on an absent key (or a non-object root) used to hand back a nil
+    # cursor that crashed the first reader; now it is a real `null`.
+    var t = parseJson("""{"a": 1}""")
+    check kind(t{"nope"}), JNull
+    check getInt(t{"nope"}, 7), 7'i64
+    check isError(t{"nope"}), false
+    check len(t{"nope"}), 0
+    var arr = parseJson("[1, 2]")
+    check kind(arr{"a"}), JNull
+
+  block nesting_limit:
+    # Deeply nested input used to overflow the parser's stack.
+    var deep = ""
+    for i in 0..<100_000: deep.add '['
+    var t = parseJson(deep)
+    check kind(t.root), JArray
+    check hasError(t), true
+    var ok = ""
+    for i in 0..<JsonMaxDepth: ok.add '['
+    for i in 0..<JsonMaxDepth: ok.add ']'
+    var t2 = parseJson(ok)
+    check hasError(t2), false
+
   echo "json self-tests passed"
 
 main()

@@ -103,7 +103,8 @@ type
   LLInstrKind* = enum
     llBinOp,
     llIcmp, llFcmp,
-    llZext, llSext, llTrunc, llFpext, llFptrunc, llSitofp, llFptosi,
+    llZext, llSext, llTrunc, llFpext, llFptrunc,
+    llSitofp, llUitofp, llFptosi, llFptoui,
     llBitcast, llInttoptr, llPtrtoint,
     llAlloca, llLoad, llStore, llGep,
     llCall, llExtractValue, llInsertValue,

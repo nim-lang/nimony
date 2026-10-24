@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/trecursiveitems.nim(17, 18) Error: recursion is not supported in inline iterators

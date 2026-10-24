@@ -113,7 +113,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   if r != NoSymId:
     var canAnalyse = false
     let v = c.typeCache.getLocalInfo(r)
-    if v.kind == ParamY:
+    if isParamLike(v.kind):
       # an `owned` parameter is borrowed like any other parameter, only
       # `sink owned` takes over the ownership (RFC #575)
       canAnalyse = v.typ.typeKind == SinkT
@@ -156,13 +156,13 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
       while not isLastSon(n): skip n
     of ErrX, SufX, AtX, DotX, PatX, ParX, AddrX, NilX, InfX,
         NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX,
-        SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
+        SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
         CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
         ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
         LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, CallstrlitX, InfixX, PrefixX,
-        HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
+        HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
@@ -183,14 +183,14 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
       hdrefs = true
       inc n
     of ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX,
-        NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX,
+        NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX,
         AlignofX, OffsetofX, OconstrX, AconstrX, BracketX, CurlyX,
         CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
         BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
         CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
-        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
+        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
@@ -427,13 +427,13 @@ proc isSimpleExpression(n: var Cursor): bool =
       else:
         result = false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX, XorX,
-        NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX, AconstrX,
+        NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX, AconstrX,
         BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX,
         NeqX, LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
         TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX,
-        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
+        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
@@ -984,14 +984,14 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           while n.hasMore: trOnlyEssentials c, n
     of ErrX, SufX, AtX, DerefX, HderefX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
-        NotX, NegX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX,
+        NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
         MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
-        InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+        InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
         UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
@@ -1197,18 +1197,14 @@ proc trConvExprImpl(c: var Context; n: var Cursor; e: Expects) =
     while n.hasMore:
       tr c, n, e
 
-proc isCursorField(fieldKey: Cursor): bool =
-  ## A field referenced in a `(kv fieldSym value …)` constructor entry.
-  ## Loads the field's decl and checks for the `.cursor` pragma so the
-  ## value can be moved/bit-copied without an `=dup` — matching the
-  ## non-owning semantics the lifter uses inside auto-derived hooks
-  ## (see `unravelObjField` in `src/hexer/lifter.nim`).
+proc isCursorField(c: var Context; objType, fieldKey: Cursor): bool =
+  ## Whether the field `fieldKey` of a constructor for `objType` is
+  ## `{.cursor.}`. Resolved through the object's type, like
+  ## `writesThroughCursorField`: a field symbol is owned by its type
+  ## declaration, so `tryLoadSym` cannot find it.
   if fieldKey.kind != Symbol: return false
-  let res = tryLoadSym(fieldKey.symId)
-  if res.status != LacksNothing: return false
-  let local = asLocal(res.decl)
-  if local.kind notin {FldY, GfldY}: return false
-  result = hasPragma(local.pragmas, CursorP)
+  let decl = lookupFieldDecl(c.typeCache, objType, fieldKey.symId)
+  result = not cursorIsNil(decl.typ) and hasPragma(decl.pragmas, CursorP)
 
 proc hasStaticPayload(n: Cursor): bool =
   ## True when a field of the object constructor `n` points at static
@@ -1264,14 +1260,14 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
         # `=destroy(typ)` at scope exit would `rc-` — net rc+0, but a
         # mismatched =wasMoved on the source would over-count, exactly
         # the shape of the open stage-2 TypeCache UAF.
-        let kind = if isCursorField(fieldKey): WantNonOwner else: WantOwner
+        let kind = if isCursorField(c, typ, fieldKey): WantNonOwner else: WantOwner
         tr c, n, kind
         if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
   finishOwningTemp c, ow
 
-proc trNewobjFields(c: var Context; n: var Cursor) =
+proc trNewobjFields(c: var Context; n: var Cursor; objType: Cursor) =
   # drains the constructor fields; the enclosing scope's close is consumed
   # by `trNewobj`
   while n.hasMore:
@@ -1279,7 +1275,7 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
       copyInto c.dest, n:
         let fieldKey = n
         takeTree c.dest, n # keep field name
-        let kind = if isCursorField(fieldKey): WantNonOwner else: WantOwner
+        let kind = if isCursorField(c, objType, fieldKey): WantNonOwner else: WantOwner
         tr(c, n, kind)
         if n.hasMore:
           # optional inheritance
@@ -1407,7 +1403,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
           if n.hasMore:
             copyIntoKind c.dest, OconstrX, info:
               c.dest.addSubtree baseType
-              trNewobjFields(c, n)
+              trNewobjFields(c, n, baseType)
           else:
             # A `newobj` that a hexer pass synthesized for a type it invented (a
             # closure environment, a coroutine frame) names no fields. The payload
@@ -1783,11 +1779,11 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trEnsureMove c, n, e
     of AconstrX, TupconstrX:
       trConstructing c, n, e, n.exprKind
-    of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, CanFormCyclesX, SetconstrX,
+    of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, SetconstrX,
        OchoiceX, CchoiceX, XorX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
-       EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, DeclaredX,
+       EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, StaticX, DeclaredX,
        DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
        InternalFieldPairsX, IsX, ToClosureX, PluginCallX:
@@ -1906,43 +1902,96 @@ proc readableHookname(fn: SymId): string =
       inc i
     setLen result, i
 
-proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: NifLineInfo): int =
-  let res = tryLoadSym(fn)
+type
+  ErrorScan = object
+    r: Reporter
+    inferred: seq[(SymId, Cursor)] ## generic instances and derived hooks
+    errors: HashSet[SymId] ## the `inferred` routines that became `.error`
+
+proc isErrorRoutine(s: ErrorScan; fn: SymId): bool =
+  if fn in s.errors:
+    result = true
+  else:
+    let res = tryLoadSym(fn)
+    result = res.status == LacksNothing and res.decl.symKind.isRoutine and
+      hasPragma(asRoutine(res.decl).pragmas, ErrorP)
+
+proc callsErrorRoutine(s: ErrorScan; n: var Cursor): bool =
+  ## Scans the tree at `n`, advancing past it.
+  result = false
+  if n.kind == TagLit:
+    if n.exprKind in CallKinds:
+      let fn = n.childCursor
+      if fn.isSymbol and isErrorRoutine(s, fn.symId):
+        result = true
+    n.loopInto:
+      if callsErrorRoutine(s, n): result = true
+  else:
+    inc n
+
+proc isDerivedHook(fn: SymId): bool =
+  ## The lifter names its hooks `=op_<type key>`; a written one is `=op`.
+  let name = pool.symBasename(fn)
+  result = name.len > 2 and name[0] == '=' and name[1] in {'a'..'z'} and
+    name.find('_') > 0
+
+proc isInferred(r: Routine): bool =
+  ## A generic instance exists for every instantiation of the generic, used or
+  ## not -- seq's `=dup` for a `T` that cannot be copied -- and a derived hook
+  ## for every type that needs one: an `.error` call in either does not report
+  ## but makes the routine itself `.error`, reported where it is called.
+  result = r.typevars.typeKind == InvokeT or
+    (r.name.isSymbolDef and isDerivedHook(r.name.symId))
+
+proc collectInferred(s: var ErrorScan; n: Cursor) =
+  var n = n
+  n.loopInto:
+    if isRoutine(symKind n):
+      let routine = asRoutine(n, SkipInclBody)
+      if routine.name.isSymbolDef and routine.body.isTagLit and isInferred(routine):
+        s.inferred.add (routine.name.symId, routine.body)
+    skip n
+
+proc inferErrors(s: var ErrorScan) =
+  var changed = true
+  while changed:
+    changed = false
+    for i in 0 ..< s.inferred.len:
+      let fn = s.inferred[i][0]
+      if fn notin s.errors:
+        var body = s.inferred[i][1]
+        if callsErrorRoutine(s, body):
+          s.errors.incl fn
+          changed = true
+
+proc checkForErrorRoutine(s: var ErrorScan; fn: SymId; info: NifLineInfo): int =
   result = 0
-  if res.status == LacksNothing:
-    let routine = asRoutine(res.decl)
-    if routine.kind.isRoutine and hasPragma(routine.pragmas, ErrorP):
-      let fnName = readableHookname(fn)
-      var m = "'" & fnName & "' is not available"
-      var arg = routine.params
+  if isErrorRoutine(s, fn):
+    let res = tryLoadSym(fn)
+    let fnName = readableHookname(fn)
+    var m = "'" & fnName & "' is not available"
+    if res.status == LacksNothing:
+      var arg = asRoutine(res.decl).params
       if arg.substructureKind == ParamsU:
         arg = sub(arg)  # throwaway copy; bounds the peek under vpr
         if arg.hasMore:
           let param = asLocal(arg)
           m.add " for type <" & typeToString(param.typ) & ">"
-      try:
-        r.error infoToStr(info), m
-      except:
-        quit 1
-      inc result
+    try:
+      s.r.error infoToStr(info), m
+    except:
+      quit 1
+    inc result
 
-proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
+proc checkForMoveTypesImpl(n: var Cursor; s: var ErrorScan): int =
   ## Scans the single tree/token at `n` for `.error` hook calls, advancing
   ## past it.
   result = 0
   case n.kind
   of TagLit:
-    let sk = symKind n
-    if isRoutine(sk):
+    if isRoutine(symKind n):
       var probe = n
-      let routine = asRoutine(probe)
-      if hasPragma(routine.pragmas, NodestroyP):
-        # We skip the bodies of `(nodestroy)` routines: those are auto-derived
-        # hooks or library hook implementations (e.g. `seq.=dup`), whose bodies
-        # may reference a `.error` sub-hook for dead-code reasons. The lifter
-        # has already propagated `.error` to the enclosing hook itself via
-        # `siblingHookIsError` + `c.calledErrorHook`, so a user-visible call to
-        # the *enclosing* hook is what we want to surface, not the inner call.
+      if isInferred(asRoutine(probe)):
         skip n
         return
     let ek = n.exprKind
@@ -1953,27 +2002,35 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
         while n.isDotToken: inc n
         if n.isStringLit:
           try:
-            r.error infoToStr(info), pool.strings[n.strId]
+            s.r.error infoToStr(info), pool.strings[n.strId]
           except:
             quit 1
           inc result
           inc n
         while n.hasMore:
-          result += checkForMoveTypesImpl(n, r)
+          result += checkForMoveTypesImpl(n, s)
     else:
       if ek in CallKinds:
         let fn = n.childCursor
         if fn.isSymbol:
-          result += checkForErrorRoutine(r, fn.symId, n.info)
+          result += checkForErrorRoutine(s, fn.symId, n.info)
       n.loopInto:
-        result += checkForMoveTypesImpl(n, r)
+        result += checkForMoveTypesImpl(n, s)
   else:
     inc n
 
 proc checkForMoveTypes(c: var Context; n: Cursor): int =
-  var r = Reporter(verbosity: 2, noColors: not useColors())
+  var s = ErrorScan(r: Reporter(verbosity: 2, noColors: not useColors()))
+  collectInferred(s, n)
+  # the hooks lifted in this pass are a sequence of routines, not one tree:
+  var hooks = createTokenBuf(c.lifter.dest.len + 2)
+  hooks.addParLe StmtsS, NoLineInfo
+  for i in 0 ..< c.lifter.dest.len: hooks.add c.lifter.dest[i]
+  hooks.addParRi()
+  collectInferred(s, beginRead(hooks))
+  inferErrors(s)
   var n = n
-  result = checkForMoveTypesImpl(n, r)
+  result = checkForMoveTypesImpl(n, s)
 
 proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally

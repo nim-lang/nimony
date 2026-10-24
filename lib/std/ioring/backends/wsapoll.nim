@@ -80,23 +80,24 @@ when defined(windows):
     var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
     if n > 0:
       for i in 0..<n:
-        let idx = gSlots[lane].allocSlot(buf[i])
-        armDeadline(lane, idx)
+        let s = newSlot(lane, buf[i])
+        if s == nil: continue
+        armDeadline(lane, s)
         case buf[i].kind
         of opTimeout:
           discard            # nothing to arm on: the deadline heap is the wait
         of opNop:
-          complete(idx, 0)   # nothing to wait for either
+          complete(s, 0)   # nothing to wait for either
         of opRead, opWrite:
-          if buf[i].positioned: submitPositionedFile(idx)
+          if buf[i].positioned: submitPositionedFile(s)
         of opConnect:
           # Start the attempt here, on the polling thread, so the socket is
           # already connecting by the time the set below watches it. A connect
           # that finished at once has completed the slot; the set is rebuilt
           # from the arena, so there is nothing to undo either way.
-          discard startConnect(buf[i].fd, idx)
+          discard startConnect(buf[i].fd, s)
         else:
-          discard completeCommand(idx, buf[i])
+          discard completeCommand(s, buf[i])
     # Build this lane's set from its arena. Collect before dispatching:
     # `processFd` frees slots, which mutates the fd index the set comes from.
     # A FILE fd is its own readiness: WSAPoll cannot watch a HANDLE
@@ -146,8 +147,8 @@ when defined(windows):
         # Closed under its ops (closeFd ran before this lane issued them):
         # the ring's cancellation result, same as the other backends report.
         let dead = cint(cast[uint32](pollSets[lane][i].fd))
-        for idx in gSlots[lane].slotsForFd(dead):
-          complete(idx, ECancelled)
+        for s in gSlots[lane].slotsForFd(dead):
+          complete(s, ECancelled)
         continue
       var fired: IoEvents = {}
       if (re and POLLRDNORM) != 0: fired.incl evRead

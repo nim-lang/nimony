@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tinheritfinal.nim(4, 17) Error: cannot inherit from type: F

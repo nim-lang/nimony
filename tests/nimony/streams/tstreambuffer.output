@@ -1,0 +1,5 @@
+plain buffer and EOF
+adapter end and handoff
+decoded buffer and errors
+fill preserves file input
+invalid reader errors

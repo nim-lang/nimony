@@ -191,7 +191,11 @@ proc ecdsaVerify*(curve: Curve; publicKey: openArray[byte]; digest: openArray[by
 # ------------------------------------------------------------------- DER ----
 
 func derInt(data: openArray[byte]; pos: var int; res: var seq[byte]): bool =
-  ## One DER INTEGER at `pos`: tag 2, a short length, a positive value.
+  ## One DER INTEGER at `pos`: tag 2, a short length, a positive value in
+  ## its one minimal encoding. DER allows exactly one spelling per value; a
+  ## parser that takes others too (a negative-looking value, a redundant
+  ## leading zero) makes every signature malleable: the same signature
+  ## spelled differently still verifies.
   result = false
   if pos < 0 or pos + 2 > data.len: return
   if data[pos] != 2'u8: return
@@ -199,6 +203,10 @@ func derInt(data: openArray[byte]; pos: var int; res: var seq[byte]): bool =
   if L == 0 or L >= 128: return
   let start = pos + 2
   if start + L > data.len: return
+  if start < data.len and (data[start] and 0x80'u8) != 0: return   # negative
+  if L > 1 and start + 1 < data.len and data[start] == 0'u8 and
+      (data[start + 1] and 0x80'u8) == 0:
+    return                                            # not minimal
   res = @[]
   for i in start ..< start + L:
     if i < data.len: res.add data[i]
@@ -215,6 +223,7 @@ proc ecdsaVerifyDer*(curve: Curve; publicKey, digest, signature: openArray[byte]
   if bodyLen == 0x81:
     bodyLen = int(signature[2])
     pos = 3
+    if bodyLen < 0x80: return       # the short form was the DER one
   elif bodyLen >= 0x80:
     return
   if pos + bodyLen != signature.len: return

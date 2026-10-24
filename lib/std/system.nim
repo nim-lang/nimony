@@ -23,12 +23,17 @@ const
 
 func `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 func `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
+func `[]`*[I, T; J: SomeInteger](x: array[I, T], i: J): var T {.magic: "ArrAt".}
+  ## Any integer indexes an array by ordinal value, relative to the array's own
+  ## index range; never via the 0-based openArray `[]` (nim-lang/nimony#2750).
 func `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
 func `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
 func `[]`*[T](x: UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
   (x[i]) = elem
 template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
+  (x[i]) = elem
+template `[]=`*[I, T; J: SomeInteger](x: array[I, T], i: J; elem: T) =
   (x[i]) = elem
 template `[]=`*(x: cstring, i: int; elem: char) =
   (x[i]) = elem
@@ -66,6 +71,11 @@ func astToStr*[T](x: T): string {.magic: AstToStr.}
 func compiles*(x: untyped): bool {.magic: Compiles.}
   ## Special compile-time procedure that checks whether `x` can be compiled
   ## without any semantic error.
+
+func `static`*(x: untyped): untyped {.magic: Static.}
+  ## Evaluates `x` at compile time, like a `const` initializer, and yields its
+  ## value: `static(fib(10))`. The only way to pass an arbitrary call to a
+  ## `static` parameter; compile-time evaluation is never implicit.
   ## This can be used to check whether a type supports some operation:
   ##   ```nim
   ##   when compiles(3 + 4):
@@ -690,3 +700,19 @@ proc instantiationInfo*(): tuple[filename: string, line: int, column: int] {.mag
   ## The source position of the call. Inside a template body it is the
   ## position of the template's call site, so a template can report where it
   ## was invoked. `filename` is the file name without directories.
+
+template uncheckedBorrow*(x: untyped): untyped =
+  ## `x`, borrowed without the borrow checker's protection: the programmer
+  ## vouches that nothing mutates `x` while the borrow lasts. Needed to
+  ## iterate a location reached through a `ref`, which an alias of the `ref`
+  ## could otherwise mutate under the loop:
+  ##
+  ##   ```nim
+  ##   for k, v in uncheckedBorrow(node.table):
+  ##     echo k
+  ##   ```
+  ##
+  ## A `seq` is better iterated by index, and any container can be moved out
+  ## of its location for the loop and back in afterwards; neither needs such
+  ## a promise.
+  addr(x)[]

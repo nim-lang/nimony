@@ -16,7 +16,8 @@ type Pair = object
   n: int
 var aggregate: Pair
 
-# A field that states a default of its own answers for itself:
+# A field's declared default does not help: a global without an initializer
+# is zeroed, field defaults included, so `fine.f` would be nil.
 type WithDefault = object
   f: Foo = Foo(x: 1)
   n: int

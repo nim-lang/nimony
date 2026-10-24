@@ -43,7 +43,7 @@ type
   IndexedBox*[T; A: Indexable[T]] = object
     data: ptr A
 
-func set*[T; A: MutableIndexable[T]](b: IndexedBox[T, A]; idx: int; value: T) =
+proc set*[T; A: MutableIndexable[T]](b: IndexedBox[T, A]; idx: int; value: T) =
   b.data[][idx] = value
 
 func first*[T; A: MutableIndexable[T]](b: IndexedBox[T, A]): T =

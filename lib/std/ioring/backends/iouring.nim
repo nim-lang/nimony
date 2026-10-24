@@ -38,7 +38,7 @@
 # shared-global check cannot see yet (no `.guard` support).
 {.feature: "assumeSync".}
 
-import std/[assertions, atomics, posix/posix, tables, ticketlocks, threadpool]
+import std/[atomics, posix/posix, ticketlocks, threadpool]
 import std/syncio   # quit
 import ../../posix/io_uring
 import ../core/types
@@ -51,16 +51,9 @@ const
   DrainBatch = 128  ## Max deferred entries drained per poll() call.
   CancelUserData = 0xffff_ffff_ffff_ffff'u64
     ## `user_data` for the cancellation SQEs this backend submits on its own
-    ## behalf. Its low word is not a slot index any arena can hold, so the
-    ## completion loop drops the CQE on the bounds check below and no slot is
-    ## touched by it.
+    ## behalf; no slot lives at this address.
   AtFdCwd = cint(-100)  ## resolve an AT_* path against the cwd; `posix` only
     ## exposes its own `AT_FDCWD` under `linuxA64Raw`, so name it here.
-
-proc tagFor(idx: int; gen: uint32): uint64 {.inline.} =
-  ## A CQE's `user_data`: the slot index, and the generation of the op that was
-  ## in it when the SQE was filled.
-  uint64(uint32(idx)) or (uint64(gen) shl 32)
 
 var
   sqEntries: int
@@ -73,15 +66,13 @@ type
     iov: IOVec
 
 var gCancels: seq[seq[uint64]]
-  ## Per lane: tags of ops whose cancel is still waiting for an SQE.
+  ## Per lane: `user_data` of ops whose cancel is still waiting for an SQE.
 
-var gMsgs: seq[Table[uint64, nil ptr MsgSlot]]
-  ## Per lane: an in-flight datagram op's tag -> its msghdr, allocated at fill
-  ## time and freed on the op's CQE. (A `Tmsghdr` has non-nil pointers and so
-  ## no default, which rules out keeping it in the slot's `OpContext`.)
-
-proc newMsg(lane, idx: int; gen: uint32; name: pointer; nameLen: SockLen;
+proc newMsg(s: Slot; name: pointer; nameLen: SockLen;
             buf: pointer; len: int): ptr Tmsghdr =
+  ## The msghdr of a datagram op, kept as the slot's `backendData` until the
+  ## op's CQE. (A `Tmsghdr` has non-nil pointers and so no default, which
+  ## rules out keeping it in the slot's `OpContext`.)
   let m = cast[ptr MsgSlot](alloc0(sizeof(MsgSlot)))
   m.hdr.msg_name = name
   m.hdr.msg_namelen = nameLen
@@ -89,29 +80,20 @@ proc newMsg(lane, idx: int; gen: uint32; name: pointer; nameLen: SockLen;
   m.hdr.msg_iovlen = csize_t(1)
   m.iov.iov_base = buf
   m.iov.iov_len = csize_t(len)
-  gMsgs[lane][tagFor(idx, gen)] = m
+  s.backendData = m
   result = addr m.hdr
-
-proc takeMsg(lane: int; tag: uint64): nil ptr MsgSlot =
-  ## The msghdr registered under `tag`, removed from the table; `nil` for an
-  ## op that has none.
-  result = gMsgs[lane].getOrDefault(tag, nil)
-  if result != nil: gMsgs[lane].del(tag)
 
 proc tryInitLocalQueues(): bool =
   localQueues = @[]
-  gMsgs = @[]
   gCancels = newSeq[seq[uint64]](ioLanes())
   try:
     for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
-      gMsgs.add initTable[uint64, nil ptr MsgSlot]()
   except ErrorCode:
     return false   # the caller falls back to the epoll backend
   return true
 
-proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
-  let slot = addr gSlots[lane].slots[idx]
+proc fillSqe(sqe: ptr Sqe; slot: Slot) {.inline.} =
   let op = addr slot.op
   case op.kind
   of opRead:
@@ -158,11 +140,11 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     # `msg_name` points at the op's own `recvfrom` address, so `complete`
     # hands the storage to `peer` the way accept's does.
     discard sqe.recvmsg(SocketHandle(op.fd),
-      newMsg(lane, idx, slot.gen, addr op.recvfrom.sockAddr,
+      newMsg(slot, addr op.recvfrom.sockAddr,
              op.recvfrom.sockAddrLen, cast[pointer](op.recvfrom.buf), op.recvfrom.len))
   of opSendTo:
     discard sqe.sendmsg(SocketHandle(op.fd),
-      newMsg(lane, idx, slot.gen, addr op.sendto.sockAddr,
+      newMsg(slot, addr op.sendto.sockAddr,
              op.sendto.sockAddrLen, cast[pointer](op.sendto.buf), op.sendto.len))
   of opNop, opTimeout:
     # A timer needs no SQE. The lane's deadline heap already knows when it is
@@ -211,18 +193,21 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
     for i in 0..<n:
       if buf[i].kind == opTimeout:
         # No SQE, but it still needs a slot so the heap can complete it.
-        let idx = gSlots[lane].allocSlot(buf[i])
-        armDeadline(lane, idx)
+        let s = newSlot(lane, buf[i])
+        if s == nil: continue
+        armDeadline(lane, s)
         continue
       if buf[i].positioned:
         let transfer = if buf[i].kind == opRead: buf[i].read else: buf[i].write
         if buf[i].offset < 0 or transfer.len < 0:
-          let idx = gSlots[lane].allocSlot(buf[i])
-          complete(idx, -int(EINVAL))
+          let s = newSlot(lane, buf[i])
+          if s == nil: continue
+          complete(s, -int(EINVAL))
           continue
         if buf[i].deadline != never and buf[i].deadline <= monoNow():
-          let idx = gSlots[lane].allocSlot(buf[i])
-          complete(idx, IoTimedOut)
+          let s = newSlot(lane, buf[i])
+          if s == nil: continue
+          complete(s, IoTimedOut)
           continue
       if buf[i].kind in {opBind, opSetNonBlocking}:
         # The two config ops that have NO ring form, completed here before any
@@ -236,35 +221,37 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # siblings) is non-blocking by construction, so the op succeeds the
         # moment it reaches a poll. socket(2) and setsockopt(2), by contrast,
         # both have ring forms and go through SQEs below.
-        let idx = gSlots[lane].allocSlot(buf[i])
-        armDeadline(lane, idx)
+        let s = newSlot(lane, buf[i])
+        if s == nil: continue
+        armDeadline(lane, s)
         if buf[i].kind == opSetNonBlocking:
-          complete(idx, 0)
+          complete(s, 0)
         else:
-          discard completeCommand(idx, buf[i])   # bind(2)
+          discard completeCommand(s, buf[i])   # bind(2)
         continue
+      # The slot before the SQE: an SQE, once taken, is submitted whether or
+      # not it was filled, while a slot can be given back.
+      let s = newSlot(lane, buf[i])
+      if s == nil: continue
       var sqe: nil ptr Sqe
       try:
         sqe = localQueues[lane].getSqe()
       except ErrorCode:
-        # Ops buf[i..<n] were dequeued but never got an SQE/slot; put them
-        # back so the next poll picks them up instead of losing them forever.
-        for k in i..<n:
-          discard gOpQueues[lane].tryEnqueue(buf[k])
-        break
+        sqe = nil
       if sqe == nil:
+        # Ops buf[i..<n] were dequeued but never got an SQE; put them back so
+        # the next poll picks them up instead of losing them forever.
+        gSlots[lane].freeSlot(s)
         for k in i..<n:
-          discard gOpQueues[lane].tryEnqueue(buf[k])
+          discard gOpQueues[lane].tryEnqueue(buf[k], MaxOpQueue)
         break
-      let idx = gSlots[lane].allocSlot(buf[i])
-      armDeadline(lane, idx)
-      let slot = addr gSlots[lane].slots[idx]
-      sqe.userData = cast[pointer](tagFor(idx, slot.gen))
-      # Fill from the ARENA copy, never from `buf`: an accept SQE stores
+      armDeadline(lane, s)
+      sqe.userData = s.toPointer
+      # Fill from the slot's copy, never from `buf`: an accept SQE stores
       # `addr op.accept.sockAddr`/`addr op.accept.sockAddrLen` (the connect and
       # datagram address branches point the same way) and the kernel writes
       # through those at completion time, long after this stack frame is gone.
-      fillSqe(sqe, lane, idx)
+      fillSqe(sqe, s)
   # Sleep in the kernel until something is due — an I/O completion, or the
   # earliest deadline this lane is waiting on, whichever comes first. That is
   # ONE timeout for the whole lane, taken off the top of the deadline heap,
@@ -312,15 +299,12 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         if cqes[i].userData == CancelUserData: continue   # a cancel's own ack
         # A slot outlives its op's time in the kernel: a deadline or `closeFd`
         # only asks for the op back (`cancelOp`), and the op completes here.
-        # So the generation in `user_data` always names the op in the slot.
-        let idx = int(cqes[i].userData and 0xffff_ffff'u64)
-        let gen = uint32(cqes[i].userData shr 32)
-        let slot = addr gSlots[lane].slots[idx]
-        assert slot.inUse and slot.gen == gen,
-          "ioring/iouring: CQE for a slot the kernel no longer owned"
+        # So `user_data` always names a live slot.
+        let slot = toSlot(cast[pointer](cqes[i].userData))
         let op = addr slot.op
         if op.kind in {opRecvFrom, opSendTo}:
-          let m = takeMsg(lane, cqes[i].userData)
+          let m = cast[nil ptr MsgSlot](slot.backendData)
+          slot.backendData = nil
           if m != nil:
             if op.kind == opRecvFrom and int(cqes[i].res) > 0:
               # Narrow `sockAddrLen` to what RECVMSG wrote, as the readiness
@@ -338,7 +322,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
           if POLL_IN in fired: ev.incl evRead
           if POLL_OUT in fired: ev.incl evWrite
           res = toEventMask(ev)
-        completeFromKernel(idx, res)
+        completeFromKernel(slot, res)
       expireDeadlines(lane)
       return true
   expireDeadlines(lane)
@@ -365,13 +349,13 @@ proc flushCancels(lane: int) =
     except ErrorCode:
       discard
 
-proc iouringCancelInFlight(slotIdx: int; gen: uint32): bool {.nimcall.} =
+proc iouringCancelInFlight(s: Slot): bool {.nimcall.} =
   ## Every op in a slot on this backend has an SQE, so the kernel owns it:
   ## ask for it back by the `user_data` its SQE carries. Submitted right away
   ## rather than left for the poll loop's own submit, which `expireDeadlines`
   ## runs after.
   let lane = ioLane()
-  gCancels[lane].add tagFor(slotIdx, gen)
+  gCancels[lane].add cast[uint64](s.toPointer)
   flushCancels(lane)
   result = true
 
@@ -384,10 +368,11 @@ proc iouringClose() {.nimcall.} =
     if localQueues[i].params != nil:
       teardown(localQueues[i])
   # Free the msghdrs no CQE is coming for: the rings are gone.
-  for i in 0..<gMsgs.len:
-    for m in gMsgs[i].values:
-      if m != nil: dealloc(m)
-  gMsgs = @[]
+  for lane in 0..<gSlots.len:
+    for s in gSlots[lane].allSlots:
+      if s.backendData != nil:
+        dealloc(s.backendData)
+        s.backendData = nil
 
 proc initIoUringBackendRelays*(sqE = 256): BackendRelays =
   sqEntries = sqE

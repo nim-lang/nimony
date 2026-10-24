@@ -211,6 +211,28 @@ proc isCoroutine(n: Cursor): bool =
   result = r.kind == IteratorY and
            (hasPragma(r.pragmas, ClosureP) or hasPragma(r.pragmas, PassiveP))
 
+proc trAsmBody(dest: var TokenBuf; n: var Cursor) =
+  ## An `{.assembler.}` body is taken verbatim except for `p.f`, whose
+  ## `ddot` is a front-end node: it becomes `(dot (deref p) f)` like elsewhere.
+  if n.isTagLit:
+    if n.exprKind == DdotX:
+      dest.addParLe("dot", n.info)
+      dest.addParLe("deref", n.info)
+      n.into:
+        trAsmBody dest, n
+        dest.addParRi() # deref
+        takeTree dest, n # field
+        takeTree dest, n # inheritance depth
+        if n.isStringLit:
+          skip n # access-token marker
+        dest.addParRi(n.endInfo)
+    else:
+      takeInto dest, n:
+        while n.hasMore:
+          trAsmBody dest, n
+  else:
+    takeTree dest, n
+
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   let decl = n
@@ -236,6 +258,8 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       swap outer, c.pre
       trProcBody(c, dest, n)
       dest.addParRi()
+    elif isAsm:
+      trAsmBody dest, n
     else:
       takeTree dest, n
   c.inPassiveIter = wasPassiveIter
@@ -1346,7 +1370,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
               copyInto dest, n:
                 takeTree dest, n # keep set constructor
                 tr(c, dest, n)
-            of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+            of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
                 TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, ElseU,
                 TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
                 EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU,
@@ -1458,14 +1482,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       trDelay(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, XorX,
-        NotX, SizeofX, CanFormCyclesX, AlignofX, OffsetofX, OconstrX,
+        NotX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, CastX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
         AshrX, BaseobjX, DconvX, HconvX, ConvX,
-        CompilesX, DeclaredX, DefinedX, ProccallX,
+        CompilesX, StaticX, DeclaredX, DefinedX, ProccallX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX,

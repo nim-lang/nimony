@@ -57,6 +57,16 @@ func countBits(x: uint): int {.inline.} =
     v = v and (v - 1'u) # clears the lowest set bit
     inc result
 
+func setBit(tr: var Trunk; b: uint; c: int): bool {.inline, requires: b < TrunkSize.} =
+  ## Sets the bit and tells whether it was set already.
+  result = (tr.a[b] and (1'u shl c)) != 0'u
+  tr.a[b] = tr.a[b] or (1'u shl c)
+
+func clearBit(tr: var Trunk; b: uint; c: int): bool {.inline, requires: b < TrunkSize.} =
+  ## Clears the bit and tells whether it was clear already.
+  result = (tr.a[b] and (1'u shl c)) == 0'u
+  tr.a[b] = tr.a[b] and not (1'u shl c)
+
 func initPackedSet*[A: Ordinal](): PackedSet[A] =
   ## Returns an empty `PackedSet[A]`.
   runnableExamples:
@@ -88,8 +98,7 @@ func incl*[A: Ordinal](s: var PackedSet[A]; key: A) =
     assert len(a) == 1
 
   let (a, b, c) = split(bitPos(key))
-  let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
-  tr.a[b] = tr.a[b] or (1'u shl c)
+  discard setBit(s.t.mgetOrPut(a, default(Trunk)), b, c)
 
 func excl*[A: Ordinal](s: var PackedSet[A]; key: A) =
   ## Excludes `key` from `s`. Does nothing if it is not in there.
@@ -103,8 +112,7 @@ func excl*[A: Ordinal](s: var PackedSet[A]; key: A) =
   # No `mgetOrPut`: excluding from a trunk that does not exist must not
   # allocate one.
   if s.t.hasKey(a):
-    let tr = addr getOrQuit(s.t, a)
-    tr.a[b] = tr.a[b] and not (1'u shl c)
+    discard clearBit(getOrQuit(s.t, a), b, c)
 
 func containsOrIncl*[A: Ordinal](s: var PackedSet[A]; key: A): bool =
   ## Includes `key` in `s` and tells whether it was already in there.
@@ -114,10 +122,7 @@ func containsOrIncl*[A: Ordinal](s: var PackedSet[A]; key: A): bool =
     assert a.containsOrIncl(3) == true
 
   let (a, b, c) = split(bitPos(key))
-  let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
-  result = (tr.a[b] and (1'u shl c)) != 0'u
-  if not result:
-    tr.a[b] = tr.a[b] or (1'u shl c)
+  result = setBit(s.t.mgetOrPut(a, default(Trunk)), b, c)
 
 func missingOrExcl*[A: Ordinal](s: var PackedSet[A]; key: A): bool =
   ## Excludes `key` from `s` and tells whether it was already missing.
@@ -128,10 +133,7 @@ func missingOrExcl*[A: Ordinal](s: var PackedSet[A]; key: A): bool =
 
   let (a, b, c) = split(bitPos(key))
   if s.t.hasKey(a):
-    let tr = addr getOrQuit(s.t, a)
-    result = (tr.a[b] and (1'u shl c)) == 0'u
-    if not result:
-      tr.a[b] = tr.a[b] and not (1'u shl c)
+    result = clearBit(getOrQuit(s.t, a), b, c)
   else:
     result = true
 

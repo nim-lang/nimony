@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tcopyerrorarraytoseq.nim(5, 11) Error: '=dup' is not available for type <Foo>
+tests/nimony/errmsgs/tcopyerrorarraytoseq.nim(6, 9) Error: '=dup' is not available for type <Foo>

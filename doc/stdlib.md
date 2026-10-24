@@ -538,8 +538,50 @@ let bytes = extract(w)
 - A writer's destructor finishes it (adapter trailer, `close_notify`, end of
   data for the peer) and swallows errors; call `close` to see them, `abort` on
   error paths to avoid a complete-looking truncated stream.
-- Not yet: `openReadWrite`, `pipe`/channels, `startTls`, deadlines, the
-  `sendfile`/`splice`/kTLS paths of `copy`.
+- `deadline` reads a stream's standing I/O deadline; `renew(deadline)` replaces
+  it, and `renew(never)` clears it. Paired ends share the same deadline. These
+  operations raise `BadOperation` for closed or default-constructed streams.
+  Deadlines bound descriptor I/O; buffered and in-memory work does not wait.
+- `connect`, `connectReader` and `connectWriter` accept `dl = never`. One
+  absolute deadline covers DNS, TCP, TLS and, for the request overload, the
+  initial request flush. Expiry raises `TimeoutError`. Returned streams start
+  with `never`; use `renew` for the next exchange. Renewing does not make a
+  failed partial write resumable.
+- `pipe(capacity)` is an in-process `Reader`/`Writer` pair over a ring; a
+  full or empty pipe parks the task instead of blocking a thread.
+  `recordPipe` is its fixed-size-record form, on which `std/channels` builds.
+- Not yet: `openReadWrite`, `startTls`, the `sendfile`/`splice`/kTLS paths of
+  `copy`.
+
+For incremental parsing, a `Reader` exposes `buffered`, `peek`, `consume` and
+`fill`, like `Socket`. `peek` views unread decoded bytes without copying, and
+`consume(n)` advances past bytes the parser used. `fill()` preserves the unread
+tail and returns the number of decoded bytes added. Zero means source or
+adapter end; already buffered bytes remain available. Reader mutations
+invalidate views. Callers must consume data or bound its accumulation.
+
+## channels
+
+[Source](../lib/std/channels.nim)
+
+Typed channels with copyable `Sender[T]`/`Receiver[T]` ends; waiting parks
+the task, it does not block a thread.
+
+```nim
+let (r, s) = channel[Job](16)       # in-process; any `T`, values move as bytes
+discard s.send Job(id: 1)           # false once no receiver is left
+var j: Job
+while r.recv(j): process j          # false once no sender is left and drained
+
+let pts = sender[Point](openWriter(path"points.bin"))   # over any stream
+```
+
+- `sender[T]`/`receiver[T]` wrap any `Writer`/`Reader` and require
+  `supportsCopyMem(T)`: the bytes of a pointer mean nothing outside the
+  process. Over such a stream `send` does not flush; see `flush`.
+- All copies of an end share one stream; the last copy gone ends it. Over a
+  channel's own ring copies need no extra lock; over any other stream they
+  take turns under a lock that parks its waiters.
 
 ## tls
 
@@ -565,6 +607,33 @@ let (r, w) = connect("example.com:443", request, tls = e)
   (HTTP) know where their data ends and never get there.
 - A server that offers neither X25519 nor ChaCha20-Poly1305 (some FIPS-mode
   servers) fails with `tfUnsupported`.
+
+## http/httpheaders
+
+[Source](../lib/std/http/httpheaders.nim)
+
+`HttpHeaders` stores HTTP/1.1 header lines in wire order. Import this module
+directly for header construction and lookup without a client dependency;
+`std/httpclient` also re-exports its helpers.
+
+```nim
+import std/[http/httpheaders, assertions]
+
+proc example() {.raises.} =
+  var h = headers"Accept: application/json\r\n"
+  h.add "X-Trace", "1"
+  assert h.has("accept")
+  assert h.get("X-Trace") == "1"
+  for name, value in h.pairs:
+    discard name
+    discard value
+```
+
+`pairs` preserves duplicate fields and name spelling; `values(name)` returns
+all matching values in wire order. Lookup is case-insensitive. `get` returns
+the first match or `""`; `has` distinguishes an empty value from an absent
+field. The `headers"..."` literal is checked at compile time, and `add` rejects
+invalid field names and CR/LF in values with `BadOperation`.
 
 ## httpclient
 

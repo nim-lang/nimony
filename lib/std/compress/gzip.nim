@@ -28,7 +28,7 @@
 import ./deflate
 import ./checksums
 
-export deflate.InflateStatus
+export deflate.InflateStatus, deflate.DefaultInflateLimit
 
 type
   Format* = enum
@@ -305,12 +305,13 @@ proc isDone*(d: Decoder): bool {.inline.} =
   d.stage == dsDone and d.pending.len == 0
 
 proc uncompress*(data: openArray[char]; fmt = fmtDetect;
-                 limit = high(int)): string {.raises.} =
+                 limit = DefaultInflateLimit): string {.raises.} =
   ## `data`, decompressed. `SyntaxError` for a stream that is corrupt or cut
   ## short, `ContentTooLong` when the result would pass `limit` bytes.
   ##
-  ## Pass a `limit` whenever `data` came from someone else: it is the only
-  ## thing between a kilobyte of input and a gigabyte of output.
+  ## The limit is what stands between a kilobyte of input and a gigabyte of
+  ## output, so it has a default (`DefaultInflateLimit`, 64 MiB); pass a
+  ## larger one for data that is expected to be bigger.
   result = ""
   var d = initDecoder(fmt)
   d.feed(data)

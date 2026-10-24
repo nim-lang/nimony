@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tcopyerrornodestroy.nim(5, 9) Error: '=dup' is not available for type <Foo>

@@ -197,3 +197,6 @@ func `-=`*[T: SomeNumber](x: var T; y: T) {.untyped, inline.} =
 
 func `*=`*[T: SomeNumber](x: var T; y: T) {.untyped, inline.} =
   x = x * y
+
+func `/=`*[T: SomeFloat](x: var T; y: T) {.untyped, inline.} =
+  x = x / y

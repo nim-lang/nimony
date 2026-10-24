@@ -592,7 +592,10 @@ proc processRecord(e: NimonyTlsEngine; hdr: array[5, byte]; body: seq[byte]) {.r
   var contentType = typ
   var payload: seq[byte] = @[]
   if not e.encrypted or typ != ContentApplicationData:
-    if e.encrypted and typ != ContentAlert: e.fail(tfProtocol)
+    # Once records are protected, an unprotected one is forged or broken —
+    # an alert included: a plaintext `close_notify` would let anyone on the
+    # path end the stream early and truncate the response unnoticed.
+    if e.encrypted: e.fail(tfProtocol)
     payload = body
   else:
     if body.len < 17: e.fail(tfDecrypt)

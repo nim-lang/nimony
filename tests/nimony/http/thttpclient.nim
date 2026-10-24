@@ -105,6 +105,17 @@ proc clientChain() {.passive.} =
     except ErrorCode as e:
       log.add "[7] reserved header: " & $e & "\n"
     log.add "[8] " & h.get("x-trace") & "\n"
+    for i, bad in ["/a b", "/a\r\nX-Injected: 1", "/?q=\r\n", "/\t"]:
+      try:
+        discard httpGet(url(bad))
+        log.add "[9." & $i & "] no error\n"
+      except ErrorCode as e:
+        log.add "[9." & $i & "] request-line injection: " & $e & "\n"
+    try:
+      discard httpGet(url("/"), HttpHeaders("X-A: 1\nInjected: yes\r\n"))
+      log.add "[10] no error\n"
+    except ErrorCode as e:
+      log.add "[10] raw header block: " & $e & "\n"
   except ErrorCode as e:
     log.add "CLIENT FAILED: " & $e & "\n"
   atomicStore(clientDone, 1, moRelease)

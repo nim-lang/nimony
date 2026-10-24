@@ -827,6 +827,88 @@ proc semCanFormCycles*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.boolType
   commonType c, dest, it, beforeExpr, expected
 
+proc hasDestroyHook(c: var SemContext; s: SymId): bool =
+  ## This module's hooks are not embedded in its type declarations yet.
+  let hooks = if pool.symModule(s) == c.thisModuleSuffix: c.typeHooks.getOrDefault(s)
+              else: tryLoadAllHooks(s)
+  result = hooks.a[attachedDestroy] != NoSymId
+
+proc needsDestroy(c: var SemContext; t: TypeCursor; depth: int): bool =
+  ## Does a value of type `t` own something its `=destroy` must release? The
+  ## lifter's `isTrivial` answers the same question after sem; `when` needs
+  ## the answer now. Unknown shapes answer yes.
+  if depth > 50: return true
+  case t.kind
+  of Symbol:
+    let s = t.symId
+    let origin = skipTypeInstSym(s)
+    if hasDestroyHook(c, s) or (origin != s and hasDestroyHook(c, origin)):
+      return true
+    let res = tryLoadSym(s)
+    if res.status != LacksNothing or res.decl.symKind != TypeY: return true
+    let decl = asTypeDecl(res.decl)
+    if decl.isGeneric: return true
+    result = needsDestroy(c, decl.body, depth + 1)
+  of TagLit:
+    case t.typeKind
+    of IntT, UIntT, FloatT, BoolT, CharT, PtrT, MutT, OutT, LentT, SetT,
+       EnumT, HoleyEnumT, AnumT, VoidT, CstringT, PointerT, OrdinalT,
+       UarrayT, RangetypeT:
+      result = false
+    of RoutineTypes:
+      result = procHasPragma(t, ClosureP)
+    of RefT, OwnedT:
+      result = true
+    of SinkT, ArrayT, DistinctT:
+      result = needsDestroy(c, t.childCursor, depth + 1)
+    of ObjectT:
+      var n = t
+      inc n                                   # the `(object` token
+      if n.kind != DotToken and needsDestroy(c, n, depth + 1): return true
+      skip n                                  # the base type
+      var iter = initObjFieldIter()
+      result = false
+      while nextField(iter, n):
+        let field = takeLocal(n, SkipFinalParRi)
+        if not hasPragma(field.pragmas, CursorP) and
+            needsDestroy(c, field.typ, depth + 1):
+          return true
+    of TupleT:
+      var n = t
+      inc n
+      result = false
+      while n.kind != ParRi:
+        if needsDestroy(c, getTupleFieldType(n), depth + 1): return true
+        skip n
+    else:
+      result = true
+  else:
+    result = true
+
+proc semSupportsCopyMem*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(supportsCopyMem T)`: folded here, as soon as `T` is known, because its
+  ## use is `when not supportsCopyMem(T): {.error.}`. In a generic it stays a
+  ## node until the instance has a concrete `T`.
+  let beforeExpr = dest.len
+  let expected = it.typ
+  let info = it.n.info
+  copyInto dest, it.n:
+    semLocalTypeImpl c, dest, it.n, InLocalDecl
+  var known = false
+  var answer = false
+  var typ = cursorAt(dest, beforeExpr)
+  inc typ                                 # into `(supportsCopyMem`
+  if c.inGenericDefinition == 0 and not containsGenericParams(typ):
+    known = true
+    answer = not needsDestroy(c, typ, 0)
+  endRead(typ)
+  if known:
+    dest.shrink beforeExpr
+    dest.addParLe(if answer: TrueX else: FalseX, info)
+    dest.addParRi()
+  it.typ = c.types.boolType
+  commonType c, dest, it, beforeExpr, expected
+
 proc semInclExcl*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   copyInto dest, it.n:

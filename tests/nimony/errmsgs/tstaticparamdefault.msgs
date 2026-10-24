@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tstaticparamdefault.nim(5, 8) Error: default value of a `static` parameter must be a constant expression

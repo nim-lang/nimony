@@ -14,7 +14,8 @@
 ## computed over. None of them branches on or indexes by the data, so the
 ## straightforward implementation is already constant time.
 
-{.feature: "staticContracts".}
+when defined(nimony):
+  {.feature: "staticContracts".}   # (host Nim builds hastur with this module)
 
 runnableExamples:
   doAssert toHex(sha256("abc")) ==

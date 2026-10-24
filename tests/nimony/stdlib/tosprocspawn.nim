@@ -4,6 +4,8 @@ when defined(posix):
   import std/[os, osproc, streams, strtabs, envvars, dirs]
   import std/posix/posix
 
+  const shell = when defined(android): "/system/bin/sh" else: "/bin/sh"
+
   proc getpid(): Pid {.importc: "getpid".}
   proc getpgid(pid: Pid): Pid {.importc: "getpgid".}
 
@@ -18,7 +20,7 @@ when defined(posix):
       close(p)
 
   proc main() {.raises.} =
-    assert collect("/bin/sh", ["-c", "printf '%s|%s' \"$1\" \"$2\"", "sh",
+    assert collect(shell, ["-c", "printf '%s|%s' \"$1\" \"$2\"", "sh",
                                 "a b", "'quoted'"]) == "a b|'quoted'"
     assert collect("printf shell", options = {poEvalCommand}) == "shell"
     let env = newStringTable(modeCaseSensitive)
@@ -27,30 +29,30 @@ when defined(posix):
     assert collect("sh", ["-c", "printf '%s' \"$SPAWN_TEST_VALUE\""],
                    env = env, options = {poUsePath}) == "custom value"
 
-    let separate = startProcess("/bin/sh", args = ["-c", "printf out; printf err >&2"],
+    let separate = startProcess(shell, args = ["-c", "printf out; printf err >&2"],
                                 options = {})
     assert readAll(outputStream(separate)) == "out"
     assert readAll(errorStream(separate)) == "err"
     assert waitForExit(separate) == 0
     close(separate)
-    assert collect("/bin/sh", ["-c", "printf out; printf err >&2"],
+    assert collect(shell, ["-c", "printf out; printf err >&2"],
                    options = {poStdErrToStdOut}) == "outerr"
 
-    let input = startProcess("/bin/sh", args = ["-c", "cat"], options = {})
+    let input = startProcess(shell, args = ["-c", "cat"], options = {})
     write(inputStream(input), "stdin data")
     close(inputStream(input))
     assert readAll(outputStream(input)) == "stdin data"
     assert waitForExit(input, 5000) == 0
     close(input)
 
-    let parent = startProcess("/bin/sh", args = ["-c", "exit 23"],
+    let parent = startProcess(shell, args = ["-c", "exit 23"],
                               options = {poParentStreams})
     assert waitForExit(parent) == 23
     close(parent)
     assert execShellCmd("exit 17") == 17
     assert execCmd("exit 19") == 19
 
-    let daemon = startProcess("/bin/sh", args = ["-c", "printf 'ready\\n'; read line"],
+    let daemon = startProcess(shell, args = ["-c", "printf 'ready\\n'; read line"],
                               options = {poDaemon})
     assert readLine(outputStream(daemon)) == "ready"
     assert getpgid(Pid(processID(daemon))) == Pid(processID(daemon))
@@ -58,11 +60,11 @@ when defined(posix):
     discard waitForExit(daemon)
     close(daemon)
 
-    let sleeper = startProcess("/bin/sh", args = ["-c", "exec sleep 30"], options = {})
+    let sleeper = startProcess(shell, args = ["-c", "exec sleep 30"], options = {})
     assert waitForExit(sleeper, 1) == 128 + int(SIGKILL)
     assert not running(sleeper)
     close(sleeper)
-    let stopped = startProcess("/bin/sh", args = ["-c", "exec sleep 30"], options = {})
+    let stopped = startProcess(shell, args = ["-c", "exec sleep 30"], options = {})
     terminate(stopped)
     assert waitForExit(stopped, 5000) == 128 + int(SIGTERM)
     close(stopped)
@@ -71,7 +73,7 @@ when defined(posix):
     createDir(path(tmp))
     var script = tmp & "/child"
     try:
-      writeFile(script, "#!/bin/sh\nprintf relative")
+      writeFile(script, "#!" & shell & "\nprintf relative")
       assert chmod(script.toCString, Mode(0o755)) == 0
       assert collect("./child", workingDir = tmp) == "relative"
       assert collect("test -f child && printf cwd", workingDir = tmp,
@@ -104,7 +106,7 @@ when defined(posix):
         let before = fdCount()
         for i in 0 ..< 40:
           launchFails(tmp & "/missing")
-          launchFails("/bin/sh", tmp & "/missing-dir")
+          launchFails(shell, tmp & "/missing-dir")
         assert fdCount() == before
         assert chmod(script.toCString, Mode(0o644)) == 0
         launchFails(script, expected = EACCES)
@@ -116,7 +118,7 @@ when defined(posix):
         let oldPath = getEnv("PATH")
         try:
           putEnv("PATH", "missing:.")
-          writeFile(script, "#!/bin/sh\nprintf path")
+          writeFile(script, "#!" & shell & "\nprintf path")
           assert collect("child", workingDir = tmp, options = {poUsePath}) == "path"
           launchFails("missing-child", tmp, {poUsePath})
           assert chmod(script.toCString, Mode(0o644)) == 0
@@ -125,7 +127,7 @@ when defined(posix):
           putEnv("PATH", oldPath)
 
         # Every internal pipe end must retain CLOEXEC in the parent.
-        let pipes = startProcess("/bin/sh", args = ["-c", "exit 0"], options = {})
+        let pipes = startProcess(shell, args = ["-c", "exit 0"], options = {})
         for fd in [inputHandle(pipes), outputHandle(pipes), errorHandle(pipes)]:
           assert (fcntl(fd, 1'i32) and FD_CLOEXEC) != 0
         assert waitForExit(pipes) == 0
@@ -140,7 +142,7 @@ when defined(posix):
         var output = ""
         try:
           for i in 0 ..< 3: discard posix.close(cint(i))
-          output = collect("/bin/sh", ["-c", "printf closed; printf err >&2"],
+          output = collect(shell, ["-c", "printf closed; printf err >&2"],
                            options = {poStdErrToStdOut})
         finally:
           for i in 0 ..< 3:

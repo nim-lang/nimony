@@ -62,13 +62,6 @@ import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes, features, expreval
 
 type
-  BorrowableCheck = enum
-    IsBorrowable       ## simple path: symbols, dots, array access
-    IsBorrowableFromConst
-    IsBorrowableFromGlobal
-    HasAddr            ## path contains explicit `addr` — unsafe escape hatch
-    NotBorrowable      ## deref in middle of path or function call
-
   IvKind = enum
     ivUnknown      ## an arbitrary write: nothing known about it survives a loop
     ivIncreasing   ## every write in the loop moves it up (or leaves it alone)
@@ -100,12 +93,6 @@ type
       ## The `{.inline.}` temps `value` refers to, with what they stand for.
       ## Like `param` they are the accessor's own symbols, so reading `value`
       ## substitutes them (`accessorSubst`).
-
-  BorrowInfo = object
-    borrower: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
-    mode: BorrowableCheck
-    path: seq[SymId]  ## root :: field1 :: field2 :: ...
-    info: NifLineInfo
 
   Reading = object
     ## How a proposition is read where it is judged or assumed. At a call site
@@ -203,7 +190,6 @@ type
                                        # "Shared globals" below
     syncArgs: HashSet[int]             # positions of global symbols passed to a
                                        # `.sync` routine's `var`/`ptr` parameter
-    activeBorrows: seq[BorrowInfo]
     verbose: bool                      # --verbose: dump final IR on init/contract
                                        # failures for easier debugging
     bits: int                          # target `int` width for compile-time folding
@@ -378,6 +364,8 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
         result.mode = NotBorrowable
       var r = n
       inc r
+      if ek == DdotX and getType(c.typeCache, r).typeKind == RefT:
+        result.throughRef = true
       extractBorrowPath(c, r, result, followInlineVars)
       skip r # skip object subtree
       if r.isSymbol:
@@ -392,6 +380,8 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
         result.mode = NotBorrowable
       var r = n
       inc r
+      if getType(c.typeCache, r).typeKind == RefT:
+        result.throughRef = true
       extractBorrowPath(c, r, result, followInlineVars)
     elif ek in {HaddrX, HderefX}:
       var r = n
@@ -487,7 +477,7 @@ proc pathsOverlap(a, b: BorrowInfo): bool =
 
 proc checkBorrowConflict(c: var FirContext; mutPath: BorrowInfo; info: NifLineInfo) =
   var conflict = false
-  for b in c.activeBorrows:
+  for b in c.flow.borrows:
     if pathsOverlap(mutPath, b):
       conflict = true
       break
@@ -515,7 +505,7 @@ proc outlivesProc(c: var FirContext; s: SymId): bool =
   if s == c.resultSym: return true
   let x = localInfoOf(c, s)
   result = x.kind in {GvarY, TvarY, GletY, TletY} or
-           (x.kind == ParamY and x.typ.typeKind in {MutT, OutT})
+           (isParamLike(x.kind) and x.typ.typeKind in {MutT, OutT})
 
 proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
   ## The borrow `value` carries, if any: one already held by the symbol
@@ -525,7 +515,7 @@ proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
   result = BorrowInfo(path: @[], mode: NotBorrowable, info: value.info)
   let s = extractSymId(value)
   if s != NoSymId:
-    for b in c.activeBorrows:
+    for b in c.flow.borrows:
       if b.borrower == s:
         return b
     if s in c.inlineVars:
@@ -555,13 +545,7 @@ proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
     checkBorrowOutlivesProc(c, value)
 
 proc endBorrow(c: var FirContext; sym: SymId) =
-  var i = 0
-  while i < c.activeBorrows.len:
-    if c.activeBorrows[i].borrower == sym:
-      # order of active borrows is irrelevant, so swap-delete is fine
-      c.activeBorrows.del(i)
-    else:
-      inc i
+  c.flow.borrows.endBorrowsOf sym
 
 template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
 
@@ -2639,24 +2623,51 @@ proc isEmptyArrayRange(idx: Cursor): bool =
   if not r.isIntLit: return false
   result = r.intVal < lo
 
-proc lacksDefaultValue(c: var FirContext; typ: Cursor; depth = 0): bool =
-  ## Is there NO value of `typ` that zeroed memory spells? A not-nil pointer is
-  ## the leaf that answers "none": zeroed storage reads as `nil`, which is the
-  ## one value its type rules out. Everything built out of one inherits the
-  ## answer -- an array element, a tuple slot, an object field without a
-  ## default of its own -- so `array[8, NotNilRef]` states eight non-nil refs
-  ## and zeroed storage gives eight nils.
+type
+  ZeroedStorage = enum
+    ## What zeroed storage of a type reads as.
+    IsAValue       ## a value of the type
+    IsNil          ## `nil` in a not-nil pointer
+    IsOutOfRange   ## 0 in a `range` that excludes it
+    IsNoEnumValue  ## an ordinal 0 that no field of the enum has
+
+proc enumHasZero(body: Cursor): bool =
+  let edecl = asEnumDecl(body)
+  var field = edecl.body
+  result = false
+  field.into:
+    skip field # base type
+    if edecl.kind == AnumT:
+      skip field # owner type sym
+    while field.hasMore:
+      if field.substructureKind == EfldU:
+        var val = asLocal(field).val
+        inc val # skip tuple tag
+        if (val.kind == IntLit and val.intVal == 0) or
+           (val.kind == UIntLit and val.uintVal == 0'u64):
+          return true
+      skip field
+
+proc zeroedStorage(c: var FirContext; typ: Cursor; depth = 0): ZeroedStorage =
+  ## Does zeroed memory spell a value of `typ`? A not-nil pointer reads as
+  ## `nil`, a `range[1..3]` as 0, an enum whose fields start at 1 as an
+  ## ordinal no field has: each is a value its type rules out, and the engine
+  ## trusts the type (a value of `range[1..3]` indexes `a[x - 1]` unchecked).
+  ## Everything built out of one inherits the answer -- an array element, a
+  ## tuple slot, an object field -- so `array[8, NotNilRef]` states eight
+  ## non-nil refs and zeroed storage gives eight nils.
   ##
-  ## Unreachable and over-deep types answer `false`: the question is asked to
-  ## REPORT a violation, and a type we could not read is not evidence of one.
-  if depth > 20: return false
+  ## Unreachable and over-deep types answer `IsAValue`: the question is asked
+  ## to REPORT a violation, and a type we could not read is not evidence of one.
+  result = IsAValue
+  if depth > 20: return
   var t = typ
   while t.typeKind in {MutT, LentT, SinkT, OutT, OwnedT}:
     inc t
   var guard = 0
   while t.isSymbol and guard < 8:
     let body = typeDeclBody(c, t.symId)
-    if cursorIsNil(body): return false
+    if cursorIsNil(body): return
     t = body
     inc guard
   case t.typeKind
@@ -2666,25 +2677,32 @@ proc lacksDefaultValue(c: var FirContext; typ: Cursor; depth = 0): bool =
     # does not read an `itertype`'s marker yet, so an iterator value answers
     # "has a default" here whatever it says; listing the tag keeps the two in
     # step for when it does.)
-    result = markedAs(t, NotnilU)
+    if markedAs(t, NotnilU): result = IsNil
+  of RangetypeT:
+    var lo = zero()
+    var hi = zero()
+    if staticRangeBounds(t, lo, hi) and (zero() < lo or hi < zero()):
+      result = IsOutOfRange
+  of EnumT, HoleyEnumT, AnumT:
+    if not enumHasZero(t): result = IsNoEnumValue
   of ArrayT:
     # `(array T IndexT)`.
     var e = t
     e = sub(e)
     var idx = e
     skip idx
-    if isEmptyArrayRange(idx): return false
-    result = lacksDefaultValue(c, e, depth+1)
+    if isEmptyArrayRange(idx): return
+    result = zeroedStorage(c, e, depth+1)
   of DistinctT:
     var e = t
     e = sub(e)
-    result = lacksDefaultValue(c, e, depth+1)
+    result = zeroedStorage(c, e, depth+1)
   of TupleT:
-    result = false
     var f = t
     f = sub(f)
     while f.hasMore:
-      if lacksDefaultValue(c, getTupleFieldType(f), depth+1): return true
+      result = zeroedStorage(c, getTupleFieldType(f), depth+1)
+      if result != IsAValue: return
       skip f
   of ObjectT:
     var f = t
@@ -2692,24 +2710,24 @@ proc lacksDefaultValue(c: var FirContext; typ: Cursor; depth = 0): bool =
     var base = f
     if base.typeKind in {RefT, PtrT}: inc base
     skip f # the inheritance slot
-    result = false
-    if base.kind != DotToken and lacksDefaultValue(c, base, depth+1):
-      return true
+    if base.kind != DotToken:
+      result = zeroedStorage(c, base, depth+1)
+      if result != IsAValue: return
     var iter = initObjFieldIter()
     while nextField(iter, f):
       let field = takeLocal(f, SkipFinalParRi)
       if field.kind in {FldY, GfldY}:
-        # `x: int = 42` states a default of its own, so the field type's own
-        # answer stops mattering. A variant object is walked branch by branch,
-        # which over-reports rather than under-reports -- the branch that is
-        # not taken still occupies the storage.
-        if field.val.kind == DotToken and
-           lacksDefaultValue(c, field.typ, depth+1):
-          return true
+        # A field's declared default (`x: R = 2`) does not count: a global
+        # without an initializer is zeroed, field defaults included. A variant
+        # object is walked branch by branch, which over-reports rather than
+        # under-reports -- the branch that is not taken still occupies the
+        # storage.
+        result = zeroedStorage(c, field.typ, depth+1)
+        if result != IsAValue: return
       else:
         skip f
   else:
-    result = false
+    discard
 
 proc analysableRoot(c: var FirContext; n: Cursor): SymId =
   var n = n
@@ -3827,7 +3845,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       let argSym = extractSymId(n)
       if argSym != NoSymId:
         let argInfo = getLocalInfo(c.typeCache, argSym)
-        if argInfo.kind == ParamY and isVarOpenArray(c, argInfo.typ) and
+        if isParamLike(argInfo.kind) and isVarOpenArray(c, argInfo.typ) and
             not isVarOpenArray(c, param.typ):
           buildErr c, n.info, "`" & pool.symString(argSym).split('.')[0] &
             "` is a `var openArray` parameter: only its elements may change, " &
@@ -4165,7 +4183,7 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
       endBorrow(c, destSymId)
       if b.mode in {IsBorrowable, IsBorrowableFromGlobal}:
         b.borrower = destSymId
-        c.activeBorrows.add b
+        c.flow.borrows.incl b
   if destSymId != NoSymId:
     let symId = destSymId
     if n.kind == Symbol: checkSharedAccess c, n
@@ -4176,7 +4194,7 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
       # Sem already rejected a source-level `x = …` on it.
       if isInitialized(c, symId):
         c.buildErr n.info, "invalid reassignment to `let` variable"
-    elif x.kind == ParamY and isVarOpenArray(c, x.typ):
+    elif isParamLike(x.kind) and isVarOpenArray(c, x.typ):
       c.buildErr n.info, "a `var openArray` parameter cannot be replaced; only its elements can change"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
@@ -4269,7 +4287,6 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   let iteStart = n # skip ite/itec tag
   n = sub(n)
 
-  let savedBorrowsLen = c.activeBorrows.len
   # Split BEFORE the condition facts so they belong to the then-branch's delta
   # (the then-branch runs under `assume(cond)`); `commitThen` rolls them back.
   # `assert false` and `when`-style constants reach here as a literal condition.
@@ -4302,7 +4319,6 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   # rolls `c.flow` back to the split baseline — which drops the condition facts,
   # since the split was taken before them.
   commitThen(c.tr, c.flow, b)
-  c.activeBorrows.setLen(savedBorrowsLen)
 
   # else-branch (under assume(¬c)):
   if constCond == 1: c.tr.live = false
@@ -4316,7 +4332,6 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   # `mergeBranches` joins the then-branch (in `b`) with the current else-branch,
   # merging both the init-set and the facts; a leaving arm drops out.
   mergeBranches(c.tr, c.flow, b)
-  c.activeBorrows.setLen(savedBorrowsLen)
 
   n = iteStart; skip n
 
@@ -4682,17 +4697,18 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
       c.prescanning = false
       restrictFactsToLoopInvariants(c, w)
     let cp = c.flow.checkpoint()
-    let savedBorrows = c.activeBorrows.len
     traverseStmt c, n, call        # the body `(stmts ...)`; ends by leaving
+    let backEdge = backEdgeBorrows(c.tr)
     dropContinue(c.tr)       # the loop header consumes the back-edge
     # The loop never falls through; reset the working state to the pre-loop base.
     # A following `(lab loopExit)` installs the join of the states its exits
     # jumped with (`bindLoopExit`).
     c.flow.rollbackTo cp
-    # Borrows taken *inside* the body are loop-local (a `var p = addr coll[i]`
-    # cannot outlive the iteration), so drop them — otherwise a later mutation of
-    # the borrowed container after the loop is wrongly seen as still-borrowed.
-    c.activeBorrows.setLen(savedBorrows)
+    # Borrows are the exception to the pre-loop base: what the body leaves
+    # borrowed stays borrowed when the loop stops (see `backEdgeBorrows`).
+    # Borrows of the body's own locals are not among them, their `kill`
+    # ends them before the back-edge.
+    c.flow.inclBorrows backEdge
 
 proc recordLoopExitLabel(c: var FirContext; n: Cursor) =
   ## The trailing `(lab loopExit)` is this loop's exit; record it so
@@ -4730,7 +4746,8 @@ proc forIterFirstArg(c: var FirContext; iter: Cursor): Cursor =
     skip r # the callee
     if r.hasMore: result = r
 
-proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor) =
+proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor;
+                    binders: var seq[SymId]) =
   ## Nothing in the Final IR assigns a `for`'s loop variables (the iterator is
   ## inlined later), so they are declared and initialized here. A `var T` or
   ## `lent T` binder borrows from the iterator's first argument.
@@ -4738,7 +4755,7 @@ proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor) =
   if vars.substructureKind in {UnpackflatU, UnpacktupU}:
     vars = sub(vars) # peek only, never left
     while vars.hasMore:
-      declareForVars c, vars, firstArg
+      declareForVars c, vars, firstArg, binders
       skip vars
   elif isLocal(vars.symKind):
     let local = asLocal(vars)
@@ -4746,11 +4763,19 @@ proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor) =
     c.typeCache.registerLocal(name, vars.symKind, local.typ)
     markInit c, name
     c.forBinders.incl name
+    binders.add name
     if local.typ.typeKind in {MutT, LentT} and not cursorIsNil(firstArg):
       var path = extractPath(c, firstArg)
-      if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      if path.throughRef and path.mode != HasAddr:
+        # The borrow would be keyed to this path, but an alias of the `ref`
+        # mutates the same location under a path that does not overlap it:
+        # `for x in r.s: r2.s.add x` reallocates what the loop reads from.
+        buildErr c, firstArg.info, "cannot iterate over a location reached " &
+          "through a `ref`: an alias of the `ref` could mutate it during the " &
+          "loop; iterate by index, or over `uncheckedBorrow(...)` to take that risk"
+      elif path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
         path.borrower = name
-        c.activeBorrows.add path
+        c.flow.borrows.incl path
 
 proc traverseFor(c: var FirContext; n: var Cursor) =
   ## `(for iterCall vars body)`. The iterator's `.ensures` about the loop
@@ -4760,9 +4785,13 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
   n.into: # for tag
     let firstArg = forIterFirstArg(c, n)
     traverseExpr c, n, call
-    declareForVars c, n, firstArg
+    var binders: seq[SymId] = @[]
+    declareForVars c, n, firstArg, binders
     skip n # the loop variables
     analyseLoopBody c, n
+    # The iterator running out is an exit no `jmp` stands for, so no `kill`
+    # either: the loop variables die with the loop, and their borrows with them.
+    for b in binders: endBorrow c, b
 
   recordLoopExitLabel c, n
 
@@ -4882,7 +4911,6 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
   n = caseStart; skip n # close 'case'
 
   let cp = c.flow.checkpoint()
-  let savedBorrows = c.activeBorrows.len
   let baseLive = c.tr.live
 
   var merged = default(FlowSnap)   # join of the fall-through arms (see joinSnap)
@@ -4892,7 +4920,6 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
     # Each branch resumes from the pre-case state (the selector chose this arm).
     c.flow.rollbackTo cp
     c.tr.live = baseLive
-    c.activeBorrows.setLen(savedBorrows)
     if not cursorIsNil(br.ranges):
       addCaseFacts(c, selSym, br.ranges)
     var bc = br.body
@@ -4909,7 +4936,6 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
   else:
     c.tr.live = false
     c.flow.rollbackTo cp
-  c.activeBorrows.setLen(savedBorrows)
 
 proc traverseTry(c: var FirContext; n: var Cursor) =
   ## `(try body (except ...)* (fin ...)?)`. Conservative: an `except` handler
@@ -4920,10 +4946,13 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
   let tryStart = n # skip 'try'
   n = sub(n)
   let cp = c.flow.checkpoint()
-  let savedBorrows = c.activeBorrows.len
   let baseLive = c.tr.live
 
   traverseStmt c, n, call # try body
+  # A handler may run after any point of the body, so it starts with what was
+  # borrowed before the `try` or is borrowed where the body ended.
+  var bodyBorrows: seq[BorrowInfo] = @[]
+  for b in c.flow.borrows: bodyBorrows.add b
 
   var merged = default(FlowSnap)   # join of the fall-through of body + handlers
   var haveMerged = false
@@ -4946,7 +4975,7 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
       # handler entry = pre-try state (a raise may interrupt the body anywhere):
       c.flow.rollbackTo cp
       c.tr.live = baseLive
-      c.activeBorrows.setLen(savedBorrows)
+      c.flow.inclBorrows bodyBorrows
       # The bound exception value is initialized *in the handler* — mark it after
       # resetting to the pre-try state, which would otherwise discard the init.
       if boundExc != NoSymId:
@@ -4963,7 +4992,6 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
   else:
     c.tr.live = false
     c.flow.rollbackTo cp
-  c.activeBorrows.setLen(savedBorrows)
 
   if n.substructureKind == FinU:
     n.into:
@@ -4992,20 +5020,24 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   let initStart = n
   if not n.isDotToken or skipInitCheck:
     markInit(c, name)
-  elif kind in {GvarY, GletY, TvarY, TletY} and not isForeignStorage and
-       lacksDefaultValue(c, localType):
+  elif kind in {GvarY, GletY, TvarY, TletY} and not isForeignStorage:
     # A global carries no initialization proof: `traverseExpr` checks `inits`
     # for locals only, because a global is readable from another module and
     # (per `analysableRoot`) from another thread, so its storage is simply
-    # zeroed. Zeroed storage is not a value of a type that contains a not-nil
-    # pointer, so such a global owes an explicit initial value. A LOCAL owes
-    # nothing here: the flow analysis lets `var r: NotNilRef` stand as long as
-    # a write reaches it before any read, which is strictly more permissive
-    # and strictly as safe.
-    buildErr c, localStart.info, "'" & asNimCode(name) & "' is of type '" &
-      typeToString(localType) &
-      "', which has no default value (it contains a not-nil pointer): " &
-      "give it an initial value"
+    # zeroed. When zeroed storage is not a value of the type, such a global
+    # owes an explicit initial value. A LOCAL owes nothing here: the flow
+    # analysis lets `var r: NotNilRef` stand as long as a write reaches it
+    # before any read, which is strictly more permissive and strictly as safe.
+    let zeroed = zeroedStorage(c, localType)
+    if zeroed != IsAValue:
+      let why = case zeroed
+        of IsNil: "it contains a not-nil pointer"
+        of IsOutOfRange: "it contains a range that excludes 0"
+        of IsNoEnumValue: "it contains an enum without a field of ordinal 0"
+        of IsAValue: ""
+      buildErr c, localStart.info, "'" & asNimCode(name) & "' is of type '" &
+        typeToString(localType) & "', which has no default value (" & why &
+        "): give it an initial value"
   if kind == ResultY:
     c.resultSym = name
   if isInline:
@@ -5019,7 +5051,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     var path = extractPath(c, inner)
     if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       path.borrower = name
-      c.activeBorrows.add path
+      c.flow.borrows.incl path
     elif path.mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
@@ -5038,7 +5070,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     var path = extractPath(c, n)
     if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       path.borrower = name
-      c.activeBorrows.add path
+      c.flow.borrows.incl path
   elif not isInline and n.isSymbol and canCarryBorrow(c, n):
     # `let a = b` for a view `b`: `a` aliases whatever `b` does, so it takes over
     # `b`'s borrow. Otherwise `b = toOpenArray(r)` would release the only borrow
@@ -5046,7 +5078,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     var path = borrowCarriedBy(c, n)
     if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       path.borrower = name
-      c.activeBorrows.add path
+      c.flow.borrows.incl path
   if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT, ItertypeT}:
     checkNilMatch c, n, localType
   if not n.isDotToken:
@@ -5156,7 +5188,6 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
     inheritInits(c.flow, oldFlow)
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
-  let oldBorrows = move c.activeBorrows
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
   # Start this routine's statement context at its own head, so an error in
@@ -5251,7 +5282,6 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.flow = ensureMove oldFlow
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
-  c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
   c.stmtContext = oldStmtContext
   c.ownEnsures = oldOwnEnsures
@@ -5311,7 +5341,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
         if s != NoSymId: dying.add s
         skip m
       var escaping: seq[BorrowInfo] = @[]
-      for b in c.activeBorrows:
+      for b in c.flow.borrows:
         if b.path.len > 0 and b.path[0] in dying and b.borrower notin dying:
           escaping.add b
       for b in escaping:

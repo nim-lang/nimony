@@ -43,61 +43,6 @@ import std/errorcodes/errorcodes_http
 
 export streamio, httpheaders
 
-# ------------------------------------------------------------------ headers --
-
-template headers*(s: string): HttpHeaders {.plugin: "deps/httpheaders".}
-  ## A header block literal, checked while the program is compiled:
-  ## `headers"Accept: application/json\r\n"`. A malformed block is a
-  ## compile-time error. Values known only at run time go through `add`.
-
-proc add*(h: var HttpHeaders; name, value: string) {.raises.} =
-  ## Appends `name: value`. `BadOperation` for a name outside the token
-  ## characters or a CR/LF in the value — header injection is caught here, at
-  ## the one place it can be.
-  if name.len == 0: raise BadOperation
-  for c in name:
-    if not isTokenChar(c): raise BadOperation
-  for c in value:
-    if c in {'\r', '\n'}: raise BadOperation
-  var s = string(h)
-  s.add name
-  s.add ": "
-  s.add value
-  s.add "\r\n"
-  h = HttpHeaders(s)
-
-func eqIgnoreCase(a, b: string): bool =
-  if a.len != b.len: return false
-  result = true
-  for i in 0 ..< a.len:
-    if toLowerAscii(a[i]) != toLowerAscii(b[i]): return false
-
-iterator lines(h: HttpHeaders): (string, string) =
-  let s = string(h)
-  var i = 0
-  while i < s.len:
-    let eol = s.find("\r\n", i)
-    let stop = if eol < 0: s.len else: eol
-    let colon = s.find(':', i)
-    if colon > i and colon < stop:
-      yield (s.substr(i, colon - 1), s.substr(colon + 1, stop - 1).strip())
-    i = stop + 2
-
-iterator values*(h: HttpHeaders; name: string): string =
-  ## Every value of `name`, case-insensitively, in order.
-  for (n, v) in lines(h):
-    if eqIgnoreCase(n, name): yield v
-
-proc get*(h: HttpHeaders; name: string): string =
-  ## The first value of `name`, case-insensitively; `""` if absent.
-  result = ""
-  for v in values(h, name): return v
-
-proc has(h: HttpHeaders; name: string): bool =
-  result = false
-  for (n, v) in lines(h):
-    if eqIgnoreCase(n, name): return true
-
 # ---------------------------------------------------------- body framing ----
 
 type
@@ -214,17 +159,31 @@ const
   Reserved = ["host", "content-length", "transfer-encoding", "connection"]
 
 proc checkUserHeaders(h: HttpHeaders) {.raises.} =
-  for (n, v) in lines(h):
+  # `HttpHeaders("…")` is a plain conversion that `add`'s checks never saw.
+  if not validHeaderBlock(string(h)): raise BadOperation
+  for (n, v) in pairs(h):
     for r in Reserved:
-      if eqIgnoreCase(n, r): raise BadOperation
+      if cmpIgnoreCase(n, r) == 0: raise BadOperation
 
 type
   Target = object
     address, host, path: string
     secure: bool
 
+proc checkWireText(s: string) {.raises.} =
+  ## A URL part that is written into the request line or the `Host` header
+  ## verbatim: a space would end the request target, a CR/LF the line, and
+  ## both would let the URL write a request of its own. Such bytes have to
+  ## arrive percent-encoded.
+  for c in s:
+    if c <= ' ' or c == '\x7F': raise BadOperation
+
 proc targetOf(url: string): Target {.raises.} =
   let u = parseUri(url)
+  checkWireText(u.hostname)
+  checkWireText(u.port)
+  checkWireText(u.path)
+  checkWireText(u.query)
   let scheme = toLowerAscii(u.scheme)
   if scheme != "http" and scheme != "https": raise BadOperation
   if u.hostname.len == 0: raise BadOperation

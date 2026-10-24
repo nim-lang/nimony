@@ -39,6 +39,10 @@ when defined(posix):
     int64(cast[int](field) - cast[int](base))
 
   proc main =
+    when defined(i386) and defined(linux):
+      # glibc selects the 32-bit `struct stat` unless large-file support is
+      # requested; the bindings always use the LFS layout.
+      src.add "#define _FILE_OFFSET_BITS 64\n"
     when defined(illumos):
       # Match the __xnet_* socket ABI, not the historical msg_accrights ABI.
       src.add "#define _XOPEN_SOURCE 600\n#define __EXTENSIONS__ 1\n"
@@ -236,12 +240,17 @@ when defined(posix):
     ck("offsetof(struct msghdr, msg_controllen)", off(mh, addr mh.msg_controllen))
     ck("offsetof(struct msghdr, msg_flags)", off(mh, addr mh.msg_flags))
 
-    # ---- macOS/FreeBSD struct dirent (our Dirent overlays libc's records) ----
-    when defined(osx) or defined(freebsd):
+    # ---- struct dirent: macOS's Dirent overlays libc's records, FreeBSD's
+    # getdirentries records are read at fixed offsets ----
+    when defined(osx):
       let de = cast[ptr Dirent](addr scratch[0])
       ck("offsetof(struct dirent, d_type)", off(de, addr de.d_type))
       ck("offsetof(struct dirent, d_name)", off(de, addr de.d_name))
       ck("sizeof(((struct dirent*)0)->d_name)", int64(sizeof(de.d_name)))
+    elif defined(freebsd):
+      ck("offsetof(struct dirent, d_reclen)", int64(direntReclenAt))
+      ck("offsetof(struct dirent, d_type)", int64(direntTypeAt))
+      ck("offsetof(struct dirent, d_name)", int64(direntNameAt))
 
     # ---- struct kevent (64 bytes on FreeBSD 12+, 32 on Darwin) ----
     when defined(osx) or defined(freebsd):

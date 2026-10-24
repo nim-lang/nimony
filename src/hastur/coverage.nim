@@ -16,13 +16,15 @@ const
     ## missing from the docs.
 
 const NonModuleDirs = ["system", "includes", "private", "deps", "errorcodes",
-                       "posix", "windows", "ioring"]
+                       "posix", "windows", "ioring", "math"]
   ## Subdirectories of `lib/std` that hold no importable module, with the
   ## reason each is here: `system/`, `includes/` and `errorcodes/` are `include`
   ## fragments (`system.nim` pulls them in), `private/` is private by name,
   ## `deps/` is plugin support code, `posix/`/`windows/` are per-platform
-  ## bindings no single build can import at once, and `ioring/` is the internals
-  ## `std/ioring` is the front door to.
+  ## bindings no single build can import at once, `ioring/` is the internals
+  ## `std/ioring` is the front door to, and `math/` is the internals
+  ## `std/math` assembles (`common`/`cmath`/per-category native modules), not
+  ## meant to be imported directly.
   ##
   ## A DENY list on purpose. Everything else under `lib/std` — `http/` today —
   ## is a public module the docs must carry, and a new public subdirectory

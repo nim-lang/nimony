@@ -7,7 +7,7 @@
 import ".." / lib / [bitabs, nifpools, filelinecache, symparser]
 import ".." / finalir / finalir_model
 
-import nimony_model, decls
+import nimony_model, decls, programs
 
 
 import std/[strutils, assertions, formatfloat]
@@ -573,7 +573,13 @@ proc gproc(g: var SrcGen, n: var Cursor) =
         putWithSpace(g, tkColon, ":")
 
         var typ = param.typ
-        gtype(g, typ, emptyContext)
+        if param.kind == StaticParamY:
+          put(g, tkSymbol, "static")
+          put(g, tkBracketLe, "[")
+          gtype(g, typ, emptyContext)
+          put(g, tkBracketRi, "]")
+        else:
+          gtype(g, typ, emptyContext)
 
   put(g, tkParRi, ")")
 
@@ -1085,7 +1091,13 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
 
               if not typ.isDotToken:
                 putWithSpace(g, tkColon, ":")
-                gtype(g, typ, c)
+                if decl.kind == StaticParamY:
+                  put(g, tkSymbol, "static")
+                  put(g, tkBracketLe, "[")
+                  gtype(g, typ, c)
+                  put(g, tkBracketRi, "]")
+                else:
+                  gtype(g, typ, c)
 
               if not value.isDotToken:
                 put(g, tkSpaces, Space)
@@ -1121,6 +1133,21 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
   of DotToken:
     put(g, tkSymbol, "void")
     inc n
+  of Symbol:
+    # an instance of a generic type is spelled as its invocation, `seq[int]`,
+    # not by the base name it shares with every other instance
+    var inv = default(Cursor)
+    if pool.symIsInstantiation(n.symId):
+      let res = tryLoadSym(n.symId)
+      if res.status == LacksNothing and res.decl.symKind == TypeY:
+        let decl = asTypeDecl(res.decl)
+        if decl.typevars.typeKind == AtT:
+          inv = decl.typevars
+    if cursorIsNil(inv):
+      gsub(g, n, c)
+    else:
+      gtype(g, inv, c)
+      inc n
   else:
     gsub(g, n, c)
 
@@ -1570,8 +1597,8 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcall(g, n)
 
     of HighX, LowX, TypeofX,
-       SizeofX, AlignofX, OffsetofX, CanFormCyclesX,
-       CardX, UnpackX, FieldsX, CompilesX,
+       SizeofX, AlignofX, OffsetofX, CanFormCyclesX, SupportsCopyMemX,
+       CardX, UnpackX, FieldsX, CompilesX, StaticX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX:
       gcallsystem(g, n, $n.exprKind)
 

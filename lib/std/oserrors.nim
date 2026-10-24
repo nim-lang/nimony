@@ -8,7 +8,9 @@ type
 when defined(windows):
   import windows/winlean
 elif defined(posix):
-  from posix/posix import errno
+  from posix/posix import rawSyscalls
+  when not rawSyscalls:
+    from posix/posix import errno
 
 
 when defined(windows):
@@ -59,7 +61,12 @@ proc osLastError*(): OSErrorCode {.sideEffect.} =
   when defined(windows):
     result = cast[OSErrorCode](getLastError())
   elif defined(posix):
-    result = OSErrorCode(errno())
+    when rawSyscalls:
+      # A freestanding build has no errno: a raw call returns its error as
+      # -errno (`pcall`), and that is where to take the code from.
+      result = OSErrorCode(0)
+    else:
+      result = OSErrorCode(errno())
   else:
     # Freestanding targets (wasm32 standalone): no OS, no errno. Zero,
     # honestly, per the wasm bring-up convention.

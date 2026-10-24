@@ -945,8 +945,15 @@ proc deflate*(data: openArray[char]; level = 6): string =
   d.compress(data, result)
   d.finish(result)
 
+const
+  DefaultInflateLimit* = 64 * 1024 * 1024
+    ## How much a one-shot decode (`inflate` here, `gzip.uncompress`) produces
+    ## unless told otherwise. DEFLATE expands up to ~1000:1, so without a cap
+    ## a few kilobytes from someone else become gigabytes in memory. A caller
+    ## that expects more passes its own `limit`.
+
 proc inflate*(data: openArray[char]; dest: var string;
-              limit = high(int)): InflateStatus =
+              limit = DefaultInflateLimit): InflateStatus =
   ## Decode a whole raw DEFLATE stream from `data`, appending to `dest`.
   ## `infDone` on success; `infNeedInput` means `data` was cut short;
   ## `infOutputFull` that the result would exceed `limit` bytes.

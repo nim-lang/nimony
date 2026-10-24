@@ -67,11 +67,9 @@ proc tryBulkDequeue*[T: HasDefault](s: var FifoStripe[T]; bulkSize: int; buf: va
   dec s.count, result
   releaseSys(s.lock)
 
-proc grow*[T: HasDefault](s: var FifoStripe[T]; newCapacity: int) =
-  acquireSys(s.lock)
-  if newCapacity <= s.data.len:
-    releaseSys(s.lock)
-    return
+proc growLocked[T: HasDefault](s: var FifoStripe[T]; newCapacity: int) =
+  ## `grow` for a caller that holds the lock already.
+  if newCapacity <= s.data.len: return
   let cap = nextPow2(newCapacity)
   var newData = newSeq[T](cap)
   var idx = s.head
@@ -82,4 +80,21 @@ proc grow*[T: HasDefault](s: var FifoStripe[T]; newCapacity: int) =
   s.data = newData
   s.head = 0
   s.tail = s.count
+
+proc grow*[T: HasDefault](s: var FifoStripe[T]; newCapacity: int) =
+  acquireSys(s.lock)
+  growLocked(s, newCapacity)
+  releaseSys(s.lock)
+
+proc tryEnqueue*[T: HasDefault](s: var FifoStripe[T]; item: T; maxCapacity: int): bool =
+  ## Like `tryEnqueue`, but a full stripe first doubles its capacity, up to
+  ## `maxCapacity`, so that a stripe can start small and still absorb a burst.
+  acquireSys(s.lock)
+  if s.count >= s.data.len and s.data.len < maxCapacity:
+    growLocked(s, min(max(2 * s.data.len, 1), maxCapacity))
+  result = s.count < s.data.len
+  if result:
+    s.data[s.tail and (s.data.len - 1)] = item
+    s.tail = (s.tail + 1) and (s.data.len - 1)
+    inc s.count
   releaseSys(s.lock)

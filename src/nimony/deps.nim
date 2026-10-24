@@ -803,9 +803,12 @@ proc propagatePlugins(c: var DepContext) =
   while changed:
     changed = false
     for v in c.nodes:
-      for d in v.deps:
+      for i in 0 ..< v.deps.len:
+        let d = v.deps[i]
         if d == v.id: continue   # never iterate a set while growing it
-        for p in c.nodes[d].plugins:
+        # `uncheckedBorrow`: the guard above is what keeps `v.plugins` from being the set
+        # iterated here, which the borrow checker cannot see through the refs
+        for p in uncheckedBorrow(c.nodes[d].plugins):
           if not v.plugins.containsOrIncl(p):
             changed = true
 
@@ -1804,7 +1807,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           # doesn't rerun. Same-module `.s.idx.nif` is intentionally omitted
           # — hexer reads its own embedded index out of `.s.nif`.
           var seenImports = initHashSet[string]()
-          for depIdx in v.deps:
+          for i in 0 ..< v.deps.len:
+            let depIdx = v.deps[i]
             let idxFile = c.config.indexFile(c.nodes[depIdx].files[0], c.nodes[depIdx].plugin)
             if not seenImports.containsOrIncl(idxFile):
               b.withTree "input":
@@ -1822,17 +1826,20 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
         b.addStrLit "--isMain"
       # Module files are passed as args (primary first, then cyclic members)
       b.addStrLit c.config.parsedFile(v.files[0], c.cmd == DoDoc)
-      for idx in v.cyclicFiles:
+      for i in 0 ..< v.cyclicFiles.len:
+        let idx = v.cyclicFiles[i]
         b.addStrLit c.config.parsedFile(v.files[idx], c.cmd == DoDoc)
     # Input: parsed file
     var seenDeps = initHashSet[string]()
-    for f in v.files:
+    for i in 0 ..< v.files.len:
+      let f = v.files[i]
       let pf = c.config.parsedFile(f, c.cmd == DoDoc)
       if not seenDeps.containsOrIncl(pf):
         b.withTree "input":
           b.addStrLit pf
     # Input: dependencies
-    for i in v.deps:
+    for j in 0 ..< v.deps.len:
+      let i = v.deps[j]
       let idxFile = c.config.indexFile(c.nodes[i].files[0], c.nodes[i].plugin, c.cmd == DoDoc)
       if not seenDeps.containsOrIncl(idxFile):
         b.withTree "input":
@@ -1841,7 +1848,7 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     # outputs of `pluginbuild` nodes, so nifmake builds them first and re-sems
     # the module when one of them changes.
     var plugins: seq[string] = @[]
-    for p in v.plugins: plugins.add p
+    for p in uncheckedBorrow(v.plugins): plugins.add p
     sort plugins, cmpNames
     for p in plugins:
       b.withTree "input":
@@ -1851,7 +1858,8 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     # names them, so without this a changed data file leaves the `.s.nif`
     # looking current.
     var lostFileDep = false
-    for f in v.fileDeps:
+    for i in 0 ..< v.fileDeps.len:
+      let f = v.fileDeps[i]
       if not semos.fileExists(f):
         lostFileDep = true
       elif not seenDeps.containsOrIncl(f):
@@ -1870,7 +1878,8 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin, docMode)
     # Outputs for cyclic group members:
-    for idx in v.cyclicFiles:
+    for i in 0 ..< v.cyclicFiles.len:
+      let idx = v.cyclicFiles[i]
       b.withTree "output":
         b.addStrLit c.config.semmedFile(v.files[idx], v.plugin, docMode)
       b.withTree "output":
@@ -2444,7 +2453,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
     var seen = initHashSet[string]()
     for v in c.nodes:
       if v.plugin.len > 0: continue
-      for f in v.files:
+      for i in 0 ..< v.files.len:
+        let f = v.files[i]
         if not f.nimFile.endsWith(".nim"): continue
         if seen.containsOrIncl(f.nimFile): continue
         if not semos.fileExists(f.nimFile): continue

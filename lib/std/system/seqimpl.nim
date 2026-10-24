@@ -82,7 +82,8 @@ func newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
     if result.data != nil:
       var i = 0
       while i < size:
-        (result.data[i]) = default(T)
+        {.cast(noSideEffect).}:
+          (result.data[i]) = default(T)
         inc i
     else:
       result.len = 0
@@ -99,7 +100,8 @@ func newSeqOf*[T](size: int; initValue: T): seq[T] {.nodestroy.} =
     if result.data != nil:
       var i = 0
       while i < size:
-        (result.data[i]) = `=dup`(initValue)
+        {.cast(noSideEffect).}:
+          (result.data[i]) = `=dup`(initValue)
         inc i
     else:
       result.len = 0
@@ -136,7 +138,8 @@ func `=dup`*[T](a: seq[T]): seq[T] {.nodestroy.} =
   result = newSeqUninit[T](a.len)
   var i = 0
   while i < a.len:
-    (result.data[i]) = `=dup`(a.data[i])
+    {.cast(noSideEffect).}:
+      (result.data[i]) = `=dup`(a.data[i])
     inc i
 
 func recalcCap(oldCap, addedElements: int): int {.inline.} =
@@ -241,8 +244,9 @@ func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint
   (s.data[int i]) = elem
   {.assume: s.len == old(s.len).}
 
-func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
-  ## Copies an array into a new sequence (`@[1,2]` builds `seq` literals via array constructors).
+func `@`*[I, T](a: sink array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
+  ## Moves an array into a new sequence (`@[1,2]` builds `seq` literals via
+  ## array constructors); the copies, if any, happen at the call site.
   result = newSeqUninit[T](a.len)
   if result.data != nil:
     # The bound is the ARRAY's length, not the seq's: `a.len` is a compile-time
@@ -252,8 +256,12 @@ func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
     # stated so that the index is provable.
     var i = 0
     while i < a.len:
-      (result.data[i]) = `=dup`(a[i])
+      {.cast(noSideEffect).}:
+        (result.data[i]) = a[i]
       inc i
+  else:
+    # out of memory: what was not moved must still be destroyed
+    `=destroy`(a)
 
 # special cased in compiler as "@.1.<system suffix>" for empty seq type inference:
 template `@`*[T](a: array[0, T]): seq[T] =

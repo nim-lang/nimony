@@ -1,4 +1,4 @@
-func main =
+proc main =
   var x: (nil ptr int) = nil
   if x != nil:
     discard x[]

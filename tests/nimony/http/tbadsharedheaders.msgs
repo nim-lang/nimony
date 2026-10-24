@@ -1,0 +1,3 @@
+tests/nimony/http/tbadsharedheaders.nim(5, 23) Error: malformed header block: a line ends in `\r\n`, not in a lone `\n`
+tests/nimony/http/tbadsharedheaders.nim(6, 27) Error: malformed header block: line 1: every line must end in \r\n
+tests/nimony/http/tbadsharedheaders.nim(7, 22) Error: malformed header block: line 1: a header name may not contain ' '
