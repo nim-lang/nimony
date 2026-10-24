@@ -12,7 +12,8 @@
 proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
   n.loopInto:
     if n.kind == StrLit:
-      c.add c.m.pool.strings[n.litId]
+      let code = c.m.pool.strings[n.litId]
+      c.add code
       inc n
     else:
       genx c, n

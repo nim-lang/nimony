@@ -286,8 +286,9 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
 # -------------------- declare `result` -------------------------
 
 proc declareResult*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo): SymId =
+  let returnType = c.routine.returnType
   if c.routine.kind in {ProcY, FuncY, ConverterY, MethodY, MacroY} and
-      classifyType(c, c.routine.returnType) != VoidT:
+      classifyType(c, returnType) != VoidT:
     let name = pool.strings.getOrIncl("result")
     result = identToSym(c, name, ResultY)
     let s = Sym(kind: ResultY, name: result,
@@ -1932,7 +1933,8 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
   var orig = it.n
 
   var ignored = createTokenBuf()
-  var valueBuf = evalConstExpr(c, ignored, it.n, c.types.autoType)
+  let autoType = c.types.autoType
+  var valueBuf = evalConstExpr(c, ignored, it.n, autoType)
 
   var value = beginRead(valueBuf)
   case value.exprKind
@@ -3410,7 +3412,8 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
             semForLoopTupleVar c, vb, it, loopVarType
           else:
             while it.n.hasMore:
-              semForLoopVar c, vb, it, c.types.autoType
+              let autoType = c.types.autoType
+              semForLoopVar c, vb, it, autoType
         else:
           semForLoopVar c, vb, it, loopVarType
     of UnpacktupU:
@@ -3560,7 +3563,8 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
           else:
             # error handling
             while it.n.hasMore:
-              semForLoopVar c, dest, it, c.types.autoType
+              let autoType = c.types.autoType
+              semForLoopVar c, dest, it, autoType
         else:
           semForLoopVar c, dest, it, iterCall.typ
     of UnpacktupU:
@@ -3658,7 +3662,8 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
           matchObjectInheritance(m, raisesRefT, raisedRefT, raisesRefT.symId, raisedRefT.symId, NoType)
           compatible = not m.err
         if not compatible:
-          c.typeMismatch dest, info, a.typ, c.routine.raisesType
+          let raisesType = c.routine.raisesType
+          c.typeMismatch dest, info, a.typ, raisesType
       it.n = a.n
   producesNoReturn c, dest, info, it.typ
 
@@ -3716,7 +3721,8 @@ proc semCmp(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semExpr c, dest, operand
     semExpr c, dest, operand
     it.n = operand.n
-  commonType c, dest, it, beforeExpr, c.types.boolType
+  let boolType = c.types.boolType
+  commonType c, dest, it, beforeExpr, boolType
 
 proc literal(c: var SemContext; dest: var TokenBuf; it: var Item; literalType: TypeCursor) =
   let beforeExpr = dest.len
@@ -3741,7 +3747,8 @@ proc literalB(c: var SemContext; dest: var TokenBuf; it: var Item; literalType: 
 
 proc semNil(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
-  literalB c, dest, it, c.types.nilType
+  let nilType = c.types.nilType
+  literalB c, dest, it, nilType
   # A `nil` that `commonType` resolved against a pointer-like type is emitted
   # as `(nil T)`: later passes compute the type of an `if` or `case`
   # expression from its branches and must not see `nilt` there (#2605).
@@ -5689,15 +5696,20 @@ proc semSymChoice(c: var SemContext; dest: var TokenBuf; it: var Item; flags: se
 proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
-    literal c, dest, it, c.types.intType
+    let intType = c.types.intType
+    literal c, dest, it, intType
   of UIntLit:
-    literal c, dest, it, c.types.uintType
+    let uintType = c.types.uintType
+    literal c, dest, it, uintType
   of FloatLit:
-    literal c, dest, it, c.types.floatType
+    let floatType = c.types.floatType
+    literal c, dest, it, floatType
   of StrLit:
-    literal c, dest, it, c.types.stringType
+    let stringType = c.types.stringType
+    literal c, dest, it, stringType
   of CharLit:
-    literal c, dest, it, c.types.charType
+    let charType = c.types.charType
+    literal c, dest, it, charType
   of Ident:
     let start = dest.len
     var nearestIsUnique = false
@@ -5915,9 +5927,11 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of UsingS:
         semUsing c, dest, it.n
     of FalseX, TrueX, OvfX:
-      literalB c, dest, it, c.types.boolType
+      let boolType = c.types.boolType
+      literalB c, dest, it, boolType
     of InfX, NeginfX, NanX:
-      literalB c, dest, it, c.types.floatType
+      let floatType = c.types.floatType
+      literalB c, dest, it, floatType
     of AndX, OrX, XorX:
       let start = dest.len
       takeInto dest, it.n:

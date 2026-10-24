@@ -2245,7 +2245,8 @@ proc transformInlineRoutines(c: var EContext; dest: var TokenBuf; n: var Cursor)
   toTransform.copyIntoKind StmtsS, n.info:
     takeTree(toTransform, n)
   var t = beginRead(toTransform)
-  var dest = transform(c, t, c.main, c.bits)
+  let main = c.main
+  var dest = transform(c, t, main, c.bits)
   var d = beginRead(dest)
 
   inc d # skips (stmts

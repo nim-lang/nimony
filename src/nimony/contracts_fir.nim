@@ -440,11 +440,12 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
     # the value, so it is the root itself. Its `kill` sits at the end of the
     # scope that evaluated it, which is exactly where the value dies, so a view
     # of it escaping that scope or the proc is caught like any other local's.
-    if s in c.inlineVars and not isFreshCall(c, c.inlineVars.getOrQuit(s)) and
+    let init = if s in c.inlineVars: c.inlineVars.getOrQuit(s) else: default(Cursor)
+    if s in c.inlineVars and not isFreshCall(c, init) and
         (followInlineVars or
          getType(c.typeCache, n).typeKind in {MutT, OutT, LentT} or
-         establishesBorrow(c, c.inlineVars.getOrQuit(s))):
-      extractBorrowPath(c, c.inlineVars.getOrQuit(s), result, followInlineVars)
+         establishesBorrow(c, init)):
+      extractBorrowPath(c, init, result, followInlineVars)
     else:
       if result.mode != HasAddr:
         result.mode = IsBorrowable
@@ -519,7 +520,8 @@ proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
       if b.borrower == s:
         return b
     if s in c.inlineVars:
-      return borrowCarriedBy(c, c.inlineVars.getOrQuit(s))
+      let init = c.inlineVars.getOrQuit(s)
+      return borrowCarriedBy(c, init)
   if establishesBorrow(c, value):
     result = extractPath(c, value)
 
@@ -1201,7 +1203,8 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
       var r2 = NoSymId
       var k2 = ""
       var st2 = 0
-      if locationKey(c, c.inlineVars.getOrQuit(s), subst, r2, k2, st2, depth+1) and r2 != NoSymId:
+      let init = c.inlineVars.getOrQuit(s)
+      if locationKey(c, init, subst, r2, k2, st2, depth+1) and r2 != NoSymId:
         root = r2
         key = k2
         steps = st2
@@ -2222,7 +2225,8 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
     # declared in this module: fold its own value (bounded — a `const` defined
     # through another one nests); the evaluator below still gets its turn
     inc c.constDepth
-    result = constOrdinal(c, c.moduleConsts.getOrQuit(n.symId), val)
+    let value = c.moduleConsts.getOrQuit(n.symId)
+    result = constOrdinal(c, value, val)
     dec c.constDepth
     if result: return
   val = foldOrdinal(c.bits, n)
@@ -3853,9 +3857,11 @@ proc passedByPointer(c: var FirContext; param: Local): bool =
   ## through a pointer, and also for a copy that shares the caller's heap
   ## block. A plain-data copy cannot alias anything.
   let t = param.typ
-  result = t.typeKind in {LentT, VarargsT} or isViewType(t) or
-           passByConstRef(t, param.pragmas, c.bits div 8) or
-           not ownsNoHeap(c, t, 0)
+  # a `sink` parameter receives a copy or the moved value: its own either way
+  result = t.typeKind != SinkT and
+           (t.typeKind in {LentT, VarargsT} or isViewType(t) or
+            passByConstRef(t, param.pragmas, c.bits div 8) or
+            not ownsNoHeap(c, t, 0))
 
 proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   let callCursor = n
@@ -3948,7 +3954,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
             isParamLike(getLocalInfo(c.typeCache, n.symId).kind) and
             mutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
           needsBorrowCheck = true
-          modes[^1] = amForwardedMut
+          modes[modes.len-1] = amForwardedMut
       if root != NoSymId and isVarOpenArray(c, param.typ) and
           plainLocationVarId(c, n) == getVarId(c, root):
         # a view passed as a view: its length stays
@@ -4169,7 +4175,8 @@ proc locationIsComputed(c: var FirContext; n: Cursor): bool =
   if n.isSymbol:
     let s = n.symId
     if s in c.inlineVars:
-      result = locationIsComputed(c, c.inlineVars.getOrQuit(s))
+      let init = c.inlineVars.getOrQuit(s)
+      result = locationIsComputed(c, init)
   elif n.isTagLit:
     case n.exprKind
     of DerefX, DdotX, PatX, AtX, CallKinds:
@@ -4190,7 +4197,8 @@ proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[BorrowInfo])
   if n.isSymbol:
     let s = n.symId
     if s in c.inlineVars:
-      collectMutatedArgs(c, c.inlineVars.getOrQuit(s), dest)
+      let init = c.inlineVars.getOrQuit(s)
+      collectMutatedArgs(c, init, dest)
   elif n.isTagLit and n.exprKind in CallKinds:
     var arg = n.childCursor
     var fnType = skipProcTypeToParams(getType(c.typeCache, arg))
