@@ -343,20 +343,25 @@ proc parseFile*(filename: string;
 # spelling out `c.c`. `rawKind` is the one true alias for `nifcore.kind`; with
 # `kind` now taking a `JsonNode` there is no shadowing left to qualify around.
 
-# `rawKind` / `cursorTagId` are *procs*, not templates: a template forwarding to
+# `rawKind` / `cursorTagId` are *funcs*, not templates: a template forwarding to
 # the module-qualified `nifcore.kind` expands at the call site, and the generic
 # `fromJson` instantiates in modules that never imported `nifcore`, so the
-# qualifier would not resolve there. As procs they are sem-checked here, in
+# qualifier would not resolve there. As funcs they are sem-checked here, in
 # json.nim's scope, once.
-proc rawKind(n: JsonNode): NifKind {.inline.} =
+func rawKind(n: JsonNode): NifKind {.inline.} =
   if cursorIsNil(n.c): DotToken else: nifcore.kind(n.c)
-proc cursorTagId(n: JsonNode): TagId {.inline.} = nifcore.cursorTagId(n.c)
-proc strVal(n: JsonNode): string {.inline.}     = strVal(n.c)
-proc intVal(n: JsonNode): int64 {.inline.}      = intVal(n.c)
-proc floatVal(n: JsonNode): float64 {.inline.}  = floatVal(n.c)
-proc inc(n: var JsonNode) {.inline.} =
+func cursorTagId(n: JsonNode): TagId {.inline.} = nifcore.cursorTagId(n.c)
+func strVal(n: JsonNode): string {.inline.}     =
+  # nifcore's one-argument accessor still carries the plugin fallback pool; the
+  # two-argument accessor is pure but the cursor does not expose its pool here.
+  # Keep the suppression local to this single accessor.
+  {.cast(noSideEffect).}:
+    result = strVal(n.c)
+func intVal(n: JsonNode): int64 {.inline.}      = intVal(n.c)
+func floatVal(n: JsonNode): float64 {.inline.}  = floatVal(n.c)
+func inc(n: var JsonNode) {.inline.} =
   if not cursorIsNil(n.c): inc n.c
-proc skip(n: var JsonNode) {.inline.} =
+func skip(n: var JsonNode) {.inline.} =
   if not cursorIsNil(n.c): skip n.c
 template hasMore(n: JsonNode): bool             = hasMore(n.c)
 template into(n: var JsonNode; body: untyped)   = into(n.c, body)
@@ -365,7 +370,7 @@ template into(n: var JsonNode; body: untyped)   = into(n.c, body)
 
 proc root*(t: var JsonTree): JsonNode {.inline.} = JsonNode(c: t.buf.beginRead())
 
-proc kind*(n: JsonNode): JsonNodeKind =
+func kind*(n: JsonNode): JsonNodeKind =
   ## Effective high-level kind of the node. Coexists with `nifcore.kind(Cursor)`
   ## as a plain overload because `n` is a `JsonNode`, not a `Cursor`.
   case rawKind(n)
@@ -381,7 +386,7 @@ proc kind*(n: JsonNode): JsonNodeKind =
     of JKKv:             JNull   # kv shouldn't appear where a value is expected
   else: JNull
 
-proc info*(n: JsonNode): NifLineInfo {.inline.} =
+func info*(n: JsonNode): NifLineInfo {.inline.} =
   ## Source position recorded for the node, or `NoNifLineInfo` when the tree was
   ## parsed with `DiscardLineInfo` (or built programmatically).
   if cursorIsNil(n.c): NoNifLineInfo else: rawLineInfo(n.c)
@@ -390,19 +395,19 @@ proc fileName*(n: JsonNode): string {.inline.} =
   ## Source filename for the node, or `""` when no line info is present.
   if cursorIsNil(n.c): "" else: lineInfoFile(n.c)
 
-proc getStr*(n: JsonNode; default = ""): string =
+func getStr*(n: JsonNode; default = ""): string =
   if rawKind(n) == StrLit: strVal(n) else: default
 
-proc getInt*(n: JsonNode; default: int64 = 0): int64 =
+func getInt*(n: JsonNode; default: int64 = 0): int64 =
   if rawKind(n) == IntLit: intVal(n) else: default
 
-proc getFloat*(n: JsonNode; default = 0.0): float =
+func getFloat*(n: JsonNode; default = 0.0): float =
   case rawKind(n)
   of FloatLit: floatVal(n)
   of IntLit:   float(intVal(n))
   else:        default
 
-proc getBool*(n: JsonNode; default = false): bool =
+func getBool*(n: JsonNode; default = false): bool =
   if rawKind(n) == TagLit:
     case jsonKind(n.cursorTagId)
     of JKTrue:  return true
@@ -410,14 +415,14 @@ proc getBool*(n: JsonNode; default = false): bool =
     else: discard
   default
 
-proc getBiggestInt*(n: JsonNode; default: BiggestInt = 0): BiggestInt =
+func getBiggestInt*(n: JsonNode; default: BiggestInt = 0): BiggestInt =
   ## Retrieves the integer value as a `BiggestInt`; `getInt` is the
   ## `int64`-shaped equivalent in this model.
   if rawKind(n) == IntLit: BiggestInt(intVal(n)) else: default
 
-proc getFields*(n: JsonNode;
-                default: OrderedTable[string, JsonNode]):
-                OrderedTable[string, JsonNode] =
+func getFields*(n: JsonNode;
+                 default: OrderedTable[string, JsonNode]):
+                 OrderedTable[string, JsonNode] =
   ## Materialises a `JObject` into an ordered table. Returns `default` for
   ## non-objects, matching `std/json`'s fallback contract.
   if kind(n) != JObject: return default
@@ -425,10 +430,10 @@ proc getFields*(n: JsonNode;
   for k, v in pairs(n):
     result[k] = v
 
-proc getFields*(n: JsonNode): OrderedTable[string, JsonNode] =
+func getFields*(n: JsonNode): OrderedTable[string, JsonNode] =
   getFields(n, initOrderedTable[string, JsonNode]())
 
-proc getElems*(n: JsonNode; default: seq[JsonNode]): seq[JsonNode] =
+func getElems*(n: JsonNode; default: seq[JsonNode]): seq[JsonNode] =
   ## Materialises a `JArray` into a sequence. Returns `default` for
   ## non-arrays, matching `std/json`'s fallback contract.
   if kind(n) != JArray: return default
@@ -436,7 +441,7 @@ proc getElems*(n: JsonNode; default: seq[JsonNode]): seq[JsonNode] =
   for el in items(n):
     result.add el
 
-proc getElems*(n: JsonNode): seq[JsonNode] =
+func getElems*(n: JsonNode): seq[JsonNode] =
   getElems(n, @[])
 
 # ── Error inspection ──────────────────────────────────────────────────────────
@@ -445,7 +450,7 @@ proc getElems*(n: JsonNode): seq[JsonNode] =
 # malformed document still traverses cleanly. These helpers are the *opt-in*
 # channel that surfaces the diagnostic.
 
-proc errorMsg*(n: JsonNode): string =
+func errorMsg*(n: JsonNode): string =
   ## If the node is an error placeholder (a `null` with a diagnostic string
   ## child, `(null "msg")`), return that message; otherwise `""`. A clean `null`
   ## — and any other node — yields `""`.
@@ -457,11 +462,11 @@ proc errorMsg*(n: JsonNode): string =
         if rawKind(c2) == StrLit: result = strVal(c2)
         c2.skip
 
-proc isError*(n: JsonNode): bool {.inline.} =
+func isError*(n: JsonNode): bool {.inline.} =
   ## True when the node is an error placeholder (see `errorMsg`).
   errorMsg(n).len > 0
 
-proc firstErrorMsg(n: JsonNode): string =
+func firstErrorMsg(n: JsonNode): string =
   ## Depth-first search for the first error placeholder under `n`; `""` if clean.
   if isError(n): return errorMsg(n)
   result = ""
@@ -504,7 +509,7 @@ proc hasError*(t: var JsonTree): bool {.inline.} =
   ## True when the document contains any parse error (see `errorMsg`).
   errorMsg(t).len > 0
 
-proc len*(n: JsonNode): int =
+func len*(n: JsonNode): int =
   ## Number of elements (array) or members (object). 0 for scalars.
   result = 0
   case kind(n)
@@ -518,29 +523,35 @@ proc len*(n: JsonNode): int =
 
 iterator items*(n: JsonNode): JsonNode =
   # Inline iterators are inferred `noSideEffect` by Nimony; the cursor traversal
-  # helpers (`into`/`skip`, and `assert`'s failure path) count as effects, so we
-  # vouch for purity the same way tables.nim does for its checked accessors.
-  {.cast(noSideEffect).}:
-    assert kind(n) == JArray, "items: not a JArray"
-    var c2 = n
-    c2.into:
-      while c2.hasMore:
-        yield c2
-        c2.skip
+  # helpers (`into`/`skip`) are `func`s in nifcore now.
+  assert kind(n) == JArray, "items: not a JArray"
+  var c2 = n
+  c2.into:
+    while c2.hasMore:
+      yield c2
+      c2.skip
 
 iterator pairs*(n: JsonNode): (string, JsonNode) =
-  {.cast(noSideEffect).}:
-    assert kind(n) == JObject, "pairs: not a JObject"
-    var c2 = n
-    c2.into:
-      while c2.hasMore:
-        assert rawKind(c2) == TagLit and jsonKind(c2.cursorTagId) == JKKv,
-               "malformed object: child is not a kv"
-        c2.into:
-          let key = strVal(c2)
-          c2.inc
-          yield (key, c2)
-          c2.skip
+  assert kind(n) == JObject, "pairs: not a JObject"
+  var c2 = n
+  c2.into:
+    while c2.hasMore:
+      assert rawKind(c2) == TagLit and jsonKind(c2.cursorTagId) == JKKv,
+             "malformed object: child is not a kv"
+      c2.into:
+        let key = strVal(c2)
+        c2.inc
+        yield (key, c2)
+        c2.skip
+
+func findField(node: JsonNode; key: string): JsonNode =
+  ## The value for `key`, or a nil-cursor node when `key` is absent. Unlike
+  ## `getOrDefault`, this never mints a fresh `(null)` buffer, so read-only
+  ## comparisons can stay inside `func`.
+  if kind(node) == JObject:
+    for k, v in pairs(node):
+      if k == key: return v
+  result = default(JsonNode)
 
 proc nullNode(): JsonNode =
   ## A standalone `(null)`. The node's cursor keeps its one-token buffer alive,
@@ -550,14 +561,12 @@ proc nullNode(): JsonNode =
   t.buf.closeTag()
   result = t.root
 
-proc hasKey*(node: JsonNode; key: string): bool =
+func hasKey*(node: JsonNode; key: string): bool =
   ## Checks whether `key` exists in a `JObject`.
   assert kind(node) == JObject, "hasKey: not a JObject"
-  result = false
-  for k, v in pairs(node):
-    if k == key: return true
+  result = not cursorIsNil(findField(node, key).c)
 
-proc contains*(node: JsonNode; key: string): bool =
+func contains*(node: JsonNode; key: string): bool =
   ## Checks whether `key` exists in a `JObject`.
   assert kind(node) == JObject, "contains: not a JObject"
   result = hasKey(node, key)
@@ -565,12 +574,10 @@ proc contains*(node: JsonNode; key: string): bool =
 proc getOrDefault*(node: JsonNode; key: string): JsonNode =
   ## Returns the value for `key`, or a `JNull` node when `node` is not an
   ## object or the key is absent.
-  if kind(node) != JObject: return nullNode()
-  for k, v in pairs(node):
-    if k == key: return v
-  result = nullNode()
+  result = findField(node, key)
+  if cursorIsNil(result.c): result = nullNode()
 
-proc `[]`*(node: JsonNode; name: string): JsonNode {.raises.} =
+func `[]`*(node: JsonNode; name: string): JsonNode {.raises.} =
   ## Gets a field from a `JObject`; raises `KeyError` when absent. Use
   ## `getOrDefault` or `{}` when a missing field should produce `JNull`.
   assert kind(node) == JObject, "[]: not a JObject"
@@ -578,7 +585,7 @@ proc `[]`*(node: JsonNode; name: string): JsonNode {.raises.} =
     if k == name: return v
   raise KeyError
 
-proc `[]`*(node: JsonNode; index: int): JsonNode =
+func `[]`*(node: JsonNode; index: int): JsonNode =
   ## Gets the element at `index` in a `JArray`.
   assert kind(node) == JArray, "[]: not a JArray"
   let n = len(node)
@@ -587,9 +594,9 @@ proc `[]`*(node: JsonNode; index: int): JsonNode =
   for el in items(node):
     if i == index: return el
     inc i
-  result = nullNode()
+  result = default(JsonNode)
 
-proc `[]`*(node: JsonNode; index: BackwardsIndex): JsonNode =
+func `[]`*(node: JsonNode; index: BackwardsIndex): JsonNode =
   ## `node[^i]` is `node[node.len - i]`.
   `[]`(node, node.len - int(index))
 
@@ -640,47 +647,52 @@ proc `{}`*(t: var JsonTree; key: string): JsonNode =
 
 func `==`*(a, b: JsonNode): bool =
   ## Deep JSON value equality. Object member order is irrelevant.
-  {.cast(noSideEffect).}:
-    if kind(a) != kind(b): return false
-    case kind(a)
-    of JNull:  result = true
-    of JBool:  result = getBool(a) == getBool(b)
-    of JInt:   result = getInt(a) == getInt(b)
-    of JFloat: result = getFloat(a) == getFloat(b)
-    of JString: result = getStr(a) == getStr(b)
-    of JArray:
-      if len(a) != len(b): return false
-      for i in 0 ..< len(a):
-        if a[i] != b[i]: return false
-      result = true
-    of JObject:
-      if len(a) != len(b): return false
-      for key, val in pairs(a):
-        if not hasKey(b, key): return false
-        if val != b.getOrDefault(key): return false
-      result = true
+  if kind(a) != kind(b): return false
+  case kind(a)
+  of JNull:  result = true
+  of JBool:  result = getBool(a) == getBool(b)
+  of JInt:   result = getInt(a) == getInt(b)
+  of JFloat: result = getFloat(a) == getFloat(b)
+  of JString: result = getStr(a) == getStr(b)
+  of JArray:
+    if len(a) != len(b): return false
+    var ca = a
+    var cb = b
+    ca.into:
+      cb.into:
+        while ca.hasMore:
+          if ca != cb: return false
+          ca.skip
+          cb.skip
+    result = true
+  of JObject:
+    if len(a) != len(b): return false
+    for key, val in pairs(a):
+      let other = findField(b, key)
+      if cursorIsNil(other.c): return false
+      if val != other: return false
+    result = true
 
 func hash*(n: JsonNode): Hash =
   ## Deep hash matching `==`: object insertion order does not matter.
-  {.cast(noSideEffect).}:
-    case kind(n)
-    of JNull:  result = Hash(0)
-    of JBool:  result = hash(getBool(n))
-    of JInt:   result = hash(getInt(n))
-    of JFloat: result = hash(getFloat(n))
-    of JString: result = hash(getStr(n))
-    of JArray:
-      result = 0'u
-      for el in items(n):
-        result = result !& hash(el)
-      result = !$result
-    of JObject:
-      result = 0'u
-      for key, val in pairs(n):
-        result = result xor (hash(key) !& hash(val))
-      result = !$result
+  case kind(n)
+  of JNull:  result = Hash(0)
+  of JBool:  result = hash(getBool(n))
+  of JInt:   result = hash(getInt(n))
+  of JFloat: result = hash(getFloat(n))
+  of JString: result = hash(getStr(n))
+  of JArray:
+    result = 0'u
+    for el in items(n):
+      result = result !& hash(el)
+    result = !$result
+  of JObject:
+    result = 0'u
+    for key, val in pairs(n):
+      result = result xor (hash(key) !& hash(val))
+    result = !$result
 
-proc contains*(node: JsonNode; val: JsonNode): bool =
+func contains*(node: JsonNode; val: JsonNode): bool =
   ## Checks whether `val` exists in a `JArray`.
   assert kind(node) == JArray, "contains: not a JArray"
   result = false
@@ -689,7 +701,7 @@ proc contains*(node: JsonNode; val: JsonNode): bool =
 
 # ── Pretty-print ─────────────────────────────────────────────────────────────
 
-proc escapeJsonUnquoted*(s: string; result: var string) =
+func escapeJsonUnquoted*(s: string; result: var string) =
   ## Appends the JSON representation of `s` without surrounding quotes.
   const hexChars = "0123456789ABCDEF"
   for c in s:
@@ -711,23 +723,23 @@ proc escapeJsonUnquoted*(s: string; result: var string) =
     of '\\': result.add "\\\\"
     else:    result.add c
 
-proc escapeJsonUnquoted*(s: string): string =
+func escapeJsonUnquoted*(s: string): string =
   ## Returns the JSON representation of `s` without surrounding quotes.
   result = ""
   escapeJsonUnquoted(s, result)
 
-proc escapeJson*(s: string; result: var string) =
+func escapeJson*(s: string; result: var string) =
   ## Appends the quoted JSON representation of `s`.
   result.add '"'
   escapeJsonUnquoted(s, result)
   result.add '"'
 
-proc escapeJson*(s: string): string =
+func escapeJson*(s: string): string =
   ## Returns the quoted JSON representation of `s`.
   result = ""
   escapeJson(s, result)
 
-proc emitUgly(c: var JsonNode; r: var string) =
+func emitUgly(c: var JsonNode; r: var string) =
   case kind(c)
   of JNull:  r.add "null"; c.skip
   of JBool:  r.add (if getBool(c): "true" else: "false"); c.skip
@@ -759,22 +771,22 @@ proc emitUgly(c: var JsonNode; r: var string) =
           emitUgly(c, r)
     r.add '}'
 
-proc toUgly*(result: var string, node: JsonNode) =
+func toUgly*(result: var string, node: JsonNode) =
   ## Appends the compact JSON representation of `node` to `result`.
   var c = node
   emitUgly(c, result)
 
-proc `$`*(node: JsonNode): string =
+func `$`*(node: JsonNode): string =
   ## Returns the compact JSON representation of `node`.
   result = newStringOfCap(node.len shl 1)
   toUgly(result, node)
 
-proc addIndent(r: var string; count: int) =
+func addIndent(r: var string; count: int) =
   for i in 0 ..< count:
     r.add ' '
 
-proc toPretty(r: var string; node: JsonNode; indent, currIndent: int;
-              inArray: bool) =
+func toPretty(r: var string; node: JsonNode; indent, currIndent: int;
+               inArray: bool) =
   case kind(node)
   of JObject:
     if inArray: addIndent(r, currIndent)
@@ -811,7 +823,7 @@ proc toPretty(r: var string; node: JsonNode; indent, currIndent: int;
     if inArray: addIndent(r, currIndent)
     toUgly(r, node)
 
-proc pretty*(node: JsonNode; indent = 2): string =
+func pretty*(node: JsonNode; indent = 2): string =
   ## Returns a multi-line, indented JSON representation of `node`.
   result = ""
   toPretty(result, node, indent, 0, false)
@@ -824,7 +836,7 @@ proc `$`*(t: var JsonTree): string =
 # Siblings of nifply's `toNif`. Every overload takes `opts` in the same
 # position so the composite walkers can recurse with `toJson(t, field, opts)`.
 
-proc bareName(mangled: string): string =
+func bareName(mangled: string): string =
   ## `internalFieldPairs` / `internalTypeName` yield names with a NIF
   ## disambiguation suffix (`x.0`, `Box.0.<module>`); JSON keys and the `"type"`
   ## discriminator want the bare source name before the first `.`.

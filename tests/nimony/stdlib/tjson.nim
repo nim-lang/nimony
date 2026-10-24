@@ -22,6 +22,24 @@ proc sliceLifetime(): JsonNode =
   let c = t.root
   result = c[0..1]
 
+func pureRead(obj, arr: JsonNode): string =
+  ## The read-only JSON surface must stay usable from a `func`.
+  result = ""
+  for k, v in pairs(obj):
+    result.add k
+    result.add $v
+  for el in items(arr):
+    result.add $getInt(el)
+  result.add $arr[0]
+  result.add escapeJson("x")
+  result.add $obj.len
+  result.add $obj.hasKey("a")
+  result.add $obj.contains("a")
+  result.add errorMsg(obj)
+  result.add $getFields(obj).len
+  result.add $getElems(arr).len
+  result.add pretty(arr)
+
 proc main() =
   block atoms:
     var t = parseJson("""{"a":1,"b":"hi","c":true,"d":null,"e":3.5}""")
@@ -59,6 +77,7 @@ proc main() =
       check c{"missing"}.kind, JNull
       check c{0}.kind, JNull
       check c["a"]{1}.getInt(), 2'i64
+      check pureRead(c, c["a"]).len > 0, true
       check hasKey(c, "a"), true
       check hasKey(c, "z"), false
       check contains(c, "b"), true
