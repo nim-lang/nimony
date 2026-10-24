@@ -214,3 +214,9 @@ template map*[T; C:Broadcastable[T]](a: C, f: Mapper[T]): C {.untyped.} =
     tmp[i] = f(a[i])
 
   tmp
+
+template `-`*[T; C:Broadcastable[T]](a: C): C {.untyped.} = map(a, -)
+
+proc fill*[T; C: AbstractVec2[T]](v: var C, val: T) {.untyped.} =
+  for i in 0..<v.len:
+    v[i] = val
