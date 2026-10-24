@@ -9,12 +9,14 @@ type
     items: seq[int]
     name: string
 
-proc take(a: var int, b: int) =
+proc take(a: var string, b: string) =
   a = b
 
-# Mutable argument aliases with immutable parameter (Pascal aliasing):
+# Mutable argument aliases with immutable parameter (Pascal aliasing). A
+# `string` copy still shares the caller's buffer; an `int` copy would not
+# (tborrow_copies.nim):
 proc testMutImmAlias =
-  var a = 5
+  var a = "5"
   take(a, a)
 
 testMutImmAlias()
@@ -32,21 +34,21 @@ proc testMutMutAlias =
 testMutMutAlias()
 
 # Mutable field aliases with the whole object passed immutably:
-proc takeFieldAndObj(a: var int, b: Obj) =
-  a = b.x
+proc takeFieldAndObj(a: var string, b: Container) =
+  a = b.name
 
 proc testFieldVsObj =
-  var o = Obj(x: 1, y: 2)
-  takeFieldAndObj(o.x, o)
+  var o = Container(items: @[1], name: "n")
+  takeFieldAndObj(o.name, o)
 
 testFieldVsObj()
 
 # Mutating a container while iterating - simulated via var + read:
-proc resize(s: var seq[int], val: int) =
+proc resize(s: var seq[string], val: string) =
   s.add val
 
 proc testMutateWhileBorrowed =
-  var s = @[1, 2, 3]
+  var s = @["1", "2", "3"]
   # Simulate: for x in mitems(s): s.add(x)
   # The `var` param aliases with the direct mention
   resize(s, s[0])

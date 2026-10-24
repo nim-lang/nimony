@@ -142,14 +142,7 @@ proc errorAt(L: var Lexer; line, col: int; msg: string) =
   L.errors.add L.filename & "(" & $line & ", " & $(col + 1) & ") Error: " & msg
 
 proc error(L: var Lexer; pos: int; msg: string) =
-  let line = L.lineNumber
-  let col = pos - L.lineStart
-  errorAt L, line, col, msg
-
-proc error(L: var Lexer; msg: string) =
-  ## An error at the current position.
-  let pos = L.pos
-  error L, pos, msg
+  errorAt L, L.lineNumber, pos - L.lineStart, msg
 
 proc litNumText(L: Lexer; start: int): string =
   ## The number as `lexMessageLitNum` quotes it: everything literal-ish from
@@ -477,7 +470,7 @@ proc scanNumber(L: var Lexer; tok: var Token) =
   normalizeBasePrefix tok
   numberValue L, tok, digits
   if L.ch(L.pos) in SymChars + {'_'} and unicodeOprLen(L.buf, L.pos)[0] == 0:
-    error L, "invalid token: no whitespace between number and identifier"
+    error L, L.pos, "invalid token: no whitespace between number and identifier"
 
 proc symbolKind(s: string; pos: var int): TokKind =
   ## The keyword or identifier starting at `pos`, which is moved behind it;
@@ -700,7 +693,7 @@ proc handleHexChar(L: var Lexer; xi: var int; position: range[0..4]) =
   elif c >= 'a' and c <= 'f': xi = (xi shl 4) or (ord(c) - ord('a') + 10)
   elif c >= 'A' and c <= 'F': xi = (xi shl 4) or (ord(c) - ord('A') + 10)
   else:
-    if position <= 1: error L, "expected a hex digit"
+    if position <= 1: error L, L.pos, "expected a hex digit"
     return
   inc L.pos
 
@@ -729,7 +722,7 @@ proc getEscapedChar(L: var Lexer; tok: var Token) =
   of 'n', 'N': tok.s.add '\n'; inc L.pos
   of 'p', 'P':
     if tok.kind == tkCharLit:
-      error L, "\\p not allowed in character literal"
+      error L, L.pos, "\\p not allowed in character literal"
     tok.s.add '\n'
     inc L.pos
   of 'r', 'R', 'c', 'C': tok.s.add '\r'; inc L.pos
@@ -750,7 +743,7 @@ proc getEscapedChar(L: var Lexer; tok: var Token) =
     tok.s.add chr(xi)
   of 'u', 'U':
     if tok.kind == tkCharLit:
-      error L, "\\u not allowed in character literal"
+      error L, L.pos, "\\u not allowed in character literal"
     inc L.pos
     var xi = 0
     if L.ch(L.pos) == '{':
@@ -758,10 +751,10 @@ proc getEscapedChar(L: var Lexer; tok: var Token) =
       let start = L.pos
       while L.ch(L.pos) != '}' and L.ch(L.pos) != '\0':
         handleHexChar L, xi, 0
-      if start == L.pos: error L, "Unicode codepoint cannot be empty"
+      if start == L.pos: error L, L.pos, "Unicode codepoint cannot be empty"
       if L.ch(L.pos) == '}': inc L.pos
       if xi > 0x10FFFF:
-        error L, "Unicode codepoint must be lower than 0x10FFFF"
+        error L, L.pos, "Unicode codepoint must be lower than 0x10FFFF"
     else:
       handleHexChar L, xi, 1
       handleHexChar L, xi, 2
@@ -774,9 +767,9 @@ proc getEscapedChar(L: var Lexer; tok: var Token) =
       xi = xi * 10 + (ord(L.ch(L.pos)) - ord('0'))
       inc L.pos
     if xi <= 255: tok.s.add chr(xi)
-    else: error L, "invalid character constant"
+    else: error L, L.pos, "invalid character constant"
   else:
-    error L, "invalid character constant"
+    error L, L.pos, "invalid character constant"
     inc L.pos
 
 type
@@ -827,7 +820,7 @@ proc getString(L: var Lexer; tok: var Token; mode: StringMode) =
           break
       elif c == '\r' or c == '\n' or c == '\0':
         # at `L.pos`: the opening quote, or behind the last escape sequence
-        error L, "closing \" expected"
+        error L, L.pos, "closing \" expected"
         break
       elif c == '\\' and mode == smNormal:
         L.pos = pos
@@ -844,7 +837,7 @@ proc getCharacter(L: var Lexer; tok: var Token) =
   inc L.pos                   # skip '
   let c = L.ch(L.pos)
   if c < ' ' or c == '\'':
-    error L, "invalid character literal"
+    error L, L.pos, "invalid character literal"
     tok.s = str(c)
   elif c == '\\':
     getEscapedChar L, tok
@@ -858,7 +851,7 @@ proc getCharacter(L: var Lexer; tok: var Token) =
     tok.s = "'"
     L.pos = startPos + 1
   else:
-    error L, "missing closing ' for character literal"
+    error L, L.pos, "missing closing ' for character literal"
 
 # ---------------------------------------------------------------------------
 # Operators
@@ -987,8 +980,7 @@ proc next*(L: var Lexer; tok: var Token) =
   elif c == '*':
     # `*:` is two tokens in `var v*: int`, and one operator in `a *: b`
     if L.ch(L.pos+1) == ':' and L.ch(L.pos+2) notin OpChars:
-      let pos = L.pos
-      endOperator L, tok, pos, pos
+      endOperator L, tok, L.pos, L.pos
     else:
       getOperator L, tok
   elif c == ',':
@@ -1059,7 +1051,7 @@ proc next*(L: var Lexer; tok: var Token) =
     else:
       tok.kind = tkInvalid
       tok.s = "_"
-      error L, "invalid token: _"
+      error L, L.pos, "invalid token: _"
   elif c == '\"':
     # `foo"bar"` is a generalized string literal, `foo "bar"` is a command
     let mode = if L.pos > 0 and L.ch(L.pos-1) in SymChars: smGeneralized
@@ -1086,7 +1078,7 @@ proc next*(L: var Lexer; tok: var Token) =
   else:
     tok.kind = tkInvalid
     tok.s = str(c)
-    error L, "invalid token: " & str(c) & " (\\" & $ord(c) & ")"
+    error L, L.pos, "invalid token: " & str(c) & " (\\" & $ord(c) & ")"
     inc L.pos
 
 iterator tokens*(src: string; filename = ""): Token {.sideEffect.} =

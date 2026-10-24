@@ -59,7 +59,7 @@ import ".." / finalir / [finalir_model, finalir]
 import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-  renderer, typeprops, inferle, xints, builtintypes, features, expreval
+  renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof
 
 type
   IvKind = enum
@@ -3735,10 +3735,16 @@ proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
   else:
     inc pc  # ParRi/close (classic) or stray suffix (nifcore)
 
-proc borrowCheckForCall(c: var FirContext; args: Cursor; forwardedMut: seq[bool]) =
-  ## `forwardedMut[i]` marks an argument bound to a `var`/`out` formal that is
-  ## already a location (a forwarded `var` parameter) and so carries no
-  ## `(haddr …)`: it is just as mutable as one that does.
+type
+  ArgMode = enum
+    amByValue       ## a copy: it cannot alias anything the callee mutates
+    amByPointer     ## immutable, but the callee reads it through a pointer
+    amForwardedMut  ## a `var` parameter passed on to a `var`/`out` formal
+
+proc borrowCheckForCall(c: var FirContext; args: Cursor; modes: seq[ArgMode]) =
+  ## `modes[i]` is how argument `i` is passed. A forwarded `var` parameter is
+  ## already a location and so carries no `(haddr …)`: it is just as mutable
+  ## as one that does. An argument past the formals counts as by pointer.
   var mutPaths: seq[BorrowInfo] = @[]
   var immPaths: seq[BorrowInfo] = @[]
   var n = args
@@ -3747,7 +3753,8 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor; forwardedMut: seq[bool]
     let isMut = n.exprKind == HaddrX
     # Validate borrowable path for haddr arguments (call-scoped borrows)
     var inner = n
-    if i < forwardedMut.len and forwardedMut[i]:
+    let mode = if i < modes.len: modes[i] else: amByPointer
+    if mode == amForwardedMut:
       let m = extractPath(c, n)
       if m.mode in {IsBorrowable, IsBorrowableFromGlobal}:
         mutPaths.add m
@@ -3759,7 +3766,7 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor; forwardedMut: seq[bool]
           "': path is not borrowable; use 'addr' to override or a temporary move"
       else:
         mutPaths.add m
-    else:
+    elif mode == amByPointer:
       let m = extractPath(c, n, followInlineVars = false)
       if m.mode in {IsBorrowable, IsBorrowableFromGlobal}:
         immPaths.add m
@@ -3784,6 +3791,71 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor; forwardedMut: seq[bool]
           echo "mutPaths[j]: ", mutPaths[j]
         buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
         break
+
+proc ownsNoHeap(c: var FirContext; t: Cursor; depth: int): bool =
+  ## Is a bitwise copy of `t` independent of the original? A `string` or a
+  ## `ref` passed by value is still a view of the caller's heap block, which a
+  ## mutation of the original may free. Conservative: anything not understood
+  ## owns heap.
+  result = false
+  if depth > 8: return false
+  if t.isSymbol:
+    var decl = default(Cursor)
+    if c.moduleTypes.hasKey(t.symId):
+      decl = c.moduleTypes.getOrQuit(t.symId)
+    else:
+      let sym = tryLoadSym(t.symId)
+      if sym.status == LacksNothing and sym.decl.symKind == TypeY: decl = sym.decl
+    if not cursorIsNil(decl):
+      let td = asTypeDecl(decl)
+      var hasDestroy = false
+      var p = td.pragmas
+      if p.isTagLit:
+        p = sub(p)
+        while p.hasMore:
+          if p.isTagLit and p.cursorTagId == TagId(DestroyH): hasDestroy = true
+          skip p
+      result = not hasDestroy and ownsNoHeap(c, td.body, depth+1)
+    return
+  case t.typeKind
+  of IntT, UIntT, FloatT, BoolT, CharT, EnumT, HoleyEnumT, RangetypeT,
+     PtrT, PointerT, CstringT, SetT:
+    result = true
+  of DistinctT:
+    result = ownsNoHeap(c, t.childCursor, depth+1)
+  of ArrayT:
+    result = ownsNoHeap(c, t.childCursor, depth+1)
+  of TupleT:
+    var f = t
+    f = sub(f)
+    result = true
+    while result and f.hasMore:
+      result = ownsNoHeap(c, getTupleFieldType(f), depth+1)
+      skip f
+  of ObjectT:
+    var f = t
+    f = sub(f)
+    if f.kind != DotToken: return false # inheritance: a derived value may own more
+    skip f
+    result = true
+    while result and f.hasMore:
+      if isLocal(f.symKind):
+        let fld = takeLocal(f, SkipFinalParRi)
+        result = ownsNoHeap(c, fld.typ, depth+1)
+      else:
+        result = false # `case` of a variant object and the like
+  else:
+    result = false
+
+proc passedByPointer(c: var FirContext; param: Local): bool =
+  ## Can the callee's view of this immutable parameter be changed by a
+  ## mutation through another argument? Yes when it reads the caller's storage
+  ## through a pointer, and also for a copy that shares the caller's heap
+  ## block. A plain-data copy cannot alias anything.
+  let t = param.typ
+  result = t.typeKind in {LentT, VarargsT} or isViewType(t) or
+           passByConstRef(t, param.pragmas, c.bits div 8) or
+           not ownsNoHeap(c, t, 0)
 
 proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   let callCursor = n
@@ -3810,8 +3882,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   # Collect argument paths for aliasing check
   let args = n
   var needsBorrowCheck = false
-  var forwardedMut: seq[bool] = @[]
-  var argPos = 0
+  var modes: seq[ArgMode] = @[]
   var mutatedRoots: seq[SymId] = @[]
   var viewRoots: seq[SymId] = @[]
   var mutatesUnknown = false
@@ -3830,6 +3901,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     # advances `n`; the input buffer is never rewritten, so the cursor stays
     # valid for the rest of the call.
     paramMap[param.name.symId] = n
+    modes.add(if passedByPointer(c, param): amByPointer else: amByValue)
     let pk = param.typ.typeKind
     # Save arg info before traverseExpr advances n
     let isMut = n.exprKind == HaddrX
@@ -3876,8 +3948,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
             isParamLike(getLocalInfo(c.typeCache, n.symId).kind) and
             mutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
           needsBorrowCheck = true
-          while forwardedMut.len < argPos: forwardedMut.add false
-          forwardedMut.add true
+          modes[^1] = amForwardedMut
       if root != NoSymId and isVarOpenArray(c, param.typ) and
           plainLocationVarId(c, n) == getVarId(c, root):
         # a view passed as a view: its length stays
@@ -3894,9 +3965,8 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     if syncRoot >= 0: c.syncArgs.incl syncRoot
     traverseExpr c, n, call
     if syncRoot >= 0: c.syncArgs.excl syncRoot
-    inc argPos
   if needsBorrowCheck and not c.features.contains(LenientAliasingFeature):
-    borrowCheckForCall c, args, forwardedMut
+    borrowCheckForCall c, args, modes
   while fnType.hasMore: skip fnType
   fnType = paramsStart; skip fnType
   skip fnType # skip return type

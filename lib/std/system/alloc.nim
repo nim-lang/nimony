@@ -654,8 +654,7 @@ proc requestOsChunks(a: var MemRegion, size: int): PBigChunk =
   if size > a.nextChunkSize:
     result = cast[PBigChunk](allocPages(a, size))
   else:
-    let nextChunkSize = a.nextChunkSize
-    result = cast[PBigChunk](tryAllocPages(a, nextChunkSize))
+    result = cast[PBigChunk](tryAllocPages(a, a.nextChunkSize))
     if result == nil:
       result = cast[PBigChunk](allocPages(a, size))
       a.blockChunkSizeIncrease = true

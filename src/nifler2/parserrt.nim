@@ -195,15 +195,11 @@ proc reportFailure*(p: Parser) =
 
 proc error*(p: var Parser; msg: string) =
   ## `parMessage`: at the current token.
-  let line = p.tok.line
-  let col = p.tok.col
-  errorAt p, line, col, msg
+  errorAt p, p.tok.line, p.tok.col, msg
 
 proc lexError*(p: var Parser; msg: string) =
   ## `lexMessage`: at the lexer's position, the end of the current token.
-  let line = p.lex.lineNumber
-  let col = p.lex.pos - p.lex.lineStart
-  errorAt p, line, col, msg
+  errorAt p, p.lex.lineNumber, p.lex.pos - p.lex.lineStart, msg
 
 proc expectedTok(p: var Parser; spelling: string) =
   lexError p, "expected: '" & spelling & "', but got: '" & prettyTok(p.tok) & "'"
@@ -1074,12 +1070,10 @@ proc emitLeaf*(p: var Parser) =
   # what a plain literal becomes once it leaves int32's range, exactly as in
   # compiler/lexer.nim, so a large plain literal is written with a suffix too.
   of tkIntLit:
-    let v = p.tok.iNumber
-    emitInt p, v, info
+    emitInt p, p.tok.iNumber, info
   of tkInt8Lit, tkInt16Lit, tkInt32Lit, tkInt64Lit:
     let x = openNode(p)
-    let v = p.tok.iNumber
-    emitInt p, v, info
+    emitInt p, p.tok.iNumber, info
     emitStr p, (case p.tok.kind
                 of tkInt8Lit: "i8"
                 of tkInt16Lit: "i16"
@@ -1087,12 +1081,10 @@ proc emitLeaf*(p: var Parser) =
                 else: "i64"), info
     closeNode p, x, SufL, info
   of tkUIntLit:
-    let v = cast[uint64](p.tok.iNumber)
-    emitUInt p, v, info
+    emitUInt p, cast[uint64](p.tok.iNumber), info
   of tkUInt8Lit, tkUInt16Lit, tkUInt32Lit, tkUInt64Lit:
     let x = openNode(p)
-    let v = cast[uint64](p.tok.iNumber)
-    emitUInt p, v, info
+    emitUInt p, cast[uint64](p.tok.iNumber), info
     emitStr p, (case p.tok.kind
                 of tkUInt8Lit: "u8"
                 of tkUInt16Lit: "u16"
