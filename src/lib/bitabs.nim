@@ -22,7 +22,7 @@ type
     vals: seq[T] # indexed by LitId
     keys: seq[Id]  # indexed by hash(val)
 
-proc initBiTable*[Id, T](): BiTable[Id, T] = BiTable[Id, T](vals: @[], keys: @[])
+func initBiTable*[Id, T](): BiTable[Id, T] = BiTable[Id, T](vals: @[], keys: @[])
 
 proc nextTry(h, maxHash: Hash): Hash {.inline.} =
   result = (h + 1) and maxHash
@@ -30,7 +30,7 @@ proc nextTry(h, maxHash: Hash): Hash {.inline.} =
 template maxHash(t): untyped = high(t.keys).Hash
 template isFilled(x: untyped): bool = x.uint32 > 0'u32
 
-proc len*[Id, T](t: BiTable[Id, T]): int = t.vals.len
+func len*[Id, T](t: BiTable[Id, T]): int = t.vals.len
 
 proc mustRehash(length, counter: int): bool {.inline.} =
   assert(length > counter)
@@ -159,7 +159,7 @@ proc getOrInclFromView*[Id, T, View](t: var BiTable[Id, T]; v: View): Id =
   t.vals.add $v
 
 when defined(nimony):
-  proc `[]`*[Id, T](t: BiTable[Id, T]; strId: Id): var T {.inline.} =
+  func `[]`*[Id, T](t: BiTable[Id, T]; strId: Id): var T {.inline.} =
     let idx = idToIdx strId
     assert idx < t.vals.len
     result = t.vals[idx]
