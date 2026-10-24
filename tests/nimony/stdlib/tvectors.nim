@@ -1,5 +1,5 @@
-import ../../../lib/std/vectors
-import std/[assertions, math]
+import std/vectors
+import std/[assertions, math, syncio]
 
 proc vec2(x, y: float): Vec2[float] =
   result = default(Vec2[float])
@@ -69,3 +69,4 @@ proc main =
     assert vec2(0.0, 0.0).isZero
 
 main()
+echo "ok"
