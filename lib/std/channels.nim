@@ -21,9 +21,9 @@
 ## `Writer` or `Reader`, so a stream never has more than one of each and its
 ## lifecycle stays that of a connection: the last copy gone is the end gone.
 
-import std/[streamio, threadpool, ticketlocks, typetraits]
+import std/[private/coreio, threadpool, ticketlocks, typetraits]
 
-export streamio.Reader, streamio.Writer
+export coreio.Reader, coreio.Writer
 
 # On a channel's own ring, a send or a receive is one whole record under the
 # ring's lock, so copies on different threads need nothing more.
@@ -181,14 +181,30 @@ proc send*[T](s: Sender[T]; x: sink T): bool {.passive, raises.} =
   result = sendBytes(e, addr v, sizeof(T))
   if result: `=wasMoved`(v)           # its bytes are the receiver's now
 
-proc recv*[T](r: Receiver[T]; dest: var T): bool {.passive, raises.} =
-  ## Parks while the channel is empty. False when no sender is left and
-  ## nothing is buffered; `dest` is then untouched.
+proc recv*[T](r: Receiver[T]; dest: var T; dl = never): bool {.passive, raises.} =
+  ## Waits while the channel is empty. False when no sender is left and
+  ## nothing is buffered; `dest` is then untouched. With a `dl` the wait is
+  ## bounded: `TimeoutError` when it arrives first. The deadline applies to a
+  ## channel's own ring (the `channel[T]` form); over a general stream the read
+  ## still parks until the data or the end arrives.
   let e = r.e
   if e == nil: raise BadOperation
   var v {.noinit.}: T
   zeroMem(addr v, sizeof(T))          # a moved-from value until filled
-  result = recvBytes(e, addr v, sizeof(T))
+  if dl == never or not e.direct:
+    result = recvBytes(e, addr v, sizeof(T))
+  else:
+    while true:
+      let n = tryReadRecord(e.r, addr v)
+      if n > 0:
+        result = true
+        break
+      elif n == 0:
+        result = false
+        break
+      if monoNow() >= dl:
+        raise TimeoutError
+      sleepUntil(earlier(dl, afterMs(5)))
   if result: dest = move v
 
 proc flush*[T](s: Sender[T]) {.passive, raises.} =
