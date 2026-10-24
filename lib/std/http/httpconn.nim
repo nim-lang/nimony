@@ -71,7 +71,7 @@ proc initHttpConn*(fd: cint; deadline: Deadline; tags: HttpTags): HttpConn =
   result = HttpConn(tags: tags, scan: default(HeadScanner), chunk: csHeader,
                     chunkLeft: 0, fdVal: fd, error: Success)
   try:
-    var (r, w) = plainFd(fd, deadline)
+    var (r, w) = plainStreams(fd, deadline)
     result.r = move r
     result.w = move w
   except ErrorCode as e:
@@ -87,12 +87,12 @@ proc initHttpConn*(fd: cint; deadline: Deadline; tags: HttpTags;
   result = HttpConn(tags: tags, scan: default(HeadScanner), chunk: csHeader,
                     chunkLeft: 0, fdVal: fd, error: Success)
   try:
-    var (r, w) = acceptFd(fd, tls, deadline)
+    var (r, w) = acceptStreams(fd, tls, deadline)
     r.renew(deadline)
     result.r = move r
     result.w = move w
   except ErrorCode as e:
-    # `acceptFd` owns and closed `fd` on this path.
+    # `acceptStreams` owns and closed `fd` on this path.
     result.fdVal = -1
     result.error = e
 
@@ -271,10 +271,10 @@ proc readBody*(c: var HttpConn; dest: var openArray[char];
 
 # --------------------------------------------------------------- writing ---
 
-proc sendHead*(c: var HttpConn; m: var HttpMsg;
+proc sendHead*(c: var HttpConn; m: HttpMsg;
                dl = never) {.passive, raises.} =
-  ## Serialize `m`'s head and flush it. `headLen` sizes the buffer exactly, so
-  ## this never writes, fails and retries.
+  ## Serialize `m`'s head into the writer's buffer and flush it. `headLen`
+  ## sizes the buffer exactly, so this never writes, fails and retries.
   ##
   ## `ValueError` for a message with no head to write — one that was never
   ## built, or moved from — or with one that would not come out well formed:
@@ -282,10 +282,9 @@ proc sendHead*(c: var HttpConn; m: var HttpMsg;
   ## what it says: `headLen` and `writeHead` disagreed about the same tree.
   let need = headLen(m)
   if need <= 0: raise ValueError
-  var buf = newString(need)
-  if writeHead(toOpenArray(buf, 0, need - 1), 0, m) != need: raise BugError
+  if writeHead(toOpenArray(c.w.scratch(need), 0, need - 1), 0, m) != need:
+    raise BugError
   c.w.tighten(dl)
-  c.w.write buf
   c.w.flush()
 
 proc sendBody*(c: var HttpConn; body: openArray[char];
@@ -304,19 +303,18 @@ proc sendChunk*(c: var HttpConn; data: openArray[char];
   ## `endChunks` is how a body is ended.
   if data.len == 0: return
   let n = chunkOverhead(data.len) + data.len
-  var buf = newString(n)
-  if writeChunk(toOpenArray(buf, 0, n - 1), 0, data) != n: raise BugError
+  if writeChunk(toOpenArray(c.w.scratch(n), 0, n - 1), 0, data) != n:
+    raise BugError
   c.w.tighten(dl)
-  c.w.write buf
   c.w.flush()
 
 proc endChunks*(c: var HttpConn; dl = never) {.passive, raises.} =
   ## The zero chunk and the empty trailer section that end a chunked body.
-  var buf = newString(8)
-  let n = writeLastChunk(toOpenArray(buf, 0, buf.len - 1), 0)
-  if n < 0: raise BugError
+  const LastChunkLen = 5            # "0\r\n\r\n"
+  let n = writeLastChunk(toOpenArray(c.w.scratch(LastChunkLen), 0,
+                                     LastChunkLen - 1), 0)
+  if n != LastChunkLen: raise BugError
   c.w.tighten(dl)
-  c.w.write toOpenArray(buf, 0, n - 1)
   c.w.flush()
 
 proc respond*(c: var HttpConn; status: int; body: openArray[char];

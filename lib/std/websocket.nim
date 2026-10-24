@@ -48,9 +48,15 @@
 #
 # ## The shape of the thing
 #
-# `WebSocket` owns one connection — a `Reader` and a `Writer` — and it is
-# move-only, because a connection with two owners is a connection with two
-# writers. The streams are the ones the HTTP layer was already using:
+# `WebSocket` is a pair: a `WebSocketReader` and a `WebSocketWriter`. The
+# reader owns the `Reader`, parses frames, reassembles fragmented messages and
+# checks that text is text; the writer owns the `Writer`, frames messages,
+# masks them when this end is the client and sends the close frame. The pair
+# owns what belongs to both: the subprotocol, the closing handshake and the
+# error. It is move-only, because a connection with two owners is a connection
+# with two writers.
+#
+# The streams are the ones the HTTP layer was already using:
 # `HttpConnection.takeStreams` hands them over with their buffers, so a client
 # that sent its first frame right behind the handshake request has it read
 # already and it is not lost between the two protocols. The framing lives in
@@ -58,11 +64,12 @@
 # byte stream, and a WebSocket is not a byte stream, it is a sequence of
 # messages with rules about which of them may be interrupted by which.
 #
-# The connection has one owner and this module is it: `recv` answers a ping
-# with a pong by itself, and the closing handshake starts on whichever side
-# did not ask for it. A handler that writes to the connection from another
-# task while `recv` is running interleaves two frames in the middle of each
-# other. There is one writer, so there is one place that writes.
+# The connection has one owner and this module is it: the pair's `recv`
+# answers a ping with a pong by itself, and the closing handshake starts on
+# whichever side did not ask for it. A handler that writes to the connection
+# from another task while `recv` is running interleaves two frames in the
+# middle of each other. There is one writer, so there is one place that
+# writes.
 #
 # ## The two roles
 #
@@ -70,7 +77,7 @@
 # rejects an unmasked frame from a client, and a client rejects a masked one
 # from a server. That is the only difference between the roles — the framing,
 # the fragmentation and the closing handshake are the same code, which is why
-# there is one object and a `role` field rather than two types.
+# both halves carry a `role` field rather than there being two of each type.
 
 import std / [ioring, base64, sha1, unicode, uri, strutils, streamio]
 import std / httpserver except add, close
@@ -93,6 +100,11 @@ const
     ## How long a side waits for the peer's half of the closing handshake.
   MaxHandshakeHead = 16 * 1024
     ## The most of a response head a client will read before it gives up.
+
+  TokenSeparators = {',', ' ', '\t'}
+    ## What may sit between the tokens of a comma-separated header value.
+  TokenWhitespace = {' ', '\t'}
+    ## What is trimmed from the end of such a token.
 
   # RFC 6455 §7.4.1, the codes that mean something to the protocol.
   wscNormal* = 1000
@@ -164,21 +176,43 @@ type
   WsRole = enum
     wrServer, wrClient
 
-  WebSocket* = object
-    ## One WebSocket connection.
+  WebSocketReader* = object
+    ## The receiving half of one WebSocket connection.
     ##
-    ## Move-only: it owns the streams, and two owners of one connection is
-    ## two owners of one descriptor. Leaving scope ends the connection — see
-    ## the destructor below.
+    ## Move-only: it owns the `Reader`. It parses frames, reassembles
+    ## fragmented messages and checks that text is text. Control frames are
+    ## handed back to the caller (`mkPing`, `mkPong`, `mkClose`) rather than
+    ## answered here: answering a ping needs the writer.
     r: Reader
-    w: Writer
     role: WsRole
+    maxMessage: int
     msgOp: int           ## the opcode of the message being assembled; 0: none
     msgBuf: string       ## its payload so far
-    closeSent: bool
     closeSeen: bool
     closeCode: int
-    maxMessage: int
+    failCode: int        ## the close code to send for the error that stopped us
+    err: ErrorCode
+
+  WebSocketWriter* = object
+    ## The sending half of one WebSocket connection.
+    ##
+    ## Move-only, like the reader: it owns the `Writer`, and one connection
+    ## has one writer. It frames messages, masks them when this end is the
+    ## client, and sends the close frame without waiting for the peer.
+    w: Writer
+    role: WsRole
+    closeSent: bool
+    closeCode: int
+
+  WebSocket* = object
+    ## One WebSocket connection: a reader, a writer and the state that belongs
+    ## to the pair.
+    ##
+    ## Move-only: the halves own the streams, and two owners of one connection
+    ## is two owners of one descriptor. Leaving scope ends the connection — see
+    ## the note at the end of this module.
+    reader: WebSocketReader
+    writer: WebSocketWriter
     sub: string
     err: ErrorCode
     aborted: bool
@@ -325,14 +359,14 @@ proc hasToken(value: string; token: string): bool =
   ## and the order is not fixed.
   var i = 0
   while i < value.len:
-    while i < value.len and (value[i] == ',' or value[i] == ' ' or value[i] == '\t'):
+    while i < value.len and value[i] in TokenSeparators:
       inc i
     if i >= value.len: break
     let start = i
     while i < value.len and value[i] != ',':
       inc i
     var stop = i
-    while stop > start and (value[stop - 1] == ' ' or value[stop - 1] == '\t'):
+    while stop > start and value[stop - 1] in TokenWhitespace:
       dec stop
     if stop - start == token.len:
       var same = true
@@ -347,18 +381,13 @@ proc hasToken(value: string; token: string): bool =
       if same: return true
   result = false
 
-proc isBase64Char(c: char): bool =
-  if c >= 'A' and c <= 'Z': return true
-  if c >= 'a' and c <= 'z': return true
-  if c >= '0' and c <= '9': return true
-  result = c == '+' or c == '/' or c == '='
-
 proc isValidKey(key: string): bool =
   ## Whether `key` is a nonce as RFC 6455 §4.1 wants it: 16 random bytes,
   ## base64-encoded.
+  const Base64Chars = {'A'..'Z', 'a'..'z', '0'..'9', '+', '/', '='}
   if key.len != 24: return false
   for c in key:
-    if not isBase64Char(c): return false
+    if c notin Base64Chars: return false
   result = true
 
 proc pickProtocol(supported: openArray[string]; offered: string): string =
@@ -369,15 +398,14 @@ proc pickProtocol(supported: openArray[string]; offered: string): string =
   for want in supported:
     var i = 0
     while i < offered.len:
-      while i < offered.len and (offered[i] == ',' or offered[i] == ' ' or
-                                 offered[i] == '\t'):
+      while i < offered.len and offered[i] in TokenSeparators:
         inc i
       if i >= offered.len: break
       let start = i
       while i < offered.len and offered[i] != ',':
         inc i
       var stop = i
-      while stop > start and (offered[stop - 1] == ' ' or offered[stop - 1] == '\t'):
+      while stop > start and offered[stop - 1] in TokenWhitespace:
         dec stop
       if stop - start == want.len:
         var same = true
@@ -419,34 +447,60 @@ proc statusText(status: int): string =
 
 # ---------------------------------------------------------- the wire itself --
 
-proc avail(ws: WebSocket): int {.inline.} =
+proc closePayload(code: int; reason: string): string =
+  ## The payload of a close frame: the code, then the reason.
+  var p = newString(2)
+  p[0] = char((code shr 8) and 0xFF)
+  p[1] = char(code and 0xFF)
+  p.add reason
+  p.endStore()
+  result = p
+
+proc avail(rd: WebSocketReader): int {.inline.} =
   ## Protocol bytes buffered and not yet consumed.
-  ws.r.buffered
+  rd.r.buffered
 
-proc take(ws: var WebSocket; dest: var openArray[char]): int =
+proc take(rd: var WebSocketReader; dest: var openArray[char]): int =
   ## Copies what is buffered into `dest`, consuming it. No I/O, so no deadline.
-  result = min(dest.len, ws.r.buffered)
-  for i in 0 ..< result: dest[i] = ws.r.peek[i]
-  ws.r.consume result
+  result = min(dest.len, rd.r.buffered)
+  for i in 0 ..< result: dest[i] = rd.r.peek[i]
+  rd.r.consume result
 
-proc fillOnce(ws: var WebSocket): int {.passive, raises.} =
+proc fillOnce(rd: var WebSocketReader): int {.passive, raises.} =
   ## Reads more of the protocol stream. The bytes available afterwards — `0`
   ## at the end of the stream.
-  if ws.avail > 0: return ws.avail
-  result = ws.r.fill()
+  if rd.avail > 0: return rd.avail
+  result = rd.r.fill()
 
-proc ensure(ws: var WebSocket; n: int): bool {.passive, raises.} =
+proc ensure(rd: var WebSocketReader; n: int): bool {.passive, raises.} =
   ## Whether at least `n` protocol bytes are buffered; reads until they are.
-  while ws.avail < n:
-    if ws.fillOnce() == 0: return false
+  while rd.avail < n:
+    if rd.fillOnce() == 0: return false
   result = true
 
-proc writeProto(ws: var WebSocket; data: openArray[char]) {.passive, raises.} =
+proc deadline*(rd: WebSocketReader): Deadline {.raises.} =
+  ## The standing deadline of the receive side; the writer shares it.
+  rd.r.deadline
+
+proc renew*(rd: var WebSocketReader; dl: Deadline) {.raises.} =
+  ## Replaces the standing deadline of the connection. Raises `BadOperation`
+  ## for a closed or default-constructed reader.
+  rd.r.renew(dl)
+
+proc close*(rd: var WebSocketReader) =
+  ## Drops the receive side without reading anything else.
+  try:
+    rd.r.close()
+  except ErrorCode:
+    discard
+
+proc writeProto(wr: var WebSocketWriter; data: openArray[char]) {.
+    passive, raises.} =
   ## Puts protocol bytes on the wire and flushes them: a frame written is a
   ## frame handed to the kernel.
   if data.len == 0: return
-  ws.w.write(data)
-  ws.w.flush()
+  wr.w.write(data)
+  wr.w.flush()
 
 # --------------------------------------------------------------- the server --
 
@@ -486,8 +540,7 @@ proc refuse(c: var HttpConnection; status: int; body: string;
       r.close()
     except ErrorCode:
       discard
-  case status
-  of 426: raise BadProtocol
+  if status == 426: raise BadProtocol
   else: raise BadOperation
 
 proc upgradeImpl(c: var HttpConnection; protocols: openArray[string];
@@ -522,10 +575,11 @@ proc upgradeImpl(c: var HttpConnection; protocols: openArray[string];
   if idleMs > 0: r.renew(afterMs(idleMs))
   else: r.renew(never)
   var ws = WebSocket()
-  ws.r = move r
-  ws.w = move w
-  ws.role = wrServer
-  ws.maxMessage = maxMessage
+  ws.reader.r = move r
+  ws.reader.role = wrServer
+  ws.reader.maxMessage = maxMessage
+  ws.writer.w = move w
+  ws.writer.role = wrServer
   ws.sub = sub
   # The 101 goes out before the first frame does, and it says nothing about
   # length: the connection is not a body any more, it is a stream of frames.
@@ -535,7 +589,7 @@ proc upgradeImpl(c: var HttpConnection; protocols: openArray[string];
   head.add "Sec-WebSocket-Accept: " & accept & "\r\n"
   if sub.len > 0: head.add "Sec-WebSocket-Protocol: " & sub & "\r\n"
   head.add "\r\n"
-  ws.writeProto(head)
+  ws.writer.writeProto(head)
   result = ws
 
 proc upgradeWebSocket*(c: var HttpConnection; protocols: openArray[string] = [];
@@ -638,10 +692,11 @@ proc connectWebSocket*(url: string;
   var (r, w) = connect(u.hostname & ":" & $port, tls, afterMs(timeoutMs))
   r.renew(afterMs(timeoutMs))
   var ws = WebSocket()
-  ws.r = move r
-  ws.w = move w
-  ws.role = wrClient
-  ws.maxMessage = maxMessage
+  ws.reader.r = move r
+  ws.reader.role = wrClient
+  ws.reader.maxMessage = maxMessage
+  ws.writer.w = move w
+  ws.writer.role = wrClient
   var req = "GET " & path & " HTTP/1.1\r\n"
   req.add "Host: " & host & "\r\n"
   req.add "Upgrade: websocket\r\n"
@@ -652,7 +707,7 @@ proc connectWebSocket*(url: string;
     req.add "Sec-WebSocket-Protocol: " & join(protocols, ", ") & "\r\n"
   req.add string(headers)
   req.add "\r\n"
-  ws.writeProto(req)
+  ws.writer.writeProto(req)
   # The response head, one byte at a time: the bytes after it are frames, and
   # a server that sent its first message behind the 101 has already put them
   # in the reader's buffer. Reading a block and looking for the terminator in
@@ -661,10 +716,10 @@ proc connectWebSocket*(url: string;
   var matched = 0
   const terminator = "\r\n\r\n"
   while matched < 4:
-    if ws.avail == 0:
-      if ws.fillOnce() == 0: raise EndOfStreamError
+    if ws.reader.avail == 0:
+      if ws.reader.fillOnce() == 0: raise EndOfStreamError
     var one = default(array[1, char])
-    discard ws.take(toOpenArray(one, 0, 0))
+    discard ws.reader.take(toOpenArray(one, 0, 0))
     rawHead.add one[0]
     if rawHead.len > MaxHandshakeHead: raise ContentTooLong
     if one[0] == terminator[matched]: inc matched
@@ -683,16 +738,31 @@ proc connectWebSocket*(url: string;
   if answer.get("Sec-WebSocket-Accept") != acceptValue(key):
     raise ProtocolError
   ws.sub = answer.get("Sec-WebSocket-Protocol")
-  if idleMs > 0: ws.r.renew(afterMs(idleMs))
-  else: ws.r.renew(never)
+  if idleMs > 0: ws.reader.renew(afterMs(idleMs))
+  else: ws.reader.renew(never)
   result = ws
 
 # ------------------------------------------------------------ the connection --
 
+proc reader*(ws: var WebSocket): var WebSocketReader {.inline.} =
+  ## The receiving half of the connection. The pair's `recv` is the usual
+  ## entry point: it answers the pings and closes this half reports.
+  ws.reader
+
+proc writer*(ws: var WebSocket): var WebSocketWriter {.inline.} =
+  ## The sending half of the connection. The pair's `send` is the usual entry
+  ## point: it is the only place that knows the close handshake.
+  ws.writer
+
 proc closeCode*(ws: WebSocket): int =
-  ## The close code of the connection: the one that was sent, or the one the
-  ## peer sent, or 0 while the connection is still open.
-  ws.closeCode
+  ## The close code of the connection: the one the peer sent, the one that was
+  ## sent, or 0 while the connection is still open.
+  if ws.reader.closeCode != 0: ws.reader.closeCode
+  else: ws.writer.closeCode
+
+proc closeCode*(rd: WebSocketReader): int =
+  ## The close code the peer sent, or 0 while no close has been seen.
+  rd.closeCode
 
 proc subprotocol*(ws: WebSocket): string =
   ## The subprotocol the handshake agreed on; `""` when there is none.
@@ -702,31 +772,29 @@ proc lastError*(ws: WebSocket): ErrorCode =
   ## The error that ended the connection, if one did.
   ws.err
 
+proc lastError*(rd: WebSocketReader): ErrorCode =
+  ## The error that ended the receive side, if one did.
+  rd.err
+
+proc abort*(wr: var WebSocketWriter) =
+  ## Drops the sending side without a close frame.
+  wr.w.abort()
+
 proc abort*(ws: var WebSocket) =
   ## Drops the connection without a closing handshake.
   ##
   ## The peer sees the connection go away without a goodbye, which is what
   ## an error looks like from its side. Use it when the connection is not
-  ## worth a clean end — and see the note on the destructor about the trap
-  ## it is there to avoid.
+  ## worth a clean end — and see the note at the end of this module about the
+  ## trap it is there to avoid.
   ws.aborted = true
-  ws.w.abort()
-  try:
-    ws.r.close()
-  except ErrorCode:
-    discard
+  ws.writer.abort()
+  ws.reader.close()
 
-proc closePayload(code: int; reason: string): string =
-  ## The payload of a close frame: the code, then the reason.
-  var p = newString(2)
-  p[0] = char((code shr 8) and 0xFF)
-  p[1] = char(code and 0xFF)
-  p.add reason
-  p.endStore()
-  result = p
+# ------------------------------------------------------------- writing frames --
 
-proc sendFrame(ws: var WebSocket; opcode: WsOpcode; payload: openArray[char];
-               fin = true) {.passive, raises.} =
+proc sendFrame(wr: var WebSocketWriter; opcode: WsOpcode;
+               payload: openArray[char]; fin = true) {.passive, raises.} =
   ## One frame with `payload`.
   ##
   ## A masked frame (a client's) gets a fresh key, which is what a client has
@@ -736,7 +804,7 @@ proc sendFrame(ws: var WebSocket; opcode: WsOpcode; payload: openArray[char];
   ## middle of a header it has to wait for.
   var key = default(array[4, char])
   var head = ""
-  if ws.role == wrClient:
+  if wr.role == wrClient:
     var rnd = default(array[4, byte])
     if not urandom(rnd):
       # No key, no frame: a masked frame with a predictable key is the thing
@@ -749,44 +817,89 @@ proc sendFrame(ws: var WebSocket; opcode: WsOpcode; payload: openArray[char];
       for i in 0 ..< payload.len: body[i] = payload[i]
       applyMask(toOpenArray(body, 0, body.len - 1), key)
       head.add body
-    ws.writeProto(head)
+    wr.writeProto(head)
   else:
     head = frameHeader(opcode, payload.len, false, key, fin)
-    ws.writeProto(head)
-    ws.writeProto(payload)
+    wr.writeProto(head)
+    wr.writeProto(payload)
 
-proc fail(ws: var WebSocket; code: int) {.passive, raises.} =
-  ## The connection failed with `code`: the peer is told which rule it broke,
-  ## and then the connection is dropped.
-  if ws.closeCode == 0: ws.closeCode = code
-  if not ws.closeSent:
-    ws.closeSent = true
+proc fail(wr: var WebSocketWriter; code: int) {.passive, raises.} =
+  ## Tells the peer which rule it broke. The connection is dropped by the
+  ## caller, which owns both halves and the state they share.
+  if wr.closeCode == 0: wr.closeCode = code
+  if not wr.closeSent:
+    wr.closeSent = true
     try:
-      ws.sendFrame(wsoClose, closePayload(code, ""))
+      wr.sendFrame(wsoClose, closePayload(code, ""))
     except ErrorCode:
       discard
-  ws.abort()
 
-proc readFrameHeader(ws: var WebSocket; f: var WsFrame): bool {.passive, raises.} =
+proc send*(wr: var WebSocketWriter; kind: MsgKind; data: openArray[char]) {.
+  passive, raises.} =
+  ## Sends a message of `kind` with the bytes `data`.
+  ##
+  ## Text has to be text: a `mkText` whose bytes are not UTF-8 raises rather
+  ## than goes out, because the peer would have to fail the connection over
+  ## it. A ping or a pong carries at most 125 bytes.
+  case kind
+  of mkText:
+    if not isValidUtf8(data): raise ValueError
+    wr.sendFrame(wsoText, data)
+  of mkBinary:
+    wr.sendFrame(wsoBinary, data)
+  of mkPing:
+    if data.len > 125: raise ValueError
+    wr.sendFrame(wsoPing, data)
+  of mkPong:
+    if data.len > 125: raise ValueError
+    wr.sendFrame(wsoPong, data)
+  of mkClose:
+    # A close is not a message: it has a code and it ends the connection.
+    raise ValueError
+
+proc close*(wr: var WebSocketWriter; code = 1000, reason = "") {.
+  passive, raises.} =
+  ## Sends the close frame and nothing else. Waiting for the peer's half is
+  ## the pair's job; this is for a caller that only drives the writer.
+  if wr.closeSent: return
+  if not isSendableCloseCode(code): raise ValueError
+  if reason.len > 0 and not isValidUtf8(toOpenArray(reason, 0, reason.len - 1)):
+    raise ValueError
+  wr.closeCode = code
+  wr.closeSent = true
+  wr.sendFrame(wsoClose, closePayload(code, reason))
+
+# -------------------------------------------------------------- reading frames --
+
+proc markFailure(rd: var WebSocketReader; code: int) {.inline.} =
+  ## Remembers the close code that belongs to the protocol error being raised.
+  if rd.failCode == 0: rd.failCode = code
+
+proc readFrameHeader(rd: var WebSocketReader; f: var WsFrame): bool {.
+  passive, raises.} =
   ## The next frame's header; `false` when the stream ended before one began.
   ##
   ## A frame that breaks the protocol raises `ProtocolError`; one that claims
   ## more than `maxMessage` bytes raises `ContentTooLong` — and that is decided
   ## from the header, before the payload is read, so that a peer cannot make
   ## the other side allocate by announcing a length.
-  if not ws.ensure(2): return false
+  if not rd.ensure(2): return false
   var head = default(array[14, char])
-  discard ws.take(toOpenArray(head, 0, 1))
+  discard rd.take(toOpenArray(head, 0, 1))
   let need = headerLen(head[1])
   if need > 2:
-    if not ws.ensure(need - 2): raise EndOfStreamError
-    discard ws.take(toOpenArray(head, 2, need - 1))
+    if not rd.ensure(need - 2): raise EndOfStreamError
+    discard rd.take(toOpenArray(head, 2, need - 1))
   if parseFrameHeader(toOpenArray(head, 0, need - 1), f) != need:
     raise ProtocolError
-  if f.len > ws.maxMessage: raise ContentTooLong
+  if f.rsv != 0:
+    # The reserved bits belong to the extensions; this endpoint speaks none,
+    # and a peer that sets them is speaking another protocol.
+    raise ProtocolError
+  if f.len > rd.maxMessage: raise ContentTooLong
   result = true
 
-proc readPayload(ws: var WebSocket; f: WsFrame; dest: var string): int {.
+proc readPayload(rd: var WebSocketReader; f: WsFrame; dest: var string): int {.
   passive, raises.} =
   ## The payload of the frame `f`, unmasked, appended to `dest`.
   ##
@@ -799,10 +912,10 @@ proc readPayload(ws: var WebSocket; f: WsFrame; dest: var string): int {.
   var chunk = default(array[16 * 1024, char])
   var got = 0
   while got < n:
-    if ws.avail == 0:
-      if ws.fillOnce() == 0: break
+    if rd.avail == 0:
+      if rd.fillOnce() == 0: break
     let want = min(n - got, chunk.len)
-    let took = ws.take(toOpenArray(chunk, 0, want - 1))
+    let took = rd.take(toOpenArray(chunk, 0, want - 1))
     if took == 0: break
     if f.masked:
       for i in 0 ..< took:
@@ -815,48 +928,133 @@ proc readPayload(ws: var WebSocket; f: WsFrame; dest: var string): int {.
   dest.endStore()
   result = got
 
-proc readMessagePart(ws: var WebSocket; f: WsFrame): bool {.passive, raises.} =
+proc readMessagePart(rd: var WebSocketReader; f: WsFrame): bool {.
+  passive, raises.} =
   ## The payload of `f` appended to the message being assembled; `false` when
   ## the stream ended in the middle of the frame.
   ##
   ## The buffer is moved out and back rather than passed in: a `var` argument
-  ## that is a field of the connection would alias the connection itself, and
-  ## the move costs nothing — a string is a pointer, and it moves back.
-  var buf = move ws.msgBuf
-  let got = ws.readPayload(f, buf)
-  ws.msgBuf = move buf
+  ## that is a field of the reader would alias the reader itself, and the
+  ## move costs nothing — a string is a pointer, and it moves back.
+  var buf = move rd.msgBuf
+  let got = rd.readPayload(f, buf)
+  rd.msgBuf = move buf
   result = got == f.len
 
-proc nextFrame(ws: var WebSocket; f: var WsFrame): bool {.passive, raises.} =
+proc nextFrame(rd: var WebSocketReader; f: var WsFrame): bool {.
+  passive, raises.} =
   ## The next frame of the connection; `false` at the end of the stream.
-  ##
-  ## A frame that breaks the protocol ends the connection with the close
-  ## code that says so, and the error is raised on top of that: the caller
-  ## gets the diagnosis and the peer gets the news.
-  try:
-    result = ws.readFrameHeader(f)
-    if result:
-      if ws.role == wrServer and not f.masked:
-        # A client masks what it sends; a server does not. An unmasked frame
-        # from a client is not a client that forgot, it is a client that is
-        # not speaking this protocol.
-        raise ProtocolError
-      if ws.role == wrClient and f.masked:
-        # The same rule, the other way round: a masked frame from a server is
-        # a server that is confused about which end of the connection it is.
-        raise ProtocolError
-  except ErrorCode as e:
-    ws.err = e
-    case e
-    of ProtocolError:
-      ws.fail(wscProtocolError)
-    of ContentTooLong:
-      ws.fail(wscTooBig)
+  result = rd.readFrameHeader(f)
+  if result:
+    if rd.role == wrServer and not f.masked:
+      # A client masks what it sends; a server does not. An unmasked frame
+      # from a client is not a client that forgot, it is a client that is
+      # not speaking this protocol.
+      raise ProtocolError
+    if rd.role == wrClient and f.masked:
+      # The same rule, the other way round: a masked frame from a server is
+      # a server that is confused about which end of the connection it is.
+      raise ProtocolError
+
+proc recvImpl(rd: var WebSocketReader; msg: var string): MsgKind {.
+  passive, raises.} =
+  while true:
+    if rd.closeSeen:
+      # The peer said goodbye; there is nothing more to read.
+      msg = ""
+      return mkClose
+    var f = WsFrame()
+    if not rd.nextFrame(f):
+      # The stream ended without a closing handshake. There is no close code
+      # to send — nobody is there to receive it — so the connection is
+      # dropped and the caller is told why.
+      raise EndOfStreamError
+    if ord(f.opcode) >= 8:
+      # A control frame: it may come in the middle of a message, and
+      # `parseFrameHeader` has already checked that it is not fragmented and
+      # not longer than 125 bytes.
+      case f.opcode
+      of wsoClose:
+        var payload = ""
+        if rd.readPayload(f, payload) < f.len: raise EndOfStreamError
+        var code = 0
+        if payload.len == 1:
+          rd.markFailure(wscProtocolError)
+          raise ProtocolError
+        if payload.len >= 2:
+          code = (ord(payload[0]) shl 8) or ord(payload[1])
+          if not isSendableCloseCode(code):
+            rd.markFailure(wscProtocolError)
+            raise ProtocolError
+          if not isValidUtf8(toOpenArray(payload, 2, payload.len - 1)):
+            rd.markFailure(wscInvalidPayload)
+            raise ProtocolError
+        rd.closeCode = code
+        rd.closeSeen = true
+        msg = if payload.len > 2: payload.substr(2) else: ""
+        return mkClose
+      of wsoPing:
+        var payload = ""
+        if rd.readPayload(f, payload) < f.len: raise EndOfStreamError
+        msg = payload
+        return mkPing
+      of wsoPong:
+        var payload = ""
+        if rd.readPayload(f, payload) < f.len: raise EndOfStreamError
+        msg = payload
+        return mkPong
+      else:
+        discard
     else:
-      # A timeout or a broken pipe is not the peer's fault, and there is
-      # nobody left to tell it to.
-      ws.abort()
-    raise e
+      # A data frame: the first one of a message says what the message is,
+      # the ones after it continue it.
+      if f.opcode == wsoContinuation:
+        if rd.msgOp == 0:
+          # A continuation without a message to continue.
+          rd.markFailure(wscProtocolError)
+          raise ProtocolError
+      else:
+        if rd.msgOp != 0:
+          # A new message while the last one is unfinished.
+          rd.markFailure(wscProtocolError)
+          raise ProtocolError
+        rd.msgOp = ord(f.opcode)
+        rd.msgBuf = ""
+      if rd.msgBuf.len + f.len > rd.maxMessage:
+        raise ContentTooLong
+      if not rd.readMessagePart(f):
+        raise EndOfStreamError
+      if f.fin:
+        let kind = if rd.msgOp == 1: mkText else: mkBinary
+        if kind == mkText and not isValidUtf8(toOpenArray(rd.msgBuf, 0,
+                                                          rd.msgBuf.len - 1)):
+          rd.markFailure(wscInvalidPayload)
+          raise ProtocolError
+        msg = rd.msgBuf
+        rd.msgOp = 0
+        rd.msgBuf = ""
+        return kind
+
+proc recv*(rd: var WebSocketReader; msg: var string): MsgKind {.
+  passive, raises.} =
+  ## The next message of the receive side, in `msg`.
+  ##
+  ## A text or binary message is its payload. A ping, a pong and a close are
+  ## handed over as `mkPing`, `mkPong` and `mkClose`: answering a ping and
+  ## echoing a close need the writer, so that is the pair's business. A text
+  ## message is checked as a whole; UTF-8 may be split across fragments.
+  ##
+  ## The fragments of a message are put back together here. A protocol error
+  ## raises `ProtocolError` with `failCode` naming the close code to send; the
+  ## caller of a bare reader has to send it (the pair does).
+  try:
+    result = recvImpl(rd, msg)
+  except ErrorCode as e:
+    rd.err = e
+    if e == EndOfStreamError: rd.close()
+    raise
+
+# ------------------------------------------------------ the pair's recv/send --
 
 proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
   ## The next message of the connection, in `msg`.
@@ -866,135 +1064,45 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
   ## and the answer is not the application's business. A pong and a close
   ## are handed over: the first is the answer to a ping of this side's, the
   ## second ends the conversation.
-  ##
-  ## The fragments of a message are put back together here, and a text
-  ## message is checked as a whole: UTF-8 may be split across fragments,
-  ## but the message has to be text once it is complete.
   while true:
-    if ws.closeSeen:
-      # The peer said goodbye; there is nothing more to read.
-      msg = ""
-      return mkClose
-    var f = WsFrame()
-    if not ws.nextFrame(f):
-      # The stream ended without a closing handshake. There is no close code
-      # to send — nobody is there to receive it — so the connection is
-      # dropped and the caller is told why.
-      ws.err = EndOfStreamError
-      ws.abort()
-      raise EndOfStreamError
-    if f.rsv != 0:
-      # The reserved bits belong to the extensions; this endpoint speaks
-      # none, and a peer that sets them is speaking another protocol.
-      ws.fail(wscProtocolError)
-      raise ProtocolError
-    if ord(f.opcode) >= 8:
-      # A control frame: it may not be fragmented and it may not be longer
-      # than 125 bytes, and it may come in the middle of a message.
-      if not f.fin or f.len > 125:
-        ws.fail(wscProtocolError)
-        raise ProtocolError
-      case f.opcode
-      of wsoClose:
-        var payload = ""
-        if ws.readPayload(f, payload) < f.len:
-          ws.err = EndOfStreamError
-          ws.abort()
-          raise EndOfStreamError
-        var code = 0
-        if payload.len == 1:
-          ws.fail(wscProtocolError)
-          raise ProtocolError
-        if payload.len >= 2:
-          code = (ord(payload[0]) shl 8) or ord(payload[1])
-          if not isSendableCloseCode(code):
-            ws.fail(wscProtocolError)
-            raise ProtocolError
-          if not isValidUtf8(toOpenArray(payload, 2, payload.len - 1)):
-            ws.fail(wscInvalidPayload)
-            raise ProtocolError
-        ws.closeCode = code
-        if not ws.closeSent:
-          # The peer closed first: the answer carries the same code, and
-          # then the connection is over.
-          ws.closeSent = true
-          ws.sendFrame(wsoClose, closePayload(code, ""))
-        ws.closeSeen = true
-        msg = if payload.len > 2: payload.substr(2) else: ""
-        return mkClose
-      of wsoPing:
-        var payload = ""
-        if ws.readPayload(f, payload) < f.len:
-          ws.err = EndOfStreamError
-          ws.abort()
-          raise EndOfStreamError
-        ws.sendFrame(wsoPong, payload)
-        continue
-      of wsoPong:
-        var payload = ""
-        if ws.readPayload(f, payload) < f.len:
-          ws.err = EndOfStreamError
-          ws.abort()
-          raise EndOfStreamError
-        msg = payload
-        return mkPong
+    try:
+      result = ws.reader.recv(msg)
+    except ErrorCode as e:
+      ws.err = e
+      ws.reader.err = e
+      case e
+      of ProtocolError:
+        ws.writer.fail(if ws.reader.failCode != 0: ws.reader.failCode
+                       else: wscProtocolError)
+      of ContentTooLong:
+        ws.writer.fail(wscTooBig)
       else:
+        # A timeout or a broken pipe is not the peer's fault, and there is
+        # nobody left to tell it to.
         discard
+      ws.abort()
+      raise
+    case result
+    of mkPing:
+      # The reader handed the ping over instead of answering it; the pair is
+      # the only place that owns both halves, so the pong goes out here.
+      ws.writer.sendFrame(wsoPong, msg)
+    of mkClose:
+      if not ws.writer.closeSent:
+        # The peer closed first: the answer carries the same code, and then
+        # the connection is over.
+        ws.writer.closeSent = true
+        ws.writer.closeCode = ws.reader.closeCode
+        ws.writer.sendFrame(wsoClose, closePayload(ws.reader.closeCode, ""))
+      return mkClose
     else:
-      # A data frame: the first one of a message says what the message is,
-      # the ones after it continue it.
-      if f.opcode == wsoContinuation:
-        if ws.msgOp == 0:
-          # A continuation without a message to continue.
-          ws.fail(wscProtocolError)
-          raise ProtocolError
-      else:
-        if ws.msgOp != 0:
-          # A new message while the last one is unfinished.
-          ws.fail(wscProtocolError)
-          raise ProtocolError
-        ws.msgOp = ord(f.opcode)
-        ws.msgBuf = ""
-      if ws.msgBuf.len + f.len > ws.maxMessage:
-        ws.fail(wscTooBig)
-        raise ContentTooLong
-      if not ws.readMessagePart(f):
-        ws.err = EndOfStreamError
-        ws.abort()
-        raise EndOfStreamError
-      if f.fin:
-        let kind = if ws.msgOp == 1: mkText else: mkBinary
-        if kind == mkText and not isValidUtf8(toOpenArray(ws.msgBuf, 0,
-                                                           ws.msgBuf.len - 1)):
-          ws.fail(wscInvalidPayload)
-          raise ProtocolError
-        msg = ws.msgBuf
-        ws.msgOp = 0
-        ws.msgBuf = ""
-        return kind
+      return result
 
 proc send*(ws: var WebSocket; kind: MsgKind; data: openArray[char]) {.
   passive, raises.} =
-  ## Sends a message of `kind` with the bytes `data`.
-  ##
-  ## Text has to be text: a `mkText` whose bytes are not UTF-8 raises rather
-  ## than goes out, because the peer would have to fail the connection over
-  ## it. A ping or a pong carries at most 125 bytes.
-  case kind
-  of mkText:
-    if not isValidUtf8(data): raise ValueError
-    ws.sendFrame(wsoText, data)
-  of mkBinary:
-    ws.sendFrame(wsoBinary, data)
-  of mkPing:
-    if data.len > 125: raise ValueError
-    ws.sendFrame(wsoPing, data)
-  of mkPong:
-    if data.len > 125: raise ValueError
-    ws.sendFrame(wsoPong, data)
-  of mkClose:
-    # A close is not a message: it has a code and it ends the connection.
-    raise ValueError
+  ## Sends a message of `kind` with the bytes `data`; see
+  ## `WebSocketWriter.send`.
+  ws.writer.send(kind, data)
 
 proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
   ## Ends the connection the way the protocol says: the close frame goes
@@ -1003,48 +1111,42 @@ proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
   ## The wait has the connection's deadline, or five seconds when it has
   ## none. A peer that does not answer is a timeout and raises like every
   ## other timeout in this API.
-  if ws.closeSent: return
-  if not isSendableCloseCode(code): raise ValueError
-  if reason.len > 0 and not isValidUtf8(toOpenArray(reason, 0, reason.len - 1)):
-    raise ValueError
-  ws.closeCode = code
-  ws.closeSent = true
-  ws.sendFrame(wsoClose, closePayload(code, reason))
-  # The peer's close is the other half of the handshake.
-  if ws.r.deadline == never:
-    ws.r.renew(afterMs(DefaultCloseMs))
-  while not ws.closeSeen:
-    var f = WsFrame()
-    if not ws.nextFrame(f):
-      ws.err = EndOfStreamError
-      ws.abort()
-      raise EndOfStreamError
-    if ord(f.opcode) >= 8:
-      case f.opcode
-      of wsoClose:
-        var payload = ""
-        if ws.readPayload(f, payload) < f.len:
-          ws.err = EndOfStreamError
-          ws.abort()
-          raise EndOfStreamError
-        ws.closeSeen = true
-      of wsoPing:
-        var payload = ""
-        if ws.readPayload(f, payload) < f.len:
-          ws.err = EndOfStreamError
-          ws.abort()
-          raise EndOfStreamError
-        ws.sendFrame(wsoPong, payload)
-      else:
-        discard
-    else:
-      # A message that arrives while the handshake is finishing is dropped:
-      # the caller asked for the connection to end.
-      var payload = ""
-      if ws.readPayload(f, payload) < f.len:
-        ws.err = EndOfStreamError
-        ws.abort()
+  if ws.writer.closeSent: return
+  try:
+    ws.writer.close(code, reason)
+    # The peer's close is the other half of the handshake.
+    if ws.reader.deadline == never:
+      ws.reader.renew(afterMs(DefaultCloseMs))
+    while not ws.reader.closeSeen:
+      var f = WsFrame()
+      if not ws.reader.nextFrame(f):
         raise EndOfStreamError
+      if ord(f.opcode) >= 8:
+        case f.opcode
+        of wsoClose:
+          var payload = ""
+          if ws.reader.readPayload(f, payload) < f.len:
+            raise EndOfStreamError
+          if payload.len >= 2:
+            ws.reader.closeCode = (ord(payload[0]) shl 8) or ord(payload[1])
+          ws.reader.closeSeen = true
+        of wsoPing:
+          var payload = ""
+          if ws.reader.readPayload(f, payload) < f.len:
+            raise EndOfStreamError
+          ws.writer.sendFrame(wsoPong, payload)
+        else:
+          discard
+      else:
+        # A message that arrives while the handshake is finishing is dropped:
+        # the caller asked for the connection to end.
+        var payload = ""
+        if ws.reader.readPayload(f, payload) < f.len:
+          raise EndOfStreamError
+  except ErrorCode as e:
+    ws.err = e
+    ws.abort()
+    raise
 
 # No explicit `=destroy`: the `Reader`/`Writer` fields close the connection, and
 # a destructor cannot raise, so it could not report a failed goodbye. A peer

@@ -692,9 +692,10 @@ proc push(w: var Writer; final: bool) {.passive, raises.} =
     elif final and w.buf.len > 0: raise ProtocolError   # an adapter must take all at the end
     if outb.len > 0: coreSend(c, outb)
   elif w.buf.len > 0:
-    let data = move w.buf
-    w.buf = ""
-    coreSend(c, data)
+    # Send from the buffer and then just drop its length: the capacity has to
+    # survive the flush, or every write allocates a new buffer.
+    coreSend(c, w.buf)
+    w.buf.setLen(0)
 
 proc write*(w: var Writer; data: openArray[char]) {.passive, raises.} =
   let c = w.core
@@ -713,6 +714,19 @@ proc flush*(w: var Writer) {.passive, raises.} =
   ## Everything written so far goes down (and, for a connection, out).
   if w.core == nil or w.finished: raise BadOperation
   push(w, false)
+
+proc scratch*(w: var Writer; n: int): var string {.raises.} =
+  ## The writer's own buffer, resized to `n` bytes for a caller that
+  ## serializes a head or a frame in place before `flush`. Nothing is copied,
+  ## and nothing is allocated once the buffer has grown to `n`.
+  ##
+  ## Only for a writer with nothing buffered: the scratch *is* the buffer, so
+  ## bytes the caller had written and not flushed would be replaced. Raises
+  ## `BadOperation` when it is closed, finished or has pending bytes. The
+  ## caller has to fill all `n` bytes.
+  if w.core == nil or w.finished or w.buf.len > 0: raise BadOperation
+  w.buf.setLen n
+  result = w.buf
 
 proc finishImpl(w: var Writer; clean: bool) {.passive, raises.} =
   w.finished = true
@@ -892,14 +906,14 @@ proc fdCore(fd: cint; dl: Deadline): Core =
   c.dl = dl
   result = c
 
-proc plainFd*(fd: cint; dl = never): (Reader, Writer) =
+proc plainStreams*(fd: cint; dl = never): (Reader, Writer) =
   ## The streams over an already connected, non-blocking descriptor, without
   ## TLS. This does no I/O, so it can be built outside a passive chain; `dl` is
   ## the streams' standing deadline. The core owns `fd` from here on.
   let c = fdCore(fd, dl)
   result = (initReader(c), initWriter(c))
 
-proc acceptFd*(fd: cint; tls: nil TlsEngine = nil; dl = never): (Reader, Writer) {.
+proc acceptStreams*(fd: cint; tls: nil TlsEngine = nil; dl = never): (Reader, Writer) {.
     passive, raises.} =
   ## The streams over an already accepted, non-blocking descriptor. TLS, when
   ## an engine is given, is handshaken as the server before this returns; `dl`
