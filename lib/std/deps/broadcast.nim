@@ -1,12 +1,14 @@
 import plugins
-import std/[syncio]
+import std/[syncio, assertions]
 
 proc scalarOpName(op: string): string =
   result = op
   if result.len > 1 and result[result.len - 1] in {'.', '!'}:
     result = result[0 ..< result.len - 1]
-  if result.len > 1 and result[0] == '!':
+  elif result.len > 1 and result[0] == '!':
     result = result[1 ..< result.len]
+  else:
+    assert false, "Unknown operation `" & result & "` used in broadcasting"
 
   case result:
   of "||": result = "or"
@@ -145,22 +147,7 @@ proc toScalarOp(result: var NifBuilder, n: NifCursor, idx: SymId, info: LineInfo
         result.closeTree() # /call
       else:
         let fnName = if c.kind == Symbol: c.symId.symBasename else: c.identText
-        let scFn = scalarOpName(fnName)
-        let isSc = isScalarBroadcast(fnName)
-        skip c
-        result.openTree("call", info)
-        result.addIdent scFn
-        if isSc:
-          if c.hasMore:
-            toScalarOp(result, c, idx, info)
-            skip c
-          while c.hasMore:
-            result.addSubtree(c)
-            skip c
-        else:
-          while c.hasMore:
-            toScalarOp(result, c, idx, info)
-            skip c
+        result.addTree errorTree("Unknown call in `@.`: `" & fnName & "`.", c)
         result.closeTree()
     else:
       # e.g. dot or already indexed
