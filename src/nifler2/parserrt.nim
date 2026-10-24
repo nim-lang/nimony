@@ -195,11 +195,15 @@ proc reportFailure*(p: Parser) =
 
 proc error*(p: var Parser; msg: string) =
   ## `parMessage`: at the current token.
-  errorAt p, p.tok.line, p.tok.col, msg
+  let line = p.tok.line
+  let col = p.tok.col
+  errorAt p, line, col, msg
 
 proc lexError*(p: var Parser; msg: string) =
   ## `lexMessage`: at the lexer's position, the end of the current token.
-  errorAt p, p.lex.lineNumber, p.lex.pos - p.lex.lineStart, msg
+  let line = p.lex.lineNumber
+  let col = p.lex.pos - p.lex.lineStart
+  errorAt p, line, col, msg
 
 proc expectedTok(p: var Parser; spelling: string) =
   lexError p, "expected: '" & spelling & "', but got: '" & prettyTok(p.tok) & "'"
@@ -599,6 +603,12 @@ proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
   setSince(p, m, node)
   if node.next == nil: p.last = node
 
+proc insertOpLeafAt*(p: var Parser; m: Mark) =
+  ## `insertLeafAt` with the current token's text: `p.tok.s` passed directly
+  ## would alias the `var Parser`.
+  let text = p.tok.s
+  insertLeafAt p, m, text
+
 # --------------------------------------------------------------- layouts
 #
 # nifler's `nim-parsed` dialect is not the shape of the source: every absent
@@ -759,7 +769,9 @@ proc literalAsIdent*(p: var Parser; m: Mark) =
   of IntLit: emitIdent p, $intVal(k), m.info
   of UIntLit: emitIdent p, $uintVal(k), m.info
   of FloatLit: emitIdent p, $floatVal(k), m.info
-  of StrLit: emitIdent p, p.pool.strings[strId(k)], m.info
+  of StrLit:
+    let s = p.pool.strings[strId(k)]
+    emitIdent p, s, m.info
   else: p.append k
 
 proc posMarker*(p: var Parser) =
@@ -1062,10 +1074,12 @@ proc emitLeaf*(p: var Parser) =
   # what a plain literal becomes once it leaves int32's range, exactly as in
   # compiler/lexer.nim, so a large plain literal is written with a suffix too.
   of tkIntLit:
-    emitInt p, p.tok.iNumber, info
+    let v = p.tok.iNumber
+    emitInt p, v, info
   of tkInt8Lit, tkInt16Lit, tkInt32Lit, tkInt64Lit:
     let x = openNode(p)
-    emitInt p, p.tok.iNumber, info
+    let v = p.tok.iNumber
+    emitInt p, v, info
     emitStr p, (case p.tok.kind
                 of tkInt8Lit: "i8"
                 of tkInt16Lit: "i16"
@@ -1073,10 +1087,12 @@ proc emitLeaf*(p: var Parser) =
                 else: "i64"), info
     closeNode p, x, SufL, info
   of tkUIntLit:
-    emitUInt p, cast[uint64](p.tok.iNumber), info
+    let v = cast[uint64](p.tok.iNumber)
+    emitUInt p, v, info
   of tkUInt8Lit, tkUInt16Lit, tkUInt32Lit, tkUInt64Lit:
     let x = openNode(p)
-    emitUInt p, cast[uint64](p.tok.iNumber), info
+    let v = cast[uint64](p.tok.iNumber)
+    emitUInt p, v, info
     emitStr p, (case p.tok.kind
                 of tkUInt8Lit: "u8"
                 of tkUInt16Lit: "u16"
@@ -1094,12 +1110,14 @@ proc emitLeaf*(p: var Parser) =
                 else: "f128"), info
     closeNode p, x, SufL, info
   of tkStrLit:
-    emitStr p, p.tok.s, info
+    let s = p.tok.s
+    emitStr p, s, info
   of tkRStrLit, tkTripleStrLit, tkGStrLit, tkGTripleStrLit:
     # a generalized string literal is raw: `parseGStrLit` makes the argument
     # an `nkRStrLit` (or `nkTripleStrLit`)
     let x = openNode(p)
-    emitStr p, p.tok.s, info
+    let s = p.tok.s
+    emitStr p, s, info
     emitStr p, (if p.tok.kind == tkRStrLit or p.tok.kind == tkGStrLit: "R" else: "T"), info
     closeNode p, x, SufL, info
   of tkCharLit:

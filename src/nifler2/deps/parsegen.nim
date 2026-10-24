@@ -1917,7 +1917,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     e.line code(cIf, "", [code(cElif, "", [call(assocP, [p()]),
                                          code(cStmts, "", [asgn(id("assoc"), intLit(0))])])])
     e.line letC("opInfo", pinfo())    # `parseOperators` creates the node here
-    e.line call("insertLeafAt", [p(), id(mark), dot(dot(p(), "tok"), "s")])
+    e.line call("insertOpLeafAt", [p(), id(mark)])
     e.line call("getTok", [p()])
     e.line call("afterOperator", [p()])
     var args = @[p()]
@@ -1961,7 +1961,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     e.line code(cIf, "", [code(cElif, "", [call(tassoc, [p()]),
                                          code(cStmts, "", [asgn(id(av), intLit(0))])])])
     e.line letC(oi, pinfo())
-    e.line call("insertLeafAt", [p(), id(mark), dot(dot(p(), "tok"), "s")])
+    e.line call("insertOpLeafAt", [p(), id(mark)])
     e.line call("getTok", [p()])
     e.line call("afterOperator", [p()])
     var args = @[p(), infix("+", id(pv), id(av))]
