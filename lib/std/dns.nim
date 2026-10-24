@@ -290,8 +290,7 @@ type
                                     ## every constructor makes the table, so no
                                     ## reader has to prove it is there.
     servers*: seq[string]           ## nameserver addresses, dotted quads
-    sockFd: cint                    ## one socket shared by every query
-    sockDeadline: Deadline
+    sock: UdpSocket                 ## one socket shared by every query
     sockOpen: bool
     alive: bool
     sockLock: Lock
@@ -446,6 +445,8 @@ proc initResolver*(dl = never): Resolver {.passive, raises.} =
   ## it. The hosts file is read through the ring (`asyncio`), so construction
   ## is `{.passive.}` and bounded by `dl` like everything else here.
   result = Resolver(hosts: newStringTable(modeCaseInsensitive), servers: @[],
+                    sock: UdpSocket(fd: -1, deadline: never,
+                                    peer: PeerAddr(raw: Sockaddr_storage())),
                     sockOpen: false, alive: false,
                     pending: initTable[uint16, PendingQuery]())
   initLock(result.sockLock)
@@ -469,19 +470,12 @@ proc receiverLoop(r: Resolver) {.passive.} =
   ## The long-lived half of a resolver: one socket, every waiter, routed by
   ## the DNS id the query drew. A datagram nobody waits for is dropped, which
   ## is what the old one-socket-per-query loop did with a mismatched id too.
-  var fd = cint(-1)
-  var sockDeadline = never
-  withLock(r.sockLock):
-    fd = r.sockFd
-    sockDeadline = r.sockDeadline
-  var us = UdpSocket(fd: fd, deadline: sockDeadline,
-                     peer: PeerAddr(raw: Sockaddr_storage()))
   var peer = PeerAddr(raw: Sockaddr_storage())
   var buf = newSeq[char](512)
   while r.alive:
     var n = 0
     try:
-      n = recvFrom(us, toOpenArray(buf, 0, buf.len - 1), peer, never)
+      n = recvFrom(r.sock, toOpenArray(buf, 0, buf.len - 1), peer, never)
     except ErrorCode:
       break
     var m = Message(id: 0'u16, flags: 0'u16)
@@ -493,7 +487,6 @@ proc receiverLoop(r: Resolver) {.passive.} =
         discard tx.send(m)
       except ErrorCode:
         discard                  # the waiter is gone; drop the datagram
-  `=wasMoved`(us)                # the resolver owns the descriptor, not us
 
 proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
             dl: Deadline): Message {.passive, raises.} =
@@ -522,36 +515,26 @@ proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
                   flags: 0x0100'u16)   # RD
   q.questions.add question
   encodeMessage(q, wire)
-  # The pre-check is only a fast path: the authoritative check is the second
-  # one, under the same lock that publishes `sockFd`/`sockDeadline`/`sockOpen`.
-  # `openUdp` is passive and may park, so it cannot run while the lock is held;
-  # a task that loses the race closes the socket it opened and uses the winner's.
-  var needOpen = false
+  # One critical section for the whole "open if needed, then read what was
+  # published": a second task cannot observe a half-initialised resolver or
+  # open a second socket for the same resolver.
+  var sockDeadline = never
   withLock(r.sockLock):
     if not r.sockOpen:
       var s = openUdp(0, dl)
-      r.sockFd = s.fd
-      r.sockDeadline = never     # each query brings its own budget
-      `=wasMoved`(s)             # the resolver owns the descriptor now
+      s.deadline = never
+      r.sock = s
       r.sockOpen = true
       r.alive = true
       submit(delay(receiverLoop(r)))
-  var sockFd = cint(-1)
-  var sockDeadline = never
-  withLock(r.sockLock):
-    sockFd = r.sockFd
-    sockDeadline = r.sockDeadline
+    sockDeadline = r.sock.deadline
   let d = earlier(sockDeadline, dl)
   let (rx, tx) = channel[Message](1)
   withLock(r.pendingLock):
     r.pending[q.id] = PendingQuery(tx: tx)
-  var us = UdpSocket(fd: sockFd, deadline: sockDeadline,
-                     peer: PeerAddr(raw: Sockaddr_storage()))
   try:
-    sendTo(us, wire, r.servers[serverIdx], port, d)
-    `=wasMoved`(us)
+    sendTo(r.sock, wire, r.servers[serverIdx], port, d)
   except ErrorCode:
-    `=wasMoved`(us)
     withLock(r.pendingLock):
       r.pending.del(q.id)
     raise
@@ -646,7 +629,10 @@ proc resolve*(r: var Resolver; hostIn: string; dl = never): string {.passive, ra
 
 var
   gDefaultResolver = Resolver(hosts: newStringTable(modeCaseInsensitive),
-                              servers: @[], sockOpen: false, alive: false,
+                              servers: @[],
+                              sock: UdpSocket(fd: -1, deadline: never,
+                                              peer: PeerAddr(raw: Sockaddr_storage())),
+                              sockOpen: false, alive: false,
                               pending: initTable[uint16, PendingQuery]())
     ## An empty resolver until the first `defaultResolver` replaces it: the
     ## table is not-nil, so the global is born with one rather than with a
