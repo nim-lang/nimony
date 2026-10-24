@@ -5,7 +5,7 @@ import std/broadcast
 import std/[math, assertions]
 
 type
-  AbstractVec2[T] = concept of Broadcastable[T]
+  AbstractVec2*[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
@@ -15,7 +15,7 @@ type
     proc w(v: Self): T {.error.}
     proc `w=`(v: var Self, val: T) {.error.}
 
-  AbstractVec3[T] = concept of Broadcastable[T]
+  AbstractVec3*[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
@@ -25,7 +25,7 @@ type
     proc w(v: Self): T {.error.}
     proc `w=`(v: var Self, val: T) {.error.}
 
-  AbstractVec4[T] = concept of Broadcastable[T]
+  AbstractVec4*[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
@@ -59,7 +59,7 @@ type
   HasAdd = concept
     proc `+`(x, y: Self): Self
 
-  AbstractVector[T] = AbstractVec2[T] | AbstractVec3[T] | AbstractVec4[T]
+  AbstractVector*[T] = AbstractVec2[T] | AbstractVec3[T] | AbstractVec4[T]
 
   Vec*[N, T] = object
     components: array[N, T]
