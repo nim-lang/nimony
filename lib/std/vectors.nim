@@ -1,11 +1,11 @@
 #############################################################################################################################
 #################################################### CVECTORS ################################################################
 #############################################################################################################################
-
-import std/[broadcast, math]
+import broadcast
+import std/[math, assertions]
 
 type
-  AbstractVec2[T] = concept of Broadcastable
+  AbstractVec2[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
@@ -15,7 +15,7 @@ type
     proc w(v: Self): T {.error.}
     proc `w=`(v: var Self, val: T) {.error.}
 
-  AbstractVec3[T] = concept of Broadcastable
+  AbstractVec3[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
@@ -25,7 +25,7 @@ type
     proc w(v: Self): T {.error.}
     proc `w=`(v: var Self, val: T) {.error.}
 
-  AbstractVec4[T] = concept of Broadcastable
+  AbstractVec4[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
@@ -50,59 +50,68 @@ type
   HasSign = concept
     proc sgn(x: Self): Self
 
+  HasMul = concept
+    proc `*`(x, y: Self): Self
+
+  HasSub = concept
+    proc `-`(x, y: Self): Self
+
+  HasAdd = concept
+    proc `+`(x, y: Self): Self
+
   AbstractVector[T] = AbstractVec2[T] | AbstractVec3[T] | AbstractVec4[T]
 
-  Vec[N, T] = object
+  Vec*[N, T] = object
     components: array[N, T]
 
-  Vec2[T] = Vec[2, T]
-  Vec3[T] = Vec[3, T]
-  Vec4[T] = Vec[4, T]
+  Vec2*[T] = Vec[2, T]
+  Vec3*[T] = Vec[3, T]
+  Vec4*[T] = Vec[4, T]
 
 func `[]`*[N: static[int], T](v: Vec[N,T], i: int): T {.untyped, requires: i < N.} = 
   return v.components[i]
-func `[]=`*[N: static[int], T](v: Vec[N,T], i: int, val: T) {.untyped, requires: i < N.} = 
+func `[]=`*[N: static[int], T](v: var Vec[N,T], i: int, val: T) {.untyped, requires: i < N.} = 
   v.components[i] = val
 func len*[N: static[int], T](v: Vec[N,T]): int {.untyped, inline.} = N
 func similar*[N: static[int], T](v: Vec[N,T]): Vec[N, T] {.untyped, inline.} =
   return default(Vec[N, T])
 
-func x[T](v: Vec2[T]):T {.untyped.} = v.components[0]
-func y[T](v: Vec2[T]):T {.untyped.} = v.components[1]
-func z[T](v: Vec2[T]):T {.untyped, error.}
-func w[T](v: Vec2[T]):T {.untyped, error.}
-func `x=`[T](v: var Vec2[T], val: T) {.untyped.} = 
+func x*[T](v: Vec2[T]):T {.untyped.} = v.components[0]
+func y*[T](v: Vec2[T]):T {.untyped.} = v.components[1]
+func z*[T](v: Vec2[T]):T {.untyped, error.}
+func w*[T](v: Vec2[T]):T {.untyped, error.}
+func `x=`*[T](v: var Vec2[T], val: T) {.untyped.} = 
   v.components[0] = val
-func `y=`[T](v: var Vec2[T], val: T) {.untyped.} = 
+func `y=`*[T](v: var Vec2[T], val: T) {.untyped.} = 
   v.components[1] = val
-func `z=`[T](v: var Vec2[T], val: T) {.untyped, error.}
-func `w=`[T](v: var Vec2[T], val: T) {.untyped, error.}
+func `z=`*[T](v: var Vec2[T], val: T) {.untyped, error.}
+func `w=`*[T](v: var Vec2[T], val: T) {.untyped, error.}
 
 
-func x[T](v: Vec3[T]):T {.untyped.} = v.components[0]
-func y[T](v: Vec3[T]):T {.untyped.} = v.components[1]
-func z[T](v: Vec3[T]):T {.untyped.} = v.components[2]
-func w[T](v: Vec3[T]):T {.untyped, error.}
-func `x=`[T](v: var Vec3[T], val: T) {.untyped.} = 
+func x*[T](v: Vec3[T]):T {.untyped.} = v.components[0]
+func y*[T](v: Vec3[T]):T {.untyped.} = v.components[1]
+func z*[T](v: Vec3[T]):T {.untyped.} = v.components[2]
+func w*[T](v: Vec3[T]):T {.untyped, error.}
+func `x=`*[T](v: var Vec3[T], val: T) {.untyped.} = 
   v.components[0] = val
-func `y=`[T](v: var Vec3[T], val: T) {.untyped.} = 
+func `y=`*[T](v: var Vec3[T], val: T) {.untyped.} = 
   v.components[1] = val
-func `z=`[T](v: var Vec3[T], val: T) {.untyped.} = 
+func `z=`*[T](v: var Vec3[T], val: T) {.untyped.} = 
   v.components[2] = val
-func `w=`[T](v: var Vec3[T], val: T) {.untyped, error.}
+func `w=`*[T](v: var Vec3[T], val: T) {.untyped, error.}
 
 
-func x[T](v: Vec4[T]):T {.untyped.} = v.components[0]
-func y[T](v: Vec4[T]):T {.untyped.} = v.components[1]
-func z[T](v: Vec4[T]):T {.untyped.} = v.components[2]
-func w[T](v: Vec4[T]):T {.untyped.} = v.components[3]
-func `x=`[T](v: var Vec4[T], val: T) {.untyped.} = 
+func x*[T](v: Vec4[T]):T {.untyped.} = v.components[0]
+func y*[T](v: Vec4[T]):T {.untyped.} = v.components[1]
+func z*[T](v: Vec4[T]):T {.untyped.} = v.components[2]
+func w*[T](v: Vec4[T]):T {.untyped.} = v.components[3]
+func `x=`*[T](v: var Vec4[T], val: T) {.untyped.} = 
   v.components[0] = val
-func `y=`[T](v: var Vec4[T], val: T) {.untyped.} = 
+func `y=`*[T](v: var Vec4[T], val: T) {.untyped.} = 
   v.components[1] = val
-func `z=`[T](v: var Vec4[T], val: T) {.untyped.} = 
+func `z=`*[T](v: var Vec4[T], val: T) {.untyped.} = 
   v.components[2] = val
-func `w=`[T](v: var Vec4[T], val: T) {.untyped.} =
+func `w=`*[T](v: var Vec4[T], val: T) {.untyped.} =
   v.components[3] = val
 
 # ########################################################################################################################### #
@@ -122,7 +131,7 @@ func `==`*[T; C: Broadcastable[T]](a, b: C): bool {.untyped.} =
 ################################################## DOT PRODUCT ##############################################################
 #############################################################################################################################
 
-func dot*[T: SomeNumber, C: Broadcastable[T]](a, b: C): T =
+proc dot*[T: SomeNumber, C: Broadcastable[T]](a, b: C): T {.untyped.} =
   ## Dot product: |a|·|b|·cos(θ).
   ## Positive when Cvectors point the same way, 0 when perpendicular,
   ## negative when opposing. Core to lighting, projection and culling.
@@ -136,7 +145,7 @@ func dot*[T: SomeNumber, C: Broadcastable[T]](a, b: C): T =
 ################################################## CROSS PRODUCT ############################################################
 #############################################################################################################################
 
-func cross*[T: SomeNumber, N: AbstractVec3[T]](a, b: N): N =
+func cross*[T: SomeNumber, N: AbstractVec3[T]](a, b: N): N {.untyped.} =
   ## Cross product of two AbstractVec3 (right-hand rule).
   ## Returns a new vector perpendicular to both inputs.
   ## Magnitude = |a|·|b|·sin(θ) = area of parallelogram spanned by a and b.
@@ -146,7 +155,7 @@ func cross*[T: SomeNumber, N: AbstractVec3[T]](a, b: N): N =
   result.y = a.z * b.x - a.x * b.z
   result.z = a.x * b.y - a.y * b.x
 
-func cross*[T: SomeNumber, N: AbstractVec2[T]](a, b: N): T =
+func cross*[T: SomeNumber, N: AbstractVec2[T]](a, b: N): T {.untyped.} =
   ## 2D "cross product" (perp-dot product).
   ## Returns the Z component of the 3D cross product when z = 0.
   ## Positive → b is CCW from a; negative → CW.
@@ -158,26 +167,26 @@ func cross*[T: SomeNumber, N: AbstractVec2[T]](a, b: N): T =
 ################################################## LENGTH / MAGNITUDE #######################################################
 #############################################################################################################################
 
-func lengthSq*[T: SomeNumber, C: Broadcastable[T]](v: C): T =
-  ## Squared Euclidean length. No sqrt — cheaper for comparisons.
+func lengthSq*[T: SomeNumber, C: Broadcastable[T]](v: C): T {.untyped.} =
+  ## Squared Euclidean length. No sqrt. Cheaper for comparisons.
   result = 0
   for i in 0..<v.len:
     result += v[i] * v[i]
 
-func length*[T: SomeNumber, C: Broadcastable[T]](v: C): float =
+func length*[T; C: Broadcastable[T]](v: C): float {.untyped.} =
   ## Euclidean length (magnitude) of a AbstractVec2.
-  sqrt(v.lengthSq)
+  sqrt(v.lengthSq.float)
 
 #############################################################################################################################
 ################################################## NORMALIZATION ############################################################
 #############################################################################################################################
 
-func normalize*[T: SomeFloat, C: Broadcastable[T]](v: C): C =
+func normalize*[T: SomeFloat, C: Broadcastable[T]](v: C): C {.untyped.} =
   ## Return a unit-length (length = 1) copy of v.
-  ## Result is NaN/Inf when v is the zero Cvector — use safeNormalize if unsure.
+  ## Result is NaN/Inf when v is the zero vector. Use safeNormalize if unsure.
   v /! T(v.length)
 
-func safeNormalize*[T: SomeFloat, C: Broadcastable[T]](v, fallback: C): C =
+proc safeNormalize*[T: SomeFloat, C: Broadcastable[T]](v, fallback: C): C {.untyped.} =
   ## Normalize v, returning fallback when v is nearly zero.
   ## Prevents NaN in degenerate cases (zero-velocity objects, null axes…).
   assert v.len == fallback.len, "Vectors must be of the same len"
@@ -188,7 +197,7 @@ func safeNormalize*[T: SomeFloat, C: Broadcastable[T]](v, fallback: C): C =
 ################################################## DISTANCE #################################################################
 #############################################################################################################################
 
-func distanceSq*[T: SomeNumber, C: Broadcastable[T]](a, b: C): T =
+proc distanceSq*[T: SomeNumber, C: Broadcastable[T]](a, b: C): T {.untyped.} =
   ## Squared Euclidean distance between two points.
   ## Cheaper than distance() — ideal for radius/proximity checks.
   assert a.len == b.len, "Vectors must be of the same len."
@@ -197,7 +206,7 @@ func distanceSq*[T: SomeNumber, C: Broadcastable[T]](a, b: C): T =
     let d = a[i] - b[i]
     result += d * d
 
-func distance*[T: SomeNumber, C: Broadcastable[T]](a, b: C): float =
+proc distance*[T: SomeNumber, C: Broadcastable[T]](a, b: C): float {.untyped.} =
   ## Euclidean distance between two points.
   sqrt(distanceSq(a, b))
 
@@ -205,16 +214,16 @@ func distance*[T: SomeNumber, C: Broadcastable[T]](a, b: C): float =
 ################################################## INTERPOLATION ############################################################
 #############################################################################################################################
 
-func lerp*[T: SomeNumber, C: Broadcastable[T]](a, b: C, t: float): C =
+func lerp*[T: SomeNumber, C: Broadcastable[T]](a, b: C, t: float): C {.untyped.} =
   ## Linear interpolation: t=0 → a, t=1 → b.
   ## t is NOT clamped — values outside [0,1] extrapolate beyond the segment.
   @. a +. (b -. a) *! t
 
-func lerpClamped*[T: SomeNumber, C: Broadcastable[T]](a, b: C, t: float): C =
+func lerpClamped*[T: SomeNumber, C: Broadcastable[T]](a, b: C, t: float): C {.untyped.} =
   ## Lerp with t clamped to [0, 1]. Safe version that never extrapolates.
   lerp(a, b, clamp(t, 0.float, 1.float))
 
-func slerp*[T: SomeFloat, C: Broadcastable[T]](a, b: C, t: float): C =
+func slerp*[T: SomeFloat, C: Broadcastable[T]](a, b: C, t: float): C {.untyped.} =
   ## Spherical linear interpolation between two unit CVec3 Cvectors.
   ## Produces constant angular velocity — ideal for camera / orientation blending.
   ## Both a and b must be normalized. t in [0, 1].
@@ -228,7 +237,7 @@ func slerp*[T: SomeFloat, C: Broadcastable[T]](a, b: C, t: float): C =
 
   return @. a *! wa +. b *! wb
 
-func moveTowards*[T: SomeFloat, C: Broadcastable[T]](current, target: C, maxDelta: T): C =
+func moveTowards*[T: SomeFloat, C: Broadcastable[T]](current, target: C, maxDelta: T): C {.untyped.} =
   ## Move current towards target by at most maxDelta units per call.
   ## Will not overshoot. Common in AI movement and UI easing.
   let dv   = target -. current
@@ -239,11 +248,11 @@ func moveTowards*[T: SomeFloat, C: Broadcastable[T]](current, target: C, maxDelt
     let inv = maxDelta / dist
     @. current +. dv *! inv
 
-func smoothFunc(a, b, x: float): float =
+func smoothFunc(a, b, x: float): float {.untyped.} =
   let t = clamp((x - a) / (b - a), 0.float, 1.float)
   t * t * (3.float - 2.float * t)
 
-func smoothStep*[T: SomeFloat, C: Broadcastable[T]](edge0, edge1, v: C): C =
+proc smoothStep*[T: SomeFloat, C: Broadcastable[T]](edge0, edge1, v: C): C {.untyped.} =
   ## Per-component smoothstep — smooth Hermite interpolation in [edge0, edge1].
   ## Derivative is zero at the endpoints; useful for smooth procedural shaping.
   assert edge0.len == v.len and edge1.len == v.len, "Vectors should all have the same length."
@@ -255,70 +264,70 @@ func smoothStep*[T: SomeFloat, C: Broadcastable[T]](edge0, edge1, v: C): C =
 ################################################## COMPONENT-WISE MATH ######################################################
 #############################################################################################################################
 
-func abs*[T: HasAbs, C: Broadcastable[T]](v: C): C =
+func abs*[T: HasAbs, C: Broadcastable[T]](v: C): C {.untyped.} =
   ## Component-wise absolute value.
   map(v, abs)
 
-func floor*[T: HasFloor, C: Broadcastable[T]](v: C): C =
+func floor*[T: HasFloor, C: Broadcastable[T]](v: C): C {.untyped.} =
   ## Component-wise floor.
   map(v, floor)
 
-func ceil*[T: HasCeil, C: Broadcastable[T]](v: C): C =
+func ceil*[T: HasCeil, C: Broadcastable[T]](v: C): C {.untyped.} =
   ## Component-wise ceil.
   map(v, ceil)
 
-func round*[T: HasRound, C: Broadcastable[T]](v: C): C =
+func round*[T: HasRound, C: Broadcastable[T]](v: C): C {.untyped.} =
   ## Component-wise round to nearest integer.
   map(v, round)
 
-func fract*[T: HasFloor and SomeNumber, C: Broadcastable[T]](v: C): C =
+func fract*[T: HasFloor and SomeNumber, C: Broadcastable[T]](v: C): C {.untyped.} =
   ## Component-wise fractional part: v - floor(v). Each result in [0, 1).
   @. v -. map(v, floor)
 
-func min*[T: SomeNumber, C: Broadcastable[T]](a, b: C): C =
+proc min*[T: SomeNumber, C: Broadcastable[T]](a, b: C): C {.untyped.} =
   ## Component-wise minimum.
   assert a.len == b.len, "Vectors must be of the same len."
   result = similar(a)
   for i in 0..<result.len:
     result[i] = min(a[i], b[i])
 
-func max*[T: SomeNumber, C: Broadcastable[T]](a, b: C): C =
+proc max*[T: SomeNumber, C: Broadcastable[T]](a, b: C): C {.untyped.} =
   ## Component-wise maximum.
   assert a.len == b.len, "Vectors must be of the same len."
   result = similar(a)
   for i in 0..<result.len:
     result[i] = max(a[i], b[i])
 
-func clamp*[T: SomeNumber, C: Broadcastable[T]](v, lo, hi: C): C =
+proc clamp*[T: SomeNumber, C: Broadcastable[T]](v, lo, hi: C): C {.untyped.} =
   ## Component-wise clamp.
   assert v.len == lo.len and v.len == hi.len, "Vectors must be of the same len."
   result = similar(v)
   for i in 0..<result.len:
     result[i] = clamp(v[i], lo[i], hi[i])
 
-func clamp*[T: SomeNumber, C: Broadcastable[T]](v: C): C =
+func clamp*[T: SomeNumber, C: Broadcastable[T]](v: C): C {.untyped.} =
   ## Component-wise clamp to [0, 1].
   result = similar(v)
   for i in 0..<result.len:
     result[i] = clamp(v[i], T(0), T(1))
 
-func sign*[T: HasSign, C: Broadcastable[T]](v: C): C =
+func sign*[T: HasSign, C: Broadcastable[T]](v: C): C {.untyped.} =
   ## Component-wise round to nearest integer.
   map(v, sgn)
 
-func sum*[T: SomeNumber, C: Broadcastable[T]](v: C): T =
+func sum*[T: SomeNumber, C: Broadcastable[T]](v: C): T {.untyped.} =
   ## Sum of all components. Useful for computing averages.
   result = 0
   for i in 0..<v.len:
     result += v[i]
 
-func minComponent*[T: SomeNumber, C: Broadcastable[T]](v: C): T {.requires: v.len > 0.} =
+func minComponent*[T: SomeNumber, C: Broadcastable[T]](v: C): T {.untyped, requires: v.len > 0.} =
   ## Smallest component value of v.
   result = v[0]
   for i in 0..<v.len:
     result = min(result, v[i])
 
-func maxComponent*[T: SomeNumber, C: Broadcastable[T]](v: C): T {.requires: v.len > 0.} =
+func maxComponent*[T: SomeNumber, C: Broadcastable[T]](v: C): T {.untyped, requires: v.len > 0.} =
   ## Largest component value of v.
   result = v[0]
   for i in 0..<v.len:
@@ -328,13 +337,13 @@ func maxComponent*[T: SomeNumber, C: Broadcastable[T]](v: C): T {.requires: v.le
 ################################################## GEOMETRY / PHYSICS #######################################################
 #############################################################################################################################
 
-func reflect*[T: SomeNumber, C: Broadcastable[T]](incident, normal: C): C =
+func reflect*[T: SomeNumber, C: Broadcastable[T]](incident, normal: C): C {.untyped.} =
   ## Reflect the incident Cvector about a unit surface normal (2D).
   ## Formula: incident − 2·dot(incident, normal)·normal.
   let d = T(2) * dot(incident, normal)
   @. incident -. (normal *! d)
   
-func refract*[T: SomeFloat, C: Broadcastable[T]](incident, normal: C, eta: float): C =
+func refract*[T: SomeFloat, C: Broadcastable[T]](incident, normal: C, eta: float): C {.untyped.} =
   ## Refracted direction via Snell's law.
   ## eta = n₁/n₂ (e.g. 1.0/1.5 for air→glass).
   ## incident must be normalized and point towards the surface.
@@ -347,23 +356,23 @@ func refract*[T: SomeFloat, C: Broadcastable[T]](incident, normal: C, eta: float
     let c = eta * ni + sqrt(k)
     @. incident *! eta -. normal *! c
 
-func project*[T: SomeFloat, C: Broadcastable[T]](v, onto: C): C =
+func project*[T: SomeFloat, C: Broadcastable[T]](v, onto: C): C {.untyped.} =
   ## Project v onto `onto`. onto need not be normalized.
   ## Returns the component of v along the direction of onto.
   onto *! (dot(v, onto) / onto.lengthSq)
 
-func reject*[T: SomeFloat, C: Broadcastable[T]](v, onto: C): C =
+func reject*[T: SomeFloat, C: Broadcastable[T]](v, onto: C): C {.untyped.} =
   ## Rejection of v from `onto` — the component of v perpendicular to onto.
   ## Invariant: project(v, onto) + reject(v, onto) == v.
   v -. project(v, onto)
 
-func perpendicular*[T: SomeNumber, C: AbstractVec2[T]](v: C): C =
+func perpendicular*[T: SomeNumber, C: AbstractVec2[T]](v: C): C {.untyped.} =
   ## Return a Cvector perpendicular to v, rotated 90° counter-clockwise.
   result = similar(v)
   result.x = -v.y
   result.y = v.x
 
-func faceForward*[T: SomeNumber, C: AbstractVec3[T]](n, incident, nRef: C): C =
+func faceForward*[T: SomeNumber, C: AbstractVec3[T]](n, incident, nRef: C): C {.untyped.} =
   ## Return n oriented so it faces the same hemisphere as nRef relative to
   ## incident. Useful for ensuring surface normals face the camera/viewer.
   if dot(nRef, incident) < 0: 
@@ -375,30 +384,30 @@ func faceForward*[T: SomeNumber, C: AbstractVec3[T]](n, incident, nRef: C): C =
 ################################################## ANGLE UTILITIES ##########################################################
 #############################################################################################################################
 
-func angle*[T: SomeFloat, C: Broadcastable[T]](a, b: C): float =
+proc angle*[T: SomeFloat, C: Broadcastable[T]](a, b: C): float {.untyped.} =
   ## Unsigned angle in radians between two AbstractVec2 Cvectors (both must be non-zero).
   arccos(clamp(dot(a, b) / (a.length * b.length), T(-1), T(1)))
 
-func signedAngle*[T: SomeFloat, C: Broadcastable[T]](a, b: C): float =
+func signedAngle*[T: SomeFloat, C: Broadcastable[T]](a, b: C): float {.untyped.} =
   ## Signed angle in radians from a to b.
   ## Positive = counter-clockwise, negative = clockwise.
   arctan2(cross(a, b), dot(a, b))
 
-func toAngle*[T: SomeFloat, C: AbstractVec2[T]](v: C): float =
+func toAngle*[T: SomeFloat, C: AbstractVec2[T]](v: C): float {.untyped.} =
   ## Angle of v relative to the +X axis in radians (= atan2(y, x)).
   arctan2(v.y, v.x)
 
-func rotate*[T: SomeFloat, C: AbstractVec2[T]](v: C, angle: float): C =
+func rotate*[T: SomeFloat, C: AbstractVec2[T]](v: C, angle: float): C {.untyped.} =
   ## Rotate a AbstractVec2 by `angle` radians counter-clockwise around the origin.
   let c = T(cos(angle)); let s = T(sin(angle))
   result = similar(v)
   result.x = v.x * c - v.y * s
   result.y = v.x * s + v.y * c
 
-func rotateAround*[T: SomeFloat, C: AbstractVec2[T]](v, pivot: C, angle: float): C =
+proc rotateAround*[T: SomeFloat, C: AbstractVec2[T]](v, pivot: C, angle: float): C {.untyped.} =
   ## Rotate v around an arbitrary 2D pivot point by `angle` radians.
   assert v.len == pivot.len, "Vectors must be of same len."
-  let c  = cos(angle).T; let s = sin(angle).T
+  let c  = T(cos(angle)); let s = T(sin(angle))
   let dx = v.x - pivot.x;  let dy = v.y - pivot.y
   result = similar(v)
   result.x = pivot.x + dx * c - dy * s
@@ -408,7 +417,7 @@ func rotateAround*[T: SomeFloat, C: AbstractVec2[T]](v, pivot: C, angle: float):
 ################################################## APPROXIMATE EQUALITY #####################################################
 #############################################################################################################################
 
-func approxEq*[T: SomeFloat, C: Broadcastable[T]](a, b: C, eps: float = 1e-6f): bool =
+func approxEq*[T: SomeFloat, C: Broadcastable[T]](a, b: C, eps: float = 1e-6f): bool {.untyped.} =
   ## Component-wise approximate equality within epsilon.
   ## Prefer over `==` when comparing computed floating-point vectors.
   result = true
@@ -418,10 +427,10 @@ func approxEq*[T: SomeFloat, C: Broadcastable[T]](a, b: C, eps: float = 1e-6f): 
     result = result and (abs(a[i] - b[i]) <= eps)
     inc i
 
-func isNormalized*[T: SomeFloat, C: Broadcastable[T]](v: C, eps: float = 1e-5f): bool =
+func isNormalized*[T: SomeFloat, C: Broadcastable[T]](v: C, eps: float = 1e-5f): bool {.untyped.} =
   abs(v.lengthSq - 1.float) <= eps
 
-func isZero*[T: SomeFloat, C: Broadcastable[T]](v: C, eps: float = 1e-8f): bool =
+func isZero*[T: SomeFloat, C: Broadcastable[T]](v: C, eps: float = 1e-8f): bool {.untyped.} =
   v.lengthSq <= eps * eps
 
 
@@ -440,3 +449,8 @@ template `$`*[T](v: Vec3[T]): string {.untyped.} =
 template `$`*[T](v: Vec4[T]): string {.untyped.} =
   ## Pretty-print any CVec4-compatible value as "(x, y, z, w)".
   "(x=" & $v.x & ", y=" & $v.y & ", z=" & $v.z & ", w=" & $v.w & ")"
+
+
+
+
+
