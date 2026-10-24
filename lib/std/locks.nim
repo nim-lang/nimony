@@ -55,6 +55,15 @@ proc release*(lock: var Lock) {.sync, inline.} =
   when not defined(js):
     releaseSys(lock)
 
+template withLock*(a: Lock; body: untyped) =
+  ## Acquires the given lock, executes the statements in body and
+  ## releases the lock after the statements finished executing.
+  acquire(a)
+  try:
+    body
+  finally:
+    release(a)
+
 
 proc initCond*(cond: var Cond) {.sync, inline.} =
   ## Initializes the given condition variable.
