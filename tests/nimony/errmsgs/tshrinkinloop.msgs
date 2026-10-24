@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tshrinkinloop.nim(12, 13) Error: cannot prove contract: i < s.len and 0 <= i [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tshrinkinloop.nim(21, 14) Error: cannot prove contract: i < s.len and 0 <= i [pass --verbose for the Final IR]

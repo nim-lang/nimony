@@ -146,6 +146,9 @@ type
                                        # `bindLoopExit`.
     forBinders: HashSet[SymId]         # `for` loop variables: see `declareForVars`
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
+    staleInlineVars: HashSet[SymId]    # inline temps that no longer stand for
+                                       # their init expression: see
+                                       # `staleBoundsOfLoop`
     derivedIds: Table[string, VarId]   # canonical location key -> derived VarId
                                        # (see "Derived locations" below)
     derivedKeys: seq[string]           # parallel to `derivedRoots`: the location key
@@ -1192,7 +1195,7 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   let m = argOf(n, subst)
   let s = extractSymId(m)
   if s != NoSymId:
-    if c.inlineVars.hasKey(s):
+    if c.inlineVars.hasKey(s) and s notin c.staleInlineVars:
       # An `(inline)` temp stands for the expression it was bound to. The bound
       # of `for i in 0 ..< s.len` becomes such a temp, and without looking
       # through it the loop bound and the contract would never meet. A temp
@@ -4678,6 +4681,21 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for ch in bypasses:
     c.facts.add ch
 
+proc staleBoundsOfLoop(c: var FirContext; w: LoopWrites) =
+  ## An inline temp bound before the loop holds the value its expression had
+  ## *then*: `for i in 0 ..< s.len` reads `s.len` once, into a temp, and the
+  ## iterator's `i < temp` is re-assumed on every iteration. Read through to
+  ## `s.len` that is only true while `s.len` cannot shrink; a body that writes
+  ## `s` some other way gets the temp as a variable of its own (#2765).
+  for t, value in c.inlineVars:
+    if t notin c.staleInlineVars:
+      let v = plainLocationVarId(c, value)
+      if v != InvalidVarId:
+        let derived = int(v) <= FirstDerivedVarId
+        if (w.opaque and derived) or
+            (w.kinds.hasKey(v) and w.kinds.getOrDefault(v) != ivIncreasing):
+          c.staleInlineVars.incl t
+
 proc analyseLoopBody(c: var FirContext; n: var Cursor) =
   ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
   ## via `(jmp loopExit)` and never falls through.
@@ -4694,6 +4712,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
       var scan = n
       c.prescanning = true
       scanLoopWrites(c, scan, w)
+      staleBoundsOfLoop(c, w)
       c.prescanning = false
       restrictFactsToLoopInvariants(c, w)
     let cp = c.flow.checkpoint()
@@ -5188,6 +5207,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
     inheritInits(c.flow, oldFlow)
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
+  let oldStaleInlineVars = move c.staleInlineVars
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
   # Start this routine's statement context at its own head, so an error in
@@ -5282,6 +5302,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.flow = ensureMove oldFlow
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
+  c.staleInlineVars = ensureMove oldStaleInlineVars
   c.currentProcStart = oldProcStart
   c.stmtContext = oldStmtContext
   c.ownEnsures = oldOwnEnsures
