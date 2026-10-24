@@ -205,6 +205,10 @@ proc insertAt(buf: var seq[BufTok]; t: BufTok; pos: int) =
 proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
   p.buf.insertAt(BufTok(kind: bLeaf, text: text), m.pos)
 
+proc insertOpLeafAt*(p: var Parser; m: Mark) =
+  let text = p.tok.s
+  insertLeafAt p, m, text
+
 proc emitLeaf*(p: var Parser) =
   p.buf.add BufTok(kind: bLeaf, text: p.tok.s)
   getTok p

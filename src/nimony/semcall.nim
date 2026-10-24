@@ -546,7 +546,8 @@ proc untypedCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var Ca
   # walks past the buffer end (assertion in nifcursors.load).
   leaveCall dest, it, cs
   # untyped propagates to the result type:
-  typeofCallIs c, dest, it, cs.beforeCall, c.types.untypedType
+  let untypedType = c.types.untypedType
+  typeofCallIs c, dest, it, cs.beforeCall, untypedType
 
 proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: CallState) =
   let beforeExpr = dest.len
@@ -1291,7 +1292,8 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           (AllowEmpty in cs.flags or isSomeSeqType(it.typ) or isSomeOpenArrayType(it.typ)):
         # empty seq will be handled, either by `commonType` now or
         # the call this is an argument of in the case of AllowEmpty
-        typeofCallIs c, dest, it, cs.beforeCall, c.types.autoType
+        let autoType = c.types.autoType
+        typeofCallIs c, dest, it, cs.beforeCall, autoType
       else:
         # `leaveCall` has already closed the call tree at `cs.beforeCall`, so
         # the error has to REPLACE it: appended, it would be a second child of

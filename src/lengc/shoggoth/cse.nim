@@ -779,9 +779,11 @@ proc clearCacheReachable(c: var Context) =
   for key in toClear:
     c.cache[key] = default(CachedEntry)
   var dropFacts: seq[string] = @[]
+  var provenRoots = move c.provenRoots # moved out: `c` is passed alongside
   for key, idx in c.proven.pairs:
-    if idx > 0 and not rootsUnreachableByCallee(c, c.provenRoots[idx-1], escaped):
+    if idx > 0 and not rootsUnreachableByCallee(c, provenRoots[idx-1], escaped):
       dropFacts.add key
+  c.provenRoots = move provenRoots
   for key in dropFacts: c.proven[key] = 0
 
 proc dropFactsInClasses(c: var Context; reps: HashSet[SymId]) =
@@ -868,9 +870,13 @@ proc expressionOverlaps(c: var Context; cur: Cursor; w: AccessPath;
   c.pathScratch.setLen 0
   collectReadPaths(cur, c.pathScratch)
   if c.pathScratch.len == 0: return true      # described nothing → conservative
-  for i in 0 ..< c.pathScratch.len:
-    if mayOverlap(c, c.pathScratch[i], w, escaped): return true
+  var paths = move c.pathScratch # moved out: `c` is passed alongside
   result = false
+  for i in 0 ..< paths.len:
+    if mayOverlap(c, paths[i], w, escaped):
+      result = true
+      break
+  c.pathScratch = move paths
 
 proc callClobbersEntry(c: var Context; cur: Cursor; written: seq[AccessPath];
                        reps: HashSet[SymId]; escaped: HashSet[SymId]): bool =
