@@ -123,6 +123,18 @@ proc failures() =
   try: discard uncompress(packed, limit = data.len)
   except ErrorCode as x: e = x
   assert e == Success
+  # Without a `limit` the default one holds: concatenated members of 1 MiB
+  # each, a few kilobytes in all, do not get to fill memory.
+  var zeros = newString(1 shl 20)
+  let member = compress(zeros)
+  var bomb = ""
+  for i in 0 ..< DefaultInflateLimit div zeros.len + 1: bomb.add member
+  e = Success
+  try: discard uncompress(bomb)
+  except ErrorCode as x: e = x
+  assert e == ContentTooLong
+  var out0 = ""
+  assert inflate(deflate(zeros), out0, limit = 1000) == infOutputFull
   # Not DEFLATE at all.
   var out1 = ""
   assert inflate("\xFF\xFF\xFF\xFF", out1) == infError
