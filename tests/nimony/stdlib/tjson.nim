@@ -10,6 +10,11 @@ type Point = object
   shade: Color
 type Box = object
   v: int
+type Custom = object
+  value: int
+
+proc `%`(x: Custom): JsonNode =
+  newJString("custom:" & $x.value)
 
 template check(a, b) =
   let xx = a
@@ -21,6 +26,16 @@ proc sliceLifetime(): JsonNode =
   var t = parseJson("""[10,20,30]""")
   let c = t.root
   result = c[0..1]
+
+proc builderLifetime(): JsonNode =
+  ## The finished tree can die; the returned cursor keeps its buffer alive.
+  var b = initJsonBuilder()
+  b.beginArray()
+  b.add(1)
+  b.add(2)
+  b.endArray()
+  var t = b.finish()
+  result = t.root
 
 func pureRead(obj, arr: JsonNode): string =
   ## The read-only JSON surface must stay usable from a `func`.
@@ -150,6 +165,97 @@ proc main() =
       check a.root == c, false
     except:
       check false, true
+
+  block construction:
+    var b = initJsonBuilder()
+    b.beginObject()
+    b.addField("name", "Ada")
+    b.addField("age", 36)
+    b.addField("ok", true)
+    b.addField("nil", newJNull())
+    b.addField("defaultNil", default(JsonNode))
+    b.beginField("tags")
+    b.beginArray()
+    b.add("math")
+    b.add(newJString("compiler"))
+    b.addNull()
+    b.endArray()
+    b.endField()
+    b.endObject()
+    var tree = b.finish()
+    check $tree.root,
+          """{"name":"Ada","age":36,"ok":true,"nil":null,"defaultNil":null,"tags":["math","compiler",null]}"""
+
+    var empty = initJsonBuilder()
+    empty.beginObject()
+    empty.beginField("a")
+    empty.beginArray()
+    empty.endArray()
+    empty.endField()
+    empty.beginField("o")
+    empty.beginObject()
+    empty.endObject()
+    empty.endField()
+    empty.endObject()
+    var emptyTree = empty.finish()
+    check $emptyTree.root, """{"a":[],"o":{}}"""
+
+    var typed = initJsonBuilder()
+    typed.beginObject()
+    typed.addField("p", Point(x: 3, y: 4, label: "t", shade: green))
+    typed.addField("id", newJInt(9))
+    typed.endObject()
+    var typedTree = typed.finish()
+    check $typedTree.root,
+          """{"p":{"x":3,"y":4,"label":"t","shade":"green"},"id":9}"""
+
+    var opted = initJsonBuilder(opts = JsonOptions(typeFieldName: "type"))
+    opted.beginArray()
+    opted.add(Box(v: 7))
+    opted.endArray()
+    var optedTree = opted.finish()
+    check $optedTree.root, """[{"type":"Box","v":7}]"""
+
+    var src = parseJson("""{"a":1}""", "src.json", KeepLineInfo)
+    var mixed = initJsonBuilder()
+    mixed.beginArray()
+    mixed.add(src.root)
+    mixed.add(Point(x: 1, y: 2, label: "p", shade: red))
+    mixed.endArray()
+    var mixedTree = mixed.finish()
+    check $mixedTree.root,
+          """[{"a":1},{"x":1,"y":2,"label":"p","shade":"red"}]"""
+    let copied = mixedTree.root[0]
+    check fileName(copied{"a"}), "src.json"
+
+    check $(`%`(42)), "42"
+    check $(`%`("hi")), "\"hi\""
+    check $(`%`(@[1, 2])), "[1,2]"
+    check $(`%`(Point(x: 9, y: 8, label: "q", shade: blue))),
+          """{"x":9,"y":8,"label":"q","shade":"blue"}"""
+    check $newJNull(), "null"
+    check $newJBool(false), "false"
+    check $newJInt(7), "7"
+    check $newJFloat(2.5), "2.5"
+    check $newJString("x"), "\"x\""
+    let existing = newJInt(5)
+    check $(`%`(existing)), "5"
+    check $builderLifetime(), "[1,2]"
+
+    check $`%*`({"name": "Ada", "nums": [1, 2], "nested": {"ok": true}}),
+          """{"name":"Ada","nums":[1,2],"nested":{"ok":true}}"""
+    let key = "dyn"
+    check $`%*`({key: 1}), """{"dyn":1}"""
+    check $`%*`([]), "[]"
+    check $`%*`({}), "{}"
+    check $`%*`(nil), "null"
+    let n = 7
+    check $`%*`({"n": n, "none": nil}), """{"n":7,"none":null}"""
+    check $`%*`({"inner": `%*`({"a": 1})}), """{"inner":{"a":1}}"""
+    check $`%*`({"custom": Custom(value: 3)}), """{"custom":"custom:3"}"""
+    let xs = @[1, 2]
+    check $`%*`({"xs": xs, "p": Point(x: 1, y: 2, label: "m", shade: green)}),
+          """{"xs":[1,2],"p":{"x":1,"y":2,"label":"m","shade":"green"}}"""
 
   block round_trip:
     var t1 = parseJson("""{"a":[1,2,3],"b":"hi","c":{"x":1.5}}""")

@@ -28,6 +28,11 @@
 ##   with `kind`, `getStr`/`getInt`/…, `len`, `items`, `pairs`, `keys`,
 ##   `hasKey`/`contains`, `[]`/`{}`, `getFields`/`getElems`, and deep
 ##   `==`/`hash`. `$`, `toUgly`, `pretty`, and `escapeJson*` render a node.
+## * **construction** — `JsonBuilder` owns a tree while arrays/objects are
+##   appended and `finish` seals it; `add`, `addField`, `addNull`, `%`/`%*` and
+##   the scalar `newJ*` constructors cover the common cases. Nodes are immutable
+##   snapshots once built, so construction never invalidates a value that
+##   escaped into the read API.
 ## * **typed map** — `toJson` (typed Nim → JSON) and `fromJson` (JSON → typed
 ##   Nim), the JSON siblings of `nifply`'s `toNif`/`fromNif`. Same reflection
 ##   magics (`internalFieldPairs` / `internalTypeName`), same `oconstr`/`kv`/
@@ -40,6 +45,7 @@
 when defined(nimony):
   {.feature: "untyped".}      # generic bodies sem-checked at instantiation
   {.feature: "lenientnils".}  # nifcore returns nil pools for ownerless cursors
+  import std/macros           # `%*` builds builder calls from literal syntax
 
 import std / [parsejson, streams, parseutils, assertions, formatfloat,
               syncio, tables, hashes]
@@ -110,7 +116,28 @@ type
     ## reference-counted), so nodes can be passed and stored freely.
     c*: Cursor
 
+  JsonBuilderFrameKind = enum
+    jbfRoot, jbfArray, jbfObject, jbfField
+
+  JsonBuilderFrame = object
+    kind: JsonBuilderFrameKind
+    values: int
+
+  JsonBuilder* = object
+    ## Write-once construction front end for a `JsonTree`. The builder owns the
+    ## tree while it is open and exposes only append/stack operations, so the
+    ## token buffer never has a live cursor during construction and no mutation
+    ## can invalidate a previously handed-out `JsonNode`.
+    ##
+    ## Construction is deliberately LIFO: arrays, objects and object fields are
+    ## opened and closed in nesting order. `finish` is the only way to obtain the
+    ## completed, fully sealed `JsonTree`; it consumes the builder.
+    tree: JsonTree
+    frames: seq[JsonBuilderFrame]
+    opts: JsonOptions
+
 proc `=copy`(dest: var JsonTree; src: JsonTree) {.error.}
+proc `=copy`(dest: var JsonBuilder; src: JsonBuilder) {.error.}
 
 # ── Boundary shims (unchanged from the jsonnif blueprint) ────────────────────
 # The +/-1 collapses to a single add/sub; both are register-only.
@@ -127,6 +154,100 @@ proc createJsonTree*(sharedPool: Pool = nil): JsonTree =
   ## design. Each tree still gets its own fresh `TagPool` so the `JsonKind` cast
   ## stays a register move.
   result = JsonTree(buf: createTokenBuf(16, sharedPool, createTags[JsonKind]()))
+
+# ── Builder ──────────────────────────────────────────────────────────────────
+#
+# The builder is the mutable half of the JSON API. It owns a `JsonTree` while
+# construction is in progress; no `JsonNode` is handed out until `finish` moves
+# the sealed tree out. That keeps the cursor/refcount model out of the building
+# phase: appends never see a live cursor, so there is no `prepareMutation` fork
+# and no way for a later append to invalidate an earlier node.
+
+proc initJsonBuilder*(sharedPool: Pool = nil;
+                      opts = JsonOptions()): JsonBuilder =
+  ## Start a fresh document. `sharedPool` is threaded into `createJsonTree`.
+  result = JsonBuilder(tree: createJsonTree(sharedPool), opts: opts)
+  result.frames.add(JsonBuilderFrame(kind: jbfRoot))
+
+proc markValue(b: var JsonBuilder) =
+  ## Account for one value in the current frame and reject a second value where
+  ## the grammar allows only one (root or object field).
+  let i = b.frames.high
+  case b.frames[i].kind
+  of jbfRoot:
+    assert b.frames[i].values == 0, "JSON builder: root already has a value"
+    b.frames[i].values = 1
+  of jbfArray:
+    inc b.frames[i].values
+  of jbfField:
+    assert b.frames[i].values == 0, "JSON builder: field already has a value"
+    b.frames[i].values = 1
+  of jbfObject:
+    assert false, "JSON builder: object values need a key; use beginField"
+
+proc beginArray*(b: var JsonBuilder) =
+  ## Open an array value in the current frame.
+  b.markValue()
+  b.tree.buf.openTag JKArray.tagId
+  b.frames.add(JsonBuilderFrame(kind: jbfArray))
+
+proc endArray*(b: var JsonBuilder) =
+  ## Close the innermost array.
+  assert b.frames[^1].kind == jbfArray,
+         "JSON builder: endArray without a matching beginArray"
+  b.tree.buf.closeTag()
+  discard b.frames.pop()
+
+proc beginObject*(b: var JsonBuilder) =
+  ## Open an object value in the current frame.
+  b.markValue()
+  b.tree.buf.openTag JKObject.tagId
+  b.frames.add(JsonBuilderFrame(kind: jbfObject))
+
+proc endObject*(b: var JsonBuilder) =
+  ## Close the innermost object.
+  assert b.frames[^1].kind == jbfObject,
+         "JSON builder: endObject without a matching beginObject"
+  b.tree.buf.closeTag()
+  discard b.frames.pop()
+
+proc beginField*(b: var JsonBuilder; key: string) =
+  ## Open a keyed member of the innermost object. Follow it with exactly one
+  ## value (a scalar, array, object or null) and then `endField`.
+  assert b.frames[^1].kind == jbfObject,
+         "JSON builder: beginField outside an object"
+  inc b.frames[^1].values
+  b.tree.buf.openTag JKKv.tagId
+  b.tree.buf.addStrLit key
+  b.frames.add(JsonBuilderFrame(kind: jbfField))
+
+proc endField*(b: var JsonBuilder) =
+  ## Close the innermost object field.
+  assert b.frames[^1].kind == jbfField,
+         "JSON builder: endField without a matching beginField"
+  assert b.frames[^1].values == 1,
+         "JSON builder: field has no value"
+  b.tree.buf.closeTag()
+  discard b.frames.pop()
+
+proc addNull*(b: var JsonBuilder) =
+  ## Append a JSON `null` value.
+  b.markValue()
+  b.tree.buf.openTag JKNull.tagId
+  b.tree.buf.closeTag()
+
+proc finish*(b: sink JsonBuilder): JsonTree =
+  ## Seal the document and transfer ownership of the tree to the caller. The
+  ## builder must contain exactly one root value and no open array/object/field.
+  ## Consumes the builder; using it again is an error.
+  assert b.frames.len == 1,
+         "JSON builder: unclosed array, object or field"
+  assert b.frames[0].kind == jbfRoot,
+         "JSON builder: malformed root frame"
+  assert b.frames[0].values == 1,
+         "JSON builder: document has no root value"
+  result = move(b.tree)
+  b.frames.setLen(0)
 
 # ── Parser ───────────────────────────────────────────────────────────────────
 #
@@ -880,6 +1001,132 @@ proc toJson*[T](x: T; opts = JsonOptions()): JsonTree =
   ## recursive workers by arity (1–2 args, no leading `var JsonTree`).
   result = createJsonTree()
   toJson(result, x, opts)
+
+# ── Builder values ───────────────────────────────────────────────────────────
+# `add` delegates to the `toJson` workers so construction and the typed map
+# share one encoder. A finished `JsonNode` is copied through `addSubtree`, which
+# re-interns its literals/tags and preserves any line info.
+
+proc add*(b: var JsonBuilder; n: JsonNode) =
+  ## Append a finished JSON value. A nil `JsonNode` is emitted as `null`.
+  b.markValue()
+  if cursorIsNil(n.c):
+    b.tree.buf.openTag JKNull.tagId
+    b.tree.buf.closeTag()
+  else:
+    b.tree.buf.addSubtree(n.c)
+
+proc add*[T](b: var JsonBuilder; value: T) =
+  ## Append a typed value using the same encoding as `toJson`.
+  b.markValue()
+  toJson(b.tree, value, b.opts)
+
+proc addField*(b: var JsonBuilder; key: string; value: JsonNode) =
+  ## Append one object member whose value is a finished JSON node.
+  b.beginField(key)
+  b.add(value)
+  b.endField()
+
+proc addField*[T](b: var JsonBuilder; key: string; value: T) =
+  ## Append one object member whose value is typed.
+  b.beginField(key)
+  b.add(value)
+  b.endField()
+
+proc newNode[T](value: T): JsonNode =
+  ## Build a standalone node: the finished tree may die immediately because the
+  ## returned cursor keeps its buffer and pools alive through the cursor owner.
+  var b = initJsonBuilder()
+  b.add(value)
+  var t = b.finish()
+  result = t.root
+
+proc `%`*[T](x: T): JsonNode =
+  ## std/json-style value conversion built on the write-once builder.
+  newNode(x)
+
+proc newJNull*(): JsonNode =
+  ## A standalone JSON `null`.
+  var b = initJsonBuilder()
+  b.addNull()
+  var t = b.finish()
+  result = t.root
+
+proc newJBool*(value: bool): JsonNode =
+  ## A standalone JSON boolean.
+  newNode(value)
+
+proc newJInt*(value: int64): JsonNode =
+  ## A standalone JSON integer.
+  newNode(value)
+
+proc newJFloat*(value: float): JsonNode =
+  ## A standalone JSON float.
+  newNode(value)
+
+proc newJString*(value: string): JsonNode =
+  ## A standalone JSON string.
+  newNode(value)
+
+when defined(nimony):
+  macro `%*`*(x: untyped): untyped =
+    ## Build a `JsonNode` from JSON-shaped literal syntax::
+    ##
+    ##   %* {"name": "Ada", "tags": ["math", "compiler"], "ok": true}
+    ##
+    ## Brackets become arrays, table constructors become objects, `nil`
+    ## becomes `null`, and every other expression is converted with `%` and
+    ## appended. Object keys are expressions, so quote literal names
+    ## (`{"name": ...}`). The generated temporaries use a NIF disambiguator so
+    ## a user expression cannot capture them (the macro system has no `genSym`).
+    proc call0(b: NimNode; name: string): NimNode =
+      newCall(newDotExpr(b, newIdentNode(name)))
+
+    proc addExpr(n, b: NimNode; body: NimNode) =
+      ## Use `%` for leaves so user-defined `%` overloads apply, matching
+      ## std/json's `%*`.
+      body.add newCall(newDotExpr(b, newIdentNode("add")),
+                       [newCall(newIdentNode("%"), [n])])
+
+    proc genValue(n, b: NimNode; body: NimNode) =
+      case n.kind
+      of nnkNilLit:
+        body.add call0(b, "addNull")
+      of nnkBracket:
+        body.add call0(b, "beginArray")
+        var i = 0
+        while i < n.len:
+          genValue(n[i], b, body)
+          inc i
+        body.add call0(b, "endArray")
+      of nnkCurly:
+        if n.len == 0:
+          body.add call0(b, "beginObject")
+          body.add call0(b, "endObject")
+        else:
+          addExpr(n, b, body)
+      of nnkTableConstr:
+        body.add call0(b, "beginObject")
+        var i = 0
+        while i < n.len:
+          let child = n[i]
+          body.add newCall(newDotExpr(b, newIdentNode("beginField")),
+                           [child[0]])
+          genValue(child[1], b, body)
+          body.add call0(b, "endField")
+          inc i
+        body.add call0(b, "endObject")
+      else:
+        addExpr(n, b, body)
+
+    let b = newIdentNode("jsonBuilderForMacro.0")
+    let t = newIdentNode("jsonTreeForMacro.0")
+    var body = newStmtList()
+    body.add newVarStmt(b, newCall("initJsonBuilder"))
+    genValue(x, b, body)
+    body.add newVarStmt(t, newCall(newDotExpr(b, newIdentNode("finish"))))
+    body.add newDotExpr(t, newIdentNode("root"))
+    result = newTree(nnkBlockExpr, [newEmptyNode(), body])
 
 # ── Typed map: fromJson (JSON → typed Nim) ───────────────────────────────────
 # Siblings of nifply's `fromNif`. A mutating `var T` overload (used by the
