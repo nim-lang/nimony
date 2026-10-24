@@ -1,7 +1,7 @@
 when defined(nimony):
   {.feature: "untyped".}   # so the `check` template's `xx != b` resolves to bool
 
-import std/[json, syncio]
+import std/[json, syncio, tables]
 
 type Color = enum red, green, blue
 type Point = object
@@ -10,12 +10,50 @@ type Point = object
   shade: Color
 type Box = object
   v: int
+type Custom = object
+  value: int
+
+proc `%`(x: Custom): JsonNode =
+  newJString("custom:" & $x.value)
 
 template check(a, b) =
   let xx = a
   if xx != b:
     echo "test failed ", astToStr(a), ": got ", xx, " expected ", b
     quit 1
+
+proc sliceLifetime(): JsonNode =
+  var t = parseJson("""[10,20,30]""")
+  let c = t.root
+  result = c[0..1]
+
+proc builderLifetime(): JsonNode =
+  ## The finished tree can die; the returned cursor keeps its buffer alive.
+  var b = initJsonBuilder()
+  b.beginArray()
+  b.add(1)
+  b.add(2)
+  b.endArray()
+  var t = b.finish()
+  result = t.root
+
+func pureRead(obj, arr: JsonNode): string =
+  ## The read-only JSON surface must stay usable from a `func`.
+  result = ""
+  for k, v in pairs(obj):
+    result.add k
+    result.add $v
+  for el in items(arr):
+    result.add $getInt(el)
+  result.add $arr[0]
+  result.add escapeJson("x")
+  result.add $obj.len
+  result.add $obj.hasKey("a")
+  result.add $obj.contains("a")
+  result.add errorMsg(obj)
+  result.add $getFields(obj).len
+  result.add $getElems(arr).len
+  result.add pretty(arr)
 
 proc main() =
   block atoms:
@@ -39,6 +77,185 @@ proc main() =
     check elems.len, 2
     check elems[0], 1'i64
     check elems[1], 2'i64
+
+  block read_compat:
+    try:
+      var t = parseJson("""{"a":[1,2,3],"b":"hi"}""")
+      let c = t.root
+      check c["a"].kind, JArray
+      check c["a"][0].getInt(), 1'i64
+      check c["a"][^1].getInt(), 3'i64
+      check $c["a"][0..1], "[1,2]"
+      check $c["a"][0..^1], "[1,2,3]"
+      check $c["a"][^2..^1], "[2,3]"
+      check c{"b"}.getStr(), "hi"
+      check c{"missing"}.kind, JNull
+      check c{0}.kind, JNull
+      check c["a"]{1}.getInt(), 2'i64
+      check pureRead(c, c["a"]).len > 0, true
+      check hasKey(c, "a"), true
+      check hasKey(c, "z"), false
+      check contains(c, "b"), true
+      check contains(c["a"], c["a"][0]), true
+      check getOrDefault(c, "z").kind, JNull
+      check $getOrDefault(c, "z"), "null"
+      check pretty(getOrDefault(c, "z")), "null"
+      check getBiggestInt(c["a"][0]), 1'i64
+      var raised = false
+      try:
+        discard c["z"]
+      except:
+        raised = true
+      check raised, true
+
+      check $sliceLifetime(), "[10,20]"
+
+      let fields = getFields(c)
+      check fields.len, 2
+      check fields["a"][0].getInt(), 1'i64
+      let elems = getElems(c["a"])
+      check elems.len, 3
+      check elems[1].getInt(), 2'i64
+      check getFields(c, initOrderedTable[string, JsonNode]()).len, 2
+      check getElems(c["a"], @[]).len, 3
+
+      var ks: seq[string] = @[]
+      for k in keys(c):
+        ks.add k
+      check ks.len, 2
+      check ks[0], "a"
+      check ks[1], "b"
+
+      check $c, """{"a":[1,2,3],"b":"hi"}"""
+      var ugly = "prefix:"
+      toUgly(ugly, c)
+      check ugly, "prefix:" & $c
+      check pretty(c), """{
+  "a": [
+    1,
+    2,
+    3
+  ],
+  "b": "hi"
+}"""
+      check escapeJsonUnquoted("\n"), "\\n"
+      check escapeJsonUnquoted("\0"), "\\u0000"
+      check escapeJsonUnquoted("\v"), "\\u000b"
+      check escapeJsonUnquoted("\14"), "\\u000E"
+      check escapeJson("a"), "\"a\""
+      check escapeJsonUnquoted("\""), "\\\""
+      check escapeJsonUnquoted("\\"), "\\\\"
+
+      var nested = parseJson("""{"x":{"y":7}}""")
+      let nc = nested.root
+      check nc{"x", "y"}.getInt(), 7'i64
+      check nc{"x", "missing"}.kind, JNull
+      check nc{0}.kind, JNull
+
+      var empty = parseJson("""{"a":[],"b":{}}""")
+      check pretty(empty.root), """{
+  "a": [],
+  "b": {}
+}"""
+
+      var a = parseJson("""{"x":1,"y":[2,3]}""")
+      var b = parseJson("""{"y":[2,3],"x":1}""")
+      check a.root == b.root, true
+      check hash(a.root) == hash(b.root), true
+      check a.root == c, false
+    except:
+      check false, true
+
+  block construction:
+    var b = initJsonBuilder()
+    b.beginObject()
+    b.addField("name", "Ada")
+    b.addField("age", 36)
+    b.addField("ok", true)
+    b.addField("nil", newJNull())
+    b.addField("defaultNil", default(JsonNode))
+    b.beginField("tags")
+    b.beginArray()
+    b.add("math")
+    b.add(newJString("compiler"))
+    b.addNull()
+    b.endArray()
+    b.endField()
+    b.endObject()
+    var tree = b.finish()
+    check $tree.root,
+          """{"name":"Ada","age":36,"ok":true,"nil":null,"defaultNil":null,"tags":["math","compiler",null]}"""
+
+    var empty = initJsonBuilder()
+    empty.beginObject()
+    empty.beginField("a")
+    empty.beginArray()
+    empty.endArray()
+    empty.endField()
+    empty.beginField("o")
+    empty.beginObject()
+    empty.endObject()
+    empty.endField()
+    empty.endObject()
+    var emptyTree = empty.finish()
+    check $emptyTree.root, """{"a":[],"o":{}}"""
+
+    var typed = initJsonBuilder()
+    typed.beginObject()
+    typed.addField("p", Point(x: 3, y: 4, label: "t", shade: green))
+    typed.addField("id", newJInt(9))
+    typed.endObject()
+    var typedTree = typed.finish()
+    check $typedTree.root,
+          """{"p":{"x":3,"y":4,"label":"t","shade":"green"},"id":9}"""
+
+    var opted = initJsonBuilder(opts = JsonOptions(typeFieldName: "type"))
+    opted.beginArray()
+    opted.add(Box(v: 7))
+    opted.endArray()
+    var optedTree = opted.finish()
+    check $optedTree.root, """[{"type":"Box","v":7}]"""
+
+    var src = parseJson("""{"a":1}""", "src.json", KeepLineInfo)
+    var mixed = initJsonBuilder()
+    mixed.beginArray()
+    mixed.add(src.root)
+    mixed.add(Point(x: 1, y: 2, label: "p", shade: red))
+    mixed.endArray()
+    var mixedTree = mixed.finish()
+    check $mixedTree.root,
+          """[{"a":1},{"x":1,"y":2,"label":"p","shade":"red"}]"""
+    let copied = mixedTree.root[0]
+    check fileName(copied{"a"}), "src.json"
+
+    check $(`%`(42)), "42"
+    check $(`%`("hi")), "\"hi\""
+    check $(`%`(@[1, 2])), "[1,2]"
+    check $(`%`(Point(x: 9, y: 8, label: "q", shade: blue))),
+          """{"x":9,"y":8,"label":"q","shade":"blue"}"""
+    check $newJNull(), "null"
+    check $newJBool(false), "false"
+    check $newJInt(7), "7"
+    check $newJFloat(2.5), "2.5"
+    check $newJString("x"), "\"x\""
+    let existing = newJInt(5)
+    check $(`%`(existing)), "5"
+    check $builderLifetime(), "[1,2]"
+
+    check $`%*`({"name": "Ada", "nums": [1, 2], "nested": {"ok": true}}),
+          """{"name":"Ada","nums":[1,2],"nested":{"ok":true}}"""
+    let key = "dyn"
+    check $`%*`({key: 1}), """{"dyn":1}"""
+    check $`%*`([]), "[]"
+    check $`%*`({}), "{}"
+    check $`%*`(nil), "null"
+    let n = 7
+    check $`%*`({"n": n, "none": nil}), """{"n":7,"none":null}"""
+    check $`%*`({"inner": `%*`({"a": 1})}), """{"inner":{"a":1}}"""
+    check $`%*`({"custom": Custom(value: 3)}), """{"custom":"custom:3"}"""
+    let xs = @[1, 2]
+    check $`%*`({"xs": xs, "p": Point(x: 1, y: 2, label: "m", shade: green)}),
+          """{"xs":[1,2],"p":{"x":1,"y":2,"label":"m","shade":"green"}}"""
 
   block round_trip:
     var t1 = parseJson("""{"a":[1,2,3],"b":"hi","c":{"x":1.5}}""")

@@ -25,7 +25,14 @@
 ## Three layers, mirroring how `nifply` relates typed Nim to NIF:
 ##
 ## * **parse / read** — `parseJson` / `parseFile` build a `JsonTree`; navigate
-##   with `kind`, `getStr`/`getInt`/…, `len`, `items`, `pairs`, `{}`.
+##   with `kind`, `getStr`/`getInt`/…, `len`, `items`, `pairs`, `keys`,
+##   `hasKey`/`contains`, `[]`/`{}`, `getFields`/`getElems`, and deep
+##   `==`/`hash`. `$`, `toUgly`, `pretty`, and `escapeJson*` render a node.
+## * **construction** — `JsonBuilder` owns a tree while arrays/objects are
+##   appended and `finish` seals it; `add`, `addField`, `addNull`, `%`/`%*` and
+##   the scalar `newJ*` constructors cover the common cases. Nodes are immutable
+##   snapshots once built, so construction never invalidates a value that
+##   escaped into the read API.
 ## * **typed map** — `toJson` (typed Nim → JSON) and `fromJson` (JSON → typed
 ##   Nim), the JSON siblings of `nifply`'s `toNif`/`fromNif`. Same reflection
 ##   magics (`internalFieldPairs` / `internalTypeName`), same `oconstr`/`kv`/
@@ -38,8 +45,10 @@
 when defined(nimony):
   {.feature: "untyped".}      # generic bodies sem-checked at instantiation
   {.feature: "lenientnils".}  # nifcore returns nil pools for ownerless cursors
+  import std/macros           # `%*` builds builder calls from literal syntax
 
-import std / [parsejson, streams, parseutils, assertions, formatfloat, syncio]
+import std / [parsejson, streams, parseutils, assertions, formatfloat,
+              syncio, tables, hashes]
 import ../../src/lib/nifcore
 
 export parsejson  # callers may want JsonParser, getTok, etc.
@@ -107,7 +116,28 @@ type
     ## reference-counted), so nodes can be passed and stored freely.
     c*: Cursor
 
+  JsonBuilderFrameKind = enum
+    jbfRoot, jbfArray, jbfObject, jbfField
+
+  JsonBuilderFrame = object
+    kind: JsonBuilderFrameKind
+    values: int
+
+  JsonBuilder* = object
+    ## Write-once construction front end for a `JsonTree`. The builder owns the
+    ## tree while it is open and exposes only append/stack operations, so the
+    ## token buffer never has a live cursor during construction and no mutation
+    ## can invalidate a previously handed-out `JsonNode`.
+    ##
+    ## Construction is deliberately LIFO: arrays, objects and object fields are
+    ## opened and closed in nesting order. `finish` is the only way to obtain the
+    ## completed, fully sealed `JsonTree`; it consumes the builder.
+    tree: JsonTree
+    frames: seq[JsonBuilderFrame]
+    opts: JsonOptions
+
 proc `=copy`(dest: var JsonTree; src: JsonTree) {.error.}
+proc `=copy`(dest: var JsonBuilder; src: JsonBuilder) {.error.}
 
 # ── Boundary shims (unchanged from the jsonnif blueprint) ────────────────────
 # The +/-1 collapses to a single add/sub; both are register-only.
@@ -124,6 +154,100 @@ proc createJsonTree*(sharedPool: Pool = nil): JsonTree =
   ## design. Each tree still gets its own fresh `TagPool` so the `JsonKind` cast
   ## stays a register move.
   result = JsonTree(buf: createTokenBuf(16, sharedPool, createTags[JsonKind]()))
+
+# ── Builder ──────────────────────────────────────────────────────────────────
+#
+# The builder is the mutable half of the JSON API. It owns a `JsonTree` while
+# construction is in progress; no `JsonNode` is handed out until `finish` moves
+# the sealed tree out. That keeps the cursor/refcount model out of the building
+# phase: appends never see a live cursor, so there is no `prepareMutation` fork
+# and no way for a later append to invalidate an earlier node.
+
+proc initJsonBuilder*(sharedPool: Pool = nil;
+                      opts = JsonOptions()): JsonBuilder =
+  ## Start a fresh document. `sharedPool` is threaded into `createJsonTree`.
+  result = JsonBuilder(tree: createJsonTree(sharedPool), opts: opts)
+  result.frames.add(JsonBuilderFrame(kind: jbfRoot))
+
+proc markValue(b: var JsonBuilder) =
+  ## Account for one value in the current frame and reject a second value where
+  ## the grammar allows only one (root or object field).
+  let i = b.frames.high
+  case b.frames[i].kind
+  of jbfRoot:
+    assert b.frames[i].values == 0, "JSON builder: root already has a value"
+    b.frames[i].values = 1
+  of jbfArray:
+    inc b.frames[i].values
+  of jbfField:
+    assert b.frames[i].values == 0, "JSON builder: field already has a value"
+    b.frames[i].values = 1
+  of jbfObject:
+    assert false, "JSON builder: object values need a key; use beginField"
+
+proc beginArray*(b: var JsonBuilder) =
+  ## Open an array value in the current frame.
+  b.markValue()
+  b.tree.buf.openTag JKArray.tagId
+  b.frames.add(JsonBuilderFrame(kind: jbfArray))
+
+proc endArray*(b: var JsonBuilder) =
+  ## Close the innermost array.
+  assert b.frames[^1].kind == jbfArray,
+         "JSON builder: endArray without a matching beginArray"
+  b.tree.buf.closeTag()
+  discard b.frames.pop()
+
+proc beginObject*(b: var JsonBuilder) =
+  ## Open an object value in the current frame.
+  b.markValue()
+  b.tree.buf.openTag JKObject.tagId
+  b.frames.add(JsonBuilderFrame(kind: jbfObject))
+
+proc endObject*(b: var JsonBuilder) =
+  ## Close the innermost object.
+  assert b.frames[^1].kind == jbfObject,
+         "JSON builder: endObject without a matching beginObject"
+  b.tree.buf.closeTag()
+  discard b.frames.pop()
+
+proc beginField*(b: var JsonBuilder; key: string) =
+  ## Open a keyed member of the innermost object. Follow it with exactly one
+  ## value (a scalar, array, object or null) and then `endField`.
+  assert b.frames[^1].kind == jbfObject,
+         "JSON builder: beginField outside an object"
+  inc b.frames[^1].values
+  b.tree.buf.openTag JKKv.tagId
+  b.tree.buf.addStrLit key
+  b.frames.add(JsonBuilderFrame(kind: jbfField))
+
+proc endField*(b: var JsonBuilder) =
+  ## Close the innermost object field.
+  assert b.frames[^1].kind == jbfField,
+         "JSON builder: endField without a matching beginField"
+  assert b.frames[^1].values == 1,
+         "JSON builder: field has no value"
+  b.tree.buf.closeTag()
+  discard b.frames.pop()
+
+proc addNull*(b: var JsonBuilder) =
+  ## Append a JSON `null` value.
+  b.markValue()
+  b.tree.buf.openTag JKNull.tagId
+  b.tree.buf.closeTag()
+
+proc finish*(b: sink JsonBuilder): JsonTree =
+  ## Seal the document and transfer ownership of the tree to the caller. The
+  ## builder must contain exactly one root value and no open array/object/field.
+  ## Consumes the builder; using it again is an error.
+  assert b.frames.len == 1,
+         "JSON builder: unclosed array, object or field"
+  assert b.frames[0].kind == jbfRoot,
+         "JSON builder: malformed root frame"
+  assert b.frames[0].values == 1,
+         "JSON builder: document has no root value"
+  result = move(b.tree)
+  b.frames.setLen(0)
 
 # ── Parser ───────────────────────────────────────────────────────────────────
 #
@@ -340,18 +464,26 @@ proc parseFile*(filename: string;
 # spelling out `c.c`. `rawKind` is the one true alias for `nifcore.kind`; with
 # `kind` now taking a `JsonNode` there is no shadowing left to qualify around.
 
-# `rawKind` / `cursorTagId` are *procs*, not templates: a template forwarding to
+# `rawKind` / `cursorTagId` are *funcs*, not templates: a template forwarding to
 # the module-qualified `nifcore.kind` expands at the call site, and the generic
 # `fromJson` instantiates in modules that never imported `nifcore`, so the
-# qualifier would not resolve there. As procs they are sem-checked here, in
+# qualifier would not resolve there. As funcs they are sem-checked here, in
 # json.nim's scope, once.
-proc rawKind(n: JsonNode): NifKind {.inline.}   = nifcore.kind(n.c)
-proc cursorTagId(n: JsonNode): TagId {.inline.} = nifcore.cursorTagId(n.c)
-proc strVal(n: JsonNode): string {.inline.}     = strVal(n.c)
-proc intVal(n: JsonNode): int64 {.inline.}      = intVal(n.c)
-proc floatVal(n: JsonNode): float64 {.inline.}  = floatVal(n.c)
-proc inc(n: var JsonNode) {.inline.}            = inc n.c
-proc skip(n: var JsonNode) {.inline.}           = skip n.c
+func rawKind(n: JsonNode): NifKind {.inline.} =
+  if cursorIsNil(n.c): DotToken else: nifcore.kind(n.c)
+func cursorTagId(n: JsonNode): TagId {.inline.} = nifcore.cursorTagId(n.c)
+func strVal(n: JsonNode): string {.inline.}     =
+  # nifcore's one-argument accessor still carries the plugin fallback pool; the
+  # two-argument accessor is pure but the cursor does not expose its pool here.
+  # Keep the suppression local to this single accessor.
+  {.cast(noSideEffect).}:
+    result = strVal(n.c)
+func intVal(n: JsonNode): int64 {.inline.}      = intVal(n.c)
+func floatVal(n: JsonNode): float64 {.inline.}  = floatVal(n.c)
+func inc(n: var JsonNode) {.inline.} =
+  if not cursorIsNil(n.c): inc n.c
+func skip(n: var JsonNode) {.inline.} =
+  if not cursorIsNil(n.c): skip n.c
 template hasMore(n: JsonNode): bool             = hasMore(n.c)
 template into(n: var JsonNode; body: untyped)   = into(n.c, body)
 
@@ -359,7 +491,7 @@ template into(n: var JsonNode; body: untyped)   = into(n.c, body)
 
 proc root*(t: var JsonTree): JsonNode {.inline.} = JsonNode(c: t.buf.beginRead())
 
-proc kind*(n: JsonNode): JsonNodeKind =
+func kind*(n: JsonNode): JsonNodeKind =
   ## Effective high-level kind of the node. Coexists with `nifcore.kind(Cursor)`
   ## as a plain overload because `n` is a `JsonNode`, not a `Cursor`.
   case rawKind(n)
@@ -375,28 +507,28 @@ proc kind*(n: JsonNode): JsonNodeKind =
     of JKKv:             JNull   # kv shouldn't appear where a value is expected
   else: JNull
 
-proc info*(n: JsonNode): NifLineInfo {.inline.} =
+func info*(n: JsonNode): NifLineInfo {.inline.} =
   ## Source position recorded for the node, or `NoNifLineInfo` when the tree was
   ## parsed with `DiscardLineInfo` (or built programmatically).
-  rawLineInfo(n.c)
+  if cursorIsNil(n.c): NoNifLineInfo else: rawLineInfo(n.c)
 
 proc fileName*(n: JsonNode): string {.inline.} =
   ## Source filename for the node, or `""` when no line info is present.
-  lineInfoFile(n.c)
+  if cursorIsNil(n.c): "" else: lineInfoFile(n.c)
 
-proc getStr*(n: JsonNode; default = ""): string =
+func getStr*(n: JsonNode; default = ""): string =
   if rawKind(n) == StrLit: strVal(n) else: default
 
-proc getInt*(n: JsonNode; default: int64 = 0): int64 =
+func getInt*(n: JsonNode; default: int64 = 0): int64 =
   if rawKind(n) == IntLit: intVal(n) else: default
 
-proc getFloat*(n: JsonNode; default = 0.0): float =
+func getFloat*(n: JsonNode; default = 0.0): float =
   case rawKind(n)
   of FloatLit: floatVal(n)
   of IntLit:   float(intVal(n))
   else:        default
 
-proc getBool*(n: JsonNode; default = false): bool =
+func getBool*(n: JsonNode; default = false): bool =
   if rawKind(n) == TagLit:
     case jsonKind(n.cursorTagId)
     of JKTrue:  return true
@@ -404,13 +536,42 @@ proc getBool*(n: JsonNode; default = false): bool =
     else: discard
   default
 
+func getBiggestInt*(n: JsonNode; default: BiggestInt = 0): BiggestInt =
+  ## Retrieves the integer value as a `BiggestInt`; `getInt` is the
+  ## `int64`-shaped equivalent in this model.
+  if rawKind(n) == IntLit: BiggestInt(intVal(n)) else: default
+
+func getFields*(n: JsonNode;
+                 default: OrderedTable[string, JsonNode]):
+                 OrderedTable[string, JsonNode] =
+  ## Materialises a `JObject` into an ordered table. Returns `default` for
+  ## non-objects, matching `std/json`'s fallback contract.
+  if kind(n) != JObject: return default
+  result = initOrderedTable[string, JsonNode]()
+  for k, v in pairs(n):
+    result[k] = v
+
+func getFields*(n: JsonNode): OrderedTable[string, JsonNode] =
+  getFields(n, initOrderedTable[string, JsonNode]())
+
+func getElems*(n: JsonNode; default: seq[JsonNode]): seq[JsonNode] =
+  ## Materialises a `JArray` into a sequence. Returns `default` for
+  ## non-arrays, matching `std/json`'s fallback contract.
+  if kind(n) != JArray: return default
+  result = @[]
+  for el in items(n):
+    result.add el
+
+func getElems*(n: JsonNode): seq[JsonNode] =
+  getElems(n, @[])
+
 # ── Error inspection ──────────────────────────────────────────────────────────
 # A parse error is stored as a `null` carrying a diagnostic string: `(null
 # "msg")`. To any reader that does not look inside it is a plain `JNull`, so a
 # malformed document still traverses cleanly. These helpers are the *opt-in*
 # channel that surfaces the diagnostic.
 
-proc errorMsg*(n: JsonNode): string =
+func errorMsg*(n: JsonNode): string =
   ## If the node is an error placeholder (a `null` with a diagnostic string
   ## child, `(null "msg")`), return that message; otherwise `""`. A clean `null`
   ## — and any other node — yields `""`.
@@ -422,11 +583,11 @@ proc errorMsg*(n: JsonNode): string =
         if rawKind(c2) == StrLit: result = strVal(c2)
         c2.skip
 
-proc isError*(n: JsonNode): bool {.inline.} =
+func isError*(n: JsonNode): bool {.inline.} =
   ## True when the node is an error placeholder (see `errorMsg`).
   errorMsg(n).len > 0
 
-proc firstErrorMsg(n: JsonNode): string =
+func firstErrorMsg(n: JsonNode): string =
   ## Depth-first search for the first error placeholder under `n`; `""` if clean.
   if isError(n): return errorMsg(n)
   result = ""
@@ -469,7 +630,7 @@ proc hasError*(t: var JsonTree): bool {.inline.} =
   ## True when the document contains any parse error (see `errorMsg`).
   errorMsg(t).len > 0
 
-proc len*(n: JsonNode): int =
+func len*(n: JsonNode): int =
   ## Number of elements (array) or members (object). 0 for scalars.
   result = 0
   case kind(n)
@@ -483,29 +644,35 @@ proc len*(n: JsonNode): int =
 
 iterator items*(n: JsonNode): JsonNode =
   # Inline iterators are inferred `noSideEffect` by Nimony; the cursor traversal
-  # helpers (`into`/`skip`, and `assert`'s failure path) count as effects, so we
-  # vouch for purity the same way tables.nim does for its checked accessors.
-  {.cast(noSideEffect).}:
-    assert kind(n) == JArray, "items: not a JArray"
-    var c2 = n
-    c2.into:
-      while c2.hasMore:
-        yield c2
-        c2.skip
+  # helpers (`into`/`skip`) are `func`s in nifcore now.
+  assert kind(n) == JArray, "items: not a JArray"
+  var c2 = n
+  c2.into:
+    while c2.hasMore:
+      yield c2
+      c2.skip
 
 iterator pairs*(n: JsonNode): (string, JsonNode) =
-  {.cast(noSideEffect).}:
-    assert kind(n) == JObject, "pairs: not a JObject"
-    var c2 = n
-    c2.into:
-      while c2.hasMore:
-        assert rawKind(c2) == TagLit and jsonKind(c2.cursorTagId) == JKKv,
-               "malformed object: child is not a kv"
-        c2.into:
-          let key = strVal(c2)
-          c2.inc
-          yield (key, c2)
-          c2.skip
+  assert kind(n) == JObject, "pairs: not a JObject"
+  var c2 = n
+  c2.into:
+    while c2.hasMore:
+      assert rawKind(c2) == TagLit and jsonKind(c2.cursorTagId) == JKKv,
+             "malformed object: child is not a kv"
+      c2.into:
+        let key = strVal(c2)
+        c2.inc
+        yield (key, c2)
+        c2.skip
+
+func findField(node: JsonNode; key: string): JsonNode =
+  ## The value for `key`, or a nil-cursor node when `key` is absent. Unlike
+  ## `getOrDefault`, this never mints a fresh `(null)` buffer, so read-only
+  ## comparisons can stay inside `func`.
+  if kind(node) == JObject:
+    for k, v in pairs(node):
+      if k == key: return v
+  result = default(JsonNode)
 
 proc nullNode(): JsonNode =
   ## A standalone `(null)`. The node's cursor keeps its one-token buffer alive,
@@ -514,6 +681,80 @@ proc nullNode(): JsonNode =
   t.buf.openTag JKNull.tagId
   t.buf.closeTag()
   result = t.root
+
+func hasKey*(node: JsonNode; key: string): bool =
+  ## Checks whether `key` exists in a `JObject`.
+  assert kind(node) == JObject, "hasKey: not a JObject"
+  result = not cursorIsNil(findField(node, key).c)
+
+func contains*(node: JsonNode; key: string): bool =
+  ## Checks whether `key` exists in a `JObject`.
+  assert kind(node) == JObject, "contains: not a JObject"
+  result = hasKey(node, key)
+
+proc getOrDefault*(node: JsonNode; key: string): JsonNode =
+  ## Returns the value for `key`, or a `JNull` node when `node` is not an
+  ## object or the key is absent.
+  result = findField(node, key)
+  if cursorIsNil(result.c): result = nullNode()
+
+func `[]`*(node: JsonNode; name: string): JsonNode {.raises.} =
+  ## Gets a field from a `JObject`; raises `KeyError` when absent. Use
+  ## `getOrDefault` or `{}` when a missing field should produce `JNull`.
+  assert kind(node) == JObject, "[]: not a JObject"
+  for k, v in pairs(node):
+    if k == name: return v
+  raise KeyError
+
+func `[]`*(node: JsonNode; index: int): JsonNode =
+  ## Gets the element at `index` in a `JArray`.
+  assert kind(node) == JArray, "[]: not a JArray"
+  let n = len(node)
+  assert index >= 0 and index < n, "[]: index out of bounds"
+  var i = 0
+  for el in items(node):
+    if i == index: return el
+    inc i
+  result = default(JsonNode)
+
+func `[]`*(node: JsonNode; index: BackwardsIndex): JsonNode =
+  ## `node[^i]` is `node[node.len - i]`.
+  `[]`(node, node.len - int(index))
+
+proc `[]`*[U, V](node: JsonNode; x: HSlice[U, V]): JsonNode =
+  ## Returns a new `JArray` containing the inclusive slice.
+  assert kind(node) == JArray, "[]: not a JArray"
+  let lo = when x.a is BackwardsIndex: node.len - int(x.a) else: int(x.a)
+  let count = (when x.b is BackwardsIndex: node.len - int(x.b)
+               else: int(x.b)) - lo + 1
+  var t = createJsonTree()
+  t.buf.openTag JKArray.tagId
+  for i in 0 ..< count:
+    t.buf.addSubtree(node[lo + i].c)
+  t.buf.closeTag()
+  result = t.root
+
+# A single-key lookup (`node{"key"}`) is covered by this varargs overload;
+# Nimony reports a separate single-string overload as ambiguous with it.
+proc `{}`*(node: JsonNode; keys: varargs[string]): JsonNode =
+  ## Traverses nested objects; returns a `JNull` node when a step is missing.
+  result = node
+  for key in keys:
+    if kind(result) != JObject: return nullNode()
+    result = result.getOrDefault(key)
+
+proc `{}`*(node: JsonNode; indexes: varargs[int]): JsonNode =
+  ## Traverses nested arrays; returns a `JNull` node when a step is missing.
+  result = node
+  for i in indexes:
+    if kind(result) != JArray or i < 0 or i >= len(result):
+      return nullNode()
+    result = result[i]
+
+iterator keys*(node: JsonNode): string =
+  ## Iterates over the keys of a `JObject`.
+  for k, v in pairs(node):
+    yield k
 
 proc `{}`*(t: var JsonTree; key: string): JsonNode =
   ## Object member lookup. Returns a `JNull` node when the root is not an
@@ -525,30 +766,108 @@ proc `{}`*(t: var JsonTree; key: string): JsonNode =
         return v
   result = nullNode()
 
+func `==`*(a, b: JsonNode): bool =
+  ## Deep JSON value equality. Object member order is irrelevant.
+  if kind(a) != kind(b): return false
+  case kind(a)
+  of JNull:  result = true
+  of JBool:  result = getBool(a) == getBool(b)
+  of JInt:   result = getInt(a) == getInt(b)
+  of JFloat: result = getFloat(a) == getFloat(b)
+  of JString: result = getStr(a) == getStr(b)
+  of JArray:
+    if len(a) != len(b): return false
+    var ca = a
+    var cb = b
+    ca.into:
+      cb.into:
+        while ca.hasMore:
+          if ca != cb: return false
+          ca.skip
+          cb.skip
+    result = true
+  of JObject:
+    if len(a) != len(b): return false
+    for key, val in pairs(a):
+      let other = findField(b, key)
+      if cursorIsNil(other.c): return false
+      if val != other: return false
+    result = true
+
+func hash*(n: JsonNode): Hash =
+  ## Deep hash matching `==`: object insertion order does not matter.
+  case kind(n)
+  of JNull:  result = Hash(0)
+  of JBool:  result = hash(getBool(n))
+  of JInt:   result = hash(getInt(n))
+  of JFloat: result = hash(getFloat(n))
+  of JString: result = hash(getStr(n))
+  of JArray:
+    result = 0'u
+    for el in items(n):
+      result = result !& hash(el)
+    result = !$result
+  of JObject:
+    result = 0'u
+    for key, val in pairs(n):
+      result = result xor (hash(key) !& hash(val))
+    result = !$result
+
+func contains*(node: JsonNode; val: JsonNode): bool =
+  ## Checks whether `val` exists in a `JArray`.
+  assert kind(node) == JArray, "contains: not a JArray"
+  result = false
+  for el in items(node):
+    if el == val: return true
+
 # ── Pretty-print ─────────────────────────────────────────────────────────────
 
-proc emitEscaped(s: string; r: var string) =
-  r.add '"'
+func escapeJsonUnquoted*(s: string; result: var string) =
+  ## Appends the JSON representation of `s` without surrounding quotes.
+  const hexChars = "0123456789ABCDEF"
   for c in s:
     case c
-    of '\L': r.add "\\n"
-    of '\b': r.add "\\b"
-    of '\f': r.add "\\f"
-    of '\t': r.add "\\t"
-    of '\r': r.add "\\r"
-    of '"':  r.add "\\\""
-    of '\\': r.add "\\\\"
-    else:    r.add c
-  r.add '"'
+    of '\L': result.add "\\n"
+    of '\b': result.add "\\b"
+    of '\f': result.add "\\f"
+    of '\t': result.add "\\t"
+    of '\v': result.add "\\u000b"
+    of '\r': result.add "\\r"
+    of '"':  result.add "\\\""
+    of '\0'..'\7':
+      result.add "\\u000"
+      result.add $ord(c)
+    of '\14'..'\31':
+      result.add "\\u00"
+      result.add hexChars[ord(c) shr 4]
+      result.add hexChars[ord(c) and 0xF]
+    of '\\': result.add "\\\\"
+    else:    result.add c
 
-proc emitUgly(c: var JsonNode; r: var string) =
+func escapeJsonUnquoted*(s: string): string =
+  ## Returns the JSON representation of `s` without surrounding quotes.
+  result = ""
+  escapeJsonUnquoted(s, result)
+
+func escapeJson*(s: string; result: var string) =
+  ## Appends the quoted JSON representation of `s`.
+  result.add '"'
+  escapeJsonUnquoted(s, result)
+  result.add '"'
+
+func escapeJson*(s: string): string =
+  ## Returns the quoted JSON representation of `s`.
+  result = ""
+  escapeJson(s, result)
+
+func emitUgly(c: var JsonNode; r: var string) =
   case kind(c)
   of JNull:  r.add "null"; c.skip
   of JBool:  r.add (if getBool(c): "true" else: "false"); c.skip
   of JInt:   r.add $getInt(c);   c.inc
   of JFloat: r.add $getFloat(c); c.inc
   of JString:
-    emitEscaped(getStr(c), r); c.inc
+    escapeJson(getStr(c), r); c.inc
   of JArray:
     r.add '['
     var first = true
@@ -567,22 +886,78 @@ proc emitUgly(c: var JsonNode; r: var string) =
         first = false
         assert jsonKind(c.cursorTagId) == JKKv
         c.into:
-          emitEscaped(strVal(c), r)
+          escapeJson(strVal(c), r)
           r.add ':'
           c.inc
           emitUgly(c, r)
     r.add '}'
 
+func toUgly*(result: var string, node: JsonNode) =
+  ## Appends the compact JSON representation of `node` to `result`.
+  var c = node
+  emitUgly(c, result)
+
+func `$`*(node: JsonNode): string =
+  ## Returns the compact JSON representation of `node`.
+  result = newStringOfCap(node.len shl 1)
+  toUgly(result, node)
+
+func addIndent(r: var string; count: int) =
+  for i in 0 ..< count:
+    r.add ' '
+
+func toPretty(r: var string; node: JsonNode; indent, currIndent: int;
+               inArray: bool) =
+  case kind(node)
+  of JObject:
+    if inArray: addIndent(r, currIndent)
+    if len(node) == 0:
+      r.add "{}"
+      return
+    r.add "{\n"
+    var first = true
+    for key, val in pairs(node):
+      if not first: r.add ",\n"
+      first = false
+      addIndent(r, currIndent + indent)
+      escapeJson(key, r)
+      r.add ": "
+      toPretty(r, val, indent, currIndent + indent, false)
+    r.add "\n"
+    addIndent(r, currIndent)
+    r.add "}"
+  of JArray:
+    if inArray: addIndent(r, currIndent)
+    if len(node) == 0:
+      r.add "[]"
+      return
+    r.add "[\n"
+    var first = true
+    for el in items(node):
+      if not first: r.add ",\n"
+      first = false
+      toPretty(r, el, indent, currIndent + indent, true)
+    r.add "\n"
+    addIndent(r, currIndent)
+    r.add "]"
+  else:
+    if inArray: addIndent(r, currIndent)
+    toUgly(r, node)
+
+func pretty*(node: JsonNode; indent = 2): string =
+  ## Returns a multi-line, indented JSON representation of `node`.
+  result = ""
+  toPretty(result, node, indent, 0, false)
+
 proc `$`*(t: var JsonTree): string =
   result = newStringOfCap(64)
-  var c = t.root
-  emitUgly(c, result)
+  toUgly(result, t.root)
 
 # ── Typed map: toJson (typed Nim → JSON) ─────────────────────────────────────
 # Siblings of nifply's `toNif`. Every overload takes `opts` in the same
 # position so the composite walkers can recurse with `toJson(t, field, opts)`.
 
-proc bareName(mangled: string): string =
+func bareName(mangled: string): string =
   ## `internalFieldPairs` / `internalTypeName` yield names with a NIF
   ## disambiguation suffix (`x.0`, `Box.0.<module>`); JSON keys and the `"type"`
   ## discriminator want the bare source name before the first `.`.
@@ -626,6 +1001,132 @@ proc toJson*[T](x: T; opts = JsonOptions()): JsonTree =
   ## recursive workers by arity (1–2 args, no leading `var JsonTree`).
   result = createJsonTree()
   toJson(result, x, opts)
+
+# ── Builder values ───────────────────────────────────────────────────────────
+# `add` delegates to the `toJson` workers so construction and the typed map
+# share one encoder. A finished `JsonNode` is copied through `addSubtree`, which
+# re-interns its literals/tags and preserves any line info.
+
+proc add*(b: var JsonBuilder; n: JsonNode) =
+  ## Append a finished JSON value. A nil `JsonNode` is emitted as `null`.
+  b.markValue()
+  if cursorIsNil(n.c):
+    b.tree.buf.openTag JKNull.tagId
+    b.tree.buf.closeTag()
+  else:
+    b.tree.buf.addSubtree(n.c)
+
+proc add*[T](b: var JsonBuilder; value: T) =
+  ## Append a typed value using the same encoding as `toJson`.
+  b.markValue()
+  toJson(b.tree, value, b.opts)
+
+proc addField*(b: var JsonBuilder; key: string; value: JsonNode) =
+  ## Append one object member whose value is a finished JSON node.
+  b.beginField(key)
+  b.add(value)
+  b.endField()
+
+proc addField*[T](b: var JsonBuilder; key: string; value: T) =
+  ## Append one object member whose value is typed.
+  b.beginField(key)
+  b.add(value)
+  b.endField()
+
+proc newNode[T](value: T): JsonNode =
+  ## Build a standalone node: the finished tree may die immediately because the
+  ## returned cursor keeps its buffer and pools alive through the cursor owner.
+  var b = initJsonBuilder()
+  b.add(value)
+  var t = b.finish()
+  result = t.root
+
+proc `%`*[T](x: T): JsonNode =
+  ## std/json-style value conversion built on the write-once builder.
+  newNode(x)
+
+proc newJNull*(): JsonNode =
+  ## A standalone JSON `null`.
+  var b = initJsonBuilder()
+  b.addNull()
+  var t = b.finish()
+  result = t.root
+
+proc newJBool*(value: bool): JsonNode =
+  ## A standalone JSON boolean.
+  newNode(value)
+
+proc newJInt*(value: int64): JsonNode =
+  ## A standalone JSON integer.
+  newNode(value)
+
+proc newJFloat*(value: float): JsonNode =
+  ## A standalone JSON float.
+  newNode(value)
+
+proc newJString*(value: string): JsonNode =
+  ## A standalone JSON string.
+  newNode(value)
+
+when defined(nimony):
+  macro `%*`*(x: untyped): untyped =
+    ## Build a `JsonNode` from JSON-shaped literal syntax::
+    ##
+    ##   %* {"name": "Ada", "tags": ["math", "compiler"], "ok": true}
+    ##
+    ## Brackets become arrays, table constructors become objects, `nil`
+    ## becomes `null`, and every other expression is converted with `%` and
+    ## appended. Object keys are expressions, so quote literal names
+    ## (`{"name": ...}`). The generated temporaries use a NIF disambiguator so
+    ## a user expression cannot capture them (the macro system has no `genSym`).
+    proc call0(b: NimNode; name: string): NimNode =
+      newCall(newDotExpr(b, newIdentNode(name)))
+
+    proc addExpr(n, b: NimNode; body: NimNode) =
+      ## Use `%` for leaves so user-defined `%` overloads apply, matching
+      ## std/json's `%*`.
+      body.add newCall(newDotExpr(b, newIdentNode("add")),
+                       [newCall(newIdentNode("%"), [n])])
+
+    proc genValue(n, b: NimNode; body: NimNode) =
+      case n.kind
+      of nnkNilLit:
+        body.add call0(b, "addNull")
+      of nnkBracket:
+        body.add call0(b, "beginArray")
+        var i = 0
+        while i < n.len:
+          genValue(n[i], b, body)
+          inc i
+        body.add call0(b, "endArray")
+      of nnkCurly:
+        if n.len == 0:
+          body.add call0(b, "beginObject")
+          body.add call0(b, "endObject")
+        else:
+          addExpr(n, b, body)
+      of nnkTableConstr:
+        body.add call0(b, "beginObject")
+        var i = 0
+        while i < n.len:
+          let child = n[i]
+          body.add newCall(newDotExpr(b, newIdentNode("beginField")),
+                           [child[0]])
+          genValue(child[1], b, body)
+          body.add call0(b, "endField")
+          inc i
+        body.add call0(b, "endObject")
+      else:
+        addExpr(n, b, body)
+
+    let b = newIdentNode("jsonBuilderForMacro.0")
+    let t = newIdentNode("jsonTreeForMacro.0")
+    var body = newStmtList()
+    body.add newVarStmt(b, newCall("initJsonBuilder"))
+    genValue(x, b, body)
+    body.add newVarStmt(t, newCall(newDotExpr(b, newIdentNode("finish"))))
+    body.add newDotExpr(t, newIdentNode("root"))
+    result = newTree(nnkBlockExpr, [newEmptyNode(), body])
 
 # ── Typed map: fromJson (JSON → typed Nim) ───────────────────────────────────
 # Siblings of nifply's `fromNif`. A mutating `var T` overload (used by the
