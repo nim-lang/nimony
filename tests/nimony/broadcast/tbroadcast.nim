@@ -57,10 +57,52 @@ proc t6() =
   let res = @. ((x +. y) *. (y -. x) /. (z *! 2.0))
   assert res == @[15.0, 7.0, 5.4]
 
+proc t7() =
+  let a = @[0b1010, 0b1100]
+  let b = @[0b0110, 0b0011]
+  let c = @. ((a &&. b) ||! 0b0001)
+  assert c == @[3, 1]
+
+  let d = @. (a ^^. b)
+  assert d == @[0b1100, 0b1111]
+
+proc t8() =
+  let a = @[1, 2, 4]
+  let b = @. (a <<! 2)
+  assert b == @[4, 8, 16]
+  let c = @. (b >>! 1)
+  assert c == @[2, 4, 8]
+
+proc t9() =
+  let a = @[17, 23, 31]
+  let b = @. ((a //! 5) +. (a %! 5))
+  assert b == @[5, 7, 7]
+
+proc t10() =
+  let a = @["hello", "world"]
+  let b = @["!", "?"]
+  let c = @. (a &. b &! " :)")
+  assert c == @["hello! :)", "world? :)"]
+
+func `^`(x, y: int): int =
+  result = 1
+  for _ in 0 ..< y:
+    result = result * x
+
+proc t11() =
+  let a = @[2, 3, 4]
+  let b = @. (a ^! 3)
+  assert b == @[8, 27, 64]
+
 t1()
 t2()
 t3()
 t4()
 t5()
 t6()
+t7()
+t8()
+t9()
+t10()
+t11()
 echo "broadcast ok"

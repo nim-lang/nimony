@@ -8,6 +8,16 @@ proc scalarOpName(op: string): string =
   if result.len > 1 and result[0] == '!':
     result = result[1 ..< result.len]
 
+  case result:
+  of "||": result = "or"
+  of "&&": result = "and"
+  of "^^": result = "xor"
+  of "<<": result = "shl"
+  of ">>": result = "shr"
+  of "//": result = "div"
+  of "%": result = "mod"
+  else: discard
+
 proc isScalarBroadcast(op: string): bool =
   op.len > 1 and op[op.len - 1] == '!'
 
@@ -59,10 +69,16 @@ proc collectContainers(n: NifCursor, containers: var seq[NifCursor]) =
         skip c # skip map
         collectContainers(c, containers)
       else:
+        let fnName = if c.kind == Symbol: c.symId.symBasename else: c.identText
+        let isSc = isScalarBroadcast(fnName)
         skip c # skip callee
-        while c.hasMore:
-          collectContainers(c, containers)
-          skip c
+        if isSc:
+          if c.hasMore:
+            collectContainers(c, containers)
+        else:
+          while c.hasMore:
+            collectContainers(c, containers)
+            skip c
     elif tag == "dot" or tag == "at":
       if not hasContainer(containers, n):
         containers.add n
@@ -128,12 +144,23 @@ proc toScalarOp(result: var NifBuilder, n: NifCursor, idx: SymId, info: LineInfo
         result.closeTree() # /at
         result.closeTree() # /call
       else:
-        result.openTree("call", info)
-        result.addSubtree(c) # callee
+        let fnName = if c.kind == Symbol: c.symId.symBasename else: c.identText
+        let scFn = scalarOpName(fnName)
+        let isSc = isScalarBroadcast(fnName)
         skip c
-        while c.hasMore:
-          toScalarOp(result, c, idx, info)
-          skip c
+        result.openTree("call", info)
+        result.addIdent scFn
+        if isSc:
+          if c.hasMore:
+            toScalarOp(result, c, idx, info)
+            skip c
+          while c.hasMore:
+            result.addSubtree(c)
+            skip c
+        else:
+          while c.hasMore:
+            toScalarOp(result, c, idx, info)
+            skip c
         result.closeTree()
     else:
       # e.g. dot or already indexed
@@ -229,4 +256,4 @@ proc transform(n: var NifCursor): NifBuilder =
 
 var inp = loadPluginInput()
 var c = inp
-saveTree transform(c)
+saveTree transform(c)
