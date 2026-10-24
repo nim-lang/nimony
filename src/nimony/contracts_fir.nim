@@ -4786,14 +4786,16 @@ proc staleBoundsOfLoop(c: var FirContext; w: LoopWrites) =
   ## iterator's `i < temp` is re-assumed on every iteration. Read through to
   ## `s.len` that is only true while `s.len` cannot shrink; a body that writes
   ## `s` some other way gets the temp as a variable of its own (#2765).
+  var temps: seq[(SymId, Cursor)] = @[]
   for t, value in c.inlineVars:
-    if t notin c.staleInlineVars:
-      let v = plainLocationVarId(c, value)
-      if v != InvalidVarId:
-        let derived = int(v) <= FirstDerivedVarId
-        if (w.opaque and derived) or
-            (w.kinds.hasKey(v) and w.kinds.getOrDefault(v) != ivIncreasing):
-          c.staleInlineVars.incl t
+    if t notin c.staleInlineVars: temps.add (t, value)
+  for (t, value) in temps:
+    let v = plainLocationVarId(c, value)
+    if v != InvalidVarId:
+      let derived = int(v) <= FirstDerivedVarId
+      if (w.opaque and derived) or
+          (w.kinds.hasKey(v) and w.kinds.getOrDefault(v) != ivIncreasing):
+        c.staleInlineVars.incl t
 
 proc analyseLoopBody(c: var FirContext; n: var Cursor) =
   ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
