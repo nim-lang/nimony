@@ -1,3 +1,5 @@
 tests/nimony/object/tsumtype_errors.nim(13, 3) Error: not all cases are covered; missing: {SubOpr}
 tests/nimony/object/tsumtype_errors.nim(28, 11) Error: value already handled
 tests/nimony/object/tsumtype_errors.nim(34, 15) Error: branches in set pattern must come from the same `of` declaration
+tests/nimony/object/tsumtype_errors.nim(47, 21) Error: type mismatch: got: int64 but wanted: string
+tests/nimony/object/tsumtype_errors.nim(49, 20) Error: type mismatch: got: string but wanted: int64

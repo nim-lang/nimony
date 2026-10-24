@@ -989,6 +989,7 @@ proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =
     c.buildErr dest, info, "cannot `cast` between types " & typeToString(srcType) & " and " & typeToString(destType)
 
 proc semLocalTypeExpr(c: var SemContext; dest: var TokenBuf; it: var Item)
+proc yieldsSumTypeConstr(c: var SemContext; n: Cursor): bool
 
 proc semReturnType(c: var SemContext; dest: var TokenBuf; n: var Cursor): TypeCursor =
   result = semLocalType(c, dest, n, InReturnTypeDecl)
@@ -2927,6 +2928,57 @@ proc findOneofEfld(c: var SemContext; name: StrId): SymId =
         for defId in candidates:
           if isAnumEfld(defId):
             return defId
+
+proc isSumTypeConstr(c: var SemContext; n: Cursor): bool =
+  ## `Branch(field: value, ...)`, a sum type's branch name used as its
+  ## constructor. It infers only the type arguments its own fields mention
+  ## (`Ok(v: 1)` cannot know `E`), so it is the expression that needs the
+  ## type its context expects.
+  result = false
+  if n.exprKind in {CallX, CmdX, OconstrX}:
+    let head = sub(n)
+    result = head.isIdent and findOneofEfld(c, head.strId) != SymId(0)
+
+proc yieldsSumTypeConstr(c: var SemContext; n: Cursor): bool =
+  ## Every value `n` can produce is written as a sum type constructor: the
+  ## constructor itself, or an `if` with an `else`, a `case`, or a block whose
+  ## every branch ends in one. Such an expression needs the type its context
+  ## expects, and it cannot be a statement, so giving it that type never turns
+  ## a statement (`result = ...`) into a type error.
+  if isSumTypeConstr(c, n): return true
+  result = false
+  case n.stmtKind
+  of StmtsS:
+    var it = sub(n)
+    var last = default(Cursor)
+    while it.hasMore:
+      last = it
+      skip it
+    result = not cursorIsNil(last) and yieldsSumTypeConstr(c, last)
+  of IfS, CaseS:
+    # Every branch must end in a constructor; an `if` also needs its `else`
+    # (a `case` is exhaustive or does not compile).
+    var it = sub(n)
+    if n.stmtKind == CaseS: skip it # the selector
+    var branches = 0
+    var hasElse = false
+    result = true
+    while result and it.hasMore:
+      case it.substructureKind
+      of ElifU, OfU:
+        var action = sub(it)
+        skip action # the condition or the ranges
+        result = yieldsSumTypeConstr(c, action)
+      of ElseU:
+        hasElse = true
+        result = yieldsSumTypeConstr(c, sub(it))
+      else:
+        result = false
+      inc branches
+      skip it
+    result = result and branches > 0 and (n.stmtKind == CaseS or hasElse)
+  else:
+    discard
 
 proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
                             selectorType: TypeCursor; objTypeSym: SymId;

@@ -35,3 +35,15 @@ proc badSet(n: Node): int =
     result = 0
   else:
     result = 1
+
+# The expected type of a constructor is not a way around a type mismatch.
+type
+  Res[T, E] = object
+    case
+    of Ok: v: T
+    of Err: e: E
+
+proc show(r: Res[int, string]): int = 0
+discard show(Err(e: 5))
+
+proc text(): int = "text"
