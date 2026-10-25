@@ -26,4 +26,9 @@
 [26] text that is not text once assembled: 1007
 [27] a frame that claims two megabytes: 1009
 [28] HTTP/1.0: 400
+[29] an empty close is echoed empty: true 0
+[30] the client's echo: mkText from the client
+[30] the client's close: 1000
+[30] a send after the close: BadOperation
+[31] idle is per message: 4 of 4
 the server saw the hang-up: EndOfStreamError

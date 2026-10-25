@@ -20,7 +20,7 @@
 # message or a frame bigger than the endpoint accepts.
 
 import std / [httpserver, websocket, socket, ioring, threadpool, atomics,
-              assertions, syncio]
+              assertions, syncio, os]
 import peer/wspeer
 
 let tags = newHttpTags()
@@ -30,7 +30,7 @@ var clientsDone: int = 0
 var handlerDone: int = 0
 var gPort: int = 0
 var listening: int = 0
-var report: array[29, string]
+var report: array[32, string]
   ## One slot per case, written only by that case's task and read after all of
   ## them have finished. That is why there is no lock: the cases run in
   ## parallel, but no two of them share a slot. The report is printed in index
@@ -456,6 +456,47 @@ proc case28() {.passive, raises.} =
   say(28, "HTTP/1.0: " & $status)
   p.closePeer()
 
+proc case29() {.passive, raises.} =
+  ## A close that carries no code: the answer carries none either — 0 is not
+  ## a code, and a peer that gets one back fails the connection over it.
+  var p = connectWs(gPort, handshake("/echo"))
+  discard p.readHead()
+  p.send(frame(opcode = 0x8, payload = ""))
+  let f = p.readFrame()
+  say(29, "an empty close is echoed empty: " & $(f.opcode == 0x8) & " " &
+      $f.payload.len)
+  p.closePeer()
+
+proc case30() {.passive, raises.} =
+  ## This module's own client against this module's own server: the
+  ## handshake, an echo, the closing handshake, and nothing after it.
+  var ws = connectWebSocket("ws://127.0.0.1:" & $gPort & "/echo")
+  ws.send(mkText, "from the client")
+  var msg = ""
+  let kind = ws.recv(msg)
+  say(30, "the client's echo: " & $kind & " " & msg)
+  ws.close(1000, "done")
+  say(30, "the client's close: " & $ws.closeCode)
+  var after = "nothing"
+  try:
+    ws.send(mkText, "too late")
+  except ErrorCode as e:
+    after = $e
+  say(30, "a send after the close: " & after)
+
+proc case31() {.passive, raises.} =
+  ## `idleMs` is per message, not per connection: four exchanges that take
+  ## longer than `idleMs` together, but not one by one.
+  var ws = connectWebSocket("ws://127.0.0.1:" & $gPort & "/echo", idleMs = 400)
+  var ok = 0
+  for i in 0 ..< 4:
+    sleep 150
+    ws.send(mkText, $i)
+    var msg = ""
+    if ws.recv(msg) == mkText and msg == $i: inc ok
+  say(31, "idle is per message: " & $ok & " of 4")
+  ws.close()
+
 proc runCase(n: int) {.passive, raises.} =
   ## The case `n`.
   case n
@@ -487,6 +528,9 @@ proc runCase(n: int) {.passive, raises.} =
   of 26: case26()
   of 27: case27()
   of 28: case28()
+  of 29: case29()
+  of 30: case30()
+  of 31: case31()
   else: discard
 
 proc clientCase(n: int) {.passive.} =
@@ -502,7 +546,7 @@ proc clientCase(n: int) {.passive.} =
 
 proc main =
   initIoRing()
-  gServer = 28
+  gServer = 31
   submit(delay(serverChain()), 0)
   let start = monoNow()
   while atomicLoad(listening, moAcquire) == 0:
@@ -511,14 +555,14 @@ proc main =
 
   # All cases at once: they are independent connections, and the report is
   # sorted by index at the end rather than by who finished first.
-  for n in 1 .. 28:
+  for n in 1 .. 31:
     submit(delay(clientCase(n)), 1)
-  awaitCount(clientsDone, 28, "cases")
+  awaitCount(clientsDone, 31, "cases")
   # The server notices the hang-up after the client is gone; the report has
   # to wait for it.
   awaitFlag(handlerDone, "handler")
   awaitFlag(serverDone, "server")
-  for i in 1 .. 28:
+  for i in 1 .. 31:
     stdout.write report[i]
   stdout.write slog
 

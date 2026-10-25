@@ -98,8 +98,6 @@ const
     ## How long the client gives the server to answer the handshake.
   DefaultCloseMs* = 5_000
     ## How long a side waits for the peer's half of the closing handshake.
-  MaxHandshakeHead = 16 * 1024
-    ## The most of a response head a client will read before it gives up.
 
   TokenSeparators = {',', ' ', '\t'}
     ## What may sit between the tokens of a comma-separated header value.
@@ -186,6 +184,7 @@ type
     r: Reader
     role: WsRole
     maxMessage: int
+    idleMs: int          ## the budget `recv` gives each message; 0: none
     msgOp: int           ## the opcode of the message being assembled; 0: none
     msgBuf: string       ## its payload so far
     closeSeen: bool
@@ -344,19 +343,17 @@ proc isSendableCloseCode*(code: int): bool =
   ## local fact about TLS; sending any of them would be a lie about what
   ## happened. 1004 was never defined.
   ##
+  ## The rest of 1000 to 2999 belongs to the protocol and is not assigned:
+  ## a peer that sends such a code is not speaking RFC 6455 (§7.4.2).
+  ##
   ## 3000 to 3999 are for libraries and frameworks to use, 4000 to 4999 for
   ## private use; both are legal on the wire.
-  if code < 1000: return false
-  if code == 1004 or code == 1005 or code == 1006 or code == 1015: return false
-  if code <= 2999: return true
-  if code <= 4999: return true       # for libraries and for private use
-  result = false
+  case code
+  of 1000..1003, 1007..1014, 3000..4999: true
+  else: false
 
-proc hasToken(value: string; token: string): bool =
-  ## Whether the comma-separated `value` holds `token`, case-insensitively.
-  ##
-  ## `Connection: keep-alive, Upgrade` is one header with two tokens in it,
-  ## and the order is not fixed.
+iterator tokens(value: string): string =
+  ## The tokens of the comma-separated header `value`, trimmed.
   var i = 0
   while i < value.len:
     while i < value.len and value[i] in TokenSeparators:
@@ -368,18 +365,16 @@ proc hasToken(value: string; token: string): bool =
     var stop = i
     while stop > start and value[stop - 1] in TokenWhitespace:
       dec stop
-    if stop - start == token.len:
-      var same = true
-      for k in 0 ..< token.len:
-        var a = value[start + k]
-        var b = token[k]
-        if a >= 'A' and a <= 'Z': a = chr(ord(a) + 32)
-        if b >= 'A' and b <= 'Z': b = chr(ord(b) + 32)
-        if a != b:
-          same = false
-          break
-      if same: return true
+    yield value.substr(start, stop - 1)
+
+proc hasToken(value: string; token: string): bool =
+  ## Whether the comma-separated `value` holds `token`, case-insensitively.
+  ##
+  ## `Connection: keep-alive, Upgrade` is one header with two tokens in it,
+  ## and the order is not fixed.
   result = false
+  for t in tokens(value):
+    if cmpIgnoreCase(t, token) == 0: return true
 
 proc isValidKey(key: string): bool =
   ## Whether `key` is a nonce as RFC 6455 §4.1 wants it: 16 random bytes,
@@ -395,30 +390,9 @@ proc pickProtocol(supported: openArray[string]; offered: string): string =
   ##
   ## The server's list is in the server's order, so the server picks — the
   ## client only says what it is willing to speak.
-  for want in supported:
-    var i = 0
-    while i < offered.len:
-      while i < offered.len and offered[i] in TokenSeparators:
-        inc i
-      if i >= offered.len: break
-      let start = i
-      while i < offered.len and offered[i] != ',':
-        inc i
-      var stop = i
-      while stop > start and offered[stop - 1] in TokenWhitespace:
-        dec stop
-      if stop - start == want.len:
-        var same = true
-        for k in 0 ..< want.len:
-          var a = offered[start + k]
-          var b = want[k]
-          if a >= 'A' and a <= 'Z': a = chr(ord(a) + 32)
-          if b >= 'A' and b <= 'Z': b = chr(ord(b) + 32)
-          if a != b:
-            same = false
-            break
-        if same: return want
   result = ""
+  for want in supported:
+    if hasToken(offered, want): return want
 
 proc acceptValue(key: string): string =
   ## The `Sec-WebSocket-Accept` value for `key`.
@@ -448,7 +422,10 @@ proc statusText(status: int): string =
 # ---------------------------------------------------------- the wire itself --
 
 proc closePayload(code: int; reason: string): string =
-  ## The payload of a close frame: the code, then the reason.
+  ## The payload of a close frame: the code, then the reason. Code `0` is the
+  ## close that carried no code, and its answer carries none either: 0 is not
+  ## a code that may go on the wire.
+  if code == 0: return ""
   var p = newString(2)
   p[0] = char((code shr 8) and 0xFF)
   p[1] = char(code and 0xFF)
@@ -463,8 +440,9 @@ proc avail(rd: WebSocketReader): int {.inline.} =
 proc take(rd: var WebSocketReader; dest: var openArray[char]): int =
   ## Copies what is buffered into `dest`, consuming it. No I/O, so no deadline.
   result = min(dest.len, rd.r.buffered)
-  for i in 0 ..< result: dest[i] = rd.r.peek[i]
-  rd.r.consume result
+  if result > 0:
+    copyMem(addr dest[0], addr rd.r.peek[0], result)
+    rd.r.consume result
 
 proc fillOnce(rd: var WebSocketReader): int {.passive, raises.} =
   ## Reads more of the protocol stream. The bytes available afterwards — `0`
@@ -578,6 +556,7 @@ proc upgradeImpl(c: var HttpConnection; protocols: openArray[string];
   ws.reader.r = move r
   ws.reader.role = wrServer
   ws.reader.maxMessage = maxMessage
+  ws.reader.idleMs = idleMs
   ws.writer.w = move w
   ws.writer.role = wrServer
   ws.sub = sub
@@ -610,9 +589,9 @@ proc upgradeWebSocket*(c: var HttpConnection; protocols: openArray[string] = [];
   ## named in the 101.
   ##
   ## `maxMessage` is the largest message the connection accepts, in bytes.
-  ## `idleMs` is the standing deadline for the connection's I/O; 0 means no
-  ## deadline, which is what a WebSocket usually wants — a connection with
-  ## nothing to say is idle, not stuck.
+  ## `idleMs` is how long `recv` waits for the next message, counted afresh
+  ## for every call; 0 means no limit, which is what a WebSocket usually
+  ## wants — a connection with nothing to say is idle, not stuck.
   ##
   ## The `Origin` of the request is not this module's business. A server that
   ## cares about where a connection comes from — the cross-site WebSocket
@@ -647,8 +626,8 @@ proc connectWebSocket*(url: string;
   ## the handshake unchanged; `protocols` are offered as
   ## `Sec-WebSocket-Protocol`, in this order, and the one the server picks is
   ## `subprotocol`. `timeoutMs` bounds the whole handshake — connect, TLS and
-  ## the answer — and `idleMs` is the standing deadline for the connection
-  ## afterwards, 0 for none.
+  ## the answer — and `idleMs` is how long `recv` waits for the next
+  ## message, counted afresh for every call, 0 for no limit.
   ##
   ## A `wss://` URL needs a TLS engine: `std/tls`'s `newTlsEngine()` is the
   ## one to pass, and this module does not import it, so that a server that
@@ -695,6 +674,7 @@ proc connectWebSocket*(url: string;
   ws.reader.r = move r
   ws.reader.role = wrClient
   ws.reader.maxMessage = maxMessage
+  ws.reader.idleMs = idleMs
   ws.writer.w = move w
   ws.writer.role = wrClient
   var req = "GET " & path & " HTTP/1.1\r\n"
@@ -708,23 +688,19 @@ proc connectWebSocket*(url: string;
   req.add string(headers)
   req.add "\r\n"
   ws.writer.writeProto(req)
-  # The response head, one byte at a time: the bytes after it are frames, and
-  # a server that sent its first message behind the 101 has already put them
-  # in the reader's buffer. Reading a block and looking for the terminator in
-  # it would consume those bytes into a string nobody parses.
-  var rawHead = ""
-  var matched = 0
-  const terminator = "\r\n\r\n"
-  while matched < 4:
-    if ws.reader.avail == 0:
-      if ws.reader.fillOnce() == 0: raise EndOfStreamError
-    var one = default(array[1, char])
-    discard ws.reader.take(toOpenArray(one, 0, 0))
-    rawHead.add one[0]
-    if rawHead.len > MaxHandshakeHead: raise ContentTooLong
-    if one[0] == terminator[matched]: inc matched
-    elif one[0] == '\r': matched = 1
-    else: matched = 0
+  # The response head, and not one byte more: the bytes after it are frames,
+  # and a server that sent its first message behind the 101 has put them in
+  # the reader's buffer already.
+  var scan = default(HeadScanner)
+  var headLen = 0
+  while true:
+    headLen = findHeadEnd(scan, ws.reader.r.peek)
+    if headLen == ParseBad: raise ContentTooLong
+    if headLen >= 0: break
+    if ws.reader.r.fill() == 0: raise EndOfStreamError
+  var rawHead = newString(headLen)
+  discard ws.reader.take(toOpenArray(rawHead, 0, headLen - 1))
+  if not rawHead.endsWith("\r\n\r\n"): raise ProtocolError
   let stop = rawHead.len - 4            # the head lines end before the last CRLF
   let eol = rawHead.find("\r\n")
   if eol < 0 or eol > stop: raise ProtocolError
@@ -737,7 +713,11 @@ proc connectWebSocket*(url: string;
   if not hasToken(answer.get("Connection"), "upgrade"): raise ProtocolError
   if answer.get("Sec-WebSocket-Accept") != acceptValue(key):
     raise ProtocolError
+  # RFC 6455 §4.1: a subprotocol the client did not offer, or an extension
+  # it did not ask for (it asks for none), fails the connection.
   ws.sub = answer.get("Sec-WebSocket-Protocol")
+  if ws.sub.len > 0 and ws.sub notin protocols: raise ProtocolError
+  if answer.has("Sec-WebSocket-Extensions"): raise ProtocolError
   if idleMs > 0: ws.reader.renew(afterMs(idleMs))
   else: ws.reader.renew(never)
   result = ws
@@ -840,7 +820,9 @@ proc send*(wr: var WebSocketWriter; kind: MsgKind; data: openArray[char]) {.
   ##
   ## Text has to be text: a `mkText` whose bytes are not UTF-8 raises rather
   ## than goes out, because the peer would have to fail the connection over
-  ## it. A ping or a pong carries at most 125 bytes.
+  ## it. A ping or a pong carries at most 125 bytes. Nothing may follow a
+  ## close frame, so after one this raises `BadOperation`.
+  if wr.closeSent: raise BadOperation
   case kind
   of mkText:
     if not isValidUtf8(data): raise ValueError
@@ -909,20 +891,16 @@ proc readPayload(rd: var WebSocketReader; f: WsFrame; dest: var string): int {.
   if n == 0: return 0
   let old = dest.len
   let dp = beginStore(dest, old + n, old)
-  var chunk = default(array[16 * 1024, char])
   var got = 0
   while got < n:
     if rd.avail == 0:
       if rd.fillOnce() == 0: break
-    let want = min(n - got, chunk.len)
-    let took = rd.take(toOpenArray(chunk, 0, want - 1))
-    if took == 0: break
+    let took = min(n - got, rd.avail)
+    copyMem(addr dp[got], addr rd.r.peek[0], took)
+    rd.r.consume took
     if f.masked:
-      for i in 0 ..< took:
-        dp[got + i] = char(ord(chunk[i]) xor ord(f.key[(got + i) and 3]))
-    else:
-      for i in 0 ..< took:
-        dp[got + i] = chunk[i]
+      for i in got ..< got + took:
+        dp[i] = char(ord(dp[i]) xor ord(f.key[i and 3]))
     got += took
   if got < n: dest.setLen old + got
   dest.endStore()
@@ -1047,7 +1025,11 @@ proc recv*(rd: var WebSocketReader; msg: var string): MsgKind {.
   ## The fragments of a message are put back together here. A protocol error
   ## raises `ProtocolError` with `failCode` naming the close code to send; the
   ## caller of a bare reader has to send it (the pair does).
+  ##
+  ## With an `idleMs`, each call gets that long: it replaces whatever deadline
+  ## the connection had.
   try:
+    if rd.idleMs > 0: rd.r.renew(afterMs(rd.idleMs))
     result = recvImpl(rd, msg)
   except ErrorCode as e:
     rd.err = e
@@ -1085,8 +1067,9 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
     case result
     of mkPing:
       # The reader handed the ping over instead of answering it; the pair is
-      # the only place that owns both halves, so the pong goes out here.
-      ws.writer.sendFrame(wsoPong, msg)
+      # the only place that owns both halves, so the pong goes out here —
+      # unless this side has said goodbye, after which it says nothing.
+      if not ws.writer.closeSent: ws.writer.sendFrame(wsoPong, msg)
     of mkClose:
       if not ws.writer.closeSent:
         # The peer closed first: the answer carries the same code, and then
@@ -1108,15 +1091,15 @@ proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
   ## Ends the connection the way the protocol says: the close frame goes
   ## out, and then this side waits for the peer's close.
   ##
-  ## The wait has the connection's deadline, or five seconds when it has
+  ## The wait is the connection's `idleMs`, or five seconds when it has
   ## none. A peer that does not answer is a timeout and raises like every
   ## other timeout in this API.
   if ws.writer.closeSent: return
   try:
     ws.writer.close(code, reason)
     # The peer's close is the other half of the handshake.
-    if ws.reader.deadline == never:
-      ws.reader.renew(afterMs(DefaultCloseMs))
+    ws.reader.renew(afterMs(if ws.reader.idleMs > 0: ws.reader.idleMs
+                            else: DefaultCloseMs))
     while not ws.reader.closeSeen:
       var f = WsFrame()
       if not ws.reader.nextFrame(f):

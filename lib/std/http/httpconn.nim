@@ -27,7 +27,7 @@ import ./httpwire
 import ../streamio
 import std / [ioring, assertions]
 
-export streamio.Reader, streamio.Writer, streamio.TlsEngine
+export streamio.Reader, streamio.Writer
 
 # ------------------------------------------------------------ connection ---
 
@@ -56,50 +56,17 @@ type
     chunk: ChunkState
     chunkLeft: int
     fdVal: cint
-    error*: ErrorCode
-      ## What ended a connection whose setup failed (`accept`'s TLS handshake,
-      ## say); `Success` otherwise.
+    deadline: Deadline
+      ## The standing budget. The streams' own deadline is set from it, and
+      ## from a tighter per-call one, before every operation: a per-call
+      ## deadline is about that call and must not outlive it.
 
 proc initHttpConn*(fd: cint; deadline: Deadline; tags: HttpTags): HttpConn =
   ## `fd` must already be non-blocking. The deadline has no default: a
   ## connection with no budget is one a quiet peer can hold forever.
-  ##
-  ## Plaintext only, and non-raising: an already-connected descriptor has no
-  ## setup that can fail, which is what lets a test build one outside a
-  ## passive chain. A server that may want TLS uses the engine-taking overload
-  ## and reads `error` if its handshake failed.
-  result = HttpConn(tags: tags, scan: default(HeadScanner), chunk: csHeader,
-                    chunkLeft: 0, fdVal: fd, error: Success)
-  try:
-    var (r, w) = plainStreams(fd, deadline)
-    result.r = move r
-    result.w = move w
-  except ErrorCode as e:
-    result.fdVal = -1
-    result.error = e
-
-proc initHttpConn*(fd: cint; deadline: Deadline; tags: HttpTags;
-                   tls: nil TlsEngine): HttpConn {.passive.} =
-  ## The same, with an optional server TLS engine. A failed handshake closes
-  ## the descriptor and answers a connection whose `error` says why; the check
-  ## is `isOpen` because a constructor that owns a move-only value cannot
-  ## raise.
-  result = HttpConn(tags: tags, scan: default(HeadScanner), chunk: csHeader,
-                    chunkLeft: 0, fdVal: fd, error: Success)
-  try:
-    var (r, w) = acceptStreams(fd, tls, deadline)
-    r.renew(deadline)
-    result.r = move r
-    result.w = move w
-  except ErrorCode as e:
-    # `acceptStreams` owns and closed `fd` on this path.
-    result.fdVal = -1
-    result.error = e
-
-proc isOpen*(c: HttpConn): bool {.inline.} =
-  ## Whether the streams were set up. A connection from a failed TLS
-  ## handshake is not open and carries the reason in `error`.
-  c.fdVal >= 0
+  var (r, w) = openStreams(fd, deadline)
+  HttpConn(r: move r, w: move w, tags: tags, scan: default(HeadScanner),
+           chunk: csHeader, chunkLeft: 0, fdVal: fd, deadline: deadline)
 
 proc fd*(c: HttpConn): cint {.inline.} = c.fdVal
 
@@ -117,17 +84,11 @@ proc takeStreams*(c: var HttpConn): (Reader, Writer) =
 
 # --------------------------------------------------------------- reading ---
 
-proc tighten(r: var Reader; dl: Deadline) {.raises.} =
-  ## A per-operation deadline can only make the standing one tighter, never
-  ## widen it. The tighter value stays until the next `renew`, which is what a
-  ## keep-alive connection does before each exchange.
-  if dl != never:
-    r.renew(earlier(r.deadline, dl))
-
-proc tighten(w: var Writer; dl: Deadline) {.raises.} =
-  ## See the `Reader` overload; the deadline is shared.
-  if dl != never:
-    w.renew(earlier(w.deadline, dl))
+proc budget(c: var HttpConn; dl: Deadline) {.raises.} =
+  ## The deadline the next operation runs under: the standing one, or a
+  ## tighter one the caller supplied. `earlier` means a caller can never widen
+  ## the budget by passing a later instant. Reader and writer share it.
+  c.r.renew(earlier(c.deadline, dl))
 
 proc readHead(c: var HttpConn; m: var HttpMsg; asRequest: bool;
               dl: Deadline) {.passive, raises.} =
@@ -141,7 +102,7 @@ proc readHead(c: var HttpConn; m: var HttpMsg; asRequest: bool;
   ## `ContentTooLong` when the head passes `MaxHeadLen`, `SyntaxError` when it
   ## is complete and malformed, `EndOfStreamError` when the peer closed before
   ## finishing one, plus whatever `fill` raises.
-  c.r.tighten(dl)
+  c.budget(dl)
   while true:
     let headLen = findHeadEnd(c.scan, c.r.peek)
     if headLen == ParseBad: raise ContentTooLong
@@ -210,7 +171,7 @@ proc readChunked*(c: var HttpConn; dest: var openArray[char];
   ## body it stopped sending. Those were one `-1` before, and they are not the
   ## same thing: one is a peer to answer 400, the other a connection to drop.
   result = 0
-  c.r.tighten(dl)
+  c.budget(dl)
   while true:
     case c.chunk
     of csDone:
@@ -219,9 +180,8 @@ proc readChunked*(c: var HttpConn; dest: var openArray[char];
       if c.r.buffered == 0:
         needMore(c)
         continue
-      let took = min(min(dest.len, c.chunkLeft), c.r.buffered)
-      for i in 0..<took: dest[i] = c.r.peek[i]
-      c.r.consume took
+      # Something is buffered, so this is a copy and not a read.
+      let took = c.r.read(toOpenArray(dest, 0, min(dest.len, c.chunkLeft) - 1))
       c.chunkLeft -= took
       if c.chunkLeft == 0: c.chunk = csDataEnd
       return took
@@ -266,7 +226,7 @@ proc readBody*(c: var HttpConn; dest: var openArray[char];
   ## `readChunked` if it says so: guessing the framing is how two hops come to
   ## disagree about where a message ends. Nothing about it is HTTP, so it is
   ## the `Reader`'s read — the caller stops at `contentLength` bytes.
-  c.r.tighten(dl)
+  c.budget(dl)
   result = c.r.read(dest)
 
 # --------------------------------------------------------------- writing ---
@@ -284,7 +244,7 @@ proc sendHead*(c: var HttpConn; m: HttpMsg;
   if need <= 0: raise ValueError
   if writeHead(toOpenArray(c.w.scratch(need), 0, need - 1), 0, m) != need:
     raise BugError
-  c.w.tighten(dl)
+  c.budget(dl)
   c.w.flush()
 
 proc sendBody*(c: var HttpConn; body: openArray[char];
@@ -292,7 +252,7 @@ proc sendBody*(c: var HttpConn; body: openArray[char];
   ## Send a body already in memory, and make it visible to the peer before
   ## this returns.
   if body.len > 0:
-    c.w.tighten(dl)
+    c.budget(dl)
     c.w.write body
     c.w.flush()
 
@@ -305,7 +265,7 @@ proc sendChunk*(c: var HttpConn; data: openArray[char];
   let n = chunkOverhead(data.len) + data.len
   if writeChunk(toOpenArray(c.w.scratch(n), 0, n - 1), 0, data) != n:
     raise BugError
-  c.w.tighten(dl)
+  c.budget(dl)
   c.w.flush()
 
 proc endChunks*(c: var HttpConn; dl = never) {.passive, raises.} =
@@ -314,7 +274,7 @@ proc endChunks*(c: var HttpConn; dl = never) {.passive, raises.} =
   let n = writeLastChunk(toOpenArray(c.w.scratch(LastChunkLen), 0,
                                      LastChunkLen - 1), 0)
   if n != LastChunkLen: raise BugError
-  c.w.tighten(dl)
+  c.budget(dl)
   c.w.flush()
 
 proc respond*(c: var HttpConn; status: int; body: openArray[char];
@@ -332,14 +292,11 @@ proc respond*(c: var HttpConn; status: int; body: openArray[char];
 
 # ------------------------------------------------------------ keep-alive ---
 
-proc renew*(c: var HttpConn; deadline: Deadline) =
+proc renew*(c: var HttpConn; deadline: Deadline) {.inline.} =
   ## Start the next request's budget. A keep-alive connection serves many
   ## requests and each gets its own, or the first one would spend the whole
   ## connection's allowance on behalf of all of them.
-  try:
-    c.r.renew(deadline)
-  except ErrorCode:
-    discard
+  c.deadline = deadline
 
 proc close*(c: var HttpConn) =
   ## Cancel anything still in flight and close the fd. Idempotent. Must run on

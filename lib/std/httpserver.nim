@@ -63,7 +63,7 @@ import std / [http/httpconn, http/httpmsg, http/httpparse, http/httpwire,
               http/httpdate, http/httpcoding, compress/gzip, socket, ioring,
               streamio, uri, assertions]
 
-export httpmsg, httpcoding, httpconn.HttpConn, streamio,
+export httpmsg, httpcoding, httpconn.HttpConn, streamio.Reader, streamio.Writer,
        socket.PeerAddr, socket.`$`, socket.ip,
        socket.port, socket.family, socket.isV4, socket.isV6
 export ioring.Deadline, ioring.never, ioring.afterMs, ioring.after,
@@ -163,8 +163,6 @@ type
     codedStream: bool      ## the streamed response is going through `enc`
     enc: Encoder
     zbuf: string           ## encoded bytes on their way to the socket
-    error*: ErrorCode      ## what ended a connection `accept` could not set
-                           ## up (a failed TLS handshake, say); `Success` otherwise
 
 # No explicit `=copy` here: `HttpConn` holds move-only streams, so this object
 # is move-only by construction. Restating it suppresses the generated `=dup`
@@ -193,14 +191,9 @@ proc close*(s: var HttpServer) =
     closeFd(s.fd)
     s.fd = -1
 
-proc initConnection(s: HttpServer; fd: cint; peer: PeerAddr;
-                    tls: nil TlsEngine): HttpConnection {.passive.} =
-  ## The connection's policy fields, and — when `fd` is a real descriptor —
-  ## its streams. A failed TLS handshake closes the descriptor and answers a
-  ## closed connection carrying the reason in `error`; that is the same shape
-  ## `accept` uses when the listener is gone, because a constructor that owns a
-  ## move-only value cannot raise.
-  result = HttpConnection(
+proc initConnection(s: HttpServer; fd: cint; peer: PeerAddr): HttpConnection =
+  HttpConnection(
+    conn: initHttpConn(fd, afterMs(s.idleMs), s.tags),
     peer: peer,
     req: initHttpMsg(s.tags),
     res: initHttpMsg(s.tags),
@@ -212,15 +205,9 @@ proc initConnection(s: HttpServer; fd: cint; peer: PeerAddr;
     checkTargets: s.checkTargets,
     compression: s.compression, compressLevel: s.compressLevel,
     compressMinLen: s.compressMinLen, coding: ceIdentity,
-    codedStream: false, enc: default(Encoder), zbuf: "", error: Success)
-  if fd >= 0:
-    result.conn = initHttpConn(cint(fd), afterMs(s.idleMs), s.tags, tls)
-    if not result.conn.isOpen:
-      result.phase = phClosed
-      result.error = result.conn.error
+    codedStream: false, enc: default(Encoder), zbuf: "")
 
-proc accept*(s: var HttpServer; tls: nil TlsEngine = nil): HttpConnection {.
-    passive.} =
+proc accept*(s: var HttpServer): HttpConnection {.passive.} =
   ## The next connection.
   ##
   ## Answers a connection whose `isClosed` is true when the listener is gone,
@@ -240,20 +227,14 @@ proc accept*(s: var HttpServer; tls: nil TlsEngine = nil): HttpConnection {.
   ##
   ## No deadline either: a listener with nothing connecting to it is idle, not
   ## stuck, and the thing that ends this wait is `close`.
-  ##
-  ## `tls` is the engine for this one connection, or `nil` for plaintext. An
-  ## engine serves one connection, so a TLS server constructs a new one for
-  ## every `accept`; the handshake runs before `accept` returns and its
-  ## deadline is the server's idle budget. A failed handshake answers a closed
-  ## connection whose `error` says why (`c.isClosed` is then true).
   var peer = PeerAddr(raw: Sockaddr_storage())
   let fd = acceptAsync(s.fd, peer, never)
   if fd < 0:
-    result = initConnection(s, -1.cint, peer, nil)
+    result = initConnection(s, -1.cint, peer)
     result.phase = phClosed
   else:
     setNonBlocking(cint(fd))
-    result = initConnection(s, cint(fd), peer, tls)
+    result = initConnection(s, cint(fd), peer)
 
 # --------------------------------------------------------- reading a head --
 
@@ -281,7 +262,7 @@ proc takeStreams*(c: var HttpConnection): (Reader, Writer) =
   c.phase = phClosed
   result = c.conn.takeStreams()
 
-proc requestHeader*(c: var HttpConnection; name: string): string =
+proc requestHeader*(c: HttpConnection; name: string): string =
   ## The value of the request's header `name`, whatever its spelling; `""` when
   ## the request does not carry it.
   ##
@@ -290,7 +271,7 @@ proc requestHeader*(c: var HttpConnection; name: string): string =
   ## them, and the handler is the one that knows their names.
   c.req.findHeader(name)
 
-proc countRequestHeader*(c: var HttpConnection; name: string): int =
+proc countRequestHeader*(c: HttpConnection; name: string): int =
   ## How many times the request carries the header `name`.
   c.req.countHeaderByName(name)
 

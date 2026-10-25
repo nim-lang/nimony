@@ -156,7 +156,9 @@ proc main() {.raises.} =
   echo "999 may not be sent:  ", not isSendableCloseCode(999)
   echo "5000 may not be sent: ", not isSendableCloseCode(5000)
   echo "1000 may be sent:     ", isSendableCloseCode(1000)
-  echo "2999 may be sent:     ", isSendableCloseCode(2999)
+  echo "1016 may not be sent: ", not isSendableCloseCode(1016)
+  echo "2999 may not be sent: ", not isSendableCloseCode(2999)
+  echo "1014 may be sent:     ", isSendableCloseCode(1014)
   echo "3000 may be sent:     ", isSendableCloseCode(3000)
   echo "4999 may be sent:     ", isSendableCloseCode(4999)
 

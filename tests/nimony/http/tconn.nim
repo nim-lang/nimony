@@ -4,6 +4,7 @@ when defined(windows):
   echo "second request on the same connection: /again"
   echo "read past a dead peer: EndOfStreamError"
   echo "idle connection timed out: TimeoutError"
+  echo "per-call deadlines do not stick: 3 bytes"
   echo "client got 200 len=12 body=hello world!"
   echo "client got 404 len=0"
   echo "chunked body: Hello, world!"
@@ -11,7 +12,7 @@ else:
   # An end-to-end run over a real socket pair, through the ring, with the
   # server and the client each a `.passive` chain resumed by pool workers.
   import std / [http/httpconn, http/httpmsg, http/httpparse, socket,
-                ioring, threadpool, atomics, assertions, syncio]
+                ioring, threadpool, atomics, assertions, syncio, os]
   import std/posix/posix
   let tags = newHttpTags()   # this test's own tag space
   let hApiKey = registerHeader(tags, "x-api-key")   # the header this test indexes on
@@ -219,6 +220,37 @@ else:
     let (a, b) = mkPair()
     idleFd = a
     submit(delay(readsIdlePeer()), 0)
+    awaitFlag(serverDone)
+    closeFd(b)                     # `a` belongs to the connection
+
+  # ---- a per-call deadline is about that call ------------------------------
+
+  var slowFd: cint
+
+  proc readsSlowBody() {.passive.} =
+    # Each read gets 300ms, and the bytes arrive 200ms apart: a per-call
+    # deadline that stuck to the connection would time the third read out.
+    var c = initHttpConn(slowFd, afterMs(5000), tags)
+    var got = 0
+    try:
+      var buf = default(array[1, char])
+      while got < 3:
+        if c.readBody(buf, afterMs(300)) == 0: break
+        inc got
+      serverLog.add "per-call deadlines do not stick: " & $got & " bytes\n"
+    except ErrorCode as e:
+      serverLog.add "per-call deadlines do not stick: " & $e & " after " &
+                    $got & "\n"
+    atomicStore(serverDone, 1, moRelease)
+
+  block perCallDeadline:
+    let (a, b) = mkPair()
+    slowFd = a
+    submit(delay(readsSlowBody()), 0)
+    for i in 0 ..< 3:
+      if i > 0: sleep 200
+      var x = 'x'
+      discard write(b, addr x, 1)
     awaitFlag(serverDone)
     closeFd(b)                     # `a` belongs to the connection
 

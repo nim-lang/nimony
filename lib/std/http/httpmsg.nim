@@ -25,7 +25,7 @@
 # testable on its own.
 
 import ../../../src/lib/nifcore
-import std / [assertions, syncio]
+import std / [assertions, syncio, strutils]
 
 export nifcore.TagId, nifcore.`==`, nifcore.Cursor
 
@@ -649,20 +649,6 @@ proc getStr*(m: HttpMsg; h: TagId): string =
 
 proc getStr*(m: HttpMsg; h: HttpTag): string {.inline.} = getStr(m, tag(h))
 
-proc sameName(a, b: string): bool =
-  ## Whether two header names are the same, ASCII case-insensitively.
-  ##
-  ## HTTP's own rule, spelled out here because the tag pool already folds the
-  ## names it knows and this is for the ones it does not.
-  if a.len != b.len: return false
-  for i in 0 ..< a.len:
-    var x = a[i]
-    var y = b[i]
-    if x >= 'A' and x <= 'Z': x = chr(ord(x) + 32)
-    if y >= 'A' and y <= 'Z': y = chr(ord(y) + 32)
-    if x != y: return false
-  result = true
-
 proc findHeader*(m: HttpMsg; name: string): string =
   ## The value of the header `name`, whatever its spelling; `""` when the
   ## message does not carry it.
@@ -672,11 +658,11 @@ proc findHeader*(m: HttpMsg; name: string): string =
   ## Key`) has no tag for them, and the layer that knows their names is the
   ## one that has to look them up.
   for (n, v) in otherHeaders(m):
-    if sameName(n, name): return v
+    if cmpIgnoreCase(n, name) == 0: return v
   var c = headersStart(m)
   while c.hasMore:
     if c.cursorTagId != tag(tXhdr):
-      if sameName(name(m.tags, c.cursorTagId), name):
+      if cmpIgnoreCase(name(m.tags, c.cursorTagId), name) == 0:
         var v = c.sub()
         if not v.hasMore: return ""
         case v.kind
@@ -695,11 +681,11 @@ proc countHeaderByName*(m: HttpMsg; name: string): int =
   ## does not know what it is sending.
   result = 0
   for (n, v) in otherHeaders(m):
-    if sameName(n, name): inc result
+    if cmpIgnoreCase(n, name) == 0: inc result
   var c = headersStart(m)
   while c.hasMore:
     if c.cursorTagId != tag(tXhdr):
-      if sameName(name(m.tags, c.cursorTagId), name): inc result
+      if cmpIgnoreCase(name(m.tags, c.cursorTagId), name) == 0: inc result
     c.skip
 
 proc getInt*(m: HttpMsg; h: TagId; default = -1): int =
