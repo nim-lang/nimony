@@ -156,8 +156,9 @@ proc hexerMain() =
     else:
       writeHelp()
 
-proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode) =
-  let st = processFile(input, output, verify, vecMode)
+proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode;
+            memNodes: bool) =
+  let st = processFile(input, output, verify, vecMode, memNodes)
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
@@ -171,28 +172,30 @@ proc optimizeMain(args: seq[string]) =
   var verify = false
   var stats = false
   var vecMode = vecOff
+  var memNodes = true
   for a in args:
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
     elif a == "--verify": verify = true
     elif a == "--stats": stats = true
     elif a == "--vectorize": vecMode = vecNeon
     elif a == "--vectorize:sse": vecMode = vecSse
+    elif a == "--no-mem-nodes": memNodes = false   # a back end without (memset …)
     elif a.startsWith("-"): quit "unknown option: " & a
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--no-mem-nodes] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
     onRaiseQuit createDir(path(outdir))
     for inp in positional:
-      runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode)
+      runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode, memNodes)
   elif positional.len == 2:
-    runOne(positional[0], positional[1], verify, stats, vecMode)
+    runOne(positional[0], positional[1], verify, stats, vecMode, memNodes)
   else:
     # in-place rewrite of each input
     for inp in positional:
-      runOne(inp, inp, verify, stats, vecMode)
+      runOne(inp, inp, verify, stats, vecMode, memNodes)
 
 proc main =
   # `commandLineParams` rather than `paramStr`: Nimony's `parseopt` exports a

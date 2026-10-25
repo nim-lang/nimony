@@ -591,3 +591,9 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     error c.m, "expected statement but got: ", n
   of KeepovfS:
     genKeepOverflow c, n
+  of MemsetS:
+    genMemBuiltin c, n, "__builtin_memset("
+    c.add Semicolon
+  of MemcpyS:
+    genMemBuiltin c, n, "__builtin_memcpy("
+    c.add Semicolon

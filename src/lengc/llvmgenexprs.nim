@@ -315,6 +315,18 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
                      callRetType: retType, callArgs: args)
       result = res
 
+proc sizeToI64(c: var LLVMCode; v: LLValue): LLValue =
+  ## The `llvm.mem*` intrinsics take an `i64` length; a Leng size expression
+  ## is whatever integer the target's `int` is. Sizes are never negative, so a
+  ## narrower one zero-extends.
+  if v.kind == llvInt or (v.typ.kind == llInt and v.typ.intBits == 64):
+    result = v.withType(c.prim.i64)
+  else:
+    let t = c.nextTemp()
+    result = llReg(t, c.prim.i64)
+    c.emit LLInstr(kind: llZext, result: result, castOp: "zext", castSrc: v,
+                   castDstType: c.prim.i64)
+
 proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[
     LLValue]; retType: LLType; result: var LLValue) =
   case externName
@@ -370,6 +382,20 @@ proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[
       c.emit LLInstr(kind: llCall, result: res, callCallee: llGlobalRef(externName, c.prim.ptrT),
                      callRetType: retType, callArgs: args)
       result = res
+
+proc genMemNode(c: var LLVMCode; n: var Cursor; externName: string;
+                result: var LLValue) =
+  ## `(memset D V N)` / `(memcpy D S N)` / `(memcmp A B N)`: the same lowering
+  ## as a call to the importc'd C function of that name.
+  var args: seq[LLValue] = @[]
+  n.into:
+    for i in 0 ..< 3:
+      var a = LLValue(); genExprLLVM(c, n, a)
+      args.add a
+  let size = sizeToI64(c, args[2])
+  args[2] = size
+  let retType = c.prim.i32                 # only `memcmp` has a result
+  genMemIntrinsicCall(c, externName, args, retType, result)
 
 const
   AtomicBuiltins = [
@@ -834,7 +860,7 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
      OconstrC, AconstrC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
      BitandC, BitorC, BitxorC, BitnotC,
-     EqC, NeqC, LeC, LtC, CastC, ConvC, CallC, InstrC:
+     EqC, NeqC, LeC, LtC, CastC, ConvC, CallC, InstrC, MemcmpC:
     error c.m, "not an lvalue: ", n
 
 proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -1089,6 +1115,8 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     genCallWithType(c, n, retType, result)
   of InstrC:
     genInstrLLVM(c, n, result)
+  of MemcmpC:
+    genMemNode(c, n, "memcmp", result)
   of AddrC, HaddrC:
     genAddrLLVM(c, n, result)
   of DerefC:

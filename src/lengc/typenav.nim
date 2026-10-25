@@ -250,6 +250,8 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
       result = createIntegralType(c, "(f +64)")
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(c, "(bool)")
+    of MemcmpC:
+      result = createIntegralType(c, "(i +32)")
     of CallC, InstrC:
       # `(instr SYM …)` is typed EXACTLY like `(call SYM …)` — the callee's
       # signature drives everything. Only the *cost* differs, which is what the

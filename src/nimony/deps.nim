@@ -1254,6 +1254,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           var vecFlag = "--vectorize"
           if cpuName == "amd64": vecFlag = "--vectorize:sse"
           b.addStrLit vecFlag
+        if cpuName == "avr":
+          # arkham's AVR emitter has no lowering for `(memset …)` (nor for a
+          # call to C's `memset`), so the fill-loop recognizer stays off there.
+          b.addStrLit "--no-mem-nodes"
         b.addKeyw "input"
         b.addKeyw "output"
 

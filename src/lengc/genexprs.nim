@@ -76,6 +76,23 @@ proc intrinsicOfCallee(c: var GeneratedCode; callee: Cursor;
                        bits: var int): IntrinsicOp {.inline.} =
   intrinsicOfCallee(c.m, callee, bits)
 
+proc genMemBuiltin*(c: var GeneratedCode; n: var Cursor; callee: string) =
+  ## `(memset D V N)` / `(memcpy D S N)` / `(memcmp A B N)`: three operands,
+  ## spelled as the builtin the C compiler inlines for a small constant size.
+  ## The size is cast to `size_t` so a signed Leng integer does not draw a
+  ## sign-conversion warning.
+  genCLineDir(c, info(n))
+  c.add callee
+  n.into:
+    genx c, n
+    c.add Comma
+    genx c, n
+    c.add Comma
+    c.add "(size_t)("
+    genx c, n
+    c.add ParRi
+  c.add ParRi
+
 proc genInstr(c: var GeneratedCode; n: var Cursor) =
   ## `(instr SYM X*)` — an intrinsic application. Selection-final: the opcode
   ## the source named is the one emitted, so this never falls back to a call.
@@ -544,6 +561,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       while n.hasMore: skip n
   of CallC: genCall c, n
   of InstrC: genInstr c, n
+  of MemcmpC: genMemBuiltin c, n, "__builtin_memcmp("
   of AddC: typedBinOp c, n, " + "
   of SubC: typedBinOp c, n, " - "
   of MulC: typedBinOp c, n, " * "

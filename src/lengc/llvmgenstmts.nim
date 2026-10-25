@@ -640,3 +640,6 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
     error c.m, "expected statement but got: ", n
   of KeepovfS:
     genKeepOverflowLLVM c, n
+  of MemsetS, MemcpyS:
+    var ignored = LLValue()
+    genMemNode(c, n, (if n.stmtKind == MemsetS: "memset" else: "memcpy"), ignored)

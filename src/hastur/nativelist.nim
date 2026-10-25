@@ -224,6 +224,11 @@ const
     # the reciprocal: the magic constants, the 65-bit "add" fixup and the signed
     # high half all go wrong quietly. Also two divisions in one expression.
     "tests/nimony/basicarith/tdivmodconst",
+    # shoggoth's `(memset …)`/`(memcpy …)` nodes (#2350): arkham lowers them
+    # with the inline `mem*` loops, whose operands are no longer leaves — the
+    # address of `p[i]` stages its index through a scratch register.
+    "tests/nimony/opt/topt_memset_fill",
+    "tests/nimony/opt/topt_memcpy_copy",
     # `float32` at every width-sensitive spot. Native-relevant by nature: the C
     # backend gets the widths from C's own type system, so this only ever fails on
     # a backend that has to derive them itself.
