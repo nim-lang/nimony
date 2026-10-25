@@ -902,8 +902,8 @@ proc readPayload(rd: var WebSocketReader; f: WsFrame; dest: var string): int {.
       for i in got ..< got + took:
         dp[i] = char(ord(dp[i]) xor ord(f.key[i and 3]))
     got += took
-  if got < n: dest.setLen old + got
   dest.endStore()
+  if got < n: dest.setLen old + got
   result = got
 
 proc readMessagePart(rd: var WebSocketReader; f: WsFrame): bool {.
