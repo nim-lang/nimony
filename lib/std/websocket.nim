@@ -425,13 +425,14 @@ proc closePayload(code: int; reason: string): string =
   ## The payload of a close frame: the code, then the reason. Code `0` is the
   ## close that carried no code, and its answer carries none either: 0 is not
   ## a code that may go on the wire.
-  if code == 0: return ""
-  var p = newString(2)
-  p[0] = char((code shr 8) and 0xFF)
-  p[1] = char(code and 0xFF)
-  p.add reason
-  p.endStore()
-  result = p
+  result = ""
+  if code != 0:
+    # one allocation of the final size, filled in place
+    let p = beginStore(result, 2 + reason.len)
+    p[0] = char((code shr 8) and 0xFF)
+    p[1] = char(code and 0xFF)
+    if reason.len > 0: copyMem(addr p[2], readRawData(reason), reason.len)
+    result.endStore()
 
 proc avail(rd: WebSocketReader): int {.inline.} =
   ## Protocol bytes buffered and not yet consumed.
@@ -489,11 +490,17 @@ proc refusalText(status: int; body: string; extra: string): string =
   ## of its own, and it cannot carry a header nobody registered. The answer
   ## here is short, fixed and written by this module, so nothing a peer sent
   ## can end up in it.
-  result = "HTTP/1.1 " & $status & " " & statusText(status) & "\r\n"
-  result.add "Content-Type: text/plain; charset=utf-8\r\n"
-  result.add "Content-Length: " & $body.len & "\r\n"
-  result.add "Connection: close\r\n"
-  if extra.len > 0: result.add extra
+  # The fixed part is about 120 bytes: reserve it all up front and append in
+  # place, with no temporary strings for the numbers or the pieces.
+  result = newStringOfCap(160 + extra.len + body.len)
+  result.add "HTTP/1.1 "
+  result.addInt status
+  result.add ' '
+  result.add statusText(status)
+  result.add "\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: "
+  result.addInt body.len
+  result.add "\r\nConnection: close\r\n"
+  result.add extra
   result.add "\r\n"
   result.add body
 
@@ -553,11 +560,11 @@ proc upgradeImpl(c: var HttpConnection; protocols: openArray[string];
   if idleMs > 0: r.renew(afterMs(idleMs))
   else: r.renew(never)
   var ws = WebSocket()
-  ws.reader.r = move r
+  ws.reader.r = ensureMove r
   ws.reader.role = wrServer
   ws.reader.maxMessage = maxMessage
   ws.reader.idleMs = idleMs
-  ws.writer.w = move w
+  ws.writer.w = ensureMove w
   ws.writer.role = wrServer
   ws.sub = sub
   # The 101 goes out before the first frame does, and it says nothing about
@@ -671,11 +678,11 @@ proc connectWebSocket*(url: string;
   var (r, w) = connect(u.hostname & ":" & $port, tls, afterMs(timeoutMs))
   r.renew(afterMs(timeoutMs))
   var ws = WebSocket()
-  ws.reader.r = move r
+  ws.reader.r = ensureMove r
   ws.reader.role = wrClient
   ws.reader.maxMessage = maxMessage
   ws.reader.idleMs = idleMs
-  ws.writer.w = move w
+  ws.writer.w = ensureMove w
   ws.writer.role = wrClient
   var req = "GET " & path & " HTTP/1.1\r\n"
   req.add "Host: " & host & "\r\n"
@@ -916,7 +923,7 @@ proc readMessagePart(rd: var WebSocketReader; f: WsFrame): bool {.
   ## move costs nothing — a string is a pointer, and it moves back.
   var buf = move rd.msgBuf
   let got = rd.readPayload(f, buf)
-  rd.msgBuf = move buf
+  rd.msgBuf = ensureMove buf
   result = got == f.len
 
 proc nextFrame(rd: var WebSocketReader; f: var WsFrame): bool {.
