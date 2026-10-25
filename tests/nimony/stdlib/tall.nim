@@ -121,6 +121,7 @@ import std/unicode
 import std/uri
 import std/varints
 import std/volatile
+import std/websocket
 import std/widestrs
 import std/wordwrap
 import std/writenif

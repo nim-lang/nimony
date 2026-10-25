@@ -25,7 +25,7 @@
 # testable on its own.
 
 import ../../../src/lib/nifcore
-import std / [assertions, syncio]
+import std / [assertions, syncio, strutils]
 
 export nifcore.TagId, nifcore.`==`, nifcore.Cursor
 
@@ -648,6 +648,45 @@ proc getStr*(m: HttpMsg; h: TagId): string =
   result = ""
 
 proc getStr*(m: HttpMsg; h: HttpTag): string {.inline.} = getStr(m, tag(h))
+
+proc findHeader*(m: HttpMsg; name: string): string =
+  ## The value of the header `name`, whatever its spelling; `""` when the
+  ## message does not carry it.
+  ##
+  ## The name is matched case-insensitively, and the headers nobody registered
+  ## are searched too — a protocol that brings its own headers (`Sec-WebSocket-
+  ## Key`) has no tag for them, and the layer that knows their names is the
+  ## one that has to look them up.
+  for (n, v) in otherHeaders(m):
+    if cmpIgnoreCase(n, name) == 0: return v
+  var c = headersStart(m)
+  while c.hasMore:
+    if c.cursorTagId != tag(tXhdr):
+      if cmpIgnoreCase(name(m.tags, c.cursorTagId), name) == 0:
+        var v = c.sub()
+        if not v.hasMore: return ""
+        case v.kind
+        of StrLit: return v.strVal
+        of IntLit: return $v.intVal
+        of TagLit: return name(m.tags, v.cursorTagId)
+        else: return ""
+    c.skip
+  result = ""
+
+proc countHeaderByName*(m: HttpMsg; name: string): int =
+  ## How many times the message carries the header `name`.
+  ##
+  ## More than once matters for the headers a protocol frames a message with:
+  ## two `Sec-WebSocket-Key` lines are not a formatting quirk but a peer that
+  ## does not know what it is sending.
+  result = 0
+  for (n, v) in otherHeaders(m):
+    if cmpIgnoreCase(n, name) == 0: inc result
+  var c = headersStart(m)
+  while c.hasMore:
+    if c.cursorTagId != tag(tXhdr):
+      if cmpIgnoreCase(name(m.tags, c.cursorTagId), name) == 0: inc result
+    c.skip
 
 proc getInt*(m: HttpMsg; h: TagId; default = -1): int =
   ## The first value of `h` as an integer — no re-parsing, it was stored as

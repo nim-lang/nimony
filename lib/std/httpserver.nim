@@ -61,9 +61,10 @@
 
 import std / [http/httpconn, http/httpmsg, http/httpparse, http/httpwire,
               http/httpdate, http/httpcoding, compress/gzip, socket, ioring,
-              uri, assertions]
+              streamio, uri, assertions]
 
-export httpmsg, httpcoding, httpconn.HttpConn, socket.PeerAddr, socket.`$`, socket.ip,
+export httpmsg, httpcoding, httpconn.HttpConn, streamio.Reader, streamio.Writer,
+       socket.PeerAddr, socket.`$`, socket.ip,
        socket.port, socket.family, socket.isV4, socket.isV6
 export ioring.Deadline, ioring.never, ioring.afterMs, ioring.after,
        ioring.monoNow, ioring.listenTcp, ioring.setNonBlocking,
@@ -163,9 +164,9 @@ type
     enc: Encoder
     zbuf: string           ## encoded bytes on their way to the socket
 
-# No explicit `=copy` here: `HttpConn` holds a `Socket`, whose `=copy` is
-# already an error, so this object is move-only by construction. Restating it
-# suppresses the generated `=dup` and then `accept` cannot return one.
+# No explicit `=copy` here: `HttpConn` holds move-only streams, so this object
+# is move-only by construction. Restating it suppresses the generated `=dup`
+# and then `accept` cannot return one.
 
 # ------------------------------------------------------------- listening ---
 
@@ -244,6 +245,35 @@ proc close*(c: var HttpConnection) =
   if c.phase != phClosed:
     c.phase = phClosed
     c.conn.close()
+
+proc takeStreams*(c: var HttpConnection): (Reader, Writer) =
+  ## The connection's streams, given up.
+  ##
+  ## An upgrade — to WebSocket, say — is exactly this: from here on the bytes
+  ## on the descriptor are not HTTP, and the HTTP layer must not touch them.
+  ## The caller owns the streams from now on, and the connection is closed so
+  ## that a `next` after the upgrade cannot read a second request out of a
+  ## stream that is no longer HTTP.
+  ##
+  ## The bytes the HTTP layer had already read travel with the `Reader` in its
+  ## own buffer: a client that sent its first frame right behind the handshake
+  ## request has them already read, and they are the new protocol's, not the
+  ## old one's.
+  c.phase = phClosed
+  result = c.conn.takeStreams()
+
+proc requestHeader*(c: HttpConnection; name: string): string =
+  ## The value of the request's header `name`, whatever its spelling; `""` when
+  ## the request does not carry it.
+  ##
+  ## The name is matched case-insensitively, and the headers nobody registered
+  ## are searched too: a protocol that brings its own headers has no tag for
+  ## them, and the handler is the one that knows their names.
+  c.req.findHeader(name)
+
+proc countRequestHeader*(c: HttpConnection; name: string): int =
+  ## How many times the request carries the header `name`.
+  c.req.countHeaderByName(name)
 
 proc sendStatusOnly(c: var HttpConnection; status: int) {.passive.} =
   ## The last thing said on a connection that is about to be dropped: a bare
@@ -447,6 +477,13 @@ template query*(c: HttpConnection): lent string = c.queryBuf
   ## has to split before it decodes or a `%26` becomes a separator.
 
 proc meth*(c: HttpConnection): TagId {.inline.} = c.req.methodOf
+
+proc version*(c: HttpConnection): TagId {.inline.} =
+  ## The HTTP version of the request.
+  ##
+  ## `tag(tV11)` for HTTP/1.1 — the only version a WebSocket handshake may
+  ## use, since RFC 6455 §4.2.1 says so.
+  c.req.versionOf
 
 proc isHead*(c: HttpConnection): bool {.inline.} =
   c.req.methodOf == tag(mHead)

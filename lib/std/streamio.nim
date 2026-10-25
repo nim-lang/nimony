@@ -671,15 +671,23 @@ proc push(w: var Writer; final: bool) {.passive, raises.} =
     elif final and w.buf.len > 0: raise ProtocolError   # an adapter must take all at the end
     if outb.len > 0: coreSend(c, outb)
   elif w.buf.len > 0:
-    let data = move w.buf
-    w.buf = ""
-    coreSend(c, data)
+    # Send from the buffer and then just drop its length: the capacity has to
+    # survive the flush, or every write allocates a new buffer.
+    coreSend(c, w.buf)
+    w.buf.setLen(0)
 
 proc write*(w: var Writer; data: openArray[char]) {.passive, raises.} =
   let c = w.core
   if c == nil or w.finished: raise BadOperation
   if c.kind == ckPipe and w.adapter == nil and w.buf.len == 0:
     # A pipe's writer has no buffer: what is written is readable at once.
+    coreSend(c, data)
+  elif w.adapter == nil and w.buf.len + data.len >= FlushAt:
+    # Too big to be worth buffering: what is buffered goes first, then `data`
+    # straight from the caller's memory. Copying it would cost a copy, and the
+    # buffer, which keeps its capacity, would stay as large as the largest
+    # write for the rest of the stream's life.
+    push(w, false)
     coreSend(c, data)
   else:
     w.buf.addBytes data
@@ -692,6 +700,19 @@ proc flush*(w: var Writer) {.passive, raises.} =
   ## Everything written so far goes down (and, for a connection, out).
   if w.core == nil or w.finished: raise BadOperation
   push(w, false)
+
+proc scratch*(w: var Writer; n: int): var string {.raises.} =
+  ## The writer's own buffer, resized to `n` bytes for a caller that
+  ## serializes a head or a frame in place before `flush`. Nothing is copied,
+  ## and nothing is allocated once the buffer has grown to `n`.
+  ##
+  ## Only for a writer with nothing buffered: the scratch *is* the buffer, so
+  ## bytes the caller had written and not flushed would be replaced. Raises
+  ## `BadOperation` when it is closed, finished or has pending bytes. The
+  ## caller has to fill all `n` bytes.
+  if w.core == nil or w.finished or w.buf.len > 0: raise BadOperation
+  w.buf.setLen n
+  result = w.buf
 
 proc finishImpl(w: var Writer; clean: bool) {.passive, raises.} =
   w.finished = true
@@ -864,6 +885,16 @@ proc connectCore(address: string; tls: nil TlsEngine; dl: Deadline): Core {.
     c.tls = tls
     tlsHandshake(c, tls, host)     # on failure the core closes the socket
   result = c
+
+proc openStreams*(fd: cint; dl = never): (Reader, Writer) =
+  ## The streams over an already connected, non-blocking socket, without TLS:
+  ## the server-side counterpart of `connect`, for a caller with a listener of
+  ## its own (`std/httpserver`). No I/O, so it can be called outside a passive
+  ## chain; `dl` is the standing deadline. The core owns `fd` from here on.
+  let c = newCore(ckFd, fd)
+  c.isSocket = true
+  c.dl = dl
+  result = (initReader(c), initWriter(c))
 
 proc connect*(address: string; tls: nil TlsEngine = nil;
               dl = never): (Reader, Writer) {.
