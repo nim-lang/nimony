@@ -430,6 +430,44 @@ proc incrementalTests*() =
     writeFile(pluginData, originalPluginData)
     writeFile(slurpData, originalSlurpData)
 
+  # Phase 12: a `std/writenif` in the nimcache that is out of date. The
+  # compile-time evaluator's program links against it, and its build graph
+  # has no rule for it: `semos.prepareEval` has to bring it up to date, not
+  # only build it when it is missing. One left behind by an older stdlib
+  # failed every evaluation ("cannot evaluate expression at compile time")
+  # until the nimcache was wiped. Simulated by making its `.p.nif` and `.s.nif`
+  # older than `writenif.nim` and the `.s.nif` an empty module; the slice
+  # bound is edited so the evaluation is not answered from its memo.
+  let evalSrc = "tests/incremental/evaldep.nim"
+  let evalCache = "nimcache" / "incremental-eval"
+  if fileExists(evalSrc):
+    inc phases
+    let originalEval = readFile(evalSrc)
+    removeDir evalCache
+    let evalCmd = nimony.quoteShell & " c -r --silentMake --nimcache:" &
+                  evalCache.quoteShell & " " & evalSrc.quoteShell
+    var evalOutput = ""
+    proc runEval(label: string): bool =
+      let (output, ec) = execCmdEx(evalCmd)
+      evalOutput = output
+      result = ec == 0
+      if not result:
+        failures.add label & ": compile failed: " & output.strip.splitLines[^1]
+    block:
+      if runEval("eval-cold"):
+        expect evalOutput.contains("head-0123"), "eval-cold: expected 'head-0123'"
+        let wn = evalCache / "wriwhv7qv"
+        expect fileExists(wn & ".s.nif"), "eval-cold: no std/writenif in the nimcache"
+        writeFile(wn & ".s.nif", "(.nif27)\n(stmts)\n")
+        let old = fromUnix(1_000_000_000)
+        setLastModificationTime(wn & ".p.nif", old)
+        setLastModificationTime(wn & ".s.nif", old)
+        writeFile(evalSrc, originalEval.replace("0 ..< 4", "0 ..< 5"))
+        if runEval("eval-stale-writenif"):
+          expect evalOutput.contains("head-01234"),
+                 "eval-stale-writenif: expected 'head-01234'"
+    writeFile(evalSrc, originalEval)
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f
