@@ -528,7 +528,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     if hasParRi:
       while n.hasMore: skip n
   of AssumeSyncP:
-    if kind == VarY:
+    if kind in {VarY, GvarY}:
       # stamped onto a global by `{.feature: "assumeSync".}`, see `semPragmas`
       crucial.flags.incl pk
       dest.addParLe(pk, n.info)
