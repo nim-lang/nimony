@@ -891,20 +891,24 @@ const StaleLockNs = 120'i64 * 1_000_000_000'i64
   ## A writenif build takes seconds; a lock this old lost its holder.
 
 proc prepareEval*(c: var SemContext): string =
-  ## Precompile `std/writenif` into this nimcache, once. Every module of a
-  ## parallel build that evaluates something at compile time gets here, all
-  ## sharing the nimcache, so the build is done under a lock: two concurrent
-  ## builds of it race on the same outputs, and on Windows the loser cannot
-  ## replace a file the winner's C compiler still has open.
+  ## Bring `std/writenif` up to date in this nimcache, once per process. The
+  ## eval program's build graph has no rule for it and links against whatever
+  ## `.s.nif` is there, so its mere existence is not enough: one left by an
+  ## older stdlib (a `std/math` since split into modules, say) fails every
+  ## evaluation with "cannot evaluate expression at compile time" until the
+  ## nimcache is wiped. nifmake makes the build a no-op when it is current.
+  ## Every module of a parallel build that evaluates something at compile
+  ## time gets here, all sharing the nimcache, so the build is done under a
+  ## lock: two concurrent builds of it race on the same outputs, and on
+  ## Windows the loser cannot replace a file the winner's C compiler still
+  ## has open.
   result = ""
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
-    let target = c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"
     let lock = c.g.config.nifcachePath / writeNifModuleSuffix & ".lock"
-    while not os.fileExists(target):
+    while true:
       if vfsTryLock(lock):
-        if not os.fileExists(target):   # built while we waited
-          result = buildWriteNifModule(c)
+        result = buildWriteNifModule(c)
         vfsUnlock(lock)
         break
       if vfsNow() - vfsMtime(lock) > StaleLockNs:
