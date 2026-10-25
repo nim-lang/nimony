@@ -1194,21 +1194,6 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   let m = argOf(n, subst)
   let s = extractSymId(m)
   if s != NoSymId:
-    if c.inlineVars.hasKey(s):
-      # An `(inline)` temp stands for the expression it was bound to. The bound
-      # of `for i in 0 ..< s.len` becomes such a temp, and without looking
-      # through it the loop bound and the contract would never meet. A temp
-      # bound to something that is not a location is still a variable of its
-      # own, so a failed look-through falls through rather than failing.
-      var r2 = NoSymId
-      var k2 = ""
-      var st2 = 0
-      let init = c.inlineVars.getOrQuit(s)
-      if locationKey(c, init, subst, r2, k2, st2, depth+1) and r2 != NoSymId:
-        root = r2
-        key = k2
-        steps = st2
-        return true
     root = s
     key = "v" & $uint32(s)
     return true
@@ -5184,7 +5169,9 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     checkRangeAssign c, localType, n
   traverseExpr c, n, call
   # `let last = x - 1` is a *fact*, and the Final IR states the bound of every
-  # `for i in 0 ..< s.len` in exactly that shape. Only shapes the pure operand
+  # `for i in 0 ..< s.len` in exactly that shape: an `(inline)` temp equal to
+  # `s.len`, and only as long as the facts say so — a loop body that shrinks `s`
+  # drops `t <= s.len` like any other non-invariant (#2765). Only shapes the pure operand
   # reader understands contribute one; unlike `traverseAsgn` this deliberately
   # does not go through `rightHandSide`, whose fallback would analyse the
   # initializer a second time and report its contracts twice.

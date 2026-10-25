@@ -55,6 +55,12 @@ proc inclusiveRange(s: seq[int]): int =
   for i in 0 .. s.len - 1:
     result = result + s[i]
 
+proc elementWritesKeepTheBound(s: var seq[int]) =
+  # writing elements leaves `s.len` alone, so the bound read at loop entry
+  # still describes it (#2765)
+  for i in 0 ..< s.len:
+    s[i] = s[i] + 1
+
 proc contractIsAssumedInTheBody(x: int) {.requires: x > 0.} =
   # A body may assume its own precondition: every call site had to discharge it.
   needsPositive(x)
@@ -68,6 +74,9 @@ assert seqIndexInAForLoop(@[1, 2, 3]) == 6
 assert stringIndexInAForLoop("") == 0
 assert openArrayIndexInAForLoop([4, 5]) == 9
 assert inclusiveRange(@[1, 2]) == 3
+var bumped = @[1, 2]
+elementWritesKeepTheBound(bumped)
+assert bumped == @[2, 3]
 contractIsAssumedInTheBody(1)
 
 proc ensuresCarriesToTheCallSite(s: string; q: seq[int]): int =
