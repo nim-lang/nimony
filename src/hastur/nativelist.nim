@@ -220,6 +220,10 @@ const
     # by nature: under `nimony c` the C compiler owns that rewrite, so only a
     # backend doing its own can round the wrong way on a negative dividend.
     "tests/nimony/basicarith/tdivmodpow2",
+    # ... and by any OTHER constant, which arkham turns into a multiplication by
+    # the reciprocal: the magic constants, the 65-bit "add" fixup and the signed
+    # high half all go wrong quietly. Also two divisions in one expression.
+    "tests/nimony/basicarith/tdivmodconst",
     # `float32` at every width-sensitive spot. Native-relevant by nature: the C
     # backend gets the widths from C's own type system, so this only ever fails on
     # a backend that has to derive them itself.
