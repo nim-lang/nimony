@@ -58,6 +58,7 @@ func `+!`*[T: Arithmetic, C:Broadcastable[T]](a: C, b: T): C =
   for i in 0..<a.len:
     result[i] = a[i] + b
   result
+template `+!`*[T: Arithmetic, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = b +! a
 
 func `-.`*[T: Arithmetic, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
   result = similar(a)
@@ -70,6 +71,7 @@ func `-!`*[T: Arithmetic, C:Broadcastable[T]](a: C, b: T): C =
   for i in 0..<a.len:
     result[i] = a[i] - b
   result
+template `-!`*[T: Arithmetic, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = -(b -! a)
 
 func `*.`*[T: Arithmetic, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
   result = similar(a)
@@ -82,6 +84,7 @@ func `*!`*[T: Arithmetic, C:Broadcastable[T]](a: C, b: T): C =
   for i in 0..<a.len:
     result[i] = a[i] * b
   result
+template `*!`*[T: Arithmetic, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = b *! a
 
 func `/.`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
   result = similar(a)
@@ -94,6 +97,8 @@ func `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: C, b: T): C =
   for i in 0..<a.len:
     result[i] = a[i] / b
   result
+func inv[T: ArithmeticAndDiv](v: T): T {.untyped.} = 1/v
+template `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = map(b, inv) *! a
 
 # --- Power operators ---
 func `^.`*[T: HasPower, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
@@ -145,6 +150,7 @@ func `&&!`*[T: HasBitwise, C:Broadcastable[T]](a: C, b: T): C =
   for i in 0..<a.len:
     result[i] = a[i] and b
   result
+template `&&!`*[T: HasBitwise, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = b &&! a
 
 func `||.`*[T: HasBitwise, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
   result = similar(a)
@@ -157,6 +163,7 @@ func `||!`*[T: HasBitwise, C:Broadcastable[T]](a: C, b: T): C =
   for i in 0..<a.len:
     result[i] = a[i] or b
   result
+template `||!`*[T: HasBitwise, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = b ||! a
 
 func `^^.`*[T: HasBitwise, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
   result = similar(a)
@@ -169,6 +176,7 @@ func `^^!`*[T: HasBitwise, C:Broadcastable[T]](a: C, b: T): C =
   for i in 0..<a.len:
     result[i] = a[i] xor b
   result
+template `^^!`*[T: HasBitwise, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = b ^^! a
 
 # --- Ampersand / concat operators ---
 func `&.`*[T: HasAmpersand, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
