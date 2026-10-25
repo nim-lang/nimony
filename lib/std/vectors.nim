@@ -115,6 +115,11 @@ func `w=`*[T](v: var Vec4[T], val: T) {.untyped.} =
 # ################################################# ARITHMETIC OPERATORS #################################################### #
 # ########################################################################################################################### #
 
+template `+`*[T; V: AbstractVector[T]](a, b: V): V {.untyped.} = a +. b
+template `-`*[T; V: AbstractVector[T]](a, b: V): V {.untyped.} = a -. b
+template `*`*[T; V: AbstractVector[T]](a, b: V): V {.untyped.} = a *. b
+template `/`*[T; V: AbstractVector[T]](a, b: V): V {.untyped.} = a /. b
+
 func `==`*[T; C: Broadcastable[T]](a, b: C): bool {.untyped.} =
   ## Exact component-wise equality. Prefer `approxEq` for float comparisons.
   result = true
