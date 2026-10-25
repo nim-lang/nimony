@@ -552,10 +552,12 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
       var resValueBuf = createTokenBuf(2)
       resValueBuf.addParLe(TrueX, info)
       resValueBuf.addParRi()
-      let res = liftTemp(c, pre, beginRead(resValueBuf), c.typeCache.builtins.boolType, info)
+      let boolType = c.typeCache.builtins.boolType
+      let res = liftTemp(c, pre, beginRead(resValueBuf), boolType, info)
       var iValueBuf = createTokenBuf(2)
       iValueBuf.addIntLit(0, info)
-      let i = liftTemp(c, pre, beginRead(iValueBuf), c.typeCache.builtins.intType, info)
+      let intType = c.typeCache.builtins.intType
+      let i = liftTemp(c, pre, beginRead(iValueBuf), intType, info)
       let exitLab = openRange(c, pre, i, size, info)
       copyIntoKind pre, AsgnS, info:
         pre.addSubtree res
@@ -605,7 +607,8 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let res = liftTemp(c, pre, beginRead(resValueBuf), cType, info)
       var iValueBuf = createTokenBuf(2)
       iValueBuf.addIntLit(0, info)
-      let i = liftTemp(c, pre, beginRead(iValueBuf), c.typeCache.builtins.intType, info)
+      let intType = c.typeCache.builtins.intType
+      let i = liftTemp(c, pre, beginRead(iValueBuf), intType, info)
       let exitLab = openRange(c, pre, i, size, info)
       copyIntoKind pre, AsgnS, info:
         copyIntoKind pre, ArratX, info:
@@ -769,10 +772,12 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let useTemp = needsTemp(bOrig)
       let b: Cursor
       if useTemp:
-        b = liftTemp(c, pre, bOrig, c.typeCache.builtins.uintType, elemInfo)
+        let uintType = c.typeCache.builtins.uintType
+        b = liftTemp(c, pre, bOrig, uintType, elemInfo)
       else:
         b = bOrig
-      let i = liftTemp(c, pre, a, c.typeCache.builtins.uintType, elemInfo)
+      let uintType = c.typeCache.builtins.uintType
+      let i = liftTemp(c, pre, a, uintType, elemInfo)
       let exitLab = openLoop(c, pre, elemInfo)
       addUIntTypedOp pre, LeX, -1, elemInfo:
         pre.addSubtree i
@@ -796,7 +801,8 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let useTemp = needsTemp(aOrig)
       let a: Cursor
       if useTemp:
-        a = liftTemp(c, pre, aOrig, c.typeCache.builtins.uintType, elemInfo)
+        let uintType = c.typeCache.builtins.uintType
+        a = liftTemp(c, pre, aOrig, uintType, elemInfo)
       else:
         a = aOrig
       if big:
@@ -1319,7 +1325,8 @@ proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
   else:
     var stmts = createTokenBuf(32)
-    let t = declareTemp(c, stmts, c.typeCache.builtins.boolType, info)
+    let boolType = c.typeCache.builtins.boolType
+    let t = declareTemp(c, stmts, boolType, info)
     stmts.add a
     stmts.addParRi()
     openIf stmts, info

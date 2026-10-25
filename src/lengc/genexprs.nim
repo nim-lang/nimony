@@ -203,7 +203,8 @@ proc genField(c: var GeneratedCode; fld: Cursor; objBody: Cursor; objTypeIsImpor
           case p.pragmaKind
           of ImportcP, ImportcppP, ExportcP:
             let litId = externName(s, p)
-            c.add c.m.pool.strings[litId]
+            let name = c.m.pool.strings[litId]
+            c.add name
             return
           else:
             discard

@@ -533,7 +533,8 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: LLType;
     result = res
 
 proc genCallLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
-  genCallWithType(c, n, c.prim.ptrT, result)
+  let ptrT = c.prim.ptrT
+  genCallWithType(c, n, ptrT, result)
 
 proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   genCallLLVM(c, n, result)
@@ -998,7 +999,8 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     var lhs = LLValue()
     var rhs = LLValue()
     n.into:
-      c.emitAlloca(resName, c.prim.i8)
+      let i8 = c.prim.i8
+      c.emitAlloca(resName, i8)
       c.emitStore(llIntTextC("0", c.prim.i8), llReg(resName, c.prim.ptrT))
       genExprLLVM(c, n, lhs)
       let lhsBool = c.nextTemp()
@@ -1025,7 +1027,7 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.setLoc(andInfo)
       c.emit LLInstr(kind: llBr, brTarget: endLabel)
       discard c.startBlock(endLabel)
-      result = c.emitLoad(llReg(resName, c.prim.ptrT), c.prim.i8)
+      result = c.emitLoad(llReg(resName, c.prim.ptrT), i8)
       while n.hasMore: skip n
   of OrC:
     let orInfo = n.info
@@ -1033,7 +1035,8 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     var lhs = LLValue()
     var rhs = LLValue()
     n.into:
-      c.emitAlloca(resName, c.prim.i8)
+      let i8 = c.prim.i8
+      c.emitAlloca(resName, i8)
       c.emitStore(llIntTextC("1", c.prim.i8), llReg(resName, c.prim.ptrT))
       genExprLLVM(c, n, lhs)
       let lhsBool = c.nextTemp()
@@ -1060,7 +1063,7 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.setLoc(orInfo)
       c.emit LLInstr(kind: llBr, brTarget: endLabel)
       discard c.startBlock(endLabel)
-      result = c.emitLoad(llReg(resName, c.prim.ptrT), c.prim.i8)
+      result = c.emitLoad(llReg(resName, c.prim.ptrT), i8)
       while n.hasMore: skip n
   of NotC:
     let notInfo = n.info
@@ -1275,7 +1278,8 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     result = c.emitLoad(lval, loadType)
   of ErrvC, OvfC:
     var lval = LLValue(); genLvalueLLVM(c, n, lval)
-    result = c.emitLoad(lval, c.prim.i8)
+    let i8 = c.prim.i8
+    result = c.emitLoad(lval, i8)
 
 proc genCondLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   let condInfo = n.info

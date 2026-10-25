@@ -1084,7 +1084,8 @@ proc constPragmaString(c: var SemContext; dest: var TokenBuf; n: var Cursor; s: 
   ## Evaluate one pragma argument as a constant `string` expression (a literal,
   ## a `const`, `&`, …). On failure the error is left in `dest`.
   let start = dest.len
-  let id = evalConstStrExpr(c, dest, n, c.types.stringType)
+  let stringType = c.types.stringType
+  let id = evalConstStrExpr(c, dest, n, stringType)
   result = id != StrId(0)
   if result:
     dest.shrink start
@@ -1287,7 +1288,8 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     let info = it.n.info
     toPragmaArgs()
     let start = dest.len
-    let s = evalConstStrExpr(c, dest, it.n, c.types.stringType)
+    let stringType = c.types.stringType
+    let s = evalConstStrExpr(c, dest, it.n, stringType)
     closePragmaLine()
     if s != StrId(0):
       dest.shrink start
@@ -1411,7 +1413,8 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
   of PassLP:
     toPragmaArgs()
     let start = dest.len
-    let s = evalConstStrExpr(c, dest, it.n, c.types.stringType)
+    let stringType = c.types.stringType
+    let s = evalConstStrExpr(c, dest, it.n, stringType)
     if s != StrId(0):
       dest.shrink start
       c.passL.add pool.strings[s]
@@ -1419,7 +1422,8 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
   of PassCP:
     toPragmaArgs()
     let start = dest.len
-    let s = evalConstStrExpr(c, dest, it.n, c.types.stringType)
+    let stringType = c.types.stringType
+    let s = evalConstStrExpr(c, dest, it.n, stringType)
     if s != StrId(0):
       dest.shrink start
       c.passC.add pool.strings[s]
@@ -1428,7 +1432,8 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     toPragmaArgs()
     let info = it.n.info
     let start = dest.len
-    let s = evalConstStrExpr(c, dest, it.n, c.types.stringType)
+    let stringType = c.types.stringType
+    let s = evalConstStrExpr(c, dest, it.n, stringType)
     if s != StrId(0):
       dest.shrink start
       let features = parseFeatures(pool.strings[s])

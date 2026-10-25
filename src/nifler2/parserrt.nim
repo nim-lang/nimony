@@ -599,6 +599,12 @@ proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
   setSince(p, m, node)
   if node.next == nil: p.last = node
 
+proc insertOpLeafAt*(p: var Parser; m: Mark) =
+  ## `insertLeafAt` with the current token's text: `p.tok.s` passed directly
+  ## would alias the `var Parser`.
+  let text = p.tok.s
+  insertLeafAt p, m, text
+
 # --------------------------------------------------------------- layouts
 #
 # nifler's `nim-parsed` dialect is not the shape of the source: every absent
@@ -759,7 +765,9 @@ proc literalAsIdent*(p: var Parser; m: Mark) =
   of IntLit: emitIdent p, $intVal(k), m.info
   of UIntLit: emitIdent p, $uintVal(k), m.info
   of FloatLit: emitIdent p, $floatVal(k), m.info
-  of StrLit: emitIdent p, p.pool.strings[strId(k)], m.info
+  of StrLit:
+    let s = p.pool.strings[strId(k)]
+    emitIdent p, s, m.info
   else: p.append k
 
 proc posMarker*(p: var Parser) =
@@ -1094,12 +1102,14 @@ proc emitLeaf*(p: var Parser) =
                 else: "f128"), info
     closeNode p, x, SufL, info
   of tkStrLit:
-    emitStr p, p.tok.s, info
+    let s = p.tok.s
+    emitStr p, s, info
   of tkRStrLit, tkTripleStrLit, tkGStrLit, tkGTripleStrLit:
     # a generalized string literal is raw: `parseGStrLit` makes the argument
     # an `nkRStrLit` (or `nkTripleStrLit`)
     let x = openNode(p)
-    emitStr p, p.tok.s, info
+    let s = p.tok.s
+    emitStr p, s, info
     emitStr p, (if p.tok.kind == tkRStrLit or p.tok.kind == tkGStrLit: "R" else: "T"), info
     closeNode p, x, SufL, info
   of tkCharLit:

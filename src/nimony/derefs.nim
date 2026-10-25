@@ -460,7 +460,8 @@ proc trReturn(c: var Context; n: var Cursor) =
           if checkTupleConstrBorrowing(c, n) != Valid:
             err = true
         if not err:
-          tr c, n, c.r.returnExpects, c.r.returnType
+          let returnType = c.r.returnType
+          tr c, n, c.r.returnExpects, returnType
         else:
           skip n
 

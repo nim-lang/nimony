@@ -60,21 +60,24 @@ proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Ite
   of UntypedT:
     discard "ok"
   of VoidT:
-    typecheck(c, dest, lastSonInfo, it.typ, c.routine.returnType)
+    let returnType = c.routine.returnType
+    typecheck(c, dest, lastSonInfo, it.typ, returnType)
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, PtrT, ArrayT, VarargsT,
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
      TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
-    commonType c, dest, it, beforeLastSon, c.routine.returnType
+    let returnType = c.routine.returnType
+    commonType c, dest, it, beforeLastSon, returnType
 
 proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
                           lastSonInfo: NifLineInfo; beforeLastSon: int) =
   ## Handle return type for regular procedures, transforming `expr` to `result = expr` if needed.
+  let returnType = c.routine.returnType
   if classifyType(c, it.typ) in {VoidT, UntypedT}:
     discard "ok"
   elif c.routine.resId != SymId(0):
-    commonType c, dest, it, beforeLastSon, c.routine.returnType
+    commonType c, dest, it, beforeLastSon, returnType
     # nifcore cannot splice an unbalanced `(asgn resId` open; collect the
     # last-son subtree, drop it, and re-emit it wrapped in `(asgn resId …)`.
     var lastSon = createTokenBuf(dest.len - beforeLastSon + 2)
@@ -90,7 +93,7 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
     dest.addUnstructured reemit
     endRead reemit
     dest.addParRi()
-  elif classifyType(c, c.routine.returnType) == VoidT and
+  elif classifyType(c, returnType) == VoidT and
        classifyType(c, it.typ) notin {AutoT, NoType}:
     # A VOID routine whose body's TAIL is an expression of a CONCRETE non-void
     # type. This used to fall through to `commonType` against `void`, reporting
@@ -114,7 +117,7 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
       buildErr c, dest, lastSonInfo,
         "expression of type `" & typeToString(it.typ) & "` must be discarded"
   else:
-    commonType c, dest, it, beforeLastSon, c.routine.returnType
+    commonType c, dest, it, beforeLastSon, returnType
 
 proc semProcBody(c: var SemContext; dest: var TokenBuf; itB: var Item) =
   ## Consumes the rest of the body's `(stmts)` scope; the caller entered it
@@ -585,7 +588,8 @@ proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): 
   let oldPhase = c.phase
   c.phase = SemcheckBodies
   let before = dest.len
-  result = evalConstIntExpr(c, dest, n, c.types.autoType)
+  let autoType = c.types.autoType
+  result = evalConstIntExpr(c, dest, n, autoType)
   if not isNaN(result):
     var err = false
     let valI = asSigned(result, err)
@@ -796,24 +800,25 @@ proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
 
 proc checkTypeHook(c: var SemContext; dest: var TokenBuf; params: seq[TypeCursor]; op: HookKind; info: NifLineInfo) =
   var cond: bool
+  let returnType = c.routine.returnType
   case op
   of NoHook:
     return
   of DestroyH:
-    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 1
+    cond = classifyType(c, returnType) == VoidT and params.len == 1
     if not cond:
       buildErr c, dest, info, "signature for '=destroy' must be proc[T: object](x: T)"
   of TraceH:
-    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+    cond = classifyType(c, returnType) == VoidT and params.len == 2 and
       classifyType(c, params[0]) == MutT and classifyType(c, params[1]) == PointerT
   of WasmovedH:
-    cond = classifyType(c, c.routine.returnType) == VoidT and
+    cond = classifyType(c, returnType) == VoidT and
         params.len == 1 and classifyType(c, params[0]) == MutT
   of CopyH:
-    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+    cond = classifyType(c, returnType) == VoidT and params.len == 2 and
       classifyType(c, params[0]) == MutT
   of SinkhH:
-    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+    cond = classifyType(c, returnType) == VoidT and params.len == 2 and
       classifyType(c, params[0]) == MutT
   of DupH:
     cond = params.len == 1 and sameTrees(params[0], c.routine.returnType)

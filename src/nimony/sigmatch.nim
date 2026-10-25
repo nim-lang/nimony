@@ -994,7 +994,8 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
   var missing: seq[SymId] = @[]
   for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, body):
-    if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody, m.inferred):
+    let inferred = m.inferred
+    if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody, inferred):
       addMissingConstraint(m, routine)
       missing.add conceptRequirementSym(routine)
   leaveBodyCheck(m.context, conceptSym, a)
