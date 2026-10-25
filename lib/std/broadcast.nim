@@ -48,172 +48,172 @@ template `@.`*[T; C:Broadcastable[T]](expr: C): untyped {.untyped, plugin: "deps
 
 # --- Arithmetic operators (. and !) ---
 func `+.`*[T: Arithmetic, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] + b[i]
-  tmp
+    result[i] = a[i] + b[i]
+  result
 
 func `+!`*[T: Arithmetic, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] + b
-  tmp
+    result[i] = a[i] + b
+  result
 
 func `-.`*[T: Arithmetic, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] - b[i]
-  tmp
+    result[i] = a[i] - b[i]
+  result
 
 func `-!`*[T: Arithmetic, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] - b
-  tmp
+    result[i] = a[i] - b
+  result
 
 func `*.`*[T: Arithmetic, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] * b[i]
-  tmp
+    result[i] = a[i] * b[i]
+  result
 
 func `*!`*[T: Arithmetic, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] * b
-  tmp
+    result[i] = a[i] * b
+  result
 
 func `/.`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] / b[i]
-  tmp
+    result[i] = a[i] / b[i]
+  result
 
 func `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] / b
-  tmp
+    result[i] = a[i] / b
+  result
 
 # --- Power operators ---
 func `^.`*[T: HasPower, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] ^ b[i]
-  tmp
+    result[i] = a[i] ^ b[i]
+  result
 
 func `^!`*[T: HasPower, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] ^ b
-  tmp
+    result[i] = a[i] ^ b
+  result
 
 # --- Bitshift operators ---
 func `<<.`*[T: HasBitShift, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] shl b[i]
-  tmp
+    result[i] = a[i] shl b[i]
+  result
 
 func `<<!`*[T: HasBitShift, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] shl b
-  tmp
+    result[i] = a[i] shl b
+  result
 
 func `>>.`*[T: HasBitShift, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] shr b[i]
-  tmp
+    result[i] = a[i] shr b[i]
+  result
 
 func `>>!`*[T: HasBitShift, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] shr b
-  tmp
+    result[i] = a[i] shr b
+  result
 
 # --- Bitwise operators ---
 func `&&.`*[T: HasBitwise, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] and b[i]
-  tmp
+    result[i] = a[i] and b[i]
+  result
 
 func `&&!`*[T: HasBitwise, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] and b
-  tmp
+    result[i] = a[i] and b
+  result
 
 func `||.`*[T: HasBitwise, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] or b[i]
-  tmp
+    result[i] = a[i] or b[i]
+  result
 
 func `||!`*[T: HasBitwise, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] or b
-  tmp
+    result[i] = a[i] or b
+  result
 
 func `^^.`*[T: HasBitwise, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] xor b[i]
-  tmp
+    result[i] = a[i] xor b[i]
+  result
 
 func `^^!`*[T: HasBitwise, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] xor b
-  tmp
+    result[i] = a[i] xor b
+  result
 
 # --- Ampersand / concat operators ---
 func `&.`*[T: HasAmpersand, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] & b[i]
-  tmp
+    result[i] = a[i] & b[i]
+  result
 
 func `&!`*[T: HasAmpersand, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] & b
-  tmp
+    result[i] = a[i] & b
+  result
 
 # --- Integer division and modulo ---
 func `//.`*[T: HasDivMod, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] div b[i]
-  tmp
+    result[i] = a[i] div b[i]
+  result
 
 func `//!`*[T: HasDivMod, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] div b
-  tmp
+    result[i] = a[i] div b
+  result
 
 func `%.`*[T: HasDivMod, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] mod b[i]
-  tmp
+    result[i] = a[i] mod b[i]
+  result
 
 func `%!`*[T: HasDivMod, C:Broadcastable[T]](a: C, b: T): C =
-  var tmp = similar(a)
+  var result = similar(a)
   for i in 0..<a.len:
-    tmp[i] = a[i] mod b
-  tmp
+    result[i] = a[i] mod b
+  result
 
 template map*[T; C:Broadcastable[T]](a: C, f: Mapper[T]): C {.untyped.} =
-  var tmp = similar(a)
-  for i in 0..<tmp.len:
-    tmp[i] = f(a[i])
+  var result = similar(a)
+  for i in 0..<result.len:
+    result[i] = f(a[i])
 
-  tmp
+  result
 
 template `-`*[T; C:Broadcastable[T]](a: C): C {.untyped.} = map(a, `-`)
 
