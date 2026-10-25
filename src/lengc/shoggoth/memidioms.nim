@@ -81,6 +81,7 @@ import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/typeKind/substr
 import ".." / nifmodules                      # MainModule
 import ".." / typenav                         # getType / registerLocal / scopes
 import patchsets
+import vmrewriter                             # subtreeEqual
 
 type
   LeafKind = enum
@@ -99,9 +100,17 @@ type
     inits: Table[SymId, int]         ## a `var`'s initializer, by position
 
   MemSite = object
-    pos: int                         ## the loop
+    pos: int                         ## the loop / the store
     start: int                       ## what replaces it, or goes before it
     insert: bool                     ## a guarded fast path IN FRONT of the loop
+
+  MemOpts* = object
+    ## What the target allows. The driver fills it from the command line.
+    nodes*: bool                     ## the back end lowers `(memset …)`/`(memcpy …)`
+    mergeWordBytes*: int             ## > 0: merge adjacent constant field stores
+                                     ## into stores up to this many bytes (a
+                                     ## little-endian target that does not
+                                     ## reorder by type — never the C backend)
 
   MemScan = object
     ## The match side. It also BUILDS each replacement into `scratch` as soon as
@@ -112,6 +121,7 @@ type
     facts: Facts
     scratch: TokenBuf
     sites: seq[MemSite]
+    opts: MemOpts
 
 proc posOf(s: MemScan; n: Cursor): int {.inline.} =
   cursorToPosition(s.buf[], n)
@@ -737,6 +747,307 @@ proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
     let start = emitReplacement(s, lm, isCopy = false, byteVal, guardDisjoint = false)
     s.sites.add MemSite(pos: s.posOf(w), start: start, insert: false)
 
+# ---- adjacent field stores ------------------------------------------------
+#
+# `o.a = 1; o.b = 2` with `a`, `b` adjacent one-byte fields becomes ONE 16-bit
+# store of `0x0201` — fewer stores, and on a modern core the store buffer and
+# the store ports are what such init sequences are bound by. Object
+# initializations are full of these: constant fields, mostly zeros.
+#
+# Only for a back end that neither reorders memory accesses by type nor runs
+# on a big-endian machine — arkham, never C: writing two `uint8` fields
+# through a `uint16*` is undefined there, and `gcc -O3` with strict aliasing
+# may move a later byte load in front of the merged store. The driver passes
+# `--merge-stores:<word bits>` for the native back end only.
+#
+# A merged store covers [off, off+W) with W in 2/4/8, `off` a multiple of W
+# (naturally aligned: fine on every core, the ones that trap on a misaligned
+# store included) and W at most the target word. Every byte in it belongs to
+# a field the run stores or to padding — never to a field the run leaves
+# alone. The layout is C's, which is arkham's; anything whose layout is not
+# certain (packed, aligned, imported, bit fields, unions, inheritance) is left
+# as it is.
+
+type
+  FieldSlot = object
+    sym: SymId
+    off, size: int
+
+  StoreEntry = object
+    pos: int                         ## the `(asgn …)`
+    lhs: Cursor                      ## its `(dot B f)`
+    fld: SymId
+    off, size: int
+    value: uint64                    ## the constant, masked to `size` bytes
+    leaves: Leaves
+
+proc hasLayoutPragma(pragmas: Cursor): bool =
+  ## Pragmas that move fields away from C's natural layout, or that hand the
+  ## layout to a C header we cannot see.
+  result = false
+  if pragmas.kind != TagLit: return
+  var p = pragmas.childCursor
+  while p.hasMore:
+    if p.kind == TagLit and p.pragmaKind in {PackedP, AlignP, ImportcP,
+                                               ImportcppP, NodeclP, BitsP}:
+      return true
+    skip p
+
+proc resolveTypeDecl(s: MemScan; t: Cursor; body: var Cursor): bool =
+  ## Follow named types to their body; false for a declaration whose layout
+  ## pragmas make the C rules inapplicable.
+  var c = t
+  var guard = 0
+  while c.kind == Symbol and guard < 20:
+    inc guard
+    let d = s.m[].getDeclOrNil(c.symId)
+    if d == nil or d.pos.stmtKind != TypeS: return false
+    let td = asTypeDecl(d.pos)
+    if hasLayoutPragma(td.pragmas): return false
+    c = td.body
+  body = c
+  result = c.kind == TagLit
+
+proc sizeAlignOf(s: MemScan; t: Cursor; size, align: var int; depth = 0): bool
+
+proc layoutObject(s: MemScan; body: Cursor; fields: var seq[FieldSlot];
+                  size, align: var int; depth: int): bool =
+  ## C layout of a base-less object of plain fields.
+  var c = body.childCursor
+  if not c.hasMore or c.kind != DotToken: return false     # inheritance: no
+  skip c
+  var off = 0
+  var maxAl = 1
+  while c.hasMore:
+    if not (c.kind == TagLit and c.substructureKind == FldU): return false
+    var f = c.childCursor
+    if f.kind != SymbolDef: return false
+    let sym = f.symId
+    skip f
+    if f.kind != DotToken: return false                    # field pragmas: no
+    skip f
+    var fs = 0
+    var fa = 0
+    if not sizeAlignOf(s, f, fs, fa, depth + 1): return false
+    off = (off + fa - 1) div fa * fa
+    fields.add FieldSlot(sym: sym, off: off, size: fs)
+    off += fs
+    maxAl = max(maxAl, fa)
+    skip c
+  size = (off + maxAl - 1) div maxAl * maxAl
+  align = maxAl
+  result = true
+
+proc sizeAlignOf(s: MemScan; t: Cursor; size, align: var int; depth = 0): bool =
+  if depth > 16: return false
+  var b = default(Cursor)
+  if not resolveTypeDecl(s, t, b): return false
+  result = true
+  case b.typeKind
+  of IT, UT, FT, CT:
+    let bits = b.childCursor
+    if bits.kind != IntLit: return false
+    let n = int(intVal(bits))
+    size = if n > 0: n div 8 else: s.opts.mergeWordBytes
+    align = size
+  of BoolT:
+    size = 1
+    align = 1
+  of PtrT, AptrT, ProctypeT:
+    size = s.opts.mergeWordBytes
+    align = size
+  of EnumT:
+    result = sizeAlignOf(s, b.childCursor, size, align, depth + 1)
+  of ArrayT:
+    var c = b.childCursor
+    var es = 0
+    if not sizeAlignOf(s, c, es, align, depth + 1): return false
+    skip c
+    if c.kind != IntLit: return false
+    size = es * int(intVal(c))
+  of ObjectT:
+    var fields: seq[FieldSlot] = @[]
+    result = layoutObject(s, b, fields, size, align, depth)
+  else:
+    result = false
+
+proc storeConst(s: MemScan; v: Cursor; size: int; bits: var uint64): bool =
+  ## The bit pattern a constant store writes, masked to `size` bytes.
+  var iv = 0'i64
+  if isZeroValue(v):
+    bits = 0
+    result = true
+  elif v.kind == TagLit and v.exprKind == TrueC:
+    bits = 1
+    result = true
+  elif v.kind == FloatLit:
+    result = false                         # its width is the context's
+  elif constInt(s, v, iv):
+    bits = cast[uint64](iv)
+    result = true
+  else:
+    result = false
+  if result and size < 8:
+    bits = bits and ((1'u64 shl (size * 8)) - 1'u64)
+
+proc matchFieldStore(s: MemScan; n: Cursor; base: var Cursor; fld: var SymId;
+                     value: var Cursor): bool =
+  ## `(asgn (dot B f [0]) V)`.
+  result = false
+  if n.kind == TagLit and n.stmtKind == AsgnS:
+    var c = n.childCursor
+    if c.kind == TagLit and c.exprKind == DotC:
+      var d = c.childCursor
+      base = d
+      skip d
+      if d.kind != Symbol: return
+      fld = d.symId
+      skip d
+      if d.hasMore:                        # an inheritance depth must be 0
+        if not (d.kind == IntLit and intVal(d) == 0): return
+        skip d
+      if d.hasMore: return
+      skip c
+      if c.hasMore:
+        value = c
+        skip c
+        result = not c.hasMore
+
+proc baseMayTakeAddr(s: MemScan; base: Cursor): bool =
+  ## Taking `&B.f` must not demote a local that could live in registers: the
+  ## object has to be memory already — behind a pointer, a global, or a local
+  ## whose address is taken anyway.
+  let r = rootLocal(base)
+  result = r == SymId(0) or r notin s.facts.locals or r in s.facts.addrTaken
+
+proc emitMerged(s: var MemScan; e: StoreEntry; width: int; value: uint64): int =
+  ## `(asgn (deref (cast (ptr (u W)) (addr (dot B f)))) VALUE)`.
+  result = s.scratch.len
+  let b = addr s.scratch
+  b[].openTag TagId(AsgnS)
+  b[].openTag TagId(DerefC)
+  b[].openTag TagId(CastC)
+  b[].openTag TagId(PtrT)
+  b[].openTag TagId(UT)
+  b[].addIntLit width * 8
+  b[].closeTag()
+  b[].closeTag()
+  emitAddr(b[], e.lhs)
+  b[].closeTag()
+  b[].closeTag()
+  b[].addUIntLit value
+  b[].closeTag()
+
+proc emitHole(s: var MemScan): int =
+  result = s.scratch.len
+  s.scratch.addDotToken()
+
+proc mergeRun(s: var MemScan; base: Cursor; run: seq[StoreEntry];
+              layout: seq[FieldSlot]; structSize: int) =
+  ## Find the merged stores a run allows and record them.
+  if run.len < 2: return
+  var stored: Leaves = {}
+  for e in run: stored.incl e.leaves
+  if not baseMayTakeAddr(s, base) or not invariantLoc(s, base, SymId(0), stored):
+    return
+  # byte ownership: -2 padding, -1 a field the run does not store, else run index
+  var owner = newSeq[int](structSize)
+  for i in 0 ..< structSize: owner[i] = -2
+  for f in layout:
+    for i in f.off ..< f.off + f.size: owner[i] = -1
+  for k, e in run:
+    for i in e.off ..< e.off + e.size: owner[i] = k
+  var merged = newSeq[bool](run.len)
+  var order: seq[int] = @[]
+  for k in 0 ..< run.len: order.add k
+  for k in order:
+    if merged[k]: continue
+    let e = run[k]
+    for width in [8, 4, 2]:
+      if width > s.opts.mergeWordBytes or e.off mod width != 0 or
+         e.off + width > structSize:
+        continue
+      var ok = true
+      var members: seq[int] = @[]
+      for i in e.off ..< e.off + width:
+        let o = owner[i]
+        if o == -1 or (o >= 0 and merged[o]):
+          ok = false
+          break
+        if o >= 0 and o notin members: members.add o
+      if not ok or members.len < 2: continue
+      for m in members:                    # every member entirely inside
+        if run[m].off + run[m].size > e.off + width:
+          ok = false
+      if not ok: continue
+      var value = 0'u64
+      for m in members:
+        value = value or (run[m].value shl ((run[m].off - e.off) * 8))
+      # The merged store takes the place of the FIRST member in program
+      # order; the members are disjoint, so the order among them is free. Its
+      # ADDRESS is that of the member at the start of the window, `e` — not
+      # of whichever member came first: in `o.d = 4; o.c = 3` those differ.
+      var first = members[0]
+      for m in members:
+        if run[m].pos < run[first].pos: first = m
+      let start = emitMerged(s, e, width, value)
+      s.sites.add MemSite(pos: run[first].pos, start: start, insert: false)
+      for m in members:
+        merged[m] = true
+        if m != first:
+          s.sites.add MemSite(pos: run[m].pos, start: emitHole(s), insert: false)
+      break
+
+proc storesField(run: seq[StoreEntry]; fld: SymId): bool =
+  result = false
+  for e in run:
+    if e.fld == fld: return true
+
+proc scanStoreRuns(s: var MemScan; list: Cursor) =
+  ## Runs of adjacent constant stores to fields of one object, in one list.
+  ## Anything else in between — a non-constant store included — ends a run:
+  ## the stores cannot be moved across it.
+  var run: seq[StoreEntry] = @[]
+  var runBase = default(Cursor)
+  var layout: seq[FieldSlot] = @[]
+  var structSize = 0                       # 0: no layout for `runBase`
+  var it = list.childCursor
+  while it.hasMore:
+    if it.kind == DotToken:                # a hole: not a statement
+      skip it
+      continue
+    var base = default(Cursor)
+    var value = default(Cursor)
+    var fld = SymId(0)
+    var added = false
+    if matchFieldStore(s, it, base, fld, value):
+      if run.len == 0 or not subtreeEqual(base, runBase) or storesField(run, fld):
+        mergeRun(s, runBase, run, layout, structSize)
+        run.setLen 0
+        layout.setLen 0
+        structSize = 0
+        var body = default(Cursor)
+        var align = 0
+        runBase = base
+        if not (resolveTypeDecl(s, getNominalType(s.m[], base), body) and
+                body.typeKind == ObjectT and
+                layoutObject(s, body, layout, structSize, align, 0)):
+          structSize = 0
+      if structSize > 0:
+        for f in layout:
+          var bits = 0'u64
+          if f.sym == fld and storeConst(s, value, f.size, bits):
+            let lhs = it.childCursor
+            run.add StoreEntry(pos: s.posOf(it), lhs: lhs, fld: fld, off: f.off,
+                               size: f.size, value: bits,
+                               leaves: leavesOf(s.m, getNominalType(s.m[], lhs)))
+            added = true
+    if not added:
+      mergeRun(s, runBase, run, layout, structSize)
+      run.setLen 0
+    skip it
+  mergeRun(s, runBase, run, layout, structSize)
+
 # ---- the walk --------------------------------------------------------------
 
 proc exitLabelAfter(list: Cursor; w: Cursor; lab: var SymId): bool =
@@ -751,11 +1062,12 @@ proc exitLabelAfter(list: Cursor; w: Cursor; lab: var SymId): bool =
 proc scan(s: var MemScan; n: Cursor)
 
 proc scanList(s: var MemScan; list: Cursor) =
+  if s.opts.mergeWordBytes > 0: scanStoreRuns(s, list)
   var it = list.childCursor
   while it.hasMore:
     if it.kind == TagLit and it.stmtKind == WhileS:
       var lab = SymId(0)
-      if exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
+      if s.opts.nodes and exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
     scan(s, it)
     skip it
 
@@ -784,14 +1096,15 @@ proc scan(s: var MemScan; n: Cursor) =
         scan(s, it)
         skip it
 
-proc runMemIdioms*(buf: var TokenBuf; m: ptr MainModule; params: Cursor): int =
+proc runMemIdioms*(buf: var TokenBuf; m: ptr MainModule; params: Cursor;
+                   opts: MemOpts): int =
   ## Replace every fill loop in the body with a `(memset …)` and put a
   ## `(memcpy …)` in front of every copy loop; returns how many.
   ## `m` must have the proc's scope open with its params registered.
   result = 0
   if m == nil: return
   var s = MemScan(buf: addr buf, m: m, facts: gatherFacts(buf, params),
-                  scratch: createTokenBuf(64, buf.pool, buf.tags))
+                  scratch: createTokenBuf(64, buf.pool, buf.tags), opts: opts)
   var root = beginRead(buf)
   m[].openScope()
   while root.hasMore:

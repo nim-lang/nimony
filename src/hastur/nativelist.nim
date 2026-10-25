@@ -229,6 +229,9 @@ const
     # address of `p[i]` stages its index through a scratch register.
     "tests/nimony/opt/topt_memset_fill",
     "tests/nimony/opt/topt_memcpy_copy",
+    # adjacent constant field stores merged into one wider store: native only
+    # (the C backend's strict aliasing forbids it), so only this run checks it
+    "tests/nimony/opt/topt_store_merge",
     # `float32` at every width-sensitive spot. Native-relevant by nature: the C
     # backend gets the widths from C's own type system, so this only ever fails on
     # a backend that has to derive them itself.
