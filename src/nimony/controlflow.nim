@@ -193,7 +193,8 @@ proc maybeAppend(tar: var Target; w: var TargetWrapper) =
 proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   # `tar = x and y` <=> `if x: tar = y else: tar = false`
   let info = n.info
-  var w = makeVar(c, info, tar, c.typeCache.builtins.boolType)
+  let boolType = c.typeCache.builtins.boolType
+  var w = makeVar(c, info, tar, boolType)
 
   n.into:
     var aa = initTarget(IsEmpty)
@@ -227,7 +228,8 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
 proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   # `tar = x or y` <=> `if x: tar = true else: tar = y`
   let info = n.info
-  var w = makeVar(c, info, tar, c.typeCache.builtins.boolType)
+  let boolType = c.typeCache.builtins.boolType
+  var w = makeVar(c, info, tar, boolType)
 
   n.into:
     var aa = initTarget(IsEmpty)

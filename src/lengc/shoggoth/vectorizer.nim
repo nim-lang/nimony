@@ -1062,16 +1062,19 @@ proc vecEval(e: var Emitter; n: Cursor; fresh: var bool): string =
             e.b.closeTag()
             result = accN
           else:
-            let mN = vecBin(e, e.iVfmul, aN, bN)
-            result = vecBin(e, e.iVfadd, mN, accN)
+            let mulOp = e.iVfmul
+            let mN = vecBin(e, mulOp, aN, bN)
+            let addOp = e.iVfadd
+            result = vecBin(e, addOp, mN, accN)
         else:
           var fL, fR = false
           let lN = vecEval(e, lhs, fL)
           let rN = vecEval(e, rhs, fR)
-          result = case kind
-                   of AddC: vecBin(e, e.iVfadd, lN, rN)
-                   of SubC: vecBin(e, e.iVfsub, lN, rN)
-                   else: vecBin(e, e.iVfmul, lN, rN)
+          let op = case kind
+                   of AddC: e.iVfadd
+                   of SubC: e.iVfsub
+                   else: e.iVfmul
+          result = vecBin(e, op, lN, rN)
       else:
         raiseAssert "vectorizer: unexpected lane tree"
   else:
@@ -1104,7 +1107,8 @@ proc emitSlot(e: var Emitter; byteOff: int) =
   e.valueVec.clear()
   for vi in 0 ..< e.plan.values.len:
     var fresh = false
-    let nm = vecEval(e, e.plan.values[vi].rhsCur, fresh)
+    let rhs = e.plan.values[vi].rhsCur
+    let nm = vecEval(e, rhs, fresh)
     e.valueVec[e.plan.values[vi].sym] = nm
   # the accumulator updates: each slot owns its own partial-sum local, so the
   # unrolled slots carry independent dependency chains
@@ -1132,7 +1136,8 @@ proc emitSlot(e: var Emitter; byteOff: int) =
       e.accUpdate(acc, op, [tN])
   if e.plan.hasStore:
     var srcFresh = false
-    let srcName = vecEval(e, e.plan.storeSrc, srcFresh)
+    let storeSrc = e.plan.storeSrc
+    let srcName = vecEval(e, storeSrc, srcFresh)
     e.b.openTag tid(InstrTagId)
     e.b.addSymUse e.iFstrq
     e.b.addSymUse e.ptrs[e.storePtr].name

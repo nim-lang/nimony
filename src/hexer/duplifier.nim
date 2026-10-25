@@ -298,7 +298,8 @@ proc expandCallTemps(c: var Context; dest: var TokenBuf; n: Cursor) =
   ## predicates: they judge a place by its root, and a temp's root is its own.
   var n = n
   if n.kind == Symbol and n.symId in c.callTemps:
-    expandCallTemps c, dest, c.callTemps.getOrQuit(n.symId)
+    let call = c.callTemps.getOrQuit(n.symId)
+    expandCallTemps c, dest, call
   elif n.isTagLit:
     dest.addParLe(n.cursorTagId, n.info)
     n = sub(n)   # peek only, never left

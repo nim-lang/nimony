@@ -41,13 +41,16 @@ proc combineType*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; d: v
 
 proc producesVoid*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; d: var Cursor) =
   if typeKind(d) in {AutoT, VoidT}:
-    combineType c, dest, info, d, c.types.voidType
+    let voidType = c.types.voidType
+    combineType c, dest, info, d, voidType
   else:
-    c.typeMismatch dest, info, c.types.voidType, d
+    let voidType = c.types.voidType
+    c.typeMismatch dest, info, voidType, d
 
 proc producesNoReturn*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; d: var Cursor) =
   if typeKind(d) in {AutoT, VoidT}:
-    combineType c, dest, info, d, c.types.voidType
+    let voidType = c.types.voidType
+    combineType c, dest, info, d, voidType
   else:
     # allowed in expression context
     discard

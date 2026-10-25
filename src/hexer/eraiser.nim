@@ -342,8 +342,9 @@ proc emitUnwind(c: var Context; dest: var TokenBuf; code: TokenBuf;
     copyIntoKind dest, RetS, info:
       dest.addSymUse c.resultSym, info
   else:
+    let retType = c.retType
     copyIntoKind dest, RetS, info:
-      produceRaiseTuple c, dest, c.retType, info
+      produceRaiseTuple c, dest, retType, info
       dest.add code
       finishRaiseTuple c, dest, info
 
@@ -598,7 +599,8 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSymUse n.symId, n.info
         inc n
       else:
-        let maybeClose = produceSuccessTuple(c, dest, c.retType, n.info)
+        let retType = c.retType
+        let maybeClose = produceSuccessTuple(c, dest, retType, n.info)
         tr c, dest, n
         if maybeClose:
           dest.addParRi() # tuple constructor

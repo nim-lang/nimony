@@ -64,8 +64,8 @@ const
   NoLineInfo* = PackedLineInfo(0'u32)
   NoFile* = FileId(0'u32)
 
-proc isValid*(x: PackedLineInfo): bool {.inline.} = uint32(x) != uint32(NoLineInfo)
-proc isValid*(x: FileId): bool {.inline.} = x != NoFile
+func isValid*(x: PackedLineInfo): bool {.inline.} = uint32(x) != uint32(NoLineInfo)
+func isValid*(x: FileId): bool {.inline.} = x != NoFile
 
 proc pack*(m: var LineInfoManager; file: FileId; line, col: int32): PackedLineInfo =
   if file.uint32 <= FileMax.uint32 and line <= LineMax and col <= ColMax:

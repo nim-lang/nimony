@@ -12,6 +12,14 @@ proc raiseAssert*(msg: string) {.noreturn.} =
   echo "[Assertion Failure] ", msg
   quit 1
 
+proc failedAssertImpl*(msg: string) {.noinline, noSideEffect, noreturn.} =
+  ## Raises an assertion failure, but is hidden from the effect system: the
+  ## process terminates, so a failed assertion cannot return a side effect to
+  ## its caller. Mirrors upstream Nim's `failedAssertImpl`, and keeps `assert`
+  ## usable inside `func` (and therefore inside read-only accessors).
+  {.cast(noSideEffect).}:
+    raiseAssert(msg)
+
 template assert*(cond: bool; msg = "") =
   when assertionsEnabled:
     # The failure path is a single `noreturn` CALL, never inlined code. Expanding
@@ -20,7 +28,7 @@ template assert*(cond: bool; msg = "") =
     # (worse) pushes tiny accessors like `nifcore.kind` over the inliner's size
     # cap, so they stay real calls forever.
     if not cond:
-      raiseAssert(msg)
+      failedAssertImpl(msg)
   else:
     # Compiled out entirely. `assert` is a run-time debugging aid and nothing
     # more: a claim the contract prover may rely on is `{.assert: cond.}`, which

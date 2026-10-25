@@ -842,7 +842,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     # Generate body
     genStmtLLVM c, prc.body
 
-    finalizeSubprogram(c, spId, paramDITypes, c.currentProc.retainedNodes)
+    let retainedNodes = c.currentProc.retainedNodes
+    finalizeSubprogram(c, spId, paramDITypes, retainedNodes)
 
     if not c.currentProc.needsTerminator:
       if prc.returnType.kind == DotToken:

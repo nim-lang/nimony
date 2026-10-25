@@ -36,7 +36,8 @@ proc getVirtualGuardLLVM(c: var LLVMCode; n: Cursor): (SymId, bool) =
 proc genOnErrorLLVM(c: var LLVMCode; n: var Cursor) =
   let onErrInfo = n.info
   let errPtr = llGlobalRef("LENGC_ERR_", c.prim.ptrT)
-  let errVal = c.emitLoad(errPtr, c.prim.i8)
+  let i8 = c.prim.i8
+  let errVal = c.emitLoad(errPtr, i8)
   let cond = c.nextTemp()
   let condRes = llReg(cond, c.prim.i1)
   c.setLoc(onErrInfo)
@@ -357,7 +358,8 @@ proc genMflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
       let s = n.symId
       c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
       let name = mangleToC(c.m.pool.symString(s))
-      c.emitAlloca(name, c.prim.i8)
+      let i8 = c.prim.i8
+      c.emitAlloca(name, i8)
       c.emitStore(llIntTextC("0", c.prim.i8), llReg(name, c.prim.ptrT))
       inc n
     else:
@@ -452,7 +454,8 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
   let ovfRes = llReg(ovfFlag, c.prim.i1)
   c.emit LLInstr(kind: llExtractValue, result: ovfRes, evAggregate: rsRes,
                  evAggType: aggTyp, evIndex: 1)
-  let currentOvf = c.emitLoad(llGlobalRef("LENGC_OVF_", c.prim.ptrT), c.prim.i8)
+  let i8 = c.prim.i8
+  let currentOvf = c.emitLoad(llGlobalRef("LENGC_OVF_", c.prim.ptrT), i8)
   let currentOvfBool = c.nextTemp()
   let cobRes = llReg(currentOvfBool, c.prim.i1)
   c.setLoc(ovfInfo)
@@ -581,7 +584,8 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
         let valueType = getType(c.m, valueExpr)
         var val = LLValue(); genExprLLVM(c, n, val)
         var coerced = LLValue()
-        coerceValueLLVM(c, val, valueType, c.currentProc.retTypeCursor, coerced)
+        let retType = c.currentProc.retTypeCursor
+        coerceValueLLVM(c, val, valueType, retType, coerced)
         c.setLoc(retInfo)
         c.emit LLInstr(kind: llRet, retVal: coerced)
       else:
