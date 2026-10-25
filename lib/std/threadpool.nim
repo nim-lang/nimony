@@ -240,9 +240,12 @@ proc reactorPoll*(timeoutMs: int): bool {.inline.} =
   ## there is. Every caller of `gReactor` goes through this.
   if reactorReady(): gReactor(timeoutMs) else: poolPollIo(timeoutMs)
 
+var idleSleepUs {.threadvar.}: int
+
 proc workCycle(stripe: int): bool =
   ## One turn of a worker: run the queued tasks, drive this thread's I/O lane,
   ## and nap when neither had anything. Answers whether tasks ran.
+  if idleSleepUs == 0: idleSleepUs = 1
   # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
   #    each continuation, re-submitting any that yield more work.
   result = drainOnce(stripe)
@@ -252,14 +255,22 @@ proc workCycle(stripe: int): bool =
     # Only when the reactor did not wait for us. Behind one that did, this
     # nap is the difference between noticing a completion when it arrives
     # and noticing it up to a millisecond later.
-    const timeoutMs = 1
+    #
+    # Back the nap off from a microsecond to a millisecond. A fork-join
+    # producer submits the next batch microseconds after draining the previous
+    # one; a flat 1ms sleep makes the worker miss that batch and the merge pays
+    # the whole millisecond. The doubling means a genuinely idle pool still
+    # reaches the 1ms nap after a handful of short waits.
     when defined(windows):
-      sleep(timeoutMs.uint32)
+      sleep(max(1, idleSleepUs div 1000).uint32)
     else:
-      var ts = Timespec(tv_sec: Time(timeoutMs div 1000),
-                         tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
+      var ts = Timespec(tv_sec: Time(idleSleepUs div 1_000_000),
+                         tv_nsec: clong((idleSleepUs mod 1_000_000) * 1_000))
       var rem = Timespec()
       discard nanosleep(ts, rem)
+    idleSleepUs = min(idleSleepUs * 2, 1000)
+  else:
+    idleSleepUs = 1
 
 proc passiveWait() {.nimcall.} =
   ## `system.setPassiveWaitHook`: a thread waiting for a parked `.passive` call
