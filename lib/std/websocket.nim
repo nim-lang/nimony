@@ -231,6 +231,26 @@ type
 
 # ------------------------------------------------------------------- frames --
 
+proc maskBytes(dest: ptr UncheckedArray[char]; n: int; key: array[4, char];
+               offset: int) =
+  ## XORs `n` bytes with the mask, eight at a time. The key is four bytes, so
+  ## its repeat is one word for every position: a client masks every frame it
+  ## sends, which makes this the per-byte cost of every message a server reads.
+  var k8: uint64 = 0
+  var kk = default(array[8, char])
+  for i in 0 ..< 8: kk[i] = key[(offset + i) and 3]
+  copyMem(addr k8, addr kk[0], 8)
+  var i = 0
+  while i + 8 <= n:
+    var v: uint64 = 0
+    copyMem(addr v, addr dest[i], 8)
+    v = v xor k8
+    copyMem(addr dest[i], addr v, 8)
+    i += 8
+  while i < n:
+    dest[i] = char(ord(dest[i]) xor ord(key[(offset + i) and 3]))
+    inc i
+
 proc applyMask*(data: var openArray[char]; key: array[4, char]; offset = 0) =
   ## XORs `data` with the mask `key`, starting `offset` bytes into the payload.
   ##
@@ -238,8 +258,9 @@ proc applyMask*(data: var openArray[char]; key: array[4, char]; offset = 0) =
   ## applies it before the bytes go out, a receiver after they arrive. The
   ## offset is what makes a payload that arrives in pieces come out right —
   ## the key restarts at the front of the frame, not at the front of the read.
-  for i in 0 ..< data.len:
-    data[i] = char(ord(data[i]) xor ord(key[(offset + i) and 3]))
+  if data.len > 0:
+    maskBytes(cast[ptr UncheckedArray[char]](addr data[0]), data.len, key,
+              offset)
 
 proc parseFrameHeader*(bytes: openArray[char]; f: var WsFrame): int =
   ## How many bytes the frame header at the front of `bytes` takes,
@@ -507,6 +528,13 @@ proc ensure(rd: var WebSocketReader; n: int): bool {.passive, raises.} =
   while rd.avail < n:
     if rd.r.fill() == 0: return false
   result = true
+
+proc buffered*(rd: WebSocketReader): int {.inline.} =
+  ## Protocol bytes the reader already has and has not consumed. Non-zero means
+  ## a `recv` will not wait for the peer, which is what an echo server needs to
+  ## know before it decides to flush: while frames are still buffered, the
+  ## replies can wait and go out together.
+  rd.r.buffered
 
 proc deadline*(rd: WebSocketReader): Deadline {.raises.} =
   ## The standing deadline of the receive side; the writer shares it.
@@ -1000,25 +1028,21 @@ proc readPayload(rd: var WebSocketReader; f: WsFrame; dest: var string): int {.
     copyMem(addr dp[got], addr rd.r.peek[0], took)
     rd.r.consume took
     if f.masked:
-      for i in got ..< got + took:
-        dp[i] = char(ord(dp[i]) xor ord(f.key[i and 3]))
+      maskBytes(cast[ptr UncheckedArray[char]](addr dp[got]), took, f.key, got)
     got += took
   dest.endStore()
   if got < n: dest.setLen old + got
   result = got
 
-proc readMessagePart(rd: var WebSocketReader; f: WsFrame): bool {.
-  passive, raises.} =
-  ## The payload of `f` appended to the message being assembled; `false` when
-  ## the stream ended in the middle of the frame.
+proc readMessagePart(rd: var WebSocketReader; f: WsFrame;
+                     dest: var string): bool {.passive, raises.} =
+  ## The payload of `f` appended to `dest`; `false` when the stream ended in
+  ## the middle of the frame.
   ##
-  ## The buffer is moved out and back rather than passed in: a `var` argument
-  ## that is a field of the reader would alias the reader itself, and the
-  ## move costs nothing — a string is a pointer, and it moves back.
-  var buf = move rd.msgBuf
-  let got = rd.readPayload(f, buf)
-  rd.msgBuf = ensureMove buf
-  result = got == f.len
+  ## `dest` is the caller's own message buffer, not a field of the reader, so
+  ## it can be passed in: a message is assembled in place, and the only bytes
+  ## the reader keeps are those of a message a control frame interrupted.
+  result = rd.readPayload(f, dest) == f.len
 
 proc nextFrame(rd: var WebSocketReader; f: var WsFrame): bool {.
   passive, raises.} =
@@ -1037,6 +1061,15 @@ proc nextFrame(rd: var WebSocketReader; f: var WsFrame): bool {.
 
 proc recvImpl(rd: var WebSocketReader; msg: var string): MsgKind {.
   passive, raises.} =
+  ## The caller's `msg` is the assembly buffer: it is emptied here and filled
+  ## in place, so a message costs no allocation and no copy once the caller's
+  ## string has grown to its size — which is why a handler should keep its
+  ## `msg` across calls.
+  msg.setLen 0
+  if rd.msgOp != 0 and rd.msgBuf.len > 0:
+    # A control frame interrupted a message; carry on where it stopped.
+    msg = move rd.msgBuf
+    rd.msgBuf = ""
   while true:
     if rd.closeSeen:
       # The peer said goodbye; there is nothing more to read.
@@ -1051,7 +1084,11 @@ proc recvImpl(rd: var WebSocketReader; msg: var string): MsgKind {.
     if ord(f.opcode) >= 8:
       # A control frame: it may come in the middle of a message, and
       # `parseFrameHeader` has already checked that it is not fragmented and
-      # not longer than 125 bytes.
+      # not longer than 125 bytes. What is assembled so far goes back to the
+      # reader, and the next call carries on with it.
+      if rd.msgOp != 0 and msg.len > 0:
+        rd.msgBuf = move msg
+        msg = ""
       case f.opcode
       of wsoClose:
         var payload = ""
@@ -1098,20 +1135,17 @@ proc recvImpl(rd: var WebSocketReader; msg: var string): MsgKind {.
           rd.markFailure(wscProtocolError)
           raise ProtocolError
         rd.msgOp = ord(f.opcode)
-        rd.msgBuf = ""
-      if rd.msgBuf.len + f.len > rd.maxMessage:
+        msg.setLen 0
+      if msg.len + f.len > rd.maxMessage:
         raise ContentTooLong
-      if not rd.readMessagePart(f):
+      if not rd.readMessagePart(f, msg):
         raise EndOfStreamError
       if f.fin:
         let kind = if rd.msgOp == 1: mkText else: mkBinary
-        if kind == mkText and not isValidUtf8(toOpenArray(rd.msgBuf, 0,
-                                                          rd.msgBuf.len - 1)):
+        if kind == mkText and not isValidUtf8(toOpenArray(msg, 0, msg.len - 1)):
           rd.markFailure(wscInvalidPayload)
           raise ProtocolError
-        msg = rd.msgBuf
         rd.msgOp = 0
-        rd.msgBuf = ""
         return kind
 
 proc recv*(rd: var WebSocketReader; msg: var string): MsgKind {.
@@ -1150,12 +1184,16 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
   while true:
     # Anything this side owes the peer goes out before the chain waits for the
     # peer: a frame sent with `flush = false` and then a `recv` would otherwise
-    # wait for an answer to something the peer has not been told. A flush of an
-    # empty buffer costs nothing.
-    try:
-      ws.writer.flush()
-    except ErrorCode:
-      discard
+    # wait for an answer to something the peer has not been told. Only when the
+    # connection has nothing buffered, though — that is when the wait really
+    # happens, and while frames are still coming the replies can ride along
+    # with the next write. That is what lets an echo server answer a burst with
+    # one write instead of one per message.
+    if ws.reader.buffered == 0:
+      try:
+        ws.writer.flush()
+      except ErrorCode:
+        discard
     try:
       result = ws.reader.recv(msg)
     except ErrorCode as e:

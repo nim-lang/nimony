@@ -18,9 +18,11 @@ when defined(posix):
 
 proc ignoreSigPipe() =
   ## The runtime installs no handler and the write path does not pass
-  ## MSG_NOSIGNAL, so a write to a socket the peer has closed kills the
-  ## process. Every server — and this test, which is one — has to say this.
-  discard cSignal(SigPipe, cast[pointer](1))
+  ## MSG_NOSIGNAL, so on a POSIX system a write to a socket the peer has closed
+  ## kills the process. Every server — and this test, which is one — has to say
+  ## this. Windows has no SIGPIPE: a write to a closed socket is an error there.
+  when defined(posix):
+    discard cSignal(SigPipe, cast[pointer](1))
 
 let tags = newHttpTags()
 
