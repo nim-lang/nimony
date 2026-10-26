@@ -234,6 +234,10 @@ proc accept*(s: var HttpServer): HttpConnection {.passive.} =
     result.phase = phClosed
   else:
     setNonBlocking(cint(fd))
+    # Nagle holds a small reply until the previous one is acknowledged, which
+    # for a request/response server is one extra round trip per answer; see
+    # `setNoDelay`. Every connection pays one ring op here, once.
+    setNoDelay(cint(fd))
     result = initConnection(s, cint(fd), peer)
 
 # --------------------------------------------------------- reading a head --
