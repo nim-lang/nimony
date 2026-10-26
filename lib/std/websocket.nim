@@ -1548,17 +1548,20 @@ proc resolve(r: Room; topic: string): nil TopicNode =
     r.lastTopic = topic
     r.lastNode = found
 
-proc deliver(t: TopicNode; text: string; gen: int) =
+proc deliver(t: TopicNode; frame: string; gen: int) =
   ## One publish to `t` and everything below it, each member once.
+  ##
+  ## `frame` is the message already spelled as a frame. A server masks
+  ## nothing, so the bytes are the same for every member: they are built once
+  ## per publish and appended, instead of encoded again for each of the
+  ## subscribers.
   var i = 0
   while i < t.subs.len:
     let m = t.subs[i]
     if not m.gone and m.gen != gen:
       m.gen = gen
       try:
-        # `sendFrame` and not `send`: the text was checked once, when it was
-        # published, and this runs once per delivery.
-        m.wr.sendFrame(wsoText, text, flush = false)
+        m.wr.w.write(frame)
         m.dirty = true
       except ErrorCode:
         # A member whose socket is gone takes the line with it; the rest of
@@ -1568,7 +1571,7 @@ proc deliver(t: TopicNode; text: string; gen: int) =
     inc i
   i = 0
   while i < t.children.len:
-    deliver(t.children[i], text, gen)
+    deliver(t.children[i], frame, gen)
     inc i
 
 proc forget(root: TopicNode; m: Member) =
@@ -1585,6 +1588,7 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
   ## runs dry, so one write carries a whole turn's frames.
   let root = r.root
   var members: seq[Member] = @[]
+  var frame = ""
   var e = RoomEvent()
   while true:
     try:
@@ -1619,7 +1623,14 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
       of rePublish:
         inc r.gen
         let n = resolve(r, e.topic)
-        if n != nil: deliver(n, e.text, r.gen)
+        if n != nil:
+          # The frame is spelled once: a server masks nothing, so every member
+          # gets the same bytes. The text was checked when it was published.
+          let size = frameHeaderLen(e.text.len, false) + e.text.len
+          frame.setLen size
+          discard fillFrame(toOpenArray(frame, 0, size - 1), wsoText, e.text,
+                            false, default(array[4, char]), true)
+          deliver(n, frame, r.gen)
       of reSend, rePong:
         var i = 0
         while i < members.len and members[i].id != e.id: inc i
