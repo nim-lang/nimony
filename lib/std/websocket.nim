@@ -1310,8 +1310,6 @@ proc `=destroy`*(ws: WebSocket) =
 # then on the room owns the writer and the pair's own `send`, `recv`, `close`
 # and `publish` go through it:
 #
-#   let room = newRoom()          # or nothing: `subscribe` uses the default
-#
 #   proc handle(c: sink HttpConnection) {.passive.} =
 #     if not c.next(): return
 #     var ws = upgradeWebSocket(c)
@@ -1327,6 +1325,14 @@ proc `=destroy`*(ws: WebSocket) =
 #       discard
 #     ws.close()
 #
+# Topics are paths, as in uWebSockets: `"chat"`, `"chat/room1"`,
+# `"chat/room1/users"`. Publishing to a topic reaches its subscribers and the
+# subscribers of everything below it, so `publish("chat", ...)` is the whole
+# room and `publish("chat/room1", ...)` is one part of it. The room keeps a
+# tree, not a list of members to scan: a publish walks the path once and then
+# the subscribers that hang off the node it lands on, so its cost is the depth
+# of the topic and the size of the subtree, not the size of the room.
+#
 # `publish` hands the room one line; the room writes it into every member's
 # buffer and flushes each member once per turn. A message therefore costs one
 # channel send and one buffer append per member — not a task per delivery,
@@ -1336,6 +1342,13 @@ type
   RoomEventKind = enum
     reJoin, rePublish, reSend, rePong, reClose, reAddTopic, reDropTopic
 
+  TopicNode = ref object
+    ## One segment of a topic path, and what hangs off it.
+    segment: string
+    parent: nil TopicNode
+    children: seq[TopicNode]
+    subs: seq[Member]
+
   Member = ref object
     ## One connection's writer, owned by the room from `subscribe` on.
     wr: WebSocketWriter
@@ -1343,6 +1356,13 @@ type
     topics: seq[string]
     dirty: bool
       ## Frames were buffered for this member since the last flush.
+    gen: int
+      ## The last publish it was given. A member subscribed to a topic *and*
+      ## one of its parents is reached twice by one publish; the generation is
+      ## what keeps that to one delivery.
+    gone: bool
+      ## Its socket failed: it is out of the tree and out of `members` at the
+      ## end of the turn, without disturbing the walk that found it.
 
   RoomEvent = object
     kind: RoomEventKind
@@ -1356,9 +1376,11 @@ type
   RoomObj = object
     inbox: Sender[RoomEvent]
     nextId: int
+    gen: int
+      ## Bumped for every publish; see `Member.gen`.
 
   Room* = ref RoomObj
-    ## A set of connections and the chain that writes to them.
+    ## A tree of topics and the chain that writes to the connections in it.
 
 proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.}
 
@@ -1371,7 +1393,7 @@ proc newRoom*(capacity = 4096): Room {.raises.} =
   ## share one flush per member: too small and a fan-out pays a syscall per
   ## frame, too large and a slow peer's frames sit in the queue.
   var (rx, tx) = channel[RoomEvent](capacity)
-  result = Room(inbox: tx, nextId: 0)
+  result = Room(inbox: tx, nextId: 0, gen: 0)
   submit(delay(roomLoop(result, rx)), -1)
 
 var
@@ -1399,17 +1421,112 @@ proc defaultRoom*(): Room {.raises.} =
     if r != nil: result = r
     else: raise BadOperation
 
-proc has(m: Member; topic: string): bool =
+# ------------------------------------------------------------ the tree --
+
+proc newTopic(segment: string; parent: nil TopicNode): TopicNode =
+  TopicNode(segment: segment, parent: parent, children: @[], subs: @[])
+
+proc childFor(t: TopicNode; segment: string): TopicNode =
+  ## The child of `t` called `segment`, created if it is not there yet.
+  var i = 0
+  while i < t.children.len:
+    if t.children[i].segment == segment: return t.children[i]
+    inc i
+  result = newTopic(segment, t)
+  t.children.add result
+
+proc nodeFor(t: TopicNode; topic: string): TopicNode =
+  ## The node of `topic`, created along the way. `""` is the root itself.
+  result = t
+  var i = 0
+  while i <= topic.len:
+    let start = i
+    while i < topic.len and topic[i] != '/': inc i
+    if i > start:
+      result = result.childFor(topic.substr(start, i - 1))
+    inc i
+
+proc findNode(t: TopicNode; topic: string): nil TopicNode =
+  ## The node of `topic`, or nil when nothing ever subscribed there.
+  var cur: nil TopicNode = t
+  var i = 0
+  while i <= topic.len:
+    let here = cur
+    if here == nil: return nil
+    let start = i
+    while i < topic.len and topic[i] != '/': inc i
+    if i > start:
+      let segment = topic.substr(start, i - 1)
+      var k = 0
+      var next: nil TopicNode = nil
+      while k < here.children.len:
+        if here.children[k].segment == segment:
+          next = here.children[k]
+          break
+        inc k
+      cur = next
+    inc i
+  result = cur
+
+proc unlink(n: TopicNode) =
+  ## Drops an empty node from its parent, and that parent too when it becomes
+  ## empty, up to the root. What a `dropTopic` leaves behind is not kept.
+  var cur = n
+  while true:
+    let p = cur.parent
+    if p == nil: return
+    if cur.subs.len > 0 or cur.children.len > 0: return
+    var i = 0
+    while i < p.children.len:
+      if p.children[i] == cur:
+        p.children.delete i
+        break
+      inc i
+    cur = p
+
+proc dropSub(t: TopicNode; m: Member) =
+  var i = 0
+  while i < t.subs.len:
+    if t.subs[i] == m: t.subs.delete i
+    else: inc i
+  if t.subs.len == 0: unlink(t)
+
+# ------------------------------------------------------------ the room --
+
+proc deliver(t: TopicNode; text: string; gen: int) =
+  ## One publish to `t` and everything below it.
+  var i = 0
+  while i < t.subs.len:
+    let m = t.subs[i]
+    if not m.gone and m.gen != gen:
+      m.gen = gen
+      try:
+        m.wr.send(mkText, text, flush = false)
+        m.dirty = true
+      except ErrorCode:
+        # A member whose socket is gone takes the line with it; the rest of
+        # the subtree does not care, and the walk does not stop for it.
+        m.wr.abort()
+        m.gone = true
+    inc i
+  i = 0
+  while i < t.children.len:
+    deliver(t.children[i], text, gen)
+    inc i
+
+proc forget(root: TopicNode; m: Member) =
+  ## Takes a member out of every topic it was in.
   var i = 0
   while i < m.topics.len:
-    if m.topics[i] == topic: return true
+    let n = findNode(root, m.topics[i])
+    if n != nil: dropSub(n, m)
     inc i
-  result = false
 
 proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
   ## The one chain that writes to a room's sockets. Everything it writes is
   ## buffered per member with `flush = false`; the flush happens when the queue
   ## runs dry, so one write carries a whole turn's frames.
+  var root = newTopic("", nil)
   var members: seq[Member] = @[]
   var e = RoomEvent()
   while true:
@@ -1418,37 +1535,33 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
         var i = 0
         while i < members.len:
           let m = members[i]
-          if m.dirty:
-            m.dirty = false
-            try:
-              m.wr.flush()
-              inc i
-            except ErrorCode:
-              m.wr.abort()
-              members.delete i
+          if m.gone:
+            forget(root, m)
+            members.delete i
           else:
-            inc i
+            if m.dirty:
+              m.dirty = false
+              try:
+                m.wr.flush()
+                inc i
+              except ErrorCode:
+                m.wr.abort()
+                m.gone = true
+                forget(root, m)
+                members.delete i
+            else:
+              inc i
         if not rx.recv(e): return
       case e.kind
       of reJoin:
         let m = e.member
-        if m != nil: members.add m
+        if m != nil:
+          members.add m
+          nodeFor(root, e.topic).subs.add m
       of rePublish:
-        var i = 0
-        while i < members.len:
-          let m = members[i]
-          if m.has(e.topic):
-            try:
-              m.wr.send(mkText, e.text, flush = false)
-              m.dirty = true
-              inc i
-            except ErrorCode:
-              # A member whose socket is gone takes the line with it; the rest
-              # of the room does not care.
-              m.wr.abort()
-              members.delete i
-          else:
-            inc i
+        inc r.gen
+        let n = findNode(root, e.topic)
+        if n != nil: deliver(n, e.text, r.gen)
       of reSend, rePong:
         var i = 0
         while i < members.len and members[i].id != e.id: inc i
@@ -1460,26 +1573,38 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
               members[i].wr.send(e.msg, e.text, flush = false)
             members[i].dirty = true
           except ErrorCode:
-            discard
+            members[i].wr.abort()
+            members[i].gone = true
       of reAddTopic, reDropTopic:
         var i = 0
         while i < members.len and members[i].id != e.id: inc i
         if i < members.len:
+          let m = members[i]
           if e.kind == reAddTopic:
-            if not members[i].has(e.topic): members[i].topics.add e.topic
+            var seen = false
+            var k = 0
+            while k < m.topics.len:
+              if m.topics[k] == e.topic: seen = true
+              inc k
+            if not seen:
+              m.topics.add e.topic
+              nodeFor(root, e.topic).subs.add m
           else:
             var k = 0
-            while k < members[i].topics.len:
-              if members[i].topics[k] == e.topic:
-                members[i].topics.delete k
+            while k < m.topics.len:
+              if m.topics[k] == e.topic:
+                m.topics.delete k
                 break
               inc k
+            let n = findNode(root, e.topic)
+            if n != nil: dropSub(n, m)
       of reClose:
         var i = 0
         while i < members.len and members[i].id != e.id: inc i
         if i < members.len:
           let m = members[i]
           members.delete i
+          forget(root, m)
           try:
             m.wr.close(if e.code == 0: 1000 else: e.code)
           except ErrorCode:
@@ -1490,8 +1615,9 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
 proc attach(r: Room; wr: sink WebSocketWriter; topic: string): int {.passive, raises.} =
   ## A member with this writer, in `topic`. The room writes to it from now on.
   let id = atomicFetchAdd(r.nextId, 1, moRelaxed)
-  let m = Member(wr: move wr, id: id, topics: @[topic], dirty: false)
-  discard r.inbox.send RoomEvent(kind: reJoin, member: m, id: id)
+  let m = Member(wr: move wr, id: id, topics: @[topic], dirty: false, gen: 0,
+                 gone: false)
+  discard r.inbox.send RoomEvent(kind: reJoin, member: m, id: id, topic: topic)
   result = id
 
 proc addTopic*(r: Room; id: int; topic: string) {.passive, raises.} =
@@ -1505,7 +1631,9 @@ proc dropTopic*(r: Room; id: int; topic: string) {.passive, raises.} =
   discard r.inbox.send RoomEvent(kind: reDropTopic, id: id, topic: topic)
 
 proc publish*(r: Room; topic: string; data: string) {.passive, raises.} =
-  ## Sends `data` as a text message to every member of `topic`.
+  ## Sends `data` as a text message to every member of `topic` **and of every
+  ## topic below it**: `publish("chat", ...)` is the whole room,
+  ## `publish("chat/room1", ...)` one part of it.
   ##
   ## The room does the writing; this parks when its queue is full, which is the
   ## room's backpressure and the reason a publisher cannot outrun its members
@@ -1514,9 +1642,13 @@ proc publish*(r: Room; topic: string; data: string) {.passive, raises.} =
 
 proc subscribe*(ws: var WebSocket; room: Room; topic: string) {.
     passive, raises.} =
-  ## Joins `topic` in `room`. The first call gives the connection's writer to
-  ## the room, which writes to it from then on; later calls add topics. A
-  ## connection belongs to one room only, because it has one writer.
+  ## Joins `topic` in `room` — a path like `"chat/room1"`, whose parents are
+  ## not implied: a publish to `"chat"` reaches this connection because it is
+  ## below `"chat"`, and a publish to `"chat/room1"` because it is that topic.
+  ##
+  ## The first call gives the connection's writer to the room, which writes to
+  ## it from then on; later calls add topics. A connection belongs to one room
+  ## only, because it has one writer.
   let r = ws.room
   if r == nil:
     ws.room = room
@@ -1530,15 +1662,17 @@ proc subscribe*(ws: var WebSocket; topic: string) {.passive, raises.} =
   subscribe(ws, defaultRoom(), topic)
 
 proc unsubscribe*(ws: var WebSocket; topic: string) {.passive, raises.} =
-  ## Leaves `topic`; the connection stays in the room for its other topics.
+  ## Leaves `topic`; the connection stays in the room for its other topics, and
+  ## a publish to a parent of `topic` no longer reaches it.
   let r = ws.room
   if r == nil: return
   r.dropTopic(ws.member, topic)
 
 proc publish*(ws: var WebSocket; topic: string; data: string) {.
     passive, raises.} =
-  ## Sends `data` to every member of `topic`, this connection included if it
-  ## is one. A connection that never subscribed publishes to the default room.
+  ## Sends `data` to every member of `topic` and of the topics below it, this
+  ## connection included if it is one of them. A connection that never
+  ## subscribed publishes to the default room.
   let r = ws.room
   if r != nil: r.publish(topic, data)
   else: defaultRoom().publish(topic, data)

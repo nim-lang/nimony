@@ -1,8 +1,18 @@
+[0] a: mkText joined
+[0] b: mkText joined
 [1] a: mkText hello
 [1] b: mkText hello
 [2] a: mkText only you
 [2] a again: mkText after
 [2] b: mkText after
-[3] b closed with 1000
-[3] a: mkText still here
-[4] a closed with 1000
+[3] v: mkText joined
+[3] a: mkText all
+[3] b: mkText all
+[3] v: mkText all
+[4] v: mkText vips
+[4] a: mkText after vip
+[4] b: mkText after vip
+[4] v again: mkText after vip
+[5] b closed with 1000
+[5] a: mkText still here
+[6] a closed with 1000
