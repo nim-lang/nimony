@@ -147,6 +147,11 @@ var gReactorState*: int = 0
   ## Nothing orders those plain stores against each other, so on a weakly
   ## ordered machine a worker could see the new reactor and an arena seq that is
   ## still empty. `reactorReady` pairs an acquire with `setupRing`'s release.
+var gReactorHasReady*: nil proc (): bool {.nimcall.} = nil
+  ## Set by the I/O backend alongside `gReactor`: does the lane have a
+  ## completion already published and not yet consumed? Read by the drain loop
+  ## before it runs another step of a chain inline (see `trampolineSteps`).
+
 var gReactorWaits* = false
   ## Does `gReactor(ms)` actually sleep for up to `ms`? Set from the I/O
   ## backend (see `BackendRelays.waits`). While it is false an idle worker has
@@ -305,9 +310,19 @@ proc drainOnce(startStripe: int): bool =
     if n > 0:
       for i in 0 ..< n:
         let c = buf[i].con
-        let next = c.fn(c.env)
-        if next.fn != nil:
-          submit(next, startStripe)
+        when trampolineSteps > 0:
+          var next = c.fn(c.env)
+          var steps = 0
+          while next.fn != nil and steps < trampolineSteps and
+                not (gReactorHasReady != nil and gReactorHasReady()):
+            next = next.fn(next.env)
+            inc steps
+          if next.fn != nil:
+            submit(next, startStripe)
+        else:
+          let next = c.fn(c.env)
+          if next.fn != nil:
+            submit(next, startStripe)
       countMetric(workerMetrics[threadIdx].tasksHandled, n)
       if attempt != 0:
         countMetric(workerMetrics[threadIdx].tasksStealed, n)
@@ -339,6 +354,23 @@ proc reactorPoll*(timeoutMs: int): bool {.inline.} =
   ## Drive the I/O reactor if there is one, and the do-nothing default until
   ## there is. Every caller of `gReactor` goes through this.
   if reactorReady(): gReactor(timeoutMs) else: poolPollIo(timeoutMs)
+
+const trampolineSteps {.intdefine.} = 64
+  ## How many continuation steps of a chain to run inline in the drain loop
+  ## before handing the rest back to the pool.
+  ##
+  ## `submit`-ing each step and popping it again costs two atomics, a division
+  ## and a call per frame. A message in the many-connection regime resubmits
+  ## ~16 times, which was 24% of the server's instructions there; running the
+  ## steps inline removes that, and it is the single largest win in that
+  ## regime (+11%).
+  ##
+  ## The price is the worker not polling its lane meanwhile, which is why the
+  ## loop stops as soon as the backend says a completion is already waiting
+  ## (`gReactorHasReady`): a published completion left in the queue is pure
+  ## latency. Without that gate the trampoline costs the pipelined
+  ## single-client case ~7% — there, one poll collects ~19 completions and the
+  ## worker must get back to it.
 
 var idleSleepUs {.threadvar.}: int
 

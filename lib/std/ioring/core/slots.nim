@@ -1,18 +1,23 @@
 # Per-op slots.
 #
-# Every in-flight op lives in its own `ref Slot`, created when it is submitted
-# and released when it completes, so a ring's footprint follows its load. The
-# lane's per-fd lists hold the only owning reference; the deadline heap holds
-# cursors, and what the kernel keeps (io_uring's `user_data`, an IOCP
-# OVERLAPPED) is the slot's raw address, valid because a slot is never
-# released before the kernel has given its op back.
+# Every in-flight op lives in its own `Slot`. The lane's per-fd lists hold the
+# only owning reference; the deadline heap holds cursors, and what the kernel
+# keeps (io_uring's `user_data`, an IOCP OVERLAPPED) is the slot's raw address,
+# valid because a slot is never released before the kernel has given its op
+# back.
+#
 #
 # The per-fd lists are intrusive and doubly linked, so a readiness event finds
 # "all ops for this fd" in O(k) (k = ops on this fd) instead of scanning every
-# slot.
+# slot. Their heads are indexed by the descriptor itself: a table keyed by
+# `cint` was one hash, one insert and one backshifting delete per op — 14% of
+# the server's instructions in the many-connection profile — while a
+# descriptor is already a small dense integer. The array grows to the highest
+# descriptor seen and never shrinks; a lane with 2048 connections holds 16 KB
+# of heads.
 
 import ./types
-import std/[tables, assertions]
+import std/assertions
 
 type
   SlotObj* = object
@@ -32,10 +37,13 @@ type
       ## The predecessor owns this slot through `nextInFd`.
   Slot* = ref SlotObj
   SlotArena* = object
-    fdHeads: Table[cint, nil Slot]  ## fd -> head of its op list
+    fdHeads: seq[nil Slot]
+      ## `fd + 1` -> head of its op list; `nil` when it has none. The +1 is
+      ## for the ops that have no descriptor at all (`opTimeout`, `opNop`,
+      ## whose `fd` is -1) and still need a list to sit on.
 
 proc init*(a: var SlotArena) =
-  a.fdHeads = initTable[cint, nil Slot]()
+  a.fdHeads = @[]
 
 proc toPointer*(s: Slot): pointer {.inline.} =
   ## The address a backend hands the kernel for `s`.
@@ -55,7 +63,15 @@ proc allocSlot*(a: var SlotArena, op: OpContext): nil Slot =
   ## A fresh slot holding `op`, or `nil` when memory is exhausted.
   result = Slot(op: op, timerPos: -1)
   if result == nil: return
-  pushFront(a.fdHeads.mgetOrPut(op.fd, nil), result)
+  let fd = int(op.fd) + 1
+  if fd >= a.fdHeads.len:
+    # Grow geometrically, and always past the descriptor that asked: a ring
+    # that jumps straight to a high descriptor should not pay one realloc per
+    # step on the way there.
+    var n = if a.fdHeads.len == 0: 64 else: a.fdHeads.len
+    while n <= fd: n = n * 2
+    a.fdHeads.setLen(n)
+  pushFront(a.fdHeads[fd], result)
 
 proc freeSlot*(a: var SlotArena; s: Slot) =
   ## Unlink `s` from its fd's list, which drops the ring's reference to it.
@@ -65,17 +81,18 @@ proc freeSlot*(a: var SlotArena; s: Slot) =
   s.prevInFd = nil
   if next != nil:
     next.prevInFd = prev
-  # Last: this releases `s`.
   if prev != nil:
     prev.nextInFd = move next
   elif next != nil:
-    a.fdHeads[s.op.fd] = move next
+    a.fdHeads[int(s.op.fd) + 1] = move next
   else:
-    a.fdHeads.del(s.op.fd)
+    a.fdHeads[int(s.op.fd) + 1] = nil
+  s.nextInFd = nil
 
 proc hasPendingForFd*(a: var SlotArena; fd: cint): bool =
   ## `var`, like `slotsForFd`, purely to avoid copying the arena — see there.
-  result = a.fdHeads.getOrDefault(fd, nil) != nil
+  let i = int(fd) + 1
+  result = i < a.fdHeads.len and a.fdHeads[i] != nil
 
 iterator slotsForFd*(a: var SlotArena; fd: cint): Slot =
   ## Yield every in-flight slot for `fd`, O(k) in the number of ops on this
@@ -89,7 +106,9 @@ iterator slotsForFd*(a: var SlotArena; fd: cint): Slot =
   ## The body may complete the slot it was handed (`complete`/`closeFd` both
   ## do), so the successor is taken *before* yielding; holding it also keeps
   ## it alive while the body runs.
-  var cur = a.fdHeads.getOrDefault(fd, nil)
+  let i = int(fd) + 1
+  if i >= a.fdHeads.len: return
+  var cur = a.fdHeads[i]
   while cur != nil:
     let nxt = cur.nextInFd
     yield cur
@@ -99,13 +118,14 @@ iterator pendingFds*(a: var SlotArena): cint =
   ## Every fd that has at least one in-flight slot. The table is mutated by
   ## `freeSlot`, so a caller that completes ops must collect the fds first and
   ## dispatch afterwards — never `complete` from inside this loop.
-  for fd in a.fdHeads.keys:
-    yield fd
+  for i in 0 ..< a.fdHeads.len:
+    if a.fdHeads[i] != nil:
+      yield cint(i - 1)
 
 iterator allSlots*(a: var SlotArena): Slot =
   ## Every in-flight slot. The body must not complete any of them.
-  for head in a.fdHeads.values:
-    var cur = head
+  for i in 0 ..< a.fdHeads.len:
+    var cur = a.fdHeads[i]
     while cur != nil:
       yield cur
       cur = cur.nextInFd

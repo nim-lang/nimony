@@ -404,10 +404,16 @@ proc `=copy`*(dest: var Socket; src: Socket) {.error.}
 proc initSocket*(fd: cint; deadline: Deadline): Socket =
   ## `fd` must already be non-blocking. The deadline has no default: a socket
   ## with no budget is one a quiet peer can hold forever.
+  ##
+  ## The read and write buffers start empty and are allocated by the first
+  ## `fill`/`scratch` that needs one. Allocating them here meant two 8 KB
+  ## buffers per socket for a peer that may never say anything — and a server
+  ## holding idle connections, or a client holding a hundred thousand of them,
+  ## pays that per connection whether it is used or not.
   Socket(fd: fd, deadline: deadline,
          peer: PeerAddr(raw: Sockaddr_storage()),
-         rbuf: newSeq[char](ReadChunk), rlen: 0, rpos: 0,
-         wbuf: newSeq[char](ReadChunk))
+         rbuf: @[], rlen: 0, rpos: 0,
+         wbuf: @[])
 
 proc budget*(s: Socket; dl: Deadline): Deadline {.inline.} =
   ## The deadline an operation actually runs under: the socket's, or a tighter
@@ -472,6 +478,8 @@ proc fill*(s: var Socket; dl = never): int {.passive, raises.} =
   ## deadline arrived first, `IOError` otherwise.
   result = 0
   compact(s)
+  if s.rbuf.len == 0:
+    s.rbuf = newSeq[char](ReadChunk)
   if s.rlen >= s.rbuf.len:
     if s.rbuf.len >= MaxBuffered:
       raise FullError

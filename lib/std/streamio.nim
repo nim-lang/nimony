@@ -65,7 +65,22 @@ when defined(posix):
     header: "<sys/socket.h>", sideEffect.}
 
 const
-  ChunkSize = 16 * 1024       ## one read from below; one TLS record's worth
+  ChunkSize {.intdefine.} = 16 * 1024
+    ## The most one read from below takes; one TLS record's worth. A reader
+    ## reaches it only while its peer keeps filling what it is given — see
+    ## `MinRead`.
+  MinRead {.intdefine.} = 1024
+    ## The first read of a connection, and what it falls back to when a read
+    ## comes back short.
+    ##
+    ## This is the per-connection memory floor, and it is why it is small: a
+    ## read reserves its size in the reader's buffer, and the buffer keeps the
+    ## capacity. Reserving `ChunkSize` for every connection meant a chat server
+    ## with 8000 quiet clients held 8000 sixteen-kilobyte buffers — 36 KB of
+    ## chunk each once the allocator's size classes were done with it — for
+    ## messages of forty bytes. Now a quiet connection holds `MinRead` and a
+    ## busy one doubles up to `ChunkSize` within five reads, so a flooding peer
+    ## still gets its 16 KB reads.
   FlushAt = 64 * 1024         ## a writer pushes its buffer down past this
 
 proc addBytes(dest: var string; src: openArray[char]) {.inline.} =
@@ -416,17 +431,22 @@ proc coreSend(c: Core; data: openArray[char]) {.passive, raises.} =
     else:
       writeFd(c, data)
 
-proc readFd(c: Core; dest: var string): int {.passive, raises.} =
+proc readFd(c: Core; dest: var string; step = ChunkSize): int {.passive, raises.} =
   ## Appends one read's worth; `0` at the end of the source. The kernel writes
   ## straight into `dest`'s spare room: no staging buffer, no zero-fill.
+  ##
+  ## `step` is how much room this read reserves, and it is the reader's
+  ## business (see `MinRead`), not this proc's: the reservation is what stays
+  ## allocated for the life of the buffer.
   let old = dest.len
-  let n = readAsync(c.fd, beginStore(dest, old + ChunkSize, old), ChunkSize, c.dl)
+  let n = readAsync(c.fd, beginStore(dest, old + step, old), step, c.dl)
   dest.setLen old + max(n, 0)            # a shrink: keeps the capacity, syncs the prefix
   if n < 0: raise toErr(n)
   result = n
 
-proc coreRecv(c: Core; dest: var string): int {.passive, raises.} =
+proc coreRecv(c: Core; dest: var string; step = ChunkSize): int {.passive, raises.} =
   ## Appends bytes from below the adapter; `0` once the source has ended.
+  ## `step` bounds one read, and only the descriptor path uses it.
   result = 0
   if c.peerDone: return
   case c.kind
@@ -448,7 +468,7 @@ proc coreRecv(c: Core; dest: var string): int {.passive, raises.} =
   of ckFd:
     let e = c.tls
     if e == nil:
-      result = readFd(c, dest)
+      result = readFd(c, dest, step)
       if result == 0: c.peerDone = true
     else:
       while true:
@@ -489,6 +509,10 @@ type
     raw: string          ## bytes from below not yet taken by the adapter
     adapter: nil Adapter
     eof: bool            ## the source below has ended
+    step: int
+      ## How much room the next read reserves: `MinRead` for a quiet
+      ## connection, doubling up to `ChunkSize` while the peer keeps filling
+      ## it. See `MinRead` for why this is not just `ChunkSize`.
 
   Writer* = object
     ## Move-only, like `Reader`.
@@ -532,7 +556,8 @@ proc `=dup`*(x: Writer): Writer {.error.}
 proc `=copy`*(dest: var Writer; src: Writer) {.error.}
 
 proc initReader(c: Core): Reader =
-  Reader(core: c, buf: "", pos: 0, raw: "", adapter: nil, eof: false)
+  Reader(core: c, buf: "", pos: 0, raw: "", adapter: nil, eof: false,
+         step: MinRead)
 
 proc initWriter(c: Core): Writer =
   Writer(core: c, buf: "", adapter: nil, finished: false)
@@ -615,7 +640,15 @@ proc refill(r: var Reader): bool {.passive, raises.} =
         return true
       if r.eof: return false
     if r.eof: return false
-    if coreRecv(c, r.raw) == 0: r.eof = true
+    let n = coreRecv(c, r.raw, r.step)
+    if n == 0: r.eof = true
+    # Grow the step only while the peer fills it, and fall back when a read
+    # comes back short: the reservation is what the connection keeps, so a
+    # quiet connection must not hold a flooding one's buffer.
+    if n >= r.step:
+      if r.step < ChunkSize: r.step = min(r.step * 2, ChunkSize)
+    elif n > 0 and r.step > MinRead:
+      r.step = MinRead
 
 proc fill*(r: var Reader): int {.passive, raises.} =
   ## Append more decoded bytes, preserving the unread tail and compacting

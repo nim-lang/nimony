@@ -88,6 +88,7 @@ proc setupRing() =
   gCq = newSeq[IoCompletion](CqSize)
   initPlatformBackend()
   gReactor = backendRelays.poll
+  gReactorHasReady = backendRelays.hasReady
   gReactorWaits = backendRelays.waits
   # The release half of `threadpool.reactorReady`: the workers have been running
   # since `initPool` above, so everything the reactor reaches — the op queues,
@@ -639,7 +640,7 @@ when defined(posix):
     # needed: sin_port sits at offset 2 in both sockaddr_in and sockaddr_in6.
     result = (uint16(raw[2]) shl 8) or uint16(raw[3])
 
-  proc listenTcp*(port: uint16; backlog = 128): cint =
+  proc listenTcp*(port: uint16; backlog = 1024): cint =
     let fd = socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     assert fd >= 0, "socket() failed"
     var yes: cint = 1
@@ -738,7 +739,7 @@ when defined(windows):
       discard cancelPendingOps(fd)
     discard wsClosesocket(socketOf(fd))
 
-  proc listenTcp*(port: uint16; backlog = 128): cint =
+  proc listenTcp*(port: uint16; backlog = 1024): cint =
     ## IPv4 wildcard listener. No SO_REUSEADDR: on Winsock that option allows a
     ## second bind to hijack a live listener, so the POSIX "restart without
     ## TIME_WAIT" semantics are not what it means here.
