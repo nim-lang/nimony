@@ -68,10 +68,11 @@ proc freeSlot*(a: var SlotArena; s: Slot) =
   # Last: this releases `s`.
   if prev != nil:
     prev.nextInFd = move next
-  elif next != nil:
-    a.fdHeads[s.op.fd] = move next
   else:
-    a.fdHeads.del(s.op.fd)
+    # `nil` when it was the last, not `del`: a delete shifts every later
+    # entry and rebuilds the table's index, and this runs on every
+    # completion. Descriptor numbers are reused, so the entries stay few.
+    a.fdHeads[s.op.fd] = move next
 
 proc hasPendingForFd*(a: var SlotArena; fd: cint): bool =
   ## `var`, like `slotsForFd`, purely to avoid copying the arena — see there.
@@ -99,8 +100,8 @@ iterator pendingFds*(a: var SlotArena): cint =
   ## Every fd that has at least one in-flight slot. The table is mutated by
   ## `freeSlot`, so a caller that completes ops must collect the fds first and
   ## dispatch afterwards — never `complete` from inside this loop.
-  for fd in a.fdHeads.keys:
-    yield fd
+  for fd, head in a.fdHeads.pairs:
+    if head != nil: yield fd
 
 iterator allSlots*(a: var SlotArena): Slot =
   ## Every in-flight slot. The body must not complete any of them.
