@@ -445,16 +445,14 @@ proc take(rd: var WebSocketReader; dest: var openArray[char]): int =
     copyMem(addr dest[0], addr rd.r.peek[0], result)
     rd.r.consume result
 
-proc fillOnce(rd: var WebSocketReader): int {.passive, raises.} =
-  ## Reads more of the protocol stream. The bytes available afterwards — `0`
-  ## at the end of the stream.
-  if rd.avail > 0: return rd.avail
-  result = rd.r.fill()
-
 proc ensure(rd: var WebSocketReader; n: int): bool {.passive, raises.} =
   ## Whether at least `n` protocol bytes are buffered; reads until they are.
+  ##
+  ## `fill` returns what it *added*, and `0` at the end of the stream even
+  ## when unread bytes remain. Asking it again after a short read therefore
+  ## cannot make progress: that is the end, and the answer is `false`.
   while rd.avail < n:
-    if rd.fillOnce() == 0: return false
+    if rd.r.fill() == 0: return false
   result = true
 
 proc deadline*(rd: WebSocketReader): Deadline {.raises.} =
@@ -901,7 +899,7 @@ proc readPayload(rd: var WebSocketReader; f: WsFrame; dest: var string): int {.
   var got = 0
   while got < n:
     if rd.avail == 0:
-      if rd.fillOnce() == 0: break
+      if rd.r.fill() == 0: break
     let took = min(n - got, rd.avail)
     copyMem(addr dp[got], addr rd.r.peek[0], took)
     rd.r.consume took
