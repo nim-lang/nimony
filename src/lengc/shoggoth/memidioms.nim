@@ -7,8 +7,12 @@
 #    distribution, for details about the copyright.
 #
 
-## Replaces element-wise FILL loops with one `(memset D V N)` and puts a
-## `(memcpy D S N)` in front of element-wise COPY loops (nimony#2350).
+## Replaces element-wise FILL loops with one `Memset` intrinsic and puts a
+## `Memcpy` in front of element-wise COPY loops (nimony#2350). Both are
+## `(instr …)` applications of declarations this pass adds to the module
+## (`addMemIntrinsicDecls`): an intrinsic has no body, so unlike a call to
+## `c_memset` there is no definition DCE (which ran before us) could have
+## dropped.
 ##
 ## Generics and bounds safety make Nim produce these loops everywhere a C
 ## programmer would have written `memset`: `default(array[N, T])` is a
@@ -32,7 +36,7 @@
 ## to that inlining leaves behind. It becomes
 ##
 ##   (if (elif (lt IV HI)
-##     (stmts (memset (addr (at B IV)) BYTE (mul (i -1) COUNT (sizeof E)))
+##     (stmts (instr memset (addr (at B IV)) BYTE (mul (i -1) COUNT (sizeof E)))
 ##            (asgn IV HI))))             ; the value the loop left behind
 ##
 ## so nothing after the loop can tell the difference, the induction variable
@@ -54,12 +58,11 @@
 ## constant for a one-byte element, all-zero bits for a wider one — an all-zero
 ## object constructor included, which is what makes the `setLen` tails match.
 ##
-## **Where it runs.** After CSE and before the vectorizer, so no other shoggoth
-## pass ever sees a `(memset …)`: the inter-module inliner reads the OTHER
-## modules' pre-optimization Leng, and everything else that runs later only
-## passes unknown statements through. The backends lower the node with the
-## inline loop or intrinsic they already used for a call to C's `memset` —
-## except AVR, which has none, so the driver turns the pass off there.
+## **Where it runs.** After CSE and before the vectorizer, which would
+## otherwise turn the same loops into vector stores. The backends lower the
+## rows with the inline loop or builtin they already used for a call to C's
+## `memset` — except AVR, which has none, so the driver turns the pass off
+## there.
 ##
 ## **Copies.** `D[IV] = S[IV]` needs the same invariance argument for both
 ## bases, and one more thing: `memcpy` is only a forward element loop when the
@@ -69,7 +72,7 @@
 ## untouched loop, guarded by a runtime test that the byte ranges are disjoint:
 ##
 ##   (if (elif (and (lt IV HI) DISJOINT)
-##     (stmts (memcpy (addr D[IV]) (addr S[IV]) N) (asgn IV HI))))
+##     (stmts (instr memcpy (addr D[IV]) (addr S[IV]) N) (asgn IV HI))))
 ##   (while (true) …)                     ; finds IV == HI and exits at once
 ##
 ## so an overlapping copy still runs the loop it always ran, and no label in
@@ -82,6 +85,7 @@ import ".." / nifmodules                      # MainModule
 import ".." / typenav                         # getType / registerLocal / scopes
 import patchsets
 import vmrewriter                             # subtreeEqual
+import ".." / ".." / "lib" / intrinsics       # MemsetOp / MemcpyOp
 
 type
   LeafKind = enum
@@ -106,7 +110,7 @@ type
 
   MemOpts* = object
     ## What the target allows. The driver fills it from the command line.
-    nodes*: bool                     ## the back end lowers `(memset …)`/`(memcpy …)`
+    intrinsics*: bool                ## the back end lowers the `Memset`/`Memcpy` rows
     mergeWordBytes*: int             ## > 0: merge adjacent constant field stores
                                      ## into stores up to this many bytes (a
                                      ## little-endian target that does not
@@ -122,6 +126,8 @@ type
     scratch: TokenBuf
     sites: seq[MemSite]
     opts: MemOpts
+    suffix: string                   ## the module's, for the intrinsic names
+    used: set[IntrinsicOp]           ## which mem intrinsics were emitted
 
 proc posOf(s: MemScan; n: Cursor): int {.inline.} =
   cursorToPosition(s.buf[], n)
@@ -660,9 +666,18 @@ proc emitFinalIv(b: var TokenBuf; lm: LoopMatch) =
     b.addSubtree lm.hi
   b.closeTag()
 
-proc emitMemStmt(b: var TokenBuf; lm: LoopMatch; isCopy: bool; byteVal: int64) =
-  ## `(memset (addr DST) BYTE N)` / `(memcpy (addr DST) (addr SRC) N)`.
-  b.openTag TagId(if isCopy: MemcpyS else: MemsetS)
+proc memIntrinsicName(op: IntrinsicOp; suffix: string): string =
+  ## The module-local declaration an `(instr …)` this pass emits names; see
+  ## `addMemIntrinsicDecls`.
+  (if op == MemcpyOp: "memcpy." else: "memset.") & suffix
+
+proc emitMemStmt(s: var MemScan; b: var TokenBuf; lm: LoopMatch; isCopy: bool;
+                 byteVal: int64) =
+  ## `(instr memset (addr DST) BYTE N)` / `(instr memcpy (addr DST) (addr SRC) N)`.
+  let op = if isCopy: MemcpyOp else: MemsetOp
+  s.used.incl op
+  b.openTag TagId(InstrS)
+  b.addSymUse memIntrinsicName(op, s.suffix)
   emitAddr(b, lm.lhs)
   if isCopy: emitAddr(b, lm.value)
   else: b.addIntLit byteVal
@@ -717,7 +732,7 @@ proc emitReplacement(s: var MemScan; lm: LoopMatch; isCopy: bool; byteVal: int64
   else:
     b[].addSubtree lm.cond
   b[].openTag TagId(StmtsS)
-  emitMemStmt(b[], lm, isCopy, byteVal)
+  emitMemStmt(s, b[], lm, isCopy, byteVal)
   emitFinalIv(b[], lm)
   b[].closeTag()
   b[].closeTag()
@@ -1067,7 +1082,7 @@ proc scanList(s: var MemScan; list: Cursor) =
   while it.hasMore:
     if it.kind == TagLit and it.stmtKind == WhileS:
       var lab = SymId(0)
-      if s.opts.nodes and exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
+      if s.opts.intrinsics and exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
     scan(s, it)
     skip it
 
@@ -1096,15 +1111,51 @@ proc scan(s: var MemScan; n: Cursor) =
         scan(s, it)
         skip it
 
+proc addMemIntrinsicDecls*(dest: var TokenBuf; suffix: string;
+                           used: set[IntrinsicOp]) =
+  ## The `{.intrinsic.}` declarations the emitted `(instr …)` applications name,
+  ## appended once per module, like the vectorizer's: declaration-only (body
+  ## `.`), so there is nothing for DCE to keep alive and nothing a back end
+  ## emits for them. The pragma string is what selects the row.
+  for op in [MemsetOp, MemcpyOp]:
+    if op notin used: continue
+    let name = memIntrinsicName(op, suffix)
+    dest.openTag TagId(ProcS)
+    dest.addSymDef name
+    dest.openTag TagId(ParamsT)
+    for i in 0 ..< 3:
+      dest.openTag TagId(ParamU)
+      dest.addSymDef "a" & $i & "." & name
+      dest.addDotToken()
+      if i == 0 or (i == 1 and op == MemcpyOp):
+        dest.openTag TagId(PtrT)              # dest / src
+        emitIntType(dest, UT)
+        dest.closeTag()
+      else:
+        emitIntType(dest, IT)                 # the byte / the size
+      dest.closeTag()                         # param
+    dest.closeTag()                           # params
+    dest.addDotToken()                        # void result
+    dest.openTag TagId(PragmasU)
+    dest.openTag TagId(IntrinsicP)
+    dest.addStrLit IntrinsicNames[op]
+    dest.closeTag()
+    dest.closeTag()                           # pragmas
+    dest.addDotToken()                        # no body
+    dest.closeTag()                           # proc
+
 proc runMemIdioms*(buf: var TokenBuf; m: ptr MainModule; params: Cursor;
-                   opts: MemOpts): int =
-  ## Replace every fill loop in the body with a `(memset …)` and put a
-  ## `(memcpy …)` in front of every copy loop; returns how many.
+                   opts: MemOpts; suffix: string;
+                   used: var set[IntrinsicOp]): int =
+  ## Replace every fill loop in the body with a `Memset` and put a `Memcpy` in
+  ## front of every copy loop; returns how many. `used` collects the rows the
+  ## module then needs declarations for (`addMemIntrinsicDecls`).
   ## `m` must have the proc's scope open with its params registered.
   result = 0
   if m == nil: return
   var s = MemScan(buf: addr buf, m: m, facts: gatherFacts(buf, params),
-                  scratch: createTokenBuf(64, buf.pool, buf.tags), opts: opts)
+                  scratch: createTokenBuf(64, buf.pool, buf.tags), opts: opts,
+                  suffix: suffix, used: {})
   var root = beginRead(buf)
   m[].openScope()
   while root.hasMore:
@@ -1120,3 +1171,4 @@ proc runMemIdioms*(buf: var TokenBuf; m: ptr MainModule; params: Cursor;
     var nb = patch.apply()
     buf = ensureMove(nb)
     result = s.sites.len
+  used = used + s.used

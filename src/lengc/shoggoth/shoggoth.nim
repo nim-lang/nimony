@@ -172,14 +172,14 @@ proc optimizeMain(args: seq[string]) =
   var verify = false
   var stats = false
   var vecMode = vecOff
-  var memOpts = MemOpts(nodes: true)
+  var memOpts = MemOpts(intrinsics: true)
   for a in args:
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
     elif a == "--verify": verify = true
     elif a == "--stats": stats = true
     elif a == "--vectorize": vecMode = vecNeon
     elif a == "--vectorize:sse": vecMode = vecSse
-    elif a == "--no-mem-nodes": memOpts.nodes = false   # a back end without (memset …)
+    elif a == "--no-mem-intrinsics": memOpts.intrinsics = false   # a back end without the Memset/Memcpy rows
     elif a.startsWith("--merge-stores:"):
       # adjacent constant field stores -> one wider store; the value is the
       # target's word in bits. Little-endian and type-agnostic back ends only.
@@ -192,7 +192,7 @@ proc optimizeMain(args: seq[string]) =
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--no-mem-nodes] [--merge-stores:BITS] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
     onRaiseQuit createDir(path(outdir))

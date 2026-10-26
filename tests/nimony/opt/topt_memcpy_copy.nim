@@ -1,4 +1,5 @@
-# Copy loops that shoggoth's `memidioms` pass turns into `(memcpy …)` (#2350).
+# Copy loops that shoggoth's `memidioms` pass turns into a `Memcpy` intrinsic
+# (#2350).
 # Two local arrays cannot overlap, so their loop is replaced. Two pointers
 # can, and then the forward element loop is NOT a memcpy: copying a range one
 # element up repeats the first element. Those keep the loop behind a runtime

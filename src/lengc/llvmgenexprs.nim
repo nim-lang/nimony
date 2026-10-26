@@ -383,20 +383,6 @@ proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[
                      callRetType: retType, callArgs: args)
       result = res
 
-proc genMemNode(c: var LLVMCode; n: var Cursor; externName: string;
-                result: var LLValue) =
-  ## `(memset D V N)` / `(memcpy D S N)` / `(memcmp A B N)`: the same lowering
-  ## as a call to the importc'd C function of that name.
-  var args: seq[LLValue] = @[]
-  n.into:
-    for i in 0 ..< 3:
-      var a = LLValue(); genExprLLVM(c, n, a)
-      args.add a
-  let size = sizeToI64(c, args[2])
-  args[2] = size
-  let retType = c.prim.i32                 # only `memcmp` has a result
-  genMemIntrinsicCall(c, externName, args, retType, result)
-
 const
   AtomicBuiltins = [
     "__atomic_load_n", "__atomic_store_n", "__atomic_exchange_n",
@@ -494,6 +480,14 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     c.setLoc(start.info)
     if op.isAtomic:
       genAtomicCall(c, cBuiltinFor(op, bits), args, retType, result)
+    elif op.isMemOp:
+      # the same lowering as a call to the importc'd C function of that name
+      args[2] = sizeToI64(c, args[2])
+      let name = case op
+                 of MemsetOp: "memset"
+                 of MemcpyOp: "memcpy"
+                 else: "memcmp"
+      genMemIntrinsicCall(c, name, args, retType, result)
 
     else:
       let builtin = cBuiltinFor(op, bits)
@@ -860,7 +854,7 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
      OconstrC, AconstrC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
      BitandC, BitorC, BitxorC, BitnotC,
-     EqC, NeqC, LeC, LtC, CastC, ConvC, CallC, InstrC, MemcmpC:
+     EqC, NeqC, LeC, LtC, CastC, ConvC, CallC, InstrC:
     error c.m, "not an lvalue: ", n
 
 proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -1115,8 +1109,6 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     genCallWithType(c, n, retType, result)
   of InstrC:
     genInstrLLVM(c, n, result)
-  of MemcmpC:
-    genMemNode(c, n, "memcmp", result)
   of AddrC, HaddrC:
     genAddrLLVM(c, n, result)
   of DerefC:

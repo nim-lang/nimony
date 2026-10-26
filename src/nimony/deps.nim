@@ -1255,9 +1255,9 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           if cpuName == "amd64": vecFlag = "--vectorize:sse"
           b.addStrLit vecFlag
         if cpuName == "avr":
-          # arkham's AVR emitter has no lowering for `(memset …)` (nor for a
+          # arkham's AVR emitter has no lowering for the `Memset` row (nor for a
           # call to C's `memset`), so the fill-loop recognizer stays off there.
-          b.addStrLit "--no-mem-nodes"
+          b.addStrLit "--no-mem-intrinsics"
         elif native:
           # Merge adjacent constant field stores into wider ones. arkham only:
           # it does not reorder memory accesses by type, which a C compiler

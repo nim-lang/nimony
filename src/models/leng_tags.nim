@@ -50,10 +50,9 @@ type
     BaseobjC = (ord(BaseobjTagId), "baseobj")  ## object conversion to base type
     ErrvC = (ord(ErrvTagId), "errv")  ## error flag for Leng
     InstrC = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
-    MemcmpC = (ord(MemcmpTagId), "memcmp")  ## compare `X3` bytes at the pointers `X1` and `X2` as unsigned bytes; the result is an `(i 32)` that is negative, zero or positive like C's `memcmp`. Reads memory through both pointers and writes nothing
 
 proc rawTagIsLengExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, HaddrTagId, BaseobjTagId, ErrvTagId, InstrTagId, MemcmpTagId}
+  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, HaddrTagId, BaseobjTagId, ErrvTagId, InstrTagId}
 
 type
   LengStmt* = enum
@@ -89,11 +88,9 @@ type
     VflagS = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
     InstrS = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
     AlwaysS = (ord(AlwaysTagId), "always")  ## the statements of one replicated `finally` section: the eraiser emits one `(always …)` per way out of a `try`, so each copy stays recognizable as "runs on every path" after the `try` itself is gone. Like `stmts`, it opens no scope. Currently pure meta information: `lengcgen` emits its statements unwrapped, so `lengc`/`arkham` never see it. It is meant for checking that every path destroys a value and, later, for precise stack unwinding that runs custom logic
-    MemsetS = (ord(MemsetTagId), "memset")  ## fill `X3` bytes starting at the pointer `X1` with the byte value `X2` (an integer; only its low 8 bits count). A STATEMENT, not a call: nothing is referenced by name, so a pass that recognizes a fill loop or an all-zero object construction can emit it in any module without a declaration to keep alive, and every back end lowers it with its own inline loop or intrinsic (`memset` in C, `llvm.memset`, arkham's inline byte loop). It writes memory through `X1` and reads nothing
-    MemcpyS = (ord(MemcpyTagId), "memcpy")  ## copy `X3` bytes from the pointer `X2` to the pointer `X1`; the regions must not overlap. A statement for the same reason as `(memset …)`: a recognized element-wise copy loop becomes one without a symbol to reference. It writes memory through `X1` and reads memory through `X2`
 
 proc rawTagIsLengStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, AlwaysTagId, MemsetTagId, MemcpyTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, AlwaysTagId}
 
 type
   LengType* = enum

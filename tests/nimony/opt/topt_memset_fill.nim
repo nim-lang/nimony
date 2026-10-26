@@ -1,7 +1,7 @@
-# Fill loops that shoggoth's `memidioms` pass turns into `(memset …)` (#2350),
-# and the near misses it must leave alone. Every result is printed, so a fill
-# that writes one element too many or too few, the wrong byte, or forgets the
-# value the loop leaves in its counter shows up as a diff.
+# Fill loops that shoggoth's `memidioms` pass turns into a `Memset` intrinsic
+# (#2350), and the near misses it must leave alone. Every result is printed, so
+# a fill that writes one element too many or too few, the wrong byte, or
+# forgets the value the loop leaves in its counter shows up as a diff.
 
 import std / syncio
 

@@ -373,9 +373,6 @@ type
     CanFormCyclesTagId
     AlwaysTagId
     SupportsCopyMemTagId
-    MemsetTagId
-    MemcpyTagId
-    MemcmpTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -748,8 +745,5 @@ const
     ("enableTrace", 367),
     ("canFormCycles", 368),
     ("always", 369),
-    ("supportsCopyMem", 370),
-    ("memset", 371),
-    ("memcpy", 372),
-    ("memcmp", 373)
+    ("supportsCopyMem", 370)
   ]

@@ -110,6 +110,10 @@ proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
   # what matters here, and a function-like macro has exactly the one `genInstr`
   # emits.
   of CpuRelaxOp: "NIM_CPU_RELAX"
+  # The size operand is a Leng integer; C converts it to `size_t` implicitly.
+  of MemsetOp: "__builtin_memset"
+  of MemcpyOp: "__builtin_memcpy"
+  of MemcmpOp: "__builtin_memcmp"
   else: ""
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =
@@ -250,8 +254,6 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
       result = createIntegralType(c, "(f +64)")
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(c, "(bool)")
-    of MemcmpC:
-      result = createIntegralType(c, "(i +32)")
     of CallC, InstrC:
       # `(instr SYM …)` is typed EXACTLY like `(call SYM …)` — the callee's
       # signature drives everything. Only the *cost* differs, which is what the
