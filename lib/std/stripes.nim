@@ -58,6 +58,11 @@ proc tryBulkEnqueue*[T: HasDefault](s: var FifoStripe[T]; items: openArray[T]): 
   releaseSys(s.lock)
 
 proc tryBulkDequeue*[T: HasDefault](s: var FifoStripe[T]; bulkSize: int; buf: var openArray[T]): int =
+  # The empty case is the common one — a worker probes every stripe on every
+  # cycle, and all but one are usually empty — so it is answered without the
+  # lock. The read is racy on purpose: a stale zero only means the task waits
+  # for the next cycle, and a stale non-zero takes the lock and finds nothing.
+  if s.count == 0: return 0
   acquireSys(s.lock)
   result = min(s.count, min(bulkSize, buf.len))
   if s.data.len > 0:
