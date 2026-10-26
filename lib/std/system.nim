@@ -642,7 +642,8 @@ func `[]`*[T](s: seq[T]; x: HSlice[int, int]): seq[T] {.nodestroy.} =
   result = newSeqUninit[T](n)
   var i = 0
   while i < n:
-    (result.rawData[i]) = `=dup`(s.rawData[a+i])
+    {.cast(noSideEffect).}:
+      (result.rawData[i]) = `=dup`(s.rawData[a+i])
     inc i
 
 func `[]`*[T](s: seq[T]; x: HSlice[int, BackwardsIndex]): seq[T] {.inline.} =
