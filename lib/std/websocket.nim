@@ -1378,6 +1378,12 @@ type
     nextId: int
     gen: int
       ## Bumped for every publish; see `Member.gen`.
+    root: TopicNode
+    lastTopic: string
+      ## The topic of the last publish and the node it resolved to: a server
+      ## publishes the same topic over and over, and one string compare beats
+      ## walking the path.
+    lastNode: nil TopicNode
 
   Room* = ref RoomObj
     ## A tree of topics and the chain that writes to the connections in it.
@@ -1393,7 +1399,8 @@ proc newRoom*(capacity = 4096): Room {.raises.} =
   ## share one flush per member: too small and a fan-out pays a syscall per
   ## frame, too large and a slow peer's frames sit in the queue.
   var (rx, tx) = channel[RoomEvent](capacity)
-  result = Room(inbox: tx, nextId: 0, gen: 0)
+  result = Room(inbox: tx, nextId: 0, gen: 0, root: newTopic("", nil),
+                lastTopic: "", lastNode: nil)
   submit(delay(roomLoop(result, rx)), -1)
 
 var
@@ -1493,15 +1500,27 @@ proc dropSub(t: TopicNode; m: Member) =
 
 # ------------------------------------------------------------ the room --
 
+proc resolve(r: Room; topic: string): nil TopicNode =
+  ## The node of `topic`, through the one-entry cache.
+  let cached = r.lastNode
+  if cached != nil and r.lastTopic == topic: return cached
+  result = findNode(r.root, topic)
+  let found = result
+  if found != nil:
+    r.lastTopic = topic
+    r.lastNode = found
+
 proc deliver(t: TopicNode; text: string; gen: int) =
-  ## One publish to `t` and everything below it.
+  ## One publish to `t` and everything below it, each member once.
   var i = 0
   while i < t.subs.len:
     let m = t.subs[i]
     if not m.gone and m.gen != gen:
       m.gen = gen
       try:
-        m.wr.send(mkText, text, flush = false)
+        # `sendFrame` and not `send`: the text was checked once, when it was
+        # published, and this runs once per delivery.
+        m.wr.sendFrame(wsoText, text, flush = false)
         m.dirty = true
       except ErrorCode:
         # A member whose socket is gone takes the line with it; the rest of
@@ -1526,7 +1545,7 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
   ## The one chain that writes to a room's sockets. Everything it writes is
   ## buffered per member with `flush = false`; the flush happens when the queue
   ## runs dry, so one write carries a whole turn's frames.
-  var root = newTopic("", nil)
+  let root = r.root
   var members: seq[Member] = @[]
   var e = RoomEvent()
   while true:
@@ -1558,9 +1577,10 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
         if m != nil:
           members.add m
           nodeFor(root, e.topic).subs.add m
+          r.lastNode = nil
       of rePublish:
         inc r.gen
-        let n = findNode(root, e.topic)
+        let n = resolve(r, e.topic)
         if n != nil: deliver(n, e.text, r.gen)
       of reSend, rePong:
         var i = 0
@@ -1580,6 +1600,7 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
         while i < members.len and members[i].id != e.id: inc i
         if i < members.len:
           let m = members[i]
+          r.lastNode = nil
           if e.kind == reAddTopic:
             var seen = false
             var k = 0
@@ -1605,6 +1626,7 @@ proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
           let m = members[i]
           members.delete i
           forget(root, m)
+          r.lastNode = nil
           try:
             m.wr.close(if e.code == 0: 1000 else: e.code)
           except ErrorCode:
