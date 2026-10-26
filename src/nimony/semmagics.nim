@@ -874,10 +874,9 @@ proc needsDestroy(c: var SemContext; t: TypeCursor; depth: int): bool =
             needsDestroy(c, field.typ, depth + 1):
           return true
     of TupleT:
-      var n = t
-      inc n
+      var n = sub(t)
       result = false
-      while n.kind != ParRi:
+      while n.hasMore:
         if needsDestroy(c, getTupleFieldType(n), depth + 1): return true
         skip n
     else:
