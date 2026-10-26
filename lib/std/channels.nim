@@ -143,6 +143,30 @@ proc recvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
     unlockEnd(addr e.lock)
     result = got == n
 
+proc tryRecvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
+  ## The same, when one value is already there. Over a ring that is the ring's
+  ## own answer; over a stream it is "the reader has this much buffered", which
+  ## is the only case in which the read below cannot park under the lock.
+  if e.direct:
+    result = tryReadRecord(e.r, p)
+  else:
+    result = false
+    lockEnd(addr e.lock)
+    if e.r.buffered >= n:
+      let dest = cast[ptr UncheckedArray[char]](p)
+      var got = 0
+      try:
+        while got < n:
+          var rest = toOpenArray(dest, got, n - 1)
+          let k = read(e.r, rest)
+          if k == 0: break
+          got += k
+      except ErrorCode as err:
+        unlockEnd(addr e.lock)
+        raise err
+      result = got == n
+    unlockEnd(addr e.lock)
+
 proc dropRecord[T](p: pointer) {.nimcall.} =
   var x {.noinit.}: T
   copyMem(addr x, p, sizeof(T))       # `x` owns it now and destroys it
@@ -189,6 +213,18 @@ proc recv*[T](r: Receiver[T]; dest: var T): bool {.passive, raises.} =
   var v {.noinit.}: T
   zeroMem(addr v, sizeof(T))          # a moved-from value until filled
   result = recvBytes(e, addr v, sizeof(T))
+  if result: dest = move v
+
+proc tryRecv*[T](r: Receiver[T]; dest: var T): bool {.passive, raises.} =
+  ## One value if one is already waiting; false when the channel is empty, or
+  ## every sender is gone. Never parks, so a task can drain what is there, do
+  ## something with the batch — put it on a socket with one flush, say — and
+  ## only then `recv`.
+  let e = r.e
+  if e == nil: raise BadOperation
+  var v {.noinit.}: T
+  zeroMem(addr v, sizeof(T))          # a moved-from value until filled
+  result = tryRecvBytes(e, addr v, sizeof(T))
   if result: dest = move v
 
 proc flush*[T](s: Sender[T]) {.passive, raises.} =

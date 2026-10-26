@@ -267,6 +267,27 @@ proc ringRead(g: Ring; p: pointer; maxLen: int; whole: bool): int {.passive.} =
     resume wake
     if result < 0: park(g, false)
 
+proc ringTryRead(g: Ring; p: pointer; maxLen: int): int =
+  ## One record into `p` if the ring has one; `-1` when it is empty. Never
+  ## parks, which is the whole point: the caller drains what is there, does
+  ## something with the batch, and only then waits for more.
+  let dest = cast[ptr UncheckedArray[char]](p)
+  var wake: seq[Continuation] = @[]
+  result = -1
+  acquire g.lock
+  if g.len >= g.recSize:
+    let cap = g.cap
+    let n = min(g.len, maxLen)
+    let first = min(n, cap - g.head)
+    copyMem(addr dest[0], addr g.data[g.head], first)
+    if n > first: copyMem(addr dest[first], addr g.data[0], n - first)
+    g.head = (g.head + n) mod cap
+    g.len -= n
+    takeWaiters(g.sendWaiters, (cap - g.len) div g.recSize, wake)
+    result = n
+  release g.lock
+  resume wake
+
 proc takeLeft(g: Ring): seq[char] =
   ## What is still in the ring, with the lock held; whole records never wrap.
   result = newSeq[char](g.len)
@@ -714,6 +735,19 @@ proc scratch*(w: var Writer; n: int): var string {.raises.} =
   w.buf.setLen n
   result = w.buf
 
+proc grow*(w: var Writer; n: int): var openArray[char] {.raises.} =
+  ## `n` more bytes at the end of the writer's buffer, for a caller that
+  ## serializes a head or a frame in place. Nothing is copied, and nothing is
+  ## allocated once the buffer has grown; the caller has to fill all `n` bytes.
+  ##
+  ## `scratch` for a writer that already has bytes buffered: a run of small
+  ## frames is spelled one after the other into the same buffer and reaches the
+  ## kernel with one `flush`.
+  if w.core == nil or w.finished: raise BadOperation
+  let old = w.buf.len
+  w.buf.setLen old + n
+  result = toOpenArray(w.buf, old, old + n - 1)
+
 proc finishImpl(w: var Writer; clean: bool) {.passive, raises.} =
   w.finished = true
   if clean:
@@ -1033,6 +1067,15 @@ proc readRecord*(r: Reader; p: pointer): bool {.passive, raises.} =
   ## Safe from several threads at once.
   let g = recordRing(r.core)
   result = ringRead(g, p, g.recSize, true) == g.recSize
+
+proc tryReadRecord*(r: Reader; p: pointer): bool {.raises.} =
+  ## One record from the ring into `p` if one is already buffered; `false` when
+  ## there is none, or the writer is gone. Never waits, so a task can drain what
+  ## is there and then do something else with it — put a batch of frames on a
+  ## socket with one flush, for one. Only after `hasRecordRing`, and safe from
+  ## several threads at once.
+  let g = recordRing(r.core)
+  result = ringTryRead(g, p, g.recSize) == g.recSize
 
 proc isOpen*(r: Reader): bool =
   ## Neither closed nor default-constructed.
