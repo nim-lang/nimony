@@ -79,7 +79,8 @@
 # the fragmentation and the closing handshake are the same code, which is why
 # both halves carry a `role` field rather than there being two of each type.
 
-import std / [ioring, base64, sha1, unicode, uri, strutils, streamio]
+import std / [ioring, base64, sha1, unicode, uri, strutils, streamio,
+              channels, threadpool, atomics, ticketlocks]
 import std / httpserver except add, close
 import std / http/[httpheaders, httpparse]
 import std / syncio
@@ -221,6 +222,12 @@ type
     sub: string
     err: ErrorCode
     aborted: bool
+    room: nil Room
+      ## The room this connection joined, if any. A connection in a room has
+      ## given its writer to it — `subscribe` moves it — and every write goes
+      ## through the room from then on.
+    member: int
+      ## This connection's id in `room`; `-1` while it is in none.
 
 # ------------------------------------------------------------------- frames --
 
@@ -604,6 +611,8 @@ proc upgradeImpl(c: var HttpConnection; protocols: openArray[string];
   if idleMs > 0: r.renew(afterMs(idleMs))
   else: r.renew(never)
   var ws = WebSocket()
+  ws.room = nil
+  ws.member = -1
   ws.reader.r = ensureMove r
   ws.reader.role = wrServer
   ws.reader.maxMessage = maxMessage
@@ -722,6 +731,8 @@ proc connectWebSocket*(url: string;
   var (r, w) = connect(u.hostname & ":" & $port, tls, afterMs(timeoutMs))
   r.renew(afterMs(timeoutMs))
   var ws = WebSocket()
+  ws.room = nil
+  ws.member = -1
   ws.reader.r = ensureMove r
   ws.reader.role = wrClient
   ws.reader.maxMessage = maxMessage
@@ -1166,10 +1177,21 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
     of mkPing:
       # The reader handed the ping over instead of answering it; the pair is
       # the only place that owns both halves, so the pong goes out here —
-      # unless this side has said goodbye, after which it says nothing.
-      if not ws.writer.closeSent: ws.writer.sendFrame(wsoPong, msg)
+      # unless this side has said goodbye, after which it says nothing. In a
+      # room the writer is the room's, so the pong is the room's to send.
+      let r = ws.room
+      if r != nil:
+        discard r.inbox.send RoomEvent(kind: rePong, id: ws.member, text: msg)
+      elif not ws.writer.closeSent:
+        ws.writer.sendFrame(wsoPong, msg)
     of mkClose:
-      if not ws.writer.closeSent:
+      let r = ws.room
+      if r != nil:
+        # The room answers the peer's goodbye, with the same code.
+        discard r.inbox.send RoomEvent(kind: reClose, id: ws.member,
+                                       code: ws.reader.closeCode)
+        ws.room = nil
+      elif not ws.writer.closeSent:
         # The peer closed first: the answer carries the same code, and then
         # the connection is over.
         ws.writer.closeSent = true
@@ -1183,12 +1205,26 @@ proc send*(ws: var WebSocket; kind: MsgKind; data: openArray[char];
            flush = true) {.passive, raises.} =
   ## Sends a message of `kind` with the bytes `data`; see
   ## `WebSocketWriter.send`.
-  ws.writer.send(kind, data, flush)
+  ##
+  ## A connection that is in a room sends through it — the room owns the writer
+  ## — and `flush` is the room's business then: it flushes each member once per
+  ## turn.
+  let r = ws.room
+  if r != nil:
+    if kind == mkText and not isValidUtf8(data): raise ValueError
+    var text = newString(data.len)
+    for i in 0 ..< data.len: text[i] = data[i]
+    var ev = RoomEvent(kind: reSend, id: ws.member, msg: kind, text: text)
+    let queued = r.inbox.send(ev)
+    if not queued: discard
+  else:
+    ws.writer.send(kind, data, flush)
 
 proc flush*(ws: var WebSocket) {.passive, raises.} =
   ## Hands everything sent with `flush = false` to the peer; see
-  ## `WebSocketWriter.flush`.
-  ws.writer.flush()
+  ## `WebSocketWriter.flush`. A connection in a room has nothing to flush here:
+  ## the room flushes each member once per turn.
+  if ws.room == nil: ws.writer.flush()
 
 proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
   ## Ends the connection the way the protocol says: the close frame goes
@@ -1197,6 +1233,14 @@ proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
   ## The wait is the connection's `idleMs`, or five seconds when it has
   ## none. A peer that does not answer is a timeout and raises like every
   ## other timeout in this API.
+  let r = ws.room
+  if r != nil:
+    # The room owns the writer: it sends the goodbye, after the frames that are
+    # already buffered, and drops the member.
+    ws.room = nil
+    discard r.inbox.send RoomEvent(kind: reClose, id: ws.member, code: code)
+    ws.reader.close()
+    return
   if ws.writer.closeSent: return
   try:
     ws.writer.close(code, reason)
@@ -1234,7 +1278,267 @@ proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
     ws.abort()
     raise
 
-# No explicit `=destroy`: the `Reader`/`Writer` fields close the connection, and
-# a destructor cannot raise, so it could not report a failed goodbye. A peer
-# that wants a close frame asks for one with `close`; the error paths call
-# `abort`, which drops the streams so that nothing is written on the way out.
+# The destructor closes the streams through the fields' own destructors. The
+# one thing it adds is leaving the room: a connection in a room has given its
+# writer away, so the goodbye is the room's to send, and a dropped `WebSocket`
+# that said nothing would leave the room writing into a descriptor nobody else
+# owns. It cannot raise, so a failed goodbye is not reported here — `close`
+# does that. A peer that wants a close frame asks for one with `close`; the
+# error paths call `abort`, which drops the streams so that nothing is written
+# on the way out.
+proc `=destroy`*(ws: WebSocket) =
+  let r = ws.room
+  if r != nil:
+    try:
+      discard r.inbox.send RoomEvent(kind: reClose, id: ws.member)
+    except ErrorCode:
+      discard
+  `=destroy`(ws.room)
+  `=destroy`(ws.reader)
+  `=destroy`(ws.writer)
+  `=destroy`(ws.sub)
+
+# ------------------------------------------------------------------- rooms --
+#
+# A chat room is the shape a WebSocket server usually has, and the one this
+# module does not give on its own: a message from one connection goes to many.
+# The rule that makes the module safe — one writer per connection, one place
+# that writes — is also why a fan-out cannot be done by the connection that
+# received the message. It needs a place that owns the writers.
+#
+# A `Room` is that place, and a connection joins one with `subscribe`. From
+# then on the room owns the writer and the pair's own `send`, `recv`, `close`
+# and `publish` go through it:
+#
+#   let room = newRoom()          # or nothing: `subscribe` uses the default
+#
+#   proc handle(c: sink HttpConnection) {.passive.} =
+#     if not c.next(): return
+#     var ws = upgradeWebSocket(c)
+#     ws.subscribe("chat")
+#     try:
+#       while true:
+#         var msg = ""
+#         case ws.recv(msg)
+#         of mkText: ws.publish("chat", msg)
+#         of mkClose: break
+#         else: discard
+#     except ErrorCode:
+#       discard
+#     ws.close()
+#
+# `publish` hands the room one line; the room writes it into every member's
+# buffer and flushes each member once per turn. A message therefore costs one
+# channel send and one buffer append per member — not a task per delivery,
+# which is what a fan-out costs when every connection writes for itself.
+
+type
+  RoomEventKind = enum
+    reJoin, rePublish, reSend, rePong, reClose, reAddTopic, reDropTopic
+
+  Member = ref object
+    ## One connection's writer, owned by the room from `subscribe` on.
+    wr: WebSocketWriter
+    id: int
+    topics: seq[string]
+    dirty: bool
+      ## Frames were buffered for this member since the last flush.
+
+  RoomEvent = object
+    kind: RoomEventKind
+    member: nil Member
+    id: int
+    topic: string
+    text: string
+    msg: MsgKind
+    code: int
+
+  RoomObj = object
+    inbox: Sender[RoomEvent]
+    nextId: int
+
+  Room* = ref RoomObj
+    ## A set of connections and the chain that writes to them.
+
+proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.}
+
+proc newRoom*(capacity = 4096): Room {.raises.} =
+  ## A room, and the chain that fans out for it. `ioRing` has to be up, like
+  ## for any server.
+  ##
+  ## `capacity` is how many lines may be queued before a publisher parks. It is
+  ## also the batch the room drains per turn, and so the number of frames that
+  ## share one flush per member: too small and a fan-out pays a syscall per
+  ## frame, too large and a slow peer's frames sit in the queue.
+  var (rx, tx) = channel[RoomEvent](capacity)
+  result = Room(inbox: tx, nextId: 0)
+  submit(delay(roomLoop(result, rx)), -1)
+
+var
+  gDefaultRoom: nil Room
+  gDefaultRoomInited: int
+  gDefaultLock: TicketLock
+
+proc defaultRoom*(): Room {.raises.} =
+  ## The process-wide room. `subscribe` and `publish` use it when they are not
+  ## given one, which is what a single-server application wants: topics are
+  ## then just names, as in Bun's `ws.subscribe("chat")`. A server that needs
+  ## isolated rooms makes its own with `newRoom`.
+  ##
+  ## Initialised on first use under a lock, so importing this module does not
+  ## start a chain for a program that never uses one.
+  if atomicLoad(gDefaultRoomInited, moAcquire) == 0:
+    acquire gDefaultLock
+    if atomicLoad(gDefaultRoomInited, moAcquire) == 0:
+      {.cast(assumeSync).}:  # written under gDefaultLock
+        gDefaultRoom = newRoom()
+      atomicStore(gDefaultRoomInited, 1, moRelease)
+    release gDefaultLock
+  {.cast(assumeSync).}:  # published by the release-store above
+    let r = gDefaultRoom
+    if r != nil: result = r
+    else: raise BadOperation
+
+proc has(m: Member; topic: string): bool =
+  var i = 0
+  while i < m.topics.len:
+    if m.topics[i] == topic: return true
+    inc i
+  result = false
+
+proc roomLoop(r: Room; rx: sink Receiver[RoomEvent]) {.passive.} =
+  ## The one chain that writes to a room's sockets. Everything it writes is
+  ## buffered per member with `flush = false`; the flush happens when the queue
+  ## runs dry, so one write carries a whole turn's frames.
+  var members: seq[Member] = @[]
+  var e = RoomEvent()
+  while true:
+    try:
+      if not rx.tryRecv(e):
+        var i = 0
+        while i < members.len:
+          let m = members[i]
+          if m.dirty:
+            m.dirty = false
+            try:
+              m.wr.flush()
+              inc i
+            except ErrorCode:
+              m.wr.abort()
+              members.delete i
+          else:
+            inc i
+        if not rx.recv(e): return
+      case e.kind
+      of reJoin:
+        let m = e.member
+        if m != nil: members.add m
+      of rePublish:
+        var i = 0
+        while i < members.len:
+          let m = members[i]
+          if m.has(e.topic):
+            try:
+              m.wr.send(mkText, e.text, flush = false)
+              m.dirty = true
+              inc i
+            except ErrorCode:
+              # A member whose socket is gone takes the line with it; the rest
+              # of the room does not care.
+              m.wr.abort()
+              members.delete i
+          else:
+            inc i
+      of reSend, rePong:
+        var i = 0
+        while i < members.len and members[i].id != e.id: inc i
+        if i < members.len:
+          try:
+            if e.kind == rePong:
+              members[i].wr.send(mkPong, e.text, flush = false)
+            else:
+              members[i].wr.send(e.msg, e.text, flush = false)
+            members[i].dirty = true
+          except ErrorCode:
+            discard
+      of reAddTopic, reDropTopic:
+        var i = 0
+        while i < members.len and members[i].id != e.id: inc i
+        if i < members.len:
+          if e.kind == reAddTopic:
+            if not members[i].has(e.topic): members[i].topics.add e.topic
+          else:
+            var k = 0
+            while k < members[i].topics.len:
+              if members[i].topics[k] == e.topic:
+                members[i].topics.delete k
+                break
+              inc k
+      of reClose:
+        var i = 0
+        while i < members.len and members[i].id != e.id: inc i
+        if i < members.len:
+          let m = members[i]
+          members.delete i
+          try:
+            m.wr.close(if e.code == 0: 1000 else: e.code)
+          except ErrorCode:
+            m.wr.abort()
+    except ErrorCode:
+      discard
+
+proc attach(r: Room; wr: sink WebSocketWriter; topic: string): int {.passive, raises.} =
+  ## A member with this writer, in `topic`. The room writes to it from now on.
+  let id = atomicFetchAdd(r.nextId, 1, moRelaxed)
+  let m = Member(wr: move wr, id: id, topics: @[topic], dirty: false)
+  discard r.inbox.send RoomEvent(kind: reJoin, member: m, id: id)
+  result = id
+
+proc addTopic*(r: Room; id: int; topic: string) {.passive, raises.} =
+  ## Puts member `id` in `topic` as well. The room applies it in order with the
+  ## publishes that follow, so a `subscribe` then a `publish` cannot lose the
+  ## connection in between.
+  discard r.inbox.send RoomEvent(kind: reAddTopic, id: id, topic: topic)
+
+proc dropTopic*(r: Room; id: int; topic: string) {.passive, raises.} =
+  ## Takes member `id` out of `topic`, leaving the connection in the room.
+  discard r.inbox.send RoomEvent(kind: reDropTopic, id: id, topic: topic)
+
+proc publish*(r: Room; topic: string; data: string) {.passive, raises.} =
+  ## Sends `data` as a text message to every member of `topic`.
+  ##
+  ## The room does the writing; this parks when its queue is full, which is the
+  ## room's backpressure and the reason a publisher cannot outrun its members
+  ## without bound.
+  discard r.inbox.send RoomEvent(kind: rePublish, topic: topic, text: data)
+
+proc subscribe*(ws: var WebSocket; room: Room; topic: string) {.
+    passive, raises.} =
+  ## Joins `topic` in `room`. The first call gives the connection's writer to
+  ## the room, which writes to it from then on; later calls add topics. A
+  ## connection belongs to one room only, because it has one writer.
+  let r = ws.room
+  if r == nil:
+    ws.room = room
+    ws.member = room.attach(move ws.writer, topic)
+  else:
+    if r != room: raise BadOperation
+    room.addTopic(ws.member, topic)
+
+proc subscribe*(ws: var WebSocket; topic: string) {.passive, raises.} =
+  ## Joins `topic` in the process-wide room; see `defaultRoom`.
+  subscribe(ws, defaultRoom(), topic)
+
+proc unsubscribe*(ws: var WebSocket; topic: string) {.passive, raises.} =
+  ## Leaves `topic`; the connection stays in the room for its other topics.
+  let r = ws.room
+  if r == nil: return
+  r.dropTopic(ws.member, topic)
+
+proc publish*(ws: var WebSocket; topic: string; data: string) {.
+    passive, raises.} =
+  ## Sends `data` to every member of `topic`, this connection included if it
+  ## is one. A connection that never subscribed publishes to the default room.
+  let r = ws.room
+  if r != nil: r.publish(topic, data)
+  else: defaultRoom().publish(topic, data)

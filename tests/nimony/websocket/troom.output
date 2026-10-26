@@ -1,0 +1,8 @@
+[1] a: mkText hello
+[1] b: mkText hello
+[2] a: mkText only you
+[2] a again: mkText after
+[2] b: mkText after
+[3] b closed with 1000
+[3] a: mkText still here
+[4] a closed with 1000
