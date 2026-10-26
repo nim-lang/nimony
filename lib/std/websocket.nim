@@ -1189,7 +1189,9 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
     # happens, and while frames are still coming the replies can ride along
     # with the next write. That is what lets an echo server answer a burst with
     # one write instead of one per message.
-    if ws.reader.buffered == 0:
+    if ws.room == nil and ws.reader.buffered == 0:
+      # A connection in a room has given its writer away: the room flushes it
+      # once per turn, and flushing the shell here would only raise.
       try:
         ws.writer.flush()
       except ErrorCode:
