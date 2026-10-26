@@ -1,0 +1,2 @@
+tests/nimony/modules/treexportsymbol_hidden.nim(5, 9) Error: undeclared identifier: mreexportsymbol_source
+tests/nimony/modules/treexportsymbol_hidden.nim(5, 32) Error: undeclared identifier: 'newConn'
