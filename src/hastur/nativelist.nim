@@ -189,6 +189,9 @@ const
     "tests/nimony/stdlib/tall"
   ]
   NativeTestFiles* = [
+    # A `let` in a toplevel `while` condition (#2794). Sem made it a global, which
+    # the C backend tolerated inside the init proc but arkham asserted on.
+    "tests/nimony/sysbasics/twhileinfor",
     # `std/dirs` read libc's `errno` after a failed syscall; a freestanding
     # build has none, so every failure reported `Success`.
     "tests/nimony/stdlib/tdir_errors",
