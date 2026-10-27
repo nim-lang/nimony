@@ -228,14 +228,23 @@ else:
   var slowFd: cint
 
   proc readsSlowBody() {.passive.} =
-    # Each read gets 300ms, and the bytes arrive 200ms apart: a per-call
-    # deadline that stuck to the connection would time the third read out.
+    # Each read gets 1500ms, and the bytes arrive 1000ms apart. The budget has
+    # to sit between one gap and two: a per-call deadline that stuck to the
+    # connection runs out 1500ms after the *first* call and so times the third
+    # read out (the third byte is 2000ms away), while a fresh one has 500ms of
+    # slack for a peer that writes late.
+    #
+    # The slack is the point. With 300ms over 200ms gaps both margins were
+    # 100ms, and a `sleep` in a parallel test run is not that punctual: a
+    # machine that overslept by more than 100ms made the second read time out
+    # ("TimeoutError after 1") with nothing wrong — reliably enough on macOS
+    # CI to look like a library bug.
     var c = initHttpConn(slowFd, afterMs(5000), tags)
     var got = 0
     try:
       var buf = default(array[1, char])
       while got < 3:
-        if c.readBody(buf, afterMs(300)) == 0: break
+        if c.readBody(buf, afterMs(1500)) == 0: break
         inc got
       serverLog.add "per-call deadlines do not stick: " & $got & " bytes\n"
     except ErrorCode as e:
@@ -248,7 +257,7 @@ else:
     slowFd = a
     submit(delay(readsSlowBody()), 0)
     for i in 0 ..< 3:
-      if i > 0: sleep 200
+      if i > 0: sleep 1000
       var x = 'x'
       discard write(b, addr x, 1)
     awaitFlag(serverDone)
