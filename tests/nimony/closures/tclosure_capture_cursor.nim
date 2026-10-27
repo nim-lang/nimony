@@ -17,6 +17,7 @@ type
   Node = ref NodeObj
 
 var gDestroyed = 0
+proc `=wasMoved`(x: var NodeObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(x: NodeObj) =
   inc gDestroyed
 

@@ -1,5 +1,5 @@
-tests/nimony/errmsgs/tcopyerrorseq.nim(19, 11) Error: '=dup' is not available for type <seq[Foo]>
-tests/nimony/errmsgs/tcopyerrorseq.nim(21, 12) Error: '=dup' is not available for type <Wrap>
-tests/nimony/errmsgs/tcopyerrorseq.nim(24, 11) Error: '=dup' is not available for type <seq[Inner]>
-tests/nimony/errmsgs/tcopyerrorseq.nim(25, 21) Error: '=dup' is not available for type <seq[Inner]>
-tests/nimony/errmsgs/tcopyerrorseq.nim(26, 11) Error: '=dup' is not available for type <SInner>
+tests/nimony/errmsgs/tcopyerrorseq.nim(20, 11) Error: '=dup' is not available for type <seq[Foo]>
+tests/nimony/errmsgs/tcopyerrorseq.nim(22, 12) Error: '=dup' is not available for type <Wrap>
+tests/nimony/errmsgs/tcopyerrorseq.nim(25, 11) Error: '=dup' is not available for type <seq[Inner]>
+tests/nimony/errmsgs/tcopyerrorseq.nim(26, 21) Error: '=dup' is not available for type <seq[Inner]>
+tests/nimony/errmsgs/tcopyerrorseq.nim(27, 11) Error: '=dup' is not available for type <SInner>

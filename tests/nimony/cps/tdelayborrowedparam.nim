@@ -9,6 +9,7 @@ type
   Box = ref object
     t: Tracked
 
+proc `=wasMoved`(x: var Tracked) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(t: Tracked) =
   if t.name.len > 0: echo "destroy ", t.name
 

@@ -514,6 +514,29 @@ proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
       endRead(r)
 
+proc checkDestroysHaveWasMoved(c: var SemContext; dest: var TokenBuf) =
+  ## A written `=destroy` frees what `=wasMoved` must then forget, and the
+  ## field-wise zeroing cannot know what `=destroy` checks. Only hooks written
+  ## in this module are in its scope; generic instances are not, so they do
+  ## not report the same error again.
+  var missing: seq[(SymId, SymId)] = @[]
+  for obj, hooks in c.typeHooks:
+    let destroy = hooks.a[attachedDestroy]
+    if destroy != SymId(0) and hooks.a[attachedWasMoved] == SymId(0):
+      missing.add (obj, destroy)
+  for (obj, destroy) in missing:
+    if fetchSym(c, destroy).pos < 0: continue
+    # the scope's `pos` is from the phase that declared the hook, so find the
+    # declaration in `dest` instead; this is the error path only
+    var info = NoLineInfo
+    for i in 0 ..< dest.len:
+      let n = readonlyCursorAt(dest, i)
+      if n.kind == SymbolDef and n.symId == destroy:
+        info = n.info
+        break
+    buildErr c, dest, info, "type '" & pool.symBasename(obj) &
+      "' has a '=destroy' but no '=wasMoved'"
+
 proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
 
@@ -543,6 +566,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       dest.copyTree res.decl
   dest.add c.pendingSumtypes
   instantiateGenericHooks c, dest
+  checkDestroysHaveWasMoved c, dest
   dest.addParRi()
   dbgCheckSeals(dest, "phase3")
   when defined(dumpPhases):
@@ -634,6 +658,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
       dest.copyTree res.decl
   dest.add c.pendingSumtypes
   instantiateGenericHooks c, dest
+  checkDestroysHaveWasMoved c, dest
   dest.addParRi()
 
   if reportErrors(dest) == 0:

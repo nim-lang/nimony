@@ -7,6 +7,7 @@ type
 
 proc `=dup`(src: MyObj): MyObj {.error.}
 
+proc `=wasMoved`(x: var MyObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(o: MyObj) = discard
 
 proc use(o: MyObj) = discard

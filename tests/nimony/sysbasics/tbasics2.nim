@@ -102,6 +102,7 @@ type
     else:
       d: X
 
+proc `=wasMoved`(x: var X) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(x: var X) =
   echo "x destroyed"
 

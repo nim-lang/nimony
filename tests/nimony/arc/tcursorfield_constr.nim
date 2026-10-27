@@ -15,6 +15,7 @@ type
     at: int
     n {.cursor.}: Node
 
+proc `=wasMoved`(x: var Probe) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(o: Probe) = echo "destroyed ", o.x
 
 proc lastUse() =

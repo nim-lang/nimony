@@ -12,12 +12,15 @@ type
   Holder = object
     member: ref Aaaa
 
+proc `=wasMoved`(x: var Cccc) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(v: Cccc) =
   echo "destroying c"
 
+proc `=wasMoved`(x: var Dddd) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(v: Dddd) =
   echo "destroying d"
 
+proc `=wasMoved`(x: var Aaaa) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(v: Aaaa) =
   echo "destroying a ", v.vvvv
 

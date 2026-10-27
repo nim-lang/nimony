@@ -26,6 +26,7 @@ type
     value: int
 
 # Custom destructor
+proc `=wasMoved`(x: var MyObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(x: var MyObj) =
   echo "Destructor called for MyObj(value=", x.value, ")"
 

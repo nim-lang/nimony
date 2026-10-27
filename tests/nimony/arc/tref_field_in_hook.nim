@@ -15,6 +15,7 @@ type
   List = object
     head: nil Node      # an empty list, and what `=wasMoved` leaves behind
 
+proc `=wasMoved`(x: var Elem) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(e: Elem) = inc freed
 
 proc `=destroy`(x: List) {.nodestroy.} =

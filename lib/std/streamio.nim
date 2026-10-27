@@ -175,6 +175,11 @@ proc `=destroy`(g: RingObj) =
   `=destroy`(g.recvWaiters)
   `=destroy`(g.sendWaiters)
 
+proc `=wasMoved`(g: var RingObj) {.nodestroy, inline.} =
+  g.data = nil
+  `=wasMoved`(g.recvWaiters)
+  `=wasMoved`(g.sendWaiters)
+
 proc `=copy`(dest: var RingObj; src: RingObj) {.error.}
 
 proc newRing(capacity, recSize: int): Ring =
@@ -342,6 +347,13 @@ proc `=destroy`(c: CoreObj) =
   `=destroy`(c.data)
   `=destroy`(c.ring)
 
+proc `=wasMoved`(c: var CoreObj) {.nodestroy, inline.} =
+  ## `-1`, not the zeroing's `0`: a moved-from `ckFd` core must not close stdin.
+  c.fd = -1
+  c.tls = nil
+  `=wasMoved`(c.data)
+  c.ring = nil
+
 proc newCore(kind: CoreKind; fd: cint): Core =
   Core(kind: kind, fd: fd, isSocket: false, tls: nil, data: "", dataPos: 0,
        peerDone: false, shutDown: false, dl: never, ring: nil)
@@ -486,6 +498,12 @@ proc `=destroy`*(r: Reader) =
   `=destroy`(r.raw)
   `=destroy`(r.adapter)
 
+proc `=wasMoved`*(r: var Reader) {.nodestroy, inline.} =
+  r.core = nil
+  `=wasMoved`(r.buf)
+  `=wasMoved`(r.raw)
+  r.adapter = nil
+
 proc `=dup`*(x: Reader): Reader {.error.}
 
 proc `=copy`*(dest: var Reader; src: Reader) {.error.}
@@ -505,6 +523,11 @@ proc `=destroy`*(w: Writer) =
   `=destroy`(w.core)
   `=destroy`(w.buf)
   `=destroy`(w.adapter)
+
+proc `=wasMoved`*(w: var Writer) {.nodestroy, inline.} =
+  w.core = nil
+  `=wasMoved`(w.buf)
+  w.adapter = nil
 
 proc `=dup`*(x: Writer): Writer {.error.}
 

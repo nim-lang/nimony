@@ -21,6 +21,7 @@ type Box = object
 var evals = 0
 var destroys = 0
 
+proc `=wasMoved`(x: var Box) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(b: Box) =
   if b.s.len > 0: inc destroys
 

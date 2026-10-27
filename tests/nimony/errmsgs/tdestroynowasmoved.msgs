@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tdestroynowasmoved.nim(5, 6) Error: type 'Handle' has a '=destroy' but no '=wasMoved'
