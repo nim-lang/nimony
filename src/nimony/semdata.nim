@@ -255,6 +255,7 @@ type
     meta*: MetaInfo
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
     typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
+    errorHooks*: HashSet[SymId] # the `.error` hooks among `typeHooks`
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
     classes*: Classes # class entries with methods for vtables

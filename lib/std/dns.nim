@@ -640,12 +640,6 @@ type
   DnsServer* = object
     sock: UdpSocket
 
-proc `=dup`*(s: DnsServer): DnsServer =
-  ## Move, not copy, like the socket it wraps: `newDnsServer` returns through
-  ## the ring's continuation ABI, which hands the value to `result` via this
-  ## hook rather than `=copy` (still an error).
-  result = DnsServer(sock: s.sock)   # `UdpSocket`'s `=dup` is the move
-
 proc newDnsServer*(port: uint16; deadline = never): DnsServer {.passive, raises.} =
   ## A bound, unconnected UDP socket able to answer questions. `port` of 0
   ## asks the kernel to pick one (`boundPort` unless the caller passes one).

@@ -387,22 +387,7 @@ proc `=wasMoved`*(s: var Socket) {.nodestroy, inline.} =
   `=wasMoved`(s.rbuf)
   `=wasMoved`(s.wbuf)
 
-proc `=dup`*(x: Socket): Socket =
-  # Field-wise: `result = x` would come back through this hook — the way the
-  # compiler lowers a hook-ful `=` — and that is the recursion that broke the
-  # same pattern in `asyncio`'s `File`. The source is moved-from afterwards, so
-  # its buffers are moved to the result, not copied: a copy would leave the
-  # source's buffers with no owner, as a moved-from socket frees nothing.
-  let src = cast[ptr Socket](unsafeAddr x)
-  result = default(Socket)
-  result.fd = src.fd
-  result.deadline = src.deadline
-  result.peer = src.peer
-  result.rbuf = move(src.rbuf)
-  result.rlen = src.rlen
-  result.rpos = src.rpos
-  result.wbuf = move(src.wbuf)
-  `=wasMoved`(src[])
+proc `=dup`*(x: Socket): Socket {.error.}
 
 proc `=copy`*(dest: var Socket; src: Socket) {.error.}
   ## Move-only: two sockets over one fd means two owners of one descriptor,
@@ -639,13 +624,7 @@ proc `=wasMoved`*(s: var UdpSocket) {.nodestroy, inline.} =
   ## somewhere else entirely.
   s.fd = -1
 
-proc `=dup`*(s: UdpSocket): UdpSocket =
-  ## Move, not copy: a return through the ring's continuation ABI hands the
-  ## socket to its new owner and empties the old slot (`=wasMoved`), so no
-  ## second owner closes the descriptor. `=copy` stays an error; this is what
-  ## CPS-composed code uses in its place (see `Socket`'s `=dup`).
-  result = UdpSocket(fd: s.fd, deadline: s.deadline, peer: s.peer)
-  `=wasMoved`(cast[ptr UdpSocket](unsafeAddr s)[])
+proc `=dup`*(s: UdpSocket): UdpSocket {.error.}
 
 proc `=copy`*(dest: var UdpSocket; src: UdpSocket) {.error.}
   ## Move-only: two sockets over one descriptor means two owners, and whichever
