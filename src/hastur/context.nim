@@ -84,6 +84,23 @@ var parallelJobs* = 1
   ## behavior). `--jobs:N` on the command line overrides; `--jobs:auto`
   ## uses `countProcessors()`.
 
+var parallelBuild* = 0
+  ## `--parallelBuild:N`: at most N build processes at once, 0 = no cap.
+  ## Caps hastur's own side-by-side tool compiles (`build all`, a boot
+  ## stage) and is passed on to every `nim c` / `nimony` it spawns, which
+  ## otherwise run one C compiler (nifmake: one job) per core each. For
+  ## hosts that kill a build that runs too many processes at once, like
+  ## Android's phantom-process and low-memory killers under Termux.
+
+proc parallelBuildFlag*(): string =
+  ## The `--parallelBuild:N ` to append to a `nim` or `nimony` command line;
+  ## both compilers spell it the same.
+  if parallelBuild > 0: "--parallelBuild:" & $parallelBuild & " " else: ""
+
+proc buildSlots*(n: int): int =
+  ## How many of `n` independent build commands may run at once.
+  if parallelBuild > 0: min(n, parallelBuild) else: n
+
 var skipBuild* = false
   ## Set by the parallel test runner on its worker invocations: the
   ## parent has already rebuilt nimony / lengc before kicking off the

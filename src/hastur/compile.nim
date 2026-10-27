@@ -13,7 +13,8 @@ proc execNimony*(cmd: string; cat: Category): (string, int) =
   let cacheArg =
     if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
     else: ""
-  result = execLocal("nimony", toCommand(cat) & " " & cacheArg & cmd)
+  result = execLocal("nimony", toCommand(cat) & " " & parallelBuildFlag() &
+                     cacheArg & cmd)
 
 proc execNimonyNative*(cmd: string): (string, int) =
   ## Compile with the C-FREE NATIVE backend (`nimony n` → arkham emits typed asm-NIF,
@@ -22,7 +23,8 @@ proc execNimonyNative*(cmd: string): (string, int) =
   let cacheArg =
     if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
     else: ""
-  result = execLocal("nimony", "n --silentMake --isMain " & cacheArg & cmd)
+  result = execLocal("nimony", "n --silentMake --isMain " & parallelBuildFlag() &
+                     cacheArg & cmd)
 
 proc pathsForFile(file: string): seq[string] =
   result = @[]
