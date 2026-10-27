@@ -1,11 +1,27 @@
-# Final IR
+# Multi-join IR
 
-Design reference for the target form of the hexer pipeline, and for the
-statement discipline the pipeline already follows on the way there.
+The backend works on two IRs:
+
+- **Shoggoth IR**: what nimsem publishes for a module, and the input of
+  `shoggoth` (passes in `src/hexer/`).
+- **Arkham IR**: what `shoggoth` produces, which is
+  [Leng](leng-spec.md). arkham, lengc and the other back ends read it.
+
+"Multi-join IR" names how both IRs model control flow. There is no `while`,
+`block` or `break`. A `loop` has a single back-edge, branching is `ite`, and
+every other exit is a forward, scoped `(jmp L)` to a `(lab L)`. Any number of
+jumps can join at the same label. That last property gives the model its name.
+
+The code still calls the lowering that establishes this form "Final IR"
+(`src/finalir/`, `TowardsFinalIr`, `FinalIrKind`, `phasePostFinalIr`). Those
+are the same thing as the multi-join form.
+
+This document is the design reference for that form and for the statement
+discipline the passes follow.
 
 The full specification — control-flow constructs (`loop`, `ite`, `case`,
 `lab`/`jmp`, `try`/`finally`/`except`), exit summaries, the Side-PC-IR
-scratchpad for destructor injection, and Final IR as a structured assembler —
+scratchpad for destructor injection, and the IR as a structured assembler —
 lives in <https://github.com/nim-lang/nimony/issues/1946>. This document
 records the parts the compiler implements today, and *why* they are shaped the
 way they are.
@@ -63,7 +79,7 @@ have worked out on its own. One producer exists today — `forRangeAssumes` in
 `finalir.nim`.
 
 The reason it has to exist: an *inline* iterator is not inlined until hexer's
-`elimForLoops`, long after `contracts_fir` runs, so the Final IR for a `for`
+`elimForLoops`, long after `contracts_fir` runs, so the Shoggoth IR for a `for`
 loop is a `(loop …)` that says nothing about the loop variable — it is not even
 declared there. The iterator's `.ensures` does say something, and it is exactly
 what the body needs:
@@ -88,7 +104,7 @@ losing one costs precision and nothing else.
 Two consequences of the same "not inlined yet" fact are worth knowing:
 
 * Nothing jumps out of that `(loop …)`, so `trLoopFromBody` emits no exit
-  label and **everything after such a loop is unreachable** as far as the Final
+  label and **everything after such a loop is unreachable** as far as the Shoggoth
   IR is concerned. Analyses must not report on a dead path: the join that
   follows one keeps both arms of the next `if`, so contradictory facts hold at
   once there.
@@ -260,12 +276,13 @@ clears it".
 ## Current pipeline
 
 ```
-nimsem: … → derefs → finalir → contracts → <published module nif>
-hexer:  iterinliner → desugar → lambdalift → eraiser → duplifier →
-        destroyer → cps → vtables → constparams → xelim_final → lengcgen
+nimsem:   … → derefs → finalir → contracts → Shoggoth IR (published module)
+shoggoth: iterinliner → desugar → lambdalift → eraiser → duplifier →
+          destroyer → cps → vtables → constparams → xelim_final → lengcgen
+          → Arkham IR (Leng)
 ```
 
-Every pass from `finalir` on reads and writes the Final IR, `lengcgen`
+Every pass from `finalir` on keeps the multi-join form, `lengcgen`
 included: it spells `ite` as a Leng `if` and `loop` as `while true` (dropping
 the trailing back-edge), because Leng's back ends and optimizer passes speak
 those. Nimony `if`/`while`/`block`/`break` reaching it is a bug. Two producers
@@ -285,7 +302,7 @@ that its `if`s are spelled `ite` (`finalir.trAsmStmt`).
   payload assignment, and `genLastRead`'s bitcopy + `=wasMoved`.
 - **`mover`** (`src/hexer/mover.nim`), the last-read analysis the duplifier
   asks before it sinks a value, is the one *analysis* in the backend and it
-  reads the Final IR directly. It used to translate the module into
+  reads the Shoggoth IR directly. It used to translate the module into
   `controlflow.nim`'s goto form first, which then had to be mapped back: a
   `srcMap` side-channel threaded through every buffer the CF builder moved or
   truncated, plus an inverted index to find the query expression again in the
@@ -297,8 +314,8 @@ that its `if`s are spelled `ite` (`finalir.trAsmStmt`).
   note in `xelim.isComplex` describes, where the two forms could disagree
   about evaluation order.
 - **`xelim_final`** is *not* a repair pass. `LowerCasts` performs two real
-  lowerings: it unnests calls (the Final-IR "calls are unnested statements"
-  rule) and binds a cast's source and result to variables, which the NIFC
+  lowerings: it unnests calls (the multi-join "calls are unnested statements"
+  rule) and binds a cast's source and result to variables, which the Leng
   backends require. It does still flatten `vtables`/`constparams` temps as a
   side effect — see *Remaining work*. The `and`/`or` it materializes are
   spelled `ite` here, `if` in the `TowardsFinalIr` run (`openIfElse`).
@@ -327,7 +344,7 @@ In rough dependency order:
    own two jobs.
 
 2. **Call unnesting as part of the normal form.** Today `xelim1` runs in
-   `ElimExprs` mode, where a call is not "complex" and stays nested. Final IR
+   `ElimExprs` mode, where a call is not "complex" and stays nested. Multi-join IR
    wants calls unnested from the start — it is the precondition that makes
    conditions call-free and pins evaluation order. Moving that from
    `xelim_final` to `xelim1` is the next structural step, and it is the one
@@ -339,8 +356,8 @@ In rough dependency order:
    analysis is needed for them).
 
 3. **Structured control flow in the backend.** `finalir.nim` already lowers to
-   `loop`/`ite`/`lab`/`jmp`; the backend pipeline still emits `while`/`break`
-   and lets `togoto.nim`/NIFC deal with it. Switching the backend over is what
+   `loop`/`ite`/`lab`/`jmp`, but `lengcgen` still spells them as Leng `if`/`while true`
+   for the back ends. Having them consume `loop`/`ite` directly is what
    unlocks the exit-summary analyses (one forward pass, no CFG, no fixpoint
    except at loop headers).
 

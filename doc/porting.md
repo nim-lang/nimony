@@ -358,7 +358,7 @@ user-supplied; use the built-in typeclass when they are intrinsic. Both
 compose: `[A: Ordinal and Stringable]`.
 
 
-## 11. Alias checking (NJVL)
+## 11. Alias checking
 
 Nimony rejects a call that passes the same location as two parameters
 when one of them is `var`:
