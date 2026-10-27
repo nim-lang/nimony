@@ -1,0 +1,8 @@
+let a: f
+var b: i
+const c: i
+type Person name: string age: i
+proc f(x: f;y: i;) -> f
+proc g(x: T;) -> T generic
+for i in infix
+
