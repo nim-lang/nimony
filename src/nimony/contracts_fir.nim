@@ -4176,6 +4176,28 @@ proc locationIsComputed(c: var FirContext; n: Cursor): bool =
     else:
       discard
 
+proc writesThroughPointer(c: var FirContext; n: Cursor): bool =
+  ## Whether the location `n` lies behind a `ptr`/`ref` dereference, so that a
+  ## write to it leaves the variable it hangs off unchanged.
+  result = false
+  if n.isSymbol:
+    let s = n.symId
+    if s in c.inlineVars:
+      result = writesThroughPointer(c, c.inlineVars.getOrQuit(s))
+  elif n.isTagLit:
+    case n.exprKind
+    of DerefX, DdotX, PatX:
+      result = true
+    of DotX, TupatX, ArratX, HderefX:
+      result = writesThroughPointer(c, n.childCursor)
+    of ConvKinds, BaseobjX:
+      var r = n
+      inc r
+      skip r # type
+      result = writesThroughPointer(c, r)
+    else:
+      discard
+
 proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[BorrowInfo]) =
   ## The paths `n` may mutate through a `var`/`out` argument of a call it
   ## contains, looking through the inline temps the calls were hoisted into.
@@ -5454,6 +5476,11 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       # by the path's root symbol.
       if unknownPath.path.len > 0 and unknownPath.path[0] in call.views:
         invalidateViewElements(c, unknownPath.path[0])
+      elif writesThroughPointer(c, n):
+        # `touch(p[])` changes the target, not `p`: what is known about `p`
+        # itself (`p != nil`) holds, exactly as after `p[] = v`. The target
+        # may alias anything, so every derived location is suspect.
+        invalidateAllDerived(c)
       elif unknownPath.path.len > 0 and unknownPath.path[0] in call.ensured:
         # The call before this already dropped everything its mutation could
         # reach and restated what its `.ensures` promises.
