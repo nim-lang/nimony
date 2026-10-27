@@ -145,6 +145,7 @@ type
     info*: NifLineInfo
     throughRef*: bool  ## the path dereferences a `ref`: an alias of it can
                        ## reach the same location under another path
+    throughPtr*: bool  ## the path dereferences a `ptr`
 
   BorrowJEntry = object
     added: bool

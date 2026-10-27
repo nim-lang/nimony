@@ -354,6 +354,12 @@ proc isFreshCall(c: var FirContext; n: Cursor): bool =
   result = n.isTagLit and n.exprKind in CallKinds and
     not canCarryBorrow(c, n) and not establishesBorrow(c, n)
 
+proc markIndirection(c: var FirContext; pointer: Cursor; result: var BorrowInfo) =
+  case getType(c.typeCache, pointer).typeKind
+  of RefT: result.throughRef = true
+  of PtrT: result.throughPtr = true
+  else: discard
+
 proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
@@ -364,8 +370,8 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
         result.mode = NotBorrowable
       var r = n
       inc r
-      if ek == DdotX and getType(c.typeCache, r).typeKind == RefT:
-        result.throughRef = true
+      if ek == DdotX:
+        markIndirection(c, r, result)
       extractBorrowPath(c, r, result, followInlineVars)
       skip r # skip object subtree
       if r.isSymbol:
@@ -380,8 +386,7 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
         result.mode = NotBorrowable
       var r = n
       inc r
-      if getType(c.typeCache, r).typeKind == RefT:
-        result.throughRef = true
+      markIndirection(c, r, result)
       extractBorrowPath(c, r, result, followInlineVars)
     elif ek in {HaddrX, HderefX}:
       var r = n
@@ -391,6 +396,8 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
       # Array/tuple access: recurse into container, don't distinguish indices
       var r = n
       inc r
+      if ek == PatX:
+        result.throughPtr = true
       extractBorrowPath(c, r, result, followInlineVars)
     elif ek in ConvKinds:
       var r = n
@@ -459,6 +466,14 @@ proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; fol
 proc extractPath(c: var FirContext; n: Cursor; followInlineVars=true): BorrowInfo =
   result = BorrowInfo(path: @[], mode: NotBorrowable, info: n.info)
   extractBorrowPath(c, n, result, followInlineVars)
+
+proc storageRoot(b: BorrowInfo): SymId =
+  ## The variable whose own storage holds the location, or `NoSymId` when the
+  ## path dereferences a pointer: writing `p[]` leaves `p` itself unchanged.
+  if b.path.len > 0 and not b.throughRef and not b.throughPtr:
+    result = b.path[0]
+  else:
+    result = NoSymId
 
 proc `$`(b: BorrowInfo): string =
   result = "BorrowInfo(mode: " & $b.mode & ", path: "
@@ -4176,29 +4191,6 @@ proc locationIsComputed(c: var FirContext; n: Cursor): bool =
     else:
       discard
 
-proc writesThroughPointer(c: var FirContext; n: Cursor): bool =
-  ## Whether the location `n` lies behind a `ptr`/`ref` dereference, so that a
-  ## write to it leaves the variable it hangs off unchanged.
-  result = false
-  if n.isSymbol:
-    let s = n.symId
-    if s in c.inlineVars:
-      let init = c.inlineVars.getOrQuit(s)
-      result = writesThroughPointer(c, init)
-  elif n.isTagLit:
-    case n.exprKind
-    of DerefX, DdotX, PatX:
-      result = true
-    of DotX, TupatX, ArratX, HderefX:
-      result = writesThroughPointer(c, n.childCursor)
-    of ConvKinds, BaseobjX:
-      var r = n
-      inc r
-      skip r # type
-      result = writesThroughPointer(c, r)
-    else:
-      discard
-
 proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[BorrowInfo]) =
   ## The paths `n` may mutate through a `var`/`out` argument of a call it
   ## contains, looking through the inline temps the calls were hoisted into.
@@ -5474,26 +5466,23 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       # `a != nil` proof — `a` was passed by `haddr` and reset to a moved-from
       # (nil) state, so a later `a.x` must be re-proven, not silently accepted.
       # Facts are keyed per root variable (see `analysableRoot`), so we invalidate
-      # by the path's root symbol.
-      if unknownPath.path.len > 0 and unknownPath.path[0] in call.views:
-        invalidateViewElements(c, unknownPath.path[0])
-      elif writesThroughPointer(c, n):
-        # `touch(p[])` changes the target, not `p`: what is known about `p`
-        # itself (`p != nil`) holds, exactly as after `p[] = v`. The target
-        # may alias anything, so every derived location is suspect.
-        invalidateAllDerived(c)
-      elif unknownPath.path.len > 0 and unknownPath.path[0] in call.ensured:
+      # by the variable whose storage holds the location.
+      let root = storageRoot(unknownPath)
+      if root != NoSymId and root in call.views:
+        invalidateViewElements(c, root)
+      elif root != NoSymId and root in call.ensured:
         # The call before this already dropped everything its mutation could
         # reach and restated what its `.ensures` promises.
         discard
-      elif unknownPath.path.len > 0:
-        let root = getVarId(c, unknownPath.path[0])
-        if root != call.stepped:
-          invalidateFactsAbout(c.facts, root)
-        invalidateDerivedFrom(c, unknownPath.path[0])
+      elif root != NoSymId:
+        let v = getVarId(c, root)
+        if v != call.stepped:
+          invalidateFactsAbout(c.facts, v)
+        invalidateDerivedFrom(c, root)
       else:
-        # No root to attribute the mutation to (a raw pointer, a temporary):
-        # anything derived may have changed underneath us.
+        # No root to attribute the mutation to (behind a pointer, a temporary):
+        # anything derived may have changed underneath us. A pointer the path
+        # goes through is not written, so `touch(p[])` keeps `p != nil`.
         invalidateAllDerived(c)
       skip n # the unknown location
   of ContinueV:
