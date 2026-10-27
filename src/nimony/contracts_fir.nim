@@ -354,136 +354,214 @@ proc isFreshCall(c: var FirContext; n: Cursor): bool =
   result = n.isTagLit and n.exprKind in CallKinds and
     not canCarryBorrow(c, n) and not establishesBorrow(c, n)
 
-proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
-  ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
-  ## expanding inline variables.
-  if n.isTagLit:
-    let ek = n.exprKind
-    if ek in {DotX, DdotX}:
-      if ek == DdotX and result.mode != HasAddr:
-        result.mode = NotBorrowable
-      var r = n
-      inc r
-      if ek == DdotX and getType(c.typeCache, r).typeKind == RefT:
-        result.throughRef = true
-      extractBorrowPath(c, r, result, followInlineVars)
-      skip r # skip object subtree
-      if r.isSymbol:
-        result.path.add r.symId
-    elif ek == AddrX:
-      result.mode = HasAddr
-      var r = n
-      inc r
-      extractBorrowPath(c, r, result, followInlineVars)
-    elif ek == DerefX:
-      if result.mode != HasAddr:
-        result.mode = NotBorrowable
-      var r = n
-      inc r
-      if getType(c.typeCache, r).typeKind == RefT:
-        result.throughRef = true
-      extractBorrowPath(c, r, result, followInlineVars)
-    elif ek in {HaddrX, HderefX}:
-      var r = n
-      inc r
-      extractBorrowPath(c, r, result, followInlineVars)
-    elif ek in {TupatX, ArratX, AtX, PatX}:
-      # Array/tuple access: recurse into container, don't distinguish indices
-      var r = n
-      inc r
-      extractBorrowPath(c, r, result, followInlineVars)
-    elif ek in ConvKinds:
-      var r = n
-      inc r
-      skip r # type
-      extractBorrowPath(c, r, result, followInlineVars)
-    elif ek == BaseobjX:
-      var r = n
-      inc r
-      skip r # type
-      skip r # intlit
-      extractBorrowPath(c, r, result, followInlineVars)
-    elif ek in CallKinds:
+# A location is the expression the lowered module writes for it: `(dot (at s
+# i) f)` already says everything a borrow or a write needs — the variable it
+# is rooted at, every field and index on the way, every pointer it goes
+# through. The helpers below read that off the tree instead of keeping a copy.
+# `follow` decides whether an inline temp is a location of its own or stands
+# for the expression it was hoisted from (see `followsInto`).
+
+proc followsInto(c: var FirContext; n: Cursor; follow: bool): bool =
+  ## Does the inline temp `n` stand for the expression it was hoisted from?
+  ## A `.establishesBorrow.` call must be looked through even when `follow` is
+  ## off: `f(toOpenArray(s), s)` reaches us as `f(tmp, (haddr s))` and the
+  ## alias is invisible unless we look through `tmp`. The type of such a temp
+  ## is the view, not `var`/`out`/`lent`, so the modifier test does not catch
+  ## it.
+  ##
+  ## A temp holding a fresh call result is the opposite case: it owns the
+  ## value, so it is the root itself. Its `kill` sits at the end of the scope
+  ## that evaluated it, which is exactly where the value dies, so a view of it
+  ## escaping that scope or the proc is caught like any other local's.
+  let s = n.symId
+  if s notin c.inlineVars: return false
+  let init = c.inlineVars.getOrQuit(s)
+  result = not isFreshCall(c, init) and
+    (follow or getType(c.typeCache, n).typeKind in {MutT, OutT, LentT} or
+     establishesBorrow(c, init))
+
+proc locInner(c: var FirContext; n: Cursor; follow: bool): Cursor =
+  ## One step from the location `n` towards its root: the operand a selector,
+  ## a dereference or a conversion applies to, or the expression a followed
+  ## inline temp stands for. Nil when `n` is the root.
+  result = default(Cursor)
+  if n.isSymbol:
+    if followsInto(c, n, follow):
+      result = c.inlineVars.getOrQuit(n.symId)
+  elif n.isTagLit:
+    case n.exprKind
+    of DotX, DdotX, AddrX, DerefX, HaddrX, HderefX, TupatX, ArratX, AtX, PatX:
+      result = n.childCursor
+    of ConvKinds:
+      result = n.childCursor
+      skip result # type
+    of BaseobjX:
+      result = n.childCursor
+      skip result # type
+      skip result # intlit
+    of CallKinds:
       # A `var`/`lent`/view result is derived from the first argument (the
       # `var T` borrowing rule), and so is an `.establishesBorrow.` one. Any
       # other result is a fresh value the caller owns: `for e in
-      # g.rules.getOrDefault(k)` iterates a temporary and borrows nothing of `g`.
+      # g.rules.getOrDefault(k)` iterates a temporary and borrows nothing of
+      # `g`.
       if not isFreshCall(c, n):
-        var r = n
-        inc r
-        skip r # fn
-        extractBorrowPath(c, r, result, followInlineVars)
-      elif result.mode != HasAddr:
-        # Nothing aliases a fresh value. One a view is taken of is hoisted
-        # into an inline temp first and rooted there (see the symbol case);
-        # only a transient use such as a `for` loop iterating it gets here.
-        result.mode = IsBorrowableFromConst
-    elif ek in {AconstrX, SetconstrX, TupconstrX, OconstrX, NilX, TrueX, FalseX}:
-      result.mode = IsBorrowableFromConst
-    elif n.finalIrKind == EtupatV:
-      var r = n
-      inc r
-      extractBorrowPath(c, r, result, followInlineVars)
-    elif n.finalIrKind == VV:
-      extractBorrowPath(c, n.childCursor, result, followInlineVars)
-  elif (n.isIntLit or n.isUIntLit or n.isCharLit or n.isFloatLit or n.isStringLit):
-    result.mode = IsBorrowableFromConst
-  elif n.isSymbol:
-    let s = n.symId
-    # A `.establishesBorrow.` call hoisted into an inline temp must be followed
-    # even when `followInlineVars` is off: `f(toOpenArray(s), s)` reaches us as
-    # `f(tmp, (haddr s))` and the alias is invisible unless we look through
-    # `tmp`. The type of such a temp is the view, not `var`/`out`/`lent`, so the
-    # modifier test below does not catch it.
-    #
-    # An inline temp holding a fresh call result is the opposite case: it owns
-    # the value, so it is the root itself. Its `kill` sits at the end of the
-    # scope that evaluated it, which is exactly where the value dies, so a view
-    # of it escaping that scope or the proc is caught like any other local's.
-    let init = if s in c.inlineVars: c.inlineVars.getOrQuit(s) else: default(Cursor)
-    if s in c.inlineVars and not isFreshCall(c, init) and
-        (followInlineVars or
-         getType(c.typeCache, n).typeKind in {MutT, OutT, LentT} or
-         establishesBorrow(c, init)):
-      extractBorrowPath(c, init, result, followInlineVars)
+        result = n.childCursor
+        skip result # fn
     else:
-      if result.mode != HasAddr:
-        result.mode = IsBorrowable
-        let res = tryLoadSym(s)
-        if res.status == LacksNothing:
-          let local = asLocal(res.decl)
-          if local.kind in {GvarY, TvarY}:
-            result.mode = IsBorrowableFromGlobal
-      result.path.add s
+      if n.finalIrKind in {EtupatV, VV}:
+        result = n.childCursor
 
-proc extractPath(c: var FirContext; n: Cursor; followInlineVars=true): BorrowInfo =
-  result = BorrowInfo(path: @[], mode: NotBorrowable, info: n.info)
-  extractBorrowPath(c, n, result, followInlineVars)
+proc locRoot(c: var FirContext; n: Cursor; follow: bool): Cursor =
+  ## The expression the location `n` is rooted at: a variable, a constant, a
+  ## fresh value, or something no location can be read off.
+  result = n
+  var guard = 0
+  while not cursorIsNil(result) and guard < 64:
+    let inner = locInner(c, result, follow)
+    if cursorIsNil(inner): break
+    result = inner
+    inc guard
 
-proc `$`(b: BorrowInfo): string =
-  result = "BorrowInfo(mode: " & $b.mode & ", path: "
-  for i in 0 ..< b.path.len:
-    result.add " :: " & pool.symString(b.path[i])
-  result.add ")"
+proc locRootSym(c: var FirContext; n: Cursor; follow = true): SymId =
+  ## The variable the location `n` is rooted at, or `NoSymId`.
+  if cursorIsNil(n): return NoSymId
+  let r = locRoot(c, n, follow)
+  result = if r.isSymbol: r.symId else: NoSymId
 
-proc pathsOverlap(a, b: BorrowInfo): bool =
-  ## Two paths overlap if one is a prefix of the other (or they are equal).
-  ## Disjoint siblings (e.g. a.b vs a.c) do not overlap.
-  if a.path.len == 0 or b.path.len == 0: return false
-  let minLen = min(a.path.len, b.path.len)
-  for i in 0 ..< minLen:
-    if a.path[i] != b.path[i]:
-      return false
+proc isConstantValue(n: Cursor): bool =
+  result = n.isIntLit or n.isUIntLit or n.isCharLit or n.isFloatLit or
+    n.isStringLit or
+    (n.isTagLit and n.exprKind in {AconstrX, SetconstrX, TupconstrX, OconstrX,
+                                   NilX, TrueX, FalseX})
+
+proc borrowMode(c: var FirContext; n: Cursor; follow = true): BorrowableCheck =
+  ## Whether a borrow of the location `n` can be tracked. An explicit `addr`
+  ## anywhere on the way is the unchecked escape hatch.
+  if cursorIsNil(n): return NotBorrowable
+  var hasAddr = false
+  var r = n
+  var guard = 0
+  while guard < 64:
+    if r.isTagLit and r.exprKind == AddrX: hasAddr = true
+    let inner = locInner(c, r, follow)
+    if cursorIsNil(inner): break
+    r = inner
+    inc guard
+  if isConstantValue(r):
+    result = IsBorrowableFromConst
+  elif hasAddr:
+    result = HasAddr
+  elif r.isTagLit and r.exprKind in CallKinds:
+    # Nothing aliases a fresh value. One a view is taken of is hoisted into an
+    # inline temp first and rooted there; only a transient use such as a `for`
+    # loop iterating it gets here.
+    result = IsBorrowableFromConst
+  elif r.isSymbol:
+    result = IsBorrowable
+    let res = tryLoadSym(r.symId)
+    if res.status == LacksNothing:
+      let local = asLocal(res.decl)
+      if local.kind in {GvarY, TvarY}:
+        result = IsBorrowableFromGlobal
+  else:
+    result = NotBorrowable
+
+proc isTracked(m: BorrowableCheck): bool {.inline.} =
+  m in {IsBorrowable, IsBorrowableFromGlobal}
+
+proc derefsPointer(c: var FirContext; n: Cursor; kinds: set[TypeKind]): bool =
+  ## Does `n` itself dereference a pointer of one of `kinds`?
+  case n.exprKind
+  of DerefX, DdotX:
+    result = getType(c.typeCache, n.childCursor).typeKind in kinds
+  of PatX:
+    result = PtrT in kinds
+  else:
+    result = false
+
+proc throughPointer(c: var FirContext; n: Cursor; kinds: set[TypeKind]): bool =
+  ## Does the location `n` lie behind a pointer of one of `kinds`?
+  result = false
+  var r = n
+  var guard = 0
+  while not cursorIsNil(r) and guard < 64:
+    if r.isTagLit and derefsPointer(c, r, kinds): return true
+    r = locInner(c, r, true)
+    inc guard
+
+proc storageRoot(c: var FirContext; n: Cursor): SymId =
+  ## The variable whose own storage holds the location `n`, or `NoSymId`.
+  ## Behind a pointer there is none: writing `p[]` leaves `p` itself unchanged.
+  if throughPointer(c, n, {PtrT, RefT}): NoSymId
+  else: locRootSym(c, n)
+
+proc isSelector(n: Cursor): bool {.inline.} =
+  n.isTagLit and n.exprKind in {DotX, DdotX, TupatX, ArratX, AtX, PatX}
+
+proc nextSelector(c: var FirContext; n: Cursor; follow: bool): Cursor =
+  ## The outermost field or index selection of the location `n`, or its root
+  ## when there is none.
+  result = n
+  var guard = 0
+  while not isSelector(result) and guard < 64:
+    let inner = locInner(c, result, follow)
+    if cursorIsNil(inner): break
+    result = inner
+    inc guard
+
+proc selectorDepth(c: var FirContext; n: Cursor; follow: bool): int =
+  result = 0
+  var r = nextSelector(c, n, follow)
+  while isSelector(r):
+    inc result
+    r = nextSelector(c, r.childCursor, follow)
+
+proc selectorsDisjoint(a, b: Cursor): bool =
+  ## Do the two selections of one value certainly pick different parts?
+  var x = a.childCursor
+  var y = b.childCursor
+  skip x # the value selected from
+  skip y
+  if a.exprKind in {DotX, DdotX} and b.exprKind in {DotX, DdotX}:
+    result = x.isSymbol and y.isSymbol and x.symId != y.symId
+  elif a.exprKind notin {DotX, DdotX} and b.exprKind notin {DotX, DdotX}:
+    result = x.isIntLit and y.isIntLit and x.intVal != y.intVal
+  else:
+    result = false
+
+proc overlaps(c: var FirContext; a: Cursor; followA: bool;
+              b: Cursor; followB: bool): bool =
+  ## Can the locations `a` and `b` share storage? Rooted at the same variable,
+  ## one lies within the other unless a field or index selection on the way
+  ## tells them apart: `a.b` and `a.c` do not overlap, `s[0]` and `s[1]` do not
+  ## either, `s[i]` and `s[j]` may.
+  let ra = locRootSym(c, a, followA)
+  if ra == NoSymId or ra != locRootSym(c, b, followB): return false
+  var x = nextSelector(c, a, followA)
+  var y = nextSelector(c, b, followB)
+  var dx = selectorDepth(c, x, followA)
+  var dy = selectorDepth(c, y, followB)
+  while dx > dy:
+    x = nextSelector(c, x.childCursor, followA)
+    dec dx
+  while dy > dx:
+    y = nextSelector(c, y.childCursor, followB)
+    dec dy
   result = true
+  while isSelector(x) and isSelector(y):
+    if selectorsDisjoint(x, y): return false
+    x = nextSelector(c, x.childCursor, followA)
+    y = nextSelector(c, y.childCursor, followB)
 
-proc checkBorrowConflict(c: var FirContext; mutPath: BorrowInfo; info: NifLineInfo) =
+proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo) =
   var conflict = false
   for b in c.flow.borrows:
-    if pathsOverlap(mutPath, b):
+    if overlaps(c, mut, true, b.loc, true):
       conflict = true
       break
   if conflict:
-    buildErr c, info, "'" & asNimCode(mutPath.path[0]) & "' is borrowed and cannot be mutated"
+    buildErr c, info, "'" & asNimCode(locRootSym(c, mut)) & "' is borrowed and cannot be mutated"
 
 proc localInfoOf(c: var FirContext; s: SymId): LocalInfo =
   ## `getLocalInfo` only knows the locals of the proc under analysis; a global
@@ -513,7 +591,7 @@ proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
   ## (`let v = toOpenArray(a)` … `g = v`), one the expression establishes on the
   ## spot (`g = toOpenArray(a)`), or one held by the inline temp the value was
   ## hoisted into (`return toOpenArray(a)` becomes `(let `x …) (ret `x)`).
-  result = BorrowInfo(path: @[], mode: NotBorrowable, info: value.info)
+  result = BorrowInfo(info: value.info)
   let s = extractSymId(value)
   if s != NoSymId:
     for b in c.flow.borrows:
@@ -523,7 +601,7 @@ proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
       let init = c.inlineVars.getOrQuit(s)
       return borrowCarriedBy(c, init)
   if establishesBorrow(c, value):
-    result = extractPath(c, value)
+    result.loc = value
 
 proc borrowedName(c: var FirContext; root: SymId): string =
   ## What a borrow is *of*, for a message: a hoisted temp has no name the user
@@ -536,10 +614,10 @@ proc checkBorrowOutlivesProc(c: var FirContext; value: Cursor) =
   ## local `a` leaves `g` pointing into a dead frame, which no amount of
   ## mutation checking downstream can catch — by then the owner is gone.
   if not canCarryBorrow(c, value): return
-  let borrowed = borrowCarriedBy(c, value)
-  if borrowed.mode == IsBorrowable and borrowed.path.len > 0 and
-     diesWithProc(c, borrowed.path[0]):
-    buildErr c, value.info, "borrow of " & borrowedName(c, borrowed.path[0]) &
+  let borrowed = borrowCarriedBy(c, value).loc
+  let root = locRootSym(c, borrowed)
+  if borrowMode(c, borrowed) == IsBorrowable and diesWithProc(c, root):
+    buildErr c, value.info, "borrow of " & borrowedName(c, root) &
       " escapes the proc; it does not live long enough"
 
 proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
@@ -3734,51 +3812,43 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor; modes: seq[ArgMode]) =
   ## `modes[i]` is how argument `i` is passed. A forwarded `var` parameter is
   ## already a location and so carries no `(haddr …)`: it is just as mutable
   ## as one that does. An argument past the formals counts as by pointer.
-  var mutPaths: seq[BorrowInfo] = @[]
-  var immPaths: seq[BorrowInfo] = @[]
+  var muts: seq[Cursor] = @[]
+  var imms: seq[Cursor] = @[]
   var n = args
   var i = 0
   while n.hasMore:
     let isMut = n.exprKind == HaddrX
     # Validate borrowable path for haddr arguments (call-scoped borrows)
-    var inner = n
     let mode = if i < modes.len: modes[i] else: amByPointer
     if mode == amForwardedMut:
-      let m = extractPath(c, n)
-      if m.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-        mutPaths.add m
+      if borrowMode(c, n).isTracked:
+        muts.add n
     elif isMut:
-      inner = n.childCursor
-      let m = extractPath(c, inner)
-      if m.mode == NotBorrowable:
+      let inner = n.childCursor
+      if borrowMode(c, inner) == NotBorrowable:
         buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
           "': path is not borrowable; use 'addr' to override or a temporary move"
       else:
-        mutPaths.add m
+        muts.add inner
     elif mode == amByPointer:
-      let m = extractPath(c, n, followInlineVars = false)
-      if m.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-        immPaths.add m
+      # An inline temp passed by value is the callee's own copy, not the
+      # location it was hoisted from.
+      if borrowMode(c, n, follow = false).isTracked:
+        imms.add n
 
     skip n
     inc i
   # Check aliasing: a mutable argument must not overlap with any other argument:
-  for i in 0 ..< mutPaths.len:
-    for j in 0 ..< immPaths.len:
-      if pathsOverlap(mutPaths[i], immPaths[j]):
-        when false:
-          echo "mutPaths[i]: ", mutPaths[i]
-          echo "immPaths[j]: ", immPaths[j]
-        buildErr c, mutPaths[i].info, "mutable argument aliases with immutable parameter"
+  for i in 0 ..< muts.len:
+    for j in 0 ..< imms.len:
+      if overlaps(c, muts[i], true, imms[j], false):
+        buildErr c, muts[i].info, "mutable argument aliases with immutable parameter"
         break
   # Mutable argument must not overlap with any other mutable argument:
-  for i in 0 ..< mutPaths.len:
-    for j in 0 ..< mutPaths.len:
-      if i != j and pathsOverlap(mutPaths[i], mutPaths[j]):
-        when false:
-          echo "mutPaths[i]: ", mutPaths[i]
-          echo "mutPaths[j]: ", mutPaths[j]
-        buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
+  for i in 0 ..< muts.len:
+    for j in 0 ..< muts.len:
+      if i != j and overlaps(c, muts[i], true, muts[j], true):
+        buildErr c, muts[i].info, "mutable argument aliases with mutable parameter"
         break
 
 proc ownsNoHeap(c: var FirContext; t: Cursor; depth: int): bool =
@@ -3929,15 +3999,14 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       # `var openArray` formal is exempt: only its elements can change, and
       # those never move the storage a view points into.
       if not isMut and not isVarOpenArray(c, param.typ):
-        let mutPath = extractPath(c, n)
-        if mutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-          checkBorrowConflict(c, mutPath, n.info)
+        let tracked = borrowMode(c, n).isTracked
+        if tracked:
+          checkBorrowConflict(c, n, n.info)
         # ... and against the other arguments of this call. Only a forwarded
         # parameter: an inline temp holding a `var T` call result (`s[i]`)
         # was never judged as a location for a local either.
         if n.kind == Symbol and
-            isParamLike(getLocalInfo(c.typeCache, n.symId).kind) and
-            mutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+            isParamLike(getLocalInfo(c.typeCache, n.symId).kind) and tracked:
           needsBorrowCheck = true
           modes[modes.len-1] = amForwardedMut
       if root != NoSymId and isVarOpenArray(c, param.typ) and
@@ -4176,7 +4245,7 @@ proc locationIsComputed(c: var FirContext; n: Cursor): bool =
     else:
       discard
 
-proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[BorrowInfo]) =
+proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[Cursor]) =
   ## The paths `n` may mutate through a `var`/`out` argument of a call it
   ## contains, looking through the inline temps the calls were hoisted into.
   if n.isSymbol:
@@ -4199,9 +4268,9 @@ proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[BorrowInfo])
         pk = param.typ.typeKind
         if pk == VarargsT: fnType = previousFormalParam
       if arg.exprKind == HaddrX:
-        dest.add extractPath(c, arg.childCursor)
+        dest.add arg.childCursor
       elif pk in {MutT, OutT}:
-        dest.add extractPath(c, arg)
+        dest.add arg
       collectMutatedArgs(c, arg, dest)
       skip arg
   elif n.isTagLit:
@@ -4210,16 +4279,16 @@ proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[BorrowInfo])
       collectMutatedArgs(c, r, dest)
       skip r
 
-proc checkDestAliasesValue(c: var FirContext; dest: Cursor; destPath: BorrowInfo; value: Cursor) =
+proc checkDestAliasesValue(c: var FirContext; dest: Cursor; value: Cursor) =
   ## `s[0].x = grow(s)`: the address of `s[0]` is taken before `grow` runs, so
   ## when `grow` reallocates `s` the store goes to freed memory.
-  if destPath.mode != HasAddr and destPath.path.len > 0 and
+  if borrowMode(c, dest) != HasAddr and locRootSym(c, dest) != NoSymId and
       locationIsComputed(c, dest):
-    var mutated: seq[BorrowInfo] = @[]
+    var mutated: seq[Cursor] = @[]
     collectMutatedArgs(c, value, mutated)
     for m in mutated:
-      if pathsOverlap(destPath, m):
-        buildErr c, dest.info, "the right-hand side may mutate '" & asNimCode(m.path[0]) &
+      if overlaps(c, dest, true, m, true):
+        buildErr c, dest.info, "the right-hand side may mutate '" & asNimCode(locRootSym(c, m)) &
           "', which the destination's address was taken from; " &
           "assign the right-hand side to a temporary first"
         break
@@ -4237,13 +4306,11 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   traverseExpr c, value, call
 
   # Check borrow conflicts for the destination
-  let destMutPath = extractPath(c, n)
-  if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-    checkBorrowConflict(c, destMutPath, n.info)
+  if borrowMode(c, n).isTracked:
+    checkBorrowConflict(c, n, n.info)
   if not c.features.contains(LenientAliasingFeature):
-    checkDestAliasesValue(c, n, destMutPath, valueStart)
-  if destMutPath.path.len > 0:
-    checkEscapingBorrow(c, valueStart, destMutPath.path[0])
+    checkDestAliasesValue(c, n, valueStart)
+  checkEscapingBorrow(c, valueStart, locRootSym(c, n))
 
   # Now handle the destination (a Symbol; the NJVL `(v symId version)` form
   # is no longer produced, see the `VV` branch of `traverseStmt`)
@@ -4263,9 +4330,9 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
     # ends: `a = toOpenArray(a, 1, 2)` is derived from `a` itself, so `a` keeps
     # what it borrowed instead of ending up borrowing from itself.
     var b = borrowCarriedBy(c, valueStart)
-    if not (b.path.len > 0 and b.path[0] == destSymId):
+    if locRootSym(c, b.loc) != destSymId:
       endBorrow(c, destSymId)
-      if b.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      if borrowMode(c, b.loc).isTracked:
         b.borrower = destSymId
         c.flow.borrows.incl b
   if destSymId != NoSymId:
@@ -4849,17 +4916,16 @@ proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor;
     c.forBinders.incl name
     binders.add name
     if local.typ.typeKind in {MutT, LentT} and not cursorIsNil(firstArg):
-      var path = extractPath(c, firstArg)
-      if path.throughRef and path.mode != HasAddr:
-        # The borrow would be keyed to this path, but an alias of the `ref`
-        # mutates the same location under a path that does not overlap it:
+      let mode = borrowMode(c, firstArg)
+      if mode != HasAddr and throughPointer(c, firstArg, {RefT}):
+        # The borrow would be keyed to this location, but an alias of the `ref`
+        # mutates it under another one that does not overlap it:
         # `for x in r.s: r2.s.add x` reallocates what the loop reads from.
         buildErr c, firstArg.info, "cannot iterate over a location reached " &
           "through a `ref`: an alias of the `ref` could mutate it during the " &
           "loop; iterate by index, or over `uncheckedBorrow(...)` to take that risk"
-      elif path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-        path.borrower = name
-        c.flow.borrows.incl path
+      elif mode.isTracked:
+        c.flow.borrows.incl BorrowInfo(borrower: name, loc: firstArg, info: firstArg.info)
 
 proc traverseFor(c: var FirContext; n: var Cursor) =
   ## `(for iterCall vars body)`. The iterator's `.ensures` about the loop
@@ -5130,13 +5196,11 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   # Validate that the path is borrowable (no deref in the middle, no calls).
   # Explicit `addr` in the path is an escape hatch ("unchecked").
   if n.isTagLit and n.exprKind == HaddrX:
-    var inner = n
-    inc inner # skip haddr tag
-    var path = extractPath(c, inner)
-    if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-      path.borrower = name
-      c.flow.borrows.incl path
-    elif path.mode == NotBorrowable:
+    let inner = n.childCursor
+    let mode = borrowMode(c, inner)
+    if mode.isTracked:
+      c.flow.borrows.incl BorrowInfo(borrower: name, loc: inner, info: inner.info)
+    elif mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
   elif not isInline and establishesBorrow(c, n):
@@ -5150,19 +5214,17 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     # together at the end of the proc — registering a borrow there would keep it
     # alive far past the statement that needed it. Their aliasing is covered
     # precisely, and only for the duration of the call, by the inline-var
-    # look-through in `extractBorrowPath`.
-    var path = extractPath(c, n)
-    if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-      path.borrower = name
-      c.flow.borrows.incl path
+    # look-through in `locInner`.
+    if borrowMode(c, n).isTracked:
+      c.flow.borrows.incl BorrowInfo(borrower: name, loc: n, info: n.info)
   elif not isInline and n.isSymbol and canCarryBorrow(c, n):
     # `let a = b` for a view `b`: `a` aliases whatever `b` does, so it takes over
     # `b`'s borrow. Otherwise `b = toOpenArray(r)` would release the only borrow
     # on `b`'s old source while `a` still points into it.
-    var path = borrowCarriedBy(c, n)
-    if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-      path.borrower = name
-      c.flow.borrows.incl path
+    var b = borrowCarriedBy(c, n)
+    if borrowMode(c, b.loc).isTracked:
+      b.borrower = name
+      c.flow.borrows.incl b
   if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT, ItertypeT}:
     checkNilMatch c, n, localType
   if not n.isDotToken:
@@ -5428,10 +5490,10 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
         skip m
       var escaping: seq[BorrowInfo] = @[]
       for b in c.flow.borrows:
-        if b.path.len > 0 and b.path[0] in dying and b.borrower notin dying:
+        if b.borrower notin dying and locRootSym(c, b.loc) in dying:
           escaping.add b
       for b in escaping:
-        buildErr c, b.info, "borrow of " & borrowedName(c, b.path[0]) &
+        buildErr c, b.info, "borrow of " & borrowedName(c, locRootSym(c, b.loc)) &
           " escapes its scope; it does not live long enough"
       # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
@@ -5443,29 +5505,30 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     # Unknown instruction - variable's contents become unknown after a call.
     # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
     n.into:
-      let unknownPath = extractPath(c, n)
-      if unknownPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
-        checkBorrowConflict(c, unknownPath, n.info)
+      if borrowMode(c, n).isTracked:
+        checkBorrowConflict(c, n, n.info)
       # The location's contents are now unknown: every fact we knew about it is
       # stale. Dropping them is what makes e.g. `move(a)` correctly forget the
       # `a != nil` proof — `a` was passed by `haddr` and reset to a moved-from
       # (nil) state, so a later `a.x` must be re-proven, not silently accepted.
       # Facts are keyed per root variable (see `analysableRoot`), so we invalidate
-      # by the path's root symbol.
-      if unknownPath.path.len > 0 and unknownPath.path[0] in call.views:
-        invalidateViewElements(c, unknownPath.path[0])
-      elif unknownPath.path.len > 0 and unknownPath.path[0] in call.ensured:
+      # by the variable whose storage holds the location.
+      let root = storageRoot(c, n)
+      if root != NoSymId and root in call.views:
+        invalidateViewElements(c, root)
+      elif root != NoSymId and root in call.ensured:
         # The call before this already dropped everything its mutation could
         # reach and restated what its `.ensures` promises.
         discard
-      elif unknownPath.path.len > 0:
-        let root = getVarId(c, unknownPath.path[0])
-        if root != call.stepped:
-          invalidateFactsAbout(c.facts, root)
-        invalidateDerivedFrom(c, unknownPath.path[0])
+      elif root != NoSymId:
+        let v = getVarId(c, root)
+        if v != call.stepped:
+          invalidateFactsAbout(c.facts, v)
+        invalidateDerivedFrom(c, root)
       else:
-        # No root to attribute the mutation to (a raw pointer, a temporary):
-        # anything derived may have changed underneath us.
+        # No variable holds the location (it lies behind a pointer, or in a
+        # temporary): anything derived may have changed underneath us. A
+        # pointer on the way is not written, so `touch(p[])` keeps `p != nil`.
         invalidateAllDerived(c)
       skip n # the unknown location
   of ContinueV:

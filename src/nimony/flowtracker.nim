@@ -132,19 +132,18 @@ proc snapshot(x: Inits): HashSet[SymId] = x.s   # a plain value copy
 
 type
   BorrowableCheck* = enum
-    IsBorrowable       ## simple path: symbols, dots, array access
+    IsBorrowable       ## rooted at a local or a parameter
     IsBorrowableFromConst
     IsBorrowableFromGlobal
     HasAddr            ## path contains explicit `addr` — unsafe escape hatch
-    NotBorrowable      ## deref in middle of path or function call
+    NotBorrowable      ## rooted at nothing a borrow can be tracked on
 
   BorrowInfo* = object
     borrower*: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
-    mode*: BorrowableCheck
-    path*: seq[SymId]  ## root :: field1 :: field2 :: ...
+    loc*: Cursor       ## the borrowed location, as the lowered module writes
+                       ## it; `contracts_fir` reads root, fields and indices
+                       ## off the tree
     info*: NifLineInfo
-    throughRef*: bool  ## the path dereferences a `ref`: an alias of it can
-                       ## reach the same location under another path
 
   BorrowJEntry = object
     added: bool
@@ -158,7 +157,7 @@ type
     journaling: bool
 
 proc sameBorrow(a, b: BorrowInfo): bool {.inline.} =
-  a.borrower == b.borrower and a.path == b.path
+  a.borrower == b.borrower and toUniqueId(a.loc) == toUniqueId(b.loc)
 
 proc find(s: seq[BorrowInfo]; b: BorrowInfo): int =
   result = -1
