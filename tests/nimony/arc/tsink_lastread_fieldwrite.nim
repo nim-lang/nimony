@@ -23,6 +23,7 @@ type
     id: int
 
 var gDestroyed = 0
+proc `=wasMoved`(x: var InnerObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(x: InnerObj) =
   inc gDestroyed
 

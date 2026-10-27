@@ -394,6 +394,10 @@ proc `=destroy`(j: Join) =
       jp.done = -1 # `joined` set it to 1 at that `yield`
       run(jp)
 
+proc `=wasMoved`(j: var Join) {.nodestroy, inline.} =
+  ## No parked iterator to finish: `=destroy` has nothing to resume.
+  j.resume = Continuation(fn: nil, env: nil)
+
 proc `=copy`(dest: var Join; src: Join) {.error.}
 
 proc parked*(c: Continuation): bool {.inline.} =

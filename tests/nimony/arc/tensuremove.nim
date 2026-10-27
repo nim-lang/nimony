@@ -33,6 +33,7 @@ block:
       JsonNode = object
         data: int
 
+    proc `=wasMoved`(x: var JsonNode) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
     proc `=destroy`(x: JsonNode) = discard
 
     proc foo(d: JsonNode) =

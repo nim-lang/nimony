@@ -3,6 +3,7 @@
 type Foo = object
   x: int
 proc `=copy`(dst: var Foo; src: Foo) {.error.}
+proc `=wasMoved`(x: var Foo) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(x: Foo) = discard
 type Wrap = object
   s: seq[Foo]

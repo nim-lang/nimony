@@ -7,6 +7,7 @@ import std/syncio
 type Tracked = object
   name: string
 
+proc `=wasMoved`(x: var Tracked) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(t: Tracked) {.noSideEffect.} =
   if t.name.len > 0:
     {.cast(noSideEffect).}: echo "  destroy ", t.name

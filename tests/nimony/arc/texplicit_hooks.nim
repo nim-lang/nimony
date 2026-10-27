@@ -35,5 +35,6 @@ block:
 
 type
   Foo = object
+proc `=wasMoved`(x: var Foo) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(x: var Foo) = discard
 proc `=dup`(x: Foo): Foo = x

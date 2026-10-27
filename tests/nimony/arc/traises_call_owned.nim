@@ -16,6 +16,7 @@ type
 
 var destroyed = 0
 
+proc `=wasMoved`(x: var Payload) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(v: Payload) =
   destroyed = destroyed + 1
 

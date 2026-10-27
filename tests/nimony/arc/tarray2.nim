@@ -5,6 +5,7 @@ type
   Obj = object
     x, y: int
 
+proc `=wasMoved`(x: var Obj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(o: Obj) = echo "destroy"
 
 proc main =

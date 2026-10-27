@@ -39,11 +39,13 @@ type
     x: int
     s: string
 
+proc `=wasMoved`(x: var PairObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(p: PairObj) =
   inc destroyed
   `=destroy`(p.name)
   `=destroy`(p.other)
 
+proc `=wasMoved`(x: var TreeObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(t: TreeObj) =
   inc destroyed
   `=destroy`(t.kids)

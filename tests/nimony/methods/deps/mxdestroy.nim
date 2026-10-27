@@ -14,6 +14,7 @@ type
 
 var gDestroyed: int = 0
 proc destroyCount*(): int = gDestroyed
+proc `=wasMoved`(x: var CanaryObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(x: CanaryObj) =
   if x.live: inc gDestroyed
 
