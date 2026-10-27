@@ -4,11 +4,21 @@ This repo is a Nim compiler reimplementation built around [NIF](https://github.c
 pipeline is split into tools and phases:
 
 - Nifler: parses Nim to NIF.
-- Nimony: semantic checking and front-end lowering.
-- Shoggoth: lowering passes, Leng generation and dead code elimination
-  (passes in `src/hexer/`), plus the optional Leng optimizer (`shoggoth opt`,
-  passes in `src/lengc/shoggoth/`, run only for `--opt:speed`/`--opt:size`).
-- Lengc: C/C++ backend based on NIF.
+- Nimony (`nimsem`): semantic checking and front-end lowering. Its output
+  is the **Shoggoth IR**.
+- Shoggoth: takes the Shoggoth IR through the lowering passes (in
+  `src/hexer/`) and produces Leng, the **Arkham IR**. It also does dead code
+  elimination and runs the optional Leng optimizer (`shoggoth opt`, passes in
+  `src/lengc/shoggoth/`, run only for `--opt:speed`/`--opt:size`).
+- Lengc: C/C++ backend based on NIF. arkham + nifasm (sibling `nativenif`
+  repo) are the native backend.
+
+Both IRs share one control-flow model, the **multi-join IR**
+(`doc/internals/multi_join_ir.md`), which the code still calls "Final IR"
+(`src/finalir/`). Shoggoth finds a type's `=hooks` only through the hook
+pragmas on its declaration in the Shoggoth IR (`doc/internals/type_hooks.md`).
+NJVL is dead. Do not resurrect it, and ignore stray
+mentions of it in code comments.
 
 When debugging compiler behavior, assume `nifler`, `nifmake`, and `lengc` are
 stable. Most problems tend to be in `Nimony` or `Shoggoth`.

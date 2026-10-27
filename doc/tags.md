@@ -98,7 +98,7 @@
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
 | `(case X (of (ranges...) S)+ (else X)?)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
 | `(of (ranges ...) S)`; `(of (ranges ...) .T)` | LengOther, NimonyOther, NiflerKind | `of` branch within a `case` statement, or of a Leng discriminated `union` |
-| `(lab D)` | LengStmt, LengSym, NimonyStmt, NimonySym, FinalIrKind | label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge |
+| `(lab D)` | LengStmt, LengSym, NimonyStmt, NimonySym, FinalIrKind | label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/internals/multi_join_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge |
 | `(jmp Y)` | LengStmt, NimonyStmt, FinalIrKind | jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals |
 | `(ret .X)` | LengStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
@@ -163,7 +163,7 @@
 | `(raises ...)` | LengPragma, NimonyPragma | proc annotation; optional list of exception types the proc may raise |
 | `(errs)` | LengPragma | proc annotation |
 | `(static T)`; `(static)`; `(static X)` | LengPragma, NimonyType, NimonyExpr, NiflerKind | `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time |
-| `(ite X S .S S? STR_LIT?)` | ControlFlowKind, FinalIrKind, LengStmt | if-then-else, optionally followed by `join` information and by a label. The Final IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's |
+| `(ite X S .S S? STR_LIT?)` | ControlFlowKind, FinalIrKind, LengStmt | if-then-else, optionally followed by `join` information and by a label. The multi-join IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's |
 | `(itec X S S)` | FinalIrKind, LengStmt | if-then-else (that was a `case`) |
 | `(loop S)` | FinalIrKind, LengStmt | infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)` |
 | `(v X INT_LIT)` | FinalIrKind | `versioned` locations |

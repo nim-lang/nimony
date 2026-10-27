@@ -132,7 +132,7 @@ lands.
 
 ### Three lowerings, one IR node
 
-The operation is one node in the Nimony IR and the Final IR; only the backend
+The operation is one node in the Nimony IR and the Shoggoth IR; only the backend
 lowering differs, selected per module by `CheckMode`:
 
 | mode | lowering |
