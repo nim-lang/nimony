@@ -38,84 +38,6 @@ type
 proc toTask*(c: Continuation): Task {.inline.} =
   Task(con: c)
 
-# --- Work-stealing deque ---
-
-type
-  TaskDeque = object
-    ## A worker's own task queue: Chase-Lev work stealing, in batches.
-    ##
-    ## The owner pushes at `bottom` and never touches `top` without a CAS; a
-    ## thief takes from `top` and only touches it with a CAS. `bottom` has one
-    ## writer (the owner), so publishing an item is a plain store followed by a
-    ## release store of `bottom`, and no lock is involved anywhere.
-    ##
-    ## Both ends take a *batch*, and the batch is what the CAS buys: advancing
-    ## `top` to `top + n` in one compare-exchange is the instant the whole batch
-    ## stops being visible to everybody else, so one atomic operation covers
-    ## `BulkSize` tasks. The owner takes from the same end as the thieves rather
-    ## than from `bottom`, which keeps exactly one rule — "whoever moves `top`
-    ## CASes it" — instead of the owner/thief protocol a LIFO owner pop needs.
-    top: int
-      ## Oldest live item; moved only by `atomicCompareExchange`.
-    bottom: int
-      ## One past the newest item; written only by the owner.
-    data: seq[Task]
-
-proc init(d: var TaskDeque; capacity: int) =
-  d.data = newSeq[Task](capacity)
-
-proc tryPush(d: var TaskDeque; t: Task): bool =
-  ## Owner only. `top` is read relaxed because it only ever grows: a stale
-  ## value is a *lower* one, so the check can say "full" when there is room but
-  ## never the other way round.
-  let b = d.bottom
-  if b - atomicLoad(d.top, moRelaxed) >= d.data.len: return false
-  d.data[b and (d.data.len - 1)] = t
-  atomicStore(d.bottom, b + 1, moRelease)
-  result = true
-
-proc tryPushBulk(d: var TaskDeque; items: openArray[Task]): int =
-  ## Owner only: publish as many leading items of `items` (in order) as fit.
-  let b = d.bottom
-  let t = atomicLoad(d.top, moRelaxed)
-  result = min(items.len, d.data.len - (b - t))
-  if result <= 0: return 0
-  for i in 0 ..< result:
-    d.data[(b + i) and (d.data.len - 1)] = items[i]
-  atomicStore(d.bottom, b + result, moRelease)
-
-proc tryBulkPop(d: var TaskDeque; bulkSize: int; buf: var openArray[Task]): int =
-  ## Take up to `bulkSize` of the oldest tasks. Anybody may call it — the owner
-  ## draining its own queue and a thief draining somebody else's are the same
-  ## operation. A lost CAS means somebody else took that batch, so it retries a
-  ## few times before reporting empty; the caller treats that as "no work here"
-  ## and moves on.
-  for attempt in 0 ..< 4:
-    let t = atomicLoad(d.top, moRelaxed)
-      ## Only used to size the batch: a stale value makes the CAS below fail
-      ## and retry, never over-claim.
-    let b = atomicLoad(d.bottom, moAcquire)
-      ## This one is the item count, and reading the items depends on it.
-    let avail = b - t
-    if avail <= 0: return 0
-    let n = min(min(avail, bulkSize), buf.len)
-    var expected = t
-    if atomicCompareExchange(d.top, expected, t + n, moAcquireRelease, moAcquire):
-      for i in 0 ..< n:
-        buf[i] = d.data[(t + i) and (d.data.len - 1)]
-      return n
-  result = 0
-
-type
-  TaskQueue = object
-    ## One stripe: the owner's lock-free deque, plus a locked FIFO for pushes
-    ## from threads that are not the owner. Those are rare — a foreign thread
-    ## submitting a task, and `flushStaged` spilling into a stripe that is not
-    ## the caller's own — and they must not touch `bottom`, which only the owner
-    ## may write.
-    own: TaskDeque
-    shared: FifoStripe[Task]
-
 # --- Task queue ---
 
 proc poolPollIo*(timeoutMs: int): bool {.nimcall.} =
@@ -133,7 +55,7 @@ type
 
 var
   workerMetrics*: seq[WorkerMetrics]
-  localQueues: seq[TaskQueue]
+  localQueues: seq[FifoStripe[Task]]
   injectQueue: FifoStripe[Task]
   workers: seq[RawThread]
   stopFlag: bool # accessed atomically
@@ -147,11 +69,6 @@ var gReactorState*: int = 0
   ## Nothing orders those plain stores against each other, so on a weakly
   ## ordered machine a worker could see the new reactor and an arena seq that is
   ## still empty. `reactorReady` pairs an acquire with `setupRing`'s release.
-var gReactorHasReady*: nil proc (): bool {.nimcall.} = nil
-  ## Set by the I/O backend alongside `gReactor`: does the lane have a
-  ## completion already published and not yet consumed? Read by the drain loop
-  ## before it runs another step of a chain inline (see `trampolineSteps`).
-
 var gReactorWaits* = false
   ## Does `gReactor(ms)` actually sleep for up to `ms`? Set from the I/O
   ## backend (see `BackendRelays.waits`). While it is false an idle worker has
@@ -175,12 +92,8 @@ template countMetric(counter: untyped; n = 1) =
 
 proc tryEnqueue(s: int; t: Task): bool {.inline.} =
   ## Push `t` onto stripe `s` if it has room; `false` when the stripe is full.
-  ## The owner pushes into its own deque; anybody else has to take the locked
-  ## FIFO, because `bottom` has exactly one writer.
   let i = s mod workerCount
-  if isPoolWorker() and i == threadIdx:
-    return localQueues[i].own.tryPush(t)
-  return localQueues[i].shared.tryEnqueue(t)
+  return localQueues[i].tryEnqueue(t)
 
 proc submit*(t: Task; h = 0) =
   ## Submit a task to the pool. **Non-lossy with "caller-runs" backpressure:**
@@ -252,12 +165,8 @@ proc flushStaged(hint: int): bool =
     var off = 0
     while remaining > 0 and off < workerCount:
       let s = (hint + off) mod workerCount
-      let moved =
-        if isPoolWorker() and s == threadIdx:
-          localQueues[s].own.tryPushBulk(toOpenArray(chunk, n - remaining, n - 1))
-        else:
-          localQueues[s].shared.tryBulkEnqueue(
-            toOpenArray(chunk, n - remaining, n - 1))
+      let moved = localQueues[s].tryBulkEnqueue(
+        toOpenArray(chunk, n - remaining, n - 1))
       dec remaining, moved
       if moved == 0:
         countMetric(workerMetrics[threadIdx].enqueueMiss)
@@ -292,9 +201,7 @@ proc tryBulkDequeue(stripe: int; buf: var array[BulkSize, Task]): int =
   if dequeTicks mod 61 == 0:
     result = injectQueue.tryBulkDequeue(BulkSize, buf)
   if result == 0:
-    result = localQueues[s].own.tryBulkPop(BulkSize, buf)
-    if result == 0:
-      result = localQueues[s].shared.tryBulkDequeue(BulkSize, buf)
+    result = localQueues[s].tryBulkDequeue(BulkSize, buf)
 
 proc drainOnce(startStripe: int): bool =
   ## Dequeue the first non-empty stripe (searching from `startStripe`, for
@@ -313,8 +220,7 @@ proc drainOnce(startStripe: int): bool =
         when trampolineSteps > 0:
           var next = c.fn(c.env)
           var steps = 0
-          while next.fn != nil and steps < trampolineSteps and
-                not (gReactorHasReady != nil and gReactorHasReady()):
+          while next.fn != nil and steps < trampolineSteps:
             next = next.fn(next.env)
             inc steps
           if next.fn != nil:
@@ -365,12 +271,9 @@ const trampolineSteps {.intdefine.} = 64
   ## steps inline removes that, and it is the single largest win in that
   ## regime (+11%).
   ##
-  ## The price is the worker not polling its lane meanwhile, which is why the
-  ## loop stops as soon as the backend says a completion is already waiting
-  ## (`gReactorHasReady`): a published completion left in the queue is pure
-  ## latency. Without that gate the trampoline costs the pipelined
-  ## single-client case ~7% — there, one poll collects ~19 completions and the
-  ## worker must get back to it.
+  ## The price is the worker not polling its lane meanwhile: a completion the
+  ## kernel has already published waits until the chain parks or runs out of
+  ## `trampolineSteps`.
 
 var idleSleepUs {.threadvar.}: int
 
@@ -378,8 +281,8 @@ proc workCycle(stripe: int): bool =
   ## One turn of a worker: run the queued tasks, drive this thread's I/O lane,
   ## and nap when neither had anything. Answers whether tasks ran.
   if idleSleepUs == 0: idleSleepUs = 1
-  # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
-  #    each continuation, re-submitting any that yield more work.
+  # 1. Bulk-drain tasks: probe the stripes from this one, for locality.
+  #    Trampolines each continuation, re-submitting any that yield more work.
   result = drainOnce(stripe)
   # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
   let eventFired = reactorPoll(if result: 0.cint else: 1.cint)
@@ -454,10 +357,9 @@ proc initPool*(count = 0) =
     setPassiveWaitHook passiveWait
     when defined(threadpoolMetrics):
       workerMetrics = newSeq[WorkerMetrics](workerCount)
-    localQueues = newSeq[TaskQueue](workerCount)
+    localQueues = newSeq[FifoStripe[Task]](workerCount)
     for i in 0..<workerCount:
-      localQueues[i].own.init(StripeSize)
-      localQueues[i].shared.init(StripeSize)
+      localQueues[i].init(StripeSize)
     injectQueue.init(StripeSize*16)
     workers.setLen(workerCount)
     for i in 0 ..< workerCount:

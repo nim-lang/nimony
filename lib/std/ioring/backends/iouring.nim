@@ -363,11 +363,6 @@ proc iouringCancelInFlight(s: Slot): bool {.nimcall.} =
   flushCancels(lane)
   result = true
 
-proc iouringHasReady(): bool {.nimcall.} =
-  ## Is there a completion this lane has not consumed yet? One atomic load of
-  ## the ring's shared tail; see `BackendRelays.hasReady`.
-  result = localQueues[ioLane()].cqReady > 0
-
 proc iouringClose() {.nimcall.} =
   # By index, and `var`: a `Queue` owns an fd and three mappings, so tearing
   # down a copy would leave the original for the seq's own destructor to tear
@@ -390,7 +385,6 @@ proc initIoUringBackendRelays*(sqE = 256): BackendRelays =
   gCancelInFlight = iouringCancelInFlight
   result = BackendRelays(
     poll: iouringPoll,
-    hasReady: iouringHasReady,
     waits: localQueues[0].hasExtArg,
     close: iouringClose,
   )

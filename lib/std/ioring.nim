@@ -88,7 +88,6 @@ proc setupRing() =
   gCq = newSeq[IoCompletion](CqSize)
   initPlatformBackend()
   gReactor = backendRelays.poll
-  gReactorHasReady = backendRelays.hasReady
   gReactorWaits = backendRelays.waits
   # The release half of `threadpool.reactorReady`: the workers have been running
   # since `initPool` above, so everything the reactor reaches — the op queues,

@@ -35,13 +35,6 @@ type
       ## doubles the idle latency and spends a second syscall doing it. A
       ## backend that cannot wait (or, for io_uring, is on a kernel without
       ## `FEAT_EXT_ARG`) leaves this `false` and keeps the nap.
-    hasReady*: unchecked proc (): bool {.nimcall.}
-      ## Are completions already waiting for this lane, unconsumed? The pool
-      ## asks before it runs a chain's next step inline: a completion that the
-      ## kernel has already published is latency if it is left sitting in the
-      ## queue, so the worker goes back to `poll` instead of trampolining.
-      ## Cheap — one atomic load of the ring's shared tail — and `nil` for a
-      ## backend with no completion queue of its own.
     close*: unchecked proc () {.nimcall.}
     forgetFd*: nil proc (fd: cint) {.nimcall.}
       ## Drop any backend-side per-fd registration/bookkeeping before a fd is
