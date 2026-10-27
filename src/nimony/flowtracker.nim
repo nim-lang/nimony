@@ -131,13 +131,6 @@ proc snapshot(x: Inits): HashSet[SymId] = x.s   # a plain value copy
 # --------------------------------------------------------------- borrows
 
 type
-  BorrowableCheck* = enum
-    IsBorrowable       ## rooted at a local or a parameter
-    IsBorrowableFromConst
-    IsBorrowableFromGlobal
-    HasAddr            ## path contains explicit `addr` — unsafe escape hatch
-    NotBorrowable      ## rooted at nothing a borrow can be tracked on
-
   BorrowInfo* = object
     borrower*: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
     loc*: Cursor       ## the borrowed location, as the lowered module writes

@@ -62,6 +62,13 @@ import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof
 
 type
+  BorrowableCheck = enum
+    IsBorrowable       ## rooted at a local or a parameter
+    IsBorrowableFromConst
+    IsBorrowableFromGlobal
+    HasAddr            ## an explicit `addr` on the way — unsafe escape hatch
+    NotBorrowable      ## rooted at nothing a borrow can be tracked on
+
   IvKind = enum
     ivUnknown      ## an arbitrary write: nothing known about it survives a loop
     ivIncreasing   ## every write in the loop moves it up (or leaves it alone)
