@@ -15,15 +15,15 @@ Two kinds of checks are affected:
 
 Implementation points:
 
-- `src/finalir/finalir.nim`: the lowering to the Final IR.
+- `src/finalir/finalir.nim`: the lowering to the multi-join form.
 - `src/nimony/contracts_fir.nim`: the prover; `applyVerdicts` writes its
   verdicts into the lowered module.
 - `src/nimony/semmain.nim`: `lowerAndProve` lowers, proves and publishes.
-- `doc/internals/final_ir.md`: the Final IR itself.
+- `doc/internals/multi_join_ir.md`: the multi-join IR itself.
 
 ---
 
-## The published module is the Final IR
+## The published module is the Shoggoth IR
 
 `semmain.lowerAndProve` lowers the module right after `derefs`, runs the prover
 on the lowered buffer, and publishes that same buffer. There is one artifact per
@@ -43,7 +43,7 @@ non-concrete routine through verbatim, so the rule needed no extra work.
 The prover's `kill`/`unknown` facts are stripped before the write
 (`finalir.stripAnalysisFacts`); the backend derives destruction from the `scope`
 tags. The validator checks the published module against `phasePostFinalIr`:
-the post-sem tags (for unlowered generic bodies) plus the Final IR's own.
+the post-sem tags (for unlowered generic bodies) plus the multi-join tags.
 
 Consumers of the published module:
 
@@ -55,13 +55,13 @@ Consumers of the published module:
 - `exprexec` compiles a program through the normal path, and `expreval` only
   folds constant expressions during sem. Neither sees the lowered form.
 
-Hexer reads the Final IR throughout and lowers nothing at its entry. The one
-exception is the hooks the lifter creates in hexer, which it lowers with
+Shoggoth reads the Shoggoth IR throughout and lowers nothing at its entry. The one
+exception is the hooks the lifter creates in shoggoth, which it lowers with
 `toFinalIr(analysisFacts = false)`. `lengcgen` turns `ite`/`loop` into Leng
 `if`/`while true`, because the native back end and most optimizer passes do not
 know Leng's own `ite`/`loop`.
 
-## `for` stays in the Final IR
+## `for` stays in the Shoggoth IR
 
 A `for` is lowered to
 
@@ -211,7 +211,7 @@ smaller, at the same compile time. Publishing the lowered module grows the
    prover's `checkRangeAssign`.
 2. **`was`**: a way to map lowered code back to its source shape, added one
    consumer at a time, error messages first. Notes:
-   - In-module macros never see the Final IR: expansion happens during sem,
+   - In-module macros never see the Shoggoth IR: expansion happens during sem,
      before the lowering. `was` is for reflection on imported bodies,
      `renderer.asNimCode` and idetools.
    - `try` and `case` keep their shape. What loses it: `while` (the condition
@@ -222,7 +222,7 @@ smaller, at the same compile time. Publishing the lowered module grows the
    - A pass that rewrites inside a `was` region drops the annotation, and the
      validator enforces that: a stale `was` is worse than none.
    - Lowering less to need less `was` is not an option: the flat `elif` layout
-     is where the Leng size win came from (`final_ir.md`, *What a flat layout
+     is where the Leng size win came from (`multi_join_ir.md`, *What a flat layout
      costs*).
 3. **Leng `loop`.** The Leng consumers read the infinite `(loop body)` form, but
    nothing produces a Leng `loop` yet, and `continue` is not a `LengStmt`, so

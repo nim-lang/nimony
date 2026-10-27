@@ -1,5 +1,9 @@
-Leng dialect
-============
+Leng dialect (Arkham IR)
+========================
+
+Leng is the **Arkham IR**: the IR that shoggoth produces and that arkham, lengc
+and the other back ends consume. Its control flow follows the
+[multi-join IR](multi_join_ir.md) model.
 
 Leng is a dialect of [NIF](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) designed to be good midlevel IR where generics have been instantiated etc. Its benefits are:
 

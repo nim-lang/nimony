@@ -301,7 +301,7 @@ proc closeBranch*[K: Keyable, V](t: var Tracker[K, V]) =
   ## - If the path diverged (`markDiverged`), the branch reaches no join:
   ##   consume it — revert its writes and drop its slice so it does not
   ##   contribute to `closeBranches`. This is the "branches that jumped away
-  ##   do not appear in the join list" rule from arcopt.md, applied to
+  ##   do not appear in the join list" rule, applied to
   ##   `return`/`raise`/`break` as well as to fully-diverging inner constructs.
   ## - Otherwise keep its writes in the log so `closeBranches` can merge them.
   ##

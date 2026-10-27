@@ -30,17 +30,18 @@ The phases of compilation are:
 2. Semantic checking phase 1 (nimsem): symbol lookups, type checking, template&macro expansions.
 3. Semantic checking phase 2 (nimsem): Effect inference. **Not implemented yet.**
 4. Inject derefs (and the corresponding mutation checking) (nimsem).
-5. Iterator inlining (shoggoth).
-6. Lambda lifting (shoggoth).
-7. Inject dups (shoggoth).
-8. Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct) (shoggoth).
-9. Inject destructors (shoggoth).
-10. Map builtins like `new` and `+` to "compiler procs" (shoggoth).
-11. Translate exception handling (shoggoth).
-12. Generate Leng code (shoggoth).
-13. Whole-program dead code elimination (shoggoth).
-14. Optional: optimize the Leng code, including inlining across modules (shoggoth). Runs only for `--opt:speed` and `--opt:size`.
-15. Generate C or LLVM code (lengc), or native code (arkham + nifasm).
+5. Lower control flow to the multi-join form, then prove contracts and eliminate runtime checks on it (nimsem). The result is the module's **Shoggoth IR**.
+6. Iterator inlining (shoggoth).
+7. Lambda lifting (shoggoth).
+8. Inject dups (shoggoth).
+9. Lower control flow expressions to control flow statements (eliminate the expr/nkStmtListExpr construct) (shoggoth).
+10. Inject destructors (shoggoth).
+11. Map builtins like `new` and `+` to "compiler procs" (shoggoth).
+12. Translate exception handling (shoggoth).
+13. Generate Leng, the **Arkham IR** (shoggoth).
+14. Whole-program dead code elimination (shoggoth).
+15. Optional: optimize the Leng code, including inlining across modules (shoggoth). Runs only for `--opt:speed` and `--opt:size`.
+16. Generate C or LLVM code (lengc), or native code (arkham + nifasm).
 
 These phases have been collected into different tools with dedicated names:
 `nifler` parses, `nimsem` does the semantic checking and `nimony` is the
@@ -48,6 +49,21 @@ driver that schedules everything (via `nifmake`). `shoggoth` does the lowering
 of one module (`shoggoth c`, its passes live in `src/hexer/`), the dead code
 elimination (`shoggoth dl`/`shoggoth de`) and the optional optimization
 (`shoggoth opt`, its passes live in `src/lengc/shoggoth/`).
+
+## Intermediate representations
+
+The backend has two IRs:
+
+- **Shoggoth IR** is what nimsem publishes for a module, and it is the input of
+  shoggoth.
+- **Arkham IR** is [Leng](internals/leng-spec.md), which shoggoth produces.
+  arkham reads it, and so do lengc and the other back ends.
+
+Both IRs model control flow the same way. This shared model is the
+**multi-join IR**: `loop` has a single back-edge, branching is `ite`, and every
+other exit is a forward, scoped `jmp` to a `lab`. Many jumps can join at one
+label. See [internals/multi_join_ir.md](internals/multi_join_ir.md). In the
+code the lowering to this form is still named "Final IR" (`src/finalir/`).
 
 
 ## NIF
@@ -72,13 +88,13 @@ NIF is not only the format between compiler phases; it is the foundation for the
 
 ### CPS and `.passive` procs
 
-The Hexer performs a continuation-passing style (CPS) transform (see `src/hexer/cps.nim`). This transform is used for both iterators and for **`.passive` procs**: procedures marked with the `{.passive.}` pragma.
+Shoggoth performs a continuation-passing style (CPS) transform (see `src/hexer/cps.nim`). This transform is used for both iterators and for **`.passive` procs**: procedures marked with the `{.passive.}` pragma.
 
 A passive proc is one that can “pause” and be resumed later. The CPS pass turns passive procs (and iterators) into state machines that work with a small runtime in `system`: `Continuation` (a function pointer plus an environment), `delay` (which defers execution of a passive call and returns a continuation), and `advance` / a configurable scheduler to step through continuations.
 
 By default, calling a passive proc from normal code **does** run it to completion: execution is driven by a trampoline that repeatedly runs the current continuation until it is done. So from the caller's perspective the call is synchronous. A scheduler can override the trampoline, however, giving fine-grained control over when to run which continuation—enabling runtimes with millions of picothreads (or whatever you call these lightweight cooperative threads). Passive procs can call other passive procs; the CPS transform introduces the necessary continuation state and labels so that control flow, including across call boundaries, is explicit.
 
-This gives a single, unified model for pausable/resumable execution (coroutines, async-like patterns, iterators) that is implemented by a single CPS pass over NIF and a minimal runtime. The implementation is currently not fully documented elsewhere; the main logic lives in Hexer’s CPS pass and in `lib/std/system.nim` (`delay`, `Continuation`, `advance`, `setScheduler`).
+This gives a single, unified model for pausable/resumable execution (coroutines, async-like patterns, iterators) that is implemented by a single CPS pass over NIF and a minimal runtime. The implementation is currently not fully documented elsewhere; the main logic lives in shoggoth's CPS pass and in `lib/std/system.nim` (`delay`, `Continuation`, `advance`, `setScheduler`).
 
 
 ## Nifler
@@ -101,20 +117,19 @@ The primary point of Nifler is to shield "Nimony" from Nim's compiler internals.
 - Reducing the bug count by orders of magnitute. A "Minimal Redundancy Internal Representation" is used, ensuring that there is only one access path to a piece of data. The internally used data structures cannot get out of sync.
 
 
-## Hexer
+## Shoggoth
 
-The hexer's job is to "lower" high level Nim code to low level Nim code that does not use features such as closures, iterators and automatic memory management. It is planned to only support Nim's ARC/ORC scheme of doing memory management. In the old compiler ARC/ORC was very complex to support as the problem was not as well understood as it is now: A key insight here is to split up the tasks into multiple well-defined subtasks:
+Shoggoth's job is to "lower" high level Nim code to low level Nim code that does not use features such as closures, iterators and automatic memory management. It is planned to only support Nim's ARC/ORC scheme of doing memory management. In the old compiler ARC/ORC was very complex to support as the problem was not as well understood as it is now: A key insight here is to split up the tasks into multiple well-defined subtasks:
 
 1. Inject dups/copies: This can produce weird constructs like `while (;let tmp = f(); tmp.value)`.
 2. Lower control flow *expressions* to *statements*. This means `if` and `case` do not produce values anymore.
 3. Inject destructors: Now that values have been bound to temporaries explicitly and the control flow has been simplified it is rather easy to inject `=destroy(x)` calls at scope exists.
 
-As previously mentioned, the hexer also does:
+As previously mentioned, shoggoth also does:
 
 - Map builtins to Nim's runtime.
 - Iterator inlining.
 - Eliminate closures by performing "lambda lifting".
-- Inject pointer derefs and implement "pass by reference".
 - Translate exception handling constructs to Leng's supported error handling.
 - The final Leng code generation.
 
