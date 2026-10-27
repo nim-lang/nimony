@@ -4183,7 +4183,8 @@ proc writesThroughPointer(c: var FirContext; n: Cursor): bool =
   if n.isSymbol:
     let s = n.symId
     if s in c.inlineVars:
-      result = writesThroughPointer(c, c.inlineVars.getOrQuit(s))
+      let init = c.inlineVars.getOrQuit(s)
+      result = writesThroughPointer(c, init)
   elif n.isTagLit:
     case n.exprKind
     of DerefX, DdotX, PatX:
