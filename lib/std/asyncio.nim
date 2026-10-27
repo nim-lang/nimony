@@ -66,17 +66,7 @@ proc `=wasMoved`*(f: var File) {.nodestroy, inline.} =
   f.fd = ClosedFile
   `=wasMoved`(f.rbuf)
 
-proc `=dup`*(x: File): File =
-  # The source is moved-from afterwards, so its buffer is moved to the result,
-  # not copied: a copy would leave the source's buffer with no owner.
-  let src = cast[ptr File](unsafeAddr x)
-  result = default(File)
-  result.fd = src.fd
-  result.deadline = src.deadline
-  result.rbuf = move(src.rbuf)
-  result.rlen = src.rlen
-  result.rpos = src.rpos
-  `=wasMoved`(src[])
+proc `=dup`*(x: File): File {.error.}
 
 proc `=copy`*(dest: var File; src: File) {.error.}
   ## Move-only: two files over one descriptor means two owners of one fd, and
