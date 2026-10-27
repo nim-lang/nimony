@@ -1,7 +1,7 @@
 when defined(nimony):
   {.feature: "untyped".}   # so the `check` template's `xx != b` resolves to bool
 
-import std/[json, syncio]
+import std/[json, streams, syncio]
 
 type Color = enum red, green, blue
 type Point = object
@@ -64,6 +64,43 @@ proc main() =
   block typed_with_discriminator:
     var tree = toJson(Box(v: 7), JsonOptions(typeFieldName: "type"))
     check $tree, """{"type":"Box","v":7}"""
+
+  block raw_numbers:
+    var small = parseJson("[1,2]", rawIntegers = true)
+    var spellings: seq[string] = @[]
+    for el in items(small.root):
+      check kind(el), JString
+      spellings.add getStr(el)
+    check spellings.len, 2
+    check spellings[0], "1"
+    check spellings[1], "2"
+    check $small, "[1,2]"
+
+    var big = parseJson("18446744073709551615", rawIntegers = true)
+    check kind(big.root), JString
+    check getStr(big.root), "18446744073709551615"
+    check $big, "18446744073709551615"
+
+    var fl = parseJson("1.2300", rawFloats = true)
+    check kind(fl.root), JString
+    check getStr(fl.root), "1.2300"
+    check $fl, "1.2300"
+
+    var nested = parseJson("""{"a":[1.20,3],"b":true}""",
+                           rawIntegers = true, rawFloats = true)
+    check $nested, """{"a":[1.20,3],"b":true}"""
+
+    var normal = parseJson("18446744073709551615")
+    check kind(normal.root), JFloat
+
+    var line = parseJson("18446744073709551615", "raw.json", KeepLineInfo,
+                         nil, rawIntegers = true)
+    check fileName(line.root), "raw.json"
+    check $line, "18446744073709551615"
+
+    var s = newStringStream("[1.50]")
+    var streamTree = parseJson(s, rawFloats = true)
+    check $streamTree, "[1.50]"
 
   block error_as_null:
     # A malformed value becomes (null "msg"): still a JNull, still prints null,
