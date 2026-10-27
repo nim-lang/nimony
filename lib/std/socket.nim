@@ -371,7 +371,12 @@ proc `=destroy`*(s: Socket) =
   ## Like the explicit `close`, this must run on the thread that submitted the
   ## socket's in-flight ops, because the ring's slot arenas are per-lane. That
   ## is what a socket belonging to its lane for life buys: it also dies there.
+  ##
+  ## A hand-written `=destroy` replaces the field-wise one, so the buffers are
+  ## freed here too.
   if s.fd >= 0: closeFd(s.fd)
+  `=destroy`(s.rbuf)
+  `=destroy`(s.wbuf)
 
 proc `=wasMoved`*(s: var Socket) {.nodestroy, inline.} =
   ## The fd went with the destination, so this one must not close it. `-1`
@@ -386,16 +391,18 @@ proc `=dup`*(x: Socket): Socket =
   # Field-wise: `result = x` would come back through this hook — the way the
   # compiler lowers a hook-ful `=` — and that is the recursion that broke the
   # same pattern in `asyncio`'s `File`. The source is moved-from afterwards, so
-  # the shared seqs below belong to the result only.
+  # its buffers are moved to the result, not copied: a copy would leave the
+  # source's buffers with no owner, as a moved-from socket frees nothing.
+  let src = cast[ptr Socket](unsafeAddr x)
   result = default(Socket)
-  result.fd = x.fd
-  result.deadline = x.deadline
-  result.peer = x.peer
-  result.rbuf = x.rbuf
-  result.rlen = x.rlen
-  result.rpos = x.rpos
-  result.wbuf = x.wbuf
-  `=wasMoved`(cast[ptr Socket](unsafeAddr x)[])
+  result.fd = src.fd
+  result.deadline = src.deadline
+  result.peer = src.peer
+  result.rbuf = move(src.rbuf)
+  result.rlen = src.rlen
+  result.rpos = src.rpos
+  result.wbuf = move(src.wbuf)
+  `=wasMoved`(src[])
 
 proc `=copy`*(dest: var Socket; src: Socket) {.error.}
   ## Move-only: two sockets over one fd means two owners of one descriptor,
