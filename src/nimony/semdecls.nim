@@ -872,6 +872,21 @@ proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isG
     c.typeHooks[obj] = HooksPerType(a: default(array[AttachedOp, SymId]))
   c.typeHooks.getOrQuit(obj).a[attachedOp] = symId
 
+proc checkCopyDupAgree(c: var SemContext; dest: var TokenBuf; obj, symId: SymId;
+                       op: HookKind; isError: bool; info: NifLineInfo) =
+  ## `=dup` is a copy too: if both hooks are explicitly given they must agree
+  ## on `.error`, or a copy forbidden by one would be allowed by the other.
+  if isError: c.errorHooks.incl symId
+  if op in {CopyH, DupH}:
+    let other = if op == CopyH: attachedDup else: attachedCopy
+    let otherSym = c.typeHooks.getOrDefault(obj).a[other]
+    if otherSym != SymId(0) and otherSym != symId and
+        (otherSym in c.errorHooks) != isError:
+      let (e, o) = if isError: (hookName(hookToAttachedOp(op)), hookName(other))
+                   else: (hookName(other), hookName(hookToAttachedOp(op)))
+      buildErr c, dest, info, "'=" & e & "' is .error but '=" & o &
+        "' is not; both hooks must agree on .error"
+
 proc getHookName(symId: SymId): string =
   result = pool.symBasename(symId)
   #result = result.normalize
@@ -1140,6 +1155,7 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
   if hk != NoHook:
     let objCursor = semHook(c, dest, hookName, beforeParams, symId, info)
     let obj = getObjSymId(c, objCursor)
+    checkCopyDupAgree(c, dest, obj, symId, hk, false, info)
     registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
 
 proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
@@ -1153,6 +1169,7 @@ proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
       let obj = getObjSymId(c, objCursor)
       # Only register when signature is valid (obj != 0); checkTypeHook may have buildErr'd
       if obj != SymId(0):
+        checkCopyDupAgree(c, dest, obj, symId, hk, true, info)
         registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
     takeTree dest, it.n
   elif BorrowP in crucial.flags and pass in {checkGenericInst, checkBody}:

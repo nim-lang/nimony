@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tcopydupdisagree.nim(8, 1) Error: '=copy' is .error but '=dup' is not; both hooks must agree on .error
+tests/nimony/errmsgs/tcopydupdisagree.nim(11, 1) Error: '=copy' is .error but '=dup' is not; both hooks must agree on .error

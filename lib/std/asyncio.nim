@@ -54,22 +54,19 @@ type
 
 proc `=destroy`*(f: File) =
   ## Closing is not something a caller has to remember: a `File` owns its
-  ## descriptor, so the descriptor goes when the file does.
+  ## descriptor, so the descriptor goes when the file does. A hand-written
+  ## `=destroy` replaces the field-wise one, so the buffer is freed here too.
   if f.fd != ClosedFile:
     closeFd(f.fd)   # also cancels this lane's in-flight ops on it
+  `=destroy`(f.rbuf)
 
 proc `=wasMoved`*(f: var File) {.nodestroy, inline.} =
-  ## The descriptor went with the destination, so this one must not close it.
+  ## The descriptor and the buffer went with the destination, so this one must
+  ## neither close nor free them.
   f.fd = ClosedFile
+  `=wasMoved`(f.rbuf)
 
-proc `=dup`*(x: File): File =
-  result = default(File)
-  result.fd = x.fd
-  result.deadline = x.deadline
-  result.rbuf = x.rbuf
-  result.rlen = x.rlen
-  result.rpos = x.rpos
-  `=wasMoved`(cast[ptr File](unsafeAddr x)[])
+proc `=dup`*(x: File): File {.error.}
 
 proc `=copy`*(dest: var File; src: File) {.error.}
   ## Move-only: two files over one descriptor means two owners of one fd, and

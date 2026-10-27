@@ -1381,13 +1381,16 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
 proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   takeInto dest, it.n:
-    semBoolExpr c, dest, it.n
-    inc c.routine.inLoop
-    c.routine.breakTargets.add SymId(0)
+    # The condition is re-evaluated inside the loop, so a declaration in it
+    # (`while (let s = f(); s > 0)`) is a loop local, never a global (#2794).
     withNewScope c:
-      semStmt c, dest, it.n, true
-    discard c.routine.breakTargets.pop()
-    dec c.routine.inLoop
+      semBoolExpr c, dest, it.n
+      inc c.routine.inLoop
+      c.routine.breakTargets.add SymId(0)
+      withNewScope c:
+        semStmt c, dest, it.n, true
+      discard c.routine.breakTargets.pop()
+      dec c.routine.inLoop
   producesVoid c, dest, info, it.typ
 
 proc semBlock(c: var SemContext; dest: var TokenBuf; it: var Item) =

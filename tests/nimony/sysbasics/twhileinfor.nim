@@ -18,3 +18,11 @@ while input != "quit":
   input = "exit"
 
 assert input == "exit"
+
+# #2794: a `let` in a toplevel `while` condition is a loop local, not a global
+var x = 3
+var sum = 0
+while (let s = x; s > 0):
+  sum += s
+  dec x
+assert sum == 6
