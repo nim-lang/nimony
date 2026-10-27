@@ -166,7 +166,7 @@ type
     WhileS = (ord(WhileTagId), "while")  ## `while` statement
     CoroforS = (ord(CoroforTagId), "corofor")  ## closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value
     CaseS = (ord(CaseTagId), "case")  ## `case` statement
-    LabS = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
+    LabS = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/internals/multi_join_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
     JmpS = (ord(JmpTagId), "jmp")  ## jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals
     RetS = (ord(RetTagId), "ret")  ## `return` instruction
     YldS = (ord(YldTagId), "yld")  ## yield statement
@@ -431,7 +431,7 @@ type
     BlockY = (ord(BlockTagId), "block")  ## block declaration
     ModuleY = (ord(ModuleTagId), "module")  ## module declaration
     CchoiceY = (ord(CchoiceTagId), "cchoice")  ## closed choice
-    LabY = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
+    LabY = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/internals/multi_join_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
 
 proc rawTagIsNimonySym*(raw: TagEnum): bool {.inline.} =
   raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, TypevarTagId, StaticTypevarTagId, StaticParamTagId, EfldTagId, FldTagId, GfldTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, ModuleTagId, CchoiceTagId, LabTagId}
@@ -452,7 +452,7 @@ proc rawTagIsHookKind*(raw: TagEnum): bool {.inline.} =
 type
   ControlFlowKind* = enum
     NoControlFlow
-    IteF = (ord(IteTagId), "ite")  ## if-then-else, optionally followed by `join` information and by a label. The Final IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's
+    IteF = (ord(IteTagId), "ite")  ## if-then-else, optionally followed by `join` information and by a label. The multi-join IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's
     GraphF = (ord(GraphTagId), "graph")  ## disjoint subgraph annotation
     ForbindF = (ord(ForbindTagId), "forbind")  ## bindings for a `for` loop but the loop itself is mapped to gotos
     KillF = (ord(KillTagId), "kill")  ## some.var is about to disappear (scope exit)
