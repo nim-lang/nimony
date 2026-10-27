@@ -15,7 +15,9 @@ pipeline is split into tools and phases:
 
 Both IRs share one control-flow model, the **multi-join IR**
 (`doc/internals/multi_join_ir.md`), which the code still calls "Final IR"
-(`src/finalir/`). NJVL is dead. Do not resurrect it, and ignore stray
+(`src/finalir/`). Shoggoth finds a type's `=hooks` only through the hook
+pragmas on its declaration in the Shoggoth IR (`doc/internals/type_hooks.md`).
+NJVL is dead. Do not resurrect it, and ignore stray
 mentions of it in code comments.
 
 When debugging compiler behavior, assume `nifler`, `nifmake`, and `lengc` are

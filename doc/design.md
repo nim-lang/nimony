@@ -65,6 +65,10 @@ other exit is a forward, scoped `jmp` to a `lab`. Many jumps can join at one
 label. See [internals/multi_join_ir.md](internals/multi_join_ir.md). In the
 code the lowering to this form is still named "Final IR" (`src/finalir/`).
 
+In the Shoggoth IR every nominal type's declaration names its `=hooks` in its
+pragmas (`(destroy S)`, `(copy S)`, …). Shoggoth looks hooks up only there.
+See [internals/type_hooks.md](internals/type_hooks.md).
+
 
 ## NIF
 
