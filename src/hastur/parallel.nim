@@ -174,7 +174,8 @@ proc prebuildSharedObjects(forward: string) =
     writeFile(src, "discard\n")
   except OSError, IOError:
     return
-  var cmd = nimony.quoteShell & " c --silentMake --nimcache:" & cache.quoteShell
+  var cmd = nimony.quoteShell & " c --silentMake " & parallelBuildFlag() &
+            "--nimcache:" & cache.quoteShell
   # Same compiler/link flags the workers use (`--cc:`, `--passL:` …), so the
   # shared `static.o` matches the toolchain the workers link with.
   if forward.len > 0:
@@ -301,6 +302,7 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
     # exact same binaries (the default is now hastur's own sibling dir, an
     # absolute path, not the literal "bin").
     args.add "--bindir:" & toolchainDir
+    if parallelBuild > 0: args.add "--parallelBuild:" & $parallelBuild
     # A work item's backend is settled HERE, by the parent, because the parent
     # is what prefills the cache — and the two warmups cannot be mixed (see
     # `warmupSharedCache`). The worker would reach the same verdict on its own
