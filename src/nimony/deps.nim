@@ -350,8 +350,10 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
   else:
     # add the dependency anyway unless it creates a cycle:
     if wouldCreateCycle(c, current, p):
-      discard "ignore cycle"
-      echo "cycle detected: ", current.files[0].nimFile, " <-> ", p.nimFile
+      # nimsem's `.s.deps.nif` lists `{.cyclic.}` imports as plain imports,
+      # so for the backend graph a cycle is expected and only its edge is dropped:
+      if not c.isGeneratingFinal:
+        echo "cycle detected: ", current.files[0].nimFile, " <-> ", p.nimFile
     else:
       current.deps.add existingNode
 
