@@ -156,8 +156,9 @@ proc hexerMain() =
     else:
       writeHelp()
 
-proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode) =
-  let st = processFile(input, output, verify, vecMode)
+proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode;
+            memOpts: MemOpts) =
+  let st = processFile(input, output, verify, vecMode, memOpts)
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
@@ -171,28 +172,38 @@ proc optimizeMain(args: seq[string]) =
   var verify = false
   var stats = false
   var vecMode = vecOff
+  var memOpts = MemOpts(intrinsics: true)
   for a in args:
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
     elif a == "--verify": verify = true
     elif a == "--stats": stats = true
     elif a == "--vectorize": vecMode = vecNeon
     elif a == "--vectorize:sse": vecMode = vecSse
+    elif a == "--no-mem-intrinsics": memOpts.intrinsics = false   # a back end without the Memset/Memcpy rows
+    elif a.startsWith("--merge-stores:"):
+      # adjacent constant field stores -> one wider store; the value is the
+      # target's word in bits. Little-endian and type-agnostic back ends only.
+      var bits = 0
+      for ch in a["--merge-stores:".len .. ^1]:
+        if ch in {'0'..'9'}: bits = bits * 10 + (ord(ch) - ord('0'))
+        else: quit "--merge-stores takes the word size in bits: " & a
+      memOpts.mergeWordBytes = bits div 8
     elif a.startsWith("-"): quit "unknown option: " & a
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
     onRaiseQuit createDir(path(outdir))
     for inp in positional:
-      runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode)
+      runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode, memOpts)
   elif positional.len == 2:
-    runOne(positional[0], positional[1], verify, stats, vecMode)
+    runOne(positional[0], positional[1], verify, stats, vecMode, memOpts)
   else:
     # in-place rewrite of each input
     for inp in positional:
-      runOne(inp, inp, verify, stats, vecMode)
+      runOne(inp, inp, verify, stats, vecMode, memOpts)
 
 proc main =
   # `commandLineParams` rather than `paramStr`: Nimony's `parseopt` exports a

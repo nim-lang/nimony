@@ -315,6 +315,18 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
                      callRetType: retType, callArgs: args)
       result = res
 
+proc sizeToI64(c: var LLVMCode; v: LLValue): LLValue =
+  ## The `llvm.mem*` intrinsics take an `i64` length; a Leng size expression
+  ## is whatever integer the target's `int` is. Sizes are never negative, so a
+  ## narrower one zero-extends.
+  if v.kind == llvInt or (v.typ.kind == llInt and v.typ.intBits == 64):
+    result = v.withType(c.prim.i64)
+  else:
+    let t = c.nextTemp()
+    result = llReg(t, c.prim.i64)
+    c.emit LLInstr(kind: llZext, result: result, castOp: "zext", castSrc: v,
+                   castDstType: c.prim.i64)
+
 proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[
     LLValue]; retType: LLType; result: var LLValue) =
   case externName
@@ -468,6 +480,14 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     c.setLoc(start.info)
     if op.isAtomic:
       genAtomicCall(c, cBuiltinFor(op, bits), args, retType, result)
+    elif op.isMemOp:
+      # the same lowering as a call to the importc'd C function of that name
+      args[2] = sizeToI64(c, args[2])
+      let name = case op
+                 of MemsetOp: "memset"
+                 of MemcpyOp: "memcpy"
+                 else: "memcmp"
+      genMemIntrinsicCall(c, name, args, retType, result)
 
     else:
       let builtin = cBuiltinFor(op, bits)
