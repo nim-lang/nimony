@@ -63,6 +63,13 @@
 ## pass could afford. The one thing it needs that the load cache must NOT have is
 ## `provenKey`, which resolves a symbol to the expression it was defined from
 ## (see the comment there).
+##
+## ## Third job: forwarding aggregate copies
+##
+## The inverse of the load cache: `var t = L` copies an aggregate that the uses
+## of `t` could read in place, so they are rewritten to `L` and the copy goes,
+## when the cache proves `L` unchanged at each of them (section "aggregate copy
+## forwarding").
 
 import std / [tables, sets, hashes, assertions, strutils, formatfloat, algorithm]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
@@ -223,6 +230,9 @@ type
                          # not a load/write of `L` (rewrite → `(deref temp)`)
     firstStmtPos: int    # position of the statement directly enclosing the first
                          # occurrence — the (sound) decl-insertion point
+    isCopy: bool         # the witness of a `Forward`, not a load to reuse: a
+                         # write to its location kills it, even one that
+                         # spares the location's own address temp (`exempt`)
     anchorStack: seq[int] # the first occurrence's enclosing hoist anchors
                           # (scope/if/case/loop = C `{}` blocks); a later
                           # occurrence is only reused when this is a prefix of its
@@ -246,9 +256,19 @@ type
                            # whose hoist position turns out unsound can be dropped
                            # without leaving dangling uses
 
+  Forward = object       # a local that is a copy of an aggregate location
+    key: string          # `hashExpr` of the location `L`
+    srcPos: int          # `L`'s position; also the `firstExprPos` of the cache
+                         # entry under `key` that witnesses `L` is unchanged
+    declPos: int         # the `(var t . T L)` statement
+    uses: seq[int]       # uses confirmed to read the same `L`
+    pending: seq[int]    # uses whose expression is still being walked
+    ok: bool             # false once one use could not be forwarded
+
   Context = object
     orig: ptr TokenBuf
     cache: Tracker[string, CachedEntry]
+    forwards: Table[SymId, Forward]    ## see "aggregate copy forwarding"
     materialized: Table[int, string]   # first-occurrence pos → temp name (not
                                        # branch-scoped: sibling branches reusing
                                        # one dominating first share the temp)
@@ -319,6 +339,7 @@ proc createContext(orig: ptr TokenBuf;
                    m: ptr MainModule): Context =
   result = Context(orig: orig, m: m,
           cache: initTracker[string, CachedEntry](),
+          forwards: initTable[SymId, Forward](),
           materialized: initTable[int, string](),
           pending: initTable[int, PendingDecl](),
           writeTargets: initHashSet[string](),
@@ -700,7 +721,7 @@ proc invalidateMentioning(c: var Context; target: SymId; exempt = "") =
   var toClear: seq[string] = @[]
   for key, entry in c.cache.pairs:
     if not entry.hasFirst: continue
-    if key == exempt: continue
+    if key == exempt and not entry.isCopy: continue
     let exprCur = cursorAt(c.orig[], entry.firstExprPos)
     if expressionMentions(exprCur, target):
       toClear.add key
@@ -806,7 +827,7 @@ proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
   var toClear: seq[string] = @[]
   for key, entry in c.cache.pairs:
     if not entry.hasFirst: continue
-    if key == exempt: continue
+    if key == exempt and not entry.isCopy: continue
     if expressionTouchesClass(c, cursorAt(c.orig[], entry.firstExprPos), reps):
       toClear.add key
   for key in toClear:
@@ -927,7 +948,7 @@ proc clobberPath(c: var Context; w: AccessPath; exempt = "") =
     reps.incl c.aa.find(w.root)
   for key, entry in c.cache.pairs:
     if not entry.hasFirst: continue
-    if key == exempt: continue
+    if key == exempt and not entry.isCopy: continue
     let exprCur = cursorAt(c.orig[], entry.firstExprPos)
     let killed = expressionOverlaps(c, exprCur, w, escaped)
     when defined(cseSummaryStats):
@@ -1544,6 +1565,119 @@ proc latestLocalDef(c: Context; start: Cursor): int =
       if p > result: result = p
     inc i
 
+# ---- aggregate copy forwarding --------------------------------------------
+# `var t = L` with `L` an aggregate location copies all of `L`. A lowering emits
+# it to evaluate `L` once: `x in s` for a `set[char]` copies 32 bytes to read
+# one. When `t` is never written nor addressed, a use of `t` can read `L`
+# instead, as long as nothing since the copy can have changed `L` — the question
+# the load cache answers. So the copy is recorded as a cache entry for `L`, the
+# usual invalidation drops it, and a use is forwarded only while that entry is
+# still the one the copy made. It is all or nothing: the copy is deleted, so
+# every use of `t` must be forwarded, or none is.
+
+proc isStableLocation(n: Cursor): bool =
+  ## A projection chain whose address is computed from symbol values alone:
+  ## reading it again costs what reading the copy costs, and holds no load of
+  ## its own that the cache could replace.
+  case n.kind
+  of Symbol:
+    result = true
+  of TagLit:
+    case n.exprKind
+    of DotC:
+      result = isStableLocation(child0(n))
+    of DerefC:
+      result = child0(n).kind == Symbol
+    of AtC, PatC:
+      var e = child0(n)
+      result = if n.exprKind == AtC: isStableLocation(e) else: e.kind == Symbol
+      skip e
+      if result: result = e.kind in {Symbol, IntLit, UIntLit, CharLit}
+    else:
+      result = false
+  else:
+    result = false
+
+proc mentionsForward(c: Context; cur: Cursor): bool
+
+proc recordForward(c: var Context; t: SymId; declPos: int; init: Cursor) =
+  if init.kind != TagLit or init.exprKind notin {DotC, AtC, DerefC, PatC}: return
+  if t in c.tainted or c.defCount.getOrDefault(t) != 1: return
+  if not isStableLocation(init) or classifyLoad(c, init) != ltcAggregate: return
+  # A use is rewritten to `init` as the input spells it, so `init` may not name
+  # a forwarded local itself: `var b = a.f` after `var a = p[i]` would put `a`
+  # back after its copy is gone.
+  if c.forwards.len > 0 and mentionsForward(c, init): return
+  let key = hashExpr(init)
+  let srcPos = cursorToPosition(c.orig[], init)
+  # `handleCandidate` refuses an aggregate before it looks at the cache, so
+  # this entry is only ever read by the invalidation and by `forwardValid`.
+  c.cache[key] = CachedEntry(hasFirst: true, firstExprPos: srcPos,
+                             firstUsePos: srcPos, firstStmtPos: -1,
+                             isCopy: true)
+  c.forwards[t] = Forward(key: key, srcPos: srcPos, declPos: declPos, ok: true)
+
+proc forwardValid(c: Context; f: Forward): bool {.inline.} =
+  let e = c.cache[f.key]
+  result = e.hasFirst and e.firstExprPos == f.srcPos
+
+proc noteForwardUse(c: var Context; n: Cursor) =
+  let s = symId(n)
+  if c.forwards.hasKey(s):
+    var f = c.forwards.getOrQuit(s)
+    if f.ok:
+      if forwardValid(c, f): f.pending.add cursorToPosition(c.orig[], n)
+      else: f.ok = false
+      c.forwards[s] = f
+
+proc confirmForwards(c: var Context) =
+  ## Runs between statements. A use is confirmed only here, once its whole
+  ## expression has been walked: C may evaluate a call to the use's right
+  ## before it, so that call must not have dropped the entry either.
+  var open: seq[SymId] = @[]
+  for s, f in c.forwards.pairs:
+    if f.pending.len > 0: open.add s
+  for s in open:
+    var f = c.forwards.getOrQuit(s)
+    if f.ok and forwardValid(c, f):
+      for u in f.pending: f.uses.add u
+    else: f.ok = false
+    f.pending.setLen 0
+    c.forwards[s] = f
+
+proc mentionsForward(c: Context; cur: Cursor): bool =
+  case cur.kind
+  of Symbol:
+    result = c.forwards.hasKey(symId(cur))
+  of TagLit:
+    result = false
+    var n = cur
+    n.loopInto:
+      if not result and mentionsForward(c, n): result = true
+      skip n
+  else:
+    result = false
+
+proc flushForwards(c: var Context) =
+  ## Every occurrence of `t` but its definition must have been forwarded: one
+  ## the walk did not reach as a value (an assignment target, a `ret` operand)
+  ## keeps the copy.
+  if c.forwards.len == 0: return
+  var occurrences = initTable[SymId, int]()
+  for i in 0 ..< c.orig[].len:
+    let tok = cursorAt(c.orig[], i)
+    if tok.kind == Symbol and c.forwards.hasKey(tok.symId):
+      occurrences[tok.symId] = occurrences.getOrDefault(tok.symId) + 1
+  var done: seq[SymId] = @[]
+  for s, f in c.forwards.pairs:
+    if f.ok and f.pending.len == 0 and f.uses.len == occurrences.getOrDefault(s):
+      done.add s
+  for s in done:
+    let f = c.forwards.getOrQuit(s)
+    let src = cursorAt(c.orig[], f.srcPos)
+    for u in f.uses: c.patchset.addSubst(u, src)
+    c.patchset.addSubst(f.declPos, cursorAt(c.dotBuf, 0))
+
 proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   ## Lazy CSE. The *first* occurrence is only recorded — no temp yet — so
   ## single-use expressions are left untouched. On the *second* occurrence the
@@ -1567,6 +1701,9 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   # temp's inferred type would be `(err)` and break the C backend.
   let cls = classifyLoad(c, lvalueCur)
   if cls == ltcUnknown: return false
+  # A temp's decl copies its expression from the input, where a forwarded `t`
+  # would still be named after its copy is deleted.
+  if c.forwards.len > 0 and mentionsForward(c, lvalueCur): return false
   if key notin c.writeTargets and cls == ltcAggregate:
     return false
   let addrMode = key in c.writeTargets
@@ -1851,6 +1988,9 @@ proc trExpr(c: var Context; n: var Cursor) =
     else:
       n.loopInto:
         trExpr(c, n)
+  of Symbol:
+    if c.forwards.len > 0: noteForwardUse(c, n)
+    inc n
   else:
     inc n
 
@@ -1858,6 +1998,7 @@ proc trVar(c: var Context; n: var Cursor; isBodyLocal: bool) =
   let declPos = cursorToPosition(c.orig[], n)
   var nameStart = default(Cursor)
   var typeStart = default(Cursor)
+  var initStart = default(Cursor)
   n.into:
     if n.hasMore:
       nameStart = n
@@ -1866,6 +2007,7 @@ proc trVar(c: var Context; n: var Cursor; isBodyLocal: bool) =
     if n.hasMore:
       typeStart = n
       skip n                                # type
+    if n.hasMore: initStart = n
     while n.hasMore: trExpr(c, n)           # initializer
   # Register the local's declared type so a later `getType` on a load through it
   # resolves (mirrors the alias pass / C backend). `computeAliasing` discards
@@ -1881,6 +2023,9 @@ proc trVar(c: var Context; n: var Cursor; isBodyLocal: bool) =
     if isBodyLocal: c.bodyLocals.incl nameStart.symId
     if c.m != nil and not cursorIsNil(typeStart) and typeStart.kind != DotToken:
       c.m[].registerLocal(nameStart.symId, typeStart)
+    if isBodyLocal and not cursorIsNil(initStart) and
+        cursorAt(c.orig[], declPos).stmtKind == VarS:
+      recordForward(c, nameStart.symId, declPos, initStart)
   # Var decls don't write existing symbols; nothing to invalidate.
 
 proc trAsgn(c: var Context; n: var Cursor) =
@@ -2088,6 +2233,7 @@ proc tr(c: var Context; n: var Cursor) =
   if not n.hasMore: return
   case n.kind
   of TagLit:
+    if c.forwards.len > 0: confirmForwards(c)
     let sk = n.stmtKind
     let pushed = isHoistAnchor(sk)
     if pushed:
@@ -2129,6 +2275,7 @@ proc tr(c: var Context; n: var Cursor) =
       trExpr(c, n)
     if pushed:
       discard c.stmtStack.pop()
+    if c.forwards.len > 0: confirmForwards(c)
   else:
     inc n
 
@@ -2214,6 +2361,7 @@ proc runCSE*(buf: var TokenBuf;
   var n = beginRead(buf)
   tr(ctx, n)
   flushPending(ctx)               # emit deferred temp decls at their final positions
+  flushForwards(ctx)              # read forwarded copies from their sources
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
