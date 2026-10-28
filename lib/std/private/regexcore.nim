@@ -744,6 +744,51 @@ func letterOf(alphabet: openArray[Alphabet]; c: Alphabet): int =
   for i in 256 ..< alphabet.len:
     if alphabet[i] == c: return i
 
+type
+  ByteClasses = object
+    ## Bytes that no NFA edge tells apart behave the same in every DFA state,
+    ## so the subset construction follows one of them, the class's smallest
+    ## byte `rep[b]`, and gives the others the same edges.
+    rep: array[256, int]
+
+proc byteClasses(a: Nfa): ByteClasses =
+  ## Refines the partition of the bytes by every set of bytes that one NFA
+  ## state sends to one place; what is left are the classes no state tells
+  ## apart. An edge with several targets counts as its own place, which can
+  ## only split more than necessary.
+  var classes: seq[set[char]] = @[{'\0'..'\xFF'}]
+  var keys: seq[int] = @[]
+  var groups: seq[set[char]] = @[]
+  for s in 0 ..< a.trans.len:
+    keys.setLen 0
+    groups.setLen 0
+    for i in 0 ..< a.trans[s].len:
+      if a.trans[s][i].cond.kind == reChar:
+        let k = if a.trans[s][i].dest.len == 1: int(a.trans[s][i].dest[0])
+                else: -1 - i
+        var g = 0
+        while g < keys.len and keys[g] != k: inc g
+        if g == keys.len:
+          keys.add k
+          groups.add {}
+        groups[g].incl a.trans[s][i].cond.val
+    for g in groups:
+      # The parts split off here are inside or outside `g` already, so only
+      # the classes that existed before need looking at.
+      let n = classes.len
+      for c in 0 ..< n:
+        let inside = classes[c] * g
+        if inside != {} and inside != classes[c]:
+          classes.add classes[c] - g
+          classes[c] = inside
+  result = default(ByteClasses)
+  for cs in classes:
+    var first = -1
+    for b in 0 .. 255:
+      if char(b) in cs:
+        if first < 0: first = b
+        result.rep[b] = first
+
 proc closure(a: Nfa; s: var LabelSet; stack: var seq[Label]) =
   ## Grows `s` to its epsilon closure. `addTrans` guarantees an epsilon edge is
   ## edge 0.
@@ -766,22 +811,25 @@ type
     hasLetter: seq[bool]
     letters: seq[int]
     stack: seq[Label]
+    destOf: array[256, int]      ## per class representative: the DFA state
+    dests: seq[int]              ## the DFA state for each of `letters`
 
 proc collectTargets(sb: var SubsetBuilder; a: Nfa; alphabet: openArray[Alphabet];
-                    j: int) =
+                    classes: ByteClasses; j: int) =
   ## Fills `sb.targets` with every non-epsilon edge out of DFA state `j`, and
-  ## `sb.letters` with their letters in alphabet order.
+  ## `sb.letters` with their letters in alphabet order. Of the bytes only the
+  ## class representatives are collected.
   for l in sb.states[j]:
     for t in a.trans[l]:
       let c = letterOf(alphabet, t.cond)
-      if c >= 0:
+      if c >= 0 and (c >= 256 or classes.rep[c] == c):
         if not sb.hasLetter[c]:
           sb.hasLetter[c] = true
           sb.letters.add c
         for d in t.dest: sb.targets[c].incl int(d)
   sort sb.letters, cmpInt
 
-proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
+proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]; classes: ByteClasses): Dfa =
   ## Subset construction (see "Modern Compiler Implementation"). State `0` is
   ## the empty set, "no match"; an edge into it is not recorded at all.
   result = default(Dfa)
@@ -789,7 +837,8 @@ proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
                          known: initTable[LabelSet, int](),
                          targets: newSeq[LabelSet](alphabet.len),
                          hasLetter: newSeq[bool](alphabet.len),
-                         letters: @[], stack: @[])
+                         letters: @[], stack: @[],
+                         destOf: default(array[256, int]), dests: @[])
   var start = initIntSet()
   start.incl 0 # the NFA's start state
   closure(a, start, sb.stack)
@@ -798,7 +847,9 @@ proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
   result.trans = newSeq[seq[DfaEdge]](2)
   var j = 1
   while j < sb.states.len:
-    collectTargets(sb, a, alphabet, j)
+    collectTargets(sb, a, alphabet, classes, j)
+    var hasBytes = false
+    sb.dests.setLen 0
     for c in sb.letters:
       var e = move sb.targets[c]
       sb.targets[c] = initIntSet()
@@ -810,7 +861,20 @@ proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
         sb.known[e] = i
         sb.states.add e
         result.trans.add @[]
-      result.trans[j].add DfaEdge(cond: alphabet[c], dest: Label(i))
+      sb.dests.add i
+      if c < 256:
+        sb.destOf[c] = i
+        hasBytes = true
+    # Every byte takes its representative's edge, in byte order, then the
+    # markers in alphabet order, as if each letter had been followed itself.
+    if hasBytes:
+      for b in 0 .. 255:
+        let i = sb.destOf[classes.rep[b]]
+        if i != 0: result.trans[j].add DfaEdge(cond: alphabet[b], dest: Label(i))
+    for k in 0 ..< sb.letters.len:
+      let c = sb.letters[k]
+      if c < 256: sb.destOf[c] = 0
+      else: result.trans[j].add DfaEdge(cond: alphabet[c], dest: Label(sb.dests[k]))
     sb.letters.setLen 0
     inc j
   result.toRules = newSeq[int](sb.states.len)
@@ -881,9 +945,11 @@ proc splitBy(rf: var Refiner; inv: LabelSet) =
     rf.hits[b] = 0
   rf.hitBlocks.setLen 0
 
-proc optimizeDfa(a: Dfa; alphabet: openArray[Alphabet]): Dfa =
+proc optimizeDfa(a: Dfa; alphabet: openArray[Alphabet]; classes: ByteClasses): Dfa =
   ## Hopcroft's algorithm. Every state carries the rule it accepts, so the
   ## initial partition is by rule rather than the usual final/non-final split.
+  ## A byte splits exactly like its class representative, so only the
+  ## representatives' edges are followed.
   var rf = Refiner(blocks: newSeq[seq[Label]](a.ruleCount + 1),
                    blockOf: newSeq[int](a.stateCount + 1),
                    work: @[], inWork: @[],
@@ -897,8 +963,9 @@ proc optimizeDfa(a: Dfa; alphabet: openArray[Alphabet]): Dfa =
     rf.blocks[r].add Label(d)
     rf.blockOf[d] = r
     for e in a.trans[d]:
-      rf.preds[e.dest].add PredEdge(letter: letterOf(alphabet, e.cond),
-                                    src: Label(d))
+      let c = letterOf(alphabet, e.cond)
+      if c >= 256 or classes.rep[c] == c:
+        rf.preds[e.dest].add PredEdge(letter: c, src: Label(d))
   for b in 0 .. a.ruleCount:
     rf.work.add b
     rf.inWork.add true
@@ -987,7 +1054,8 @@ func getRule*(a: Dfa; s: int): int {.inline.} = a.toRules[s]
 proc buildDfa(big: RegexNode): Dfa =
   let n = regExprToNfa(big)
   let alphabet = fullAlphabet(n.captures, n.backrefs)
-  result = optimizeDfa(nfaToDfa(n, alphabet), alphabet)
+  let classes = byteClasses(n)
+  result = optimizeDfa(nfaToDfa(n, alphabet, classes), alphabet, classes)
 
 proc rulesToDfa*(patterns: openArray[string]; flags: set[RegexFlag];
                  dfa: var Dfa; err: var string) =
