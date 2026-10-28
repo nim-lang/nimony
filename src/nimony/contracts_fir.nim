@@ -503,6 +503,24 @@ proc storageRoot(c: var FirContext; n: Cursor): SymId =
   if throughPointer(c, n, {PtrT, RefT}): NoSymId
   else: locRootSym(c, n)
 
+proc writtenRoot(c: var FirContext; n: Cursor): SymId =
+  ## The variable a write to the location `n` is attributed to, for
+  ## invalidating what is derived from it: the walk `locInner` takes, up to the
+  ## first symbol. An inline temp is a root of its own here, as it is for the
+  ## locations derived from it — following `x.36` in `move(x.36)`, a temp for
+  ## `x[j+1]`, would forget `x.len`. Behind a dereference there is no root, and
+  ## the target of a call result is `varResultRoot`'s to find. Asks no type, so
+  ## it serves the loop pre-scan too, which runs before the body's locals are
+  ## declared.
+  var r = n
+  var guard = 0
+  while not r.isSymbol and guard < 64:
+    if r.isTagLit and r.exprKind in {DerefX, DdotX, PatX} + CallKinds: return NoSymId
+    r = locInner(c, r, true)
+    if cursorIsNil(r): return NoSymId
+    inc guard
+  result = if r.isSymbol: r.symId else: NoSymId
+
 proc isSelector(n: Cursor): bool {.inline.} =
   n.isTagLit and n.exprKind in {DotX, DdotX, TupatX, ArratX, AtX, PatX}
 
@@ -1707,17 +1725,6 @@ proc invalidateViewElements(c: var FirContext; root: SymId) =
     if c.derivedRoots[i] == root and not isViewLen(c, i, root):
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
-proc derivedRootOf(c: var FirContext; n: Cursor): SymId =
-  ## The variable a location hangs off, for invalidation.
-  var root = NoSymId
-  var key = ""
-  var steps = 0
-  let noSubst = initTable[SymId, Cursor]()
-  if locationKey(c, n, noSubst, root, key, steps, 0):
-    result = root
-  else:
-    result = NoSymId
-
 proc varResultRoot(c: var FirContext; dest: Cursor): SymId =
   ## `data[i].key = v`: a path over the `var T` a call returns. By the language
   ## rule such a result is derived from the call's first parameter (or points
@@ -1739,7 +1746,7 @@ proc varResultRoot(c: var FirContext; dest: Cursor): SymId =
       arg = sub(arg)
       skip arg # the callee
       if arg.hasMore:
-        result = derivedRootOf(c, arg)
+        result = writtenRoot(c, arg)
 
 proc collectAccessors(c: var FirContext; n: var Cursor) =
   ## Pre-pass: index every transparent accessor declared in this module, at any
@@ -3992,7 +3999,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     # whatever was known about `s`. The formal parameter is right here, so
     # judge by it rather than by the shape of the argument.
     if pk in {MutT, OutT}:
-      let root = derivedRootOf(c, n)
+      let root = writtenRoot(c, n)
       let argSym = extractSymId(n)
       if argSym != NoSymId:
         let argInfo = getLocalInfo(c.typeCache, argSym)
@@ -4402,15 +4409,17 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
     # the derived locations it can reach. Attributing it to a root is the common
     # case; when we cannot, every derived location is suspect.
     let destLoc = plainLocationVarId(c, n)
-    let destRoot = derivedRootOf(c, n)
+    let destRoot = writtenRoot(c, n)
     let viaResult = varResultRoot(c, n)
     if viaResult != NoSymId:
       invalidateFactsAbout(c.facts, getVarId(c, viaResult))
       invalidateDerivedFrom(c, viaResult)
+    elif isElementWrite(n):
+      discard
     elif destRoot != NoSymId:
       invalidateFactsAbout(c.facts, getVarId(c, destRoot))
       invalidateWrittenPath(c, n, destRoot)
-    elif not isElementWrite(n):
+    else:
       invalidateAllDerived(c)
     if destLoc != InvalidVarId:
       # ... and then record what the write established, so that
@@ -4663,9 +4672,10 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   result = directionOf(v.exprKind == SubX, k)
 
 proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
-  let root = derivedRootOf(c, dest)
+  if isElementWrite(dest): return
+  let root = writtenRoot(c, dest)
   if root == NoSymId:
-    if not isElementWrite(dest): w.opaque = true
+    w.opaque = true
     return
   let loc = plainLocationVarId(c, dest)
   var precise = false
@@ -4727,8 +4737,6 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     var delta = createNaN()
     if stepCall(c, n, stepLoc, delta):
       noteWrite(w, stepLoc, directionOfDelta(delta))
-      let root = derivedRootOf(c, n)
-      if root != NoSymId: noteDerivedOf(c, w, root, stepLoc)
       w.pendingStep = stepLoc
       skip n
       return
