@@ -2387,12 +2387,43 @@ proc semIf(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
 
-proc semExceptionType(c: var SemContext; dest: var TokenBuf; it: var Item): TypeCursor =
+proc errorCodeValueName(c: var SemContext; orig: Cursor): string =
+  ## `except ValueError:` is the Nim 2 form, and `ValueError` is a value of
+  ## `ErrorCode` here, not a type. Only asked once the arm already failed to
+  ## be a type: the name is checked again as an expression, into a scratch
+  ## buffer, and is reported only if that expression is an `ErrorCode`.
+  result = ""
+  if orig.kind == Ident or orig.exprKind == DotX:
+    var phase = SemcheckBodies
+    swap c.phase, phase
+    var scratch = createTokenBuf(8)
+    var it = Item(n: orig, typ: c.types.autoType)
+    let oldDebugAllowErrors = c.debugAllowErrors
+    c.debugAllowErrors = true
+    semExpr c, scratch, it
+    c.debugAllowErrors = oldDebugAllowErrors
+    swap c.phase, phase
+    if it.typ.isSymbol and it.typ.symId == pool.symId(ErrorCodeName):
+      let e = cursorAt(scratch, 0)
+      if e.isSymbol:
+        result = pool.strings[symToIdent(e.symId)]
+
+proc semExceptionType(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## Emits exactly ONE node for the arm's type, an error or not: the arm is
+  ## `(except <type> <body>)` and every later pass reads it by position.
   let info = it.n.info
-  result = semLocalType(c, dest, it.n)
-  if raisesFamily(result) == NotRaisable:
-    buildErr c, dest, info, "`except` takes `ErrorCode` or a `ref` object type, not `" &
-      typeToString(result) & "`"
+  let orig = it.n
+  let start = dest.len
+  let typ = semLocalType(c, dest, it.n)
+  if typ.typeKind == ErrT:
+    let code = errorCodeValueName(c, orig)
+    if code.len > 0:
+      dest.shrink start
+      buildErr c, dest, info, "`" & code & "` is an `ErrorCode` value, not a type; write `except ErrorCode as e:` and test `e == " &
+        code & "`"
+  elif raisesFamily(typ) == NotRaisable:
+    combineErr c, dest, start, info, "`except` takes `ErrorCode` or a `ref` object type, not `" &
+      typeToString(typ) & "`"
 
 proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
@@ -2410,15 +2441,17 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
           it.n = sub(it.n)
           inc it.n
           let start = dest.len
-          let etyp = semExceptionType(c, dest, it)
-          dest.shrink start
+          semExceptionType(c, dest, it)
           var decl = createTokenBuf(8)
           decl.addParLe(LetS, info)
           decl.takeTree it.n # name
           it.n = asStart; skip it.n
           decl.addEmpty() # export marker
           decl.addEmpty() # pragmas
-          decl.addSubtree etyp
+          # the type as emitted, an error included, and not as interned: the
+          # type cache would hand back the FIRST such error and its position
+          decl.addSubtree readonlyCursorAt(dest, start)
+          dest.shrink start
           decl.addEmpty() # value
           decl.addParRi()
           var dd = beginRead(decl)
@@ -2427,7 +2460,7 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
           # resem the local declaration:
           semLocal(c, dest, it.n, LetY)
         else:
-          discard semExceptionType(c, dest, it)
+          semExceptionType(c, dest, it)
         inc c.routine.inExcept
         semStmtBranch c, dest, it, true
         dec c.routine.inExcept
