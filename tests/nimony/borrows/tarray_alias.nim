@@ -14,3 +14,15 @@ proc reverseString(s: string): string =
 
 import std/assertions
 assert reverseString("hello") == "olleh"
+
+# Distinct constant indices name distinct elements: no aliasing.
+proc swapInts(a, b: var int) =
+  let t = a
+  a = b
+  b = t
+
+proc swapEnds(): array[3, int] =
+  result = [1, 2, 3]
+  swapInts(result[0], result[2])
+
+assert swapEnds() == [3, 2, 1]
