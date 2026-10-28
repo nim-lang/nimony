@@ -1,0 +1,1 @@
+tests/nimony/stdlib/tsmartcli_variadic_field.nim(3, 16) Error: argument field conflicts with option: item

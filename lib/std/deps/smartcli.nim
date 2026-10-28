@@ -73,8 +73,14 @@ proc toCamelCase(s: string): string =
   if result.len == 0:
     result = "value"
 
+proc isVariadic(name: string): bool =
+  result = name.endsWith("...")
+
 proc argumentFieldName(name: string): string =
-  result = toCamelCase(name)
+  if name.isVariadic:
+    result = toCamelCase(name.substr(0, name.len - 4))
+  else:
+    result = toCamelCase(name)
 
 proc commandEnumName(name: string): string =
   result = "cmd" & toPascalCase(name)
@@ -189,6 +195,48 @@ proc parseSpec(rawSpec: string): CliSpec =
     elif not rawLine.isEmptyOrWhitespace:
       parseSectionEntry result, currentSection, rawLine
 
+proc validateArguments(names: seq[string]): string =
+  result = ""
+  for i, name in names:
+    if name.isVariadic:
+      if name.len == 3:
+        return "variadic argument needs a name"
+      if i != names.len - 1:
+        return "variadic argument must be last: " & name
+
+proc validateSpec(spec: CliSpec): string =
+  result = ""
+  let mode = spec.positionalMode()
+  var names: seq[string] = @[]
+  if mode == pmInlineCommand:
+    for command in spec.commands:
+      let err = validateArguments(command.argumentNames)
+      if err.len > 0: return err
+      for name in command.argumentNames:
+        names.add name
+  else:
+    let err = validateArguments(spec.argumentNames)
+    if err.len > 0: return err
+    names = spec.argumentNames
+
+  for i, name in names:
+    let field = argumentFieldName(name)
+    if spec.commands.len > 0 and field == "command":
+      return "argument field conflicts with command: " & field
+    for option in spec.options:
+      if field == option.optionFieldName:
+        return "argument field conflicts with option: " & field
+    for j in 0 ..< i:
+      if field == argumentFieldName(names[j]):
+        if name.isVariadic != names[j].isVariadic or mode != pmInlineCommand:
+          return "conflicting argument field: " & field
+        # A command cannot declare the same field twice.
+        for command in spec.commands:
+          var count = 0
+          for arg in command.argumentNames:
+            if argumentFieldName(arg) == field: inc count
+          if count > 1: return "duplicate argument field: " & field
+
 proc extractSpecNode(n: NifCursor): NifCursor =
   result = callArgs(n)
   if result.exprKind == SufX:
@@ -261,6 +309,19 @@ proc emitEnumField(dest: var NifBuilder; fieldName: string)
     dest.addEmptyNode4()
 
 # (fld ARG . . string .)*
+proc emitArgumentField(dest: var NifBuilder; name: string)
+    {.ensuresNif: addedNested(dest).} =
+  if name.isVariadic:
+    dest.withTree FldU, NoLineInfo:
+      dest.addIdent(argumentFieldName(name))
+      dest.addEmptyNode2()
+      dest.withTree AtX, NoLineInfo:
+        dest.addIdent("seq")
+        dest.addIdent("string")
+      dest.addEmptyNode()
+  else:
+    emitFieldDecl dest, argumentFieldName(name), "string"
+
 proc emitArgumentFieldDecls(dest: var NifBuilder; spec: CliSpec)
     {.ensuresNif: addedAny(dest).} =
   case spec.positionalMode()
@@ -268,14 +329,15 @@ proc emitArgumentFieldDecls(dest: var NifBuilder; spec: CliSpec)
     discard
   of pmFlat, pmSharedCommand:
     for argumentName in spec.argumentNames:
-      emitFieldDecl dest, argumentFieldName(argumentName), "string"
+      emitArgumentField dest, argumentName
   of pmInlineCommand:
     var emitted: seq[string] = @[]
     for command in spec.commands:
       for argumentName in command.argumentNames:
-        if argumentName notin emitted:
-          emitted.add argumentName
-          emitFieldDecl dest, argumentFieldName(argumentName), "string"
+        let field = argumentFieldName(argumentName)
+        if field notin emitted:
+          emitted.add field
+          emitArgumentField dest, argumentName
 
 template withOfIdent(dest: var NifBuilder; valueName: string; body: untyped) =
   dest.withTree OfU, NoLineInfo:
@@ -457,6 +519,13 @@ proc emitCommandChoice(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
       dest.withTree StmtsS, NoLineInfo:
         emitUnexpectedArgument dest, rawSpec
 
+proc emitAppendArgument(dest: var NifBuilder; name: string)
+    {.ensuresNif: addedStmt(dest).} =
+  dest.withTree CallS, NoLineInfo:
+    dest.addIdent("add")
+    emitDotExpr dest, "result", argumentFieldName(name)
+    emitDotExpr dest, "p", "key"
+
 # (case argSlot
 #   (of INT (stmts SLOT_BODY (cmd inc argSlot)))+
 #   (else (stmts (call cliUnexpectedArgument SPEC (dot p key)))))
@@ -466,12 +535,18 @@ proc emitArgumentSlots(dest: var NifBuilder; rawSpec: string; argumentNames: seq
     dest.addIdent("argSlot")
     for i, argumentName in argumentNames:
       dest.withOfInt i + slotOffset:
-        emitAssignResultFieldFromField dest,
-          argumentFieldName(argumentName), "p", "key"
+        if argumentName.isVariadic:
+          emitAppendArgument dest, argumentName
+        else:
+          emitAssignResultFieldFromField dest,
+            argumentFieldName(argumentName), "p", "key"
         emitCallStmt1 dest, "inc", "argSlot"
     dest.withTree ElseU, NoLineInfo:
       dest.withTree StmtsS, NoLineInfo:
-        emitUnexpectedArgument dest, rawSpec
+        if argumentNames.len > 0 and argumentNames[^1].isVariadic:
+          emitAppendArgument dest, argumentNames[^1]
+        else:
+          emitUnexpectedArgument dest, rawSpec
 
 # (case (dot result command)
 #   (of COMMAND_ENUM (stmts (call cliUnexpectedArgument SPEC (dot p key))))?
@@ -662,7 +737,11 @@ let specNode = extractSpecNode(root)
 if specNode.kind == StrLit:
   let rawSpec = specNode.stringValue
   let spec = parseSpec(rawSpec)
-  let argsNode = extractArgsNode(root)
-  saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
+  let err = validateSpec(spec)
+  if err.len > 0:
+    saveTree errorTree(err, specNode)
+  else:
+    let argsNode = extractArgsNode(root)
+    saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
 else:
   saveTree errorTree("cliapp expects a string literal", specNode)

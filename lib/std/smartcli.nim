@@ -3,6 +3,14 @@
 ## Use `cliapp` with a specification containing `Commands:`,
 ## `Arguments:`, and `Options:` sections. The accompanying compiler plugin
 ## generates a parser and a typed options object at the call site.
+##
+## A trailing positional name ending in `...`, such as `install ITEM...`,
+## accepts one or more values and generates a `seq[string]` field named
+## `item`. Other positional fields are strings. A repeated field name across
+## commands must have the same cardinality. Options can occur between values;
+## `--` ends option parsing and allows values beginning with `-`.
+## `Usage:` is descriptive; the `Commands:` and `Arguments:` sections define
+## the parser. Inline command arguments take precedence over `Arguments:`.
 
 import std/[parseopt, strutils, syncio]
 export parseopt
