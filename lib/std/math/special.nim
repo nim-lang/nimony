@@ -474,13 +474,14 @@ func gamma*(x: float64): float64 =
     dy = y - GMHALF
     dy -= absx
 
-  let z = absx - 0.5
+  var z = absx - 0.5
   var r = s_tgamma(absx) * exp(-y)
 
   if x < 0.0:
     # reflection formula for negative x
     r = -PI / (sinpi_tgamma(absx) * absx * r)
     dy = -dy
+    z = -z
 
   r += dy * (GMHALF + 0.5) * r / y
   let pow_y = pow(y, 0.5 * z)
@@ -596,12 +597,14 @@ func lgamma_impl(mut_x: float64): tuple[res: float64, sign: int] =
   var nadj: float64
   if sign:
     x = -x
-    let t = sin_pi_lgamma(x)
+    var t = sin_pi_lgamma(x)
     if t == 0.0:
       return (1.0 / (x - x), signgam)
     if t > 0.0:
       signgam = -1
-    nadj = ln(PIF / (sin_pi_lgamma(x) * x))
+    else:
+      t = -t
+    nadj = ln(PIF / (t * x))
   else:
     nadj = 0.0
 

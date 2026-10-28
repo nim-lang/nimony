@@ -227,6 +227,14 @@ func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
   ## Returns the absolute value of `x`.
   if x < 0: -x else: x
 
+func abs*(x: float64): float64 {.inline.} =
+  ## Clears the sign bit, as C's fabs: abs(-0.0) is +0.0 (the generic `x < 0` test keeps -0.0).
+  cast[float64](cast[uint64](x) and 0x7fff_ffff_ffff_ffff'u64)
+
+func abs*(x: float32): float32 {.inline.} =
+  ## Clears the sign bit, as C's fabsf.
+  cast[float32](cast[uint32](x) and 0x7fff_ffff'u32)
+
 template isNil*(s: cstring): bool = s == nil
 
 func chr*(u: range[0..255]): char {.inline.} =
