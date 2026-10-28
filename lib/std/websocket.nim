@@ -1402,3 +1402,14 @@ proc `=destroy`*(ws: WebSocket) =
   `=destroy`(ws.reader)
   `=destroy`(ws.writer)
   `=destroy`(ws.sub)
+
+proc `=wasMoved`*(ws: var WebSocket) {.nodestroy, inline.} =
+  ## `.nodestroy`: the halves have been handed to the destination, so clearing
+  ## this one must not run their destructors. A moved-from connection is inert:
+  ## it has no owner, so nothing is queued for it on the way out, and no
+  ## reader, writer or subprotocol of its own.
+  `=wasMoved`(ws.reader)
+  `=wasMoved`(ws.writer)
+  `=wasMoved`(ws.sub)
+  ws.owner = nil
+  ws.member = -1

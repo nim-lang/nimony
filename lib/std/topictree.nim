@@ -681,6 +681,14 @@ proc `=destroy`(t: TopicTreeInner) =
   `=destroy`(t.hub)
   `=destroy`(t.shards)
 
+proc `=wasMoved`(t: var TopicTreeInner) {.nodestroy, inline.} =
+  ## `.nodestroy`: the queue and the shards were handed to the destination, so
+  ## clearing this one must not stop them. A moved-from tree has no hub, which
+  ## is also what makes its destructor a no-op if it runs.
+  `=wasMoved`(t.hub)
+  `=wasMoved`(t.shards)
+  t.nextShard = 0
+
 proc treeOf(t: TopicTree): TopicTreeRef {.raises.} =
   ## The tree behind the handle. A default-constructed handle has none.
   let x = t.t
