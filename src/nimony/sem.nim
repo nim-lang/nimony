@@ -926,6 +926,10 @@ proc isCastableType(t: TypeCursor): bool =
     var err = false
     let size = asSigned(bitsetSizeInBytes(t.childCursor), err)
     result = not err and size <= 8
+  elif t.typeKind == ProctypeT:
+    # a non-closure proc is a code pointer, castable from and to `pointer`;
+    # a closure is a (code, env) pair:
+    result = not procHasPragma(t, ClosureP)
   else:
     result = t.typeKind in IntegralTypes or isEnumType(t)
 
