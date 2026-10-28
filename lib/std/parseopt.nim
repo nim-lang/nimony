@@ -41,7 +41,6 @@ type
   OptParser* = object
     pos: Natural
     inShortState: bool
-    positionalOnly: bool
     idx: int
     kind*: CmdLineKind
     key*, val*: string
@@ -79,7 +78,6 @@ proc currentCount(p: OptParser): int {.inline.} =
   else: result = paramCount()
 
 proc next*(p: var OptParser) =
-  ## A standalone `--` ends option parsing; subsequent tokens are arguments.
   if p.inShortState and p.pos < p.current.len:
     p.kind = cmdShortOption
     p.key = $p.current[p.pos]
@@ -105,10 +103,7 @@ proc next*(p: var OptParser) =
 
     p.current = currentArg(p, p.idx)
     inc p.idx
-    if not p.positionalOnly and p.current == "--":
-      p.positionalOnly = true
-      next p
-    elif not p.positionalOnly and p.current.len >= 2 and p.current[0] == '-' and p.current[1] == '-':
+    if p.current.len >= 2 and p.current[0] == '-' and p.current[1] == '-':
       p.kind = cmdLongOption
       var last = 2
       p.key = ""
@@ -129,7 +124,7 @@ proc next*(p: var OptParser) =
       else:
         p.val = substr(p.current, last, p.current.len-1)
 
-    elif not p.positionalOnly and p.current.len >= 1 and p.current[0] == '-':
+    elif p.current.len >= 1 and p.current[0] == '-':
       p.pos = 1
       p.inShortState = true
       next p

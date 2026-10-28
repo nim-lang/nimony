@@ -7,8 +7,7 @@
 ## A trailing positional name ending in `...`, such as `install ITEM...`,
 ## accepts one or more values and generates a `seq[string]` field named
 ## `item`. Other positional fields are strings. A repeated field name across
-## commands must have the same cardinality. Options can occur between values;
-## `--` ends option parsing and allows values beginning with `-`.
+## commands must have the same cardinality. Options can occur between values.
 ## `Usage:` is descriptive; the `Commands:` and `Arguments:` sections define
 ## the parser. Inline command arguments take precedence over `Arguments:`.
 

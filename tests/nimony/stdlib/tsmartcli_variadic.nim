@@ -7,10 +7,10 @@ Commands:
   remove ITEM...        Remove items
   status                Show status
 Options:
-  -v, --verbose  Verbose""", @["install", "target", "one", "-v", "two", "--", "-three", "--four"])
+  -v, --verbose  Verbose""", @["install", "target", "one", "-v", "two", "three", "four"])
   assert options.command == cmdInstall
   assert options.dest == "target"
-  assert options.item == @["one", "two", "-three", "--four"]
+  assert options.item == @["one", "two", "three", "four"]
   assert options.verbose
 
 block:

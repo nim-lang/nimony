@@ -208,20 +208,3 @@ block getopt_over_a_parser:
   assert kinds == @[cmdLongOption, cmdArgument, cmdShortOption]
   assert keys == @["abc", "arg0", "a"]
   assert vals == @["12", "", ""]
-
-block end_of_options:
-  var p = initOptParser(@["-v", "--", "-x", "--", "--name=value"])
-  next(p)
-  assert p.kind == cmdShortOption
-  assert p.key == "v"
-  for value in @["-x", "--", "--name=value"]:
-    next(p)
-    assert p.kind == cmdArgument
-    assert p.key == value
-  next(p)
-  assert p.kind == cmdEnd
-
-block end_of_options_at_end:
-  var p = initOptParser(@["--"])
-  next(p)
-  assert p.kind == cmdEnd
