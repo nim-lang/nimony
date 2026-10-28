@@ -195,48 +195,6 @@ proc parseSpec(rawSpec: string): CliSpec =
     elif not rawLine.isEmptyOrWhitespace:
       parseSectionEntry result, currentSection, rawLine
 
-proc validateArguments(names: seq[string]): string =
-  result = ""
-  for i, name in names:
-    if name.isVariadic:
-      if name.len == 3:
-        return "variadic argument needs a name"
-      if i != names.len - 1:
-        return "variadic argument must be last: " & name
-
-proc validateSpec(spec: CliSpec): string =
-  result = ""
-  let mode = spec.positionalMode()
-  var names: seq[string] = @[]
-  if mode == pmInlineCommand:
-    for command in spec.commands:
-      let err = validateArguments(command.argumentNames)
-      if err.len > 0: return err
-      for name in command.argumentNames:
-        names.add name
-  else:
-    let err = validateArguments(spec.argumentNames)
-    if err.len > 0: return err
-    names = spec.argumentNames
-
-  for i, name in names:
-    let field = argumentFieldName(name)
-    if spec.commands.len > 0 and field == "command":
-      return "argument field conflicts with command: " & field
-    for option in spec.options:
-      if field == option.optionFieldName:
-        return "argument field conflicts with option: " & field
-    for j in 0 ..< i:
-      if field == argumentFieldName(names[j]):
-        if name.isVariadic != names[j].isVariadic or mode != pmInlineCommand:
-          return "conflicting argument field: " & field
-        # A command cannot declare the same field twice.
-        for command in spec.commands:
-          var count = 0
-          for arg in command.argumentNames:
-            if argumentFieldName(arg) == field: inc count
-          if count > 1: return "duplicate argument field: " & field
-
 proc extractSpecNode(n: NifCursor): NifCursor =
   result = callArgs(n)
   if result.exprKind == SufX:
@@ -737,11 +695,7 @@ let specNode = extractSpecNode(root)
 if specNode.kind == StrLit:
   let rawSpec = specNode.stringValue
   let spec = parseSpec(rawSpec)
-  let err = validateSpec(spec)
-  if err.len > 0:
-    saveTree errorTree(err, specNode)
-  else:
-    let argsNode = extractArgsNode(root)
-    saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
+  let argsNode = extractArgsNode(root)
+  saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
 else:
   saveTree errorTree("cliapp expects a string literal", specNode)
