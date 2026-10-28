@@ -195,12 +195,13 @@ func captureCount*(r: Regex): int {.inline.} =
 # Matching
 # ---------------------------------------------------------------------------
 
-func nextCharacter(s: string; pos: int): int =
-  ## Advance over a valid UTF-8 character, or one byte of invalid input.
-  result = pos + 1
-  if pos >= 0 and pos < s.len and s[pos] >= '\x80':
-    let width = utf8Width(s, pos)
-    if width > 0: result = pos + width
+func nextCharacter(s: string; pos: Natural): int =
+  ## Advance to the next byte that can start a match: no UTF-8 sequence the
+  ## automaton accepts begins with a continuation byte.
+  var i: Natural = pos + 1
+  while i < s.len and s[i] in '\x80'..'\xBF':
+    inc i
+  result = i
 
 func matchLen*(s: string; r: Regex; caps: var seq[Capture]; start = 0): int =
   ## The length of the longest match of `r` starting exactly at `start`, or

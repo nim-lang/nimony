@@ -38,7 +38,7 @@ block positions:
   offsets.setLen 0
   for (a, _) in findAll("\xC0\x80é\xED\xA0\x80🙂", re""):
     offsets.add a
-  assert offsets == @[0, 1, 2, 4, 5, 6, 7, 11]
+  assert offsets == @[0, 2, 4, 7, 11]
 
 block captureRewind:
   var r = default(Regex)
@@ -69,17 +69,20 @@ block runtime:
     assert matchLen(invalid, re".") == -1
 
 block validationBoundaries:
-  for first in [0xE0, 0xE1, 0xED, 0xEF, 0xF0, 0xF1, 0xF4]:
+  # `.` must accept exactly the encodings `validateUtf8` does.
+  let dot = re"."
+  for first in [0xC0, 0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xED, 0xEF, 0xF0, 0xF1,
+                0xF4, 0xF5]:
     for second in 0 .. 255:
       for tail in [0x7F, 0x80, 0xBF, 0xC0]:
         var s = ""
         s.add char(first)
         s.add char(second)
-        s.add char(tail)
+        if first >= 0xE0: s.add char(tail)
         if first >= 0xF0: s.add '\x80'
         let valid = validateUtf8(s) == -1
-        assert (utf8Width(s, 0) == s.len) == valid
-        assert (utf8Width("!" & s, 1) == s.len) == valid
+        assert (matchLen(s, dot) == s.len) == valid
+        assert (matchLen("!" & s, dot, 1) == s.len) == valid
 
 block generated:
   let s = "é🙂!"
