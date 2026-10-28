@@ -267,6 +267,7 @@ type
     rootNode: Node
     includeStack: seq[string]
     processedModules: Table[string, int] # modname -> index to c.nodes
+    inPluginImports: bool ## a plugin may import the module that declares it
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
@@ -352,7 +353,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
     if wouldCreateCycle(c, current, p):
       # nimsem's `.s.deps.nif` lists `{.cyclic.}` imports as plain imports,
       # so for the backend graph a cycle is expected and only its edge is dropped:
-      if not c.isGeneratingFinal:
+      if not c.isGeneratingFinal and not c.inPluginImports:
         echo "cycle detected: ", current.files[0].nimFile, " <-> ", p.nimFile
     else:
       current.deps.add existingNode
@@ -547,21 +548,23 @@ proc pluginExe(c: DepContext; name: string): string =
   ## Where `semos.runPlugin` looks for the plugin: keep the two in sync.
   c.config.nifcachePath / name.addFileExt(ExeExt)
 
+proc importPluginImports(c: var DepContext; src: string; current: Node)
+
 proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
   ## `(plugin [(when COND...)] "name")`: nifler's deps-file entry for a
   ## `{.plugin: "name".}` pragma. The name resolves relative to the declaring
   ## file exactly as `semos.runPlugin` resolves it.
   ##
-  ## Ignored when this build IS a plugin build (`-d:nimonyPlugin`, set by
-  ## `semos.pluginCompileCmd`): plugins are leaves of the build graph. A plugin
-  ## whose source imports its declaring module would otherwise require itself,
-  ## and the nested builds would recurse without end. Should such a plugin
-  ## actually run another plugin at compile time, `runPlugin`'s lazy fallback
-  ## still builds that one on demand.
+  ## Not scheduled for building when this build IS a plugin build
+  ## (`-d:nimonyPlugin`, set by `semos.pluginCompileCmd`): plugins are leaves of
+  ## the build graph. A plugin whose source imports its declaring module would
+  ## otherwise require itself, and the nested builds would recurse without end.
+  ## Should such a plugin actually run another plugin at compile time,
+  ## `runPlugin`'s lazy fallback still builds that one on demand. The plugin's
+  ## imports join the program either way.
   var x = it
   skip it
-  if c.config.isDefined("nimonyPlugin"):
-    return
+  let isPluginBuild = c.config.isDefined("nimonyPlugin")
   x.into:  # (plugin …)
     if x.stmtKind == WhenS:
       if not whenMarkerHolds(c, x):
@@ -572,10 +575,12 @@ proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
         let name = pool.strings[x.strId]
         let src = resolveFile(c.config.paths, current.files[current.active].nimFile, name)
         if semos.fileExists(src):
-          let exeName = splitFile(name).name
-          current.plugins.incl exeName
-          if not c.pluginSources.hasKey(exeName):
-            c.pluginSources[exeName] = src
+          if not isPluginBuild:
+            let exeName = splitFile(name).name
+            current.plugins.incl exeName
+            if not c.pluginSources.hasKey(exeName):
+              c.pluginSources[exeName] = src
+          importPluginImports c, src, current
       skip x
 
 proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
@@ -758,6 +763,15 @@ proc loadDepsFile(depsFile: string): TokenBuf =
   result = createTokenBuf()
   parse(r, result)
   rd.close(r)
+
+proc importPluginImports(c: var DepContext; src: string; current: Node) =
+  ## See `semos.pluginProgramImports`; `semimport.importPluginImports` records
+  ## the same modules for the backend.
+  let oldInPluginImports = c.inPluginImports
+  c.inPluginImports = true # a plugin may import the module that declares it
+  for path in pluginProgramImports(src, c.config.paths, c.config.nifcachePath):
+    importSingleFile c, path, NoLineInfo, current, false
+  c.inPluginImports = oldInPluginImports
 
 proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
   ## Reads the `(dependency …)` list out of the `.s.deps.nif` the previous
@@ -1980,6 +1994,13 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         b.addIdent "pluginbuild"
         b.withTree "input":
           b.addStrLit c.pluginSources.getOrDefault(name)
+        # the modules the plugin imported last time it was built (#2785):
+        let inputs = pluginInputsFile(c.pluginExe(name))
+        if semos.fileExists(inputs):
+          for f in onRaiseQuit(readFile(inputs)).splitLines:
+            if f.len > 0 and semos.fileExists(f):
+              b.withTree "input":
+                b.addStrLit f
         b.withTree "output":
           b.addStrLit c.pluginExe(name)
 

@@ -140,6 +140,7 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
       inc i
 
 proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
+  importPluginImports c
   pruneMatchedForwardDecls(c, dest)
   # Insert `(import (kv suffix "path") …)` at the beginning of the (stmts ...)
   # so the hexer sees it before any executable code. The path is paired with

@@ -137,6 +137,19 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
   var exports: seq[(string, ImportFilter)] = @[] # ignored
   discard importSingleFile(c, dest, f1, origin, filter, exports, info)
 
+proc importPluginImports*(c: var SemContext) =
+  ## The program imports of every plugin this module ran join the program,
+  ## without names in scope: see `semos.pluginProgramImports`. `deps.nim` has
+  ## already semchecked them before us.
+  var dest = createTokenBuf(4) # no errors: only existing files are imported
+  var sources = move c.pluginSources # `importSingleFile` mutates `c`
+  for src in sources:
+    for path in pluginProgramImports(src, c.g.config.paths, c.g.config.nifcachePath):
+      if moduleSuffix(path, c.g.config.paths) != c.thisModuleSuffix:
+        importSingleFile c, dest, ImportedFilename(path: path), src,
+          ImportFilter(kind: FromImport, list: initHashSet[StrId]()), NoLineInfo
+  c.pluginSources = move sources
+
 proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string; filter: ImportFilter; info: NifLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[]
   let source = importSingleFile(c, dest, f1, origin, filter, exports, info)
