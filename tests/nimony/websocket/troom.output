@@ -17,3 +17,4 @@
 [5] b closed with 1000
 [5] a: mkText still here
 [6] a closed with 1000
+[7] 20000 publishes through a 4-slot queue, 3 shards

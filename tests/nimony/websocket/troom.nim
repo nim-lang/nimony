@@ -137,6 +137,16 @@ proc body() {.passive, raises.} =
   a.close(1000, "done")
   report.add "[6] a closed with " & $a.closeCode & "\n"
 
+  # 7. The queue itself: a four-slot ring, three shards, and nobody subscribed.
+  #    The publishers fill it and park, and a slot only becomes reusable when
+  #    the last shard has taken it. Dropping the tree at the end of this block
+  #    is what stops the shards.
+  var tiny = initTopicTree(capacity = 4, shards = 3)
+  for i in 0 ..< 20_000:
+    tiny.publish("nowhere", "x")
+  report.add "[7] 20000 publishes through a 4-slot queue, " &
+             $tiny.shardCount() & " shards\n"
+
 proc client() {.passive.} =
   try:
     body()
@@ -153,6 +163,12 @@ proc main =
     tree = initTopicTree()
   except ErrorCode as e:
     assert false, "initTopicTree: " & $e
+  try:
+    # A publish from this thread, which is not a pool worker, before there is
+    # anybody to receive it: the queue takes publishers from any thread.
+    tree.publish("chat", "nobody is here yet")
+  except ErrorCode as e:
+    assert false, "publish from the main thread: " & $e
   submit(delay(serve()), 0)
   let start = monoNow()
   while atomicLoad(listening, moAcquire) == 0:

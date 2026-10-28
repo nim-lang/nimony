@@ -434,22 +434,6 @@ proc fillFrame(dest: var openArray[char]; opcode: WsOpcode;
       applyMask(toOpenArray(dest, result, result + payload.len - 1), key)
     result += payload.len
 
-proc spellTextFrame*(dest: var string; text: string) {.raises.} =
-  ## Spells `text` as a whole server-to-client text frame in `dest`, reusing
-  ## it instead of allocating. A server masks nothing, so one frame is valid
-  ## for every connection it is published to: a fan-out spells it once and
-  ## appends the same bytes to each member's buffer.
-  let size = frameHeaderLen(text.len, false) + text.len
-  dest.setLen size
-  discard fillFrame(toOpenArray(dest, 0, size - 1), wsoText, text, false,
-                    default(array[4, char]), true)
-
-proc bufferFrame*(wr: var WebSocketWriter; frame: string) {.raises.} =
-  ## Appends an already spelled frame to the writer's buffer, without a flush.
-  ## For a fan-out that spells one frame and hands it to many writers; every
-  ## other caller wants `send`.
-  wr.w.write(frame)
-
 proc frameHeader*(opcode: WsOpcode; payloadLen: int; masked: bool;
                   key: array[4, char]; fin = true): string =
   ## The header of a frame whose payload is `payloadLen` bytes.
@@ -470,6 +454,27 @@ proc isValidUtf8(s: openArray[char]): bool =
   ## would let a peer smuggle bytes into a string that a program then treats
   ## as characters.
   result = validateUtf8(s) < 0
+
+proc spellTextFrame*(dest: var string; text: string) {.raises.} =
+  ## Spells `text` as a whole server-to-client text frame in `dest`, reusing
+  ## it instead of allocating. A server masks nothing, so one frame is valid
+  ## for every connection it is published to: a fan-out spells it once and
+  ## appends the same bytes to each member's buffer.
+  ##
+  ## The text is checked as UTF-8 here, once per publish rather than once per
+  ## delivery: a frame whose bytes are not text would make every peer fail the
+  ## connection, and it is not worth fanning out a message nobody can read.
+  if not isValidUtf8(text): raise ValueError
+  let size = frameHeaderLen(text.len, false) + text.len
+  dest.setLen size
+  discard fillFrame(toOpenArray(dest, 0, size - 1), wsoText, text, false,
+                    default(array[4, char]), true)
+
+proc bufferFrame*(wr: var WebSocketWriter; frame: string) {.raises.} =
+  ## Appends an already spelled frame to the writer's buffer, without a flush.
+  ## For a fan-out that spells one frame and hands it to many writers; every
+  ## other caller wants `send`.
+  wr.w.write(frame)
 
 proc isSendableCloseCode*(code: int): bool =
   ## Whether `code` may go on the wire.
