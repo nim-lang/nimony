@@ -3,3 +3,8 @@ tests/nimony/exceptions/tarbitrary_raises.nim(12, 20) Error: `.raises` takes `Er
 tests/nimony/exceptions/tarbitrary_raises.nim(13, 20) Error: `.raises` takes `ErrorCode` or a `ref` object type, not `Wide`
 tests/nimony/exceptions/tarbitrary_raises.nim(9, 12) Error: `.raises` takes `ErrorCode` or a `ref` object type, not `ref int64 not nil`
 tests/nimony/exceptions/tarbitrary_raises.nim(20, 10) Error: `except` takes `ErrorCode` or a `ref` object type, not `Code`
+tests/nimony/exceptions/tarbitrary_raises.nim(29, 10) Error: `ValueError` is an `ErrorCode` value, not a type; write `except ErrorCode as e:` and test `e == ValueError`
+tests/nimony/exceptions/tarbitrary_raises.nim(35, 10) Error: `except` takes `ErrorCode` or a `ref` object type, not `int64`
+tests/nimony/exceptions/tarbitrary_raises.nim(40, 19) Error: `ValueError` is an `ErrorCode` value, not a type; write `except ErrorCode as e:` and test `e == ValueError`
+tests/nimony/exceptions/tarbitrary_raises.nim(44, 10) Error: `except` takes `ErrorCode` or a `ref` object type, not `int64`
+tests/nimony/exceptions/tarbitrary_raises.nim(48, 10) Error: `ValueError` is an `ErrorCode` value, not a type; write `except ErrorCode as e:` and test `e == ValueError`
