@@ -19,3 +19,30 @@ proc f() =
   try: e()
   except Code: discard
   except: discard
+
+# `except ValueError:` is the Nim 2 form; here `ValueError` is an `ErrorCode`
+# value. Each arm is reported, and a `defer` in the routine does not turn the
+# error into a crash (#2807).
+proc g(): int =
+  defer: discard
+  try: e()
+  except ValueError: discard
+  0
+
+proc h(): int =
+  defer: discard
+  try: e()
+  except int: discard
+  0
+
+proc i() =
+  try: e()
+  except ErrorCode.ValueError as x: discard
+
+proc j() =
+  try: e()
+  except int as x: discard
+
+proc k() =
+  try: e()
+  except ValueError as x: discard
