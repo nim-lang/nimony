@@ -633,11 +633,16 @@ proc utf8Sequences(dest: var seq[Utf8Seq]; lo, hi: int) =
     sq.hi[i] = b[i]
   dest.add sq
 
-proc transBytes(a: var Nfa; s: int; lo, hi: char; d: int) =
+proc transBytes(a: var Nfa; s: int; lo, hi: char; d: int; fresh: bool) =
+  ## `fresh`: `s` has no edges yet and gets only these, so there is nothing
+  ## to merge them with.
+  if a.trans.len <= s: a.trans.setLen s + 1
   # `0 .. 255` in `int` rather than `for c in '\0'..'\xFF'`: `inc` on a
   # `char` wraps round at `high(char)`, so the char spelling never ends.
   for i in ord(lo) .. ord(hi):
-    trans a, s, Alphabet(kind: reChar, val: char(i)), d
+    let c = Alphabet(kind: reChar, val: char(i))
+    if fresh: a.trans[s].add NfaEdge(cond: c, dest: @[Label(d)])
+    else: addTrans(a.trans[s], c, d)
 
 proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
   ## Thompson's construction; returns the state the sub-expression ends in.
@@ -672,10 +677,11 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
     for sq in seqs:
       var src = entry
       for i in 0 ..< sq.len - 1:
-        transBytes a, src, sq.lo[i], sq.hi[i], next
+        transBytes a, src, sq.lo[i], sq.hi[i], next, src != entry
         src = next
         inc next
-      transBytes a, src, sq.lo[sq.len - 1], sq.hi[sq.len - 1], exit
+      transBytes a, src, sq.lo[sq.len - 1], sq.hi[sq.len - 1], exit,
+                 src != entry
     result = exit
   of reStar:
     # one transition too many is drawn here, which is harmless
