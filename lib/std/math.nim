@@ -128,9 +128,13 @@ func splitDecimal*[T: SomeFloat and FloatArithmetic and HasDefault](x: T): tuple
     assert splitDecimal(5.25) == (intpart: 5.0, floatpart: 0.25)
     assert splitDecimal(-2.73) == (intpart: -2.0, floatpart: -0.73)
   result = default(tuple[intpart: T, floatpart: T])
+  if classify(x) in {fcInf, fcNegInf}:   # modf: (±inf, ±0), not inf - inf
+    result.intpart = x
+    result.floatpart = copySign(T(0), x)
+    return
   var absolute = abs(x)
   result.intpart = floor(absolute)
   result.floatpart = absolute - result.intpart
-  if x < T(0):
+  if signbit(x):   # not x < 0: -0.0 keeps its sign, as modf
     result.intpart = -result.intpart
     result.floatpart = -result.floatpart

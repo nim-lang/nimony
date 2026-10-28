@@ -227,6 +227,14 @@ func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
   ## Returns the absolute value of `x`.
   if x < 0: -x else: x
 
+func abs*(x: float64): float64 {.inline.} =
+  ## Clears the sign bit, as C's fabs: abs(-0.0) is +0.0 (the generic `x < 0` test keeps -0.0).
+  cast[float64](cast[uint64](x) and 0x7fff_ffff_ffff_ffff'u64)
+
+func abs*(x: float32): float32 {.inline.} =
+  ## Clears the sign bit, as C's fabsf.
+  cast[float32](cast[uint32](x) and 0x7fff_ffff'u32)
+
 template isNil*(s: cstring): bool = s == nil
 
 func chr*(u: range[0..255]): char {.inline.} =
@@ -393,6 +401,10 @@ proc `=destroy`(j: Join) =
     while jp.resume.env != nil: # a `yield` on the way out parks it again
       jp.done = -1 # `joined` set it to 1 at that `yield`
       run(jp)
+
+proc `=wasMoved`(j: var Join) {.nodestroy, inline.} =
+  ## No parked iterator to finish: `=destroy` has nothing to resume.
+  j.resume = Continuation(fn: nil, env: nil)
 
 proc `=copy`(dest: var Join; src: Join) {.error.}
 

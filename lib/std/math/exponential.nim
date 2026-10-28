@@ -413,8 +413,10 @@ func log2*(x: float64): float64 =
   let lo = f - hi - 0.5 * f * f + s * (0.5 * f * f + r)
 
   let y = float64(k)
-  var w_val = y + hi * LOG2_F64_IVLN2HI
-  let val_lo = (y - w_val) + hi * LOG2_F64_IVLN2HI + (lo + hi) * LOG2_F64_IVLN2LO
+  let val_hi = hi * LOG2_F64_IVLN2HI
+  var val_lo = (lo + hi) * LOG2_F64_IVLN2LO + lo * LOG2_F64_IVLN2HI
+  let w_val = y + val_hi
+  val_lo += (y - w_val) + val_hi
   return val_lo + w_val
 
 # log10(x) = ln(x) / ln(10)
@@ -604,7 +606,7 @@ func log1p*(x: float32): float32 =
   elif ix >= 0x7f800000'u32:
     return x
 
-  var f = 0'f32
+  var f = x  # musl's k = 0 branch (1+x in [sqrt(2)/2, sqrt(2))): f = x, c = 0
   var c = 0'f32
   if k > 0:
     ui = cast[uint32](1'f32 + x)
@@ -652,7 +654,7 @@ func log1p*(x: float64): float64 =
   elif hx >= 0x7ff00000'u32:
     return x
 
-  var f = 0.0
+  var f = x  # musl's k = 0 branch (1+x in [sqrt(2)/2, sqrt(2))): f = x, c = 0
   var c = 0.0
   if k > 0:
     ui = cast[uint64](1.0 + x)

@@ -21,7 +21,8 @@ proc nimcPrefix*(): string =
   # any tool using `createThread` (hastur itself) or `initDeque` (pnak)
   # fails to build on Nim 2.2.10.
   (if debugBuild: "nim c " else: "nim c -d:release ") &
-    "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
+    "--warningAsError:ProveInit:off --warningAsError:Uninit:off " &
+    parallelBuildFlag()
 
 proc nativeToolPrefix*(): string =
   ## arkham + nifasm are the native backend's HOT codegen tools: they run
@@ -33,7 +34,8 @@ proc nativeToolPrefix*(): string =
   ## to build them unoptimized instead (for `-d:arkhamDbgSym` / gdb work on the
   ## toolchain itself).
   (if nativeToolsDebug: "nim c " else: "nim c -d:release ") &
-    "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
+    "--warningAsError:ProveInit:off --warningAsError:Uninit:off " &
+    parallelBuildFlag()
 
 proc validatePassesFlag(): string =
   ## Enable the phase-aware IR validator only when running on CI. GitHub Actions
@@ -121,7 +123,7 @@ proc buildNifler2*(showProgress = false) =
     removeDir Nifler2Cache
     createDir Nifler2Cache
     writeFile stampFile, stamp
-  exec nimony.quoteShell & " c -d:release --silentMake --nimcache:" &
+  exec nimony.quoteShell & " c -d:release --silentMake " & parallelBuildFlag() & "--nimcache:" &
        Nifler2Cache.quoteShell & " --out:" &
        (binDir() / "nifler2".addFileExt(ExeExt)).quoteShell &
        " src/nifler2/nifler2.nim", showProgress
@@ -267,7 +269,7 @@ proc buildAll*() =
     cmds.add nativeToolCmd("arkham")
     cmds.add nativeToolCmd("nifasm")
   createDir binDir()
-  let exitCodes = runConcurrently(cmds)
+  let exitCodes = runConcurrently(cmds, buildSlots(cmds.len))
   for i in 0 ..< cmds.len:
     if exitCodes[i] != 0:
       quit "FAILURE " & cmds[i] & "\n"

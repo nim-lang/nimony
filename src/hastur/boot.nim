@@ -204,7 +204,7 @@ proc bootToolCmd*(compiler, source, outBin, cacheBase, args: string;
   createDir cache
   if fileExists(outBin): removeFile(outBin)
   result = compiler.quoteShell & (if bootNative: " n" else: " c") &
-           " --silentMake --nimcache:" &
+           " --silentMake " & parallelBuildFlag() & "--nimcache:" &
            cache.quoteShell & " --out:" & outBin.quoteShell
   if withValgrind:
     result.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
@@ -242,19 +242,24 @@ proc compileBootStage*(stage: int; cacheBase, args: string; withValgrind: bool):
     echo "[boot] stage ", stage, ": ", cmds[^1]
 
   let t0 = epochTime()
-  var procs: seq[Process] = @[]
-  for cmd in cmds:
-    # `poEvalCommand` so the already-quoted command line goes through the
-    # shell exactly as `execShellCmd` ran it. Output is inherited: the tools
-    # are quiet under `--silentMake`, and interleaved progress from three
-    # compiles is still more useful than buffering it all to the end.
-    procs.add startProcess(cmd, options = {poEvalCommand, poParentStreams})
   var failed = ""
-  for i in 0 ..< procs.len:
-    let exitCode = waitForExit(procs[i])
-    close procs[i]
-    if exitCode != 0 and failed.len == 0:
-      failed = outBins[i].extractFilename
+  let batch = max(buildSlots(cmds.len), 1)
+  for first in countup(0, cmds.len - 1, batch):
+    # At most `batch` at once (`--parallelBuild`); each batch is waited for
+    # before the next starts.
+    let last = min(first + batch, cmds.len) - 1
+    var procs: seq[Process] = @[]
+    for i in first .. last:
+      # `poEvalCommand` so the already-quoted command line goes through the
+      # shell exactly as `execShellCmd` ran it. Output is inherited: the tools
+      # are quiet under `--silentMake`, and interleaved progress from three
+      # compiles is still more useful than buffering it all to the end.
+      procs.add startProcess(cmds[i], options = {poEvalCommand, poParentStreams})
+    for j in 0 ..< procs.len:
+      let exitCode = waitForExit(procs[j])
+      close procs[j]
+      if exitCode != 0 and failed.len == 0:
+        failed = outBins[first + j].extractFilename
   let dt = epochTime() - t0
   if failed.len > 0:
     quit "FAILURE: boot stage " & $stage & " (" & failed &

@@ -19,3 +19,7 @@ Foo[int]
 StaticFoo[3]
 3
 float32
+true
+true
+true
+false

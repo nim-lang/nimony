@@ -86,6 +86,9 @@ proc freeSlot*(a: var SlotArena; s: Slot) =
   elif next != nil:
     a.fdHeads[int(s.op.fd) + 1] = move next
   else:
+    # `nil` when it was the last, not `del`: a delete shifts every later
+    # entry and rebuilds the table's index, and this runs on every
+    # completion. Descriptor numbers are reused, so the entries stay few.
     a.fdHeads[int(s.op.fd) + 1] = nil
   s.nextInFd = nil
 

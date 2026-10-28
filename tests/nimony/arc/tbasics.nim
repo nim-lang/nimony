@@ -166,6 +166,7 @@ type
   TestTestObj = object of RootObj
     bar: TestObj
 
+proc `=wasMoved`(x: var TestTestObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(x: TestTestObj) =
   echo "Destructor for TestTestObj"
   let test = Test2(foo: TestObj())

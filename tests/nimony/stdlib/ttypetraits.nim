@@ -83,3 +83,16 @@ block nameTypeParameters:
     echo $N
     echo $T
   echoNAndT(default(StaticFoo[3, float32]))
+
+block supportsCopyMemTuples:
+  # A tuple is plain data when its fields are; so is an object holding one.
+  type
+    Pair = tuple[a: int, b: int]
+    Unnamed = (int, char)
+    Holder = object
+      pair: tuple[a: int, b: float]
+    Owning = tuple[a: int, s: string]
+  echo supportsCopyMem(Pair)
+  echo supportsCopyMem(Unnamed)
+  echo supportsCopyMem(Holder)
+  echo supportsCopyMem(Owning)

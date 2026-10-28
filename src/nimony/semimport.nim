@@ -107,16 +107,21 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
     publish result, moduleDecl, SemcheckBodies
   else:
     result = c.processedModules.getOrQuit(suffix)
-  let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
-  # An import that lands under THIS module's own name shadows the implicit
-  # self-module symbol, exactly like in Nim: after `import std/math as m`
-  # inside `m.nim`, `m.sin` is math's `sin` and `m` no longer qualifies this
-  # module. Without the removal both symbols sit in the same scope under the
-  # same name, so every qualified use resolves to a two-element sym choice and
-  # dies with "ambiguous identifier" (nim-lang/nimony#2308). A no-op whenever
-  # the names differ, which is the normal case.
-  c.currentScope.removeOverloadable(moduleName, c.selfModuleSym)
-  c.currentScope.addOverloadable(moduleName, s)
+  # A module reached only through a re-export of some of its symbols
+  # (`export m.foo`) gets no name in scope: `m` would qualify every export of
+  # `m`, past the re-export's filter, and clash with an import aliased to the
+  # same name. Re-exporting the whole module (`export m`) brings its name along.
+  if f1.name != "" or mode.kind != FromImport:
+    let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
+    # An import that lands under THIS module's own name shadows the implicit
+    # self-module symbol, exactly like in Nim: after `import std/math as m`
+    # inside `m.nim`, `m.sin` is math's `sin` and `m` no longer qualifies this
+    # module. Without the removal both symbols sit in the same scope under the
+    # same name, so every qualified use resolves to a two-element sym choice and
+    # dies with "ambiguous identifier" (nim-lang/nimony#2308). A no-op whenever
+    # the names differ, which is the normal case.
+    c.currentScope.removeOverloadable(moduleName, c.selfModuleSym)
+    c.currentScope.addOverloadable(moduleName, s)
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
   loadInterface suffix, module.iface, result, c.importTab, c.converters,
                 exports, mode

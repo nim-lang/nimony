@@ -8,6 +8,7 @@ type
   Resource* = object
     name*: string
 
+proc `=wasMoved`*(x: var Resource) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`*(r: Resource) =
   if r.name.len > 0: echo "released ", r.name
 

@@ -18,6 +18,7 @@ type
 
 var created, destroyed: int
 
+proc `=wasMoved`(x: var NodeObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(n: NodeObj) =
   discard atomicAddFetch(addr destroyed, 1, ATOMIC_RELAXED)
   `=destroy`(n.kids)

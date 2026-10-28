@@ -145,6 +145,10 @@ Options:
                         `boot` it additionally compiles the bootstrapped
                         nimony's own output with --opt:speed
   --jobs:N|auto         run up to N tests in parallel (auto = #cores)
+  --parallelBuild:N     run at most N build processes at once: caps hastur's
+                        concurrent tool builds and is passed on to every
+                        `nim c` / `nimony` it runs (0, the default = one per
+                        core). For hosts that kill busy builds (Termux)
   --joined:on|off       compile a directory's plain tests into ONE program
                         (default on) instead of one per test. Most of a test's
                         cost is the process tree behind it — nifler, nimsem,
@@ -256,6 +260,10 @@ proc handleCmdLine =
         else:
           try: parallelJobs = max(1, parseInt(val))
           except: writeHelp()
+      of "parallelbuild":
+        try: parallelBuild = parseInt(val)
+        except: writeHelp()
+        if parallelBuild < 0: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
       of "prefill":

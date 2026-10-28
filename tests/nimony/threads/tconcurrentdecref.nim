@@ -20,6 +20,7 @@ type
 
 var freeCount: int = 0
 
+proc `=wasMoved`(x: var Payload) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
 proc `=destroy`(p: Payload) =
   discard atomicFetchAdd(freeCount, 1, moRelease)
 

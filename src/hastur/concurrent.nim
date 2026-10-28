@@ -65,26 +65,31 @@ proc drainStdout*(arg: ReaderArg) {.thread, nimcall.} =
   finally:
     release lock[]
 
-proc runConcurrently*(cmds: openArray[string]): seq[int] =
-  ## Run every command of `cmds` at once and wait for all of them; returns
-  ## their exit codes in `cmds` order. A command line is handed to the OS as
-  ## is (`poEvalCommand`), so it must already be quoted. Each child's output
-  ## is printed as one block when it exits.
+proc runConcurrently*(cmds: openArray[string]; slots = 0): seq[int] =
+  ## Run the commands of `cmds` side by side and wait for all of them; returns
+  ## their exit codes in `cmds` order. At most `slots` run at once (0 = all
+  ## of them): they go in batches of `slots`, each waited for before the next
+  ## starts. A command line is handed to the OS as is (`poEvalCommand`), so it
+  ## must already be quoted. Each child's output is printed as one block when
+  ## it exits.
   result = newSeq[int](cmds.len)
+  let batch = if slots > 0: slots else: max(cmds.len, 1)
   var lock = default(Lock)
   initLock(lock)
   var procs = newSeq[Process](cmds.len)
   var readers = newSeq[Thread[ReaderArg]](cmds.len)
-  for i, cmd in pairs(cmds):
-    procs[i] = startProcess(cmd, options = {poEvalCommand, poStdErrToStdOut})
-    createThread(readers[i], drainStdout,
-                 ReaderArg(handle: procs[i].outputHandle.int,
-                           lockPtr: cast[pointer](addr lock)))
-  for i in 0 ..< procs.len:
-    # Join the reader first: it only returns at EOF, i.e. once the child
-    # closed its end of the pipe, and waiting on the exit code before that
-    # could leave a child blocked on a full pipe nobody reads.
-    joinThread(readers[i])
-    result[i] = waitForExit(procs[i])
-    close procs[i]
+  for first in countup(0, cmds.len - 1, batch):
+    let last = min(first + batch, cmds.len) - 1
+    for i in first .. last:
+      procs[i] = startProcess(cmds[i], options = {poEvalCommand, poStdErrToStdOut})
+      createThread(readers[i], drainStdout,
+                   ReaderArg(handle: procs[i].outputHandle.int,
+                             lockPtr: cast[pointer](addr lock)))
+    for i in first .. last:
+      # Join the reader first: it only returns at EOF, i.e. once the child
+      # closed its end of the pipe, and waiting on the exit code before that
+      # could leave a child blocked on a full pipe nobody reads.
+      joinThread(readers[i])
+      result[i] = waitForExit(procs[i])
+      close procs[i]
   deinitLock(lock)
