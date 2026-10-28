@@ -207,8 +207,25 @@ func skipToCandidate(s: string; r: Regex; pos: Natural): int
     {.ensures: result <= s.len.} =
   ## The first position at or after `pos` where a match can start; `s.len`
   ## when there is none before the end.
-  let first = r.firstBytes # read in the loop, it is copied every iteration
   var i: Natural = pos
+  if r.firstByte >= 0:
+    let b = char(r.firstByte)
+    # Eight bytes at a time: `w` has a zero byte where `s` has `b`, and the
+    # test below is true exactly when it has one. The byte loop then finds it.
+    let ones = 0x0101010101010101'u64
+    let pattern = ones * uint64(r.firstByte)
+    let raw = readRawData(s)
+    while i < s.len - 7:
+      var w = 0'u64
+      copyMem(addr w, addr raw[i], 8)
+      w = w xor pattern
+      if ((w - ones) and not w and (ones shl 7)) != 0: break
+      inc i, 8
+    while i < s.len:
+      if s[i] == b: return i
+      inc i
+    return s.len
+  let first = r.firstBytes # read in the loop, it is copied every iteration
   while i < s.len:
     if s[i] in first: return i
     inc i

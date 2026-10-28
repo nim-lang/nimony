@@ -52,11 +52,13 @@ proc searching =
   # `find` skips to bytes that can start a match; it must agree with trying
   # every position, including for patterns that can match without a byte.
   for pattern in ["\\d+", "é|z", "x*", "\\bab", "^a", "a$", "(a)\\1", "[^a]",
-                  "🙂+", "\\s"]:
+                  "🙂+", "\\s", "0x\\d", "é", "\\0255"]:
     var r = default(Regex)
     var err = ""
     assert tryRe(pattern, r, err)
-    for subject in ["", "a", "xab ab", "é🙂aa z", "aa1", "\xC0\x80a"]:
+    for subject in ["", "a", "xab ab", "é🙂aa z", "aa1", "\xC0\x80a",
+                    "0123456789abcdef0x7", "aaaaaaaaaaaaaaaaaaaaaaé",
+                    "x0x0x0x0x0x0x0x0x9a", "\xFF0xxxxxxxxxxxxxx\xFF"]:
       var slow = -1
       for i in 0 .. subject.len:
         if matchLen(subject, r, i) >= 0:

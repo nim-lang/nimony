@@ -1033,6 +1033,14 @@ func firstBytes(a: Dfa): set[char] =
     first = first + classBytes(a.letters, e.letter)
   result = first
 
+func onlyByte(cs: set[char]): int =
+  ## The one member of `cs`, or `-1` when it has none or several.
+  result = -1
+  for b in 0 .. 255:
+    if char(b) in cs:
+      if result >= 0: return -1
+      result = b
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -1139,6 +1147,8 @@ type
     capStartAt*: int
     firstBytes*: set[char] ## every match starts with one of these; all bytes
                            ## when a match can start without reading one
+    firstByte*: int        ## the only byte in `firstBytes`, or `-1`; search
+                           ## scans for it a word at a time
 
   Capture* = object ## The bounds of one capture group, both ends inclusive.
     first*: Natural  ## a position in the subject, so never negative
@@ -1149,7 +1159,8 @@ const
 
 func emptyRegex*(): Regex =
   Regex(code: @[], data: @[], startAt: 0, captures: 0,
-        capCode: @[], capData: @[], capStartAt: 0, firstBytes: {})
+        capCode: @[], capData: @[], capStartAt: 0, firstBytes: {},
+        firstByte: -1)
 
 func genData(c: var Regex; data: set[char]): int32 =
   ## Interns a character set. Sets repeat heavily across a DFA's states, so the
@@ -1225,6 +1236,7 @@ func genBytecode*(a: Dfa; res: var Regex) =
                                arg: int32(stateToLabel[res.code[i].arg]))
   res.startAt = stateToLabel[a.startState]
   res.firstBytes = firstBytes(a)
+  res.firstByte = onlyByte(res.firstBytes)
 
 proc countUses(r: RegexNode; caps, backs: var int) =
   ## Highest capture-group and back-reference index the pattern names.
