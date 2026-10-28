@@ -41,7 +41,7 @@ proc runJob(job, dir: string) =
     when defined(posix):
       discard posix.kill(posix.getpid(), SIGTERM)
     quit "FAILURE: signal job survived"
-  of "first", "blocked": discard
+  of "first", "blocked", "after": discard
   else: quit "FAILURE: unknown job " & job
   writeFile(dir / job, "done\n")
 
@@ -83,7 +83,7 @@ let root = currentSourcePath().parentDir.parentDir.parentDir
 let cache = root / "nimcache_static" / "nifmake-jobs"
 createDir(cache)
 
-for scenario in ["serial", "parallel", "failure", "signal"]:
+for scenario in ["serial", "parallel", "failure", "signal", "keepgoing"]:
   when not defined(posix):
     if scenario == "signal": continue
   let dir = cache / scenario
@@ -101,13 +101,20 @@ for scenario in ["serial", "parallel", "failure", "signal"]:
     graph.addJob(dir, "fast")
     graph.addJob(dir, "dependent", "fast")
   else:
+    # `after` becomes ready only once the failure was seen: `running` waits for
+    # the failing child to start.
+    let failing = if scenario == "keepgoing": "failure" else: scenario
     graph.addJob(dir, "running")
-    graph.addJob(dir, scenario)
-    graph.addJob(dir, "blocked", scenario)
+    graph.addJob(dir, failing)
+    graph.addJob(dir, "blocked", failing)
+    graph.addJob(dir, "after", "running")
   graph.add ")\n"
   let graphFile = dir / "build.nif"
   writeFile(graphFile, graph)
-  let parallel = if scenario == "serial": "" else: " --parallel:2"
+  let parallel = case scenario
+    of "serial": ""
+    of "keepgoing": " --parallel:2 --keep-going"
+    else: " --parallel:2"
   let command = nifmake & parallel & " --profile --report run " & graphFile.quoteShell
   let (output, code) = execCmdEx(command)
   writeFile(dir / "result.log", output)
@@ -122,10 +129,16 @@ for scenario in ["serial", "parallel", "failure", "signal"]:
     require(cachedCode == 0 and cached.contains("total=0"),
             "up-to-date build launched commands:\n" & cached)
   else:
-    let expectedExit = if scenario == "failure": 7 else: 143
+    let expectedExit = if scenario == "signal": 143 else: 7
     require(code != 0 and output.contains("exit code " & $expectedExit),
             "wrong child failure status:\n" & output)
-    require(output.contains("total=2") and fileExists(dir / "running"),
+    require(fileExists(dir / "running"),
             "did not drain the other running child:\n" & output)
     require(not fileExists(dir / "blocked"), "launched dependent of failed child")
+    if scenario == "keepgoing":
+      require(output.contains("total=3") and fileExists(dir / "after"),
+              "--keep-going stopped an independent job:\n" & output)
+    else:
+      require(output.contains("total=2") and not fileExists(dir / "after"),
+              "launched a job after a failure:\n" & output)
   echo "nifmake: ", scenario, " execution passed"
