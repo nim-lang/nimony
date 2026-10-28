@@ -71,12 +71,6 @@
 # middle of each other. There is one writer, so there is one place that
 # writes.
 #
-# A handler that has to write to *many* connections — a chat room — cannot be
-# that place, and does not write from the connections either: it gives their
-# writers to a fan-out structure and routes every write through that.
-# `std/topictree` is the one that ships, and `WriterOwner` is the hook it
-# plugs into.
-#
 # ## The two roles
 #
 # A client masks every frame it sends and a server masks none; a server
@@ -215,15 +209,6 @@ type
     closeSent: bool
     closeCode: int
 
-  WriterOwner* = ref object of RootObj
-    ## What a connection gives its writer to when it joins a fan-out
-    ## structure. `std/topictree` is the implementation that ships; this
-    ## module knows nothing more about it than the two events below, which is
-    ## what keeps the tree out of the WebSocket layer.
-    ##
-    ## A connection with an owner has given its writer away: the owner writes
-    ## and flushes, and `send`, pings and closes go through it.
-
   WebSocket* = object
     ## One WebSocket connection: a reader, a writer and the state that belongs
     ## to the pair.
@@ -236,43 +221,6 @@ type
     sub: string
     err: ErrorCode
     aborted: bool
-    owner: nil WriterOwner
-      ## The fan-out structure this connection joined, if any. A connection
-      ## with an owner has given its writer to it — `subscribe` moves it — and
-      ## every write goes through the owner from then on.
-    member: int
-      ## This connection's id in `owner`; `-1` while it has none.
-
-# ------------------------------------------------------- the writer's owner --
-
-method enqueueSend*(o: WriterOwner; id: int; kind: MsgKind; text: string) {.
-    base, passive, raises.} =
-  ## A message that a connection with this owner has sent. The text is already
-  ## checked and copied, so the owner does not borrow the caller's buffer.
-  raise BadOperation
-
-method enqueueClose*(o: WriterOwner; id: int; code: int) {.
-    base, passive, raises.} =
-  ## The goodbye for a connection with this owner, after whatever it already
-  ## queued. `code` is 0 when the connection is dropped without one.
-  raise BadOperation
-
-proc takeWriter*(ws: var WebSocket; owner: WriterOwner; id: int): WebSocketWriter {.
-    raises.} =
-  ## Gives the connection's writer to `owner`, which writes to it from then
-  ## on, and hands the writer over. `id` is the connection's name in `owner`;
-  ## see `std/topictree`.
-  ws.owner = owner
-  ws.member = id
-  result = move ws.writer
-
-proc writerOwner*(ws: WebSocket): nil WriterOwner =
-  ## The fan-out structure this connection joined, if any.
-  ws.owner
-
-proc memberId*(ws: WebSocket): int =
-  ## This connection's id in its owner, `-1` when it has none.
-  ws.member
 
 # ------------------------------------------------------------------- frames --
 
@@ -454,27 +402,6 @@ proc isValidUtf8(s: openArray[char]): bool =
   ## would let a peer smuggle bytes into a string that a program then treats
   ## as characters.
   result = validateUtf8(s) < 0
-
-proc spellTextFrame*(dest: var string; text: string) {.raises.} =
-  ## Spells `text` as a whole server-to-client text frame in `dest`, reusing
-  ## it instead of allocating. A server masks nothing, so one frame is valid
-  ## for every connection it is published to: a fan-out spells it once and
-  ## appends the same bytes to each member's buffer.
-  ##
-  ## The text is checked as UTF-8 here, once per publish rather than once per
-  ## delivery: a frame whose bytes are not text would make every peer fail the
-  ## connection, and it is not worth fanning out a message nobody can read.
-  if not isValidUtf8(text): raise ValueError
-  let size = frameHeaderLen(text.len, false) + text.len
-  dest.setLen size
-  discard fillFrame(toOpenArray(dest, 0, size - 1), wsoText, text, false,
-                    default(array[4, char]), true)
-
-proc bufferFrame*(wr: var WebSocketWriter; frame: string) {.raises.} =
-  ## Appends an already spelled frame to the writer's buffer, without a flush.
-  ## For a fan-out that spells one frame and hands it to many writers; every
-  ## other caller wants `send`.
-  wr.w.write(frame)
 
 proc isSendableCloseCode*(code: int): bool =
   ## Whether `code` may go on the wire.
@@ -705,8 +632,6 @@ proc upgradeImpl(c: var HttpConnection; protocols: openArray[string];
   if idleMs > 0: r.renew(afterMs(idleMs))
   else: r.renew(never)
   var ws = WebSocket()
-  ws.owner = nil
-  ws.member = -1
   ws.reader.r = ensureMove r
   ws.reader.role = wrServer
   ws.reader.maxMessage = maxMessage
@@ -825,8 +750,6 @@ proc connectWebSocket*(url: string;
   var (r, w) = connect(u.hostname & ":" & $port, tls, afterMs(timeoutMs))
   r.renew(afterMs(timeoutMs))
   var ws = WebSocket()
-  ws.owner = nil
-  ws.member = -1
   ws.reader.r = ensureMove r
   ws.reader.role = wrClient
   ws.reader.maxMessage = maxMessage
@@ -1255,10 +1178,7 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
     # happens, and while frames are still coming the replies can ride along
     # with the next write. That is what lets an echo server answer a burst with
     # one write instead of one per message.
-    if ws.owner == nil and ws.reader.buffered == 0:
-      # A connection with an owner has given its writer away: the owner
-      # flushes it once per turn, and flushing the shell here would only
-      # raise.
+    if ws.reader.buffered == 0:
       try:
         ws.writer.flush()
       except ErrorCode:
@@ -1284,21 +1204,11 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
     of mkPing:
       # The reader handed the ping over instead of answering it; the pair is
       # the only place that owns both halves, so the pong goes out here —
-      # unless this side has said goodbye, after which it says nothing. With
-      # an owner the writer is the owner's, so the pong is the owner's to
-      # send — a message like any other, of kind `mkPong`.
-      let o = ws.owner
-      if o != nil:
-        o.enqueueSend(ws.member, mkPong, msg)
-      elif not ws.writer.closeSent:
+      # unless this side has said goodbye, after which it says nothing.
+      if not ws.writer.closeSent:
         ws.writer.sendFrame(wsoPong, msg)
     of mkClose:
-      let o = ws.owner
-      if o != nil:
-        # The owner answers the peer's goodbye, with the same code.
-        o.enqueueClose(ws.member, ws.reader.closeCode)
-        ws.owner = nil
-      elif not ws.writer.closeSent:
+      if not ws.writer.closeSent:
         # The peer closed first: the answer carries the same code, and then
         # the connection is over.
         ws.writer.closeSent = true
@@ -1313,23 +1223,14 @@ proc send*(ws: var WebSocket; kind: MsgKind; data: openArray[char];
   ## Sends a message of `kind` with the bytes `data`; see
   ## `WebSocketWriter.send`.
   ##
-  ## A connection with an owner sends through it — the owner owns the writer —
-  ## and `flush` is the owner's business then: it flushes each member once per
-  ## turn.
-  let o = ws.owner
-  if o != nil:
-    if kind == mkText and not isValidUtf8(data): raise ValueError
-    var text = newString(data.len)
-    for i in 0 ..< data.len: text[i] = data[i]
-    o.enqueueSend(ws.member, kind, text)
-  else:
-    ws.writer.send(kind, data, flush)
+  ## With `flush = false` the frames are only buffered; see
+  ## `WebSocketWriter.send`, and `flush` below.
+  ws.writer.send(kind, data, flush)
 
 proc flush*(ws: var WebSocket) {.passive, raises.} =
   ## Hands everything sent with `flush = false` to the peer; see
-  ## `WebSocketWriter.flush`. A connection with an owner has nothing to flush
-  ## here: the owner flushes each member once per turn.
-  if ws.owner == nil: ws.writer.flush()
+  ## `WebSocketWriter.flush`.
+  ws.writer.flush()
 
 proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
   ## Ends the connection the way the protocol says: the close frame goes
@@ -1338,14 +1239,6 @@ proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
   ## The wait is the connection's `idleMs`, or five seconds when it has
   ## none. A peer that does not answer is a timeout and raises like every
   ## other timeout in this API.
-  let o = ws.owner
-  if o != nil:
-    # The owner owns the writer: it sends the goodbye, after the frames that
-    # are already buffered, and drops the member.
-    ws.owner = nil
-    o.enqueueClose(ws.member, code)
-    ws.reader.close()
-    return
   if ws.writer.closeSent: return
   try:
     ws.writer.close(code, reason)
@@ -1383,33 +1276,20 @@ proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
     ws.abort()
     raise
 
-# The destructor closes the streams through the fields' own destructors. The
-# one thing it adds is leaving the owner: a connection with an owner has given
-# its writer away, so the goodbye is the owner's to send, and a dropped
-# `WebSocket` that said nothing would leave the owner writing into a descriptor
-# nobody else owns. It cannot raise, so a failed goodbye is not reported here —
-# `close` does that. A peer that wants a close frame asks for one with `close`;
-# the error paths call `abort`, which drops the streams so that nothing is
-# written on the way out.
+# The destructor closes the streams through the fields' own destructors. A
+# dropped `WebSocket` sends no goodbye: the peer sees the connection go away
+# without one, which is what leaving scope means. A peer that wants a close
+# frame asks for one with `close`; the error paths call `abort`, which drops
+# the streams so that nothing is written on the way out.
 proc `=destroy`*(ws: WebSocket) =
-  let o = ws.owner
-  if o != nil:
-    try:
-      o.enqueueClose(ws.member, 0)
-    except ErrorCode:
-      discard
-  `=destroy`(ws.owner)
   `=destroy`(ws.reader)
   `=destroy`(ws.writer)
   `=destroy`(ws.sub)
 
 proc `=wasMoved`*(ws: var WebSocket) {.nodestroy, inline.} =
   ## `.nodestroy`: the halves have been handed to the destination, so clearing
-  ## this one must not run their destructors. A moved-from connection is inert:
-  ## it has no owner, so nothing is queued for it on the way out, and no
-  ## reader, writer or subprotocol of its own.
+  ## this one must not run their destructors on them. A moved-from connection
+  ## has no reader, writer or subprotocol of its own.
   `=wasMoved`(ws.reader)
   `=wasMoved`(ws.writer)
   `=wasMoved`(ws.sub)
-  ws.owner = nil
-  ws.member = -1
