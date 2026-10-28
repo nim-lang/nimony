@@ -137,14 +137,23 @@ proc body() {.passive, raises.} =
   a.close(1000, "done")
   report.add "[6] a closed with " & $a.closeCode & "\n"
 
-  # 7. The queue itself: a four-slot ring, three shards, and nobody subscribed.
+  # 7. A slot is given back when a member leaves and taken by the next one:
+  #    five connections in a row over the same few slots, each of them getting
+  #    its join message.
+  for i in 0 ..< 5:
+    var c = connectWebSocket("ws://127.0.0.1:" & $gPort)
+    next(c, "[7] join")
+    c.close(1000, "")
+  report.add "[7] five joins and closes over reused slots\n"
+
+  # 8. The queue itself: a four-slot ring, three shards, and nobody subscribed.
   #    The publishers fill it and park, and a slot only becomes reusable when
   #    the last shard has taken it. Dropping the tree at the end of this block
   #    is what stops the shards.
   var tiny = initTopicTree(capacity = 4, shards = 3)
   for i in 0 ..< 20_000:
     tiny.publish("nowhere", "x")
-  report.add "[7] 20000 publishes through a 4-slot queue, " &
+  report.add "[8] 20000 publishes through a 4-slot queue, " &
              $tiny.shardCount() & " shards\n"
 
 proc client() {.passive.} =

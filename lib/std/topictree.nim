@@ -87,6 +87,10 @@ type
     ## One connection's writer, owned by a shard from `subscribe` on.
     wr: WebSocketWriter
     id: int
+      ## `generation | slot | shard`, see `attach`: the shard and the slot make
+      ## a direct hit, the generation tells a reused slot from the member that
+      ## used to be there.
+    slot: int
     topics: seq[string]
     dirty: bool
       ## Frames were buffered for this member since the last flush.
@@ -155,7 +159,17 @@ type
     ## how far it has read the broadcast queue.
     id: int
     root: TopicNode
-    members: seq[Member]
+    slots: seq[nil Member]
+      ## Members by slot. A send, a pong and a close name their member by id,
+      ## and the slot in the id is the index here — no scan over the members
+      ## for every one of them.
+    free: seq[int]
+      ## Slots of the members that left, for the next ones to take. Guarded by
+      ## `lock`: `attach` runs on the joining thread, the release on the
+      ## shard's chain.
+    nextSlot: int
+    nextGen: int
+    lock: TicketLock
     touched: seq[Member]
       ## The members with something to do at the end of the turn: frames to
       ## flush, or a socket that failed and has to go. A turn with one message
@@ -179,11 +193,28 @@ type
   TopicTreeInner = object of WriterOwner
     hub: Hub
     shards: seq[Shard]
-    nextId: int
+    nextShard: int
+      ## Round-robin over the shards, so members spread evenly when nobody
+      ## subscribes to anything in particular.
 
   TopicTreeRef = ref TopicTreeInner
 
 # ------------------------------------------------------------ the tree --
+
+const
+  ShardBits = 6
+    ## How many shards an id can name; `initTopicTree` clamps to this.
+  SlotBits = 24
+  SlotShift = ShardBits
+  GenShift = ShardBits + SlotBits
+
+proc shardOf(id: int): int {.inline.} =
+  ## The shard an id belongs to.
+  id and ((1 shl ShardBits) - 1)
+
+proc slotOf(id: int): int {.inline.} =
+  ## The slot an id was allocated from.
+  (id shr SlotShift) and ((1 shl SlotBits) - 1)
 
 proc newTopic(segment: string; parent: nil TopicNode): TopicNode =
   TopicNode(segment: segment, parent: parent, children: @[], subs: @[])
@@ -309,10 +340,42 @@ proc forget(root: TopicNode; m: Member) =
     if n != nil: dropSub(n, m)
     inc i
 
-proc findBy(id: int; members: seq[Member]): int =
-  ## The index of member `id` in `members`, or `members.len` when it has left.
-  result = 0
-  while result < members.len and members[result].id != id: inc result
+when defined(linearLookup):
+  proc lookup(s: Shard; id: int): nil Member =
+    ## The scan this replaces, kept for the A/B of the send path.
+    result = nil
+    var i = 0
+    while i < s.slots.len:
+      let m = s.slots[i]
+      if m != nil and m.id == id: return m
+      inc i
+else:
+  proc lookup(s: Shard; id: int): nil Member =
+    ## The member `id`, or nil once it has left. One index and one compare: the
+    ## slot is part of the id, the generation keeps a reused slot from answering
+    ## for the member that used to be in it.
+    result = nil
+    let slot = slotOf(id)
+    if slot < s.slots.len:
+      let m = s.slots[slot]
+      if m != nil and m.id == id: result = m
+
+proc takeSlot(s: Shard): int =
+  ## A slot for a joining member: one that a departed member gave back, or a
+  ## fresh one.
+  acquire s.lock
+  if s.free.len > 0:
+    result = s.free[s.free.len - 1]
+    s.free.setLen s.free.len - 1
+  else:
+    result = s.nextSlot
+    inc s.nextSlot
+  release s.lock
+
+proc releaseSlot(s: Shard; slot: int) =
+  acquire s.lock
+  s.free.add slot
+  release s.lock
 
 # ------------------------------------------------------- the broadcast queue --
 
@@ -450,22 +513,22 @@ proc apply(s: Shard; p: Payload) =
   of teJoin:
     let m = p.member
     if m != nil:
-      s.members.add m
+      if m.slot >= s.slots.len: s.slots.setLen(m.slot + 1)
+      s.slots[m.slot] = m
       nodeFor(s.root, p.topic).subs.add m
       s.lastNode = nil
   of teSend:
-    let i = findBy(p.id, s.members)
-    if i < s.members.len:
+    let m = lookup(s, p.id)
+    if m != nil:
       try:
-        s.members[i].wr.send(p.msg, p.text, flush = false)
-        markDirty(s, s.members[i])
+        m.wr.send(p.msg, p.text, flush = false)
+        markDirty(s, m)
       except ErrorCode:
-        s.members[i].wr.abort()
-        markGone(s, s.members[i])
+        m.wr.abort()
+        markGone(s, m)
   of teAddTopic, teDropTopic:
-    let i = findBy(p.id, s.members)
-    if i < s.members.len:
-      let m = s.members[i]
+    let m = lookup(s, p.id)
+    if m != nil:
       s.lastNode = nil
       if p.kind == teAddTopic:
         var seen = false
@@ -486,13 +549,10 @@ proc apply(s: Shard; p: Payload) =
         let n = findNode(s.root, p.topic)
         if n != nil: dropSub(n, m)
   of teClose:
-    let i = findBy(p.id, s.members)
-    if i < s.members.len:
-      let m = s.members[i]
-      s.members.delete i
-      forget(s.root, m)
+    let m = lookup(s, p.id)
+    if m != nil:
       s.lastNode = nil
-      m.gone = true            # out of `members` already; the flush must skip it
+      markGone(s, m)           # the flush takes it out of the slot and the tree
       try:
         m.wr.close(if p.code == 0: 1000 else: p.code)
       except ErrorCode:
@@ -506,11 +566,14 @@ proc deliverShard(s: Shard; p: Payload) =
   if n != nil: deliver(s, n, p.frame, s.gen)
 
 proc drop(s: Shard; m: Member) =
-  ## Takes a dead member out of the shard and out of the topic tree.
-  let i = findBy(m.id, s.members)
-  if i < s.members.len:
-    s.members.delete i
-    forget(s.root, m)
+  ## Takes a dead member out of the shard, out of the topic tree, and gives its
+  ## slot back.
+  if m.slot < s.slots.len:
+    let cur = s.slots[m.slot]
+    if cur != nil and cur.id == m.id:
+      s.slots[m.slot] = nil
+  forget(s.root, m)
+  releaseSlot(s, m.slot)
 
 proc flushShard(s: Shard) =
   ## One flush per member that has frames buffered, and the members whose
@@ -562,8 +625,9 @@ proc shardLoop(hub: Hub; s: Shard) {.passive.} =
 # ------------------------------------------------------------- the API --
 
 proc newShard(id: int): Shard =
-  Shard(id: id, root: newTopic("", nil), members: @[], touched: @[], read: 0,
-        gen: 0, lastTopic: "", lastNode: nil)
+  Shard(id: id, root: newTopic("", nil), slots: @[], free: @[], nextSlot: 0,
+        nextGen: 0, lock: TicketLock(), touched: @[], read: 0, gen: 0,
+        lastTopic: "", lastNode: nil)
 
 proc nextPow2(n: int): int =
   result = 2
@@ -605,7 +669,7 @@ proc initTopicTree*(capacity = 4096; shards = 0): TopicTree {.raises.} =
   while i < count:
     ss.add newShard(i)
     inc i
-  let t = TopicTreeRef(hub: hub, shards: ss, nextId: 0)
+  let t = TopicTreeRef(hub: hub, shards: ss, nextShard: 0)
   treeLoopStart(hub, ss)
   result = TopicTree(t: t)
 
@@ -632,10 +696,20 @@ proc attach(t: TopicTreeRef; ws: var WebSocket; topic: string): int {.
     passive, raises.} =
   ## A member with this connection's writer, in `topic`, and the shard that
   ## takes care of it from now on.
-  let id = atomicFetchAdd(t.nextId, 1, moRelaxed)
-  let m = Member(wr: ws.takeWriter(t, id), id: id, topics: @[topic],
+  ##
+  ## The id names the shard and the slot directly, so a send or a close finds
+  ## its member with one index and one compare; the generation makes an id
+  ## from a departed member that has come back as a new one not match. The slot
+  ## is taken here and not by the shard, because the id has to be known before
+  ## the `teJoin` that introduces the connection.
+  let shardIdx = atomicFetchAdd(t.nextShard, 1, moRelaxed) mod t.shards.len
+  let s = t.shards[shardIdx]
+  let slot = takeSlot(s)
+  let id = (atomicFetchAdd(s.nextGen, 1, moRelaxed) shl GenShift) or
+           (slot shl SlotShift) or shardIdx
+  let m = Member(wr: ws.takeWriter(t, id), id: id, slot: slot, topics: @[topic],
                  dirty: false, gen: 0, gone: false)
-  var p = Payload(kind: teJoin, shard: id mod t.shards.len, member: m, id: id,
+  var p = Payload(kind: teJoin, shard: shardIdx, member: m, id: id,
                   topic: topic)
   emit(t, p)
   result = id
@@ -645,15 +719,13 @@ proc addTopic*(tree: TopicTree; id: int; topic: string) {.passive, raises.} =
   ## the publishes that follow, so a `subscribe` then a `publish` cannot lose
   ## the connection in between.
   let t = treeOf(tree)
-  var p = Payload(kind: teAddTopic, shard: id mod t.shards.len, id: id,
-                  topic: topic)
+  var p = Payload(kind: teAddTopic, shard: shardOf(id), id: id, topic: topic)
   emit(t, p)
 
 proc dropTopic*(tree: TopicTree; id: int; topic: string) {.passive, raises.} =
   ## Takes member `id` out of `topic`, leaving the connection in the tree.
   let t = treeOf(tree)
-  var p = Payload(kind: teDropTopic, shard: id mod t.shards.len, id: id,
-                  topic: topic)
+  var p = Payload(kind: teDropTopic, shard: shardOf(id), id: id, topic: topic)
   emit(t, p)
 
 proc publish*(tree: TopicTree; topic: string; data: string) {.
@@ -704,10 +776,10 @@ proc unsubscribe*(tree: TopicTree; topic: string; ws: var WebSocket) {.
 
 method enqueueSend(t: TopicTreeRef; id: int; kind: MsgKind; text: string) {.
     passive, raises.} =
-  var p = Payload(kind: teSend, shard: id mod t.shards.len, id: id, msg: kind,
+  var p = Payload(kind: teSend, shard: shardOf(id), id: id, msg: kind,
                   text: text)
   emit(t, p)
 
 method enqueueClose(t: TopicTreeRef; id: int; code: int) {.passive, raises.} =
-  var p = Payload(kind: teClose, shard: id mod t.shards.len, id: id, code: code)
+  var p = Payload(kind: teClose, shard: shardOf(id), id: id, code: code)
   emit(t, p)
