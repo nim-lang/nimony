@@ -251,6 +251,21 @@ else:
 template atomicStatDec(x, diff: untyped) {.untyped.} = dec x, diff
 template atomicStatInc(x, diff: untyped) {.untyped.} = inc x, diff
 
+when defined(allocStats):
+  # MEASUREMENT ONLY (-d:allocStats): live bytes and live blocks per size
+  # class, process-wide (atomic, unlike the per-region `occ`). Answers "what is
+  # a connection made of" without a profiler.
+  const StatBuckets = 128
+    ## 64-byte steps up to 8 KB, then everything above in the last bucket:
+    ## exact enough to name the block a connection is made of.
+  var gStatBytes*: array[StatBuckets, int]
+  var gStatCount*: array[StatBuckets, int]
+
+  proc statBucket(n: int): int =
+    if n >= 8 * 1024: return StatBuckets - 1
+    result = n div 64
+
+
 const
   fsLookupTable: array[byte, int8] = [
     -1'i8, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
@@ -572,6 +587,19 @@ proc pageIndex(p: pointer): int {.inline.} =
 proc pageAddr(p: pointer): PChunk {.inline.} =
   result = cast[PChunk](cast[int](p) and not PageMask)
   #sysAssert(Contains(allocator.chunkStarts, pageIndex(result)))
+
+when defined(allocStats):
+  proc statAdd(p: pointer) {.inline.} =
+    let c = pageAddr(p)
+    let b = statBucket(c.size) and (StatBuckets - 1)
+    atomicStatInc(gStatBytes[b], c.size)
+    atomicStatInc(gStatCount[b], 1)
+
+  proc statDel(p: pointer) {.inline.} =
+    let c = pageAddr(p)
+    let b = statBucket(c.size) and (StatBuckets - 1)
+    atomicStatDec(gStatBytes[b], c.size)
+    atomicStatDec(gStatCount[b], 1)
 
 when usesRegionHandles:
   var
@@ -1177,6 +1205,8 @@ template rawAllocAux(aligned: untyped) {.untyped.} =
   when logAlloc: cprintf("var pointer_%p = alloc(%ld) # %p\n", result, requestedSize, addr a)
   when defined(heaptrack):
     heaptrack_malloc(result, requestedSize)
+  when defined(allocStats):
+    statAdd(result)
   # The USABLE size, not `requestedSize` — the same number `allocatedSize` will
   # report for this pointer.
   #
@@ -1212,6 +1242,8 @@ proc rawAlloc0(a: var MemRegion, requestedSize: int): pointer =
   if result != nil: zeroMem(result, requestedSize)
 
 proc rawDealloc(a: var MemRegion, p: pointer) =
+  when defined(allocStats):
+    statDel(p)
   when defined(nimTypeNames):
     inc(a.deallocCounter)
   when defined(heaptrack):

@@ -332,6 +332,10 @@ proc flushCancels(lane: int) =
   ## Submit the cancels still waiting for an SQE. A cancel must not be lost:
   ## its op is only completed once the kernel reports it, so an op whose cancel
   ## never reached the kernel (an idle recv) would park its caller for good.
+  ##
+  ## Called on every poll, and the list is almost always empty, so the empty
+  ## case leaves before touching the ring at all.
+  if gCancels[lane].len == 0: return
   var sent = false
   while gCancels[lane].len > 0:
     var sqe: nil ptr Sqe = nil

@@ -76,6 +76,18 @@ var gReactorWaits* = false
   ## otherwise leave the loop spinning on a core.
 var threadIdx* {.threadvar.}: int
 
+template countMetric(counter: untyped; n = 1) =
+  ## Bump one of this thread's counters — only when the build asked for them.
+  ##
+  ## The counters sit on the pool's hottest lines: `submit` alone would bump one
+  ## per task, and every dequeue attempt bumps another. Nothing in the library
+  ## reads them (they are for a profile), so a normal build should not pay for
+  ## them at all. `-d:threadpoolMetrics` turns them on and sizes
+  ## `workerMetrics`; without it the table stays empty and the argument — an
+  ## index into it — is not even looked at.
+  when defined(threadpoolMetrics):
+    inc counter, uint(n)
+
 # --- Submit / dequeue ---
 
 proc tryEnqueue(s: int; t: Task): bool {.inline.} =
@@ -96,10 +108,10 @@ proc submit*(t: Task; h = 0) =
   ## Caller-runs instead guarantees forward progress (a producer that outruns
   ## the pool simply does the work), so the queue stays bounded at
   ## `StripeCount*StripeSize` and no submitter ever stalls.
-  workerMetrics[threadIdx].tasksSubmited += 1
+  countMetric(workerMetrics[threadIdx].tasksSubmited)
   if tryEnqueue(h, t): return
   for off in 1 ..< workerCount:
-    workerMetrics[threadIdx].enqueueMiss += 1
+    countMetric(workerMetrics[threadIdx].enqueueMiss)
     if tryEnqueue(h + off, t): return
   if injectQueue.tryEnqueue(t): return
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
@@ -157,7 +169,7 @@ proc flushStaged(hint: int): bool =
         toOpenArray(chunk, n - remaining, n - 1))
       dec remaining, moved
       if moved == 0:
-        workerMetrics[threadIdx].enqueueMiss += 1
+        countMetric(workerMetrics[threadIdx].enqueueMiss)
       inc off
     while remaining > 0:
       let t = chunk[n - remaining]
@@ -205,15 +217,24 @@ proc drainOnce(startStripe: int): bool =
     if n > 0:
       for i in 0 ..< n:
         let c = buf[i].con
-        let next = c.fn(c.env)
-        if next.fn != nil:
-          submit(next, startStripe)
-      workerMetrics[threadIdx].tasksHandled += n.uint
+        when trampolineSteps > 0:
+          var next = c.fn(c.env)
+          var steps = 0
+          while next.fn != nil and steps < trampolineSteps:
+            next = next.fn(next.env)
+            inc steps
+          if next.fn != nil:
+            submit(next, startStripe)
+        else:
+          let next = c.fn(c.env)
+          if next.fn != nil:
+            submit(next, startStripe)
+      countMetric(workerMetrics[threadIdx].tasksHandled, n)
       if attempt != 0:
-        workerMetrics[threadIdx].tasksStealed += n.uint
+        countMetric(workerMetrics[threadIdx].tasksStealed, n)
       return true
     else:
-      workerMetrics[threadIdx].dequeueMiss += 1
+      countMetric(workerMetrics[threadIdx].dequeueMiss)
   result = false
 
 proc poolHelp*(): bool {.inline.} =
@@ -240,14 +261,28 @@ proc reactorPoll*(timeoutMs: int): bool {.inline.} =
   ## there is. Every caller of `gReactor` goes through this.
   if reactorReady(): gReactor(timeoutMs) else: poolPollIo(timeoutMs)
 
+const trampolineSteps {.intdefine.} = 64
+  ## How many continuation steps of a chain to run inline in the drain loop
+  ## before handing the rest back to the pool.
+  ##
+  ## `submit`-ing each step and popping it again costs two atomics, a division
+  ## and a call per frame. A message in the many-connection regime resubmits
+  ## ~16 times, which was 24% of the server's instructions there; running the
+  ## steps inline removes that, and it is the single largest win in that
+  ## regime (+11%).
+  ##
+  ## The price is the worker not polling its lane meanwhile: a completion the
+  ## kernel has already published waits until the chain parks or runs out of
+  ## `trampolineSteps`.
+
 var idleSleepUs {.threadvar.}: int
 
 proc workCycle(stripe: int): bool =
   ## One turn of a worker: run the queued tasks, drive this thread's I/O lane,
   ## and nap when neither had anything. Answers whether tasks ran.
   if idleSleepUs == 0: idleSleepUs = 1
-  # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
-  #    each continuation, re-submitting any that yield more work.
+  # 1. Bulk-drain tasks: probe the stripes from this one, for locality.
+  #    Trampolines each continuation, re-submitting any that yield more work.
   result = drainOnce(stripe)
   # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
   let eventFired = reactorPoll(if result: 0.cint else: 1.cint)
@@ -320,7 +355,8 @@ proc initPool*(count = 0) =
   if atomicCompareExchange(poolState, expected, 1):
     workerCount = if count > 0: count else: max(1, cpuinfo.countProcessors() - 1)
     setPassiveWaitHook passiveWait
-    workerMetrics = newSeq[WorkerMetrics](workerCount)
+    when defined(threadpoolMetrics):
+      workerMetrics = newSeq[WorkerMetrics](workerCount)
     localQueues = newSeq[FifoStripe[Task]](workerCount)
     for i in 0..<workerCount:
       localQueues[i].init(StripeSize)

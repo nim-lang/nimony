@@ -58,6 +58,11 @@ proc tryBulkEnqueue*[T: HasDefault](s: var FifoStripe[T]; items: openArray[T]): 
   releaseSys(s.lock)
 
 proc tryBulkDequeue*[T: HasDefault](s: var FifoStripe[T]; bulkSize: int; buf: var openArray[T]): int =
+  # The empty case is the common one — a worker probes every stripe on every
+  # cycle, and all but one are usually empty — so it is answered without the
+  # lock. The read is racy on purpose: a stale zero only means the task waits
+  # for the next cycle, and a stale non-zero takes the lock and finds nothing.
+  if s.count == 0: return 0
   acquireSys(s.lock)
   result = min(s.count, min(bulkSize, buf.len))
   if s.data.len > 0:
@@ -98,3 +103,50 @@ proc tryEnqueue*[T: HasDefault](s: var FifoStripe[T]; item: T; maxCapacity: int)
     s.tail = (s.tail + 1) and (s.data.len - 1)
     inc s.count
   releaseSys(s.lock)
+
+# --- LocalRing: a ring touched by one thread ---
+
+type
+  LocalRing*[T] = object
+    ## A bounded FIFO that **exactly one thread** touches, so it needs neither
+    ## a lock nor atomics: the same thread that pushes also pops.
+    ##
+    ## That is not a special case, it is the shape of a lane's own op queue: a
+    ## worker fills its submission ring from the continuations it runs and
+    ## drains it into the io_uring SQ in its own `poll`, both on its own thread
+    ## (see `ioLane`). The ring it replaces took a `SysLock` on every push and
+    ## every pop, and the submission path is one op per read and one per write.
+    ##
+    ## The single-thread rule is the whole contract: touching one instance from
+    ## two threads is a data race, not a slow path.
+    head: int
+      ## Oldest element.
+    count: int
+    data: seq[T]
+    mask: int
+
+proc tryEnqueue*[T: HasDefault](r: var LocalRing[T]; item: T;
+                               capacity: int): bool =
+  ## Push `item`; `false` when the ring is full. Capacity is fixed at the first
+  ## push (the ring starts empty, so no allocation is paid by a lane that never
+  ## submits an op) and never changes: a full ring is backpressure for the
+  ## caller, and reallocating would mean moving the elements of a ring that is
+  ## being filled.
+  if r.data.len == 0:
+    var cap = 1
+    while cap < capacity: cap = cap shl 1
+    r.data = newSeq[T](cap)
+    r.mask = cap - 1
+  if r.count == r.data.len: return false
+  r.data[(r.head + r.count) and r.mask] = item
+  inc r.count
+  result = true
+
+proc tryBulkDequeue*[T: HasDefault](r: var LocalRing[T]; bulkSize: int;
+                                    buf: var openArray[T]): int =
+  ## Take up to `bulkSize` items in FIFO order; 0 when the ring is empty.
+  result = min(min(r.count, bulkSize), buf.len)
+  for i in 0 ..< result:
+    buf[i] = r.data[r.head]
+    r.head = (r.head + 1) and r.mask
+  dec r.count, result

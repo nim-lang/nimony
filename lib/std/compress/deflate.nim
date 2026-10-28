@@ -487,8 +487,14 @@ type
     prev: seq[uint32]
       ## By offset mod `WSize`: the previous position with the same hash.
     toks: seq[uint32]  ## the block being built: literals, `len shl 16 or dist`
-    litFreq: array[286, int]
-    distFreq: array[30, int]
+    litFreq: seq[int]
+      ## Symbol frequencies of the block being built, and the same for
+      ## distances. On the heap and not inline: 316 `int`s is 2.5 KB, and this
+      ## object sits inline in every `Encoder`, which sits inline in every
+      ## `HttpConnection` — so an inline histogram made every HTTP connection
+      ## 2.5 KB bigger for a compressor that most connections never start.
+      ## Allocated once per stream (the sizes are fixed) and zeroed per block.
+    distFreq: seq[int]
     bitbuf: uint64
     bitcnt: int
     done: bool
@@ -507,8 +513,8 @@ proc initDeflater*(level = 6): Deflater =
                     lazyLen: Lazy[lv], buf: "", pos: 0, base: 0,
                     head: newSeq[uint32](if lv > 0: HashSize else: 0),
                     prev: newSeq[uint32](if lv > 0: WSize else: 0),
-                    toks: @[], litFreq: default(array[286, int]),
-                    distFreq: default(array[30, int]),
+                    toks: @[], litFreq: newSeq[int](286),
+                    distFreq: newSeq[int](30),
                     bitbuf: 0'u64, bitcnt: 0, done: false)
 
 # -------------------------------------------------------------- bits out --
