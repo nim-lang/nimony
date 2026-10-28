@@ -116,6 +116,7 @@ import std/threadpool
 import std/ticketlocks
 import std/times
 import std/tls
+import std/topictree
 import std/typetraits
 import std/unicode
 import std/uri

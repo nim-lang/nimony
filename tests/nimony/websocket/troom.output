@@ -2,6 +2,7 @@
 [0] b: mkText joined
 [1] a: mkText hello
 [1] b: mkText hello
+[1b] a ping: mkPong alive
 [2] a: mkText only you
 [2] a again: mkText after
 [2] b: mkText after

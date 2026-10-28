@@ -1,15 +1,16 @@
-# lib/std/websocket — rooms, over a real socket.
+# lib/std/topictree — a topic tree, over a real socket.
 #
-# A room is the fan-out: one connection's message goes to every member, and the
-# room is the one place that writes. A connection joins with `ws.subscribe` and
-# publishes with `ws.publish`, so the handler never leaves the pair API.
+# A tree is the fan-out: one connection's message goes to every member, and the
+# tree is the one place that writes. A connection joins with
+# `tree.subscribe(topic, ws)`; the tree writes to it from then on, and
+# `tree.publish` fans out.
 #
 # What is checked here is that a publish reaches every member (including the
 # sender), that `ws.send` reaches only its connection, that a ping is answered
-# through the room, and that a member leaving does not take the room with it.
+# through the tree, and that a member leaving does not take the tree with it.
 
-import std / [httpserver, websocket, socket, ioring, threadpool, atomics,
-              assertions, syncio, os]
+import std / [httpserver, websocket, topictree, socket, ioring, threadpool,
+              atomics, assertions, syncio, os]
 
 when defined(posix):
   proc cSignal(sig: cint; handler: pointer): pointer {.
@@ -30,6 +31,7 @@ var gPort = 0
 var listening = 0
 var done = 0
 var report = ""
+var tree: TopicTree
 
 # ------------------------------------------------------------ the server --
 
@@ -40,10 +42,10 @@ proc handle(c: sink HttpConnection) {.passive.} =
   if not c.next(): return
   try:
     var ws = upgradeWebSocket(c)
-    ws.subscribe("chat")
-    if c.query == "name=vip": ws.subscribe("chat/vip")
+    tree.subscribe("chat", ws)
+    if c.query == "name=vip": tree.subscribe("chat/vip", ws)
     # "Connected" is not "subscribed": the client has no way to know when the
-    # room has taken its subscription, so the handler says so. It also proves a
+    # tree has taken its subscription, so the handler says so. It also proves a
     # direct send goes out after the join.
     ws.send(mkText, "joined")
     try:
@@ -55,7 +57,7 @@ proc handle(c: sink HttpConnection) {.passive.} =
           if msg == "whoami":
             ws.send(mkText, "only you")
           else:
-            ws.publish("chat", msg)
+            tree.publish("chat", msg)
         of mkClose:
           break
         else:
@@ -93,11 +95,17 @@ proc body() {.passive, raises.} =
   next(a, "[1] a")
   next(b, "[1] b")
 
+  # 1b. A ping is answered by the tree — the connection gave its writer away,
+  #     so the pong is queued with the next turn — with the same bytes, and
+  #     the other member of the tree sees nothing of it.
+  a.send(mkPing, "alive")
+  next(a, "[1b] a ping")
+
   # 2. A direct send reaches only its connection: b's next message is the
   #    publish that follows, not "only you".
   a.send(mkText, "whoami")
   next(a, "[2] a")
-  a.publish("chat", "after")
+  tree.publish("chat", "after")
   next(a, "[2] a again")
   next(b, "[2] b")
 
@@ -105,16 +113,16 @@ proc body() {.passive, raises.} =
   #    a member that is in both the parent and the child gets the line once.
   var v = connectWebSocket("ws://127.0.0.1:" & $gPort & "?name=vip")
   next(v, "[3] v")
-  a.publish("chat", "all")
+  tree.publish("chat", "all")
   next(a, "[3] a")
   next(b, "[3] b")
   next(v, "[3] v")
 
   # 4. A publish to a child reaches only its subtree: b's next line is the
   #    publish that follows, not "vips".
-  a.publish("chat/vip", "vips")
+  tree.publish("chat/vip", "vips")
   next(v, "[4] v")
-  a.publish("chat", "after vip")
+  tree.publish("chat", "after vip")
   next(a, "[4] a")
   next(b, "[4] b")
   next(v, "[4] v again")
@@ -141,6 +149,10 @@ proc client() {.passive.} =
 proc main =
   ignoreSigPipe()
   initIoRing()
+  try:
+    tree = initTopicTree()
+  except ErrorCode as e:
+    assert false, "initTopicTree: " & $e
   submit(delay(serve()), 0)
   let start = monoNow()
   while atomicLoad(listening, moAcquire) == 0:
