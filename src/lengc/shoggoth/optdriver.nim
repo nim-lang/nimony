@@ -254,7 +254,8 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
         rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)
     if st.vectorized > 0:
       addVecIntrinsicDecls(result, "vec." & suffix)
-    addMemIntrinsicDecls(result, "mem." & suffix, st.memOps)
+    if MemsetOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemsetOp)
+    if MemcpyOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemcpyOp)
     result.closeTag()
   else:
     rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)

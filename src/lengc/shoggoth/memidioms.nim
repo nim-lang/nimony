@@ -10,7 +10,7 @@
 ## Replaces element-wise FILL loops with one `Memset` intrinsic and puts a
 ## `Memcpy` in front of element-wise COPY loops (nimony#2350). Both are
 ## `(instr …)` applications of declarations this pass adds to the module
-## (`addMemIntrinsicDecls`): an intrinsic has no body, so unlike a call to
+## (`addMemIntrinsicDecl`): an intrinsic has no body, so unlike a call to
 ## `c_memset` there is no definition DCE (which ran before us) could have
 ## dropped.
 ##
@@ -100,7 +100,7 @@ type
     locals: HashSet[SymId]           ## params and every `var` the body declares
     addrTaken: HashSet[SymId]        ## locals whose location escapes (`addr`/`haddr`)
     jumpedTo: HashSet[SymId]         ## labels some `jmp` names
-    writes: Table[SymId, int]        ## whole-symbol assignments, by target
+    writes: HashSet[SymId]           ## locals some whole-symbol assignment writes
     inits: Table[SymId, int]         ## a `var`'s initializer, by position
 
   MemSite = object
@@ -156,17 +156,14 @@ proc gather(f: var Facts; buf: TokenBuf; n: Cursor) =
     if l.kind == Symbol: f.jumpedTo.incl l.symId
   of AsgnS, KeepovfS:
     let lhs = n.childCursor
-    if lhs.kind == Symbol: f.writes.mgetOrPut(lhs.symId, 0) += 1
+    if lhs.kind == Symbol: f.writes.incl lhs.symId
   of VarS:
-    var c = n.childCursor
-    if c.kind == SymbolDef:
-      let sym = c.symId
-      f.locals.incl sym
-      skip c                                  # name
-      if c.hasMore: skip c                    # pragmas
-      if c.hasMore: skip c                    # type
-      if c.hasMore and c.kind != DotToken:
-        f.inits[sym] = cursorToPosition(buf, c)
+    var c = n
+    let decl = takeVarDecl(c)
+    if decl.name.kind == SymbolDef:
+      f.locals.incl decl.name.symId
+      if decl.value.kind != DotToken:
+        f.inits[decl.name.symId] = cursorToPosition(buf, decl.value)
   else:
     if n.exprKind in {AddrC, HaddrC}:
       let r = rootLocal(n.childCursor)
@@ -277,111 +274,97 @@ proc maxOfType(m: ptr MainModule; t: Cursor; v: var int64; depth = 0): bool =
 
 # ---- values ----------------------------------------------------------------
 
-proc constInt(s: MemScan; n: Cursor; v: var int64; depth = 0): bool =
-  ## Compile-time value of an integer expression, seeing through `conv`/`suf`
-  ## and through a local that is only ever written by its initializer.
-  result = false
-  if depth > 8: return
-  case n.kind
-  of IntLit:
-    v = intVal(n)
-    result = true
-  of UIntLit:
-    v = cast[int64](uintVal(n))
-    result = true
-  of CharLit:
-    v = int64(ord(charLit(n)))
-    result = true
-  of Symbol:
-    let sym = n.symId
-    if sym in s.facts.locals and sym notin s.facts.addrTaken and
-       s.facts.writes.getOrDefault(sym, 0) == 0 and s.facts.inits.hasKey(sym):
-      var init = cursorAt(s.buf[], s.facts.inits.getOrDefault(sym))
-      result = constInt(s, init, v, depth + 1)
-      endRead init
-  of TagLit:
-    case n.exprKind
-    of SufC, ParC:
-      result = constInt(s, n.childCursor, v, depth + 1)
-    of ConvC:
-      var c = n.childCursor
-      skip c                                  # the type
-      result = constInt(s, c, v, depth + 1)
-    of AddC, SubC:
-      var c = n.childCursor
-      skip c                                  # the type
-      var a = 0'i64
-      var b = 0'i64
-      if constInt(s, c, a, depth + 1):
-        skip c
-        if constInt(s, c, b, depth + 1):
-          if n.exprKind == AddC:
-            if not ((b > 0 and a > high(int64) - b) or (b < 0 and a < low(int64) - b)):
-              v = a + b
-              result = true
-          else:
-            if not ((b < 0 and a > high(int64) + b) or (b > 0 and a < low(int64) + b)):
-              v = a - b
-              result = true
-    else: discard
-  else: discard
-
-proc isZeroValue(n: Cursor; depth = 0): bool =
-  ## All-zero bits: `0`, `0.0` (not `-0.0`), `'\0'`, `false`, `nil`, and an
-  ## object constructor made of nothing else. An `oconstr` is TOTAL (it names
-  ## every field) and lengc renders it as a C designated initializer, so the
-  ## bytes it leaves unnamed — padding, the other members of a union — are not
-  ## promised anything a zero would break.
-  if depth > 32: return false
-  case n.kind
-  of IntLit: intVal(n) == 0
-  of UIntLit: uintVal(n) == 0'u64
-  of CharLit: charLit(n) == '\0'
-  of FloatLit: cast[uint64](floatVal(n)) == 0'u64
-  of TagLit:
-    case n.exprKind
-    of FalseC, NilC: true
-    of SufC, ParC: isZeroValue(n.childCursor, depth + 1)
-    of ConvC, CastC:
-      var c = n.childCursor
-      skip c                                  # the type
-      isZeroValue(c, depth + 1)
-    of OconstrC:
-      var c = n.childCursor
-      skip c                                  # the type
-      while c.hasMore:
-        if c.kind == TagLit and c.substructureKind == KvU:
-          var kv = c.childCursor
-          skip kv                             # the field
-          if not kv.hasMore or not isZeroValue(kv, depth + 1): return false
-        elif not isZeroValue(c, depth + 1):   # an inherited part: `(oconstr Base …)`
-          return false
-        skip c
-      true
-    else: false
-  else: false
-
-proc byteValue(s: MemScan; v: Cursor; elemType: Cursor; b: var int64): bool =
-  ## The byte `memset` must write to reproduce storing `v` in every element.
-  if isZeroValue(v):
-    b = 0
-    result = true
-  elif elemByteSize(s.m, elemType) == 1:
-    if v.kind == TagLit and v.exprKind == TrueC:
-      b = 1
-      result = true
-    elif constInt(s, v, b):
-      b = b and 0xFF
-      result = true
-    else:
-      result = false
+proc truncateTo(m: ptr MainModule; t: Cursor; bits: var uint64; depth = 0): bool =
+  ## What a `conv`/`cast` to the type `t` leaves of `bits`; false unless `t`
+  ## is an integer type or an enum. The target's word, `(i -1)`, keeps all 64
+  ## bits: the store that finally consumes the value masks it to its own width.
+  let b = navigateToObjectBody(m[], t)
+  if b.kind == TagLit and b.typeKind == EnumT and depth < 4:
+    result = truncateTo(m, b.childCursor, bits, depth + 1)
   else:
-    result = false
-
-# ---- loop invariance -------------------------------------------------------
+    result = b.kind == TagLit and b.typeKind in {IT, UT, CT} and
+      b.childCursor.kind == IntLit
+    let n = if result: intVal(b.childCursor) else: 0
+    if n in 1 .. 63:
+      let mask = (1'u64 shl n) - 1'u64
+      bits = bits and mask
+      if b.typeKind == IT and (bits shr (n - 1)) != 0'u64: bits = bits or not mask
 
 proc safeLocal(s: MemScan; sym: SymId): bool {.inline.} =
   sym in s.facts.locals and sym notin s.facts.addrTaken
+
+proc constBits(s: MemScan; n: Cursor; bits: var uint64; depth = 0): bool =
+  ## The bit pattern of a constant: a literal, `true`, `false` or `nil`, seen
+  ## through `suf`/`par`, through a `conv`/`cast` to an integer type and
+  ## through a local only ever written by its initializer (copyprop leaves the
+  ## `for` loop's bound temp alone). A
+  ## float only as `0.0` (not `-0.0`): the width of any other is the
+  ## context's. An object constructor only when it is made of nothing but
+  ## zeros: an `oconstr` is TOTAL (it names every field) and lengc renders it
+  ## as a C designated initializer, so the bytes it leaves unnamed — padding,
+  ## the other members of a union — are not promised anything a zero would
+  ## break.
+  result = false
+  if depth <= 32:
+    case n.kind
+    of IntLit:
+      bits = cast[uint64](intVal(n))
+      result = true
+    of UIntLit:
+      bits = uintVal(n)
+      result = true
+    of CharLit:
+      bits = uint64(ord(charLit(n)))
+      result = true
+    of FloatLit:
+      bits = cast[uint64](floatVal(n))
+      result = bits == 0'u64
+    of Symbol:
+      let sym = n.symId
+      if s.safeLocal(sym) and sym notin s.facts.writes and s.facts.inits.hasKey(sym):
+        var init = cursorAt(s.buf[], s.facts.inits.getOrDefault(sym))
+        result = constBits(s, init, bits, depth + 1)
+        endRead init
+    of TagLit:
+      case n.exprKind
+      of FalseC, NilC:
+        bits = 0
+        result = true
+      of TrueC:
+        bits = 1
+        result = true
+      of SufC, ParC:
+        result = constBits(s, n.childCursor, bits, depth + 1)
+      of ConvC, CastC:
+        var c = n.childCursor
+        let target = c
+        skip c
+        result = constBits(s, c, bits, depth + 1) and
+          (bits == 0'u64 or truncateTo(s.m, target, bits))
+      of OconstrC:
+        var c = n.childCursor
+        skip c                                # the type
+        result = true
+        while result and c.hasMore:
+          var v = c                           # an inherited part: `(oconstr Base …)`
+          if c.kind == TagLit and c.substructureKind == KvU:
+            v = c.childCursor
+            skip v                            # the field
+          result = v.hasMore and constBits(s, v, bits, depth + 1) and bits == 0'u64
+          skip c
+        bits = 0
+      else: discard
+    else: discard
+
+proc byteValue(s: MemScan; v: Cursor; elemType: Cursor; b: var int64): bool =
+  ## The byte `memset` must write to reproduce storing `v` in every element:
+  ## any constant for a one-byte element, all-zero bits for a wider one.
+  var bits = 0'u64
+  result = constBits(s, v, bits) and
+    (bits == 0'u64 or elemByteSize(s.m, elemType) == 1)
+  b = int64(bits and 0xFF'u64)
+
+# ---- loop invariance -------------------------------------------------------
 
 proc invariantValue(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool
 proc invariantLoc(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool =
@@ -393,15 +376,15 @@ proc invariantLoc(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool =
     of DotC, ParC: invariantLoc(s, n.childCursor, iv, stored)
     of AtC:
       var c = n.childCursor
-      if not invariantLoc(s, c, iv, stored): return false
+      let base = c
       skip c
-      invariantValue(s, c, iv, stored)
+      invariantLoc(s, base, iv, stored) and invariantValue(s, c, iv, stored)
     of DerefC: invariantValue(s, n.childCursor, iv, stored)
     of PatC:
       var c = n.childCursor
-      if not invariantValue(s, c, iv, stored): return false
+      let base = c
       skip c
-      invariantValue(s, c, iv, stored)
+      invariantValue(s, base, iv, stored) and invariantValue(s, c, iv, stored)
     else: false
   else: false
 
@@ -429,41 +412,39 @@ proc invariantValue(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool =
        NegC, BitnotC:
       var c = n.childCursor
       skip c                                  # the type
-      while c.hasMore:
-        if not invariantValue(s, c, iv, stored): return false
+      var res = true
+      while res and c.hasMore:
+        res = invariantValue(s, c, iv, stored)
         skip c
-      true
+      res
     of AddrC, HaddrC: invariantLoc(s, n.childCursor, iv, stored)
     of DotC, AtC, DerefC, PatC:
       # A LOAD. Its address must not move, and the stores must not be able to
       # write what it reads — unless it reads a local's own storage, which no
       # store through a pointer reaches.
-      if not invariantLoc(s, n, iv, stored): return false
       let r = rootLocal(n)
-      if r != SymId(0) and s.safeLocal(r) and n.exprKind in {DotC, AtC}: true
-      else: not mayClobber(stored, leavesOf(s.m, getType(s.m[], n)))
+      invariantLoc(s, n, iv, stored) and
+        ((r != SymId(0) and s.safeLocal(r) and n.exprKind in {DotC, AtC}) or
+         not mayClobber(stored, leavesOf(s.m, getType(s.m[], n))))
     else: false
   else: false
 
 # ---- the loop grammar ------------------------------------------------------
 
-proc flatten(s: MemScan; first: Cursor; dest: var seq[Cursor]): bool =
-  ## The statements of a sibling run, seen through `(stmts …)`/`(scope …)` and
-  ## past `.` holes and labels nobody jumps to. A label somebody DOES jump to
-  ## is control flow we do not model: no match.
-  result = true
-  var it = first
-  while result and it.hasMore:
-    if it.kind == DotToken:
-      discard
-    elif it.kind == TagLit and it.stmtKind in {StmtsS, ScopeS}:
-      result = flatten(s, it.childCursor, dest)
-    elif it.kind == TagLit and it.stmtKind == LabS:
-      let l = it.childCursor
-      result = l.kind == SymbolDef and l.symId notin s.facts.jumpedTo
-    else:
-      dest.add it
-    skip it
+type
+  LoopMatch = object
+    ## A matched loop, as cursors into the body: valid while the scan stands
+    ## on it, which is all the build below needs.
+    cond, hi, incTyp, one, lhs, value, elemType: Cursor
+    iv, exitLab: SymId
+    isLe: bool
+
+  StmtRole = enum
+    ## What the next statement of a sibling run must be.
+    srIf                             ## `(if (elif COND BODY) (else EXIT))`
+    srStore                          ## `(asgn (at B IV) V)` / `(asgn (pat P IV) V)`
+    srIncrement                      ## `(asgn IV (add T IV 1))`
+    srExit                           ## `(jmp L)`, `L` the label after the loop
 
 proc isOne(n: Cursor): bool =
   case n.kind
@@ -519,62 +500,88 @@ proc matchStore(n: Cursor; iv: SymId; lhs, value: var Cursor): bool =
         skip c
         result = not c.hasMore
 
-proc matchExit(s: MemScan; elseNode: Cursor; exitLab: SymId): bool =
-  ## `(else …(jmp L)…)` where `L` is the label right after the loop.
-  var stmts: seq[Cursor] = @[]
-  result = flatten(s, elseNode.childCursor, stmts) and stmts.len == 1 and
-    stmts[0].kind == TagLit and stmts[0].stmtKind == JmpS and
-    stmts[0].childCursor.kind == Symbol and stmts[0].childCursor.symId == exitLab
+proc matchCond(s: MemScan; n: Cursor; lm: var LoopMatch): bool =
+  ## `(lt IV HI)` / `(le IV HI)`, `IV` a local whose address is never taken.
+  result = false
+  if n.kind == TagLit and n.exprKind in {LtC, LeC}:
+    var c = n.childCursor
+    if c.kind == Symbol and s.safeLocal(c.symId):
+      lm.cond = n
+      lm.isLe = n.exprKind == LeC
+      lm.iv = c.symId
+      skip c
+      lm.hi = c
+      skip c
+      result = not c.hasMore
 
-type
-  LoopMatch = object
-    ## A matched loop, as cursors into the body: valid while the scan stands
-    ## on it, which is all the build below needs.
-    cond, hi, incTyp, one, lhs, value, elemType: Cursor
-    iv: SymId
-    isLe: bool
+proc isDeadLabel(s: MemScan; n: Cursor): bool =
+  ## A `(lab L)` nobody jumps to: inlining leaves them behind.
+  result = false
+  if n.kind == TagLit and n.stmtKind == LabS:
+    let l = n.childCursor
+    result = l.kind == SymbolDef and l.symId notin s.facts.jumpedTo
 
-proc matchLoop(s: var MemScan; w: Cursor; exitLab: SymId; lm: var LoopMatch): bool =
+proc matchStmts(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
+                lm: var LoopMatch): bool
+
+proc matchIf(s: var MemScan; n: Cursor; lm: var LoopMatch): bool =
+  ## `(if (elif COND STORE INCREMENT) (else EXIT))`.
+  result = false
+  if n.kind == TagLit and n.stmtKind == IfS:
+    let elifNode = n.childCursor
+    var arm = elifNode
+    if arm.substructureKind == ElifU:
+      skip arm
+      if arm.hasMore and arm.substructureKind == ElseU:
+        let elseNode = arm
+        skip arm
+        var e = elifNode.childCursor
+        if not arm.hasMore and matchCond(s, e, lm):
+          skip e
+          result = matchStmts(s, e, [srStore, srIncrement], lm) and
+            matchStmts(s, elseNode.childCursor, [srExit], lm)
+
+proc matchRole(s: var MemScan; n: Cursor; role: StmtRole; lm: var LoopMatch): bool =
+  case role
+  of srIf: matchIf(s, n, lm)
+  of srStore: matchStore(n, lm.iv, lm.lhs, lm.value)
+  of srIncrement: matchIncrement(n, lm.iv, lm.incTyp, lm.one)
+  of srExit:
+    n.kind == TagLit and n.stmtKind == JmpS and
+      n.childCursor.kind == Symbol and n.childCursor.symId == lm.exitLab
+
+proc matchRun(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
+              next: var int; lm: var LoopMatch): bool =
+  ## Match the statements of the sibling run starting at `first` against
+  ## `roles[next..]`, seen through `(stmts …)`/`(scope …)` and past `.` holes
+  ## and labels nobody jumps to. A label somebody DOES jump to is control flow
+  ## we do not model: no match.
+  result = true
+  var it = first
+  while result and it.hasMore:
+    if it.kind == TagLit and it.stmtKind in {StmtsS, ScopeS}:
+      result = matchRun(s, it.childCursor, roles, next, lm)
+    elif it.kind != DotToken and not isDeadLabel(s, it):
+      result = next < roles.len and matchRole(s, it, roles[next], lm)
+      inc next
+    skip it
+
+proc matchStmts(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
+                lm: var LoopMatch): bool =
+  ## The sibling run starting at `first` is exactly `roles`, in order.
+  var next = 0
+  result = matchRun(s, first, roles, next, lm) and next == roles.len
+
+proc matchLoop(s: var MemScan; w: Cursor; lm: var LoopMatch): bool =
   ## The loop grammar of the module comment, up to the store: everything a
   ## fill and a copy have in common.
-  result = false
   var c = w.childCursor
-  if not (c.kind == TagLit and c.exprKind == TrueC): return
-  skip c
-  var outer: seq[Cursor] = @[]
-  if not flatten(s, c, outer) or outer.len != 1: return
-  let ifNode = outer[0]
-  if not (ifNode.kind == TagLit and ifNode.stmtKind == IfS): return
-  var arm = ifNode.childCursor
-  if arm.substructureKind != ElifU: return
-  let elifNode = arm
-  skip arm
-  if not (arm.hasMore and arm.substructureKind == ElseU): return
-  let elseNode = arm
-  skip arm
-  if arm.hasMore: return
-  if not matchExit(s, elseNode, exitLab): return
-  # the condition: (lt IV HI) / (le IV HI)
-  var e = elifNode.childCursor
-  lm.cond = e
-  if not (lm.cond.kind == TagLit and lm.cond.exprKind in {LtC, LeC}): return
-  lm.isLe = lm.cond.exprKind == LeC
-  var cc = lm.cond.childCursor
-  if cc.kind != Symbol: return
-  lm.iv = cc.symId
-  if not s.safeLocal(lm.iv): return
-  skip cc
-  lm.hi = cc
-  skip cc
-  if cc.hasMore: return
-  # the body: STORE then INCREMENT
-  skip e
-  var body: seq[Cursor] = @[]
-  if not flatten(s, e, body) or body.len != 2: return
-  if not matchStore(body[0], lm.iv, lm.lhs, lm.value): return
-  if not matchIncrement(body[1], lm.iv, lm.incTyp, lm.one): return
-  lm.elemType = getNominalType(s.m[], lm.lhs)
-  result = true
+  result = c.kind == TagLit and c.exprKind == TrueC
+  if result:
+    skip c
+    result = matchStmts(s, c, [srIf], lm)
+  if result:
+    lm.elemType = getNominalType(s.m[], lm.lhs)
 
 proc baseInvariant(s: MemScan; elem: Cursor; iv: SymId; stored: Leaves): bool =
   ## The array (`at`) or pointer (`pat`) an element access indexes is the same
@@ -588,10 +595,10 @@ proc boundOk(s: MemScan; lm: LoopMatch; stored: Leaves): bool =
   ## type's maximum never becomes false, and a `memset` must not make it.
   result = invariantValue(s, lm.hi, lm.iv, stored)
   if result and lm.isLe:
-    var hv = 0'i64
+    var hv = 0'u64
     var maxv = 0'i64
-    result = constInt(s, lm.hi, hv) and maxOfType(s.m, lm.incTyp, maxv) and
-      hv < maxv
+    result = constBits(s, lm.hi, hv) and maxOfType(s.m, lm.incTyp, maxv) and
+      cast[int64](hv) < maxv
 
 proc localArray(s: MemScan; elem: Cursor): SymId =
   ## The local an `(at …)` element lives in, when its address is never taken.
@@ -668,16 +675,14 @@ proc emitFinalIv(b: var TokenBuf; lm: LoopMatch) =
 
 proc memIntrinsicName(op: IntrinsicOp; suffix: string): string =
   ## The module-local declaration an `(instr …)` this pass emits names; see
-  ## `addMemIntrinsicDecls`.
+  ## `addMemIntrinsicDecl`.
   (if op == MemcpyOp: "memcpy." else: "memset.") & suffix
 
-proc emitMemStmt(s: var MemScan; b: var TokenBuf; lm: LoopMatch; isCopy: bool;
+proc emitMemStmt(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
                  byteVal: int64) =
   ## `(instr memset (addr DST) BYTE N)` / `(instr memcpy (addr DST) (addr SRC) N)`.
-  let op = if isCopy: MemcpyOp else: MemsetOp
-  s.used.incl op
   b.openTag TagId(InstrS)
-  b.addSymUse memIntrinsicName(op, s.suffix)
+  b.addSymUse name
   emitAddr(b, lm.lhs)
   if isCopy: emitAddr(b, lm.value)
   else: b.addIntLit byteVal
@@ -706,9 +711,10 @@ proc emitEndsBefore(b: var TokenBuf; lm: LoopMatch; first, second: Cursor) =
   emitAddrWord(b, second)
   b.closeTag()
 
-proc emitReplacement(s: var MemScan; lm: LoopMatch; isCopy: bool; byteVal: int64;
-                     guardDisjoint: bool): int =
-  ## The `(if …)` that does the loop's work in one call:
+proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
+                     byteVal: int64; guardDisjoint: bool) =
+  ## The `(if …)` that does the loop's work in one call to the intrinsic
+  ## `name`:
   ##
   ##   (if (elif COND (stmts MEMSTMT (asgn IV FINAL))))
   ##
@@ -717,50 +723,47 @@ proc emitReplacement(s: var MemScan; lm: LoopMatch; isCopy: bool; byteVal: int64
   ## finds `IV` already at its final value and exits at once, otherwise it
   ## runs as it always did. Leaving it in place rather than copying it into
   ## an `else` keeps every label in it defined exactly once.
-  result = s.scratch.len
-  let b = addr s.scratch
-  b[].openTag TagId(IfS)
-  b[].openTag TagId(ElifU)
+  b.openTag TagId(IfS)
+  b.openTag TagId(ElifU)
   if guardDisjoint:
-    b[].openTag TagId(AndC)
-    b[].addSubtree lm.cond
-    b[].openTag TagId(OrC)
-    emitEndsBefore(b[], lm, lm.lhs, lm.value)
-    emitEndsBefore(b[], lm, lm.value, lm.lhs)
-    b[].closeTag()
-    b[].closeTag()
+    b.openTag TagId(AndC)
+    b.addSubtree lm.cond
+    b.openTag TagId(OrC)
+    emitEndsBefore(b, lm, lm.lhs, lm.value)
+    emitEndsBefore(b, lm, lm.value, lm.lhs)
+    b.closeTag()
+    b.closeTag()
   else:
-    b[].addSubtree lm.cond
-  b[].openTag TagId(StmtsS)
-  emitMemStmt(s, b[], lm, isCopy, byteVal)
-  emitFinalIv(b[], lm)
-  b[].closeTag()
-  b[].closeTag()
-  b[].closeTag()
+    b.addSubtree lm.cond
+  b.openTag TagId(StmtsS)
+  emitMemStmt(b, lm, name, isCopy, byteVal)
+  emitFinalIv(b, lm)
+  b.closeTag()
+  b.closeTag()
+  b.closeTag()
 
 proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
   ## Match the loop `w` (its exit label `exitLab` follows it) and, when it is a
-  ## fill or a copy, build its replacement.
-  var lm = LoopMatch()
-  if not matchLoop(s, w, exitLab, lm): return
-  let stored = leavesOf(s.m, lm.elemType)
-  if not baseInvariant(s, lm.lhs, lm.iv, stored) or not boundOk(s, lm, stored):
-    return
-  let v = lm.value
-  if isElemAt(v, lm.iv):
-    # a copy: `D[IV] = S[IV]`. The assignment says the element types agree.
-    if not baseInvariant(s, v, lm.iv, stored): return
-    if staticallyDisjoint(s, lm.lhs, v):
-      let start = emitReplacement(s, lm, isCopy = true, 0, guardDisjoint = false)
-      s.sites.add MemSite(pos: s.posOf(w), start: start, insert: false)
-    else:
-      let start = emitReplacement(s, lm, isCopy = true, 0, guardDisjoint = true)
-      s.sites.add MemSite(pos: s.posOf(w), start: start, insert: true)
-  else:
+  ## fill or a copy, build its replacement. A copy is `D[IV] = S[IV]` (the
+  ## assignment says the element types agree); unless its two ranges are
+  ## disjoint by construction, it becomes a guarded fast path IN FRONT of the
+  ## loop.
+  var lm = LoopMatch(exitLab: exitLab)
+  if matchLoop(s, w, lm):
+    let stored = leavesOf(s.m, lm.elemType)
+    let isCopy = isElemAt(lm.value, lm.iv)
     var byteVal = 0'i64
-    if not byteValue(s, v, lm.elemType, byteVal): return
-    let start = emitReplacement(s, lm, isCopy = false, byteVal, guardDisjoint = false)
-    s.sites.add MemSite(pos: s.posOf(w), start: start, insert: false)
+    let valueOk =
+      if isCopy: baseInvariant(s, lm.value, lm.iv, stored)
+      else: byteValue(s, lm.value, lm.elemType, byteVal)
+    if valueOk and baseInvariant(s, lm.lhs, lm.iv, stored) and boundOk(s, lm, stored):
+      let guarded = isCopy and not staticallyDisjoint(s, lm.lhs, lm.value)
+      let op = if isCopy: MemcpyOp else: MemsetOp
+      s.used.incl op
+      let start = s.scratch.len
+      emitReplacement(s.scratch, lm, memIntrinsicName(op, s.suffix), isCopy,
+                      byteVal, guarded)
+      s.sites.add MemSite(pos: s.posOf(w), start: start, insert: guarded)
 
 # ---- adjacent field stores ------------------------------------------------
 #
@@ -800,13 +803,12 @@ proc hasLayoutPragma(pragmas: Cursor): bool =
   ## Pragmas that move fields away from C's natural layout, or that hand the
   ## layout to a C header we cannot see.
   result = false
-  if pragmas.kind != TagLit: return
-  var p = pragmas.childCursor
-  while p.hasMore:
-    if p.kind == TagLit and p.pragmaKind in {PackedP, AlignP, ImportcP,
-                                               ImportcppP, NodeclP, BitsP}:
-      return true
-    skip p
+  if pragmas.kind == TagLit:
+    var p = pragmas.childCursor
+    while not result and p.hasMore:
+      result = p.kind == TagLit and p.pragmaKind in {PackedP, AlignP, ImportcP,
+                                                      ImportcppP, NodeclP, BitsP}
+      skip p
 
 proc resolveTypeDecl(s: MemScan; t: Cursor; body: var Cursor): bool =
   ## Follow named types to their body; false for a declaration whose layout
@@ -888,20 +890,7 @@ proc sizeAlignOf(s: MemScan; t: Cursor; size, align: var int; depth = 0): bool =
 
 proc storeConst(s: MemScan; v: Cursor; size: int; bits: var uint64): bool =
   ## The bit pattern a constant store writes, masked to `size` bytes.
-  var iv = 0'i64
-  if isZeroValue(v):
-    bits = 0
-    result = true
-  elif v.kind == TagLit and v.exprKind == TrueC:
-    bits = 1
-    result = true
-  elif v.kind == FloatLit:
-    result = false                         # its width is the context's
-  elif constInt(s, v, iv):
-    bits = cast[uint64](iv)
-    result = true
-  else:
-    result = false
+  result = constBits(s, v, bits)
   if result and size < 8:
     bits = bits and ((1'u64 shl (size * 8)) - 1'u64)
 
@@ -915,18 +904,16 @@ proc matchFieldStore(s: MemScan; n: Cursor; base: var Cursor; fld: var SymId;
       var d = c.childCursor
       base = d
       skip d
-      if d.kind != Symbol: return
-      fld = d.symId
-      skip d
-      if d.hasMore:                        # an inheritance depth must be 0
-        if not (d.kind == IntLit and intVal(d) == 0): return
+      if d.kind == Symbol:
+        fld = d.symId
         skip d
-      if d.hasMore: return
-      skip c
-      if c.hasMore:
-        value = c
+        if d.hasMore and d.kind == IntLit and intVal(d) == 0:
+          skip d                           # an inheritance depth must be 0
         skip c
-        result = not c.hasMore
+        if not d.hasMore and c.hasMore:
+          value = c
+          skip c
+          result = not c.hasMore
 
 proc baseMayTakeAddr(s: MemScan; base: Cursor): bool =
   ## Taking `&B.f` must not demote a local that could live in registers: the
@@ -935,27 +922,21 @@ proc baseMayTakeAddr(s: MemScan; base: Cursor): bool =
   let r = rootLocal(base)
   result = r == SymId(0) or r notin s.facts.locals or r in s.facts.addrTaken
 
-proc emitMerged(s: var MemScan; e: StoreEntry; width: int; value: uint64): int =
+proc emitMerged(b: var TokenBuf; e: StoreEntry; width: int; value: uint64) =
   ## `(asgn (deref (cast (ptr (u W)) (addr (dot B f)))) VALUE)`.
-  result = s.scratch.len
-  let b = addr s.scratch
-  b[].openTag TagId(AsgnS)
-  b[].openTag TagId(DerefC)
-  b[].openTag TagId(CastC)
-  b[].openTag TagId(PtrT)
-  b[].openTag TagId(UT)
-  b[].addIntLit width * 8
-  b[].closeTag()
-  b[].closeTag()
-  emitAddr(b[], e.lhs)
-  b[].closeTag()
-  b[].closeTag()
-  b[].addUIntLit value
-  b[].closeTag()
-
-proc emitHole(s: var MemScan): int =
-  result = s.scratch.len
-  s.scratch.addDotToken()
+  b.openTag TagId(AsgnS)
+  b.openTag TagId(DerefC)
+  b.openTag TagId(CastC)
+  b.openTag TagId(PtrT)
+  b.openTag TagId(UT)
+  b.addIntLit width * 8
+  b.closeTag()
+  b.closeTag()
+  emitAddr(b, e.lhs)
+  b.closeTag()
+  b.closeTag()
+  b.addUIntLit value
+  b.closeTag()
 
 proc mergeRun(s: var MemScan; base: Cursor; run: seq[StoreEntry];
               layout: seq[FieldSlot]; structSize: int) =
@@ -1005,18 +986,19 @@ proc mergeRun(s: var MemScan; base: Cursor; run: seq[StoreEntry];
       var first = members[0]
       for m in members:
         if run[m].pos < run[first].pos: first = m
-      let start = emitMerged(s, e, width, value)
+      let start = s.scratch.len
+      emitMerged(s.scratch, e, width, value)
       s.sites.add MemSite(pos: run[first].pos, start: start, insert: false)
       for m in members:
         merged[m] = true
         if m != first:
-          s.sites.add MemSite(pos: run[m].pos, start: emitHole(s), insert: false)
+          s.sites.add MemSite(pos: run[m].pos, start: s.scratch.len, insert: false)
+          s.scratch.addDotToken()             # the store goes; a hole is no statement
       break
 
 proc storesField(run: seq[StoreEntry]; fld: SymId): bool =
   result = false
-  for e in run:
-    if e.fld == fld: return true
+  for e in run: result = result or e.fld == fld
 
 proc scanStoreRuns(s: var MemScan; list: Cursor) =
   ## Runs of adjacent constant stores to fields of one object, in one list.
@@ -1111,45 +1093,43 @@ proc scan(s: var MemScan; n: Cursor) =
         scan(s, it)
         skip it
 
-proc addMemIntrinsicDecls*(dest: var TokenBuf; suffix: string;
-                           used: set[IntrinsicOp]) =
-  ## The `{.intrinsic.}` declarations the emitted `(instr …)` applications name,
-  ## appended once per module, like the vectorizer's: declaration-only (body
-  ## `.`), so there is nothing for DCE to keep alive and nothing a back end
-  ## emits for them. The pragma string is what selects the row.
-  for op in [MemsetOp, MemcpyOp]:
-    if op notin used: continue
-    let name = memIntrinsicName(op, suffix)
-    dest.openTag TagId(ProcS)
-    dest.addSymDef name
-    dest.openTag TagId(ParamsT)
-    for i in 0 ..< 3:
-      dest.openTag TagId(ParamU)
-      dest.addSymDef "a" & $i & "." & name
-      dest.addDotToken()
-      if i == 0 or (i == 1 and op == MemcpyOp):
-        dest.openTag TagId(PtrT)              # dest / src
-        emitIntType(dest, UT)
-        dest.closeTag()
-      else:
-        emitIntType(dest, IT)                 # the byte / the size
-      dest.closeTag()                         # param
-    dest.closeTag()                           # params
-    dest.addDotToken()                        # void result
-    dest.openTag TagId(PragmasU)
-    dest.openTag TagId(IntrinsicP)
-    dest.addStrLit IntrinsicNames[op]
-    dest.closeTag()
-    dest.closeTag()                           # pragmas
-    dest.addDotToken()                        # no body
-    dest.closeTag()                           # proc
+proc addMemIntrinsicDecl*(dest: var TokenBuf; suffix: string; op: IntrinsicOp) =
+  ## The `{.intrinsic.}` declaration the emitted `(instr …)` applications of
+  ## `op` name, appended once per module, like the vectorizer's:
+  ## declaration-only (body `.`), so there is nothing for DCE to keep alive and
+  ## nothing a back end emits for it. The pragma string is what selects the
+  ## row.
+  let name = memIntrinsicName(op, suffix)
+  dest.openTag TagId(ProcS)
+  dest.addSymDef name
+  dest.openTag TagId(ParamsT)
+  for i in 0 ..< 3:
+    dest.openTag TagId(ParamU)
+    dest.addSymDef "a" & $i & "." & name
+    dest.addDotToken()
+    if i == 0 or (i == 1 and op == MemcpyOp):
+      dest.openTag TagId(PtrT)                # dest / src
+      emitIntType(dest, UT)
+      dest.closeTag()
+    else:
+      emitIntType(dest, IT)                   # the byte / the size
+    dest.closeTag()                           # param
+  dest.closeTag()                             # params
+  dest.addDotToken()                          # void result
+  dest.openTag TagId(PragmasU)
+  dest.openTag TagId(IntrinsicP)
+  dest.addStrLit IntrinsicNames[op]
+  dest.closeTag()
+  dest.closeTag()                             # pragmas
+  dest.addDotToken()                          # no body
+  dest.closeTag()                             # proc
 
 proc runMemIdioms*(buf: var TokenBuf; m: ptr MainModule; params: Cursor;
                    opts: MemOpts; suffix: string;
                    used: var set[IntrinsicOp]): int =
   ## Replace every fill loop in the body with a `Memset` and put a `Memcpy` in
   ## front of every copy loop; returns how many. `used` collects the rows the
-  ## module then needs declarations for (`addMemIntrinsicDecls`).
+  ## module then needs declarations for (`addMemIntrinsicDecl`).
   ## `m` must have the proc's scope open with its params registered.
   result = 0
   if m == nil: return
