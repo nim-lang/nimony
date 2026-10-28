@@ -1169,8 +1169,8 @@ func genBytecode*(a: Dfa; res: var Regex) =
     if rule != 0:
       # Remember this state only if a transition can leave an accepting
       # path. Otherwise a failed test returns this state's rule directly.
-      for dest in allDests(a, src):
-        if getRule(a, dest) != rule:
+      for edge in a.trans[src]:
+        if getRule(a, int(edge.dest)) != rule:
           gen res, opcAccept, rule
           break
     for dest in allDests(a, src):
@@ -1251,12 +1251,14 @@ proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
 # Execution
 # ---------------------------------------------------------------------------
 
-func backrefMatches(s: string; sp: Natural; c: Capture): bool =
+func backrefMatches(s: string; sp: Natural; c: Capture): bool
+    {.requires: c.last < s.len.} =
   ## Does the text at `sp` repeat what `c` captured?
   var i = c.first
   var k = sp
   while true:
     if i > c.last: return true
+    {.assert: i < s.len.}
     if k >= s.len or s[k] != s[i]: return false
     inc k
     inc i
@@ -1339,9 +1341,13 @@ func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]
       else:
         return 0
     of opcBackref:
-      if arg < caps.len and backrefMatches(s, sp, caps[arg]):
-        pc = int(code[pc+1].arg)
-        inc sp, caps[arg].last - caps[arg].first + 1
+      if arg < caps.len:
+        let cap = caps[arg]
+        if cap.last < s.len and backrefMatches(s, sp, cap):
+          pc = int(code[pc+1].arg)
+          inc sp, cap.last - cap.first + 1
+        else:
+          inc pc, 2
       else:
         inc pc, 2
     of opcTJmp:
