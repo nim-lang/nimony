@@ -38,3 +38,36 @@ Commands:
   status                Status""", @["status"])
   assert options.command == cmdStatus
   assert options.itemName.len == 0
+
+block:
+  let options = cliapp("""Tool
+Commands:
+  install DEST ITEM...  Install""", @["install", "target"])
+  assert options.dest == "target"
+  assert options.item.len == 0
+
+block:
+  let options = cliapp("""Tool
+Arguments:
+  FIRST    First
+  REST...  Remaining""", @["a"])
+  assert options.first == "a"
+  assert options.rest.len == 0
+
+block:
+  let options = cliapp("""Tool
+Commands:
+  run  Run
+Arguments:
+  ITEM...  Items""", @["run"])
+  assert options.command == cmdRun
+  assert options.item.len == 0
+
+block:
+  let options = cliapp("""Tool
+Arguments:
+  ITEM...  Items
+Options:
+  -v, --verbose  Verbose""", @["-v"])
+  assert options.item.len == 0
+  assert options.verbose

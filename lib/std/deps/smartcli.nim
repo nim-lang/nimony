@@ -195,6 +195,25 @@ proc parseSpec(rawSpec: string): CliSpec =
     elif not rawLine.isEmptyOrWhitespace:
       parseSectionEntry result, currentSection, rawLine
 
+proc requiredArguments(names: seq[string]): int =
+  result = names.len
+  if names.len > 0 and names[^1].isVariadic:
+    dec result
+
+proc misplacedVariadic(names: seq[string]): bool =
+  result = false
+  for i, name in names:
+    if name.isVariadic and i != names.len - 1:
+      return true
+
+proc hasMisplacedVariadic(spec: CliSpec): bool =
+  if spec.positionalMode() == pmInlineCommand:
+    for command in spec.commands:
+      if misplacedVariadic(command.argumentNames): return true
+    result = false
+  else:
+    result = misplacedVariadic(spec.argumentNames)
+
 proc extractSpecNode(n: NifCursor): NifCursor =
   result = callArgs(n)
   if result.exprKind == SufX:
@@ -559,7 +578,7 @@ proc emitInlineCommandMissingCheck(dest: var NifBuilder; rawSpec: string; spec: 
   dest.withTree CaseS, NoLineInfo:
     emitDotExpr dest, "result", "command"
     for command in spec.commands:
-      let requiredSlots = 1 + command.argumentNames.len
+      let requiredSlots = 1 + requiredArguments(command.argumentNames)
       dest.withOfIdent commandEnumName(command.name):
         dest.withTree IfS, NoLineInfo:
           dest.withTree ElifU, NoLineInfo:
@@ -669,13 +688,13 @@ proc emitParseProc(dest: var NifBuilder; rawSpec: string; spec: CliSpec;
       of pmFlat:
         dest.withTree IfS, NoLineInfo:
           dest.withTree ElifU, NoLineInfo:
-            emitLtIntExpr dest, "argSlot", spec.argumentNames.len
+            emitLtIntExpr dest, "argSlot", requiredArguments(spec.argumentNames)
             dest.withTree StmtsS, NoLineInfo:
               dest.withTree CallS, NoLineInfo:
                 dest.bindSym("cliMissingArguments")
                 dest.addStrLit(rawSpec)
       of pmSharedCommand:
-        emitSharedCommandMissingCheck dest, rawSpec, spec.argumentNames.len
+        emitSharedCommandMissingCheck dest, rawSpec, requiredArguments(spec.argumentNames)
       of pmInlineCommand:
         emitInlineCommandMissingCheck dest, rawSpec, spec
 
@@ -695,7 +714,10 @@ let specNode = extractSpecNode(root)
 if specNode.kind == StrLit:
   let rawSpec = specNode.stringValue
   let spec = parseSpec(rawSpec)
-  let argsNode = extractArgsNode(root)
-  saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
+  if hasMisplacedVariadic(spec):
+    saveTree errorTree("variadic argument must be last", specNode)
+  else:
+    let argsNode = extractArgsNode(root)
+    saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
 else:
   saveTree errorTree("cliapp expects a string literal", specNode)

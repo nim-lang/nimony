@@ -5,7 +5,7 @@
 ## generates a parser and a typed options object at the call site.
 ##
 ## A trailing positional name ending in `...`, such as `install ITEM...`,
-## accepts one or more values and generates a `seq[string]` field named
+## accepts zero or more values and generates a `seq[string]` field named
 ## `item`. Other positional fields are strings. A repeated field name across
 ## commands must have the same cardinality. Options can occur between values.
 ## `Usage:` is descriptive; the `Commands:` and `Arguments:` sections define

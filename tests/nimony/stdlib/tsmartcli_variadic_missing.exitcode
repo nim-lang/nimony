@@ -1,4 +1,4 @@
 [Error] missing arguments
 Tool
 Commands:
-  install ITEM...  Install items
+  install DEST ITEM...  Install items
