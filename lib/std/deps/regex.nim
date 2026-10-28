@@ -342,6 +342,7 @@ proc addOpcode(dest: var NifBuilder; o: RegexOpcode) =
   ## have named `opcRet`.
   case o
   of opcRet: dest.bindSym "opcRet"
+  of opcRetAccept: dest.bindSym "opcRetAccept"
   of opcAccept: dest.bindSym "opcAccept"
   of opcTestSet: dest.bindSym "opcTestSet"
   of opcTestChar: dest.bindSym "opcTestChar"

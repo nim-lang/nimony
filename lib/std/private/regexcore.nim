@@ -222,26 +222,40 @@ proc getNext(c: var ReCtx): char =
   skipSpaces c
   result = if c.pos < c.buf.len: c.buf[c.pos] else: '\0'
 
-proc readUtf8(c: var ReCtx): RegexNode =
-  let first = ord(c.buf[c.pos])
-  let n = if first < 0x80: 1
-          elif first >= 0xC2 and first <= 0xDF: 2
-          elif first >= 0xE0 and first <= 0xEF: 3
+func utf8Width*(s: string; pos: Natural): int =
+  ## The width of the UTF-8 scalar at pos, or zero for invalid input.
+  if pos >= s.len: return 0
+  let first = ord(s[pos])
+  if first < 0x80: return 1
+  if first >= 0xC2 and first <= 0xDF:
+    if pos + 1 < s.len and s[pos + 1] >= '\x80' and s[pos + 1] <= '\xBF':
+      return 2
+    return 0
+  let n = if first >= 0xE0 and first <= 0xEF: 3
           elif first >= 0xF0 and first <= 0xF4: 4
           else: 0
-  if n == 0 or c.pos + n > c.buf.len:
+  if n == 0 or n > s.len - pos: return 0
+  for i in 1 ..< n:
+    let b = ord(s[pos + i])
+    if b < 0x80 or b > 0xBF or
+       (i == 1 and ((first == 0xE0 and b < 0xA0) or
+                    (first == 0xED and b >= 0xA0) or
+                    (first == 0xF0 and b < 0x90) or
+                    (first == 0xF4 and b >= 0x90))):
+      return 0
+  result = n
+
+proc readUtf8(c: var ReCtx): RegexNode {.inline.} =
+  if c.buf[c.pos] < '\x80':
+    result = charExpr(c.buf[c.pos])
+    inc c.pos
+    return
+  let n = utf8Width(c.buf, c.pos)
+  if n == 0:
     error c, "invalid UTF-8 in regular expression"
     return epsExpr()
   var s = ""
   for i in 0 ..< n:
-    let b = ord(c.buf[c.pos + i])
-    if i > 0 and (b < 0x80 or b > 0xBF or
-       (i == 1 and ((first == 0xE0 and b < 0xA0) or
-                    (first == 0xED and b >= 0xA0) or
-                    (first == 0xF0 and b < 0x90) or
-                    (first == 0xF4 and b >= 0x90)))):
-      error c, "invalid UTF-8 in regular expression"
-      return epsExpr()
     s.add c.buf[c.pos + i]
   inc c.pos, n
   result = strExpr(s)
@@ -376,7 +390,15 @@ proc cmpRange(a, b: (int, int)): int =
   elif a[0] > b[0]: 1
   else: 0
 
+proc addClassRange(ascii: var set[char]; ranges: var seq[(int, int)];
+                   first, last: int) {.inline.} =
+  if first < 128:
+    ascii = ascii + {char(first)..char(min(last, 127))}
+  if last >= 128:
+    ranges.add (max(first, 128), last)
+
 proc parseCClass(c: var ReCtx): RegexNode =
+  var ascii: set[char] = {}
   var ranges: seq[(int, int)] = @[]
   inc c.pos # skip '['
   var caret = false
@@ -395,8 +417,8 @@ proc parseCClass(c: var ReCtx): RegexNode =
       if c.pos < c.buf.len and c.buf[c.pos] == '-':
         inc c.pos
         if c.pos < c.buf.len and c.buf[c.pos] == ']':
-          ranges.add (first, first)
-          ranges.add (ord('-'), ord('-'))
+          addClassRange(ascii, ranges, first, first)
+          ascii.incl '-'
           break
         let b = getChar(c, true)
         if c.err.len > 0: return epsExpr()
@@ -406,17 +428,15 @@ proc parseCClass(c: var ReCtx): RegexNode =
             error c, "invalid character range in '[...]'"
             return epsExpr()
         elif b.kind == reCClass:
-          ranges.add (ord('-'), ord('-'))
-          for i in 0 .. 127:
-            if char(i) in b.cc: ranges.add (i, i)
+          ascii.incl '-'
+          ascii = ascii + (b.cc * {'\0'..'\x7F'})
           if '\x80' in b.cc: ranges.add (128, 0x10FFFF)
         else:
           error c, "invalid character range in '[...]'"
           return epsExpr()
-      ranges.add (first, last)
+      addClassRange(ascii, ranges, first, last)
     elif a.kind == reCClass:
-      for i in 0 .. 127:
-        if char(i) in a.cc: ranges.add (i, i)
+      ascii = ascii + (a.cc * {'\0'..'\x7F'})
       if '\x80' in a.cc: ranges.add (128, 0x10FFFF)
     else:
       error c, "'" & c.buf[c.pos] & "' cannot be part of a character class"
@@ -427,9 +447,10 @@ proc parseCClass(c: var ReCtx): RegexNode =
     error c, "']' expected"
     return epsExpr()
   sort(ranges, cmpRange)
-  result = nil
+  if caret: ascii = {'\1'..'\x7F'} - ascii
+  result = if ascii == {}: nil else: cclassExpr(ascii)
   if caret:
-    var next = 1
+    var next = 128
     for (a, b) in ranges:
       if next < a:
         let part = utf8Range(next, a - 1)
@@ -1039,6 +1060,7 @@ proc regexToDfa*(pattern: string; flags: set[RegexFlag]; dfa: var Dfa;
 type
   RegexOpcode* = enum
     opcRet          ## stop and return the last accepting state
+    opcRetAccept    ## stop at this accepting state
     opcAccept       ## remember an accepting state before trying transitions
     opcTestSet      ## current character against a set in the data section
     opcTestChar     ## current character against the character in the argument
@@ -1143,7 +1165,12 @@ func genBytecode*(a: Dfa; res: var Regex) =
     stateToLabel[src] = res.code.len
     let rule = getRule(a, src)
     if rule != 0:
-      gen res, opcAccept, rule
+      # Remember this state only if a transition can leave an accepting
+      # path. Otherwise a failed test returns this state's rule directly.
+      for dest in allDests(a, src):
+        if getRule(a, dest) != rule:
+          gen res, opcAccept, rule
+          break
     for dest in allDests(a, src):
       let (others, cs) = allTransitions(a, src, dest)
       for x in others: genCapture(res, x, dest)
@@ -1151,7 +1178,8 @@ func genBytecode*(a: Dfa; res: var Regex) =
         gen res, opcTestSet, genData(res, cs)
         gen res, opcTJmp, dest
       for x in others: genTest(res, x, dest)
-    gen res, opcRet, 0
+    if rule == 0: gen res, opcRet, 0
+    else: gen res, opcRetAccept, rule
   # The jumps were emitted with state numbers; patch them to code offsets now
   # that every state's offset is known.
   for i in 0 ..< res.code.len:
@@ -1231,8 +1259,9 @@ func backrefMatches(s: string; sp: Natural; c: Capture): bool =
     inc k
     inc i
 
-func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
-         s: string; caps: var seq[Capture]; start: Natural; endPos: var int): int =
+func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]];
+         startAt: int; s: string; caps: var seq[Capture]; start: Natural;
+         endPos: var int): int =
   ## One automaton over `s` from `start`. Returns the rule that matched (`0`
   ## for none) and reports the position just past the match in `endPos`.
   result = 0
@@ -1241,8 +1270,21 @@ func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
   var pc = startAt
   var sp = start
   var acceptedCaps: seq[Capture] = @[]
+  var capturesChanged = false
   while true:
-    let instr = code[pc]
+    var instr = code[pc]
+    if instr.opc == opcAccept:
+      result = int(instr.arg)
+      endPos = sp
+      when trackCaptures:
+        if capturesChanged:
+          if acceptedCaps.len != caps.len:
+            acceptedCaps.setLen caps.len
+          for i in 0 ..< caps.len:
+            acceptedCaps[i] = caps[i]
+          capturesChanged = false
+      inc pc
+      instr = code[pc]
     let arg = int(instr.arg)
     case instr.opc
     of opcTestSet:
@@ -1259,13 +1301,14 @@ func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
       else:
         inc pc, 2
     of opcRet:
-      caps = acceptedCaps
+      when trackCaptures:
+        caps = acceptedCaps
       return result
-    of opcAccept:
-      result = arg
+    of opcRetAccept:
       endPos = sp
-      acceptedCaps = caps
-      inc pc
+      return arg
+    of opcAccept:
+      return 0 # an accept is always followed by a test or return
     of opcBegin:
       if sp == start: pc = int(code[pc+1].arg)
       else: inc pc, 2
@@ -1278,13 +1321,21 @@ func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
       else:
         inc pc, 2
     of opcCaptureBegin:
-      if caps.len <= arg: setLen(caps, arg + 1)
-      caps[arg] = Capture(first: sp, last: CaptureOpen)
-      pc = int(code[pc+1].arg)
+      when trackCaptures:
+        if caps.len <= arg: setLen(caps, arg + 1)
+        caps[arg] = Capture(first: sp, last: CaptureOpen)
+        capturesChanged = true
+        pc = int(code[pc+1].arg)
+      else:
+        return 0
     of opcCaptureEnd:
-      if caps.len <= arg: setLen(caps, arg + 1)
-      caps[arg].last = sp - 1
-      pc = int(code[pc+1].arg)
+      when trackCaptures:
+        if caps.len <= arg: setLen(caps, arg + 1)
+        caps[arg].last = sp - 1
+        capturesChanged = true
+        pc = int(code[pc+1].arg)
+      else:
+        return 0
     of opcBackref:
       if arg < caps.len and backrefMatches(s, sp, caps[arg]):
         pc = int(code[pc+1].arg)
@@ -1305,9 +1356,12 @@ func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
   ## afterwards purely for the bounds and is allowed to come up empty-handed
   ## without changing the answer.
   caps.setLen 0
-  result = run(r.code, r.data, r.startAt, s, caps, start, endPos)
+  if r.captures == 0:
+    result = run[false](r.code, r.data, r.startAt, s, caps, start, endPos)
+  else:
+    result = run[true](r.code, r.data, r.startAt, s, caps, start, endPos)
   if result > 0 and r.capCode.len > 0:
     var found: seq[Capture] = @[]
     var ignored = start
-    if run(r.capCode, r.capData, r.capStartAt, s, found, start, ignored) > 0:
+    if run[true](r.capCode, r.capData, r.capStartAt, s, found, start, ignored) > 0:
       caps = found

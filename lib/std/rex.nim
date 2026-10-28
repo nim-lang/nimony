@@ -138,7 +138,7 @@ import std / private / regexcore
 
 export RegexFlag, reExtended, reNoBackrefs, reNoCaptures
 export Regex, Capture, RegexOpcode, RegexInstr
-export opcRet, opcAccept, opcTestSet, opcTestChar, opcTJmp, opcBegin, opcEnd,
+export opcRet, opcRetAccept, opcAccept, opcTestSet, opcTestChar, opcTJmp, opcBegin, opcEnd,
        opcWordBound, opcCaptureBegin, opcCaptureEnd, opcBackref
 
 # ---------------------------------------------------------------------------
@@ -198,27 +198,9 @@ func captureCount*(r: Regex): int {.inline.} =
 func nextCharacter(s: string; pos: int): int =
   ## Advance over a valid UTF-8 character, or one byte of invalid input.
   result = pos + 1
-  if pos >= 0 and pos < s.len:
-    let first = ord(s[pos])
-    let n = if first >= 0xC2 and first <= 0xDF: 2
-            elif first >= 0xE0 and first <= 0xEF: 3
-            elif first >= 0xF0 and first <= 0xF4: 4
-            else: 1
-    if n > 1 and pos + n <= s.len:
-      var valid = true
-      for i in 1 ..< n:
-        let at = pos + i
-        if at < 0 or at >= s.len:
-          valid = false
-        else:
-          let b = ord(s[at])
-          if b < 0x80 or b > 0xBF or
-             (i == 1 and ((first == 0xE0 and b < 0xA0) or
-                          (first == 0xED and b >= 0xA0) or
-                          (first == 0xF0 and b < 0x90) or
-                          (first == 0xF4 and b >= 0x90))):
-            valid = false
-      if valid: result = pos + n
+  if pos >= 0 and pos < s.len and s[pos] >= '\x80':
+    let width = utf8Width(s, pos)
+    if width > 0: result = pos + width
 
 func matchLen*(s: string; r: Regex; caps: var seq[Capture]; start = 0): int =
   ## The length of the longest match of `r` starting exactly at `start`, or

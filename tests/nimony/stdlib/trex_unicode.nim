@@ -34,6 +34,20 @@ block positions:
   for (a, _) in findAll("é🙂", re""):
     offsets.add a
   assert offsets == @[0, 2, 6]
+  offsets.setLen 0
+  for (a, _) in findAll("\xC0\x80é\xED\xA0\x80🙂", re""):
+    offsets.add a
+  assert offsets == @[0, 1, 2, 4, 5, 6, 7, 11]
+
+block captureRewind:
+  var r = default(Regex)
+  var err = ""
+  assert tryRe("(a)\\1+(b\\1)?", r, err)
+  var caps: seq[Capture] = @[]
+  assert matchLen("aaabx", r, caps) == 3
+  assert caps.len == 1 and capture("aaabx", caps, 0) == "a"
+  assert matchLen("aaabax", r, caps) == 5
+  assert caps.len == 2 and capture("aaabax", caps, 1) == "ba"
 
 block runtime:
   var r = default(Regex)
@@ -42,6 +56,11 @@ block runtime:
   assert matchLen("éé!", r) == 4, "runtime match"
   assert not tryRe("\xC3", r, err), "invalid pattern"
   assert err.len > 0
+  for invalid in ["\x80", "\xC0\x80", "\xED\xA0\x80",
+                  "\xF4\x90\x80\x80", "\xF5\x80\x80\x80"]:
+    assert not tryRe(invalid, r, err)
+    assert err.len > 0
+    assert matchLen(invalid, re".") == -1
 
 block generated:
   let s = "é🙂!"
