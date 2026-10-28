@@ -80,6 +80,28 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   producesVoid c, dest, info, it.typ
 
+proc deferCyclicModule(c: var SemContext; suffix, path, name: string;
+                       bindName: bool; info: NifLineInfo): SymId =
+  ## Register `suffix` as a member of this cycle group and defer loading its
+  ## interface until phase1/phase2 of every member has run. `bindName` is false
+  ## when the caller is `importSingleFile`, which binds the module name itself
+  ## right after this returns (and would otherwise bind it twice).
+  result = c.processedModules.getOrDefault(suffix, SymId(0))
+  if result != SymId(0): return
+  let moduleSym = identToSym(c, pool.strings.getOrIncl(name), ModuleY)
+  c.meta.importedFiles.add path
+  c.processedModules[suffix] = moduleSym
+  if bindName and name != "":
+    let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
+    c.currentScope.addOverloadable(pool.strings.getOrIncl(name), s)
+  var moduleDecl = createTokenBuf(2)
+  moduleDecl.addParLe(ModuleY, info)
+  moduleDecl.addParRi()
+  publish moduleSym, moduleDecl, SemcheckBodies
+  discard c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: path))
+  c.deferredCyclicImports.add (suffix, moduleSym)
+  result = moduleSym
+
 proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       mode: ImportFilter; exports: var seq[(string, ImportFilter)];
                       info: NifLineInfo): SymId =
@@ -93,7 +115,18 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
     if f1.name != "": f1.name
     else: moduleNameFromPath(f2)
   let moduleName = pool.strings.getOrIncl(effectiveName)
-  if not c.processedModules.contains(suffix):
+  var deferredGroup = false
+  if suffix in c.cycleGroup and mode.kind == ImportAll:
+    # An intra-group import, whether or not the source wrote `{.cyclic.}`.
+    # The build only forms a group after it has seen the cycle, so the source
+    # marks at least one edge; the remaining edges into a member point at an
+    # interface that is still being produced and must be deferred just the
+    # same. Without this, `dns` importing `channels` normally inside the
+    # dns/channels/streamio cycle asks for `Sender` before channels' phase1
+    # has ever run.
+    result = deferCyclicModule(c, suffix, f2, effectiveName, false, info)
+    deferredGroup = true
+  elif not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
     if f1.plugin.len == 0:
       if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
@@ -122,14 +155,18 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
     # the names differ, which is the normal case.
     c.currentScope.removeOverloadable(moduleName, c.selfModuleSym)
     c.currentScope.addOverloadable(moduleName, s)
-  let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
-  loadInterface suffix, module.iface, result, c.importTab, c.converters,
-                exports, mode
-  # Track NIF snippet for this import using absolute path, for use by exprexec.
-  # Skip system.nim since it's auto-imported and would cause cycles:
-  if not f1.isSystem and suffix != SystemModuleSuffix:
-    c.importSnippets.buildTree ImportS, info:
-      c.importSnippets.addStrLit f2.toAbsolutePath
+  if not deferredGroup:
+    # A deferred member has no interface yet, and the one from an earlier
+    # build must not be picked up either: the group is checked together and
+    # `resolveCyclicImports` supplies its symbols afterwards.
+    let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
+    loadInterface suffix, module.iface, result, c.importTab, c.converters,
+                  exports, mode
+    # Track NIF snippet for this import using absolute path, for use by exprexec.
+    # Skip system.nim since it's auto-imported and would cause cycles:
+    if not f1.isSystem and suffix != SystemModuleSuffix:
+      c.importSnippets.buildTree ImportS, info:
+        c.importSnippets.addStrLit f2.toAbsolutePath
 
 proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
@@ -187,24 +224,8 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
             c.buildErr dest, info, "file not found: " & f2
             continue
           let suffix = moduleSuffix(f2, c.g.config.paths)
-          var moduleSym = SymId(0)
-          if not c.processedModules.contains(suffix):
-            c.meta.importedFiles.add f2
-            let moduleName = pool.strings.getOrIncl(f1.name)
-            moduleSym = identToSym(c, moduleName, ModuleY)
-            c.processedModules[suffix] = moduleSym
-            let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
-            if f1.name != "":
-              c.currentScope.addOverloadable(moduleName, s)
-            var moduleDecl = createTokenBuf(2)
-            moduleDecl.addParLe(ModuleY, info)
-            moduleDecl.addParRi()
-            publish moduleSym, moduleDecl, SemcheckBodies
-          else:
-            moduleSym = c.processedModules.getOrQuit(suffix)
-          discard c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
-          # Defer the actual interface loading until after phase1/phase2
-          c.deferredCyclicImports.add (suffix, moduleSym)
+          # Defer the actual interface loading until after phase1/phase2.
+          discard deferCyclicModule(c, suffix, f2, f1.name, true, info)
     else:
       # Non-cyclic import in same statement; skip it (should not happen in practice)
       skip x

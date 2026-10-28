@@ -507,7 +507,7 @@ proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
       endRead(r)
   var finalBuf = beginRead afterSem
   result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
-                        cycles = c.g.config.cycles)
+                        cycles = c.g.config.cycles, groupHooks = c.groupHooks)
   when defined(dumpPhases):
     block:
       var r = beginRead(result)
@@ -602,7 +602,14 @@ proc resolveCyclicImports(c: var SemContext) =
     for symId in prog.mem.symIds:
       let symName = pool.symString(symId)
       let modSuffix = pool.symModule(symId)
-      if modSuffix == targetSuffix:
+      # An instantiated generic (`seq[char]`, the `Sender[Message]` of a cycle
+      # member's own field) is published under the module that instantiated it
+      # but is not a name that module exports. Importing those would put `seq`
+      # -- and every other container a cycle member happens to use -- into the
+      # importer's scope, where it shadows the system one and makes each plain
+      # `seq[T]` ambiguous. The base declaration is what the importer needs;
+      # it instantiates from that itself.
+      if modSuffix == targetSuffix and not pool.symIsInstantiation(symId):
         let nameId = pool.symNameId(symId)
         c.importTab.mgetOrPut(nameId, @[]).addIfAbsent(moduleSym)
         module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
@@ -728,6 +735,16 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
       let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
       importSingleFile(modules[i].c, modules[i].dest, systemFile, "", ImportFilter(kind: ImportAll), modules[i].n0.info)
 
+  # Every module here is a member of one cycle group. Record the group so any
+  # import into it is deferred: a group member cannot have a readable
+  # interface yet, even when the source did not put `{.cyclic.}` on this
+  # particular edge.
+  var cycleGroup = initHashSet[string]()
+  for i in 0..<modules.len:
+    cycleGroup.incl modules[i].c.thisModuleSuffix
+  for i in 0..<modules.len:
+    modules[i].c.cycleGroup = cycleGroup
+
   # Phase 1: Register toplevel symbols for ALL modules
   for i in 0..<modules.len:
     var (buf1, lineInfo) = phase1(modules[i].c, modules[i].dest, modules[i].n0)
@@ -756,8 +773,13 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   for i in 0..<modules.len:
     modules[i].dest = phase3(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
 
-  # Post-processing and output for each module
+  # Post-processing and output for each module. `groupHooks` is shared by the
+  # whole group: the first member to need a hook for a type another member
+  # owns forges it, and the owner (lowered later) publishes that same symbol
+  # in the type's `(methods)` pragma instead of forging a second one.
+  var groupHooks = initTable[SymId, HooksPerType]()
   for i in 0..<modules.len:
+    modules[i].c.groupHooks = addr groupHooks
     semcheckPostProcess modules[i].c, modules[i].dest
     if reportErrors(modules[i].dest) == 0:
       maybeValidatePostSem modules[i].dest, modules[i].outfile

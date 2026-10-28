@@ -1488,6 +1488,7 @@ proc trType(c: var Context; n: var Cursor) =
           if op == attachedTrace and not c.lifter.cycles: continue
           let hookProc = getHook(c.lifter[], op, typeCursor, info)
           if hookProc != SymId(0):
+            c.lifter[].recordGroupHook(op, s, hookProc)
             if existing.a[op] == SymId(0):
               # not already emitted from c.hooks above
               c.dest.addParLe hookToTag(op), NoLineInfo
@@ -1835,8 +1836,12 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
-                   thisModuleSuffix: string; bits: int; cycles = false): TokenBuf =
+                   thisModuleSuffix: string; bits: int; cycles = false;
+                   groupHooks: ptr Table[SymId, HooksPerType] = nil): TokenBuf =
   ## `cycles`: the runtime collects cycles (`NifConfig.cycles`).
+  ## `groupHooks`: shared with the other members of a `{.cyclic.}` group, so a
+  ## hook one member forges for a foreign type is reused by the type's owner
+  ## instead of being forged a second time under the owner's suffix.
   let inputWidth = subtreeWidth(n)
   var c = Context(typeCache: createTypeCache(bits),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId),
@@ -1848,7 +1853,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
   c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
   # Pass address of hooks to lifter so it can look up hooks from current module
   c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks,
-                              cycles = cycles)
+                              cycles = cycles, groupHooks = groupHooks)
   c.typeCache.openScope()
   var n2 = n
   var n3 = n

@@ -77,14 +77,13 @@ proc broadcast*(cond: var Cond) {.sync, inline.} =
   ## specified condition variable `cond`.
   broadcastSysCond(cond)
 
-# template withLock*(a: Lock, body: untyped) =
-#   ## Acquires the given lock, executes the statements in body and
-#   ## releases the lock after the statements finish executing.
-#   acquire(a)
-#   {.locks: [a].}:
-#     try:
-#       body
-#     finally:
-#       release(a)
+template withLock*(a: Lock, body: untyped) =
+  ## Acquires the given lock, executes the statements in body and
+  ## releases the lock after the statements finish executing.
+  acquire(a)
+  try:
+    body
+  finally:
+    release(a)
 
 # {.pop.}
