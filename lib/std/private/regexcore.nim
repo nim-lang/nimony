@@ -30,7 +30,7 @@
 
 {.feature: "lenientnils".}
 
-import std / [intsets, tables, algorithm]
+import std / [intsets, tables, algorithm, unicode]
 
 type
   RegexKind* = enum ## the regex AST's node kind
@@ -126,6 +126,52 @@ proc altExpr*(a, b: RegexNode): RegexNode =
   result.a = a
   result.b = b
 
+proc byteRange(lo, hi: int): RegexNode =
+  if lo == hi: charExpr(char(lo))
+  else: cclassExpr({char(lo)..char(hi)})
+
+proc utf8RangeBytes(lo, hi: string; i: int): RegexNode =
+  ## UTF-8 preserves code-point order. Split at differing bytes, using the
+  ## full continuation-byte range for the interior of each split.
+  let a = ord(lo[i])
+  let b = ord(hi[i])
+  if i == lo.len - 1:
+    return byteRange(a, b)
+  if a == b:
+    return catExpr(charExpr(char(a)), utf8RangeBytes(lo, hi, i + 1))
+  var lowEnd = lo
+  var highStart = hi
+  for j in i + 1 ..< lo.len:
+    lowEnd[j] = '\xBF'
+    highStart[j] = '\x80'
+  result = catExpr(charExpr(char(a)), utf8RangeBytes(lo, lowEnd, i + 1))
+  if a + 1 < b:
+    var mid = byteRange(a + 1, b - 1)
+    for j in i + 1 ..< lo.len:
+      mid = catExpr(mid, byteRange(0x80, 0xBF))
+    result = altExpr(result, mid)
+  result = altExpr(result, catExpr(charExpr(char(b)),
+                                   utf8RangeBytes(highStart, hi, i + 1)))
+
+proc utf8Range(lo, hi: int): RegexNode =
+  ## Separate the UTF-8 widths and the surrogate gap before constructing
+  ## lexicographic byte ranges.
+  const bounds = [0, 0x80, 0x800, 0xD800, 0xE000, 0x10000, 0x110000]
+  result = nil
+  for i in 0 ..< bounds.len - 1:
+    if bounds[i] != 0xD800:
+      let a = max(lo, bounds[i])
+      let b = min(hi, bounds[i + 1] - 1)
+      if a <= b:
+        let part = utf8RangeBytes(toUTF8(Rune(a)), toUTF8(Rune(b)), 0)
+        result = if result == nil: part else: altExpr(result, part)
+  if result == nil: result = cclassExpr({})
+
+proc unicodeClass(cc: set[char]): RegexNode =
+  result = cclassExpr(cc * {'\0'..'\x7F'})
+  if '\x80' in cc:
+    result = altExpr(result, utf8Range(128, 0x10FFFF))
+
 proc captureExpr*(a: RegexNode): RegexNode =
   result = newNode(reCapture)
   result.a = a
@@ -176,6 +222,30 @@ proc getNext(c: var ReCtx): char =
   skipSpaces c
   result = if c.pos < c.buf.len: c.buf[c.pos] else: '\0'
 
+proc readUtf8(c: var ReCtx): RegexNode =
+  let first = ord(c.buf[c.pos])
+  let n = if first < 0x80: 1
+          elif first >= 0xC2 and first <= 0xDF: 2
+          elif first >= 0xE0 and first <= 0xEF: 3
+          elif first >= 0xF0 and first <= 0xF4: 4
+          else: 0
+  if n == 0 or c.pos + n > c.buf.len:
+    error c, "invalid UTF-8 in regular expression"
+    return epsExpr()
+  var s = ""
+  for i in 0 ..< n:
+    let b = ord(c.buf[c.pos + i])
+    if i > 0 and (b < 0x80 or b > 0xBF or
+       (i == 1 and ((first == 0xE0 and b < 0xA0) or
+                    (first == 0xED and b >= 0xA0) or
+                    (first == 0xF0 and b < 0x90) or
+                    (first == 0xF4 and b >= 0x90)))):
+      error c, "invalid UTF-8 in regular expression"
+      return epsExpr()
+    s.add c.buf[c.pos + i]
+  inc c.pos, n
+  result = strExpr(s)
+
 proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   ## One character or escape sequence. `inClass` selects the `[...]` reading of
   ## the escapes that mean different things there (`\b` is a backspace inside a
@@ -183,8 +253,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   if not inClass:
     skipSpaces c
   if c.pos < c.buf.len and c.buf[c.pos] != '\\':
-    result = charExpr(c.buf[c.pos])
-    inc c.pos
+    result = readUtf8(c)
   else:
     let ch = if c.pos + 1 < c.buf.len: c.buf[c.pos + 1] else: '\0'
     case ch
@@ -231,22 +300,25 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
         result = newNode(reEnd)
       inc c.pos, 2
     of 's':
-      result = cclassExpr(whitespace)
+      result = if inClass: cclassExpr(whitespace) else: unicodeClass(whitespace)
       inc c.pos, 2
     of 'S':
-      result = cclassExpr({'\1'..'\255'} - whitespace)
+      let cc = {'\1'..'\255'} - whitespace
+      result = if inClass: cclassExpr(cc) else: unicodeClass(cc)
       inc c.pos, 2
     of 'd':
-      result = cclassExpr(digits)
+      result = if inClass: cclassExpr(digits) else: unicodeClass(digits)
       inc c.pos, 2
     of 'D':
-      result = cclassExpr({'\1'..'\255'} - digits)
+      let cc = {'\1'..'\255'} - digits
+      result = if inClass: cclassExpr(cc) else: unicodeClass(cc)
       inc c.pos, 2
     of 'w':
-      result = cclassExpr(wordChars)
+      result = if inClass: cclassExpr(wordChars) else: unicodeClass(wordChars)
       inc c.pos, 2
     of 'W':
-      result = cclassExpr({'\1'..'\255'} - wordChars)
+      let cc = {'\1'..'\255'} - wordChars
+      result = if inClass: cclassExpr(cc) else: unicodeClass(cc)
       inc c.pos, 2
     of '0'..'9':
       let startsWithZero = ch == '0'
@@ -263,7 +335,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
           error c, "character code out of range: " & $val
           result = epsExpr()
         else:
-          result = charExpr(char(val))
+          result = strExpr(toUTF8(Rune(val)))
       else:
         result = backrefExpr(val)
     of '\0':
@@ -274,8 +346,8 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
         error c, "invalid character after '\\': #" & $ord(ch)
         result = epsExpr()
       else:
-        result = charExpr(ch)
-        inc c.pos, 2
+        inc c.pos
+        result = readUtf8(c)
 
 proc parseStr(c: var ReCtx): RegexNode =
   ## `"..."` — a literal run in which the regex operators lose their meaning.
@@ -288,6 +360,8 @@ proc parseStr(c: var ReCtx): RegexNode =
     let al = getChar(c, false)
     if al.kind == reChar:
       s.add al.c
+    elif al.kind == reStr:
+      s.add al.s
     else:
       error c, "only single characters are allowed in a quoted string"
       return epsExpr()
@@ -297,8 +371,13 @@ proc parseStr(c: var ReCtx): RegexNode =
     error c, "'\"' expected"
   result = strExpr(s)
 
+proc cmpRange(a, b: (int, int)): int =
+  if a[0] < b[0]: -1
+  elif a[0] > b[0]: 1
+  else: 0
+
 proc parseCClass(c: var ReCtx): RegexNode =
-  var cc: set[char] = {}
+  var ranges: seq[(int, int)] = @[]
   inc c.pos # skip '['
   var caret = false
   if c.pos < c.buf.len and c.buf[c.pos] == '^':
@@ -310,29 +389,35 @@ proc parseCClass(c: var ReCtx): RegexNode =
       return epsExpr()
     let a = getChar(c, true)
     if c.err.len > 0: return epsExpr()
-    if a.kind == reChar:
-      incl cc, a.c
+    if a.kind in {reChar, reStr}:
+      let first = if a.kind == reChar: ord(a.c) else: int(runeAt(a.s, 0))
+      var last = first
       if c.pos < c.buf.len and c.buf[c.pos] == '-':
         inc c.pos
         if c.pos < c.buf.len and c.buf[c.pos] == ']':
-          incl cc, '-'
+          ranges.add (first, first)
+          ranges.add (ord('-'), ord('-'))
           break
         let b = getChar(c, true)
         if c.err.len > 0: return epsExpr()
-        if b.kind == reChar:
-          if a.c <= b.c:
-            cc = cc + {a.c .. b.c}
-          else:
+        if b.kind in {reChar, reStr}:
+          last = if b.kind == reChar: ord(b.c) else: int(runeAt(b.s, 0))
+          if first > last:
             error c, "invalid character range in '[...]'"
             return epsExpr()
         elif b.kind == reCClass:
-          incl cc, '-'
-          cc = cc + b.cc
+          ranges.add (ord('-'), ord('-'))
+          for i in 0 .. 127:
+            if char(i) in b.cc: ranges.add (i, i)
+          if '\x80' in b.cc: ranges.add (128, 0x10FFFF)
         else:
           error c, "invalid character range in '[...]'"
           return epsExpr()
+      ranges.add (first, last)
     elif a.kind == reCClass:
-      cc = cc + a.cc
+      for i in 0 .. 127:
+        if char(i) in a.cc: ranges.add (i, i)
+      if '\x80' in a.cc: ranges.add (128, 0x10FFFF)
     else:
       error c, "'" & c.buf[c.pos] & "' cannot be part of a character class"
       return epsExpr()
@@ -341,7 +426,30 @@ proc parseCClass(c: var ReCtx): RegexNode =
   else:
     error c, "']' expected"
     return epsExpr()
-  result = if caret: cclassExpr({'\1'..'\xFF'} - cc) else: cclassExpr(cc)
+  sort(ranges, cmpRange)
+  result = nil
+  if caret:
+    var next = 1
+    for (a, b) in ranges:
+      if next < a:
+        let part = utf8Range(next, a - 1)
+        result = if result == nil: part else: altExpr(result, part)
+      next = max(next, b + 1)
+    if next <= 0x10FFFF:
+      let part = utf8Range(next, 0x10FFFF)
+      result = if result == nil: part else: altExpr(result, part)
+  else:
+    var i = 0
+    while i < ranges.len:
+      let a = ranges[i][0]
+      var b = ranges[i][1]
+      inc i
+      while i < ranges.len and ranges[i][0] <= b + 1:
+        b = max(b, ranges[i][1])
+        inc i
+      let part = utf8Range(a, b)
+      result = if result == nil: part else: altExpr(result, part)
+  if result == nil: result = cclassExpr({})
 
 proc parseNum(c: var ReCtx): int =
   result = 0
@@ -362,7 +470,7 @@ proc factor(c: var ReCtx): RegexNode =
     result = parseCClass(c)
   of '.':
     inc c.pos
-    result = cclassExpr({'\1'..'\xFF'})
+    result = utf8Range(1, 0x10FFFF)
   of '(':
     inc c.pos
     var isCapture = reNoCaptures notin c.flags
@@ -397,8 +505,7 @@ proc factor(c: var ReCtx): RegexNode =
     inc c.pos
     result = newNode(reBegin)
   else:
-    result = charExpr(if c.pos < c.buf.len: c.buf[c.pos] else: '\0')
-    inc c.pos
+    result = readUtf8(c)
   if c.err.len > 0: return result
   # postfix operators bind tighter than concatenation:
   var running = true
@@ -924,14 +1031,15 @@ proc regexToDfa*(pattern: string; flags: set[RegexFlag]; dfa: var Dfa;
 # ---------------------------------------------------------------------------
 #
 # The DFA is walked as a tiny program rather than as a table: a state is a run
-# of test/jump pairs ended by a `ret` carrying the rule it accepts. That keeps
-# the common step — "test the character against a set, jump" — two adjacent
-# instructions, and it is what lets `std/rex`'s `re` emit a finished automaton
-# as a literal instead of building tables at run time.
+# of test/jump pairs ended by a `ret`. Accepting states first record their
+# rule and position, so a later failed transition can return the longest match.
+# This keeps the common test/jump pair adjacent and lets `std/rex`'s `re` emit
+# a finished automaton as a literal instead of building tables at run time.
 
 type
   RegexOpcode* = enum
-    opcRet          ## stop; the argument is the rule that matched (0 = none)
+    opcRet          ## stop and return the last accepting state
+    opcAccept       ## remember an accepting state before trying transitions
     opcTestSet      ## current character against a set in the data section
     opcTestChar     ## current character against the character in the argument
     opcTJmp         ## taken when the preceding test succeeded
@@ -1034,22 +1142,16 @@ func genBytecode*(a: Dfa; res: var Regex) =
   for src in 1 .. a.stateCount:
     stateToLabel[src] = res.code.len
     let rule = getRule(a, src)
+    if rule != 0:
+      gen res, opcAccept, rule
     for dest in allDests(a, src):
-      # The "match longest, but only sometimes" rule regexes are known for:
-      # once a state accepts, only transitions that stay within the *same* rule
-      # may extend the match, or a later and longer rule would swallow an
-      # earlier one's answer.
-      if rule == 0 or rule == getRule(a, dest):
-        let (others, cs) = allTransitions(a, src, dest)
-        for x in others: genCapture(res, x, dest)
-        if cs != {}:
-          gen res, opcTestSet, genData(res, cs)
-          gen res, opcTJmp, dest
-        for x in others: genTest(res, x, dest)
-    if stateToLabel[src] != res.code.len or rule != 0:
-      # A state with neither transitions nor a rule is only ever fallen into
-      # from the `ret` above it, so it needs no `ret` of its own.
-      gen res, opcRet, rule
+      let (others, cs) = allTransitions(a, src, dest)
+      for x in others: genCapture(res, x, dest)
+      if cs != {}:
+        gen res, opcTestSet, genData(res, cs)
+        gen res, opcTJmp, dest
+      for x in others: genTest(res, x, dest)
+    gen res, opcRet, 0
   # The jumps were emitted with state numbers; patch them to code offsets now
   # that every state's offset is known.
   for i in 0 ..< res.code.len:
@@ -1138,6 +1240,7 @@ func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
   if code.len == 0: return
   var pc = startAt
   var sp = start
+  var acceptedCaps: seq[Capture] = @[]
   while true:
     let instr = code[pc]
     let arg = int(instr.arg)
@@ -1156,8 +1259,13 @@ func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
       else:
         inc pc, 2
     of opcRet:
+      caps = acceptedCaps
+      return result
+    of opcAccept:
+      result = arg
       endPos = sp
-      return arg
+      acceptedCaps = caps
+      inc pc
     of opcBegin:
       if sp == start: pc = int(code[pc+1].arg)
       else: inc pc, 2

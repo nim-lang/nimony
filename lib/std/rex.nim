@@ -49,6 +49,12 @@
 ## (`std/private/regexcore`), so a pattern cannot mean one thing in a generated
 ## lexer and another at runtime.
 ##
+## Patterns and input are UTF-8. Literals, `.`, and character classes match
+## Unicode code points, not individual bytes or grapheme clusters. Invalid
+## UTF-8 in a pattern is rejected; it does not match a character in the input.
+## Match lengths, positions, and capture bounds are byte offsets into the
+## original string.
+##
 ## Captures
 ## ========
 ##
@@ -109,8 +115,8 @@
 ## * Outside a character class `\n` matches any of `\r\n`, `\n` and `\r`.
 ## * `\123` is decimal: a back reference, or, with a leading zero (`\065`), a
 ##   character code. It is not octal.
-## * `.` matches everything but `\0`, newlines included. `\s` is `\1..\32` and
-##   `\w` includes every byte `>= 128`.
+## * `.` matches every Unicode code point but `\0`, newlines included. `\s`
+##   is `\1..\32` and `\w` includes all non-ASCII code points.
 ## * `re` takes only a string literal and compiles it with the program;
 ##   `re(someVar)` is `tryRe` here, which reports an error instead of raising.
 ## * Captures are positions (`seq[Capture]`, read with `capture`), not a
@@ -123,8 +129,8 @@
 ## * Not supported in patterns: the flags `reIgnoreCase`, `reMultiLine` and
 ##   `reDotAll`, inline options such as `(?i)`, lazy quantifiers (`x*?` is
 ##   accepted but means `x*`), lookaround, named groups, `\x` escapes and
-##   Unicode classes. Most of these need backtracking, which is exactly what
-##   this engine rules out.
+##   Unicode property classes such as `\p{L}`. Some of these features need
+##   backtracking, which this engine rules out.
 
 {.feature: "staticContracts".}
 
@@ -132,7 +138,7 @@ import std / private / regexcore
 
 export RegexFlag, reExtended, reNoBackrefs, reNoCaptures
 export Regex, Capture, RegexOpcode, RegexInstr
-export opcRet, opcTestSet, opcTestChar, opcTJmp, opcBegin, opcEnd,
+export opcRet, opcAccept, opcTestSet, opcTestChar, opcTJmp, opcBegin, opcEnd,
        opcWordBound, opcCaptureBegin, opcCaptureEnd, opcBackref
 
 # ---------------------------------------------------------------------------
@@ -189,6 +195,31 @@ func captureCount*(r: Regex): int {.inline.} =
 # Matching
 # ---------------------------------------------------------------------------
 
+func nextCharacter(s: string; pos: int): int =
+  ## Advance over a valid UTF-8 character, or one byte of invalid input.
+  result = pos + 1
+  if pos >= 0 and pos < s.len:
+    let first = ord(s[pos])
+    let n = if first >= 0xC2 and first <= 0xDF: 2
+            elif first >= 0xE0 and first <= 0xEF: 3
+            elif first >= 0xF0 and first <= 0xF4: 4
+            else: 1
+    if n > 1 and pos + n <= s.len:
+      var valid = true
+      for i in 1 ..< n:
+        let at = pos + i
+        if at < 0 or at >= s.len:
+          valid = false
+        else:
+          let b = ord(s[at])
+          if b < 0x80 or b > 0xBF or
+             (i == 1 and ((first == 0xE0 and b < 0xA0) or
+                          (first == 0xED and b >= 0xA0) or
+                          (first == 0xF0 and b < 0x90) or
+                          (first == 0xF4 and b >= 0x90))):
+            valid = false
+      if valid: result = pos + n
+
 func matchLen*(s: string; r: Regex; caps: var seq[Capture]; start = 0): int =
   ## The length of the longest match of `r` starting exactly at `start`, or
   ## `-1` when there is none. Capture bounds are written to `caps`, which is
@@ -228,7 +259,7 @@ func findBounds*(s: string; r: Regex; caps: var seq[Capture];
   while i <= s.len:
     let L = matchLen(s, r, caps, i)
     if L >= 0: return (i, i + L - 1)
-    inc i
+    i = nextCharacter(s, i)
   result = (-1, 0)
 
 func findBounds*(s: string; r: Regex; start = 0): (int, int) =
@@ -277,9 +308,9 @@ iterator findAll*(s: string; r: Regex; start = 0): (int, int) =
       inc i, L
     elif L == 0:
       yield (i, i - 1)
-      inc i
+      i = nextCharacter(s, i)
     else:
-      inc i
+      i = nextCharacter(s, i)
 
 func replace*(s: string; r: Regex; by: string): string =
   ## Every non-overlapping match of `r` replaced by `by`, which is inserted

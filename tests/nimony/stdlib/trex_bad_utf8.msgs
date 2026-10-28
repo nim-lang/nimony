@@ -1,0 +1,1 @@
+tests/nimony/stdlib/trex_bad_utf8.nim(2, 12) Error: invalid regular expression: invalid UTF-8 in regular expression
