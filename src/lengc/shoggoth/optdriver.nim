@@ -31,6 +31,9 @@ import vectorizer                             # runVectorizer (map loops -> (ins
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
 import tailcalls                              # runTailCalls (the tail-call encoding)
+import memidioms                              # runMemIdioms (fill loops -> Memset)
+import ".." / ".." / "lib" / intrinsics       # IntrinsicOp (Stats.memOps)
+export MemOpts                                # the driver flags' type, for shoggoth.nim
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
 
@@ -50,7 +53,7 @@ let disabledPasses = block:
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## vectorize, sinkret, tailcall.
+  ## memidioms, vectorize, sinkret, tailcall.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -66,6 +69,7 @@ type
     procs*, bodies*, intermodChanged*: int
     checksRemoved*: int
     vectorized*: int
+    memOps*: set[IntrinsicOp]                 ## the mem rows memidioms emitted
 
 proc extractModuleSuffix(filename: string): string =
   ## Pure copy of `nifreader.extractModuleSuffix` (basename up to the first
@@ -85,7 +89,7 @@ proc extractModuleSuffix(filename: string): string =
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                   params: Cursor = default(Cursor); eng: Engine = nil;
-                  vecMode = vecOff) =
+                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true)) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported.
   ##
@@ -141,6 +145,13 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # and no later pass needs to look at them; the scalar remainder loop it leaves
   # behind was already optimized by everything above. Only the encoding passes
   # below follow it, and they rewrite `ret`s, which it never emits.
+  # Fill loops become a `Memset` intrinsic after CSE, so the loop it inspects is
+  # the cleaned-up one, and before the vectorizer, which would otherwise turn the
+  # same loop into vector stores. `memOpts.intrinsics` is false for a back end
+  # without a lowering for the rows (AVR); `memOpts.mergeWordBytes` enables
+  # merging adjacent constant field stores, native back end only.
+  if (memOpts.intrinsics or memOpts.mergeWordBytes > 0) and passOn("memidioms"):
+    discard runMemIdioms(buf, m, params, memOpts, "mem." & suffix, st.memOps)
   if vecMode != vecOff and passOn("vectorize"):
     if runVectorizer(buf, "vec." & suffix):
       inc st.vectorized
@@ -173,7 +184,7 @@ proc isAssemblerProc(pragmas: Cursor): bool =
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                 eng: Engine = nil; vecMode = vecOff) =
+                 eng: Engine = nil; vecMode = vecOff; memOpts = MemOpts(intrinsics: true)) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
@@ -199,7 +210,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m, d.params, eng, vecMode)
+        optimizeBody(body, suffix, st, summaries, m, d.params, eng, vecMode, memOpts)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb
@@ -213,7 +224,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st, summaries, m, eng, vecMode)
+          rebuildTree(dest, n, suffix, st, summaries, m, eng, vecMode, memOpts)
       dest.closeTag()
   else:
     dest.addSubtree n
@@ -221,7 +232,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
 
 proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
                      m: ptr MainModule = nil; eng: Engine = nil;
-                     vecMode = vecOff): TokenBuf =
+                     vecMode = vecOff; memOpts = MemOpts(intrinsics: true)): TokenBuf =
   ## Rebuild the single module-level root tree (`(stmts …)`), optimizing bodies.
   ## `m` is the module type context for the alias pass (nil ⇒ coarse aliasing);
   ## `eng` the structural rewrite engine (nil ⇒ the rewriter stage is skipped);
@@ -231,21 +242,23 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
   var summaries = collectFunctionSummaries(src)   # once per module; cse runs per body
   result = createTokenBuf(src.len + src.len div 8, src.pool, src.tags)
   var n = src.beginRead()
-  if vecMode != vecOff and n.kind == TagLit and n.stmtKind == StmtsS:
-    # Open the root by hand so the vectorizer's intrinsic declarations can be
-    # appended INSIDE it once every body is processed.
+  if n.kind == TagLit and n.stmtKind == StmtsS:
+    # Open the root by hand so the intrinsic declarations the vectorizer and
+    # memidioms need can be appended INSIDE it once every body is processed.
     let tag = n.cursorTagId
     let li = rawLineInfo(n)
     result.openTag tag
     if li.isValid: result.appendLineInfo li
     n.into:
       while n.hasMore:
-        rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode)
+        rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)
     if st.vectorized > 0:
       addVecIntrinsicDecls(result, "vec." & suffix)
+    if MemsetOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemsetOp)
+    if MemcpyOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemcpyOp)
     result.closeTag()
   else:
-    rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode)
+    rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)
 
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
@@ -254,7 +267,7 @@ proc checkWellFormed(buf: var TokenBuf) =
   while n.hasMore: skip n
 
 proc processFile*(input, output: string; verify = false;
-                  vecMode = vecOff): Stats =
+                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true)): Stats =
   ## Optimize one NIFC file. Seeds the tag pool so `cursorTagId` aligns with the
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
@@ -281,7 +294,7 @@ proc processFile*(input, output: string; verify = false;
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
-  var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode)
+  var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode, memOpts)
   checkWellFormed(optimized)
   onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
   onRaiseQuit writeLengInterface(optimized, output)

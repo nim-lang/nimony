@@ -1254,6 +1254,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           var vecFlag = "--vectorize"
           if cpuName == "amd64": vecFlag = "--vectorize:sse"
           b.addStrLit vecFlag
+        if cpuName == "avr":
+          # arkham's AVR emitter has no lowering for the `Memset` row (nor for a
+          # call to C's `memset`), so the fill-loop recognizer stays off there.
+          b.addStrLit "--no-mem-intrinsics"
+        elif native:
+          # Merge adjacent constant field stores into wider ones. arkham only:
+          # it does not reorder memory accesses by type, which a C compiler
+          # with strict aliasing does — there the merged `uint16` store over
+          # two `uint8` fields is undefined behavior.
+          b.addStrLit "--merge-stores:" & $c.config.bits
         b.addKeyw "input"
         b.addKeyw "output"
 

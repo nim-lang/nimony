@@ -255,6 +255,17 @@ type
     CsellsOp
     CselhiOp
     CselhsOp
+    # ── block memory operations (`{.intrinsic: "Memset".}` …). Portable: C has
+    #    them as builtins, LLVM as `llvm.mem*`, and arkham lowers each as an
+    #    inline loop over the argument registers — which is why arkham treats one
+    #    as a CALL POINT (the loop's scratch takes caller-saved registers). They
+    #    are rows rather than `importc` calls so a pass can emit one in any module
+    #    by declaring it there: shoggoth's `memidioms` turns recognized fill/copy
+    #    loops into them, and an intrinsic declaration has no body for DCE to
+    #    keep alive.
+    MemsetOp     # Memset(dest: pointer; byte: int; size: int)
+    MemcpyOp     # Memcpy(dest, src: pointer; size: int) — the regions must not overlap
+    MemcmpOp     # int32 = Memcmp(a, b: pointer; size: int)
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -421,7 +432,8 @@ const
     "cmova", "cmovbe", "cmovl", "cmovge", "cmovg", "cmovle",
     "adds3", "adcs3", "subs3", "sbcs3", "mul3", "umulh", "umull", "umlal", "bic3",
     "cseleq", "cselne", "csellt", "cselle", "cselgt", "cselge", "csello",
-    "csells", "cselhi", "cselhs"]
+    "csells", "cselhi", "cselhs",
+    "Memset", "Memcpy", "Memcmp"]
 
   Imm8 = [ptImmLit, ptNone, ptNone, ptNone, ptNone, ptNone]
     ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -465,6 +477,11 @@ const
   VecFma = [ptVec128, ptVec128, ptVec128, ptLaneBits, ptNone, ptNone]
   VecDup = [ptFloatW, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
   VecHAdd = [ptVec128, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
+
+  MemFill = [ptAnyPtr, ptAnyInt, ptAnyInt, ptNone, ptNone, ptNone]
+    ## `(dest, byte, size)`: only the low 8 bits of `byte` count
+  MemBin = [ptAnyPtr, ptAnyPtr, ptAnyInt, ptNone, ptNone, ptNone]
+    ## `(dest, src, size)` / `(a, b, size)`
 
   MulShape = [ptAnyIntW, ptAnyIntW, ptAnyIntW, ptNone, ptNone, ptNone]
     ## `(lo, hi, s)`, all one width
@@ -1125,10 +1142,20 @@ const
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF, mfZF}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,             # cselhs
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
-                 widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: {})
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
+    # ── block memory operations ──
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # Memset
+                 params: MemFill, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efWrites}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # Memcpy
+                 params: MemBin, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efReads, efWrites}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # Memcmp
+                 params: MemBin, roles: AllIn, ret: ptInt32,
+                 widths: {}, tie: -1, effects: {efReads}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = CselhsOp
+const LastIntrinsicOp* = MemcmpOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -1247,6 +1274,12 @@ proc hasInoutOperand*(r: IntrinsicRow): bool =
   result = false
   for i in 0 ..< r.arity:
     if r.roles[i] == roInout: return true
+
+proc isMemOp*(op: IntrinsicOp): bool {.inline.} =
+  ## `Memset`/`Memcpy`/`Memcmp`. arkham lowers them as an inline loop that uses
+  ## the argument registers and caller-saved scratch, so its analyser treats one
+  ## as a call point; the other back ends call the C builtin of that name.
+  ord(op) >= ord(MemsetOp) and ord(op) <= ord(MemcmpOp)
 
 proc isVolatile*(op: IntrinsicOp): bool {.inline.} =
   ## A volatile access. Two of them may not be reordered against each other, may
