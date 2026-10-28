@@ -1309,6 +1309,7 @@ func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]
         capturesChanged = true
         pc = int(code[pc+1].arg)
       else:
+        # unreachable: code that keeps its groups runs in `matchWithCaptures`
         return 0
     of opcCaptureEnd:
       when trackCaptures:
@@ -1317,6 +1318,7 @@ func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]
         capturesChanged = true
         pc = int(code[pc+1].arg)
       else:
+        # unreachable: code that keeps its groups runs in `matchWithCaptures`
         return 0
     of opcBackref:
       if arg < caps.len:
@@ -1332,6 +1334,20 @@ func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]
       # unreachable: a `TJmp` is only ever entered through the test above it
       return 0
 
+func matchOnly(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
+               s: string; caps: var seq[Capture]; start: Natural;
+               endPos: var int): int {.inline.} =
+  ## `run` for code without capture groups: no capture bookkeeping, and
+  ## `caps` is left alone.
+  result = run[false](code, data, startAt, s, caps, start, endPos)
+
+func matchWithCaptures(code: seq[RegexInstr]; data: seq[set[char]];
+                       startAt: int; s: string; caps: var seq[Capture];
+                       start: Natural; endPos: var int): int {.inline.} =
+  ## `run` for code that keeps its groups; a failed longer match rewinds
+  ## `caps` to the last accepting state.
+  result = run[true](code, data, startAt, s, caps, start, endPos)
+
 func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
            endPos: var int): int =
   ## Matches `r` at `start`. Returns the rule that matched (`0` for none),
@@ -1342,12 +1358,16 @@ func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
   ## afterwards purely for the bounds and is allowed to come up empty-handed
   ## without changing the answer.
   caps.setLen 0
+  # Only a pattern without groups is known to need no capture bookkeeping.
+  # With groups but no back references `code` has none either, but telling
+  # the two apart costs more per call than the bookkeeping saves.
   if r.captures == 0:
-    result = run[false](r.code, r.data, r.startAt, s, caps, start, endPos)
+    result = matchOnly(r.code, r.data, r.startAt, s, caps, start, endPos)
   else:
-    result = run[true](r.code, r.data, r.startAt, s, caps, start, endPos)
+    result = matchWithCaptures(r.code, r.data, r.startAt, s, caps, start, endPos)
   if result > 0 and r.capCode.len > 0:
     var found: seq[Capture] = @[]
     var ignored = start
-    if run[true](r.capCode, r.capData, r.capStartAt, s, found, start, ignored) > 0:
+    if matchWithCaptures(r.capCode, r.capData, r.capStartAt, s, found, start,
+                         ignored) > 0:
       caps = found
