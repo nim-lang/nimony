@@ -236,7 +236,9 @@ func utf8Width*(s: string; pos: Natural): int =
           else: 0
   if n == 0 or n > s.len - pos: return 0
   for i in 1 ..< n:
-    let b = ord(s[pos + i])
+    let at = pos + i
+    if at >= s.len: return 0
+    let b = ord(s[at])
     if b < 0x80 or b > 0xBF or
        (i == 1 and ((first == 0xE0 and b < 0xA0) or
                     (first == 0xED and b >= 0xA0) or

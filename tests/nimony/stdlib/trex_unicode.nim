@@ -1,4 +1,5 @@
-import std / [assertions, rex]
+import std / [assertions, rex, unicode]
+import std / private / regexcore
 
 block literals:
   assert fullMatch("éé", re"é+"), "literal"
@@ -48,6 +49,10 @@ block captureRewind:
   assert caps.len == 1 and capture("aaabx", caps, 0) == "a"
   assert matchLen("aaabax", r, caps) == 5
   assert caps.len == 2 and capture("aaabax", caps, 1) == "ba"
+  assert fullMatch("é🙂é🙂", re"(é🙂)\1")
+  assert not fullMatch("é🙂éx", re"(é🙂)\1")
+  assert not fullMatch("é🙂é", re"(é🙂)\1")
+  assert matchLen("!é🙂é🙂?", re"(é🙂)\1", 1) == 12
 
 block runtime:
   var r = default(Regex)
@@ -56,11 +61,25 @@ block runtime:
   assert matchLen("éé!", r) == 4, "runtime match"
   assert not tryRe("\xC3", r, err), "invalid pattern"
   assert err.len > 0
-  for invalid in ["\x80", "\xC0\x80", "\xED\xA0\x80",
-                  "\xF4\x90\x80\x80", "\xF5\x80\x80\x80"]:
+  for invalid in ["\x80", "\xC0\x80", "\xE2\x82", "\xE1A\x80",
+                  "\xED\xA0\x80", "\xF0\x9F\x99", "\xF4\x90\x80\x80",
+                  "\xF5\x80\x80\x80"]:
     assert not tryRe(invalid, r, err)
     assert err.len > 0
     assert matchLen(invalid, re".") == -1
+
+block validationBoundaries:
+  for first in [0xE0, 0xE1, 0xED, 0xEF, 0xF0, 0xF1, 0xF4]:
+    for second in 0 .. 255:
+      for tail in [0x7F, 0x80, 0xBF, 0xC0]:
+        var s = ""
+        s.add char(first)
+        s.add char(second)
+        s.add char(tail)
+        if first >= 0xF0: s.add '\x80'
+        let valid = validateUtf8(s) == -1
+        assert (utf8Width(s, 0) == s.len) == valid
+        assert (utf8Width("!" & s, 1) == s.len) == valid
 
 block generated:
   let s = "é🙂!"
