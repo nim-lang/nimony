@@ -400,6 +400,11 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineIn
 
 proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
+  if c.phase != SemcheckBodies and c.deferredCyclicImports.len > 0:
+    # A cycle group member: the interfaces of `{.cyclic.}` imports are only
+    # loaded after phase1, so resolve the export in phase3.
+    takeTree dest, it.n
+    return
   var x = it.n
   skip it.n
   x.into:  # (export …)
