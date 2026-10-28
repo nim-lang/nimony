@@ -77,10 +77,7 @@ proc isVariadic(name: string): bool =
   result = name.endsWith("...")
 
 proc argumentFieldName(name: string): string =
-  if name.isVariadic:
-    result = toCamelCase(name.substr(0, name.len - 4))
-  else:
-    result = toCamelCase(name)
+  result = toCamelCase(name)
 
 proc commandEnumName(name: string): string =
   result = "cmd" & toPascalCase(name)
@@ -499,7 +496,7 @@ proc emitCommandChoice(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
 proc emitAppendArgument(dest: var NifBuilder; name: string)
     {.ensuresNif: addedStmt(dest).} =
   dest.withTree CallS, NoLineInfo:
-    dest.addIdent("add")
+    dest.bindSym("cliAddArgument")
     emitDotExpr dest, "result", argumentFieldName(name)
     emitDotExpr dest, "p", "key"
 

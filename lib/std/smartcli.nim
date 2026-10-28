@@ -57,6 +57,9 @@ proc cliUnexpectedArgument*(spec, arg: string) {.noreturn.} =
 proc cliMissingArguments*(spec: string) {.noreturn.} =
   cliFail(spec, "missing arguments")
 
+proc cliAddArgument*(values: var seq[string]; value: string) {.inline.} =
+  values.add value
+
 proc cliInvalidValue*(spec, optionName, value: string) {.noreturn.} =
   cliFail(spec, "invalid value for " & optionName & ": " & value)
 
