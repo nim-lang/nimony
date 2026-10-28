@@ -405,6 +405,9 @@ proc addRegexLit(dest: var NifBuilder; r: Regex; info: LineInfo) =
     dest.withTree KvX, info:
       dest.addIdent "capStartAt"
       dest.addIntLit r.capStartAt
+    dest.withTree KvX, info:
+      dest.addIdent "firstBytes"
+      dest.addCharSetLit r.firstBytes, info
 
 proc flagsOf(n: NifCursor; flags: var set[RegexFlag]; err: var string) =
   ## Reads a `{reExtended, …}` set constructor. The argument arrives

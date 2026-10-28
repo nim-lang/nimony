@@ -49,6 +49,20 @@ proc searching =
     found.add substr("a1b22c333d", f, l)
   assert found.len == 3
   assert found[0] == "1" and found[1] == "22" and found[2] == "333"
+  # `find` skips to bytes that can start a match; it must agree with trying
+  # every position, including for patterns that can match without a byte.
+  for pattern in ["\\d+", "é|z", "x*", "\\bab", "^a", "a$", "(a)\\1", "[^a]",
+                  "🙂+", "\\s"]:
+    var r = default(Regex)
+    var err = ""
+    assert tryRe(pattern, r, err)
+    for subject in ["", "a", "xab ab", "é🙂aa z", "aa1", "\xC0\x80a"]:
+      var slow = -1
+      for i in 0 .. subject.len:
+        if matchLen(subject, r, i) >= 0:
+          slow = i
+          break
+      assert find(subject, r) == slow
   echo "searching ok"
 
 proc rewriting =
@@ -56,6 +70,9 @@ proc rewriting =
   let parts = split("a1b22c333d", re"\d+")
   assert parts.len == 4
   assert parts[0] == "a" and parts[3] == "d"
+  assert replace("é1é22é", re"\d+", "#") == "é#é#é"
+  assert replace("abc", re"x*", "-") == "abc"
+  assert split("é1é22", re"\d+") == @["é", "é", ""]
   echo "rewriting ok"
 
 proc capturing =

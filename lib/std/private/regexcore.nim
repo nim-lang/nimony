@@ -1082,6 +1082,8 @@ type
     capCode*: seq[RegexInstr]
     capData*: seq[set[char]]
     capStartAt*: int
+    firstBytes*: set[char] ## every match starts with one of these; all bytes
+                           ## when a match can start without reading one
 
   Capture* = object ## The bounds of one capture group, both ends inclusive.
     first*: Natural  ## a position in the subject, so never negative
@@ -1092,7 +1094,7 @@ const
 
 func emptyRegex*(): Regex =
   Regex(code: @[], data: @[], startAt: 0, captures: 0,
-        capCode: @[], capData: @[], capStartAt: 0)
+        capCode: @[], capData: @[], capStartAt: 0, firstBytes: {})
 
 func genData(c: var Regex; data: set[char]): int32 =
   ## Interns a character set. Sets repeat heavily across a DFA's states, so the
@@ -1141,6 +1143,10 @@ func genCapture(c: var Regex; x: Alphabet; dest: int) =
 func genBytecode*(a: Dfa; res: var Regex) =
   ## Lowers a minimized DFA to the instruction stream `exec` walks.
   var stateToLabel = newSeq[int](a.stateCount + 1)
+  # A start state that accepts, or that leaves on an anchor or a group marker,
+  # can match without reading a byte, so then any byte can start a match.
+  var first: set[char] = {}
+  var anyFirst = getRule(a, a.startState) != 0
   for src in 1 .. a.stateCount:
     stateToLabel[src] = res.code.len
     let rule = getRule(a, src)
@@ -1153,6 +1159,11 @@ func genBytecode*(a: Dfa; res: var Regex) =
           break
     for dest in allDests(a, src):
       let (others, cs) = allTransitions(a, src, dest)
+      if src == a.startState:
+        first = first + cs
+        for x in others:
+          if x.kind == reChar: first.incl x.val
+          else: anyFirst = true
       for x in others: genCapture(res, x, dest)
       if cs != {}:
         gen res, opcTestSet, genData(res, cs)
@@ -1167,6 +1178,7 @@ func genBytecode*(a: Dfa; res: var Regex) =
       res.code[i] = RegexInstr(opc: opcTJmp,
                                arg: int32(stateToLabel[res.code[i].arg]))
   res.startAt = stateToLabel[a.startState]
+  res.firstBytes = if anyFirst: {'\0'..'\xFF'} else: first
 
 proc countUses(r: RegexNode; caps, backs: var int) =
   ## Highest capture-group and back-reference index the pattern names.

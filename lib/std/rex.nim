@@ -203,6 +203,17 @@ func nextCharacter(s: string; pos: Natural): int =
     inc i
   result = i
 
+func skipToCandidate(s: string; r: Regex; pos: Natural): int
+    {.ensures: result <= s.len.} =
+  ## The first position at or after `pos` where a match can start; `s.len`
+  ## when there is none before the end.
+  let first = r.firstBytes # read in the loop, it is copied every iteration
+  var i: Natural = pos
+  while i < s.len:
+    if s[i] in first: return i
+    inc i
+  return s.len
+
 func matchLen*(s: string; r: Regex; caps: var seq[Capture]; start = 0): int =
   ## The length of the longest match of `r` starting exactly at `start`, or
   ## `-1` when there is none. Capture bounds are written to `caps`, which is
@@ -240,6 +251,7 @@ func findBounds*(s: string; r: Regex; caps: var seq[Capture];
   ## `(-1, 0)` when there is none. An empty match reports `last == first - 1`.
   var i = start
   while i <= s.len:
+    i = skipToCandidate(s, r, i)
     let L = matchLen(s, r, caps, i)
     if L >= 0: return (i, i + L - 1)
     i = nextCharacter(s, i)
@@ -285,6 +297,7 @@ iterator findAll*(s: string; r: Regex; start = 0): (int, int) =
   ## terminates.
   var i = start
   while i <= s.len:
+    i = skipToCandidate(s, r, i)
     let L = matchLen(s, r, i)
     if L > 0:
       yield (i, i + L - 1)
@@ -301,6 +314,11 @@ func replace*(s: string; r: Regex; by: string): string =
   result = ""
   var i: Natural = 0
   while i < s.len:
+    let next = skipToCandidate(s, r, i)
+    while i < next:
+      result.add s[i]
+      inc i
+    if i >= s.len: break
     let L = matchLen(s, r, i)
     if L > 0:
       result.add by
@@ -317,6 +335,11 @@ func split*(s: string; r: Regex): seq[string] =
   var piece = ""
   var i: Natural = 0
   while i < s.len:
+    let next = skipToCandidate(s, r, i)
+    while i < next:
+      piece.add s[i]
+      inc i
+    if i >= s.len: break
     let L = matchLen(s, r, i)
     if L > 0:
       result.add piece
