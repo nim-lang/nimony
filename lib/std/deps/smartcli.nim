@@ -495,10 +495,11 @@ proc emitArgumentSlots(dest: var NifBuilder; rawSpec: string; argumentNames: seq
     dest.addIdent("argSlot")
     for i, argumentName in argumentNames:
       dest.withOfInt i + slotOffset:
-        if argumentName.isVariadic and i != argumentNames.len - 1:
-          dest.addTree(errorTree("variadic argument must be last"))
-        elif argumentName.isVariadic:
-          emitAppendArgument dest, argumentName
+        if argumentName.isVariadic:
+          if i != argumentNames.len - 1:
+            dest.addTree(errorTree("variadic argument must be last"))
+          else:
+            emitAppendArgument dest, argumentName
         else:
           emitAssignResultFieldFromField dest,
             argumentFieldName(argumentName), "p", "key"
