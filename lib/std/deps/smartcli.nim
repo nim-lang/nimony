@@ -197,20 +197,6 @@ proc requiredArguments(names: seq[string]): int =
   if names.len > 0 and names[^1].isVariadic:
     dec result
 
-proc misplacedVariadic(names: seq[string]): bool =
-  result = false
-  for i, name in names:
-    if name.isVariadic and i != names.len - 1:
-      return true
-
-proc hasMisplacedVariadic(spec: CliSpec): bool =
-  if spec.positionalMode() == pmInlineCommand:
-    for command in spec.commands:
-      if misplacedVariadic(command.argumentNames): return true
-    result = false
-  else:
-    result = misplacedVariadic(spec.argumentNames)
-
 proc extractSpecNode(n: NifCursor): NifCursor =
   result = callArgs(n)
   if result.exprKind == SufX:
@@ -509,7 +495,9 @@ proc emitArgumentSlots(dest: var NifBuilder; rawSpec: string; argumentNames: seq
     dest.addIdent("argSlot")
     for i, argumentName in argumentNames:
       dest.withOfInt i + slotOffset:
-        if argumentName.isVariadic:
+        if argumentName.isVariadic and i != argumentNames.len - 1:
+          dest.addTree(errorTree("variadic argument must be last"))
+        elif argumentName.isVariadic:
           emitAppendArgument dest, argumentName
         else:
           emitAssignResultFieldFromField dest,
@@ -711,10 +699,7 @@ let specNode = extractSpecNode(root)
 if specNode.kind == StrLit:
   let rawSpec = specNode.stringValue
   let spec = parseSpec(rawSpec)
-  if hasMisplacedVariadic(spec):
-    saveTree errorTree("variadic argument must be last", specNode)
-  else:
-    let argsNode = extractArgsNode(root)
-    saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
+  let argsNode = extractArgsNode(root)
+  saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
 else:
   saveTree errorTree("cliapp expects a string literal", specNode)

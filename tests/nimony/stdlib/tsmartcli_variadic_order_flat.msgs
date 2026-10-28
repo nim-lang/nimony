@@ -1,1 +1,1 @@
-tests/nimony/stdlib/tsmartcli_variadic_order_flat.nim(3, 16) Error: variadic argument must be last
+??? Error: variadic argument must be last
