@@ -1,0 +1,5 @@
+tests/nimony/exceptions/texcept_not_a_type.nim(13, 10) Error: `ValueError` is an `ErrorCode` value, not a type; write `except ErrorCode as e:` and test `e == ValueError`
+tests/nimony/exceptions/texcept_not_a_type.nim(21, 10) Error: `except` takes `ErrorCode` or a `ref` object type, not `int64`
+tests/nimony/exceptions/texcept_not_a_type.nim(28, 19) Error: `ValueError` is an `ErrorCode` value, not a type; write `except ErrorCode as e:` and test `e == ValueError`
+tests/nimony/exceptions/texcept_not_a_type.nim(35, 10) Error: `except` takes `ErrorCode` or a `ref` object type, not `int64`
+tests/nimony/exceptions/texcept_not_a_type.nim(42, 10) Error: `ValueError` is an `ErrorCode` value, not a type; write `except ErrorCode as e:` and test `e == ValueError`
