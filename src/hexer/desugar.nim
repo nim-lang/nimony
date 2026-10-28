@@ -433,6 +433,20 @@ proc hoistConstSet(c: var Context; n: Cursor; info: NifLineInfo): SymId =
   c.constDecls.addSubtree n
   c.constDecls.addParRi()
 
+proc castOperand(n: Cursor): Cursor =
+  ## The expression inside the `(cast <type> x)` that `genSetElem` emits.
+  result = n
+  inc result
+  skip result
+
+proc isLocationPath(n: Cursor): bool =
+  ## Is `n` a symbol, or a field or element path from a symbol or a pointer?
+  ## Its address can then be taken, so it can be lifted without a copy.
+  var n = n
+  while n.exprKind in {AtX, ArratX, TupatX, DotX, DdotX, PatX}:
+    inc n
+  result = n.kind == Symbol or n.exprKind in {DerefX, HderefX}
+
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let kind = n.exprKind
@@ -465,8 +479,20 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `b`'s evaluation and re-reading it is free, so keep it in read-only data,
   # hoisting a bare literal to a `const` to get it there.
   let aIsConst = isConstSym(aOrig) or isLiteralSet(aOrig)
+  var err = false
+  let size = int asSigned(bitsetSizeInBytes(baseType), err)
+  assert not err
   let liftB = needsTemp(bOrig) or (needsTemp(aOrig) and not aIsConst)
-  let liftA = not aIsConst and (needsTemp(aOrig) or needsTemp(bOrig))
+  var liftA = not aIsConst and (needsTemp(aOrig) or needsTemp(bOrig))
+  var liftAddrA = false
+  if kind == InsetX and size > 8 and not needsTemp(castOperand(bOrig)):
+    # `genSetElem`'s cast makes any element look like work, but a plain
+    # location under it has no effect that could change `a`. Then `a` only
+    # needs lifting for its own sake, and a location is reached through a
+    # pointer: only the byte at `b` is read, never the set. `b` keeps its
+    # temporary, which is a register.
+    liftA = not aIsConst and needsTemp(aOrig)
+    liftAddrA = liftA and isLocationPath(aOrig)
   let useTemp = liftA or liftB
   let oldBufStackLen = c.tempUseBufStack.len
   var a: Cursor
@@ -483,13 +509,12 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var val = createTokenBuf(16)
   if useTemp:
     # lift both so (n, (n = 123; n)) works
-    if liftA:
+    if liftAddrA:
+      a = liftTempAddr(c, pre, aOrig, typ, info)
+    elif liftA:
       a = liftTemp(c, pre, aOrig, typ, info)
     if liftB:
       b = liftTemp(c, pre, bOrig, if kind == InsetX: c.typeCache.builtins.uintType else: typ, info)
-  var err = false
-  let size = int asSigned(bitsetSizeInBytes(baseType), err)
-  assert not err
   case size
   of 1, 2, 4, 8:
     case kind
