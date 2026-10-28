@@ -6,6 +6,7 @@
 ## classes; see each constant for details.
 
 {.feature: "lenientnils".}
+{.feature: "staticContracts".}
 
 import std/[assertions, parseutils]
 
@@ -60,7 +61,7 @@ const
 func spaces*(n: int): string =
   ## Returns a string with `n` space characters.
   result = newString(n)
-  for i in 0 ..< n: result[i] = ' '
+  for i in 0 ..< result.len: result[i] = ' '
 
 func align*(s: string; count: Natural; padding = ' '): string =
   ## Aligns a string `s` with `padding`, so that it is of length `count`.
@@ -75,10 +76,9 @@ func align*(s: string; count: Natural; padding = ' '): string =
     assert align("1232", 6) == "  1232"
     assert align("1232", 6, '#') == "##1232"
   if s.len < count:
-    result = newString(count)
-    let fill = count - s.len
-    for i in 0 ..< fill: result[i] = padding
-    for i in fill ..< count: result[i] = s[i - fill]
+    result = newStringOfCap(count)
+    for i in s.len ..< count: result.add padding
+    result.add s
   else:
     result = s
 
@@ -95,9 +95,9 @@ func alignLeft*(s: string; count: Natural; padding = ' '): string =
     assert alignLeft("1232", 6) == "1232  "
     assert alignLeft("1232", 6, '#') == "1232##"
   if s.len < count:
-    result = newString(count)
-    for i in 0 ..< s.len: result[i] = s[i]
-    for i in s.len ..< count: result[i] = padding
+    result = newStringOfCap(count)
+    result.add s
+    for i in s.len ..< count: result.add padding
   else:
     result = s
 
@@ -116,18 +116,16 @@ func center*(s: string; width: int; fillChar: char = ' '): string =
   if width <= s.len:
     result = s
   else:
-    result = newString(width)
+    result = newStringOfCap(width)
     let leftPadding = (width - s.len) div 2
-    for i in 0 ..< width:
-      if i >= leftPadding and i < leftPadding + s.len:
-        result[i] = s[i - leftPadding]
-      else:
-        result[i] = fillChar
+    for i in 0 ..< leftPadding: result.add fillChar
+    result.add s
+    for i in leftPadding + s.len ..< width: result.add fillChar
 
 func repeat*(c: char; n: int): string =
   ## Returns a string made of `c` repeated `n` times.
   result = newString(n)
-  for i in 0 ..< n: result[i] = c
+  for i in 0 ..< result.len: result[i] = c
 
 func repeat*(s: string; n: int): string =
   ## Returns `s` repeated `n` times.
@@ -241,15 +239,18 @@ func `$`*(x: cstring): string =
 
 func `$`*(x: char): string =
   ## Returns a one-character string containing `x`.
-  result = newString(1)
-  result[0] = x
+  result = newStringOfCap(1)
+  result.add x
 
 func substrEq(s: string, pos: int, substr: string): bool =
   var length = substr.len
   if length > 0:
+    if pos < 0: return false
     var i = 0
-    while i < length and pos + i < s.len and s[pos + i] == substr[i]:
+    var k = pos
+    while i < length and k < s.len and s[k] == substr[i]:
       inc i
+      inc k
     i == length
   else:
     false
@@ -265,7 +266,7 @@ template stringHasSep(s: string, index: int, sep: string): bool =
 
 template splitCommon(s, sep, maxsplit, sepLen) {.untyped.} =
   ## Common code for split procs
-  var last = 0
+  var last: Natural = 0
   var splits = maxsplit
 
   while last <= len(s):
@@ -510,14 +511,12 @@ func delete*(s: var string, slice: Slice[int]) =
     return
   if slice.b >= slice.a:
     var i = slice.a
-    var j = slice.b + 1
-    var newLen = s.len - j + i
     # if j < s.len: moveMem(addr s[i], addr s[j], s.len - j) # pending benchmark
-    while i < newLen:
-      s[i] = s[j]
-      inc(i)
-      inc(j)
-    shrink(s, newLen)
+    for j in slice.b + 1 ..< s.len:
+      # `i < j` always holds; the prover cannot see that, so it is checked
+      if i < s.len: s[i] = s[j]
+      inc i
+    shrink(s, i)
 
 func continuesWith*(s, prefix: string; start: int): bool =
   ## Returns true if `s` continues with `prefix` at position `start`.
@@ -529,11 +528,14 @@ func continuesWith*(s, prefix: string; start: int): bool =
   ## * `endsWith func<#endsWith,string,string>`_
   if prefix.len == 0:
     return true
+  if start < 0: return false
   if prefix.len > s.len-start:
     return false
+  var k = start
   for i in 0 ..< prefix.len:
-    if s[i+start] != prefix[i]:
+    if k >= s.len or s[k] != prefix[i]:
       return false
+    inc k
   return true
 
 func startsWith*(s, prefix: string): bool =
@@ -595,9 +597,9 @@ func toLowerAscii*(s: string): string =
   ## * `normalize func<#normalize,string>`_
   runnableExamples:
     assert toLowerAscii("FooBar!") == "foobar!"
-  result = newString(s.len)
-  for i in 0 ..< s.len:
-    result[i] = toLowerAscii(s[i])
+  result = s
+  for i in 0 ..< result.len:
+    result[i] = toLowerAscii(result[i])
 
 func toUpperAscii*(c: char): char {.inline.} =
   ## Converts character `c` into upper case.
@@ -627,9 +629,9 @@ func toUpperAscii*(s: string): string =
   ## * `capitalizeAscii func<#capitalizeAscii,string>`_
   runnableExamples:
     assert toUpperAscii("FooBar!") == "FOOBAR!"
-  result = newString(s.len)
-  for i in 0 ..< s.len:
-    result[i] = toUpperAscii(s[i])
+  result = s
+  for i in 0 ..< result.len:
+    result[i] = toUpperAscii(result[i])
 
 func capitalizeAscii*(s: string): string {.inline.} =
   ## Converts the first character of string `s` into upper case.
@@ -642,9 +644,8 @@ func capitalizeAscii*(s: string): string {.inline.} =
   runnableExamples:
     assert capitalizeAscii("foo") == "Foo"
     assert capitalizeAscii("-bar") == "-bar"
-  if s.len == 0: result = ""
-  else:
-    result = s
+  result = s
+  if result.len > 0:
     result[0] = toUpperAscii(result[0])
 
 func normalize*(s: string): string =
@@ -658,16 +659,12 @@ func normalize*(s: string): string =
   runnableExamples:
     assert normalize("Foo_bar") == "foobar"
     assert normalize("Foo Bar") == "foo bar"
-  result = newString(s.len)
-  var j = 0
-  for i in 0 ..< len(s):
-    if s[i] in UppercaseLetters:
-      result[j] = chr(ord(s[i]) + (ord('a') - ord('A')))
-      inc j
-    elif s[i] != '_':
-      result[j] = s[i]
-      inc j
-  if j != s.len: shrink(result, j)
+  result = newStringOfCap(s.len)
+  for c in items(s):
+    if c in UppercaseLetters:
+      result.add chr(ord(c) + (ord('a') - ord('A')))
+    elif c != '_':
+      result.add c
 
 func cmpIgnoreCase*(a, b: string): int =
   ## Compares two strings in a case insensitive manner. Returns:
@@ -680,13 +677,12 @@ func cmpIgnoreCase*(a, b: string): int =
     assert cmpIgnoreCase("bar", "Foo") < 0
     assert cmpIgnoreCase("Foo5", "foo4") > 0
 
-  let aLen = a.len
-  let bLen = b.len
-  let minLen = min(aLen, bLen)
-  for i in 0 ..< minLen:
+  var i = 0
+  while i < a.len and i < b.len:
     result = a[i].toLowerAscii.ord - b[i].toLowerAscii.ord
     if result != 0: return
-  result = aLen - bLen
+    inc i
+  result = a.len - b.len
 
 func cmpIgnoreStyle*(a, b: string): int =
   ## Semantically the same as `cmp(normalize(a), normalize(b))`. It
@@ -702,21 +698,19 @@ func cmpIgnoreStyle*(a, b: string): int =
   runnableExamples:
     assert cmpIgnoreStyle("foo_bar", "FooBar") == 0
     assert cmpIgnoreStyle("foo_bar_5", "FooBar4") > 0
-  let aLen = a.len
-  let bLen = b.len
   var i = 0
   var j = 0
   while true:
-    while i < aLen and a[i] == '_': inc i
-    while j < bLen and b[j] == '_': inc j
-    if i == aLen:
-      if j == bLen:
+    while i < a.len and a[i] == '_': inc i
+    while j < b.len and b[j] == '_': inc j
+    if i >= a.len:
+      if j >= b.len:
         # both cursors at the end:
         return 0
       else:
         # not yet at the end of 'b':
         return -1
-    elif j == bLen:
+    elif j >= b.len:
       return 1
     let aa = toLowerAscii(a[i])
     let bb = toLowerAscii(b[j])
@@ -727,7 +721,14 @@ func cmpIgnoreStyle*(a, b: string): int =
     inc j
   return 0
 
-func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
+func lastIndex(s: string; last: int): int {.ensures: result < s.len.} =
+  ## The `last` of a search: `s.high` when `last` is negative, and clamped to
+  ## `s.high` when it lies past the end.
+  result = s.len - 1
+  if last >= 0 and last < s.len: result = last
+
+func find*(s: string; sub: char; start: Natural = 0; last = -1): int {.
+    ensures: result < s.len.} =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included).
   ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
   ##
@@ -738,13 +739,12 @@ func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
   ## See also:
   ## * `replace func<#replace,string,char,char>`_
   result = -1
-  let last = if last < 0: s.high else: last
-
-  for i in int(start)..last:
+  for i in int(start)..lastIndex(s, last):
     if s[i] == sub:
       return i
 
-func find*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
+func find*(s: string; chars: set[char]; start: Natural = 0; last = -1): int {.
+    ensures: result < s.len.} =
   ## Searches for `chars` in `s` inside range `start..last` (both ends included).
   ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
   ##
@@ -755,8 +755,7 @@ func find*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
   ## See also:
   ## * `multiReplace func<#multiReplace,string,varargs[]>`_
   result = -1
-  let last = if last < 0: s.high else: last
-  for i in int(start)..last:
+  for i in int(start)..lastIndex(s, last):
     if s[i] in chars:
       return i
 
@@ -796,7 +795,7 @@ func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
   ## * `initSkipTable func<#initSkipTable,string>`_
   ## * `initSkipTable func<#initSkipTable,SkipTable,string>`_
   let
-    last = if last < 0: s.high else: last
+    last = lastIndex(s, last)
     subLast = sub.len - 1
 
   if subLast == -1:
@@ -807,15 +806,14 @@ func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
   # This is an implementation of the Boyer-Moore Horspool algorithms
   # https://en.wikipedia.org/wiki/Boyer%E2%80%93Moore%E2%80%93Horspool_algorithm
   result = -1
-  var skip = start
+  var skip = int(start)
 
   while last - skip >= subLast:
-    var i = subLast
-    while s[skip + i] == sub[i]:
-      if i == 0:
-        return skip
-      dec i
-    inc skip, a[s[skip + subLast]]
+    if s.continuesWith(sub, skip):
+      return skip
+    let e = skip + subLast
+    if e >= 0 and e < s.len: inc skip, a[s[e]]
+    else: break
 
 func find*(s, sub: string; start: Natural = 0; last = -1): int =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included).
@@ -841,11 +839,9 @@ func rfind*(s: string; sub: char; start: Natural = 0; last = -1): int =
   ##
   ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
   result = -1
-  var i = if last < 0: s.high else: last
-  while i >= int(start):
+  for i in countdown(lastIndex(s, last), int(start)):
     if s[i] == sub:
       return i
-    dec i
 
 func rfind*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
   ## Searches for `chars` in `s` inside range `start..last` (both ends included)
@@ -853,11 +849,9 @@ func rfind*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
   ##
   ## If `s` contains none of the characters in `chars`, -1 is returned.
   result = -1
-  var i = if last < 0: s.high else: last
-  while i >= int(start):
+  for i in countdown(lastIndex(s, last), int(start)):
     if s[i] in chars:
       return i
-    dec i
 
 func rfind*(s, sub: string; start: Natural = 0; last = -1): int =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included)
@@ -869,25 +863,21 @@ func rfind*(s, sub: string; start: Natural = 0; last = -1): int =
     return max(int(start), rightIndex)
   if sub.len > s.len - start:
     return -1
-  let last = if last < 0: s.high else: last
-  var i = last - sub.len + 1
-  while i >= int(start):
+  result = -1
+  for i in countdown(lastIndex(s, last) - sub.len + 1, int(start)):
     var j = 0
-    while j < sub.len and sub[j] == s[i+j]:
+    var k = i
+    while j < sub.len and k < s.len and sub[j] == s[k]:
       inc j
+      inc k
     if j == sub.len:
       return i
-    dec i
-  result = -1
 
 func replace*(s: string; sub, by: char): string =
   ## Returns a copy of `s` where every `sub` is replaced by `by`.
-  result = newString(s.len)
-  var i = 0
-  while i < s.len:
-    if s[i] == sub: result[i] = by
-    else: result[i] = s[i]
-    inc i
+  result = s
+  for i in 0 ..< result.len:
+    if result[i] == sub: result[i] = by
 
 func replace*(s, sub: string; by = ""): string =
   ## Replaces every occurrence of the string `sub` in `s` with the string `by`.
@@ -930,6 +920,11 @@ func replace*(s, sub: string; by = ""): string =
     # copy the rest:
     add result, substr(s, i)
 
+func charInSetAt(s: string; i: int; chars: set[char]): bool =
+  ## `s[i] in chars`, false for an `i` outside of `s`.
+  result = false
+  if i >= 0 and i < s.len: result = s[i] in chars
+
 func replaceWord*(s, sub: string, by = ""): string =
   ## Replaces every occurrence of the string `sub` in `s` with the string `by`.
   ##
@@ -948,8 +943,8 @@ func replaceWord*(s, sub: string, by = ""): string =
       var j = find(a, s, sub, i, last)
       if j < 0: break
       # word boundary?
-      if (j == 0 or s[j-1] notin wordChars) and
-          (j+sub.len >= s.len or s[j+sub.len] notin wordChars):
+      if not s.charInSetAt(j-1, wordChars) and
+          not s.charInSetAt(j+sub.len, wordChars):
         add result, substr(s, i, j - 1)
         add result, by
         i = j + sublen
@@ -986,7 +981,7 @@ func multiReplace*(s: string; replacements: openArray[(string, string)]): string
     # continues from 'c', so the "bc" replacement is never matched and thus skipped.
     assert multireplace("abc", [("bc", "x"), ("ab", "_b")]) == "_bc"
   result = newStringOfCap(s.len)
-  var i = 0
+  var i: Natural = 0
   var fastChk: set[char] = {}
   # workaround https://github.com/nim-lang/nimony/issues/1461
   # and https://github.com/nim-lang/nimony/issues/1451
@@ -997,7 +992,8 @@ func multiReplace*(s: string; replacements: openArray[(string, string)]): string
   while i < s.len:
     block sIteration:
       # Assume most chars in s are not candidates for any replacement operation
-      if s[i] in fastChk:
+      let c = s[i]
+      if c in fastChk:
         for repl in replacements.items:
           if repl[0].len > 0 and s.continuesWith(repl[0], i):
             add result, repl[1]
@@ -1005,7 +1001,7 @@ func multiReplace*(s: string; replacements: openArray[(string, string)]): string
             break sIteration
       # No matching replacement found
       # copy current character from s
-      add result, s[i]
+      add result, c
       inc(i)
 
 func multiReplace*(s: openArray[char]; replacements: openArray[(set[char], char)]): string =
@@ -1032,7 +1028,7 @@ func multiReplace*(s: openArray[char]; replacements: openArray[(set[char], char)
     # Sanitize a filename with Windows-incompatible characters
     const file = "a/file:with?invalid*chars.txt"
     assert file.multiReplace(WinSanitationRules) == "a-file-with_invalid_chars.txt"
-  result = newString(s.len)
+  result = newStringOfCap(s.len)
   for i in 0..<s.len:
     var nextChar = s[i]
     # Workaround https://github.com/nim-lang/nimony/issues/1451
@@ -1040,7 +1036,7 @@ func multiReplace*(s: openArray[char]; replacements: openArray[(set[char], char)
       if nextChar in repl[0]:
         nextChar = repl[1]
         break
-    result[i] = nextChar
+    result.add nextChar
 
 const HexChars = "0123456789ABCDEF"
 
@@ -1053,7 +1049,7 @@ func toHex*(x: BiggestInt; len: Positive): string =
     doAssert toHex(BiggestInt(-1), 2) == "FF"
   var n = x
   result = newString(len)
-  for j in countdown(len - 1, 0):
+  for j in countdown(result.len - 1, 0):
     result[j] = HexChars[int(n and 0xF)]
     n = n shr 4
     # Keep sign nibbles coming for a negative value regardless of whether `shr`
@@ -1107,22 +1103,20 @@ func unescape*(s: string, prefix = "\"", suffix = "\""): string {.raises.} =
   ## If `s` does not begin with `prefix` and end with `suffix` a
   ## ValueError exception will be raised.
   result = newStringOfCap(s.len)
-  var i = prefix.len
+  var i: Natural = prefix.len
   if not s.startsWith(prefix):
     raise ValueError
-  while true:
-    if i >= s.len-suffix.len: break
+  # `i < s.len` follows from the first condition; the prover needs it spelled out
+  while i < s.len-suffix.len and i < s.len:
     if s[i] == '\\':
       if i+1 >= s.len:
         result.add('\\')
         break
       case s[i+1]:
       of 'x':
-        inc i, 2
         var c = 0
-        i += parseutils.parseHex(s, c, i, maxLen = 2)
+        inc i, parseutils.parseHex(s, c, i+2, maxLen = 2)
         result.add(chr(c))
-        dec i, 2
       of '\\':
         result.add('\\')
       of '\'':
@@ -1182,7 +1176,7 @@ const
 type
   DecInt = object ## Non-negative integer, base `DecBase`, least significant limb first.
     limbs: array[DecMaxLimbs, uint32]
-    len: int
+    len: range[0..DecMaxLimbs]
 
 func mulSmall(x: var DecInt; factor: uint32) =
   var carry = 0'u64
@@ -1231,10 +1225,10 @@ func exactDigits(f: BiggestFloat): tuple[neg: bool, digits: string, exp: int] =
     mant = mant or (1'u64 shl 52)
     e2 = biasedExp - 1075
   var x = default(DecInt)
-  while mant > 0'u64:
-    x.limbs[x.len] = uint32(mant mod DecBase)
-    mant = mant div DecBase
-    inc x.len
+  # `mant < 2^53 < DecBase^2`: two limbs hold it
+  x.limbs[0] = uint32(mant mod DecBase)
+  x.limbs[1] = uint32(mant div DecBase)
+  x.len = if x.limbs[1] != 0'u32: 2 else: 1
   var pointPos = 0                            # digits to the right of the point
   if e2 > 0:
     var k = e2
@@ -1247,7 +1241,8 @@ func exactDigits(f: BiggestFloat): tuple[neg: bool, digits: string, exp: int] =
     var k = -e2
     pointPos = k
     while k > 0:
-      let step = if k > 12: 12 else: k
+      var step: range[1..12] = 12
+      if k < 12: step = k
       mulSmall(x, Pow5[step])
       k = k - step
   var d = toDigits(x)
@@ -1352,24 +1347,22 @@ func stripTrailingZeros(s: string; decimalSep: char): string =
   ## `%g` without `#` drops the trailing zeros of the fraction, and the point
   ## with them when nothing is left behind it.
   var mantEnd = s.len
-  var i = 0
-  while i < s.len:
+  for i in 0 ..< s.len:
     if s[i] == 'e':
       mantEnd = i
       break
-    inc i
   var pointAt = -1
-  i = 0
-  while i < mantEnd:
+  for i in 0 ..< mantEnd:
     if s[i] == decimalSep:
       pointAt = i
       break
-    inc i
   if pointAt < 0:
     result = s
   else:
     var last = mantEnd
-    while last > pointAt+1 and s[last-1] == '0': dec last
+    for i in countdown(mantEnd - 1, pointAt + 1):
+      if s[i] != '0': break
+      last = i
     if last == pointAt+1: last = pointAt
     result = s.substr(0, last-1) & s.substr(mantEnd, s.len-1)
 
@@ -1442,10 +1435,13 @@ func formatFloat*(f: float, format: FloatFormatMode = ffDefault,
 
   result = formatBiggestFloat(f, format, precision.int, decimalSep)
 
-func findNormalized(x: string, inArray: openArray[string]): int =
+func findNormalized(x: string, inArray: openArray[string]): int {.
+    ensures: result < inArray.len.} =
+  ## The index of the value that follows the key `x` in `inArray`, -1 if
+  ## there is none.
   var i = 0
-  while i < inArray.len - 1:
-    if cmpIgnoreStyle(x, inArray[i]) == 0: return i
+  while i+1 < inArray.len:
+    if cmpIgnoreStyle(x, inArray[i]) == 0: return i+1
     inc(i, 2) # incrementing by 1 would probably lead to a
               # security hole...
   return -1
@@ -1512,7 +1508,7 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
       case formatstr[i+1]
       of '#':
         if num >= a.len: invalidFormatString(formatstr)
-        add result, a[num]
+        else: add result, a[num]
         inc i, 2
         inc num
       of '$':
@@ -1527,13 +1523,15 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
           j = j * 10 + ord(formatstr[i]) - ord('0')
           inc(i)
         let idx = if not negative: j-1 else: a.len-j
-        if idx < 0 or idx >= a.len: invalidFormatString(formatstr)
-        add result, a[idx]
+        if idx >= 0 and idx < a.len: add result, a[idx]
+        else: invalidFormatString(formatstr)
       of '{':
         var j: Natural = i+2
         var k = 0
-        var negative = formatstr[j] == '-'
-        if negative: inc j
+        var negative = false
+        if j < formatstr.len and formatstr[j] == '-':
+          negative = true
+          inc j
         var isNumber = 0
         while j < formatstr.len and formatstr[j] notin {'\0', '}'}:
           if formatstr[j] in Digits:
@@ -1544,18 +1542,18 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
           inc(j)
         if isNumber == 1:
           let idx = if not negative: k-1 else: a.len-k
-          if idx < 0 or idx >= a.len: invalidFormatString(formatstr)
-          add result, a[idx]
+          if idx >= 0 and idx < a.len: add result, a[idx]
+          else: invalidFormatString(formatstr)
         else:
-          var x = findNormalized(substr(formatstr, i+2, j-1), a)
-          if x >= 0 and x < a.len - 1: add result, a[x+1]
+          let x = findNormalized(substr(formatstr, i+2, j-1), a)
+          if x >= 0: add result, a[x]
           else: invalidFormatString(formatstr)
         i = j+1
       of 'a'..'z', 'A'..'Z', '\128'..'\255', '_':
         var j: Natural = i+1
         while j < formatstr.len and formatstr[j] in PatternChars: inc(j)
-        var x = findNormalized(substr(formatstr, i+1, j-1), a)
-        if x >= 0 and x < a.len - 1: add result, a[x+1]
+        let x = findNormalized(substr(formatstr, i+1, j-1), a)
+        if x >= 0: add result, a[x]
         else: invalidFormatString(formatstr)
         i = j
       else:
@@ -1613,10 +1611,13 @@ func trimZeros*(x: var string; decimalSep = '.') =
 
   let sPos = find(x, decimalSep)
   if sPos >= 0:
-    var last = find(x, 'e', start = sPos)
-    last = if last >= 0: last - 1 else: high(x)
+    let e = find(x, 'e', start = sPos)
+    var last = x.len - 1
+    if e >= 0: last = e - 1
     var pos = last
-    while pos >= 0 and x[pos] == '0': dec(pos)
+    for i in countdown(last, 0):
+      if x[i] != '0': break
+      pos = i - 1
     if pos > sPos: inc(pos)
     if last >= pos:
       try:
@@ -1656,7 +1657,7 @@ func formatSize*(bytes: int64; decimalSep = '.'; prefix = bpIEC; includeSpace = 
 
   # TODO: use fastLog2 when it is added.
   #let lg2 = if bytes == 0: 0 else: fastLog2(bytes)
-  let Lg2MaxDiv10 = sizeof(bytes) * 8 div 10
+  const Lg2MaxDiv10 = sizeof(int64) * 8 div 10
   var lg2 = Lg2MaxDiv10 * 10
   var matchedIndex = Lg2MaxDiv10
   for i in 1 .. Lg2MaxDiv10:
