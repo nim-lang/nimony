@@ -61,12 +61,12 @@ type
     hookNames: Table[string, int]
     thisModuleSuffix: string
     bits*: int
-    frontendHooks*: ptr Table[SymId, HooksPerType] # hooks from frontend, not yet in type pragmas
-    groupHooks*: ptr Table[SymId, HooksPerType]
-      ## Hooks already forged for a type by another member of a `{.cyclic.}`
-      ## group. Shared so the type's owner adopts the first one instead of
-      ## emitting a second, identically named-under-its-own-suffix hook that
-      ## the class's vtable would not contain. `nil` outside a cycle group.
+    frontendHooks*: ptr Table[SymId, HooksPerType]
+      ## Hooks not yet embedded in a type's pragmas. The lifter reads this
+      ## table and caches every hook it forges for a nominal type there, so
+      ## the next lookup finds it instead of generating a second symbol. A
+      ## `{.cyclic.}` group hands all its members the same table (the cyclic
+      ## code lives in `semmain`, not here); every other module gets its own.
     closureTuples: seq[TokenBuf]
       ## the lowered shapes handed to `requestLifting`, which keeps cursors
       ## into them: they must live as long as the context does
@@ -109,11 +109,6 @@ proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
     # Check frontend hooks first (for current module during derefs pass)
     if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
       result = c.frontendHooks[].getOrQuit(s).a[op]
-    if result == SymId(0) and c.groupHooks != nil and c.groupHooks[].hasKey(s):
-      # A cycle-group sibling already forged this type's hook. The owner has
-      # not published it in the type's pragmas yet (it is being lowered after
-      # this module), so this table is the only place it can be found.
-      result = c.groupHooks[].getOrQuit(s).a[op]
     if result == SymId(0):
       result = tryLoadHook(op, s)
     if result != SymId(0):
@@ -636,22 +631,19 @@ proc generateHookName(c: var LiftingCtx; prefix, key: string): string =
   result.add '.'
   result.add c.thisModuleSuffix
 
-proc recordGroupHook*(c: var LiftingCtx; op: AttachedOp; s: SymId; hook: SymId) =
-  ## Remember `hook` as `s`'s vtable hook for the rest of a `{.cyclic.}` group.
-  ## A hook can be found (the owner already has one) or forged here; both are
-  ## the same symbol for the class, so both have to reach the other members
-  ## before the owner's `(methods)` pragma is written.
-  if c.groupHooks != nil and hook != SymId(0) and
-      op in {attachedDestroy, attachedTrace} and hasRtti(s):
-    # `mgetOrPut` rather than `[]`: this runs in the compiler's own sem pass,
-    # where `Table.[]` is `.raises` and no handler is in scope.
-    c.groupHooks[].mgetOrPut(s, HooksPerType()).a[op] = hook
+proc rememberFrontendHook(c: var LiftingCtx; op: AttachedOp; s: SymId;
+                          hook: SymId) =
+  ## Cache a forged hook in the frontend table, which is what `loadHook`
+  ## consults before a type's pragmas exist. `mgetOrPut` rather than `[]`:
+  ## this runs in the compiler's own sem pass, where `Table.[]` is `.raises`
+  ## and no handler is in scope.
+  if c.frontendHooks != nil and hook != SymId(0):
+    c.frontendHooks[].mgetOrPut(s, HooksPerType()).a[op] = hook
 
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
   if (t.isSymbol or t.isSymbolDef):
     result = loadHook(c, op, t.symId)
     if result != SymId(0):
-      c.recordGroupHook(op, t.symId, result)
       return result
 
   let key = mangle(t, Frontend, c.bits)
@@ -667,15 +659,13 @@ proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
     else:
       c.requests.add GenHookRequest(sym: result, typ: t, op: op)
       c.structuralTypeToHook[op][key] = result
-  # RTTI class hooks are dispatched through the class's vtable, which lives in
-  # the module that OWNS the class. If that owner is lowered after this member
-  # of a `{.cyclic.}` group, it has published no hook yet; remember the one
-  # just forged here so all later members (and the owner) adopt it. Otherwise
-  # each member forges its own module-suffixed `=destroy`, none of which is in
-  # the vtable ("method `=destroy_...` not found in class"). Only `=destroy`
-  # and `=trace` are vtable entries.
+  # Cache the symbol in the frontend table so every later lookup for this type
+  # finds it — the next `getHook` in this module, and any other module sharing
+  # the table. For RTTI classes that agreement is required: dispatch goes
+  # through the class's vtable, which must name the very symbol its consumers
+  # call ("method `=destroy_...` not found in class" otherwise).
   if (t.isSymbol or t.isSymbolDef):
-    c.recordGroupHook(op, t.symId, result)
+    c.rememberFrontendHook(op, t.symId, result)
 
 proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceStatic = false) =
   ## forceStatic=true generates static dispatch for parent hook calls
@@ -1550,12 +1540,10 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
     dest.add c.dest
 
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil;
-                       cycles = false;
-                       groupHooks: ptr Table[SymId, HooksPerType] = nil): ref LiftingCtx =
+                       cycles = false): ref LiftingCtx =
   (ref LiftingCtx)(dest: initTokenBuf(), op: attachedDestroy, info: NoLineInfo,
                    thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY,
-                   frontendHooks: frontendHooks, cycles: cycles,
-                   groupHooks: groupHooks)
+                   frontendHooks: frontendHooks, cycles: cycles)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: NifLineInfo): SymId =
   c.op = op

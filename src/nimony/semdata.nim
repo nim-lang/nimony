@@ -256,12 +256,12 @@ type
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
     typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
     groupHooks*: ptr Table[SymId, HooksPerType]
-      ## In a `{.cyclic.}` group, one module may need a hook for a type another
-      ## member owns before that member has been lowered (and so before the
-      ## owner has published the hook in the type's pragmas). The member that
-      ## forges the hook records it here, and every later member — including
-      ## the owner, whose `(methods)` pragma then lists it — reuses that one
-      ## symbol. `nil` outside a cycle group.
+      ## In a `{.cyclic.}` group, the one frontend hook table every member
+      ## shares (a module outside a group uses its own `typeHooks`). It is
+      ## seeded with every member's sem-declared hooks before lowering, and
+      ## the lifter caches forged hooks there, so a type's hook is generated
+      ## once and the owner publishes the symbol its consumers already call.
+      ## `nil` outside a cycle group.
     errorHooks*: HashSet[SymId] # the `.error` hooks among `typeHooks`
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]

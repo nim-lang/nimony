@@ -88,7 +88,10 @@ type
     dest: TokenBuf
     r: CurrentRoutine
     typeCache: TypeCache
-    hooks: Table[SymId, HooksPerType]
+    hooks: ptr Table[SymId, HooksPerType]
+      ## The frontend hook table: this module's own, or the shared one of its
+      ## `{.cyclic.}` group. The lifter both reads it and caches forged hooks
+      ## there, so a hook is generated once per table, not once per module.
     classes: semdata.Classes # class entries with methods for vtables
     lifter: ref LiftingCtx
     typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
@@ -1453,7 +1456,7 @@ proc trType(c: var Context; n: var Cursor) =
         methodsToAdd.add (sig, entry.fn)
 
     # pragmas:
-    if s != SymId(0) and (c.hooks.hasKey(s) or hasMethods):
+    if s != SymId(0) and (c.hooks[].hasKey(s) or hasMethods):
       # Type has custom hooks or methods from semantic analysis
       if n.isDotToken:
         c.dest.addParLe PragmasU, info
@@ -1463,8 +1466,8 @@ proc trType(c: var Context; n: var Cursor) =
         n.into:
           while n.hasMore:
             c.dest.takeTree n # existing individual pragmas
-      if c.hooks.hasKey(s):
-        addHookDecls c.dest, c.hooks.getOrQuit(s)
+      if c.hooks[].hasKey(s):
+        addHookDecls c.dest, c.hooks[].getOrQuit(s)
       # RTTI classes: the object-level `=destroy` hook is virtual (generated as a
       # method, see lifter.genMissingHooks). It must live in the exported
       # `(methods)` vtable AND be discoverable as a `(destroy)` hook pragma —
@@ -1482,13 +1485,12 @@ proc trType(c: var Context; n: var Cursor) =
         buf.addSymUse s, info
         let typeCursor = cursorAt(buf, 0)
         c.typeSymBufs.add buf
-        let existing = if c.hooks.hasKey(s): c.hooks.getOrQuit(s)
+        let existing = if c.hooks[].hasKey(s): c.hooks[].getOrQuit(s)
                        else: default(HooksPerType)
         for op in [attachedDestroy, attachedTrace]:
           if op == attachedTrace and not c.lifter.cycles: continue
           let hookProc = getHook(c.lifter[], op, typeCursor, info)
           if hookProc != SymId(0):
-            c.lifter[].recordGroupHook(op, s, hookProc)
             if existing.a[op] == SymId(0):
               # not already emitted from c.hooks above
               c.dest.addParLe hookToTag(op), NoLineInfo
@@ -1834,26 +1836,23 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
     # classic model, a real ParRi scope-close: copy the token verbatim.
     takeTree c, n
 
-proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
+proc injectDerefs*(n: Cursor; hooks: ptr Table[SymId, HooksPerType];
                    classes: sink Classes;
-                   thisModuleSuffix: string; bits: int; cycles = false;
-                   groupHooks: ptr Table[SymId, HooksPerType] = nil): TokenBuf =
+                   thisModuleSuffix: string; bits: int; cycles = false): TokenBuf =
   ## `cycles`: the runtime collects cycles (`NifConfig.cycles`).
-  ## `groupHooks`: shared with the other members of a `{.cyclic.}` group, so a
-  ## hook one member forges for a foreign type is reused by the type's owner
-  ## instead of being forged a second time under the owner's suffix.
+  ## `hooks`: the frontend hooks the lifter consults. A `{.cyclic.}` group
+  ## hands every member the same table; anything else hands its own.
   let inputWidth = subtreeWidth(n)
   var c = Context(typeCache: createTypeCache(bits),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId),
     dest: createTokenBuf(inputWidth + inputWidth div 4), # about 1.12x the input
-    hooks: ensureMove(hooks),
+    hooks: hooks,
     classes: ensureMove(classes),
     lifter: nil) # set below after hooks is moved
   c.errorCodeType = createTokenBuf(1)
   c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
   # Pass address of hooks to lifter so it can look up hooks from current module
-  c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks,
-                              cycles = cycles, groupHooks = groupHooks)
+  c.lifter = createLiftingCtx(thisModuleSuffix, bits, c.hooks, cycles = cycles)
   c.typeCache.openScope()
   var n2 = n
   var n3 = n

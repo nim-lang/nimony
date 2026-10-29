@@ -266,8 +266,12 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   # in type pragmas yet - that happens in injectDerefs at the end).
   # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
   let moduleSuffix = pool.symModule(symId)
+  # A `{.cyclic.}` member's hooks are not in its type pragmas yet either, so
+  # the shared table is consulted before falling back to the written interface.
   let hooks = if moduleSuffix == c.thisModuleSuffix:
       c.typeHooks.getOrDefault(symId)
+    elif c.groupHooks != nil and c.groupHooks[].hasKey(symId):
+      c.groupHooks[].getOrQuit(symId)
     else:
       tryLoadAllHooks(symId)
   var needsSomething = false
@@ -506,8 +510,11 @@ proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
       endRead(r)
   var finalBuf = beginRead afterSem
-  result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
-                        cycles = c.g.config.cycles, groupHooks = c.groupHooks)
+  # The frontend hook table the lifter reads and extends: the group's shared
+  # one when there is a group, this module's own otherwise.
+  let hooks = if c.groupHooks != nil: c.groupHooks else: addr c.typeHooks
+  result = injectDerefs(finalBuf, hooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
+                        cycles = c.g.config.cycles)
   when defined(dumpPhases):
     block:
       var r = beginRead(result)
@@ -773,10 +780,11 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   for i in 0..<modules.len:
     modules[i].dest = phase3(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
 
-  # Post-processing and output for each module. `groupHooks` is shared by the
-  # whole group: the first member to need a hook for a type another member
-  # owns forges it, and the owner (lowered later) publishes that same symbol
-  # in the type's `(methods)` pragma instead of forging a second one.
+  # Post-processing and output for each module. `groupHooks` is the group's
+  # frontend hook table: exactly the one a single module gets to itself, only
+  # shared. The lifter already reads such a table and caches forged hooks in
+  # it, so the hook machinery needs no cyclic knowledge — this table is the
+  # whole cyclic hook change.
   var groupHooks = initTable[SymId, HooksPerType]()
   # A hook written in source (`=destroy` for a nominal type, say) reaches the
   # type's pragmas only when its owner is lowered: `derefs.trType` reads the
