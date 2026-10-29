@@ -30,7 +30,7 @@
 
 {.feature: "lenientnils".}
 
-import std / [intsets, tables, algorithm]
+import std / [intsets, tables, algorithm, unicode]
 
 type
   RegexKind* = enum ## the regex AST's node kind
@@ -51,13 +51,18 @@ type
     reWordBoundary, ## `\b`
     reWordBoundaryNot ## `\B`
 
+  RuneRange* = object ## the code points `a .. b`
+    a*, b*: int
+
+  RuneSet* = seq[RuneRange] ## sorted, disjoint and not adjacent
+
   RegexNode* = ref object ## a node of the parsed regular expression
     kind*: RegexKind
     a*, b*: RegexNode ## sub-expressions; which ones are used depends on `kind`
-    c*: char          ## the character for `reChar`, the index for
-                      ## `reCapture`/`reBackref`
-    s*: string        ## the literal for `reStr`
-    cc*: set[char]    ## the class for `reCClass`
+    r*: Rune          ## the code point for `reChar`
+    c*: char          ## the index for `reCapture`/`reBackref`
+    s*: string        ## the UTF-8 literal for `reStr`
+    cc*: RuneSet      ## the code points for `reCClass`
     rule*: int        ## `> 0` marks a final state and names the rule that
                       ## matched there; `0` means "not final"
 
@@ -68,23 +73,25 @@ type
 
 const
   wordChars* = {'A'..'Z', 'a'..'z', '0'..'9', '_', '\128'..'\255'}
-  whitespace* = {'\1'..'\32'}
-  digits* = {'0'..'9'}
+    ## the bytes `\b` treats as part of a word; every non-ASCII byte is one
+  maxRune = 0x10FFFF
 
 # ---------------------------------------------------------------------------
 # AST construction
 # ---------------------------------------------------------------------------
 
 proc newNode(kind: RegexKind): RegexNode =
-  result = RegexNode(kind: kind, a: nil, b: nil, c: '\0', s: "", cc: {},
-                     rule: 0)
+  result = RegexNode(kind: kind, a: nil, b: nil, r: Rune(0), c: '\0', s: "",
+                     cc: @[], rule: 0)
 
 proc epsExpr*(): RegexNode =
   result = newNode(reEps)
 
-proc charExpr*(c: char): RegexNode =
+proc charExpr*(r: Rune): RegexNode =
   result = newNode(reChar)
-  result.c = c
+  result.r = r
+
+proc charExpr*(c: char): RegexNode = charExpr(Rune(ord(c)))
 
 proc backrefExpr*(x: int): RegexNode =
   result = newNode(reBackref)
@@ -97,9 +104,9 @@ proc strExpr*(str: string): RegexNode =
     result = newNode(reStr)
     result.s = str
 
-proc cclassExpr*(charset: set[char]): RegexNode =
+proc cclassExpr*(cc: RuneSet): RegexNode =
   result = newNode(reCClass)
-  result.cc = charset
+  result.cc = cc
 
 proc starExpr*(r: RegexNode): RegexNode =
   if r.kind == reStar:
@@ -148,6 +155,55 @@ proc mnExpr(r: RegexNode; m, n: int): RegexNode =
       result = altExpr(result, ri)
 
 # ---------------------------------------------------------------------------
+# Code-point sets
+# ---------------------------------------------------------------------------
+
+proc incl(s: var RuneSet; lo, hi: int) =
+  ## Adds `lo .. hi`, merging it with the ranges it overlaps or touches.
+  var i = 0
+  while i < s.len and s[i].b + 1 < lo: inc i
+  if i == s.len or hi + 1 < s[i].a:
+    s.add RuneRange(a: lo, b: hi)
+    var j = s.len - 1
+    while j > i:
+      s[j] = s[j - 1]
+      dec j
+    s[i] = RuneRange(a: lo, b: hi)
+  else:
+    s[i].a = min(s[i].a, lo)
+    s[i].b = max(s[i].b, hi)
+    while i + 1 < s.len and s[i + 1].a <= s[i].b + 1:
+      s[i].b = max(s[i].b, s[i + 1].b)
+      s.delete i + 1
+
+proc incl(s: var RuneSet; other: RuneSet) =
+  for r in other: s.incl r.a, r.b
+
+proc complement(s: RuneSet): RuneSet =
+  ## Every code point but `\0` that is not in `s`.
+  result = @[]
+  var next = 1
+  for r in s:
+    if next < r.a: result.add RuneRange(a: next, b: r.a - 1)
+    next = r.b + 1
+  if next <= maxRune: result.add RuneRange(a: next, b: maxRune)
+
+proc namedClass(ch: char): RuneSet =
+  ## `\d`, `\s` or `\w`.
+  result = @[]
+  case ch
+  of 'd':
+    result.incl ord('0'), ord('9')
+  of 's':
+    result.incl 1, 32
+  else:
+    result.incl ord('0'), ord('9')
+    result.incl ord('A'), ord('Z')
+    result.incl ord('_'), ord('_')
+    result.incl ord('a'), ord('z')
+    result.incl 0x80, maxRune
+
+# ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
 
@@ -176,6 +232,30 @@ proc getNext(c: var ReCtx): char =
   skipSpaces c
   result = if c.pos < c.buf.len: c.buf[c.pos] else: '\0'
 
+proc readRune(c: var ReCtx): RegexNode {.inline.} =
+  ## Decode complete UTF-8 sequences; retain other bytes as character values.
+  var r = Rune(ord(c.buf[c.pos]))
+  var width = 1
+  if c.buf[c.pos] >= '\x80':
+    let n = runeLenAt(c.buf, c.pos)
+    let first = c.buf[c.pos]
+    var complete = first in '\xC2'..'\xF4' and n <= 4 and
+                   n <= c.buf.len - c.pos
+    if complete:
+      for i in 1 ..< n:
+        if c.buf[c.pos + i] notin '\x80'..'\xBF': complete = false
+      let second = c.buf[c.pos + 1]
+      if (first == '\xE0' and second < '\xA0') or
+          (first == '\xED' and second >= '\xA0') or
+          (first == '\xF0' and second < '\x90') or
+          (first == '\xF4' and second >= '\x90'):
+        complete = false
+    if complete:
+      r = runeAt(c.buf, c.pos)
+      width = n
+  result = charExpr(r)
+  inc c.pos, width
+
 proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   ## One character or escape sequence. `inClass` selects the `[...]` reading of
   ## the escapes that mean different things there (`\b` is a backspace inside a
@@ -183,8 +263,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   if not inClass:
     skipSpaces c
   if c.pos < c.buf.len and c.buf[c.pos] != '\\':
-    result = charExpr(c.buf[c.pos])
-    inc c.pos
+    result = readRune(c)
   else:
     let ch = if c.pos + 1 < c.buf.len: c.buf[c.pos + 1] else: '\0'
     case ch
@@ -230,23 +309,11 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
       else:
         result = newNode(reEnd)
       inc c.pos, 2
-    of 's':
-      result = cclassExpr(whitespace)
+    of 's', 'd', 'w':
+      result = cclassExpr(namedClass(ch))
       inc c.pos, 2
-    of 'S':
-      result = cclassExpr({'\1'..'\255'} - whitespace)
-      inc c.pos, 2
-    of 'd':
-      result = cclassExpr(digits)
-      inc c.pos, 2
-    of 'D':
-      result = cclassExpr({'\1'..'\255'} - digits)
-      inc c.pos, 2
-    of 'w':
-      result = cclassExpr(wordChars)
-      inc c.pos, 2
-    of 'W':
-      result = cclassExpr({'\1'..'\255'} - wordChars)
+    of 'S', 'D', 'W':
+      result = cclassExpr(complement(namedClass(char(ord(ch) + 32))))
       inc c.pos, 2
     of '0'..'9':
       let startsWithZero = ch == '0'
@@ -263,7 +330,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
           error c, "character code out of range: " & $val
           result = epsExpr()
         else:
-          result = charExpr(char(val))
+          result = charExpr(Rune(val))
       else:
         result = backrefExpr(val)
     of '\0':
@@ -274,12 +341,12 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
         error c, "invalid character after '\\': #" & $ord(ch)
         result = epsExpr()
       else:
-        result = charExpr(ch)
-        inc c.pos, 2
+        inc c.pos
+        result = readRune(c)
 
 proc parseStr(c: var ReCtx): RegexNode =
   ## `"..."` — a literal run in which the regex operators lose their meaning.
-  var s = ""
+  result = epsExpr()
   inc c.pos # skip the opening quote
   while c.pos < c.buf.len and c.buf[c.pos] != '\"':
     if c.buf[c.pos] == '\r' or c.buf[c.pos] == '\L':
@@ -287,7 +354,7 @@ proc parseStr(c: var ReCtx): RegexNode =
       return epsExpr()
     let al = getChar(c, false)
     if al.kind == reChar:
-      s.add al.c
+      result = catExpr(result, al)
     else:
       error c, "only single characters are allowed in a quoted string"
       return epsExpr()
@@ -295,10 +362,9 @@ proc parseStr(c: var ReCtx): RegexNode =
     inc c.pos # skip the closing quote
   else:
     error c, "'\"' expected"
-  result = strExpr(s)
 
 proc parseCClass(c: var ReCtx): RegexNode =
-  var cc: set[char] = {}
+  var cc: RuneSet = @[]
   inc c.pos # skip '['
   var caret = false
   if c.pos < c.buf.len and c.buf[c.pos] == '^':
@@ -311,28 +377,28 @@ proc parseCClass(c: var ReCtx): RegexNode =
     let a = getChar(c, true)
     if c.err.len > 0: return epsExpr()
     if a.kind == reChar:
-      incl cc, a.c
+      cc.incl int(a.r), int(a.r)
       if c.pos < c.buf.len and c.buf[c.pos] == '-':
         inc c.pos
         if c.pos < c.buf.len and c.buf[c.pos] == ']':
-          incl cc, '-'
+          cc.incl ord('-'), ord('-')
           break
         let b = getChar(c, true)
         if c.err.len > 0: return epsExpr()
         if b.kind == reChar:
-          if a.c <= b.c:
-            cc = cc + {a.c .. b.c}
+          if a.r <=% b.r:
+            cc.incl int(a.r), int(b.r)
           else:
             error c, "invalid character range in '[...]'"
             return epsExpr()
         elif b.kind == reCClass:
-          incl cc, '-'
-          cc = cc + b.cc
+          cc.incl ord('-'), ord('-')
+          cc.incl b.cc
         else:
           error c, "invalid character range in '[...]'"
           return epsExpr()
     elif a.kind == reCClass:
-      cc = cc + a.cc
+      cc.incl a.cc
     else:
       error c, "'" & c.buf[c.pos] & "' cannot be part of a character class"
       return epsExpr()
@@ -341,7 +407,7 @@ proc parseCClass(c: var ReCtx): RegexNode =
   else:
     error c, "']' expected"
     return epsExpr()
-  result = if caret: cclassExpr({'\1'..'\xFF'} - cc) else: cclassExpr(cc)
+  result = cclassExpr(if caret: complement(cc) else: cc)
 
 proc parseNum(c: var ReCtx): int =
   result = 0
@@ -362,7 +428,7 @@ proc factor(c: var ReCtx): RegexNode =
     result = parseCClass(c)
   of '.':
     inc c.pos
-    result = cclassExpr({'\1'..'\xFF'})
+    result = cclassExpr(complement(@[]))
   of '(':
     inc c.pos
     var isCapture = reNoCaptures notin c.flags
@@ -397,8 +463,7 @@ proc factor(c: var ReCtx): RegexNode =
     inc c.pos
     result = newNode(reBegin)
   else:
-    result = charExpr(if c.pos < c.buf.len: c.buf[c.pos] else: '\0')
-    inc c.pos
+    result = readRune(c)
   if c.err.len > 0: return result
   # postfix operators bind tighter than concatenation:
   var running = true
@@ -486,57 +551,108 @@ proc containsInvalidCapture*(r: RegexNode): bool =
 
 type
   Alphabet* = object
-    ## One "letter" the automaton can step over: an ordinary character, or one
+    ## A transition's condition as the DFA's consumers see it: a byte, or one
     ## of the zero-width assertions and capture markers that ride the same
     ## transition machinery.
     kind*: RegexKind
     val*: char
 
-  Label* = int32 ## a state number
-  LabelSet* = IntSet
+  Label = int32 ## a state number
+  LabelSet = IntSet
 
-  DfaEdge* = object
-    cond*: Alphabet
-    dest*: Label
+  NfaEdge = object
+    cond: Alphabet ## a marker, or `reChar` for the bytes `cond.val .. hi`
+    hi: char
+    dest: Label
 
-  NfaEdge* = object
-    cond*: Alphabet
-    dest*: seq[Label]
+  Nfa = object
+    captures, backrefs, stateCount: int ## `0` is the start state
+    eps: seq[seq[Label]]     ## per state: where its epsilon edges lead
+    trans: seq[seq[NfaEdge]] ## per state: every other edge
+    toRules: seq[int]
+
+  Letters = object
+    ## The DFA's alphabet. Letter `k < classCount` is the byte class
+    ## `firstByte[k] ..< firstByte[k + 1]`; the markers come after the classes.
+    firstByte: seq[int] ## ascending, from 0, and ended by 256
+    markers: seq[Alphabet]
+
+  DfaEdge = object
+    letter: int
+    dest: Label
 
   Dfa* = object
     startState*: int ## not always 1 before minimization
     stateCount*: int ## states are `1 .. stateCount`
     captures*, backrefs*: int
     ruleCount*: int  ## highest rule number; rule 0 means "no match"
-    trans*: seq[seq[DfaEdge]] ## indexed by state; no edge means "no match"
-    toRules*: seq[int]
-
-  Nfa* = object
-    captures*, backrefs*, stateCount*: int ## `0` is the start state
-    trans*: seq[seq[NfaEdge]]
-    toRules*: seq[int]
-
-const
-  alEpsilon* = Alphabet(kind: reEps, val: '\0')
+    letters: Letters
+    trans: seq[seq[DfaEdge]] ## indexed by state; no edge means "no match"
+    toRules: seq[int]
 
 func `==`(a, b: Alphabet): bool {.inline.} =
   a.kind == b.kind and a.val == b.val
 
 func cmpInt(a, b: int): int = a - b
 
-proc addTrans(src: var seq[NfaEdge]; c: Alphabet; d: int) =
-  for i in 0 ..< src.len:
-    if src[i].cond == c:
-      if Label(d) notin src[i].dest: src[i].dest.add Label(d)
-      return
-  src.add NfaEdge(cond: c, dest: @[Label(d)])
-  if c.kind == reEps and src.len != 1:
-    # `closure` only ever looks at edge 0 for epsilon, so keep epsilon first.
-    swap(src[0], src[src.len - 1])
+proc grow(a: var Nfa; s: int) {.inline.} =
+  if a.trans.len <= s:
+    a.trans.setLen s + 1
+    a.eps.setLen s + 1
+
+proc eps(a: var Nfa; s, d: int) =
+  grow a, s
+  a.eps[s].add Label(d)
 
 proc trans(a: var Nfa; s: int; c: Alphabet; d: int) =
-  if a.trans.len <= s: a.trans.setLen s + 1
-  addTrans(a.trans[s], c, d)
+  grow a, s
+  a.trans[s].add NfaEdge(cond: c, hi: c.val, dest: Label(d))
+
+proc transBytes(a: var Nfa; s: int; lo, hi: char; d: int) =
+  grow a, s
+  a.trans[s].add NfaEdge(cond: Alphabet(kind: reChar, val: lo), hi: hi,
+                         dest: Label(d))
+
+type
+  Utf8Seq = object
+    ## Code points whose UTF-8 encodings are `len` bytes, the i-th of them in
+    ## `lo[i] .. hi[i]`.
+    len: int
+    lo, hi: array[4, char]
+
+proc utf8Sequences(dest: var seq[Utf8Seq]; lo, hi: int) =
+  ## Splits `lo .. hi` until every piece is a product of byte ranges: no
+  ## surrogates, one encoding width, and every byte after the first one that
+  ## differs spans the full continuation range `\x80 .. \xBF`.
+  if lo > hi: return
+  if lo <= 0xDFFF and hi >= 0xD800:
+    utf8Sequences(dest, lo, 0xD7FF)
+    utf8Sequences(dest, 0xE000, hi)
+    return
+  for top in [0x7F, 0x7FF, 0xFFFF]:
+    if lo <= top and top < hi:
+      utf8Sequences(dest, lo, top)
+      utf8Sequences(dest, top + 1, hi)
+      return
+  if hi > 0x7F:
+    for i in 1 .. 3:
+      let m = (1 shl (6 * i)) - 1
+      if (lo and not m) != (hi and not m):
+        if (lo and m) != 0:
+          utf8Sequences(dest, lo, lo or m)
+          utf8Sequences(dest, (lo or m) + 1, hi)
+          return
+        if (hi and m) != m:
+          utf8Sequences(dest, lo, (hi and not m) - 1)
+          utf8Sequences(dest, hi and not m, hi)
+          return
+  let a = toUTF8(Rune(lo))
+  let b = toUTF8(Rune(hi))
+  var sq = Utf8Seq(len: a.len)
+  for i in 0 ..< a.len:
+    sq.lo[i] = a[i]
+    sq.hi[i] = b[i]
+  dest.add sq
 
 proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
   ## Thompson's construction; returns the state the sub-expression ends in.
@@ -544,51 +660,69 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
   if r == nil: return
   case r.kind
   of reEps:
-    trans a, result, alEpsilon, result + 1
+    eps a, result, result + 1
     inc result
-  of reChar:
-    trans a, result, Alphabet(kind: reChar, val: r.c), result + 1
-    inc result
+  of reChar, reStr:
+    let bytes = if r.kind == reChar: toUTF8(r.r) else: r.s
+    if r.kind == reChar and int(r.r) in 0x80..0xFF:
+      transBytes a, result, char(int(r.r)), char(int(r.r)), result + bytes.len
+    for i in 0 ..< bytes.len:
+      transBytes a, result, bytes[i], bytes[i], result + 1
+      inc result
   of reWordBoundary, reWordBoundaryNot, reBegin, reEnd:
     trans a, result, Alphabet(kind: r.kind, val: '\0'), result + 1
     inc result
-  of reStr:
-    for i in 0 ..< r.s.len:
-      trans a, result, Alphabet(kind: reChar, val: r.s[i]), result + 1
-      inc result
   of reCat:
     result = auxRegExprToNfa(r.a, a, result)
     result = auxRegExprToNfa(r.b, a, result)
   of reCClass:
-    trans a, result, alEpsilon, result + 1
-    inc result
-    # `0 .. 255` in `int` rather than `for c in '\0'..'\xFF'`: `inc` on a
-    # `char` wraps round at `high(char)`, so the char spelling never ends.
-    for i in 0 .. 255:
-      let c = char(i)
-      if c in r.cc:
-        trans a, result, Alphabet(kind: reChar, val: c), result + 1
-    inc result
+    # The one place code points become bytes: every UTF-8 sequence of the
+    # class runs from `entry` to `exit`, through states of its own.
+    var seqs: seq[Utf8Seq] = @[]
+    for i in 0 ..< r.cc.len:
+      let range = r.cc[i]
+      utf8Sequences(seqs, range.a, range.b)
+      let lo = max(range.a, 0x80)
+      let hi = min(range.b, 0xFF)
+      if lo <= hi:
+        var sq = Utf8Seq(len: 1)
+        sq.lo[0] = char(lo)
+        sq.hi[0] = char(hi)
+        seqs.add sq
+    let entry = result + 1
+    var next = entry + 1
+    for sq in seqs: inc next, sq.len - 1
+    let exit = next
+    eps a, result, entry
+    next = entry + 1
+    for sq in seqs:
+      var src = entry
+      for i in 0 ..< sq.len - 1:
+        transBytes a, src, sq.lo[i], sq.hi[i], next
+        src = next
+        inc next
+      transBytes a, src, sq.lo[sq.len - 1], sq.hi[sq.len - 1], exit
+    result = exit
   of reStar:
     # one transition too many is drawn here, which is harmless
     let aa = auxRegExprToNfa(r.a, a, result)
-    trans a, result, alEpsilon, aa + 1
-    trans a, aa, alEpsilon, aa + 1
-    trans a, aa + 1, alEpsilon, result
+    eps a, result, aa + 1
+    eps a, aa, aa + 1
+    eps a, aa + 1, result
     result = aa + 1
   of rePlus:
     result = auxRegExprToNfa(catExpr(r.a, starExpr(r.a)), a, result)
   of reOpt:
     result = auxRegExprToNfa(altExpr(r.a, epsExpr()), a, result)
   of reAlt:
-    trans a, result, alEpsilon, result + 1
+    eps a, result, result + 1
     inc result
     let oldState = result
     let aa = auxRegExprToNfa(r.a, a, result)
     let bb = auxRegExprToNfa(r.b, a, aa + 1)
-    trans a, oldState, alEpsilon, aa + 1
-    trans a, aa, alEpsilon, bb + 1
-    trans a, bb, alEpsilon, bb + 1
+    eps a, oldState, aa + 1
+    eps a, aa, bb + 1
+    eps a, bb, bb + 1
     result = bb + 1
   of reCapture, reCaptureEnd:
     a.captures = max(a.captures, int(r.c))
@@ -609,16 +743,33 @@ proc regExprToNfa(r: RegexNode): Nfa =
   result = default(Nfa)
   result.stateCount = auxRegExprToNfa(r, result, 0)
   # states that only ever receive edges, or carry no rule, still get a slot
-  result.trans.setLen result.stateCount + 1
+  grow result, result.stateCount
   result.toRules.setLen result.stateCount + 1
 
-proc fullAlphabet(captures, backrefs: int): seq[Alphabet] =
-  ## Every letter the subset construction has to consider. Characters first,
-  ## at the index of their own code, then the markers — `letterOf` relies on
-  ## that layout.
+# ---------------------------------------------------------------------------
+# The DFA's alphabet
+# ---------------------------------------------------------------------------
+
+proc byteClasses(a: Nfa; classOf: var array[256, int]): seq[int] =
+  ## Cuts the bytes into classes that no NFA edge tells apart: a range that an
+  ## edge reads starts a class at its first byte and another one after its
+  ## last. Returns the first byte of every class, followed by 256.
+  var starts: set[char] = {'\0'}
+  for s in 0 ..< a.trans.len:
+    for e in a.trans[s]:
+      if e.cond.kind == reChar:
+        starts.incl e.cond.val
+        if e.hi < '\xFF': starts.incl succ(e.hi)
   result = @[]
-  for i in 0 .. 255:  # in `int`, see `auxRegExprToNfa`
-    result.add Alphabet(kind: reChar, val: char(i))
+  for b in 0 .. 255:  # in `int`: `inc` on a `char` wraps round at `high(char)`
+    if char(b) in starts: result.add b
+    classOf[b] = result.len - 1
+  result.add 256
+
+proc markers(captures, backrefs: int): seq[Alphabet] =
+  ## Every marker a pattern with these groups can have, in the order the
+  ## bytecode tests them.
+  result = @[]
   for x in 1 .. backrefs:
     result.add Alphabet(kind: reBackref, val: char(x))
   for x in 1 .. captures:
@@ -629,23 +780,30 @@ proc fullAlphabet(captures, backrefs: int): seq[Alphabet] =
   result.add Alphabet(kind: reWordBoundary, val: '\0')
   result.add Alphabet(kind: reWordBoundaryNot, val: '\0')
 
-func letterOf(alphabet: openArray[Alphabet]; c: Alphabet): int =
-  ## `c`'s index in `alphabet`, or `-1` for epsilon.
-  if c.kind == reChar: return int(c.val)
-  result = -1
-  for i in 256 ..< alphabet.len:
-    if alphabet[i] == c: return i
+func classCount(l: Letters): int {.inline.} = l.firstByte.len - 1
+
+func letterCount(l: Letters): int {.inline.} = classCount(l) + l.markers.len
+
+func markerLetter(l: Letters; c: Alphabet): int =
+  result = classCount(l)
+  while result < letterCount(l) and l.markers[result - classCount(l)] != c:
+    inc result
+
+func classBytes(l: Letters; k: int): set[char] {.inline.} =
+  {char(l.firstByte[k]) .. char(l.firstByte[k + 1] - 1)}
+
+# ---------------------------------------------------------------------------
+# Subset construction and minimization
+# ---------------------------------------------------------------------------
 
 proc closure(a: Nfa; s: var LabelSet; stack: var seq[Label]) =
-  ## Grows `s` to its epsilon closure. `addTrans` guarantees an epsilon edge is
-  ## edge 0.
+  ## Grows `s` to its epsilon closure.
   stack.setLen 0
   for l in s: stack.add Label(l)
   while stack.len > 0:
     let l = stack.pop()
-    if a.trans[l].len > 0 and a.trans[l][0].cond.kind == reEps:
-      for d in a.trans[l][0].dest:
-        if not containsOrIncl(s, int(d)): stack.add d
+    for d in a.eps[l]:
+      if not containsOrIncl(s, int(d)): stack.add d
 
 type
   SubsetBuilder = object
@@ -659,28 +817,36 @@ type
     letters: seq[int]
     stack: seq[Label]
 
-proc collectTargets(sb: var SubsetBuilder; a: Nfa; alphabet: openArray[Alphabet];
-                    j: int) =
+proc collectTargets(sb: var SubsetBuilder; a: Nfa; letters: Letters;
+                    classOf: array[256, int]; j: int) =
   ## Fills `sb.targets` with every non-epsilon edge out of DFA state `j`, and
-  ## `sb.letters` with their letters in alphabet order.
+  ## `sb.letters` with their letters in ascending order.
   for l in sb.states[j]:
-    for t in a.trans[l]:
-      let c = letterOf(alphabet, t.cond)
-      if c >= 0:
+    for e in a.trans[l]:
+      var lo = 0
+      var hi = 0
+      if e.cond.kind == reChar:
+        lo = classOf[ord(e.cond.val)]
+        hi = classOf[ord(e.hi)]
+      else:
+        lo = markerLetter(letters, e.cond)
+        hi = lo
+      for c in lo .. hi:
         if not sb.hasLetter[c]:
           sb.hasLetter[c] = true
           sb.letters.add c
-        for d in t.dest: sb.targets[c].incl int(d)
+        sb.targets[c].incl int(e.dest)
   sort sb.letters, cmpInt
 
-proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
+proc nfaToDfa(a: Nfa; letters: Letters; classOf: array[256, int]): Dfa =
   ## Subset construction (see "Modern Compiler Implementation"). State `0` is
   ## the empty set, "no match"; an edge into it is not recorded at all.
   result = default(Dfa)
+  let n = letterCount(letters)
   var sb = SubsetBuilder(states: @[initIntSet()],
                          known: initTable[LabelSet, int](),
-                         targets: newSeq[LabelSet](alphabet.len),
-                         hasLetter: newSeq[bool](alphabet.len),
+                         targets: newSeq[LabelSet](n),
+                         hasLetter: newSeq[bool](n),
                          letters: @[], stack: @[])
   var start = initIntSet()
   start.incl 0 # the NFA's start state
@@ -690,7 +856,7 @@ proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
   result.trans = newSeq[seq[DfaEdge]](2)
   var j = 1
   while j < sb.states.len:
-    collectTargets(sb, a, alphabet, j)
+    collectTargets(sb, a, letters, classOf, j)
     for c in sb.letters:
       var e = move sb.targets[c]
       sb.targets[c] = initIntSet()
@@ -702,7 +868,7 @@ proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
         sb.known[e] = i
         sb.states.add e
         result.trans.add @[]
-      result.trans[j].add DfaEdge(cond: alphabet[c], dest: Label(i))
+      result.trans[j].add DfaEdge(letter: c, dest: Label(i))
     sb.letters.setLen 0
     inc j
   result.toRules = newSeq[int](sb.states.len)
@@ -718,6 +884,7 @@ proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
   result.startState = 1
   result.captures = a.captures
   result.backrefs = a.backrefs
+  result.letters = letters
 
 type
   PredEdge = object
@@ -773,15 +940,16 @@ proc splitBy(rf: var Refiner; inv: LabelSet) =
     rf.hits[b] = 0
   rf.hitBlocks.setLen 0
 
-proc optimizeDfa(a: Dfa; alphabet: openArray[Alphabet]): Dfa =
+proc optimizeDfa(a: Dfa): Dfa =
   ## Hopcroft's algorithm. Every state carries the rule it accepts, so the
   ## initial partition is by rule rather than the usual final/non-final split.
+  let n = letterCount(a.letters)
   var rf = Refiner(blocks: newSeq[seq[Label]](a.ruleCount + 1),
                    blockOf: newSeq[int](a.stateCount + 1),
                    work: @[], inWork: @[],
                    preds: newSeq[seq[PredEdge]](a.stateCount + 1),
-                   inv: newSeq[LabelSet](alphabet.len),
-                   hasLetter: newSeq[bool](alphabet.len),
+                   inv: newSeq[LabelSet](n),
+                   hasLetter: newSeq[bool](n),
                    letters: @[], hits: newSeq[int](a.ruleCount + 1),
                    hitBlocks: @[])
   for d in 1 .. a.stateCount:
@@ -789,8 +957,7 @@ proc optimizeDfa(a: Dfa; alphabet: openArray[Alphabet]): Dfa =
     rf.blocks[r].add Label(d)
     rf.blockOf[d] = r
     for e in a.trans[d]:
-      rf.preds[e.dest].add PredEdge(letter: letterOf(alphabet, e.cond),
-                                    src: Label(d))
+      rf.preds[e.dest].add PredEdge(letter: e.letter, src: Label(d))
   for b in 0 .. a.ruleCount:
     rf.work.add b
     rf.inWork.add true
@@ -817,6 +984,7 @@ proc optimizeDfa(a: Dfa; alphabet: openArray[Alphabet]): Dfa =
   result.backrefs = a.backrefs
   result.stateCount = rf.blocks.len
   result.ruleCount = a.ruleCount
+  result.letters = a.letters
   result.trans = newSeq[seq[DfaEdge]](rf.blocks.len + 1)
   result.toRules = newSeq[int](rf.blocks.len + 1)
   result.startState = rf.blockOf[a.startState] + 1
@@ -825,8 +993,12 @@ proc optimizeDfa(a: Dfa; alphabet: openArray[Alphabet]): Dfa =
       let rep = rf.blocks[b][0]
       result.toRules[b + 1] = a.toRules[rep]
       for e in a.trans[rep]:
-        result.trans[b + 1].add DfaEdge(cond: e.cond,
+        result.trans[b + 1].add DfaEdge(letter: e.letter,
                                         dest: Label(rf.blockOf[e.dest] + 1))
+
+# ---------------------------------------------------------------------------
+# Reading the DFA
+# ---------------------------------------------------------------------------
 
 func allTransitions*(a: Dfa; source, dest: int): (seq[Alphabet], set[char]) =
   ## Splits the `source -> dest` edges into the assertions and markers (which
@@ -836,18 +1008,17 @@ func allTransitions*(a: Dfa; source, dest: int): (seq[Alphabet], set[char]) =
   var others: seq[Alphabet] = @[]
   var cs: set[char] = {}
   var card = 0
-  var lastChar = -1
   for x in a.trans[source]:
     if x.dest == dest:
-      if x.cond.kind == reChar:
-        inc card
-        if lastChar < 0: lastChar = int(x.cond.val)
-        incl cs, x.cond.val
+      if x.letter < classCount(a.letters):
+        cs = cs + classBytes(a.letters, x.letter)
+        inc card, a.letters.firstByte[x.letter + 1] - a.letters.firstByte[x.letter]
       else:
-        others.add x.cond
+        others.add a.letters.markers[x.letter - classCount(a.letters)]
   if card == 1:
+    for b in 0 .. 255:
+      if char(b) in cs: others.add Alphabet(kind: reChar, val: char(b))
     cs = {}
-    others.add Alphabet(kind: reChar, val: char(lastChar))
   result = (others, cs)
 
 iterator allDests*(a: Dfa; source: int): int =
@@ -872,14 +1043,36 @@ iterator allDests*(a: Dfa; source: int): int =
 
 func getRule*(a: Dfa; s: int): int {.inline.} = a.toRules[s]
 
+func firstBytes(a: Dfa): set[char] =
+  ## Every byte a match can start with: all of them when a match can start
+  ## without reading one, because the start state accepts or leaves on an
+  ## anchor or a group marker.
+  result = {'\0'..'\xFF'}
+  if getRule(a, a.startState) != 0: return
+  var first: set[char] = {}
+  for e in a.trans[a.startState]:
+    if e.letter >= classCount(a.letters): return
+    first = first + classBytes(a.letters, e.letter)
+  result = first
+
+func onlyByte(cs: set[char]): int =
+  ## The one member of `cs`, or `-1` when it has none or several.
+  result = -1
+  for b in 0 .. 255:
+    if char(b) in cs:
+      if result >= 0: return -1
+      result = b
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
 proc buildDfa(big: RegexNode): Dfa =
   let n = regExprToNfa(big)
-  let alphabet = fullAlphabet(n.captures, n.backrefs)
-  result = optimizeDfa(nfaToDfa(n, alphabet), alphabet)
+  var classOf = default(array[256, int])
+  let letters = Letters(firstByte: byteClasses(n, classOf),
+                        markers: markers(n.captures, n.backrefs))
+  result = optimizeDfa(nfaToDfa(n, letters, classOf))
 
 proc rulesToDfa*(patterns: openArray[string]; flags: set[RegexFlag];
                  dfa: var Dfa; err: var string) =
@@ -924,14 +1117,16 @@ proc regexToDfa*(pattern: string; flags: set[RegexFlag]; dfa: var Dfa;
 # ---------------------------------------------------------------------------
 #
 # The DFA is walked as a tiny program rather than as a table: a state is a run
-# of test/jump pairs ended by a `ret` carrying the rule it accepts. That keeps
-# the common step — "test the character against a set, jump" — two adjacent
-# instructions, and it is what lets `std/rex`'s `re` emit a finished automaton
-# as a literal instead of building tables at run time.
+# of test/jump pairs ended by a `ret`. Accepting states first record their
+# rule and position, so a later failed transition can return the longest match.
+# This keeps the common test/jump pair adjacent and lets `std/rex`'s `re` emit
+# a finished automaton as a literal instead of building tables at run time.
 
 type
   RegexOpcode* = enum
-    opcRet          ## stop; the argument is the rule that matched (0 = none)
+    opcRet          ## stop and return the last accepting state
+    opcRetAccept    ## stop at this accepting state
+    opcAccept       ## remember an accepting state before trying transitions
     opcTestSet      ## current character against a set in the data section
     opcTestChar     ## current character against the character in the argument
     opcTJmp         ## taken when the preceding test succeeded
@@ -972,6 +1167,10 @@ type
     capCode*: seq[RegexInstr]
     capData*: seq[set[char]]
     capStartAt*: int
+    firstBytes*: set[char] ## every match starts with one of these; all bytes
+                           ## when a match can start without reading one
+    firstByte*: int        ## the only byte in `firstBytes`, or `-1`; search
+                           ## scans for it a word at a time
 
   Capture* = object ## The bounds of one capture group, both ends inclusive.
     first*: Natural  ## a position in the subject, so never negative
@@ -982,7 +1181,8 @@ const
 
 func emptyRegex*(): Regex =
   Regex(code: @[], data: @[], startAt: 0, captures: 0,
-        capCode: @[], capData: @[], capStartAt: 0)
+        capCode: @[], capData: @[], capStartAt: 0, firstBytes: {},
+        firstByte: -1)
 
 func genData(c: var Regex; data: set[char]): int32 =
   ## Interns a character set. Sets repeat heavily across a DFA's states, so the
@@ -1034,22 +1234,22 @@ func genBytecode*(a: Dfa; res: var Regex) =
   for src in 1 .. a.stateCount:
     stateToLabel[src] = res.code.len
     let rule = getRule(a, src)
+    if rule != 0:
+      # Remember this state only if a transition can leave an accepting
+      # path. Otherwise a failed test returns this state's rule directly.
+      for edge in a.trans[src]:
+        if getRule(a, int(edge.dest)) != rule:
+          gen res, opcAccept, rule
+          break
     for dest in allDests(a, src):
-      # The "match longest, but only sometimes" rule regexes are known for:
-      # once a state accepts, only transitions that stay within the *same* rule
-      # may extend the match, or a later and longer rule would swallow an
-      # earlier one's answer.
-      if rule == 0 or rule == getRule(a, dest):
-        let (others, cs) = allTransitions(a, src, dest)
-        for x in others: genCapture(res, x, dest)
-        if cs != {}:
-          gen res, opcTestSet, genData(res, cs)
-          gen res, opcTJmp, dest
-        for x in others: genTest(res, x, dest)
-    if stateToLabel[src] != res.code.len or rule != 0:
-      # A state with neither transitions nor a rule is only ever fallen into
-      # from the `ret` above it, so it needs no `ret` of its own.
-      gen res, opcRet, rule
+      let (others, cs) = allTransitions(a, src, dest)
+      for x in others: genCapture(res, x, dest)
+      if cs != {}:
+        gen res, opcTestSet, genData(res, cs)
+        gen res, opcTJmp, dest
+      for x in others: genTest(res, x, dest)
+    if rule == 0: gen res, opcRet, 0
+    else: gen res, opcRetAccept, rule
   # The jumps were emitted with state numbers; patch them to code offsets now
   # that every state's offset is known.
   for i in 0 ..< res.code.len:
@@ -1057,6 +1257,8 @@ func genBytecode*(a: Dfa; res: var Regex) =
       res.code[i] = RegexInstr(opc: opcTJmp,
                                arg: int32(stateToLabel[res.code[i].arg]))
   res.startAt = stateToLabel[a.startState]
+  res.firstBytes = firstBytes(a)
+  res.firstByte = onlyByte(res.firstBytes)
 
 proc countUses(r: RegexNode; caps, backs: var int) =
   ## Highest capture-group and back-reference index the pattern names.
@@ -1119,18 +1321,21 @@ proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
 # Execution
 # ---------------------------------------------------------------------------
 
-func backrefMatches(s: string; sp: Natural; c: Capture): bool =
+func backrefMatches(s: string; sp: Natural; c: Capture): bool
+    {.requires: c.last < s.len.} =
   ## Does the text at `sp` repeat what `c` captured?
   var i = c.first
   var k = sp
   while true:
     if i > c.last: return true
+    {.assert: i < s.len.}
     if k >= s.len or s[k] != s[i]: return false
     inc k
     inc i
 
-func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
-         s: string; caps: var seq[Capture]; start: Natural; endPos: var int): int =
+func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]];
+         startAt: int; s: string; caps: var seq[Capture]; start: Natural;
+         endPos: var int): int =
   ## One automaton over `s` from `start`. Returns the rule that matched (`0`
   ## for none) and reports the position just past the match in `endPos`.
   result = 0
@@ -1138,8 +1343,22 @@ func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
   if code.len == 0: return
   var pc = startAt
   var sp = start
+  var acceptedCaps: seq[Capture] = @[]
+  var capturesChanged = false
   while true:
-    let instr = code[pc]
+    var instr = code[pc]
+    if instr.opc == opcAccept:
+      result = int(instr.arg)
+      endPos = sp
+      when trackCaptures:
+        if capturesChanged:
+          if acceptedCaps.len != caps.len:
+            acceptedCaps.setLen caps.len
+          for i in 0 ..< caps.len:
+            acceptedCaps[i] = caps[i]
+          capturesChanged = false
+      inc pc
+      instr = code[pc]
     let arg = int(instr.arg)
     case instr.opc
     of opcTestSet:
@@ -1156,8 +1375,14 @@ func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
       else:
         inc pc, 2
     of opcRet:
+      when trackCaptures:
+        caps = acceptedCaps
+      return result
+    of opcRetAccept:
       endPos = sp
       return arg
+    of opcAccept:
+      return 0 # an accept is always followed by a test or return
     of opcBegin:
       if sp == start: pc = int(code[pc+1].arg)
       else: inc pc, 2
@@ -1170,22 +1395,50 @@ func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
       else:
         inc pc, 2
     of opcCaptureBegin:
-      if caps.len <= arg: setLen(caps, arg + 1)
-      caps[arg] = Capture(first: sp, last: CaptureOpen)
-      pc = int(code[pc+1].arg)
-    of opcCaptureEnd:
-      if caps.len <= arg: setLen(caps, arg + 1)
-      caps[arg].last = sp - 1
-      pc = int(code[pc+1].arg)
-    of opcBackref:
-      if arg < caps.len and backrefMatches(s, sp, caps[arg]):
+      when trackCaptures:
+        if caps.len <= arg: setLen(caps, arg + 1)
+        caps[arg] = Capture(first: sp, last: CaptureOpen)
+        capturesChanged = true
         pc = int(code[pc+1].arg)
-        inc sp, caps[arg].last - caps[arg].first + 1
+      else:
+        # unreachable: code that keeps its groups runs in `matchWithCaptures`
+        return 0
+    of opcCaptureEnd:
+      when trackCaptures:
+        if caps.len <= arg: setLen(caps, arg + 1)
+        caps[arg].last = sp - 1
+        capturesChanged = true
+        pc = int(code[pc+1].arg)
+      else:
+        # unreachable: code that keeps its groups runs in `matchWithCaptures`
+        return 0
+    of opcBackref:
+      if arg < caps.len:
+        let cap = caps[arg]
+        if cap.last < s.len and backrefMatches(s, sp, cap):
+          pc = int(code[pc+1].arg)
+          inc sp, cap.last - cap.first + 1
+        else:
+          inc pc, 2
       else:
         inc pc, 2
     of opcTJmp:
       # unreachable: a `TJmp` is only ever entered through the test above it
       return 0
+
+func matchOnly(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
+               s: string; caps: var seq[Capture]; start: Natural;
+               endPos: var int): int {.inline.} =
+  ## `run` for code without capture groups: no capture bookkeeping, and
+  ## `caps` is left alone.
+  result = run[false](code, data, startAt, s, caps, start, endPos)
+
+func matchWithCaptures(code: seq[RegexInstr]; data: seq[set[char]];
+                       startAt: int; s: string; caps: var seq[Capture];
+                       start: Natural; endPos: var int): int {.inline.} =
+  ## `run` for code that keeps its groups; a failed longer match rewinds
+  ## `caps` to the last accepting state.
+  result = run[true](code, data, startAt, s, caps, start, endPos)
 
 func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
            endPos: var int): int =
@@ -1197,9 +1450,16 @@ func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
   ## afterwards purely for the bounds and is allowed to come up empty-handed
   ## without changing the answer.
   caps.setLen 0
-  result = run(r.code, r.data, r.startAt, s, caps, start, endPos)
+  # Only a pattern without groups is known to need no capture bookkeeping.
+  # With groups but no back references `code` has none either, but telling
+  # the two apart costs more per call than the bookkeeping saves.
+  if r.captures == 0:
+    result = matchOnly(r.code, r.data, r.startAt, s, caps, start, endPos)
+  else:
+    result = matchWithCaptures(r.code, r.data, r.startAt, s, caps, start, endPos)
   if result > 0 and r.capCode.len > 0:
     var found: seq[Capture] = @[]
     var ignored = start
-    if run(r.capCode, r.capData, r.capStartAt, s, found, start, ignored) > 0:
+    if matchWithCaptures(r.capCode, r.capData, r.capStartAt, s, found, start,
+                         ignored) > 0:
       caps = found

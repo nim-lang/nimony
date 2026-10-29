@@ -342,6 +342,8 @@ proc addOpcode(dest: var NifBuilder; o: RegexOpcode) =
   ## have named `opcRet`.
   case o
   of opcRet: dest.bindSym "opcRet"
+  of opcRetAccept: dest.bindSym "opcRetAccept"
+  of opcAccept: dest.bindSym "opcAccept"
   of opcTestSet: dest.bindSym "opcTestSet"
   of opcTestChar: dest.bindSym "opcTestChar"
   of opcTJmp: dest.bindSym "opcTJmp"
@@ -403,6 +405,12 @@ proc addRegexLit(dest: var NifBuilder; r: Regex; info: LineInfo) =
     dest.withTree KvX, info:
       dest.addIdent "capStartAt"
       dest.addIntLit r.capStartAt
+    dest.withTree KvX, info:
+      dest.addIdent "firstBytes"
+      dest.addCharSetLit r.firstBytes, info
+    dest.withTree KvX, info:
+      dest.addIdent "firstByte"
+      dest.addIntLit r.firstByte
 
 proc flagsOf(n: NifCursor; flags: var set[RegexFlag]; err: var string) =
   ## Reads a `{reExtended, …}` set constructor. The argument arrives
