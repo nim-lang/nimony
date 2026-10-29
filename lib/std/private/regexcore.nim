@@ -1338,35 +1338,104 @@ func backrefMatches(s: string; sp: Natural; c: Capture): bool
 # markers read that start. Back references depend on captures and cannot use it.
 const SearchMemoBytes = 8 * 1024 * 1024
 
-type SearchMemo* = object
+type SearchMemo = object
   initialized, enabled, activate: bool
   width, bitCount: int
-  states: seq[int]             # state id at entry PCs, -1 elsewhere
-  accepting: seq[bool]
+  states: seq[int]             # cyclic memo id, -2 accepting entry, -1 skipped
   doomed: seq[uint64]
   pending: seq[int]
 
+type
+  SearchFrame = object
+    state, pc: int
+  SearchCycles = object
+    entries, number, low: seq[int]
+    active, cyclic: seq[bool]
+    stack: seq[int]
+    frames: seq[SearchFrame]
+    clock: int
+
+func enter(c: var SearchCycles; state: int) =
+  c.number[state] = c.clock
+  c.low[state] = c.clock
+  inc c.clock
+  c.active[state] = true
+  c.stack.add state
+  c.frames.add SearchFrame(state: state, pc: c.entries[state])
+
+func cycleStates(code: seq[RegexInstr]; ids, entries: seq[int]): seq[bool] =
+  # Iterative Tarjan: bytecode test/jump pairs are the adjacency lists.
+  # No recursion proportional to the size of a bounded repetition.
+  var c = SearchCycles(entries: entries, number: newSeq[int](entries.len),
+    low: newSeq[int](entries.len), active: newSeq[bool](entries.len),
+    cyclic: newSeq[bool](entries.len), stack: @[], frames: @[], clock: 1)
+  for root in 0 ..< entries.len:
+    if c.number[root] != 0: continue
+    enter(c, root)
+    while c.frames.len > 0:
+      let top = c.frames.len - 1
+      let frame = c.frames[top]
+      let state = frame.state
+      let pc = frame.pc
+      if pc < code.len and code[pc].opc notin {opcRet, opcRetAccept}:
+        c.frames[top].pc = pc + 1
+        if code[pc].opc == opcTJmp:
+          let targetPc = int(code[pc].arg)
+          if targetPc >= 0 and targetPc < ids.len:
+            let target = ids[targetPc]
+            if target >= 0 and target < entries.len:
+              if target == state: c.cyclic[state] = true
+              if c.number[target] == 0:
+                enter(c, target)
+              elif c.active[target]:
+                c.low[state] = min(c.low[state], c.number[target])
+      else:
+        c.frames.setLen top
+        if c.low[state] == c.number[state]:
+          let last = c.stack.len - 1
+          var first = last
+          while first > 0 and c.stack[first] != state: dec first
+          if first < last:
+            for i in first .. last: c.cyclic[c.stack[i]] = true
+          for i in first .. last: c.active[c.stack[i]] = false
+          c.stack.setLen first
+        if c.frames.len > 0:
+          let parent = c.frames[c.frames.len - 1].state
+          c.low[parent] = min(c.low[parent], c.low[state])
+  result = c.cyclic
+
 func initMemo(m: var SearchMemo; code: seq[RegexInstr]; n: int) =
   m.initialized = true
-  if n < 0 or n >= SearchMemoBytes * 8: return
-  var count = 0
   for ins in code:
     if ins.opc == opcBackref: return
-    if ins.opc == opcRet or ins.opc == opcRetAccept: inc count
+  var entries: seq[int] = @[]
+  var accepting: seq[bool] = @[]
+  m.states = newSeq[int](code.len)
+  var entry = 0
+  for i in 0 ..< code.len:
+    m.states[i] = -1
+    if code[i].opc in {opcRet, opcRetAccept}:
+      if entry >= 0 and entry < m.states.len:
+        m.states[entry] = entries.len
+        entries.add entry
+        accepting.add code[i].opc == opcRetAccept
+      entry = i + 1
+  let cycles = cycleStates(code, m.states, entries)
+  var count = 0
+  for i in 0 ..< entries.len:
+    let pc = entries[i]
+    if accepting[i]:
+      m.states[pc] = -2
+    elif cycles[i]:
+      m.states[pc] = count
+      inc count
+    else:
+      m.states[pc] = -1
+  if n < 0 or n >= SearchMemoBytes * 8: return
   let width = n + 1
   if count == 0 or count > (SearchMemoBytes * 8) div width: return
   m.width = width
   m.bitCount = count * width
-  m.states = newSeq[int](code.len)
-  var entry = 0
-  var state = 0
-  for i in 0 ..< code.len:
-    m.states[i] = -1
-    if code[i].opc == opcRet or code[i].opc == opcRetAccept:
-      if entry >= 0 and entry < m.states.len: m.states[entry] = state
-      m.accepting.add code[i].opc == opcRetAccept
-      inc state
-      entry = i + 1
   m.enabled = true
 
 func rememberDoom(m: var SearchMemo) =
@@ -1383,18 +1452,20 @@ func visit(m: var SearchMemo; pc, sp, start: int): bool =
   result = false
   if pc < 0 or pc >= m.states.len: return
   let state = m.states[pc]
-  if state < 0 or state >= m.accepting.len: return
-  if m.accepting[state]:
+  if state == -2:
     # Some accepting states omit opcAccept: their outgoing rules all agree.
     m.pending.setLen 0
-  elif sp > start and sp >= 0 and sp < m.width:
+  elif state >= 0 and sp > start and sp >= 0 and sp < m.width:
     let bit = state * m.width + sp
     let word = bit shr 6
     if word >= 0 and word < m.doomed.len:
       if (m.doomed[word] and (1'u64 shl (bit and 63))) != 0: return true
     m.pending.add bit
 
-func run[trackCaptures: static[bool]; searching: static[int]](code: seq[RegexInstr]; data: seq[set[char]];
+# Searching modes: 0 keeps the anchored interpreter unchanged, 1 detects the
+# first unproductive suffix, 2 records and consults eligible doomed pairs.
+func run[trackCaptures: static[bool]; searching: static[int]](
+         code: seq[RegexInstr]; data: seq[set[char]];
          startAt: int; s: string; caps: var seq[Capture]; start: Natural;
          endPos: var int; memo: var SearchMemo): int =
   ## One automaton over `s` from `start`. Returns the rule that matched (`0`
@@ -1534,7 +1605,7 @@ func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
                          ignored) > 0:
       caps = found
 
-func searchExec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
+func searchExec(r: Regex; s: string; caps: var seq[Capture]; start: int;
                  endPos: var int; memo: var SearchMemo): int =
   if start >= s.len: return exec(r, s, caps, start, endPos)
   if not memo.initialized and memo.activate: initMemo(memo, r.code, s.len)
@@ -1554,3 +1625,49 @@ func searchExec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
     if matchWithCaptures(r.capCode, r.capData, r.capStartAt, s, found, start,
                          ignored) > 0:
       caps = found
+
+func skipToCandidate(s: string; r: Regex; pos: Natural): int
+    {.ensures: result <= s.len.} =
+  ## The first position at or after `pos` where a match can start; `s.len`
+  ## when there is none before the end.
+  var i: Natural = pos
+  if r.firstByte >= 0:
+    let b = char(r.firstByte)
+    # Eight bytes at a time: `w` has a zero byte where `s` has `b`, and the
+    # test below is true exactly when it has one. The byte loop then finds it.
+    let ones = 0x0101010101010101'u64
+    let pattern = ones * uint64(r.firstByte)
+    let raw = readRawData(s)
+    while i < s.len - 7:
+      var w = 0'u64
+      copyMem(addr w, addr raw[i], 8)
+      w = w xor pattern
+      if ((w - ones) and not w and (ones shl 7)) != 0: break
+      inc i, 8
+    while i < s.len:
+      if s[i] == b: return i
+      inc i
+    return s.len
+  let first = r.firstBytes # read in the loop, it is copied every iteration
+  while i < s.len:
+    if s[i] in first: return i
+    inc i
+  return s.len
+
+iterator searchMatches*(s: string; r: Regex; caps: var seq[Capture];
+                        start: int; includeEmpty: bool): (int, int) =
+  ## Internal search traversal. Owns its memo for exactly this regex/subject;
+  ## callers cannot reuse state across equal-length but different inputs.
+  var memo = default(SearchMemo)
+  var pos = start
+  while pos <= s.len:
+    pos = skipToCandidate(s, r, pos)
+    if not includeEmpty and pos >= s.len: break
+    let first = pos
+    var finish = pos
+    let rule = searchExec(r, s, caps, pos, finish, memo)
+    if rule > 0 and (includeEmpty or finish > first):
+      pos = if finish > first: finish else: first + 1
+      yield (first, finish - 1)
+    else:
+      inc pos

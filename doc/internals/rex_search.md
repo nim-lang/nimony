@@ -6,33 +6,47 @@ bytecode changes, Regex fields, or extra compilation work.
 ## Design
 
 The search-only interpreter uses Reps's failed-configuration memoization.
-Each entry PC maps to a DFA state. A nonaccepting state at position `p` is
-pending only when `p > start`. Entry into **every** accepting state clears
-pending pairs, including states whose bytecode omits `opcAccept` and ends
-in `opcRetAccept`. A failed suffix marks its pairs doomed. Reaching a doomed
-pair returns the current attempt's last accept. Marker tests and captures
-keep their original semantics; `capCode` is run separately after selection.
+Each entry PC maps to one of three things: an accepting state, a memo slot for
+a nonaccepting state that can reach itself, or nothing. Only cyclic
+nonaccepting states get a slot. A state that cannot be revisited is entered at
+most once per attempt, so remembering its positions buys no pruning and costs
+a bit per input byte; `a{600}b` pays 602 bits per byte for nothing, while
+`a+b|a{2000}z` needs one. Cycles are found once per activation with an
+iterative Tarjan pass over the state graph that the test/jump pairs already
+spell out: O(code length), and no recursion proportional to a bounded
+repetition.
+
+A memoized state at position `p` is pending only when `p > start`. Entry into
+**every** accepting state clears pending pairs, including states whose
+bytecode omits `opcAccept` and ends in `opcRetAccept`. A failed suffix marks
+its pairs doomed. Reaching a doomed pair returns the current attempt's last
+accept. Marker tests and captures keep their original semantics; `capCode` is
+run separately after selection.
 
 The first attempt with an unproductive suffix only enables memoization.
-The next attempt builds the PC map in O(code length); the bitset is allocated
-only when an instrumented attempt actually leaves pending doomed pairs.
-There is no ratio threshold. Anchored `exec`/`matchLen` use the original
-interpreter specialization; generated lexers do not use this machinery.
+The next attempt builds the PC map and the cycle marks; the bitset is
+allocated only when an instrumented attempt actually leaves pending doomed
+pairs. There is no ratio threshold. Anchored `exec`/`matchLen` use the
+original interpreter specialization; generated lexers do not use this
+machinery.
 
 For a fixed DFA, successful prefixes of a non-overlapping traversal are
 disjoint. Unproductive pairs are explored once after activation, then later
 attempts stop at them. The first unproductive suffix may be explored once
 more. Start-position marker chains cost at most O(states) per attempt.
 Thus match selection is O(states × input bytes), plus preprocessing of the
-bytecode. Memo state is local to one search API invocation or `findAll`
-traversal; separate `findBounds` calls do not share it. Capture extraction
-retains its separate existing interpreter and is not memoized.
+bytecode; an acyclic automaton needs no memo at all, because an attempt cannot
+outlast the automaton. Memo state is local to one search API invocation or
+`findAll` traversal; separate `findBounds` calls do not share it. Capture
+extraction retains its separate existing interpreter and is not memoized.
 
-The bitset cap is 8 MiB (one bit per state and position, including EOF).
-Exceeding it falls back to the old matcher. Back references also fall back:
-state and position do not determine future behavior without captures.
-Those fallbacks can remain quadratic. The cap applies to the bitset; the
-PC map and pending-suffix sequence consume additional memory.
+The bitset cap is 8 MiB, one bit per eligible state and position, including
+EOF. Eligibility is the whole cost model: a pattern pays per input byte what
+its cyclic nonaccepting states are worth, not what its automaton is worth.
+Exceeding the cap falls back to the old matcher. Back references also fall
+back: state and position do not determine future behavior without captures.
+Those fallbacks can remain quadratic. The cap applies to the bitset; the PC
+map and pending-suffix sequence consume additional memory.
 
 ## Verification
 
@@ -40,6 +54,11 @@ PC map and pending-suffix sequence consume additional memory.
 - Final focused `tregex` and `trex_unicode` tests passed, including bytewise
   advancement, invalid UTF-8, continuation-byte starts, captures, replacement,
   splitting, longest/leftmost ordering, and the memory-cap fallback.
+- Cycle gate: `tests/nimony/stdlib` 85/85, `tregex` and `trex_unicode` pass,
+  and the `bench` smoke suite is 5/5. The differential patterns added to
+  `tregex` (`a+b*c+d`, `a+X|b+Y`, `a{64}b`, `(?:a+b?)+X`, …) are checked
+  against the per-position matcher, and the cap test now needs over 64
+  *eligible* states to fall back.
 - Mutation: returning no match on a memo hit instead of the saved accept made
   the differential test fail; restored code passed.
 - A 30-pattern dump of bytecode, data, first bytes and DFA transitions/rules,
@@ -66,6 +85,28 @@ with one warmup, for the whole process. The final measurement pass runs
 before/after binaries serially without compilation or tests in parallel.
 Sub-millisecond timings include process overhead and are noisy; instruction
 counts are the clearer comparison there.
+
+### Cycle-only memoization
+
+Same machine, same harness, `find` on a run of `a` bytes; "before" is the
+unspecialized memo (one bit per state), "after" is eligible states only.
+Times are wall clock for one call, not instructions.
+
+| Pattern | States | Eligible | Before | After |
+| --- | ---: | ---: | ---: | ---: |
+| `a{600}b`, n=80 000 | 602 | 0 | 207 ms | 79 ms |
+| `a+b&#124;a{2000}z`, n=50 000 | 2 003 | 1 | 1 687 ms | 216 ms |
+| `a+b&#124;a{2000}z`, n=100 000 | 2 003 | 1 | 6 629 ms | 406 ms |
+| `a+b`, n=80 000 | 3 | 1 | 1 ms | 1 ms |
+| `\w+@\w+`, n=80 000 | 4 | 1 | 1 ms | 1 ms |
+
+Two effects. `a{600}b` has no cyclic nonaccepting state, so search now runs
+the plain matcher and stops paying for a 5.8 MiB bitset it could not use; a
+bare `matchLen` loop over the same subject takes 52 ms, so what is left is the
+search helper, not memoization. `a+b|a{2000}z` used to exceed the cap on state
+count alone (2 003 states × 100 000 bytes) and stayed quadratic, 4× per
+doubling; with one eligible state it is linear in the subject, the remaining
+cost being the 2 000-state `a{2000}` chain every attempt still has to walk.
 
 ### Doubling
 

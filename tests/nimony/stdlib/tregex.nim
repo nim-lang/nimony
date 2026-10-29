@@ -218,7 +218,9 @@ proc memoSearch =
                   "\\w+$", "a*$", "(a)\\1+", "é+@?", "[^@]+@", "(?:\\w+@\\w+)?",
                   "a.*z", "(?:a|b)*c", "\\d+|\\w+@", "$", "(\\w+)@(\\w+)",
                   "\\s*$", "c?d*$|x", "[a-z]+ \\ x", "🙂+|é+", "(?:abc)+d", "\\w*",
-                  "^\\w+", "[^\\0]+\\Z", "\\w+\\B", "a|a*b", "(?:a|ab)*c", ".*x", "(a|a*b)"]:
+                  "^\\w+", "[^\\0]+\\Z", "\\w+\\B", "a|a*b", "(?:a|ab)*c", ".*x", "(a|a*b)",
+                  "a+b|a{20}z", "(?:ab)+c", "a+b*c", "a+b*c+d",
+                  "a+X|b+Y", "a{64}b", "(?:ab|a)+c", "(?:a+b?)+X"]:
     var r = default(Regex)
     var err = ""
     assert tryRe(pattern, r, err)
@@ -251,11 +253,12 @@ proc memoSearch =
   let (a, b) = findBounds(long2, re"(\w+)@(\w+)", caps)
   assert (a, b) == (301, 303)
   assert capture(long2, caps, 0) == "x" and capture(long2, caps, 1) == "y"
-  # More than 64 states times one million positions exceeds the 8 MiB bitset.
+  # More than 64 nonaccepting cyclic states times one million positions
+  # exceeds the 8 MiB bitset budget. Acyclic states no longer consume bits.
   # The first attempt overscans, so the next attempt reaches the cap fallback.
   var pattern = ""
-  for i in 0 ..< 100: pattern.add 'a'
-  pattern.add "b|a"
+  for i in 0 ..< 100: pattern.add "a+b"
+  pattern.add "z|a"
   var large = "aaa!"
   for i in 0 ..< 1048576: large.add 'x'
   var capped = default(Regex)
