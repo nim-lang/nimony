@@ -17,7 +17,16 @@ import std / private / regexcore
 
 const smoke = defined(benchSmoke)
 
-when defined(benchCompile):
+when defined(benchFailedSearch) or defined(benchShortSearch):
+  # Failed tries and successful short matches both used to rescan each suffix.
+  let r = when defined(benchFailedSearch): re"\w+@\w+" else: re"a|a*b"
+  var s = ""
+  for i in 0 ..< (when smoke: 40 else: 8000): s.add 'a'
+  var total = 0
+  for i in 0 ..< (when smoke: 3 else: 100):
+    for (first, last) in findAll(s, r): total += last - first + 1
+  echo total
+elif defined(benchCompile):
   var total = 0
   for i in 0 ..< (when smoke: 3 else: 300):
     var r = default(Regex)

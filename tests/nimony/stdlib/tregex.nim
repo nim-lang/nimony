@@ -159,3 +159,116 @@ capturing()
 captureDegradation()
 characterClasses()
 runtimePatterns()
+
+proc slowFindAll(s: string; r: Regex; start: int): seq[(int, int)] =
+  ## `findAll` as it tries a match at every position.
+  result = @[]
+  var i = start
+  while i <= s.len:
+    let L = matchLen(s, r, i)
+    if L > 0:
+      result.add (i, i + L - 1)
+      inc i, L
+    elif L == 0:
+      result.add (i, i - 1)
+      inc i
+    else:
+      inc i
+
+proc slowReplace(s: string; r: Regex; by: string): string =
+  result = ""
+  var i = 0
+  while i < s.len:
+    let L = matchLen(s, r, i)
+    if L > 0:
+      result.add by
+      inc i, L
+    else:
+      result.add s[i]
+      inc i
+
+proc slowSplit(s: string; r: Regex): seq[string] =
+  result = @[]
+  var piece = ""
+  var i = 0
+  while i < s.len:
+    let L = matchLen(s, r, i)
+    if L > 0:
+      result.add piece
+      piece = ""
+      inc i, L
+    else:
+      piece.add s[i]
+      inc i
+  result.add piece
+
+proc memoSearch =
+  # Compare byte-by-byte anchored matching with search-local memoization.
+  var long1 = ""
+  for i in 0 ..< 300: long1.add char(ord('a') + i mod 26)
+  var long2 = long1 & " x@y " & long1 & "@" & long1 & " é@🙂 "
+  var long3 = ""
+  for i in 0 ..< 40: long3.add "abcabcd ééé\xC3 12 x@ @y "
+  var long4 = ""
+  for i in 0 ..< 200: long4.add "é"
+  long4.add "\xFF\x80aé@é"
+  var long5 = ""
+  for i in 0 ..< 300: long5.add 'a'
+  for pattern in ["abcd|c", "(?:abcd|c)d*", "\\w+@\\w+", "x*", "\\bab\\w*",
+                  "\\w+$", "a*$", "(a)\\1+", "é+@?", "[^@]+@", "(?:\\w+@\\w+)?",
+                  "a.*z", "(?:a|b)*c", "\\d+|\\w+@", "$", "(\\w+)@(\\w+)",
+                  "\\s*$", "c?d*$|x", "[a-z]+ \\ x", "🙂+|é+", "(?:abc)+d", "\\w*",
+                  "^\\w+", "[^\\0]+\\Z", "\\w+\\B", "a|a*b", "(?:a|ab)*c", ".*x", "(a|a*b)"]:
+    var r = default(Regex)
+    var err = ""
+    assert tryRe(pattern, r, err)
+    for subject in ["", "abcd", "abcabcd", "xab ab", "é🙂aa z", "\xC0\x80a",
+                    "a@b", long1, long2, long3, long4, long4 & long1, long5]:
+      for start in [0, 1, 2, 7, 150, 301]:
+        if start > subject.len: continue
+        let slow = slowFindAll(subject, r, start)
+        var fast: seq[(int, int)] = @[]
+        for m in findAll(subject, r, start): fast.add m
+        assert fast == slow
+        let (a, b) = findBounds(subject, r, start)
+        if slow.len == 0: assert a == -1 and b == 0
+        else: assert (a, b) == slow[0]
+      var caps: seq[Capture] = @[]
+      let bounds = findBounds(subject, r, caps)
+      if bounds[0] >= 0:
+        var expected: seq[Capture] = @[]
+        assert matchLen(subject, r, expected, bounds[0]) == bounds[1] - bounds[0] + 1
+        assert caps.len == expected.len
+        for i in 0 ..< caps.len:
+          assert caps[i].first == expected[i].first and caps[i].last == expected[i].last
+      assert replace(subject, r, "<>") == slowReplace(subject, r, "<>")
+      assert split(subject, r) == slowSplit(subject, r)
+  # Compile-time and runtime regex construction share search behavior.
+  let lit = re"\w+@\w+"
+  assert findBounds(long2, lit) == (301, 303)
+  # captures come from the forward run at the start that was found
+  var caps: seq[Capture] = @[]
+  let (a, b) = findBounds(long2, re"(\w+)@(\w+)", caps)
+  assert (a, b) == (301, 303)
+  assert capture(long2, caps, 0) == "x" and capture(long2, caps, 1) == "y"
+  # More than 64 states times one million positions exceeds the 8 MiB bitset.
+  # The first attempt overscans, so the next attempt reaches the cap fallback.
+  var pattern = ""
+  for i in 0 ..< 100: pattern.add 'a'
+  pattern.add "b|a"
+  var large = "aaa!"
+  for i in 0 ..< 1048576: large.add 'x'
+  var capped = default(Regex)
+  var error = ""
+  assert tryRe(pattern, capped, error)
+  var count = 0
+  for (first, last) in findAll(large, capped):
+    assert first == count and last == count
+    inc count
+  assert count == 3
+  assert find("xxab", re"^ab") == 2
+  assert findBounds("ab", re"a|ab") == (0, 1)
+  assert findBounds("abcd", re"abcd|c") == (0, 3)
+  echo "memo search ok"
+
+memoSearch()

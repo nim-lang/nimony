@@ -6,3 +6,4 @@ capturing ok
 capture degradation ok
 character classes ok
 runtime patterns ok
+memo search ok

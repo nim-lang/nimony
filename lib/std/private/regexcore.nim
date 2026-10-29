@@ -1333,9 +1333,70 @@ func backrefMatches(s: string; sp: Natural; c: Capture): bool
     inc k
     inc i
 
-func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]];
+# Search-local Reps memoization. No compile-time or anchored-match state.
+# A pair is valid only strictly after the attempt's start: begin/word-boundary
+# markers read that start. Back references depend on captures and cannot use it.
+const SearchMemoBytes = 8 * 1024 * 1024
+
+type SearchMemo* = object
+  initialized, enabled, activate: bool
+  width, bitCount: int
+  states: seq[int]             # state id at entry PCs, -1 elsewhere
+  accepting: seq[bool]
+  doomed: seq[uint64]
+  pending: seq[int]
+
+func initMemo(m: var SearchMemo; code: seq[RegexInstr]; n: int) =
+  m.initialized = true
+  if n < 0 or n >= SearchMemoBytes * 8: return
+  var count = 0
+  for ins in code:
+    if ins.opc == opcBackref: return
+    if ins.opc == opcRet or ins.opc == opcRetAccept: inc count
+  let width = n + 1
+  if count == 0 or count > (SearchMemoBytes * 8) div width: return
+  m.width = width
+  m.bitCount = count * width
+  m.states = newSeq[int](code.len)
+  var entry = 0
+  var state = 0
+  for i in 0 ..< code.len:
+    m.states[i] = -1
+    if code[i].opc == opcRet or code[i].opc == opcRetAccept:
+      if entry >= 0 and entry < m.states.len: m.states[entry] = state
+      m.accepting.add code[i].opc == opcRetAccept
+      inc state
+      entry = i + 1
+  m.enabled = true
+
+func rememberDoom(m: var SearchMemo) =
+  if m.pending.len == 0: return
+  # Allocate the bitset only once a try has an unproductive suffix.
+  if m.doomed.len == 0: m.doomed = newSeq[uint64]((m.bitCount + 63) div 64)
+  for bit in m.pending:
+    let word = bit shr 6
+    if word >= 0 and word < m.doomed.len:
+      m.doomed[word] = m.doomed[word] or (1'u64 shl (bit and 63))
+  m.pending.setLen 0
+
+func visit(m: var SearchMemo; pc, sp, start: int): bool =
+  result = false
+  if pc < 0 or pc >= m.states.len: return
+  let state = m.states[pc]
+  if state < 0 or state >= m.accepting.len: return
+  if m.accepting[state]:
+    # Some accepting states omit opcAccept: their outgoing rules all agree.
+    m.pending.setLen 0
+  elif sp > start and sp >= 0 and sp < m.width:
+    let bit = state * m.width + sp
+    let word = bit shr 6
+    if word >= 0 and word < m.doomed.len:
+      if (m.doomed[word] and (1'u64 shl (bit and 63))) != 0: return true
+    m.pending.add bit
+
+func run[trackCaptures: static[bool]; searching: static[int]](code: seq[RegexInstr]; data: seq[set[char]];
          startAt: int; s: string; caps: var seq[Capture]; start: Natural;
-         endPos: var int): int =
+         endPos: var int; memo: var SearchMemo): int =
   ## One automaton over `s` from `start`. Returns the rule that matched (`0`
   ## for none) and reports the position just past the match in `endPos`.
   result = 0
@@ -1346,6 +1407,10 @@ func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]
   var acceptedCaps: seq[Capture] = @[]
   var capturesChanged = false
   while true:
+    when searching == 2:
+      if visit(memo, pc, sp, start):
+        rememberDoom(memo)
+        return result
     var instr = code[pc]
     if instr.opc == opcAccept:
       result = int(instr.arg)
@@ -1375,10 +1440,13 @@ func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]
       else:
         inc pc, 2
     of opcRet:
+      when searching == 1: memo.activate = sp > endPos
+      when searching == 2: rememberDoom(memo)
       when trackCaptures:
         caps = acceptedCaps
       return result
     of opcRetAccept:
+      when searching == 2: memo.pending.setLen 0
       endPos = sp
       return arg
     of opcAccept:
@@ -1431,14 +1499,16 @@ func matchOnly(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
                endPos: var int): int {.inline.} =
   ## `run` for code without capture groups: no capture bookkeeping, and
   ## `caps` is left alone.
-  result = run[false](code, data, startAt, s, caps, start, endPos)
+  var unused = default(SearchMemo)
+  result = run[false, 0](code, data, startAt, s, caps, start, endPos, unused)
 
 func matchWithCaptures(code: seq[RegexInstr]; data: seq[set[char]];
                        startAt: int; s: string; caps: var seq[Capture];
                        start: Natural; endPos: var int): int {.inline.} =
   ## `run` for code that keeps its groups; a failed longer match rewinds
   ## `caps` to the last accepting state.
-  result = run[true](code, data, startAt, s, caps, start, endPos)
+  var unused = default(SearchMemo)
+  result = run[true, 0](code, data, startAt, s, caps, start, endPos, unused)
 
 func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
            endPos: var int): int =
@@ -1457,6 +1527,27 @@ func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
     result = matchOnly(r.code, r.data, r.startAt, s, caps, start, endPos)
   else:
     result = matchWithCaptures(r.code, r.data, r.startAt, s, caps, start, endPos)
+  if result > 0 and r.capCode.len > 0:
+    var found: seq[Capture] = @[]
+    var ignored = start
+    if matchWithCaptures(r.capCode, r.capData, r.capStartAt, s, found, start,
+                         ignored) > 0:
+      caps = found
+
+func searchExec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
+                 endPos: var int; memo: var SearchMemo): int =
+  if start >= s.len: return exec(r, s, caps, start, endPos)
+  if not memo.initialized and memo.activate: initMemo(memo, r.code, s.len)
+  if memo.initialized and not memo.enabled:
+    return exec(r, s, caps, start, endPos)
+  caps.setLen 0
+  if memo.enabled:
+    memo.pending.setLen 0
+    result = run[false, 2](r.code, r.data, r.startAt, s, caps, start, endPos, memo)
+  elif r.captures == 0:
+    result = run[false, 1](r.code, r.data, r.startAt, s, caps, start, endPos, memo)
+  else:
+    result = run[true, 1](r.code, r.data, r.startAt, s, caps, start, endPos, memo)
   if result > 0 and r.capCode.len > 0:
     var found: seq[Capture] = @[]
     var ignored = start

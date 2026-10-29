@@ -19,6 +19,19 @@
 ## needs two million states. Matching stays linear, but compiling a pattern
 ## from an untrusted source with `tryRe` can take unbounded time and memory.
 ##
+## Searching memoizes DFA states and byte positions that cannot reach another
+## accept (Reps, "Maximal-munch tokenization in linear time"). For a fixed
+## automaton, a search or a full `findAll` traversal takes linear time in the
+## subject length: successful prefixes are disjoint, and failed suffix pairs
+## are explored at most once after activation. The first unproductive suffix
+## enables memoization; it can be scanned once more before being recorded.
+##
+## The search-local bitset is capped at 8 MiB. If one bit for each state and
+## byte position (including the end) requires more than that budget, or the bytecode contains a back reference, search uses
+## the original matcher and can take quadratic time. Back references need
+## capture contents as well as state and position. Capture extraction still
+## runs separately after selecting a match; its existing behavior is preserved.
+##
 ## Two ways to use it:
 ##
 ## **At runtime** — build a `Regex` from a string and match against it:
@@ -254,17 +267,27 @@ func fullMatch*(s: string; r: Regex; caps: var seq[Capture]; start = 0): bool =
   ## `fullMatch`, additionally reporting the capture bounds.
   matchLen(s, r, caps, start) == s.len - start
 
+func nextSearch(s: string; r: Regex; caps: var seq[Capture];
+                pos: var int; memo: var SearchMemo; includeEmpty: bool): (int, int) =
+  while pos <= s.len:
+    pos = skipToCandidate(s, r, pos)
+    if not includeEmpty and pos >= s.len: break
+    let first = pos
+    var finish = pos
+    let rule = searchExec(r, s, caps, pos, finish, memo)
+    if rule > 0 and (includeEmpty or finish > first):
+      pos = if finish > first: finish else: first + 1
+      return (first, finish - 1)
+    inc pos
+  result = (-1, 0)
+
 func findBounds*(s: string; r: Regex; caps: var seq[Capture];
                  start = 0): (int, int) =
   ## The bounds of the first match at or after `start`, both ends inclusive, or
   ## `(-1, 0)` when there is none. An empty match reports `last == first - 1`.
   var i = start
-  while i <= s.len:
-    i = skipToCandidate(s, r, i)
-    let L = matchLen(s, r, caps, i)
-    if L >= 0: return (i, i + L - 1)
-    inc i
-  result = (-1, 0)
+  var memo = default(SearchMemo)
+  result = nextSearch(s, r, caps, i, memo, true)
 
 func findBounds*(s: string; r: Regex; start = 0): (int, int) =
   ## The bounds of the first match at or after `start`, both ends inclusive, or
@@ -305,58 +328,55 @@ iterator findAll*(s: string; r: Regex; start = 0): (int, int) =
   ## inclusive. An empty match advances by one byte, so the loop always
   ## terminates.
   var i = start
+  var memo = default(SearchMemo)
+  var caps: seq[Capture] = @[]
   while i <= s.len:
-    i = skipToCandidate(s, r, i)
-    let L = matchLen(s, r, i)
-    if L > 0:
-      yield (i, i + L - 1)
-      inc i, L
-    elif L == 0:
-      yield (i, i - 1)
-      inc i
-    else:
-      inc i
+    let bounds = nextSearch(s, r, caps, i, memo, true)
+    if bounds[0] < 0: break
+    yield bounds
 
 func replace*(s: string; r: Regex; by: string): string =
-  ## Every non-overlapping match of `r` replaced by `by`, which is inserted
-  ## literally — there is no `$1` substitution.
+  ## Every non-empty, non-overlapping match of `r` replaced by `by`, which is
+  ## inserted literally — there is no `$1` substitution.
   result = ""
-  var i: Natural = 0
-  while i < s.len:
-    let next = skipToCandidate(s, r, i)
-    while i < next:
-      result.add s[i]
-      inc i
-    if i >= s.len: break
-    let L = matchLen(s, r, i)
-    if L > 0:
-      result.add by
-      inc i, L
-    else:
-      result.add s[i]
-      inc i
+  var pos = 0
+  var copied = 0
+  var memo = default(SearchMemo)
+  var caps: seq[Capture] = @[]
+  while pos < s.len:
+    let (first, last) = nextSearch(s, r, caps, pos, memo, false)
+    if first < 0: break
+    while copied >= 0 and copied < first and copied < s.len:
+      result.add s[copied]
+      inc copied
+    result.add by
+    copied = last + 1
+  while copied >= 0 and copied < s.len:
+    result.add s[copied]
+    inc copied
 
 func split*(s: string; r: Regex): seq[string] =
   ## `s` split at every non-empty match of `r`. The separators are dropped and
   ## empty fields are kept, so the pieces and the separators together
   ## reconstruct `s`.
   result = @[]
+  var pos = 0
+  var copied = 0
+  var memo = default(SearchMemo)
+  var caps: seq[Capture] = @[]
   var piece = ""
-  var i: Natural = 0
-  while i < s.len:
-    let next = skipToCandidate(s, r, i)
-    while i < next:
-      piece.add s[i]
-      inc i
-    if i >= s.len: break
-    let L = matchLen(s, r, i)
-    if L > 0:
-      result.add piece
-      piece = ""
-      inc i, L
-    else:
-      piece.add s[i]
-      inc i
+  while pos < s.len:
+    let (first, last) = nextSearch(s, r, caps, pos, memo, false)
+    if first < 0: break
+    while copied >= 0 and copied < first and copied < s.len:
+      piece.add s[copied]
+      inc copied
+    result.add piece
+    piece = ""
+    copied = last + 1
+  while copied >= 0 and copied < s.len:
+    piece.add s[copied]
+    inc copied
   result.add piece
 
 # ---------------------------------------------------------------------------
