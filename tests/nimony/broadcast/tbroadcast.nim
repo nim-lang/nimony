@@ -1,4 +1,4 @@
-import std/broadcast
+import ../../../lib/std/broadcast
 import std/[syncio, assertions]
 
 proc t1() =
@@ -61,22 +61,32 @@ proc t7() =
   let a = @[0b1010, 0b1100]
   let b = @[0b0110, 0b0011]
   let c = @. ((a &&. b) ||! 0b0001)
+  let d = @. ((a and b) or 0b0001)
   assert c == @[3, 1]
+  assert d == c
 
-  let d = @. (a ^^. b)
-  assert d == @[0b1100, 0b1111]
+  let e = @. (a ^^. b)
+  let f = @. (a xor b)
+  assert e == @[0b1100, 0b1111]
+  assert f == e
 
 proc t8() =
   let a = @[1, 2, 4]
   let b = @. (a <<! 2)
+  let c = @. (a shl 2)
   assert b == @[4, 8, 16]
-  let c = @. (b >>! 1)
-  assert c == @[2, 4, 8]
+  assert c == b
+  let d = @. (b >>! 1)
+  let e = @. (b shr 1)
+  assert d == @[2, 4, 8]
+  assert e == d
 
 proc t9() =
   let a = @[17, 23, 31]
   let b = @. ((a //! 5) +. (a %! 5))
+  let c = @. ((a div 5) +. (a mod 5))
   assert b == @[5, 7, 7]
+  assert c == b
 
 proc t10() =
   let a = @["hello", "world"]

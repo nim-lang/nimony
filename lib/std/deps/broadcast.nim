@@ -84,6 +84,8 @@ proc collectContainers(n: NifCursor, containers: var seq[NifCursor]) =
     elif tag == "dot" or tag == "at":
       if not hasContainer(containers, n):
         containers.add n
+    elif tag == "expr":
+      collectContainers(firstChild(n), containers)
   else:
     discard
 
