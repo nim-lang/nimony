@@ -65,7 +65,22 @@ when defined(posix):
     header: "<sys/socket.h>", sideEffect.}
 
 const
-  ChunkSize = 16 * 1024       ## one read from below; one TLS record's worth
+  ChunkSize {.intdefine.} = 16 * 1024
+    ## The most one read from below takes; one TLS record's worth. A reader
+    ## reaches it only while its peer keeps filling what it is given — see
+    ## `MinRead`.
+  MinRead {.intdefine.} = 1024
+    ## The first read of a connection, and what it falls back to when a read
+    ## comes back short.
+    ##
+    ## This is the per-connection memory floor, and it is why it is small: a
+    ## read reserves its size in the reader's buffer, and the buffer keeps the
+    ## capacity. Reserving `ChunkSize` for every connection meant a chat server
+    ## with 8000 quiet clients held 8000 sixteen-kilobyte buffers — 36 KB of
+    ## chunk each once the allocator's size classes were done with it — for
+    ## messages of forty bytes. Now a quiet connection holds `MinRead` and a
+    ## busy one doubles up to `ChunkSize` within five reads, so a flooding peer
+    ## still gets its 16 KB reads.
   FlushAt = 64 * 1024         ## a writer pushes its buffer down past this
 
 proc addBytes(dest: var string; src: openArray[char]) {.inline.} =
@@ -272,6 +287,27 @@ proc ringRead(g: Ring; p: pointer; maxLen: int; whole: bool): int {.passive.} =
     resume wake
     if result < 0: park(g, false)
 
+proc ringTryRead(g: Ring; p: pointer; maxLen: int): int =
+  ## One record into `p` if the ring has one; `-1` when it is empty. Never
+  ## parks, which is the whole point: the caller drains what is there, does
+  ## something with the batch, and only then waits for more.
+  let dest = cast[ptr UncheckedArray[char]](p)
+  var wake: seq[Continuation] = @[]
+  result = -1
+  acquire g.lock
+  if g.len >= g.recSize:
+    let cap = g.cap
+    let n = min(g.len, maxLen)
+    let first = min(n, cap - g.head)
+    copyMem(addr dest[0], addr g.data[g.head], first)
+    if n > first: copyMem(addr dest[first], addr g.data[0], n - first)
+    g.head = (g.head + n) mod cap
+    g.len -= n
+    takeWaiters(g.sendWaiters, (cap - g.len) div g.recSize, wake)
+    result = n
+  release g.lock
+  resume wake
+
 proc takeLeft(g: Ring): seq[char] =
   ## What is still in the ring, with the lock held; whole records never wrap.
   result = newSeq[char](g.len)
@@ -407,17 +443,22 @@ proc coreSend(c: Core; data: openArray[char]) {.passive, raises.} =
     else:
       writeFd(c, data)
 
-proc readFd(c: Core; dest: var string): int {.passive, raises.} =
+proc readFd(c: Core; dest: var string; step = ChunkSize): int {.passive, raises.} =
   ## Appends one read's worth; `0` at the end of the source. The kernel writes
   ## straight into `dest`'s spare room: no staging buffer, no zero-fill.
+  ##
+  ## `step` is how much room this read reserves, and it is the reader's
+  ## business (see `MinRead`), not this proc's: the reservation is what stays
+  ## allocated for the life of the buffer.
   let old = dest.len
-  let n = readAsync(c.fd, beginStore(dest, old + ChunkSize, old), ChunkSize, c.dl)
+  let n = readAsync(c.fd, beginStore(dest, old + step, old), step, c.dl)
   dest.setLen old + max(n, 0)            # a shrink: keeps the capacity, syncs the prefix
   if n < 0: raise toErr(n)
   result = n
 
-proc coreRecv(c: Core; dest: var string): int {.passive, raises.} =
+proc coreRecv(c: Core; dest: var string; step = ChunkSize): int {.passive, raises.} =
   ## Appends bytes from below the adapter; `0` once the source has ended.
+  ## `step` bounds one read, and only the descriptor path uses it.
   result = 0
   if c.peerDone: return
   case c.kind
@@ -439,7 +480,7 @@ proc coreRecv(c: Core; dest: var string): int {.passive, raises.} =
   of ckFd:
     let e = c.tls
     if e == nil:
-      result = readFd(c, dest)
+      result = readFd(c, dest, step)
       if result == 0: c.peerDone = true
     else:
       while true:
@@ -480,6 +521,10 @@ type
     raw: string          ## bytes from below not yet taken by the adapter
     adapter: nil Adapter
     eof: bool            ## the source below has ended
+    step: int
+      ## How much room the next read reserves: `MinRead` for a quiet
+      ## connection, doubling up to `ChunkSize` while the peer keeps filling
+      ## it. See `MinRead` for why this is not just `ChunkSize`.
 
   Writer* = object
     ## Move-only, like `Reader`.
@@ -534,7 +579,8 @@ proc `=dup`*(x: Writer): Writer {.error.}
 proc `=copy`*(dest: var Writer; src: Writer) {.error.}
 
 proc initReader(c: Core): Reader =
-  Reader(core: c, buf: "", pos: 0, raw: "", adapter: nil, eof: false)
+  Reader(core: c, buf: "", pos: 0, raw: "", adapter: nil, eof: false,
+         step: MinRead)
 
 proc initWriter(c: Core): Writer =
   Writer(core: c, buf: "", adapter: nil, finished: false)
@@ -617,7 +663,15 @@ proc refill(r: var Reader): bool {.passive, raises.} =
         return true
       if r.eof: return false
     if r.eof: return false
-    if coreRecv(c, r.raw) == 0: r.eof = true
+    let n = coreRecv(c, r.raw, r.step)
+    if n == 0: r.eof = true
+    # Grow the step only while the peer fills it, and fall back when a read
+    # comes back short: the reservation is what the connection keeps, so a
+    # quiet connection must not hold a flooding one's buffer.
+    if n >= r.step:
+      if r.step < ChunkSize: r.step = min(r.step * 2, ChunkSize)
+    elif n > 0 and r.step > MinRead:
+      r.step = MinRead
 
 proc fill*(r: var Reader): int {.passive, raises.} =
   ## Append more decoded bytes, preserving the unread tail and compacting
@@ -736,6 +790,19 @@ proc scratch*(w: var Writer; n: int): var string {.raises.} =
   if w.core == nil or w.finished or w.buf.len > 0: raise BadOperation
   w.buf.setLen n
   result = w.buf
+
+proc grow*(w: var Writer; n: int): var openArray[char] {.raises.} =
+  ## `n` more bytes at the end of the writer's buffer, for a caller that
+  ## serializes a head or a frame in place. Nothing is copied, and nothing is
+  ## allocated once the buffer has grown; the caller has to fill all `n` bytes.
+  ##
+  ## `scratch` for a writer that already has bytes buffered: a run of small
+  ## frames is spelled one after the other into the same buffer and reaches the
+  ## kernel with one `flush`.
+  if w.core == nil or w.finished: raise BadOperation
+  let old = w.buf.len
+  w.buf.setLen old + n
+  result = toOpenArray(w.buf, old, old + n - 1)
 
 proc finishImpl(w: var Writer; clean: bool) {.passive, raises.} =
   w.finished = true
@@ -1056,6 +1123,15 @@ proc readRecord*(r: Reader; p: pointer): bool {.passive, raises.} =
   ## Safe from several threads at once.
   let g = recordRing(r.core)
   result = ringRead(g, p, g.recSize, true) == g.recSize
+
+proc tryReadRecord*(r: Reader; p: pointer): bool {.raises.} =
+  ## One record from the ring into `p` if one is already buffered; `false` when
+  ## there is none, or the writer is gone. Never waits, so a task can drain what
+  ## is there and then do something else with it — put a batch of frames on a
+  ## socket with one flush, for one. Only after `hasRecordRing`, and safe from
+  ## several threads at once.
+  let g = recordRing(r.core)
+  result = ringTryRead(g, p, g.recSize) == g.recSize
 
 proc isOpen*(r: Reader): bool =
   ## Neither closed nor default-constructed.

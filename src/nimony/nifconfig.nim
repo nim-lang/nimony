@@ -137,6 +137,8 @@ type
     toTrack*: TrackPosition
     cc*: string
     linker*: string
+    depFile*: string ## `--depfile:FILE`: where the driver writes the source
+                     ## files of the program as `(stmts (dependency …))`
     layoutFile*: string  # `--layout:FILE` — the BOARD, for a bare-metal target:
                          # its memory regions, stack slots and heap. Forwarded to
                          # arkham verbatim; empty on a hosted target, which has an

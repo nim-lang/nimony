@@ -40,6 +40,10 @@ proc nimonyDir(): string =
   else:
     result = appDir
 
+proc pluginLibDir(): string =
+  ## Where the plugin API (`plugins.nim`) lives.
+  nimonyDir() / "src" / "nimony" / "lib"
+
 proc stdlibDir*(): string =
   result = nimonyDir() / "lib"
 
@@ -186,12 +190,19 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
       result = paths[i] / nimFile
       inc i
 
+proc resolveImport*(paths: openArray[string]; origin: string; toResolve: string): string =
+  ## `resolveFile` for an imported module: `std/x` falls back to `x`.
+  result = resolveFile(paths, origin, toResolve)
+  if not os.fileExists(result) and toResolve.startsWith("std/"):
+    result = resolveFile(paths, origin, toResolve.substr(4))
+
 type
   ImportedFilename* = object
     path*: string ## stringified path from AST that has to be resolved
     name*: string ## extracted module name to define a sym for in `import`
     plugin*: string ## plugin name if any (usually empty)
     isSystem*: bool
+    isCyclic*: bool ## `import m {.cyclic.}`
 
 proc moduleNameFromPath*(path: string): string =
   result = splitFile(path).name
@@ -338,6 +349,29 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     hasError = true
     skip n
 
+proc isCyclicImport*(n: Cursor): bool =
+  ## `m {.cyclic.}` in an import list.
+  result = false
+  if n.isTagLit and n.exprKind == PragmaxX:
+    var y = n
+    inc y
+    skip y # the filename
+    if y.substructureKind == PragmasU:
+      inc y
+      result = y.isIdent and pool.strings[y.strId] == "cyclic"
+
+proc importedFilename*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool) =
+  ## One entry of an `import` list: `m`, `m as x`, `m {.plugin: "p".}` or
+  ## `m {.cyclic.}`.
+  if isCyclicImport(n):
+    let start = res.len
+    n.into PragmaxX:
+      filenameVal(n, res, hasError, allowAs = false)
+      while n.hasMore: skip n # (pragmas cyclic)
+    for i in start ..< res.len: res[i].isCyclic = true
+  else:
+    filenameVal(n, res, hasError, allowAs = true)
+
 proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
   # Unpack Current File to Absolute
   let nifcache = config.nifcachePath
@@ -401,7 +435,9 @@ proc lastModTimeOrStale(path: string): int64 =
   except:
     result = -1'i64
 
-proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
+proc ensureParsed(nimFile: string; paths: openArray[string], nifcachePath: string): string =
+  ## Runs nifler on `nimFile` unless its `.p.nif` (the result) and
+  ## `.p.deps.nif` are fresh.
   let nifler = parserTool()
   let name = moduleSuffix(nimFile, paths)
   let src = nifcachePath / name & ".p.nif"
@@ -420,11 +456,68 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
     discard "already parsed by the dep scan"
   else:
     execArgs nifler, ["--portablePaths", "--deps", "parse", nimFile, src]
+  result = src
 
-  var r = rd.open(src)
+proc loadDepsFile*(depsFile: string): TokenBuf =
+  var r = rd.open(depsFile)
+  result = createTokenBuf()
+  parse(r, result)
+  rd.close(r)
+
+proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
+  var r = rd.open(ensureParsed(nimFile, paths, nifcachePath))
   result = createTokenBuf()
   parse(r, result, denseLineInfo = true)
   rd.close(r)
+
+proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: string;
+                     allResolve: var bool): seq[string] =
+  ## The modules `nimFile` imports plainly (no `{.plugin.}`, no `{.cyclic.}`),
+  ## read off its nifler deps file like `deps.processImport` does. `when`
+  ## conditions are not evaluated. `allResolve` tells whether every import
+  ## resolves on `paths` to a module outside of the plugin API (`src/nimony/lib`).
+  result = @[]
+  allResolve = true
+  var buf = loadDepsFile(ensureParsed(nimFile, paths, nifcachePath).changeFileExt(".deps.nif"))
+  var files: seq[ImportedFilename] = @[]
+  var n = beginRead(buf)
+  n.into:  # (stmts …)
+    while n.hasMore:
+      let kind = n.stmtKind
+      if kind in {ImportS, FromimportS, ImportexceptS}:
+        var x = n
+        x.into:
+          if x.stmtKind == WhenS: skip x, SkipCond
+          while x.hasMore:
+            var entry: seq[ImportedFilename] = @[]
+            var hasError = false
+            importedFilename(x, entry, hasError)
+            if not hasError:
+              for f in entry:
+                if not f.isCyclic and f.plugin.len == 0: files.add f
+            if kind != ImportS:
+              while x.hasMore: skip x # the imported/excluded names
+      skip n
+  let pluginDir = pluginLibDir()
+  for f in files:
+    let path = resolveImport(paths, nimFile, f.path)
+    if fileExists(path) and toAbsolutePath(path).parentDir != pluginDir:
+      result.add toAbsolutePath(path)
+    else:
+      allResolve = false
+
+proc pluginProgramImports*(plugin: string; paths: openArray[string];
+                           nifcachePath: string): seq[string] =
+  ## The modules the plugin source `plugin` imports that join the program of
+  ## the plugin's user, like a Nim macro module's imports: the plugin's
+  ## `bindSym`s refer to their symbols (#2639). Left out are imports that do
+  ## not resolve on the program's search path (`plugins`) and plugin code: a
+  ## module with such an import.
+  result = @[]
+  var allResolve = true
+  for path in resolvedImports(plugin, paths, nifcachePath, allResolve):
+    discard resolvedImports(path, paths, nifcachePath, allResolve)
+    if allResolve: result.add path
 proc getFile*(info: NifLineInfo): string =
   let fid = info.file
   if fid.isValid:
@@ -469,7 +562,7 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   # module declaring it (`lib/std/deps/smartcli.nim` imports `std/smartcli`)
   # would need itself built first, and the nested builds never bottom out.
   let nimonyExe = findTool("nimony")
-  let pluginDir = nimonyDir() / "src/nimony/lib"
+  let pluginDir = pluginLibDir()
   let srcLibPath = nimonyDir() / "src" / "lib"
   result = quoteShell(nimonyExe) &
     " --nimcache:" & quoteShell(cacheDir) &
@@ -527,11 +620,17 @@ proc runValidatorOnPlugin(config: NifConfig; nf, checkCache: string) =
   if checkCode != 0: return
   exec quoteShell(v) & " --nimcache:" & quoteShell(checkCache) & " " & quoteShell(nf)
 
-proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string) =
+proc pluginDepFile*(exefile: string): string =
+  ## The source files the last build of the plugin `exefile` read: inputs of
+  ## the next build's `pluginbuild` node (#2785), the depfile pattern.
+  exefile & ".deps.nif"
+
+proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string; depFile = "") =
   ## Build a plugin's `.nim` source `nf` as the executable `exefile`. Plugins
   ## import `lib/plugins.nim` and are compiled by Nimony itself. The
   ## sub-compiles work in `<scratch>_d` (the build) and `<scratch>_v` (the
-  ## validator's sem-only run); the caller owns these directories.
+  ## validator's sem-only run); the caller owns these directories. A non-empty
+  ## `depFile` receives the plugin's source files (`--depfile`).
   ##
   ## The link target is a temporary sibling, never `exefile` itself, and it is
   ## moved into place as one operation once it is complete. Nothing ever opens
@@ -542,6 +641,9 @@ proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string) =
   makePluginCache cacheDir
   let staging = atomicTempPath(exefile)
   var cmd = pluginCompileCmd(config, cacheDir)
+  if depFile.len > 0:
+    cmd.add " --depfile:"
+    cmd.add quoteShell(depFile)
   cmd.add " -o:"
   cmd.add quoteShell(staging)
   cmd.add " c "
@@ -557,7 +659,7 @@ proc buildPlugin*(config: NifConfig; nf, exefile: string) =
   ## nifmake builds the executable once, as a node of its own, before any of
   ## the nimsem runs that may execute it. Being the only builder by
   ## construction, this path may keep incremental caches next to the exe.
-  buildPluginInto(config, nf, exefile, exefile)
+  buildPluginInto(config, nf, exefile, exefile, pluginDepFile(exefile))
 
 proc ensurePlugin(config: NifConfig; nf, exefile: string) =
   ## The lazy fallback for a plugin the build graph did not provide: a
@@ -806,6 +908,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
 
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
   ensurePlugin(c.g.config, nf, pluginExe)
+  if nf notin c.pluginSources: c.pluginSources.add nf
 
   try:
     writeFileIfChanged(inputFile, pluginInput)

@@ -1,0 +1,4 @@
+tests/nimony/stdlib/tsmartcli_variadic_mixed.nim(3, 15) Trace: instantiation from here
+??? Error: Type mismatch at [position]
+cliAddArgument(result.item, p.key)
+[1] expected: seq[string] but got: string (declared in lib/std/smartcli.nim(60, 1))

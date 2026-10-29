@@ -137,6 +137,19 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
   var exports: seq[(string, ImportFilter)] = @[] # ignored
   discard importSingleFile(c, dest, f1, origin, filter, exports, info)
 
+proc importPluginImports*(c: var SemContext) =
+  ## The program imports of every plugin this module ran join the program,
+  ## without names in scope: see `semos.pluginProgramImports`. `deps.nim` has
+  ## already semchecked them before us.
+  var dest = createTokenBuf(4) # no errors: only existing files are imported
+  var sources = move c.pluginSources # `importSingleFile` mutates `c`
+  for src in sources:
+    for path in pluginProgramImports(src, c.g.config.paths, c.g.config.nifcachePath):
+      if moduleSuffix(path, c.g.config.paths) != c.thisModuleSuffix:
+        importSingleFile c, dest, ImportedFilename(path: path), src,
+          ImportFilter(kind: FromImport, list: initHashSet[StrId]()), NoLineInfo
+  c.pluginSources = move sources
+
 proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string; filter: ImportFilter; info: NifLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[]
   let source = importSingleFile(c, dest, f1, origin, filter, exports, info)
@@ -160,25 +173,10 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
   ## scope, so `x` is positioned at children. We walk those.
   let info = x.info
   while x.hasMore:
-    var isCyclic = false
-    if x.isTagLit and x.exprKind == PragmaxX:
-      var y = x
-      inc y, SkipTag
-      skip y, AnyExpr  # filename expr
-      if y.substructureKind == PragmasU:
-        inc y, SkipTag
-        if y.isIdent and pool.strings[y.strId] == "cyclic":
-          isCyclic = true
-
-    if isCyclic:
-      # Manually parse the pragmax wrapper to extract the filename
+    if isCyclicImport(x):
       var files: seq[ImportedFilename] = @[]
       var hasError = false
-      x.into PragmaxX:
-        filenameVal(x, files, hasError, allowAs = false)
-        skip x, SkipPragmas # skip (pragmas cyclic)
-        while x.hasMore: skip x, SkipFull
-
+      importedFilename(x, files, hasError)
       if not hasError:
         let origin = getFile(info)
         for f1 in files:
@@ -217,15 +215,9 @@ proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilenam
     onConceptImportsChanged(c)
 
 template maybeCyclic(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
-  if x.isTagLit and x.exprKind == PragmaxX:
-    var y = x
-    inc y
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.isIdent and pool.strings[y.strId] == "cyclic":
-        cyclicImport(c, dest, x)
-        return
+  if isCyclicImport(x):
+    cyclicImport(c, dest, x)
+    return
 
 proc takeImportedName(x: var Cursor; names: var HashSet[StrId];
                       hasError: var bool) =
@@ -400,6 +392,11 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineIn
 
 proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
+  if c.phase != SemcheckBodies and c.deferredCyclicImports.len > 0:
+    # A cycle group member: the interfaces of `{.cyclic.}` imports are only
+    # loaded after phase1, so resolve the export in phase3.
+    takeTree dest, it.n
+    return
   var x = it.n
   skip it.n
   x.into:  # (export …)

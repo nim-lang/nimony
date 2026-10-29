@@ -73,6 +73,9 @@ proc toCamelCase(s: string): string =
   if result.len == 0:
     result = "value"
 
+proc isVariadic(name: string): bool =
+  result = name.endsWith("...")
+
 proc argumentFieldName(name: string): string =
   result = toCamelCase(name)
 
@@ -189,6 +192,11 @@ proc parseSpec(rawSpec: string): CliSpec =
     elif not rawLine.isEmptyOrWhitespace:
       parseSectionEntry result, currentSection, rawLine
 
+proc requiredArguments(names: seq[string]): int =
+  result = names.len
+  if names.len > 0 and names[^1].isVariadic:
+    dec result
+
 proc extractSpecNode(n: NifCursor): NifCursor =
   result = callArgs(n)
   if result.exprKind == SufX:
@@ -261,6 +269,19 @@ proc emitEnumField(dest: var NifBuilder; fieldName: string)
     dest.addEmptyNode4()
 
 # (fld ARG . . string .)*
+proc emitArgumentField(dest: var NifBuilder; name: string)
+    {.ensuresNif: addedNested(dest).} =
+  if name.isVariadic:
+    dest.withTree FldU, NoLineInfo:
+      dest.addIdent(argumentFieldName(name))
+      dest.addEmptyNode2()
+      dest.withTree AtX, NoLineInfo:
+        dest.addIdent("seq")
+        dest.addIdent("string")
+      dest.addEmptyNode()
+  else:
+    emitFieldDecl dest, argumentFieldName(name), "string"
+
 proc emitArgumentFieldDecls(dest: var NifBuilder; spec: CliSpec)
     {.ensuresNif: addedAny(dest).} =
   case spec.positionalMode()
@@ -268,14 +289,15 @@ proc emitArgumentFieldDecls(dest: var NifBuilder; spec: CliSpec)
     discard
   of pmFlat, pmSharedCommand:
     for argumentName in spec.argumentNames:
-      emitFieldDecl dest, argumentFieldName(argumentName), "string"
+      emitArgumentField dest, argumentName
   of pmInlineCommand:
     var emitted: seq[string] = @[]
     for command in spec.commands:
       for argumentName in command.argumentNames:
-        if argumentName notin emitted:
-          emitted.add argumentName
-          emitFieldDecl dest, argumentFieldName(argumentName), "string"
+        let field = argumentFieldName(argumentName)
+        if field notin emitted:
+          emitted.add field
+          emitArgumentField dest, argumentName
 
 template withOfIdent(dest: var NifBuilder; valueName: string; body: untyped) =
   dest.withTree OfU, NoLineInfo:
@@ -457,6 +479,13 @@ proc emitCommandChoice(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
       dest.withTree StmtsS, NoLineInfo:
         emitUnexpectedArgument dest, rawSpec
 
+proc emitAppendArgument(dest: var NifBuilder; name: string)
+    {.ensuresNif: addedStmt(dest).} =
+  dest.withTree CallS, NoLineInfo:
+    dest.bindSym("cliAddArgument")
+    emitDotExpr dest, "result", argumentFieldName(name)
+    emitDotExpr dest, "p", "key"
+
 # (case argSlot
 #   (of INT (stmts SLOT_BODY (cmd inc argSlot)))+
 #   (else (stmts (call cliUnexpectedArgument SPEC (dot p key)))))
@@ -466,12 +495,21 @@ proc emitArgumentSlots(dest: var NifBuilder; rawSpec: string; argumentNames: seq
     dest.addIdent("argSlot")
     for i, argumentName in argumentNames:
       dest.withOfInt i + slotOffset:
-        emitAssignResultFieldFromField dest,
-          argumentFieldName(argumentName), "p", "key"
+        if argumentName.isVariadic:
+          if i != argumentNames.len - 1:
+            dest.addTree(errorTree("variadic argument must be last"))
+          else:
+            emitAppendArgument dest, argumentName
+        else:
+          emitAssignResultFieldFromField dest,
+            argumentFieldName(argumentName), "p", "key"
         emitCallStmt1 dest, "inc", "argSlot"
     dest.withTree ElseU, NoLineInfo:
       dest.withTree StmtsS, NoLineInfo:
-        emitUnexpectedArgument dest, rawSpec
+        if argumentNames.len > 0 and argumentNames[^1].isVariadic:
+          emitAppendArgument dest, argumentNames[^1]
+        else:
+          emitUnexpectedArgument dest, rawSpec
 
 # (case (dot result command)
 #   (of COMMAND_ENUM (stmts (call cliUnexpectedArgument SPEC (dot p key))))?
@@ -526,7 +564,7 @@ proc emitInlineCommandMissingCheck(dest: var NifBuilder; rawSpec: string; spec: 
   dest.withTree CaseS, NoLineInfo:
     emitDotExpr dest, "result", "command"
     for command in spec.commands:
-      let requiredSlots = 1 + command.argumentNames.len
+      let requiredSlots = 1 + requiredArguments(command.argumentNames)
       dest.withOfIdent commandEnumName(command.name):
         dest.withTree IfS, NoLineInfo:
           dest.withTree ElifU, NoLineInfo:
@@ -636,13 +674,13 @@ proc emitParseProc(dest: var NifBuilder; rawSpec: string; spec: CliSpec;
       of pmFlat:
         dest.withTree IfS, NoLineInfo:
           dest.withTree ElifU, NoLineInfo:
-            emitLtIntExpr dest, "argSlot", spec.argumentNames.len
+            emitLtIntExpr dest, "argSlot", requiredArguments(spec.argumentNames)
             dest.withTree StmtsS, NoLineInfo:
               dest.withTree CallS, NoLineInfo:
                 dest.bindSym("cliMissingArguments")
                 dest.addStrLit(rawSpec)
       of pmSharedCommand:
-        emitSharedCommandMissingCheck dest, rawSpec, spec.argumentNames.len
+        emitSharedCommandMissingCheck dest, rawSpec, requiredArguments(spec.argumentNames)
       of pmInlineCommand:
         emitInlineCommandMissingCheck dest, rawSpec, spec
 

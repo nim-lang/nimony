@@ -170,8 +170,18 @@ type
 
 # ------------------------------------------------------------- listening ---
 
-proc listenHttp*(port: uint16; tags: HttpTags; backlog = 128): HttpServer =
+proc listenHttp*(port: uint16; tags: HttpTags; backlog = 1024): HttpServer =
   ## Listen on `port`. `initIoRing()` must already have run.
+  ##
+  ## `backlog` is how many completed handshakes the kernel may queue for
+  ## `accept` before it starts dropping new ones, and the kernel clamps it to
+  ## `somaxconn`. It is a *burst* buffer, not a connection limit — the
+  ## connections already accepted do not occupy it — so it should be sized for
+  ## the fastest rate the peer can connect at, not for steady state. 128 is
+  ## what this used to be, and it is not enough: a client opening 8192
+  ## connections at once overflowed it and lost 19% of them to dropped SYNs,
+  ## while the same run at 4096 lost none. (nginx and Node both default to
+  ## 511; 1024 is the same idea with a little more room.)
   ##
   ## `tags` is the process's one tag space (`newHttpTags()`, once, during
   ## init) — every message on every connection is built and parsed against it,
@@ -234,6 +244,10 @@ proc accept*(s: var HttpServer): HttpConnection {.passive.} =
     result.phase = phClosed
   else:
     setNonBlocking(cint(fd))
+    # Nagle holds a small reply until the previous one is acknowledged, which
+    # for a request/response server is one extra round trip per answer; see
+    # `setNoDelay`. Every connection pays one ring op here, once.
+    setNoDelay(cint(fd))
     result = initConnection(s, cint(fd), peer)
 
 # --------------------------------------------------------- reading a head --

@@ -63,11 +63,52 @@ proc ioLane*(): int {.inline.} =
   ## thread's own `poll`, i.e. by its `waitCompletions`/`pollCompletions` loop.
   if isPoolWorker(): threadIdx else: workerCount
 
-var gOpQueues*: seq[FifoStripe[OpContext]]
+type
+  OpQueue* = object
+    ## One lane's deferred ops, split by who produces them.
+    ##
+    ## The lane owner's own submissions are the overwhelming majority, and for
+    ## them producer and consumer are the *same thread*: a worker fills this
+    ## queue from the continuations it runs and drains it into the SQ from its
+    ## own `poll` (see `ioLane`). So `own` is a plain `LocalRing` — no lock, no
+    ## atomics.
+    ##
+    ## Everything else (the trailing lane that all non-worker threads share, and
+    ## iocp's routing of a socket's op to the lane that owns it) really is
+    ## multi-producer and keeps the locked `FifoStripe`.
+    ##
+    ## Before the split every op took a `SysLock`, and the submission path is
+    ## one op per read and one per write.
+    lane: int
+    own: LocalRing[OpContext]
+    shared: FifoStripe[OpContext]
+
+var gOpQueues*: seq[OpQueue]
+
 proc initOpQueues*() =
-  gOpQueues = newSeq[FifoStripe[OpContext]](ioLanes())
-  for q in gOpQueues:
-    q.init(InitialOpQueue)
+  gOpQueues = newSeq[OpQueue](ioLanes())
+  for i in 0 ..< gOpQueues.len:
+    gOpQueues[i].lane = i
+    gOpQueues[i].shared.init(InitialOpQueue)
+
+proc tryEnqueue*(q: var OpQueue; op: OpContext; maxCapacity: int): bool =
+  ## Push an op onto this lane. The unlocked ring is used only when the caller
+  ## *is* the lane's owner, i.e. is the thread that will poll it: `isPoolWorker()`
+  ## rules out the trailing lane, whose `ioLane()` is the same number for every
+  ## foreign thread.
+  if isPoolWorker() and q.lane == threadIdx:
+    result = q.own.tryEnqueue(op, maxCapacity)
+  else:
+    result = q.shared.tryEnqueue(op, maxCapacity)
+
+proc tryBulkDequeue*(q: var OpQueue; bulkSize: int;
+                     buf: var openArray[OpContext]): int =
+  ## The lane owner's own ops first (they are the ones that were just
+  ## submitted here), then whatever foreign threads left. The two were one FIFO
+  ## before, so their relative order was never meaningful.
+  result = q.own.tryBulkDequeue(bulkSize, buf)
+  if result == 0:
+    result = q.shared.tryBulkDequeue(bulkSize, buf)
 
 var gSlots*: seq[SlotArena]
 proc initSlots*() =
@@ -203,7 +244,14 @@ proc deliver(cont: Continuation; resPtr: int; seqnum: SeqNum; kind: IoOp;
   if resPtr != 0:
     cast[ptr int](resPtr)[] = res
   if cont.fn != nil:
-    submit(cont, int(fd))
+    # No hint, deliberately: a hint of `fd` would map to some stripe that is
+    # almost never this worker's own, and a push into somebody else's stripe is
+    # the *locked* half of the queue. Without it the chain is staged on this
+    # lane's private ring and lands on this lane's own deque, lock-free, in the
+    # next cycle — which is when the hinted form would have been dequeued
+    # anyway. It also keeps the chain on the lane that polled its completion,
+    # where the socket's buffers and the chain's frame are warm.
+    submit(cont)
   else:
     gCqLock.acquire()
     if gCqCount < CqSize:

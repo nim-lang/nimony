@@ -99,6 +99,12 @@ const
   DefaultCloseMs* = 5_000
     ## How long a side waits for the peer's half of the closing handshake.
 
+  MaxBufferedFrame = 32 * 1024
+    ## The largest frame that is copied into the stream's buffer whole. A
+    ## frame costs one `copyMem` more that way and one allocation less; past
+    ## this size the copy is the bigger of the two, so the payload goes to the
+    ## kernel straight from the caller's memory instead.
+
   TokenSeparators = {',', ' ', '\t'}
     ## What may sit between the tokens of a comma-separated header value.
   TokenWhitespace = {' ', '\t'}
@@ -218,6 +224,26 @@ type
 
 # ------------------------------------------------------------------- frames --
 
+proc maskBytes(dest: ptr UncheckedArray[char]; n: int; key: array[4, char];
+               offset: int) =
+  ## XORs `n` bytes with the mask, eight at a time. The key is four bytes, so
+  ## its repeat is one word for every position: a client masks every frame it
+  ## sends, which makes this the per-byte cost of every message a server reads.
+  var k8: uint64 = 0
+  var kk = default(array[8, char])
+  for i in 0 ..< 8: kk[i] = key[(offset + i) and 3]
+  copyMem(addr k8, addr kk[0], 8)
+  var i = 0
+  while i + 8 <= n:
+    var v: uint64 = 0
+    copyMem(addr v, addr dest[i], 8)
+    v = v xor k8
+    copyMem(addr dest[i], addr v, 8)
+    i += 8
+  while i < n:
+    dest[i] = char(ord(dest[i]) xor ord(key[(offset + i) and 3]))
+    inc i
+
 proc applyMask*(data: var openArray[char]; key: array[4, char]; offset = 0) =
   ## XORs `data` with the mask `key`, starting `offset` bytes into the payload.
   ##
@@ -225,8 +251,9 @@ proc applyMask*(data: var openArray[char]; key: array[4, char]; offset = 0) =
   ## applies it before the bytes go out, a receiver after they arrive. The
   ## offset is what makes a payload that arrives in pieces come out right —
   ## the key restarts at the front of the frame, not at the front of the read.
-  for i in 0 ..< data.len:
-    data[i] = char(ord(data[i]) xor ord(key[(offset + i) and 3]))
+  if data.len > 0:
+    maskBytes(cast[ptr UncheckedArray[char]](addr data[0]), data.len, key,
+              offset)
 
 proc parseFrameHeader*(bytes: openArray[char]; f: var WsFrame): int =
   ## How many bytes the frame header at the front of `bytes` takes,
@@ -300,30 +327,70 @@ proc headerLen(b1: char): int {.inline.} =
   result = 2 + (if n == 126: 2 elif n == 127: 8 else: 0)
   if (ord(b1) and 0x80) != 0: result += 4
 
+proc frameHeaderLen(payloadLen: int; masked: bool): int {.inline.} =
+  ## How many bytes `fillHeader` writes for a payload of `payloadLen`.
+  (if payloadLen < 126: 2 elif payloadLen <= 65535: 4 else: 10) +
+    (if masked: 4 else: 0)
+
+proc fillHeader(dest: var openArray[char]; opcode: WsOpcode; payloadLen: int;
+                masked: bool; key: array[4, char]; fin: bool): int =
+  ## The header of a frame whose payload is `payloadLen` bytes, spelled into
+  ## `dest`; returns how many bytes it took. The length goes in the fewest
+  ## bytes that hold it, as RFC 6455 §5.2 asks — a peer that does not is a
+  ## peer the receiver has to refuse, so both sides write it the same way.
+  ##
+  ## In place and not as a fresh string: a server that fans one message out to
+  ## many connections spells one header per delivery, and an allocation there
+  ## is a cost the message does not deserve.
+  var i = 0
+  dest[i] = chr((if fin: 0x80 else: 0) or ord(opcode))
+  inc i
+  let maskBit = if masked: 0x80 else: 0
+  if payloadLen < 126:
+    dest[i] = chr(payloadLen or maskBit)
+    inc i
+  elif payloadLen <= 65535:
+    dest[i] = chr(126 or maskBit)
+    inc i
+    dest[i] = chr((payloadLen shr 8) and 0xFF)
+    inc i
+    dest[i] = chr(payloadLen and 0xFF)
+    inc i
+  else:
+    dest[i] = chr(127 or maskBit)
+    inc i
+    let wide = uint64(payloadLen)
+    for k in 0 ..< 8:
+      dest[i] = char((wide shr (8 * (7 - k))) and 0xFF)
+      inc i
+  if masked:
+    for k in 0 ..< 4:
+      dest[i] = key[k]
+      inc i
+  result = i
+
+proc fillFrame(dest: var openArray[char]; opcode: WsOpcode;
+               payload: openArray[char]; masked: bool; key: array[4, char];
+               fin: bool): int =
+  ## The whole frame in `dest`, and how many bytes it took. One `copyMem` for
+  ## the payload and one pass of masking for a client's frame; nothing is
+  ## allocated.
+  result = fillHeader(dest, opcode, payload.len, masked, key, fin)
+  if payload.len > 0:
+    copyMem(addr dest[result], unsafeAddr payload[0], payload.len)
+    if masked:
+      applyMask(toOpenArray(dest, result, result + payload.len - 1), key)
+    result += payload.len
+
 proc frameHeader*(opcode: WsOpcode; payloadLen: int; masked: bool;
                   key: array[4, char]; fin = true): string =
   ## The header of a frame whose payload is `payloadLen` bytes.
   ##
-  ## The length is written in the fewest bytes that hold it, as RFC 6455 §5.2
-  ## asks; a peer that does not is a peer the receiver has to refuse, so both
-  ## sides of this module write it the same way.
-  result = newString(0)
-  result.add chr((if fin: 0x80 else: 0) or ord(opcode))
-  let maskBit = if masked: 0x80 else: 0
-  if payloadLen < 126:
-    result.add chr(payloadLen or maskBit)
-  elif payloadLen <= 65535:
-    result.add chr(126 or maskBit)
-    result.add chr((payloadLen shr 8) and 0xFF)
-    result.add chr(payloadLen and 0xFF)
-  else:
-    result.add chr(127 or maskBit)
-    let wide = uint64(payloadLen)
-    for i in 0 ..< 8:
-      result.add char((wide shr (8 * (7 - i))) and 0xFF)
-  if masked:
-    for i in 0 ..< 4:
-      result.add key[i]
+  ## `fillHeader` with a string to put it in: for a caller that needs the
+  ## bytes on their own, not as part of a frame.
+  result = newString(frameHeaderLen(payloadLen, masked))
+  discard fillHeader(toOpenArray(result, 0, result.len - 1), opcode, payloadLen,
+                     masked, key, fin)
 
 # ------------------------------------------------------------------ helpers --
 
@@ -454,6 +521,13 @@ proc ensure(rd: var WebSocketReader; n: int): bool {.passive, raises.} =
   while rd.avail < n:
     if rd.r.fill() == 0: return false
   result = true
+
+proc buffered*(rd: WebSocketReader): int {.inline.} =
+  ## Protocol bytes the reader already has and has not consumed. Non-zero means
+  ## a `recv` will not wait for the peer, which is what an echo server needs to
+  ## know before it decides to flush: while frames are still buffered, the
+  ## replies can wait and go out together.
+  rd.r.buffered
 
 proc deadline*(rd: WebSocketReader): Deadline {.raises.} =
   ## The standing deadline of the receive side; the writer shares it.
@@ -779,7 +853,8 @@ proc abort*(ws: var WebSocket) =
 # ------------------------------------------------------------- writing frames --
 
 proc sendFrame(wr: var WebSocketWriter; opcode: WsOpcode;
-               payload: openArray[char]; fin = true) {.passive, raises.} =
+               payload: openArray[char]; fin = true; flush = true) {.
+    passive, raises.} =
   ## One frame with `payload`.
   ##
   ## A masked frame (a client's) gets a fresh key, which is what a client has
@@ -787,26 +862,49 @@ proc sendFrame(wr: var WebSocketWriter; opcode: WsOpcode;
   ## proxy from seeing the same bytes twice, and only the client knows the
   ## key. The frame is written as one piece, so a peer is never left in the
   ## middle of a header it has to wait for.
+  ##
+  ## The header and the payload go into the stream's buffer and are flushed
+  ## *once*: a flush is a syscall and, on a ring, a submit-and-wait, so a frame
+  ## that flushed twice would cost two of them for a header of two to fourteen
+  ## bytes. A server that fans one message out to many connections pays this
+  ## per delivery, which is where it shows. With `flush = false` even that one
+  ## is deferred, so a run of frames reaches the kernel together.
+  ##
+  ## The frame is spelled into the writer's own buffer (`Writer.grow`), so a
+  ## frame costs no allocation: the header used to be a string of its own and a
+  ## client's payload a second one.
   var key = default(array[4, char])
-  var head = ""
-  if wr.role == wrClient:
+  let masked = wr.role == wrClient
+  if masked:
     var rnd = default(array[4, byte])
     if not urandom(rnd):
       # No key, no frame: a masked frame with a predictable key is the thing
       # the mask exists to prevent.
       raise IOError
     for i in 0 ..< 4: key[i] = char(int(rnd[i]))
-    head = frameHeader(opcode, payload.len, true, key, fin)
-    if payload.len > 0:
-      var body = newString(payload.len)
-      for i in 0 ..< payload.len: body[i] = payload[i]
-      applyMask(toOpenArray(body, 0, body.len - 1), key)
-      head.add body
-    wr.writeProto(head)
+  let n = frameHeaderLen(payload.len, masked) + payload.len
+  if n <= MaxBufferedFrame:
+    # The frame is small enough to be worth copying into the buffer, where the
+    # next frame joins it.
+    discard fillFrame(wr.w.grow(n), opcode, payload, masked, key, fin)
   else:
-    head = frameHeader(opcode, payload.len, false, key, fin)
-    wr.writeProto(head)
-    wr.writeProto(payload)
+    # Too big to be worth a copy: the header goes in the buffer (anything
+    # already there goes out in front of it) and the payload is handed to the
+    # kernel straight from the caller's memory.
+    wr.w.flush()
+    var head = newString(frameHeaderLen(payload.len, masked))
+    discard fillHeader(toOpenArray(head, 0, head.len - 1), opcode, payload.len,
+                       masked, key, fin)
+    wr.w.write(head)
+    if payload.len > 0:
+      if masked:
+        var body = newString(payload.len)
+        for i in 0 ..< payload.len: body[i] = payload[i]
+        applyMask(toOpenArray(body, 0, body.len - 1), key)
+        wr.w.write(body)
+      else:
+        wr.w.write(payload)
+  if flush: wr.w.flush()
 
 proc fail(wr: var WebSocketWriter; code: int) {.passive, raises.} =
   ## Tells the peer which rule it broke. The connection is dropped by the
@@ -819,30 +917,45 @@ proc fail(wr: var WebSocketWriter; code: int) {.passive, raises.} =
     except ErrorCode:
       discard
 
-proc send*(wr: var WebSocketWriter; kind: MsgKind; data: openArray[char]) {.
-  passive, raises.} =
+proc send*(wr: var WebSocketWriter; kind: MsgKind; data: openArray[char];
+           flush = true) {.passive, raises.} =
   ## Sends a message of `kind` with the bytes `data`.
   ##
   ## Text has to be text: a `mkText` whose bytes are not UTF-8 raises rather
   ## than goes out, because the peer would have to fail the connection over
   ## it. A ping or a pong carries at most 125 bytes. Nothing may follow a
   ## close frame, so after one this raises `BadOperation`.
+  ##
+  ## With `flush = false` the frame is only put in the connection's buffer and
+  ## goes out with the next `flush`, or with the next frame that asks for one,
+  ## or when the buffer fills. That is what makes a fan-out cheap: a task with
+  ## several frames for one connection writes them all with one syscall — and
+  ## the wait for that syscall is the backpressure that lets the next batch
+  ## exist. A writer that stops writing has to `flush`; `close` does, and so
+  ## does the pair's `recv` before it parks.
   if wr.closeSent: raise BadOperation
   case kind
   of mkText:
     if not isValidUtf8(data): raise ValueError
-    wr.sendFrame(wsoText, data)
+    wr.sendFrame(wsoText, data, flush = flush)
   of mkBinary:
-    wr.sendFrame(wsoBinary, data)
+    wr.sendFrame(wsoBinary, data, flush = flush)
   of mkPing:
     if data.len > 125: raise ValueError
-    wr.sendFrame(wsoPing, data)
+    wr.sendFrame(wsoPing, data, flush = flush)
   of mkPong:
     if data.len > 125: raise ValueError
-    wr.sendFrame(wsoPong, data)
+    wr.sendFrame(wsoPong, data, flush = flush)
   of mkClose:
     # A close is not a message: it has a code and it ends the connection.
     raise ValueError
+
+proc flush*(wr: var WebSocketWriter) {.passive, raises.} =
+  ## Hands everything sent with `flush = false` to the kernel.
+  ##
+  ## A flush of an empty buffer is free — it does not reach the descriptor —
+  ## so this is safe to call whenever a batch of frames is finished.
+  wr.w.flush()
 
 proc close*(wr: var WebSocketWriter; code = 1000, reason = "") {.
   passive, raises.} =
@@ -904,25 +1017,21 @@ proc readPayload(rd: var WebSocketReader; f: WsFrame; dest: var string): int {.
     copyMem(addr dp[got], addr rd.r.peek[0], took)
     rd.r.consume took
     if f.masked:
-      for i in got ..< got + took:
-        dp[i] = char(ord(dp[i]) xor ord(f.key[i and 3]))
+      maskBytes(cast[ptr UncheckedArray[char]](addr dp[got]), took, f.key, got)
     got += took
   dest.endStore()
   if got < n: dest.setLen old + got
   result = got
 
-proc readMessagePart(rd: var WebSocketReader; f: WsFrame): bool {.
-  passive, raises.} =
-  ## The payload of `f` appended to the message being assembled; `false` when
-  ## the stream ended in the middle of the frame.
+proc readMessagePart(rd: var WebSocketReader; f: WsFrame;
+                     dest: var string): bool {.passive, raises.} =
+  ## The payload of `f` appended to `dest`; `false` when the stream ended in
+  ## the middle of the frame.
   ##
-  ## The buffer is moved out and back rather than passed in: a `var` argument
-  ## that is a field of the reader would alias the reader itself, and the
-  ## move costs nothing — a string is a pointer, and it moves back.
-  var buf = move rd.msgBuf
-  let got = rd.readPayload(f, buf)
-  rd.msgBuf = ensureMove buf
-  result = got == f.len
+  ## `dest` is the caller's own message buffer, not a field of the reader, so
+  ## it can be passed in: a message is assembled in place, and the only bytes
+  ## the reader keeps are those of a message a control frame interrupted.
+  result = rd.readPayload(f, dest) == f.len
 
 proc nextFrame(rd: var WebSocketReader; f: var WsFrame): bool {.
   passive, raises.} =
@@ -941,6 +1050,15 @@ proc nextFrame(rd: var WebSocketReader; f: var WsFrame): bool {.
 
 proc recvImpl(rd: var WebSocketReader; msg: var string): MsgKind {.
   passive, raises.} =
+  ## The caller's `msg` is the assembly buffer: it is emptied here and filled
+  ## in place, so a message costs no allocation and no copy once the caller's
+  ## string has grown to its size — which is why a handler should keep its
+  ## `msg` across calls.
+  msg.setLen 0
+  if rd.msgOp != 0 and rd.msgBuf.len > 0:
+    # A control frame interrupted a message; carry on where it stopped.
+    msg = move rd.msgBuf
+    rd.msgBuf = ""
   while true:
     if rd.closeSeen:
       # The peer said goodbye; there is nothing more to read.
@@ -955,7 +1073,11 @@ proc recvImpl(rd: var WebSocketReader; msg: var string): MsgKind {.
     if ord(f.opcode) >= 8:
       # A control frame: it may come in the middle of a message, and
       # `parseFrameHeader` has already checked that it is not fragmented and
-      # not longer than 125 bytes.
+      # not longer than 125 bytes. What is assembled so far goes back to the
+      # reader, and the next call carries on with it.
+      if rd.msgOp != 0 and msg.len > 0:
+        rd.msgBuf = move msg
+        msg = ""
       case f.opcode
       of wsoClose:
         var payload = ""
@@ -1002,20 +1124,17 @@ proc recvImpl(rd: var WebSocketReader; msg: var string): MsgKind {.
           rd.markFailure(wscProtocolError)
           raise ProtocolError
         rd.msgOp = ord(f.opcode)
-        rd.msgBuf = ""
-      if rd.msgBuf.len + f.len > rd.maxMessage:
+        msg.setLen 0
+      if msg.len + f.len > rd.maxMessage:
         raise ContentTooLong
-      if not rd.readMessagePart(f):
+      if not rd.readMessagePart(f, msg):
         raise EndOfStreamError
       if f.fin:
         let kind = if rd.msgOp == 1: mkText else: mkBinary
-        if kind == mkText and not isValidUtf8(toOpenArray(rd.msgBuf, 0,
-                                                          rd.msgBuf.len - 1)):
+        if kind == mkText and not isValidUtf8(toOpenArray(msg, 0, msg.len - 1)):
           rd.markFailure(wscInvalidPayload)
           raise ProtocolError
-        msg = rd.msgBuf
         rd.msgOp = 0
-        rd.msgBuf = ""
         return kind
 
 proc recv*(rd: var WebSocketReader; msg: var string): MsgKind {.
@@ -1052,6 +1171,18 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
   ## are handed over: the first is the answer to a ping of this side's, the
   ## second ends the conversation.
   while true:
+    # Anything this side owes the peer goes out before the chain waits for the
+    # peer: a frame sent with `flush = false` and then a `recv` would otherwise
+    # wait for an answer to something the peer has not been told. Only when the
+    # connection has nothing buffered, though — that is when the wait really
+    # happens, and while frames are still coming the replies can ride along
+    # with the next write. That is what lets an echo server answer a burst with
+    # one write instead of one per message.
+    if ws.reader.buffered == 0:
+      try:
+        ws.writer.flush()
+      except ErrorCode:
+        discard
     try:
       result = ws.reader.recv(msg)
     except ErrorCode as e:
@@ -1074,7 +1205,8 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
       # The reader handed the ping over instead of answering it; the pair is
       # the only place that owns both halves, so the pong goes out here —
       # unless this side has said goodbye, after which it says nothing.
-      if not ws.writer.closeSent: ws.writer.sendFrame(wsoPong, msg)
+      if not ws.writer.closeSent:
+        ws.writer.sendFrame(wsoPong, msg)
     of mkClose:
       if not ws.writer.closeSent:
         # The peer closed first: the answer carries the same code, and then
@@ -1086,11 +1218,19 @@ proc recv*(ws: var WebSocket; msg: var string): MsgKind {.passive, raises.} =
     else:
       return result
 
-proc send*(ws: var WebSocket; kind: MsgKind; data: openArray[char]) {.
-  passive, raises.} =
+proc send*(ws: var WebSocket; kind: MsgKind; data: openArray[char];
+           flush = true) {.passive, raises.} =
   ## Sends a message of `kind` with the bytes `data`; see
   ## `WebSocketWriter.send`.
-  ws.writer.send(kind, data)
+  ##
+  ## With `flush = false` the frames are only buffered; see
+  ## `WebSocketWriter.send`, and `flush` below.
+  ws.writer.send(kind, data, flush)
+
+proc flush*(ws: var WebSocket) {.passive, raises.} =
+  ## Hands everything sent with `flush = false` to the peer; see
+  ## `WebSocketWriter.flush`.
+  ws.writer.flush()
 
 proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
   ## Ends the connection the way the protocol says: the close frame goes
@@ -1136,7 +1276,20 @@ proc close*(ws: var WebSocket; code = 1000, reason = "") {.passive, raises.} =
     ws.abort()
     raise
 
-# No explicit `=destroy`: the `Reader`/`Writer` fields close the connection, and
-# a destructor cannot raise, so it could not report a failed goodbye. A peer
-# that wants a close frame asks for one with `close`; the error paths call
-# `abort`, which drops the streams so that nothing is written on the way out.
+# The destructor closes the streams through the fields' own destructors. A
+# dropped `WebSocket` sends no goodbye: the peer sees the connection go away
+# without one, which is what leaving scope means. A peer that wants a close
+# frame asks for one with `close`; the error paths call `abort`, which drops
+# the streams so that nothing is written on the way out.
+proc `=destroy`*(ws: WebSocket) =
+  `=destroy`(ws.reader)
+  `=destroy`(ws.writer)
+  `=destroy`(ws.sub)
+
+proc `=wasMoved`*(ws: var WebSocket) {.nodestroy, inline.} =
+  ## `.nodestroy`: the halves have been handed to the destination, so clearing
+  ## this one must not run their destructors on them. A moved-from connection
+  ## has no reader, writer or subprotocol of its own.
+  `=wasMoved`(ws.reader)
+  `=wasMoved`(ws.writer)
+  `=wasMoved`(ws.sub)
