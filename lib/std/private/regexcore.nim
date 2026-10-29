@@ -233,13 +233,28 @@ proc getNext(c: var ReCtx): char =
   result = if c.pos < c.buf.len: c.buf[c.pos] else: '\0'
 
 proc readRune(c: var ReCtx): RegexNode {.inline.} =
-  ## The pattern is valid UTF-8 (`parseRegExpr` checks it up front).
-  if c.buf[c.pos] < '\x80':
-    result = charExpr(c.buf[c.pos])
-    inc c.pos
-  else:
-    result = charExpr(runeAt(c.buf, c.pos))
-    inc c.pos, runeLenAt(c.buf, c.pos)
+  ## Decode complete UTF-8 sequences; retain other bytes as character values.
+  var r = Rune(ord(c.buf[c.pos]))
+  var width = 1
+  if c.buf[c.pos] >= '\x80':
+    let n = runeLenAt(c.buf, c.pos)
+    let first = c.buf[c.pos]
+    var complete = first in '\xC2'..'\xF4' and n <= 4 and
+                   n <= c.buf.len - c.pos
+    if complete:
+      for i in 1 ..< n:
+        if c.buf[c.pos + i] notin '\x80'..'\xBF': complete = false
+      let second = c.buf[c.pos + 1]
+      if (first == '\xE0' and second < '\xA0') or
+          (first == '\xED' and second >= '\xA0') or
+          (first == '\xF0' and second < '\x90') or
+          (first == '\xF4' and second >= '\x90'):
+        complete = false
+    if complete:
+      r = runeAt(c.buf, c.pos)
+      width = n
+  result = charExpr(r)
+  inc c.pos, width
 
 proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   ## One character or escape sequence. `inClass` selects the `[...]` reading of
@@ -331,7 +346,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
 
 proc parseStr(c: var ReCtx): RegexNode =
   ## `"..."` — a literal run in which the regex operators lose their meaning.
-  var s = ""
+  result = epsExpr()
   inc c.pos # skip the opening quote
   while c.pos < c.buf.len and c.buf[c.pos] != '\"':
     if c.buf[c.pos] == '\r' or c.buf[c.pos] == '\L':
@@ -339,7 +354,7 @@ proc parseStr(c: var ReCtx): RegexNode =
       return epsExpr()
     let al = getChar(c, false)
     if al.kind == reChar:
-      s.add al.r
+      result = catExpr(result, al)
     else:
       error c, "only single characters are allowed in a quoted string"
       return epsExpr()
@@ -347,7 +362,6 @@ proc parseStr(c: var ReCtx): RegexNode =
     inc c.pos # skip the closing quote
   else:
     error c, "'\"' expected"
-  result = strExpr(s)
 
 proc parseCClass(c: var ReCtx): RegexNode =
   var cc: RuneSet = @[]
@@ -506,9 +520,6 @@ proc parseRegExpr*(pattern: string; flags: set[RegexFlag];
   ## result is an epsilon node, so callers may keep walking the tree without a
   ## nil check as long as they test `err` before using the result.
   var c = ReCtx(buf: pattern, pos: 0, flags: flags, captures: 0, err: "")
-  if validateUtf8(pattern) >= 0:
-    err = "invalid UTF-8 in regular expression"
-    return epsExpr()
   result = parseRegExprImpl(c)
   if c.err.len == 0 and not atEnd(c):
     error c, "unexpected '" & c.buf[c.pos] & "' in regular expression"
@@ -653,6 +664,8 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
     inc result
   of reChar, reStr:
     let bytes = if r.kind == reChar: toUTF8(r.r) else: r.s
+    if r.kind == reChar and int(r.r) in 0x80..0xFF:
+      transBytes a, result, char(int(r.r)), char(int(r.r)), result + bytes.len
     for i in 0 ..< bytes.len:
       transBytes a, result, bytes[i], bytes[i], result + 1
       inc result
@@ -666,7 +679,16 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
     # The one place code points become bytes: every UTF-8 sequence of the
     # class runs from `entry` to `exit`, through states of its own.
     var seqs: seq[Utf8Seq] = @[]
-    for i in 0 ..< r.cc.len: utf8Sequences(seqs, r.cc[i].a, r.cc[i].b)
+    for i in 0 ..< r.cc.len:
+      let range = r.cc[i]
+      utf8Sequences(seqs, range.a, range.b)
+      let lo = max(range.a, 0x80)
+      let hi = min(range.b, 0xFF)
+      if lo <= hi:
+        var sq = Utf8Seq(len: 1)
+        sq.lo[0] = char(lo)
+        sq.hi[0] = char(hi)
+        seqs.add sq
     let entry = result + 1
     var next = entry + 1
     for sq in seqs: inc next, sq.len - 1

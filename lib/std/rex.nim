@@ -49,9 +49,9 @@
 ## (`std/private/regexcore`), so a pattern cannot mean one thing in a generated
 ## lexer and another at runtime.
 ##
-## Patterns and input are UTF-8. Literals, `.`, and character classes match
-## Unicode code points, not individual bytes or grapheme clusters. Invalid
-## UTF-8 in a pattern is rejected; it does not match a character in the input.
+## Patterns and input may contain UTF-8 and arbitrary bytes. Literals, `.`,
+## and character classes support Unicode code points; byte values 128..255
+## also match the corresponding individual byte. The longest match wins.
 ## Match lengths, positions, and capture bounds are byte offsets into the
 ## original string.
 ##
@@ -115,8 +115,8 @@
 ## * Outside a character class `\n` matches any of `\r\n`, `\n` and `\r`.
 ## * `\123` is decimal: a back reference, or, with a leading zero (`\065`), a
 ##   character code. It is not octal.
-## * `.` matches every Unicode code point but `\0`, newlines included. `\s`
-##   is `\1..\32` and `\w` includes all non-ASCII code points.
+## * `.` matches every Unicode code point and nonzero byte, newlines included.
+##   `\s` is `\1..\32` and `\w` includes non-ASCII code points and bytes.
 ## * `re` takes only a string literal and compiles it with the program;
 ##   `re(someVar)` is `tryRe` here, which reports an error instead of raising.
 ## * Captures are positions (`seq[Capture]`, read with `capture`), not a
@@ -195,14 +195,6 @@ func captureCount*(r: Regex): int {.inline.} =
 # Matching
 # ---------------------------------------------------------------------------
 
-func nextCharacter(s: string; pos: Natural): int =
-  ## Advance to the next byte that can start a match: no UTF-8 sequence the
-  ## automaton accepts begins with a continuation byte.
-  var i: Natural = pos + 1
-  while i < s.len and s[i] in '\x80'..'\xBF':
-    inc i
-  result = i
-
 func skipToCandidate(s: string; r: Regex; pos: Natural): int
     {.ensures: result <= s.len.} =
   ## The first position at or after `pos` where a match can start; `s.len`
@@ -271,7 +263,7 @@ func findBounds*(s: string; r: Regex; caps: var seq[Capture];
     i = skipToCandidate(s, r, i)
     let L = matchLen(s, r, caps, i)
     if L >= 0: return (i, i + L - 1)
-    i = nextCharacter(s, i)
+    inc i
   result = (-1, 0)
 
 func findBounds*(s: string; r: Regex; start = 0): (int, int) =
@@ -310,7 +302,7 @@ func captureTexts*(s: string; caps: seq[Capture]): seq[string] =
 
 iterator findAll*(s: string; r: Regex; start = 0): (int, int) =
   ## The bounds of every non-overlapping match, left to right, both ends
-  ## inclusive. An empty match advances by one character, so the loop always
+  ## inclusive. An empty match advances by one byte, so the loop always
   ## terminates.
   var i = start
   while i <= s.len:
@@ -321,9 +313,9 @@ iterator findAll*(s: string; r: Regex; start = 0): (int, int) =
       inc i, L
     elif L == 0:
       yield (i, i - 1)
-      i = nextCharacter(s, i)
+      inc i
     else:
-      i = nextCharacter(s, i)
+      inc i
 
 func replace*(s: string; r: Regex; by: string): string =
   ## Every non-overlapping match of `r` replaced by `by`, which is inserted

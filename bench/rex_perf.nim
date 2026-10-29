@@ -41,8 +41,8 @@ elif defined(benchLexer):
     r"'? [uU] 16",
     r"'? [uU] 32",
     r"'? [uU] 64",
-    r"' ([a-zA-Z0-9] | [^\0-\0127]) ([a-zA-Z0-9_] | [^\0-\0127])*",
-    r"[fFdDiIuU] ([a-zA-Z0-9_] | [^\0-\0127])*",
+    r"' [a-zA-Z0-9\0128-\0255] [a-zA-Z0-9_\0128-\0255]*",
+    r"[fFdDiIuU] [a-zA-Z0-9_\0128-\0255]*",
   ]
   const numberRules = [
     r"-? 0 [xX] ([0-9a-fA-F](_?[0-9a-fA-F])*)?",
@@ -119,7 +119,7 @@ elif defined(benchLexer):
     r"while",
     r"xor",
     r"yield",
-    r"([a-zA-Z] | [^\0-\0127]) (_? ([a-zA-Z0-9] | [^\0-\0127]))*",
+    r"[a-zA-Z\0128-\0255](_?[a-zA-Z0-9\0128-\0255])*",
   ]
   var total = 0
   for i in 0 ..< (when smoke: 1 else: 20):
