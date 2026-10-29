@@ -219,7 +219,9 @@ available.
 
 - `open` returns bool**, not a File — check it. The `File` is an
   out-parameter.
-- `readLine` returns `false` at EOF. Use it in a `while` loop.
+- `readLine(f, s)` returns `false` at EOF. Use it in a `while` loop.
+- `readLine(f)` returns the line without its line ending and raises
+  `EndOfStreamError` at EOF.
 - `writeLine` appends the platform line ending.
 - `tryWriteFile` is a convenience that opens, writes, and closes
   in one call.
