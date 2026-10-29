@@ -148,6 +148,11 @@ type
     jsBrowser*: bool  # `--browser`: the JS backend emits for a browser host
                       # (no Node `fs`/`process`; output buffers, exports on
                       # globalThis.NIF). Forwarded to jorogumo as --target:browser.
+    hostImports*: bool  # `--hostImports`: wasm only. A bodyless `importc` proc
+                        # becomes an `env` import under its C name instead of
+                        # being refused. Forwarded to jorogumo as --host-imports.
+    exportAll*: bool  # `--exportAll`: wasm only. Every function is also exported
+                      # as `dbg$<name>`. Forwarded to jorogumo as --export-all.
     optLevel*: OptLevel
     noValidate*: bool # skip running the validator on plugin sources
     verbose*: bool    # --verbose: dump Final IR on contract/init failures
