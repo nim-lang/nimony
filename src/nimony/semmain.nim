@@ -778,6 +778,19 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   # owns forges it, and the owner (lowered later) publishes that same symbol
   # in the type's `(methods)` pragma instead of forging a second one.
   var groupHooks = initTable[SymId, HooksPerType]()
+  # A hook written in source (`=destroy` for a nominal type, say) reaches the
+  # type's pragmas only when its owner is lowered: `derefs.trType` reads the
+  # sem-side `typeHooks`. A member lowered before the owner would not see it
+  # and would forge a structural hook that skips the owner's body. That is not
+  # theoretical: `std/channels` (lowered before `std/streamio`) forged a
+  # `=destroy` for `Writer` that never called `finishImpl`, so `ringWriterGone`
+  # never ran and a channel reader waited forever. Seed the group table with
+  # every member's sem-declared hooks.
+  for i in 0..<modules.len:
+    for typ, hooks in modules[i].c.typeHooks:
+      let dst = addr groupHooks.mgetOrPut(typ, HooksPerType())
+      for op in low(AttachedOp)..high(AttachedOp):
+        if hooks.a[op] != SymId(0): dst[].a[op] = hooks.a[op]
   for i in 0..<modules.len:
     modules[i].c.groupHooks = addr groupHooks
     semcheckPostProcess modules[i].c, modules[i].dest
