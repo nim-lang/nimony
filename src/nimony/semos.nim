@@ -590,11 +590,17 @@ proc runValidatorOnPlugin(config: NifConfig; nf, checkCache: string) =
   if checkCode != 0: return
   exec quoteShell(v) & " --nimcache:" & quoteShell(checkCache) & " " & quoteShell(nf)
 
-proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string) =
+proc pluginDepFile*(exefile: string): string =
+  ## The source files the last build of the plugin `exefile` read: inputs of
+  ## the next build's `pluginbuild` node (#2785), the depfile pattern.
+  exefile & ".deps.nif"
+
+proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string; depFile = "") =
   ## Build a plugin's `.nim` source `nf` as the executable `exefile`. Plugins
   ## import `lib/plugins.nim` and are compiled by Nimony itself. The
   ## sub-compiles work in `<scratch>_d` (the build) and `<scratch>_v` (the
-  ## validator's sem-only run); the caller owns these directories.
+  ## validator's sem-only run); the caller owns these directories. A non-empty
+  ## `depFile` receives the plugin's source files (`--depfile`).
   ##
   ## The link target is a temporary sibling, never `exefile` itself, and it is
   ## moved into place as one operation once it is complete. Nothing ever opens
@@ -605,6 +611,9 @@ proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string) =
   makePluginCache cacheDir
   let staging = atomicTempPath(exefile)
   var cmd = pluginCompileCmd(config, cacheDir)
+  if depFile.len > 0:
+    cmd.add " --depfile:"
+    cmd.add quoteShell(depFile)
   cmd.add " -o:"
   cmd.add quoteShell(staging)
   cmd.add " c "
@@ -614,47 +623,13 @@ proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string) =
     vfsRemove staging   # no `.tmp.NNN` litter
     quit "FAILURE: cannot install plugin executable " & exefile
 
-proc pluginInputsFile*(exefile: string): string =
-  ## One source file per line that the last build of the plugin `exefile` read.
-  exefile & ".inputs"
-
 proc buildPlugin*(config: NifConfig; nf, exefile: string) =
   ## `nimsem plugin <nf> <exefile>`: the build-graph way to get a plugin.
   ## The dependency scanner lists every `{.plugin.}` a module declares, so
   ## nifmake builds the executable once, as a node of its own, before any of
   ## the nimsem runs that may execute it. Being the only builder by
   ## construction, this path may keep incremental caches next to the exe.
-  buildPluginInto(config, nf, exefile, exefile)
-  # The modules the plugin imports become inputs of the next build's
-  # `pluginbuild` node (#2785), read off the sub-compile's `.s.deps.nif`s:
-  # the depfile pattern, like `SemContext.fileDeps`.
-  var inputs = initHashSet[string]()
-  for depsFile in globFiles(exefile & "_d" / "*.s.deps.nif"):
-    var buf = createTokenBuf(100)
-    var r = rd.open(depsFile)
-    parse(r, buf)
-    rd.close(r)
-    var n = beginRead(buf)
-    n.into:  # (stmts …)
-      while n.hasMore:
-        if n.stmtKind == ImportS:
-          var x = n
-          x.into:
-            while x.hasMore:
-              if x.kind == StrLit: inputs.incl pool.strings[x.strId]
-              skip x
-        skip n
-  var lines: seq[string] = @[]
-  for f in inputs: lines.add f
-  sort lines
-  var content = ""
-  for f in lines:
-    content.add f
-    content.add '\n'
-  try:
-    writeFile pluginInputsFile(exefile), content
-  except:
-    quit "FAILURE: cannot write " & pluginInputsFile(exefile)
+  buildPluginInto(config, nf, exefile, exefile, pluginDepFile(exefile))
 
 proc ensurePlugin(config: NifConfig; nf, exefile: string) =
   ## The lazy fallback for a plugin the build graph did not provide: a

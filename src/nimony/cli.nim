@@ -149,6 +149,10 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     forwardArgLengc = false
   of "base":
     config.baseDir = val
+  of "depfile":
+    config.depFile = val
+    forwardArg = false
+    forwardArgLengc = false
   of "nimcache":
     config.nifcachePath = val
     forwardArgLengc = false

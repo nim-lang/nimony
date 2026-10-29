@@ -773,6 +773,36 @@ proc importPluginImports(c: var DepContext; src: string; current: Node) =
     importSingleFile c, path, NoLineInfo, current, false
   c.inPluginImports = oldInPluginImports
 
+proc readDependencies(depsFile: string; files: var seq[string]) =
+  ## Adds the files of the `(dependency …)` tree in `depsFile` to `files`.
+  var buf = loadDepsFile(depsFile)
+  var n = beginRead(buf)
+  if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
+    n.into:
+      while n.hasMore:
+        if n.cursorTagId == TagId(DependencyIdx):
+          n.into:
+            while n.hasMore:
+              assert n.isStringLit
+              files.add pool.strings[n.strId]
+              inc n
+        else:
+          skip n
+
+proc writeDepFile(c: DepContext; depFile: string) =
+  ## `--depfile`: the source files of the program, includes among them.
+  var buf = createTokenBuf(c.nodes.len * 2 + 4)
+  buf.buildTree StmtsS, NoLineInfo:
+    buf.buildTree TagId(DependencyIdx), NoLineInfo:
+      var seen = initHashSet[string]()
+      for v in c.nodes:
+        if v.plugin.len > 0: continue
+        for i in 0 ..< v.files.len:
+          let f = v.files[i].nimFile
+          if not f.endsWith(".nif") and not seen.containsOrIncl(f):
+            buf.addStrLit toAbsolutePath(f)
+  onRaiseQuit writeFile(buf, depFile)
+
 proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
   ## Reads the `(dependency …)` list out of the `.s.deps.nif` the previous
   ## build's nimsem wrote (nim-lang/nimony#1378). The classic depfile pattern:
@@ -781,19 +811,7 @@ proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
   ## build's, and the caller has just read the current ones from nifler.
   let depsFile = c.config.deps2File(p)
   if semos.fileExists(depsFile):
-    var buf = loadDepsFile(depsFile)
-    var n = beginRead(buf)
-    if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
-      n.into:
-        while n.hasMore:
-          if n.cursorTagId == TagId(DependencyIdx):
-            n.into:
-              while n.hasMore:
-                assert n.isStringLit
-                current.fileDeps.add pool.strings[n.strId]
-                inc n
-          else:
-            skip n
+    readDependencies depsFile, current.fileDeps
 
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
@@ -1995,10 +2013,12 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         b.withTree "input":
           b.addStrLit c.pluginSources.getOrDefault(name)
         # the modules the plugin imported last time it was built (#2785):
-        let inputs = pluginInputsFile(c.pluginExe(name))
+        let inputs = pluginDepFile(c.pluginExe(name))
         if semos.fileExists(inputs):
-          for f in onRaiseQuit(readFile(inputs)).splitLines:
-            if f.len > 0 and semos.fileExists(f):
+          var files: seq[string] = @[]
+          readDependencies inputs, files
+          for f in files:
+            if semos.fileExists(f):
               b.withTree "input":
                 b.addStrLit f
         b.withTree "output":
@@ -2395,6 +2415,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
     parseNifConfig cfgNif, config
 
   var c = initDepContext(config, project, false, forceRebuild, moduleFlags, cmd)
+  if c.config.depFile.len > 0:
+    writeDepFile c, c.config.depFile
   # found in the runtime's nifler deps, which the later phases do not read
   config.cycles = c.config.cycles
   let feMemoFile = frontendMemoFile(c.config)
