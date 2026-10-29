@@ -1,4 +1,4 @@
-import ../../../lib/std/broadcast
+import std/broadcast
 import std/[syncio, assertions]
 
 proc t1() =
