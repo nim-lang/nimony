@@ -326,9 +326,9 @@ proc numberSuffix(L: var Lexer; tok: var Token; start: int; isFloat: bool) =
   of r"'? [uU] 16": kind = tkUInt16Lit
   of r"'? [uU] 32": kind = tkUInt32Lit
   of r"'? [uU] 64": kind = tkUInt64Lit
-  of r"' [a-zA-Z0-9\0128-\0255] [a-zA-Z0-9_\0128-\0255]*":
+  of r"' ([a-zA-Z0-9] | [^\0-\0127]) ([a-zA-Z0-9_] | [^\0-\0127])*":
     kind = tkCustomLit
-  of r"[fFdDiIuU] [a-zA-Z0-9_\0128-\0255]*":
+  of r"[fFdDiIuU] ([a-zA-Z0-9_] | [^\0-\0127])*":
     error L, numEnd, "invalid number suffix: '" & L.buf.substr(numEnd, pos-1) & "'"
   else:
     if L.ch(pos) == '\'':
@@ -545,7 +545,8 @@ proc symbolKind(s: string; pos: var int): TokKind =
   of "while": result = tkWhile
   of "xor": result = tkXor
   of "yield": result = tkYield
-  of r"[a-zA-Z\0128-\0255](_?[a-zA-Z0-9\0128-\0255])*": result = tkSymbol
+  of r"([a-zA-Z] | [^\0-\0127]) (_? ([a-zA-Z0-9] | [^\0-\0127]))*":
+    result = tkSymbol
 
 proc scanSymbol(L: var Lexer; tok: var Token) =
   let start = L.pos

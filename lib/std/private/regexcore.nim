@@ -30,7 +30,7 @@
 
 {.feature: "lenientnils".}
 
-import std / [intsets, tables, algorithm]
+import std / [intsets, tables, algorithm, unicode]
 
 type
   RegexKind* = enum ## the regex AST's node kind
@@ -51,13 +51,18 @@ type
     reWordBoundary, ## `\b`
     reWordBoundaryNot ## `\B`
 
+  RuneRange* = object ## the code points `a .. b`
+    a*, b*: int
+
+  RuneSet* = seq[RuneRange] ## sorted, disjoint and not adjacent
+
   RegexNode* = ref object ## a node of the parsed regular expression
     kind*: RegexKind
     a*, b*: RegexNode ## sub-expressions; which ones are used depends on `kind`
-    c*: char          ## the character for `reChar`, the index for
-                      ## `reCapture`/`reBackref`
-    s*: string        ## the literal for `reStr`
-    cc*: set[char]    ## the bytes for `reCClass`
+    r*: Rune          ## the code point for `reChar`
+    c*: char          ## the index for `reCapture`/`reBackref`
+    s*: string        ## the UTF-8 literal for `reStr`
+    cc*: RuneSet      ## the code points for `reCClass`
     rule*: int        ## `> 0` marks a final state and names the rule that
                       ## matched there; `0` means "not final"
 
@@ -68,23 +73,25 @@ type
 
 const
   wordChars* = {'A'..'Z', 'a'..'z', '0'..'9', '_', '\128'..'\255'}
-  whitespace* = {'\1'..'\32'}
-  digits* = {'0'..'9'}
+    ## the bytes `\b` treats as part of a word; every non-ASCII byte is one
+  maxRune = 0x10FFFF
 
 # ---------------------------------------------------------------------------
 # AST construction
 # ---------------------------------------------------------------------------
 
 proc newNode(kind: RegexKind): RegexNode =
-  result = RegexNode(kind: kind, a: nil, b: nil, c: '\0', s: "", cc: {},
-                     rule: 0)
+  result = RegexNode(kind: kind, a: nil, b: nil, r: Rune(0), c: '\0', s: "",
+                     cc: @[], rule: 0)
 
 proc epsExpr*(): RegexNode =
   result = newNode(reEps)
 
-proc charExpr*(c: char): RegexNode =
+proc charExpr*(r: Rune): RegexNode =
   result = newNode(reChar)
-  result.c = c
+  result.r = r
+
+proc charExpr*(c: char): RegexNode = charExpr(Rune(ord(c)))
 
 proc backrefExpr*(x: int): RegexNode =
   result = newNode(reBackref)
@@ -97,7 +104,7 @@ proc strExpr*(str: string): RegexNode =
     result = newNode(reStr)
     result.s = str
 
-proc cclassExpr*(cc: set[char]): RegexNode =
+proc cclassExpr*(cc: RuneSet): RegexNode =
   result = newNode(reCClass)
   result.cc = cc
 
@@ -148,19 +155,53 @@ proc mnExpr(r: RegexNode; m, n: int): RegexNode =
       result = altExpr(result, ri)
 
 # ---------------------------------------------------------------------------
-# Byte sets
+# Code-point sets
 # ---------------------------------------------------------------------------
 
-proc complement(s: set[char]): set[char] {.inline.} =
-  ## Every byte but `\0` that is not in `s`.
-  result = {'\1'..'\xFF'} - s
+proc incl(s: var RuneSet; lo, hi: int) =
+  ## Adds `lo .. hi`, merging it with the ranges it overlaps or touches.
+  var i = 0
+  while i < s.len and s[i].b + 1 < lo: inc i
+  if i == s.len or hi + 1 < s[i].a:
+    s.add RuneRange(a: lo, b: hi)
+    var j = s.len - 1
+    while j > i:
+      s[j] = s[j - 1]
+      dec j
+    s[i] = RuneRange(a: lo, b: hi)
+  else:
+    s[i].a = min(s[i].a, lo)
+    s[i].b = max(s[i].b, hi)
+    while i + 1 < s.len and s[i + 1].a <= s[i].b + 1:
+      s[i].b = max(s[i].b, s[i + 1].b)
+      s.delete i + 1
 
-proc namedClass(ch: char): set[char] =
+proc incl(s: var RuneSet; other: RuneSet) =
+  for r in other: s.incl r.a, r.b
+
+proc complement(s: RuneSet): RuneSet =
+  ## Every code point but `\0` that is not in `s`.
+  result = @[]
+  var next = 1
+  for r in s:
+    if next < r.a: result.add RuneRange(a: next, b: r.a - 1)
+    next = r.b + 1
+  if next <= maxRune: result.add RuneRange(a: next, b: maxRune)
+
+proc namedClass(ch: char): RuneSet =
   ## `\d`, `\s` or `\w`.
+  result = @[]
   case ch
-  of 'd': result = digits
-  of 's': result = whitespace
-  else: result = wordChars
+  of 'd':
+    result.incl ord('0'), ord('9')
+  of 's':
+    result.incl 1, 32
+  else:
+    result.incl ord('0'), ord('9')
+    result.incl ord('A'), ord('Z')
+    result.incl ord('_'), ord('_')
+    result.incl ord('a'), ord('z')
+    result.incl 0x80, maxRune
 
 # ---------------------------------------------------------------------------
 # Parser
@@ -191,6 +232,15 @@ proc getNext(c: var ReCtx): char =
   skipSpaces c
   result = if c.pos < c.buf.len: c.buf[c.pos] else: '\0'
 
+proc readRune(c: var ReCtx): RegexNode {.inline.} =
+  ## The pattern is valid UTF-8 (`parseRegExpr` checks it up front).
+  if c.buf[c.pos] < '\x80':
+    result = charExpr(c.buf[c.pos])
+    inc c.pos
+  else:
+    result = charExpr(runeAt(c.buf, c.pos))
+    inc c.pos, runeLenAt(c.buf, c.pos)
+
 proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   ## One character or escape sequence. `inClass` selects the `[...]` reading of
   ## the escapes that mean different things there (`\b` is a backspace inside a
@@ -198,8 +248,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   if not inClass:
     skipSpaces c
   if c.pos < c.buf.len and c.buf[c.pos] != '\\':
-    result = charExpr(c.buf[c.pos])
-    inc c.pos
+    result = readRune(c)
   else:
     let ch = if c.pos + 1 < c.buf.len: c.buf[c.pos + 1] else: '\0'
     case ch
@@ -266,7 +315,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
           error c, "character code out of range: " & $val
           result = epsExpr()
         else:
-          result = charExpr(char(val))
+          result = charExpr(Rune(val))
       else:
         result = backrefExpr(val)
     of '\0':
@@ -277,8 +326,8 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
         error c, "invalid character after '\\': #" & $ord(ch)
         result = epsExpr()
       else:
-        result = charExpr(ch)
-        inc c.pos, 2
+        inc c.pos
+        result = readRune(c)
 
 proc parseStr(c: var ReCtx): RegexNode =
   ## `"..."` — a literal run in which the regex operators lose their meaning.
@@ -290,7 +339,7 @@ proc parseStr(c: var ReCtx): RegexNode =
       return epsExpr()
     let al = getChar(c, false)
     if al.kind == reChar:
-      s.add al.c
+      s.add al.r
     else:
       error c, "only single characters are allowed in a quoted string"
       return epsExpr()
@@ -301,7 +350,7 @@ proc parseStr(c: var ReCtx): RegexNode =
   result = strExpr(s)
 
 proc parseCClass(c: var ReCtx): RegexNode =
-  var cc: set[char] = {}
+  var cc: RuneSet = @[]
   inc c.pos # skip '['
   var caret = false
   if c.pos < c.buf.len and c.buf[c.pos] == '^':
@@ -314,28 +363,28 @@ proc parseCClass(c: var ReCtx): RegexNode =
     let a = getChar(c, true)
     if c.err.len > 0: return epsExpr()
     if a.kind == reChar:
-      incl cc, a.c
+      cc.incl int(a.r), int(a.r)
       if c.pos < c.buf.len and c.buf[c.pos] == '-':
         inc c.pos
         if c.pos < c.buf.len and c.buf[c.pos] == ']':
-          incl cc, '-'
+          cc.incl ord('-'), ord('-')
           break
         let b = getChar(c, true)
         if c.err.len > 0: return epsExpr()
         if b.kind == reChar:
-          if a.c <= b.c:
-            cc = cc + {a.c .. b.c}
+          if a.r <=% b.r:
+            cc.incl int(a.r), int(b.r)
           else:
             error c, "invalid character range in '[...]'"
             return epsExpr()
         elif b.kind == reCClass:
-          incl cc, '-'
-          cc = cc + b.cc
+          cc.incl ord('-'), ord('-')
+          cc.incl b.cc
         else:
           error c, "invalid character range in '[...]'"
           return epsExpr()
     elif a.kind == reCClass:
-      cc = cc + a.cc
+      cc.incl a.cc
     else:
       error c, "'" & c.buf[c.pos] & "' cannot be part of a character class"
       return epsExpr()
@@ -365,7 +414,7 @@ proc factor(c: var ReCtx): RegexNode =
     result = parseCClass(c)
   of '.':
     inc c.pos
-    result = cclassExpr(complement({}))
+    result = cclassExpr(complement(@[]))
   of '(':
     inc c.pos
     var isCapture = reNoCaptures notin c.flags
@@ -400,8 +449,7 @@ proc factor(c: var ReCtx): RegexNode =
     inc c.pos
     result = newNode(reBegin)
   else:
-    result = charExpr(if c.pos < c.buf.len: c.buf[c.pos] else: '\0')
-    inc c.pos
+    result = readRune(c)
   if c.err.len > 0: return result
   # postfix operators bind tighter than concatenation:
   var running = true
@@ -458,6 +506,9 @@ proc parseRegExpr*(pattern: string; flags: set[RegexFlag];
   ## result is an epsilon node, so callers may keep walking the tree without a
   ## nil check as long as they test `err` before using the result.
   var c = ReCtx(buf: pattern, pos: 0, flags: flags, captures: 0, err: "")
+  if validateUtf8(pattern) >= 0:
+    err = "invalid UTF-8 in regular expression"
+    return epsExpr()
   result = parseRegExprImpl(c)
   if c.err.len == 0 and not atEnd(c):
     error c, "unexpected '" & c.buf[c.pos] & "' in regular expression"
@@ -551,6 +602,47 @@ proc transBytes(a: var Nfa; s: int; lo, hi: char; d: int) =
   a.trans[s].add NfaEdge(cond: Alphabet(kind: reChar, val: lo), hi: hi,
                          dest: Label(d))
 
+type
+  Utf8Seq = object
+    ## Code points whose UTF-8 encodings are `len` bytes, the i-th of them in
+    ## `lo[i] .. hi[i]`.
+    len: int
+    lo, hi: array[4, char]
+
+proc utf8Sequences(dest: var seq[Utf8Seq]; lo, hi: int) =
+  ## Splits `lo .. hi` until every piece is a product of byte ranges: no
+  ## surrogates, one encoding width, and every byte after the first one that
+  ## differs spans the full continuation range `\x80 .. \xBF`.
+  if lo > hi: return
+  if lo <= 0xDFFF and hi >= 0xD800:
+    utf8Sequences(dest, lo, 0xD7FF)
+    utf8Sequences(dest, 0xE000, hi)
+    return
+  for top in [0x7F, 0x7FF, 0xFFFF]:
+    if lo <= top and top < hi:
+      utf8Sequences(dest, lo, top)
+      utf8Sequences(dest, top + 1, hi)
+      return
+  if hi > 0x7F:
+    for i in 1 .. 3:
+      let m = (1 shl (6 * i)) - 1
+      if (lo and not m) != (hi and not m):
+        if (lo and m) != 0:
+          utf8Sequences(dest, lo, lo or m)
+          utf8Sequences(dest, (lo or m) + 1, hi)
+          return
+        if (hi and m) != m:
+          utf8Sequences(dest, lo, (hi and not m) - 1)
+          utf8Sequences(dest, hi and not m, hi)
+          return
+  let a = toUTF8(Rune(lo))
+  let b = toUTF8(Rune(hi))
+  var sq = Utf8Seq(len: a.len)
+  for i in 0 ..< a.len:
+    sq.lo[i] = a[i]
+    sq.hi[i] = b[i]
+  dest.add sq
+
 proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
   ## Thompson's construction; returns the state the sub-expression ends in.
   result = currState
@@ -559,12 +651,10 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
   of reEps:
     eps a, result, result + 1
     inc result
-  of reChar:
-    transBytes a, result, r.c, r.c, result + 1
-    inc result
-  of reStr:
-    for i in 0 ..< r.s.len:
-      transBytes a, result, r.s[i], r.s[i], result + 1
+  of reChar, reStr:
+    let bytes = if r.kind == reChar: toUTF8(r.r) else: r.s
+    for i in 0 ..< bytes.len:
+      transBytes a, result, bytes[i], bytes[i], result + 1
       inc result
   of reWordBoundary, reWordBoundaryNot, reBegin, reEnd:
     trans a, result, Alphabet(kind: r.kind, val: '\0'), result + 1
@@ -573,18 +663,23 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
     result = auxRegExprToNfa(r.a, a, result)
     result = auxRegExprToNfa(r.b, a, result)
   of reCClass:
-    # Consecutive bytes of the class share one edge.
+    # The one place code points become bytes: every UTF-8 sequence of the
+    # class runs from `entry` to `exit`, through states of its own.
+    var seqs: seq[Utf8Seq] = @[]
+    for i in 0 ..< r.cc.len: utf8Sequences(seqs, r.cc[i].a, r.cc[i].b)
     let entry = result + 1
-    let exit = result + 2
+    var next = entry + 1
+    for sq in seqs: inc next, sq.len - 1
+    let exit = next
     eps a, result, entry
-    var b = 0
-    while b <= 255:
-      if char(b) in r.cc:
-        var hi = b
-        while hi < 255 and char(hi + 1) in r.cc: inc hi
-        transBytes a, entry, char(b), char(hi), exit
-        b = hi
-      inc b
+    next = entry + 1
+    for sq in seqs:
+      var src = entry
+      for i in 0 ..< sq.len - 1:
+        transBytes a, src, sq.lo[i], sq.hi[i], next
+        src = next
+        inc next
+      transBytes a, src, sq.lo[sq.len - 1], sq.hi[sq.len - 1], exit
     result = exit
   of reStar:
     # one transition too many is drawn here, which is harmless
