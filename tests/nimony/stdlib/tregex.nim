@@ -65,6 +65,21 @@ proc searching =
           slow = i
           break
       assert find(subject, r) == slow
+  # Matching is byte-oriented: malformed UTF-8 is matched like any other byte,
+  # not rejected, and a multi-byte character still consists of several bytes.
+  var bad = default(Regex)
+  var err = ""
+  assert tryRe("\xC3", bad, err)
+  assert err == ""
+  assert fullMatch("\xC3", bad)
+  for invalid in ["\x80", "\xC0\x80", "\xE2\x82", "\xED\xA0\x80"]:
+    assert tryRe(invalid, bad, err)
+    assert err == ""
+    assert fullMatch(invalid, bad)
+  assert fullMatch("\xC3", re"\0195")
+  assert fullMatch("\xE4", re".")
+  assert fullMatch("\xC3\xA4", re"..")
+  assert matchLen("\xE4x", re"\w+") == 2
   echo "searching ok"
 
 proc rewriting =
