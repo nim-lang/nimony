@@ -643,9 +643,9 @@ proc recordGroupHook*(c: var LiftingCtx; op: AttachedOp; s: SymId; hook: SymId) 
   ## before the owner's `(methods)` pragma is written.
   if c.groupHooks != nil and hook != SymId(0) and
       op in {attachedDestroy, attachedTrace} and hasRtti(s):
-    if not c.groupHooks[].hasKey(s):
-      c.groupHooks[][s] = HooksPerType()
-    c.groupHooks[][s].a[op] = hook
+    # `mgetOrPut` rather than `[]`: this runs in the compiler's own sem pass,
+    # where `Table.[]` is `.raises` and no handler is in scope.
+    c.groupHooks[].mgetOrPut(s, HooksPerType()).a[op] = hook
 
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
   if (t.isSymbol or t.isSymbolDef):

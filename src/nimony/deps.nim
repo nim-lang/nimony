@@ -862,12 +862,14 @@ proc mergeCyclicGroups(c: var DepContext) =
     let root = c.nodes[r]
     let member = c.nodes[i]
     let first = root.files.len
-    for f in member.files: root.files.add f
+    for j in 0 ..< member.files.len: root.files.add member.files[j]
     for k in first ..< root.files.len: root.cyclicFiles.add k
-    for d in member.deps: root.deps.add d
-    for p in member.plugins: root.plugins.incl p
+    for j in 0 ..< member.deps.len: root.deps.add member.deps[j]
+    # `uncheckedBorrow`: the set is not mutated while it is walked, but the
+    # borrow checker cannot see that through the `ref`.
+    for p in uncheckedBorrow(member.plugins): root.plugins.incl p
     root.isSystem = root.isSystem or member.isSystem
-    for f in member.fileDeps: root.fileDeps.add f
+    for j in 0 ..< member.fileDeps.len: root.fileDeps.add member.fileDeps[j]
 
   var indexMap = newSeq[int](c.nodes.len)
   var kept: seq[Node] = @[]
@@ -881,8 +883,8 @@ proc mergeCyclicGroups(c: var DepContext) =
   for i in 0 ..< kept.len:
     let node = kept[i]
     var deps: seq[int] = @[]
-    for d in node.deps:
-      let r = rootOf[d]
+    for j in 0 ..< node.deps.len:
+      let r = rootOf[node.deps[j]]
       if indexMap[r] < 0 or indexMap[r] == i: continue
       if indexMap[r] notin deps: deps.add indexMap[r]
     node.deps = deps
