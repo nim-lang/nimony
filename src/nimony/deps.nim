@@ -870,7 +870,7 @@ proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
 
 proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
                      targetOS: TSystemOS; checkFlags: string; native, cycles: bool;
-                     crt = false) =
+                     crt = false; wasm = false) =
   let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
@@ -882,6 +882,8 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
     # no argc/argv/envp, so `main` takes none there.
     b.addStrLit "--os:" & platform.OS[targetOS].name
     if native: b.addStrLit "--native"
+    # wasm's `call_indirect` checks signatures: closure calls must always pass the env.
+    if wasm: b.addStrLit "--wasm"
     # A native program linked with libc: `main` returns to crt (see `linuxLibc`).
     if crt: b.addStrLit "--crt"
     if cycles: b.addStrLit "--cycles"
@@ -1272,7 +1274,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # Command for hexer
     defineHexerCmds(b, shoggoth, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian,
                     c.config.targetOS, c.config.checkFlags, c.config.backend == backendNative,
-                    c.config.cycles, crt = linuxLibc)
+                    c.config.cycles, crt = linuxLibc, wasm = c.config.backend == backendWasm)
 
     # Command for C/LLVM compiler (object files). The fixed part of its command
     # line is collected in `ccArgs` first: besides being emitted, it keys the
@@ -2195,7 +2197,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
 
     defineHexerCmds(b, findTool("shoggoth"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian,
                     config.targetOS, config.checkFlags, config.backend == backendNative,
-                    config.cycles)
+                    config.cycles, wasm = config.backend == backendWasm)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"

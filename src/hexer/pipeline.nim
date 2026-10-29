@@ -61,7 +61,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   # Pass 3: Lambda Lifting
   pass.prepareForNext("lambdalift")
-  elimLambdas(pass)
+  elimLambdas(pass, c.wasm)
 
   # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
   # a check, and the success tuple lands in the same pass: signatures, the

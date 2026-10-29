@@ -2795,7 +2795,7 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         swap dest, c.initBody
 
 proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows); crt = false;
-             cycles = false) =
+             cycles = false; wasm = false) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -2813,6 +2813,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     nativeBackend: native,
     crtEntry: crt,
     isWindows: isWindows,
+    wasm: wasm,
     localDeclCounters: 1000,
     activeChecks: flags,
     liftingCtx: createLiftingCtx(mp.name, bits, cycles = cycles)
