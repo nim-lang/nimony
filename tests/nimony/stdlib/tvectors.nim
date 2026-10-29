@@ -27,7 +27,7 @@ proc main =
     let b = vec3(1.0, 2.0, 3.0)
     assert b.len == 3 and b.z == 3.0
     assert $b == "(x=1.0, y=2.0, z=3.0)"
-  
+
   block: # dot, cross, and lengths
     let a = vec3(1.0, 2.0, 3.0)
     let b = vec3(4.0, -5.0, 6.0)

@@ -2,27 +2,21 @@ import std/broadcast
 import std/[math, assertions]
 
 type
-  AbstractVec2*[T] = concept of Broadcastable[T]
+  Vec2Concept*[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
     proc `y=`(v: var Self, val: T)
-    proc z(v: Self): T {.error.}
-    proc `z=`(v: var Self, val: T) {.error.}
-    proc w(v: Self): T {.error.}
-    proc `w=`(v: var Self, val: T) {.error.}
 
-  AbstractVec3*[T] = concept of Broadcastable[T]
+  Vec3Concept*[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
     proc `y=`(v: var Self, val: T)
     proc z(v: Self): T
     proc `z=`(v: var Self, val: T)
-    proc w(v: Self): T {.error.}
-    proc `w=`(v: var Self, val: T) {.error.}
 
-  AbstractVec4*[T] = concept of Broadcastable[T]
+  Vec4Concept*[T] = concept of Broadcastable[T]
     proc x(v: Self): T
     proc `x=`(v: var Self, val: T)
     proc y(v: Self): T
@@ -31,6 +25,10 @@ type
     proc `z=`(v: var Self, val: T)
     proc w(v: Self): T
     proc `w=`(v: var Self, val: T)
+
+  AbstractVec2*[T] = Vec2Concept[T] and not Vec3Concept[T] and not Vec4Concept
+  AbstractVec3*[T] = Vec3Concept[T] and not Vec4Concept[T]
+  AbstractVec4*[T] = Vec4Concept[T]
 
   HasComp = concept
     proc `<`(a, b: Self): bool
@@ -110,27 +108,21 @@ func similar*[N: static[int], T](v: Vec[N,T]): Vec[N, T] {.inline.} =
 
 func x*[T](v: Vec2[T]):T = v.components[0]
 func y*[T](v: Vec2[T]):T = v.components[1]
-func z*[T](v: Vec2[T]):T {.error.}
-func w*[T](v: Vec2[T]):T {.error.}
 func `x=`*[T](v: var Vec2[T], val: T) = 
   v.components[0] = val
 func `y=`*[T](v: var Vec2[T], val: T) = 
   v.components[1] = val
-func `z=`*[T](v: var Vec2[T], val: T) {.error.}
-func `w=`*[T](v: var Vec2[T], val: T) {.error.}
 
 
 func x*[T](v: Vec3[T]):T = v.components[0]
 func y*[T](v: Vec3[T]):T = v.components[1]
 func z*[T](v: Vec3[T]):T = v.components[2]
-func w*[T](v: Vec3[T]):T {.error.}
 func `x=`*[T](v: var Vec3[T], val: T) = 
   v.components[0] = val
 func `y=`*[T](v: var Vec3[T], val: T) = 
   v.components[1] = val
 func `z=`*[T](v: var Vec3[T], val: T) = 
   v.components[2] = val
-func `w=`*[T](v: var Vec3[T], val: T) {.error.}
 
 
 func x*[T](v: Vec4[T]):T = v.components[0]
