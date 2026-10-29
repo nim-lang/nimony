@@ -190,12 +190,19 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
       result = paths[i] / nimFile
       inc i
 
+proc resolveImport*(paths: openArray[string]; origin: string; toResolve: string): string =
+  ## `resolveFile` for an imported module: `std/x` falls back to `x`.
+  result = resolveFile(paths, origin, toResolve)
+  if not os.fileExists(result) and toResolve.startsWith("std/"):
+    result = resolveFile(paths, origin, toResolve.substr(4))
+
 type
   ImportedFilename* = object
     path*: string ## stringified path from AST that has to be resolved
     name*: string ## extracted module name to define a sym for in `import`
     plugin*: string ## plugin name if any (usually empty)
     isSystem*: bool
+    isCyclic*: bool ## `import m {.cyclic.}`
 
 proc moduleNameFromPath*(path: string): string =
   result = splitFile(path).name
@@ -342,6 +349,29 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     hasError = true
     skip n
 
+proc isCyclicImport*(n: Cursor): bool =
+  ## `m {.cyclic.}` in an import list.
+  result = false
+  if n.isTagLit and n.exprKind == PragmaxX:
+    var y = n
+    inc y
+    skip y # the filename
+    if y.substructureKind == PragmasU:
+      inc y
+      result = y.isIdent and pool.strings[y.strId] == "cyclic"
+
+proc importedFilename*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool) =
+  ## One entry of an `import` list: `m`, `m as x`, `m {.plugin: "p".}` or
+  ## `m {.cyclic.}`.
+  if isCyclicImport(n):
+    let start = res.len
+    n.into PragmaxX:
+      filenameVal(n, res, hasError, allowAs = false)
+      while n.hasMore: skip n # (pragmas cyclic)
+    for i in start ..< res.len: res[i].isCyclic = true
+  else:
+    filenameVal(n, res, hasError, allowAs = true)
+
 proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
   # Unpack Current File to Absolute
   let nifcache = config.nifcachePath
@@ -428,6 +458,12 @@ proc ensureParsed(nimFile: string; paths: openArray[string], nifcachePath: strin
     execArgs nifler, ["--portablePaths", "--deps", "parse", nimFile, src]
   result = src
 
+proc loadDepsFile*(depsFile: string): TokenBuf =
+  var r = rd.open(depsFile)
+  result = createTokenBuf()
+  parse(r, result)
+  rd.close(r)
+
 proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
   var r = rd.open(ensureParsed(nimFile, paths, nifcachePath))
   result = createTokenBuf()
@@ -437,16 +473,12 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
 proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: string;
                      allResolve: var bool): seq[string] =
   ## The modules `nimFile` imports plainly (no `{.plugin.}`, no `{.cyclic.}`),
-  ## read off its nifler deps file. `when` conditions are not evaluated.
-  ## `allResolve` tells whether every import resolves on `paths` to a module
-  ## outside of the plugin API (`src/nimony/lib`).
+  ## read off its nifler deps file like `deps.processImport` does. `when`
+  ## conditions are not evaluated. `allResolve` tells whether every import
+  ## resolves on `paths` to a module outside of the plugin API (`src/nimony/lib`).
   result = @[]
   allResolve = true
-  let depsFile = ensureParsed(nimFile, paths, nifcachePath).changeFileExt(".deps.nif")
-  var buf = createTokenBuf(100)
-  var r = rd.open(depsFile)
-  parse(r, buf)
-  rd.close(r)
+  var buf = loadDepsFile(ensureParsed(nimFile, paths, nifcachePath).changeFileExt(".deps.nif"))
   var files: seq[ImportedFilename] = @[]
   var n = beginRead(buf)
   n.into:  # (stmts …)
@@ -457,20 +489,18 @@ proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: st
         x.into:
           if x.stmtKind == WhenS: skip x, SkipCond
           while x.hasMore:
-            if x.exprKind == PragmaxX:
-              skip x
-            else:
-              var hasError = false
-              filenameVal(x, files, hasError, allowAs = true)
-              if hasError: skip x
+            var entry: seq[ImportedFilename] = @[]
+            var hasError = false
+            importedFilename(x, entry, hasError)
+            if not hasError:
+              for f in entry:
+                if not f.isCyclic and f.plugin.len == 0: files.add f
             if kind != ImportS:
-              while x.hasMore: skip x
+              while x.hasMore: skip x # the imported/excluded names
       skip n
   let pluginDir = pluginLibDir()
   for f in files:
-    var path = resolveFile(paths, nimFile, f.path)
-    if not fileExists(path) and f.path.startsWith("std/"):
-      path = resolveFile(paths, nimFile, f.path.substr(4))
+    let path = resolveImport(paths, nimFile, f.path)
     if fileExists(path) and toAbsolutePath(path).parentDir != pluginDir:
       result.add toAbsolutePath(path)
     else:

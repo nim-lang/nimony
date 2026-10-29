@@ -173,25 +173,10 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
   ## scope, so `x` is positioned at children. We walk those.
   let info = x.info
   while x.hasMore:
-    var isCyclic = false
-    if x.isTagLit and x.exprKind == PragmaxX:
-      var y = x
-      inc y, SkipTag
-      skip y, AnyExpr  # filename expr
-      if y.substructureKind == PragmasU:
-        inc y, SkipTag
-        if y.isIdent and pool.strings[y.strId] == "cyclic":
-          isCyclic = true
-
-    if isCyclic:
-      # Manually parse the pragmax wrapper to extract the filename
+    if isCyclicImport(x):
       var files: seq[ImportedFilename] = @[]
       var hasError = false
-      x.into PragmaxX:
-        filenameVal(x, files, hasError, allowAs = false)
-        skip x, SkipPragmas # skip (pragmas cyclic)
-        while x.hasMore: skip x, SkipFull
-
+      importedFilename(x, files, hasError)
       if not hasError:
         let origin = getFile(info)
         for f1 in files:
@@ -230,15 +215,9 @@ proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilenam
     onConceptImportsChanged(c)
 
 template maybeCyclic(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
-  if x.isTagLit and x.exprKind == PragmaxX:
-    var y = x
-    inc y
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.isIdent and pool.strings[y.strId] == "cyclic":
-        cyclicImport(c, dest, x)
-        return
+  if isCyclicImport(x):
+    cyclicImport(c, dest, x)
+    return
 
 proc takeImportedName(x: var Cursor; names: var HashSet[StrId];
                       hasError: var bool) =

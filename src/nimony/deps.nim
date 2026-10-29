@@ -196,11 +196,6 @@ proc exeFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
     else:
       base / ("lib" & baseName & ".a")
 
-proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
-  result = resolveFile(paths, origin, toResolve)
-  if not semos.fileExists(result) and toResolve.startsWith("std/"):
-    result = resolveFile(paths, origin, toResolve.substr(4))
-
 type
   Node = ref object
     files: seq[FilePair]
@@ -307,8 +302,8 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
           if f1.plugin.len > 0:
             discard "ignore plugin include file, will cause an error in sem.nim"
             continue
-          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile,
-                                      c.config.expandMM(f1.path))
+          let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile,
+                                 c.config.expandMM(f1.path))
           # check for recursive include files:
           var isRecursive = false
           for a in c.includeStack:
@@ -337,7 +332,7 @@ proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
 
 proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
                       current: Node; isSystem: bool) =
-  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+  let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
@@ -359,7 +354,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
       current.deps.add existingNode
 
 proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineInfo; current: Node) =
-  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f.path)
+  let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f.path)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
@@ -376,7 +371,7 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineIn
 proc importCyclicModule(c: var DepContext; f1: string; info: NifLineInfo;
                         current: Node) =
   ## Merge a cyclic import target into the current node's cycle group.
-  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+  let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
   if c.processedModules.hasKey(p.modname):
@@ -488,34 +483,16 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
         return
       skip x, SkipCond
     while x.hasMore:
-      var isCyclic = false
-      if x.isTagLit and x.exprKind == PragmaxX:
-        var y = x
-        inc y
-        skip y
-        if y.substructureKind == PragmasU:
-          inc y
-          if y.isIdent and pool.strings[y.strId] == "cyclic":
-            isCyclic = true
-
       var files: seq[ImportedFilename] = @[]
       var hasError = false
-      if isCyclic:
-        # Manually parse the pragmax: enter it, parse the inner filename, skip the pragma
-        x.into PragmaxX:
-          filenameVal(x, files, hasError, allowAs = false)
-          skip x, SkipPragmas # skip (pragmas cyclic)
-          while x.hasMore: skip x, SkipFull
-      else:
-        filenameVal(x, files, hasError, allowAs = true)
+      importedFilename(x, files, hasError)
       if hasError:
         discard "ignore wrong `import` statement"
-      elif isCyclic:
-        for f in files:
-          importCyclicModule c, f.path, info, current
       else:
         for f in files:
-          if f.plugin.len == 0:
+          if f.isCyclic:
+            importCyclicModule c, f.path, info, current
+          elif f.plugin.len == 0:
             importSingleFile c, f.path, info, current, false
           else:
             processPluginImport c, f, info, current
@@ -757,12 +734,6 @@ proc importSystem(c: var DepContext; current: Node) =
     traverseDeps c, p, imported
     existingNode = imported.id
   current.deps.add existingNode
-
-proc loadDepsFile(depsFile: string): TokenBuf =
-  var r = rd.open(depsFile)
-  result = createTokenBuf()
-  parse(r, result)
-  rd.close(r)
 
 proc importPluginImports(c: var DepContext; src: string; current: Node) =
   ## See `semos.pluginProgramImports`; `semimport.importPluginImports` records
