@@ -196,11 +196,6 @@ proc exeFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
     else:
       base / ("lib" & baseName & ".a")
 
-proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
-  result = resolveFile(paths, origin, toResolve)
-  if not semos.fileExists(result) and toResolve.startsWith("std/"):
-    result = resolveFile(paths, origin, toResolve.substr(4))
-
 type
   Node = ref object
     files: seq[FilePair]
@@ -271,6 +266,7 @@ type
     rootNode: Node
     includeStack: seq[string]
     processedModules: Table[string, int] # modname -> index to c.nodes
+    inPluginImports: bool ## a plugin may import the module that declares it
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
@@ -310,8 +306,8 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
           if f1.plugin.len > 0:
             discard "ignore plugin include file, will cause an error in sem.nim"
             continue
-          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile,
-                                      c.config.expandMM(f1.path))
+          let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile,
+                                 c.config.expandMM(f1.path))
           # check for recursive include files:
           var isRecursive = false
           for a in c.includeStack:
@@ -340,7 +336,7 @@ proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
 
 proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
                       current: Node; isSystem: bool) =
-  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+  let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
@@ -356,13 +352,13 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
     if wouldCreateCycle(c, current, p):
       # nimsem's `.s.deps.nif` lists `{.cyclic.}` imports as plain imports,
       # so for the backend graph a cycle is expected and only its edge is dropped:
-      if not c.isGeneratingFinal:
+      if not c.isGeneratingFinal and not c.inPluginImports:
         echo "cycle detected: ", current.files[0].nimFile, " <-> ", p.nimFile
     else:
       current.deps.add existingNode
 
 proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineInfo; current: Node) =
-  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f.path)
+  let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f.path)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
@@ -397,7 +393,7 @@ proc unionMerge(c: var DepContext; a, b: int) =
 proc importCyclicModule(c: var DepContext; f1: string; info: NifLineInfo;
                         current: Node) =
   ## Merge a cyclic import target into the current node's cycle group.
-  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+  let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
   let existing = c.processedModules.getOrDefault(p.modname, -1)
@@ -523,34 +519,16 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
         return
       skip x, SkipCond
     while x.hasMore:
-      var isCyclic = false
-      if x.isTagLit and x.exprKind == PragmaxX:
-        var y = x
-        inc y
-        skip y
-        if y.substructureKind == PragmasU:
-          inc y
-          if y.isIdent and pool.strings[y.strId] == "cyclic":
-            isCyclic = true
-
       var files: seq[ImportedFilename] = @[]
       var hasError = false
-      if isCyclic:
-        # Manually parse the pragmax: enter it, parse the inner filename, skip the pragma
-        x.into PragmaxX:
-          filenameVal(x, files, hasError, allowAs = false)
-          skip x, SkipPragmas # skip (pragmas cyclic)
-          while x.hasMore: skip x, SkipFull
-      else:
-        filenameVal(x, files, hasError, allowAs = true)
+      importedFilename(x, files, hasError)
       if hasError:
         discard "ignore wrong `import` statement"
-      elif isCyclic:
-        for f in files:
-          importCyclicModule c, f.path, info, current
       else:
         for f in files:
-          if f.plugin.len == 0:
+          if f.isCyclic:
+            importCyclicModule c, f.path, info, current
+          elif f.plugin.len == 0:
             importSingleFile c, f.path, info, current, false
           else:
             processPluginImport c, f, info, current
@@ -583,21 +561,23 @@ proc pluginExe(c: DepContext; name: string): string =
   ## Where `semos.runPlugin` looks for the plugin: keep the two in sync.
   c.config.nifcachePath / name.addFileExt(ExeExt)
 
+proc importPluginImports(c: var DepContext; src: string; current: Node)
+
 proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
   ## `(plugin [(when COND...)] "name")`: nifler's deps-file entry for a
   ## `{.plugin: "name".}` pragma. The name resolves relative to the declaring
   ## file exactly as `semos.runPlugin` resolves it.
   ##
-  ## Ignored when this build IS a plugin build (`-d:nimonyPlugin`, set by
-  ## `semos.pluginCompileCmd`): plugins are leaves of the build graph. A plugin
-  ## whose source imports its declaring module would otherwise require itself,
-  ## and the nested builds would recurse without end. Should such a plugin
-  ## actually run another plugin at compile time, `runPlugin`'s lazy fallback
-  ## still builds that one on demand.
+  ## Not scheduled for building when this build IS a plugin build
+  ## (`-d:nimonyPlugin`, set by `semos.pluginCompileCmd`): plugins are leaves of
+  ## the build graph. A plugin whose source imports its declaring module would
+  ## otherwise require itself, and the nested builds would recurse without end.
+  ## Should such a plugin actually run another plugin at compile time,
+  ## `runPlugin`'s lazy fallback still builds that one on demand. The plugin's
+  ## imports join the program either way.
   var x = it
   skip it
-  if c.config.isDefined("nimonyPlugin"):
-    return
+  let isPluginBuild = c.config.isDefined("nimonyPlugin")
   x.into:  # (plugin …)
     if x.stmtKind == WhenS:
       if not whenMarkerHolds(c, x):
@@ -608,10 +588,12 @@ proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
         let name = pool.strings[x.strId]
         let src = resolveFile(c.config.paths, current.files[current.active].nimFile, name)
         if semos.fileExists(src):
-          let exeName = splitFile(name).name
-          current.plugins.incl exeName
-          if not c.pluginSources.hasKey(exeName):
-            c.pluginSources[exeName] = src
+          if not isPluginBuild:
+            let exeName = splitFile(name).name
+            current.plugins.incl exeName
+            if not c.pluginSources.hasKey(exeName):
+              c.pluginSources[exeName] = src
+          importPluginImports c, src, current
       skip x
 
 proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
@@ -790,11 +772,44 @@ proc importSystem(c: var DepContext; current: Node) =
     existingNode = imported.id
   current.deps.add existingNode
 
-proc loadDepsFile(depsFile: string): TokenBuf =
-  var r = rd.open(depsFile)
-  result = createTokenBuf()
-  parse(r, result)
-  rd.close(r)
+proc importPluginImports(c: var DepContext; src: string; current: Node) =
+  ## See `semos.pluginProgramImports`; `semimport.importPluginImports` records
+  ## the same modules for the backend.
+  let oldInPluginImports = c.inPluginImports
+  c.inPluginImports = true # a plugin may import the module that declares it
+  for path in pluginProgramImports(src, c.config.paths, c.config.nifcachePath):
+    importSingleFile c, path, NoLineInfo, current, false
+  c.inPluginImports = oldInPluginImports
+
+proc readDependencies(depsFile: string; files: var seq[string]) =
+  ## Adds the files of the `(dependency …)` tree in `depsFile` to `files`.
+  var buf = loadDepsFile(depsFile)
+  var n = beginRead(buf)
+  if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
+    n.into:
+      while n.hasMore:
+        if n.cursorTagId == TagId(DependencyIdx):
+          n.into:
+            while n.hasMore:
+              assert n.isStringLit
+              files.add pool.strings[n.strId]
+              inc n
+        else:
+          skip n
+
+proc writeDepFile(c: DepContext; depFile: string) =
+  ## `--depfile`: the source files of the program, includes among them.
+  var buf = createTokenBuf(c.nodes.len * 2 + 4)
+  buf.buildTree StmtsS, NoLineInfo:
+    buf.buildTree TagId(DependencyIdx), NoLineInfo:
+      var seen = initHashSet[string]()
+      for v in c.nodes:
+        if v.plugin.len > 0: continue
+        for i in 0 ..< v.files.len:
+          let f = v.files[i].nimFile
+          if not f.endsWith(".nif") and not seen.containsOrIncl(f):
+            buf.addStrLit toAbsolutePath(f)
+  onRaiseQuit writeFile(buf, depFile)
 
 proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
   ## Reads the `(dependency …)` list out of the `.s.deps.nif` the previous
@@ -804,19 +819,7 @@ proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
   ## build's, and the caller has just read the current ones from nifler.
   let depsFile = c.config.deps2File(p)
   if semos.fileExists(depsFile):
-    var buf = loadDepsFile(depsFile)
-    var n = beginRead(buf)
-    if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
-      n.into:
-        while n.hasMore:
-          if n.cursorTagId == TagId(DependencyIdx):
-            n.into:
-              while n.hasMore:
-                assert n.isStringLit
-                current.fileDeps.add pool.strings[n.strId]
-                inc n
-          else:
-            skip n
+    readDependencies depsFile, current.fileDeps
 
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
@@ -2077,6 +2080,15 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         b.addIdent "pluginbuild"
         b.withTree "input":
           b.addStrLit c.pluginSources.getOrDefault(name)
+        # the modules the plugin imported last time it was built (#2785):
+        let inputs = pluginDepFile(c.pluginExe(name))
+        if semos.fileExists(inputs):
+          var files: seq[string] = @[]
+          readDependencies inputs, files
+          for f in files:
+            if semos.fileExists(f):
+              b.withTree "input":
+                b.addStrLit f
         b.withTree "output":
           b.addStrLit c.pluginExe(name)
 
@@ -2473,6 +2485,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
     parseNifConfig cfgNif, config
 
   var c = initDepContext(config, project, false, forceRebuild, moduleFlags, cmd)
+  if c.config.depFile.len > 0:
+    writeDepFile c, c.config.depFile
   # found in the runtime's nifler deps, which the later phases do not read
   config.cycles = c.config.cycles
   let feMemoFile = frontendMemoFile(c.config)

@@ -86,6 +86,8 @@ Options:
                             counts on stdout (one line per nifmake call)
   --stats                   after build, print total LOC and module count
                             across the dep graph
+  --depfile:FILE            write the program's source files to FILE as
+                            `(stmts (dependency "file"...))`
   --layout:FILE             native backend, bare-metal targets only: the BOARD
                             description (memory regions, stack slots, heap) that
                             arkham and nifasm build the image against. See

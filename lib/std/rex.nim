@@ -49,6 +49,12 @@
 ## (`std/private/regexcore`), so a pattern cannot mean one thing in a generated
 ## lexer and another at runtime.
 ##
+## Patterns and input may contain UTF-8 and arbitrary bytes. Literals, `.`,
+## and character classes support Unicode code points; byte values 128..255
+## also match the corresponding individual byte. The longest match wins.
+## Match lengths, positions, and capture bounds are byte offsets into the
+## original string.
+##
 ## Captures
 ## ========
 ##
@@ -109,8 +115,8 @@
 ## * Outside a character class `\n` matches any of `\r\n`, `\n` and `\r`.
 ## * `\123` is decimal: a back reference, or, with a leading zero (`\065`), a
 ##   character code. It is not octal.
-## * `.` matches everything but `\0`, newlines included. `\s` is `\1..\32` and
-##   `\w` includes every byte `>= 128`.
+## * `.` matches every Unicode code point and nonzero byte, newlines included.
+##   `\s` is `\1..\32` and `\w` includes non-ASCII code points and bytes.
 ## * `re` takes only a string literal and compiles it with the program;
 ##   `re(someVar)` is `tryRe` here, which reports an error instead of raising.
 ## * Captures are positions (`seq[Capture]`, read with `capture`), not a
@@ -123,8 +129,8 @@
 ## * Not supported in patterns: the flags `reIgnoreCase`, `reMultiLine` and
 ##   `reDotAll`, inline options such as `(?i)`, lazy quantifiers (`x*?` is
 ##   accepted but means `x*`), lookaround, named groups, `\x` escapes and
-##   Unicode classes. Most of these need backtracking, which is exactly what
-##   this engine rules out.
+##   Unicode property classes such as `\p{L}`. Some of these features need
+##   backtracking, which this engine rules out.
 
 {.feature: "staticContracts".}
 
@@ -132,7 +138,7 @@ import std / private / regexcore
 
 export RegexFlag, reExtended, reNoBackrefs, reNoCaptures
 export Regex, Capture, RegexOpcode, RegexInstr
-export opcRet, opcTestSet, opcTestChar, opcTJmp, opcBegin, opcEnd,
+export opcRet, opcRetAccept, opcAccept, opcTestSet, opcTestChar, opcTJmp, opcBegin, opcEnd,
        opcWordBound, opcCaptureBegin, opcCaptureEnd, opcBackref
 
 # ---------------------------------------------------------------------------
@@ -189,6 +195,34 @@ func captureCount*(r: Regex): int {.inline.} =
 # Matching
 # ---------------------------------------------------------------------------
 
+func skipToCandidate(s: string; r: Regex; pos: Natural): int
+    {.ensures: result <= s.len.} =
+  ## The first position at or after `pos` where a match can start; `s.len`
+  ## when there is none before the end.
+  var i: Natural = pos
+  if r.firstByte >= 0:
+    let b = char(r.firstByte)
+    # Eight bytes at a time: `w` has a zero byte where `s` has `b`, and the
+    # test below is true exactly when it has one. The byte loop then finds it.
+    let ones = 0x0101010101010101'u64
+    let pattern = ones * uint64(r.firstByte)
+    let raw = readRawData(s)
+    while i < s.len - 7:
+      var w = 0'u64
+      copyMem(addr w, addr raw[i], 8)
+      w = w xor pattern
+      if ((w - ones) and not w and (ones shl 7)) != 0: break
+      inc i, 8
+    while i < s.len:
+      if s[i] == b: return i
+      inc i
+    return s.len
+  let first = r.firstBytes # read in the loop, it is copied every iteration
+  while i < s.len:
+    if s[i] in first: return i
+    inc i
+  return s.len
+
 func matchLen*(s: string; r: Regex; caps: var seq[Capture]; start = 0): int =
   ## The length of the longest match of `r` starting exactly at `start`, or
   ## `-1` when there is none. Capture bounds are written to `caps`, which is
@@ -226,6 +260,7 @@ func findBounds*(s: string; r: Regex; caps: var seq[Capture];
   ## `(-1, 0)` when there is none. An empty match reports `last == first - 1`.
   var i = start
   while i <= s.len:
+    i = skipToCandidate(s, r, i)
     let L = matchLen(s, r, caps, i)
     if L >= 0: return (i, i + L - 1)
     inc i
@@ -267,10 +302,11 @@ func captureTexts*(s: string; caps: seq[Capture]): seq[string] =
 
 iterator findAll*(s: string; r: Regex; start = 0): (int, int) =
   ## The bounds of every non-overlapping match, left to right, both ends
-  ## inclusive. An empty match advances by one character, so the loop always
+  ## inclusive. An empty match advances by one byte, so the loop always
   ## terminates.
   var i = start
   while i <= s.len:
+    i = skipToCandidate(s, r, i)
     let L = matchLen(s, r, i)
     if L > 0:
       yield (i, i + L - 1)
@@ -287,6 +323,11 @@ func replace*(s: string; r: Regex; by: string): string =
   result = ""
   var i: Natural = 0
   while i < s.len:
+    let next = skipToCandidate(s, r, i)
+    while i < next:
+      result.add s[i]
+      inc i
+    if i >= s.len: break
     let L = matchLen(s, r, i)
     if L > 0:
       result.add by
@@ -303,6 +344,11 @@ func split*(s: string; r: Regex): seq[string] =
   var piece = ""
   var i: Natural = 0
   while i < s.len:
+    let next = skipToCandidate(s, r, i)
+    while i < next:
+      piece.add s[i]
+      inc i
+    if i >= s.len: break
     let L = matchLen(s, r, i)
     if L > 0:
       result.add piece
