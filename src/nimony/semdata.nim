@@ -296,6 +296,9 @@ type
     semEmitCB*: SemEmitCallbackT
     passL*: seq[string]
     passC*: seq[string]
+    pluginSources*: seq[string]
+      ## Sources of the plugins this module ran. Their imports join the program
+      ## (`semimport.importPluginImports`): a plugin's `bindSym` refers to them.
     fileDeps*: seq[string]
       ## Absolute paths of the files this module's semchecking READ outside
       ## its own source: what a `.plugin` reported via `plugins.dependsOn` and
