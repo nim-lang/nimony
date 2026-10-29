@@ -1746,7 +1746,7 @@ in `{|  |}` in the following example:
 Example:
 
   ```nim
-  let line = readline(stdin)
+  let line = readLine(stdin)
   case line
   of "delete-everything", "restart-computer":
     echo "permission denied"

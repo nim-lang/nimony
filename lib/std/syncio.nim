@@ -503,6 +503,17 @@ proc readLine*(f: File; s: var string): bool =
   s.shrink 0
   addReadLine f, s
 
+proc readLine*(f: File): string {.raises.} =
+  ## Reads a line from a file, without the line ending (`\n` or `\r\n`).
+  ## Raises `EndOfStreamError` at the end of the file and `IOError` if the
+  ## read fails.
+  result = ""
+  if not addReadLine(f, result):
+    if failed(f): raise IOError
+    raise EndOfStreamError
+  if result.len > 0 and result[result.len - 1] == '\r':
+    result.shrink result.len - 1
+
 iterator lines*(filename: string): string {.sideEffect.} =
   ## Iterates over every line in `filename`. Silently returns no lines if the
   ## file cannot be opened.
