@@ -4827,6 +4827,8 @@ of the individual feature, not in the pragma syntax. This means a feature changi
 never requires renaming the pragma in source code.
 
 Features are scoped to the module they appear in and do not propagate to importers.
+A `.feature` pragma must therefore be written at module top level, not inside a
+routine body.
 
 The following features are available:
 
