@@ -415,19 +415,21 @@ proc addRegexLit(dest: var NifBuilder; r: Regex; info: LineInfo) =
       dest.addIdent "lit"
       dest.addStrLit r.lit
     dest.withTree KvX, info:
-      dest.addIdent "litMin"
-      dest.addIntLit r.litMin
+      dest.addIdent "byteClass"
+      dest.addStrLit r.byteClass
     dest.withTree KvX, info:
-      dest.addIdent "litBack"
+      dest.addIdent "stride"
+      dest.addIntLit r.stride
+    dest.withTree KvX, info:
+      dest.addIdent "entry"
+      dest.addIntLit r.entry
+    dest.withTree KvX, info:
+      dest.addIdent "transitions"
       dest.withSeqLit info:
-        for x in r.litBack: dest.addIntLit x
-    dest.withTree KvX, info:
-      dest.addIdent "litBackSets"
-      dest.withSeqLit info:
-        for x in r.litBackSets: dest.addCharSetLit x, info
-    dest.withTree KvX, info:
-      dest.addIdent "leadBytes"
-      dest.addCharSetLit r.leadBytes, info
+        for x in r.transitions:
+          dest.withTree CallX, info:
+            dest.bindSym "int32"
+            dest.addIntLit int(x)
 
 proc flagsOf(n: NifCursor; flags: var set[RegexFlag]; err: var string) =
   ## Reads a `{reExtended, …}` set constructor. The argument arrives

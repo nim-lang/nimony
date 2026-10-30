@@ -14,7 +14,7 @@
 ## This module is shared by two very different consumers:
 ##
 ## * `std/rex` compiles a pattern at **runtime** and walks the resulting DFA
-##   as bytecode;
+##   as a byte-class transition table (a register VM for backreferences);
 ## * `std/deps/regex`, the plugin behind `std/rex`'s `lex` construct, runs the
 ##   very same pipeline at **compile time** and emits the DFA as straight-line
 ##   Nimony code.
@@ -70,8 +70,7 @@ type
     reExtended,     ## ignore unescaped spaces and tabs
     reNoBackrefs,   ## treat `\1` as a character literal, not a back reference
     reNoCaptures,   ## `(x)` means the same as `(?:x)`
-    reUnanchored    ## accept a pattern without a search anchor (see
-                    ## `compileRegex`); searching with it can be quadratic
+    reUnanchored    ## compatibility flag; regular searches need no anchor
 
 const
   wordChars* = {'A'..'Z', 'a'..'z', '0'..'9', '_', '\128'..'\255'}
@@ -568,6 +567,7 @@ type
     dest: Label
 
   Nfa = object
+    keepCaptures: bool
     captures, backrefs, stateCount: int ## `0` is the start state
     eps: seq[seq[Label]]     ## per state: where its epsilon edges lead
     trans: seq[seq[NfaEdge]] ## per state: every other edge
@@ -691,11 +691,10 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
         sq.lo[0] = char(lo)
         sq.hi[0] = char(hi)
         seqs.add sq
-    let entry = result + 1
+    let entry = result
     var next = entry + 1
     for sq in seqs: inc next, sq.len - 1
     let exit = next
-    eps a, result, entry
     next = entry + 1
     for sq in seqs:
       var src = entry
@@ -729,12 +728,15 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
     eps a, bb, bb + 1
     result = bb + 1
   of reCapture, reCaptureEnd:
-    a.captures = max(a.captures, int(r.c))
-    trans a, result, Alphabet(kind: reCapture, val: r.c), result + 1
-    inc result
-    result = auxRegExprToNfa(r.a, a, result)
-    trans a, result, Alphabet(kind: reCaptureEnd, val: r.c), result + 1
-    inc result
+    if not a.keepCaptures:
+      result = auxRegExprToNfa(r.a, a, result)
+    else:
+      a.captures = max(a.captures, int(r.c))
+      trans a, result, Alphabet(kind: reCapture, val: r.c), result + 1
+      inc result
+      result = auxRegExprToNfa(r.a, a, result)
+      trans a, result, Alphabet(kind: reCaptureEnd, val: r.c), result + 1
+      inc result
   of reBackref:
     a.backrefs = max(a.backrefs, int(r.c))
     trans a, result, Alphabet(kind: reBackref, val: r.c), result + 1
@@ -743,8 +745,8 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
     if a.toRules.len <= result: a.toRules.setLen result + 1
     a.toRules[result] = r.rule
 
-proc regExprToNfa(r: RegexNode): Nfa =
-  result = default(Nfa)
+proc regExprToNfa(r: RegexNode; keepCaptures: bool): Nfa =
+  result = Nfa(keepCaptures: keepCaptures)
   result.stateCount = auxRegExprToNfa(r, result, 0)
   # states that only ever receive edges, or carry no rule, still get a slot
   grow result, result.stateCount
@@ -1071,8 +1073,8 @@ func onlyByte(cs: set[char]): int =
 # Driver
 # ---------------------------------------------------------------------------
 
-proc buildDfa(big: RegexNode): Dfa =
-  let n = regExprToNfa(big)
+proc buildDfa(big: RegexNode; keepCaptures = true): Dfa =
+  let n = regExprToNfa(big, keepCaptures)
   var classOf = default(array[256, int])
   let letters = Letters(firstByte: byteClasses(n, classOf),
                         markers: markers(n.captures, n.backrefs))
@@ -1150,7 +1152,7 @@ type
   Regex* = object
     ## A compiled regular expression.
     ##
-    ## There may be **two** automata in here. `code` decides the match and is
+    ## There may be **two** automata in here. The table decides the match and is
     ## built with the capture groups turned into plain groups; `capCode`, when
     ## it is not empty, is the same pattern built with the groups kept, and is
     ## run afterwards only to fill in where they landed.
@@ -1164,7 +1166,7 @@ type
     ## the match on the capture-free automaton makes that impossible: at worst
     ## the second run fails and the caller sees a correct match with no capture
     ## bounds.
-    code*: seq[RegexInstr]
+    code*: seq[RegexInstr] ## fallback for backreferences and zero-width cycles
     data*: seq[set[char]]
     startAt*: int
     captures*: int         ## number of capture groups in the pattern
@@ -1175,18 +1177,11 @@ type
                            ## when a match can start without reading one
     firstByte*: int        ## the only byte in `firstBytes`, or `-1`; search
                            ## scans for it a word at a time
-    lit*: string           ## a literal every match contains, or `""`; search
-                           ## looks for it first and asks the automaton only
-                           ## at the starts that can reach it
-    litMin*: int           ## a match has at least this many bytes before `lit`
-    litBack*: seq[int]     ## from `lit` leftwards, how to bound the match's
-                           ## start: step back over at most `litBack[i]` bytes
-    litBackSets*: seq[set[char]] ## …that are in `litBackSets[i]`; `-1` means
-                                 ## no limit
-    leadBytes*: set[char]  ## the pattern is `C* R` or `C+ R` and these bytes
-                           ## match `C` on their own: an attempt that fails at
-                           ## `j` rules out every start in the run of them
-                           ## beginning at `j`, and the one just past it
+    lit*: string           ## required literal, used only as an absence prefilter
+    byteClass*: string    ## 256 byte-to-column indices; never a decoder
+    stride*: int          ## byte classes plus one EOF column
+    transitions*: seq[int32] ## row-major; 0 stops, negative entries accept
+    entry*: int           ## initial row (assertions relative to this start)
 
   Capture* = object ## The bounds of one capture group, both ends inclusive.
     first*: Natural  ## a position in the subject, so never negative
@@ -1196,10 +1191,7 @@ const
   CaptureOpen* = -2 ## `last` while the group is still being matched
 
 func emptyRegex*(): Regex =
-  Regex(code: @[], data: @[], startAt: 0, captures: 0,
-        capCode: @[], capData: @[], capStartAt: 0, firstBytes: {},
-        firstByte: -1, lit: "", litMin: 0, litBack: @[], litBackSets: @[],
-        leadBytes: {})
+  Regex(firstByte: -1)
 
 func genData(c: var Regex; data: set[char]): int32 =
   ## Interns a character set. Sets repeat heavily across a DFA's states, so the
@@ -1285,131 +1277,6 @@ proc countUses(r: RegexNode; caps, backs: var int) =
   countUses(r.a, caps, backs)
   countUses(r.b, caps, backs)
 
-func failsFast(a: Dfa): bool =
-  ## No cycle runs through nonaccepting states only. An attempt then reads at
-  ## most `stateCount` bytes past its last accepting state: a failed attempt is
-  ## short, and a successful one has consumed what it read, so restarting the
-  ## automaton at every position stays linear in the subject.
-  var succs = newSeq[seq[int]](a.stateCount + 1)
-  for src in 1 .. a.stateCount:
-    if getRule(a, src) == 0:
-      for d in allDests(a, src):
-        if getRule(a, d) == 0: succs[src].add d
-  # iterative DFS; `a{2000}` is a chain of 2000 states
-  var color = newSeq[int](a.stateCount + 1) # 0 unseen, 1 on the path, 2 done
-  for root in 1 .. a.stateCount:
-    if color[root] != 0 or getRule(a, root) != 0: continue
-    var path = @[(root, 0)]
-    color[root] = 1
-    while path.len > 0:
-      let (src, i) = path[path.len - 1]
-      if i < succs[src].len:
-        path[path.len - 1] = (src, i + 1)
-        let d = succs[src][i]
-        if color[d] == 1: return false
-        if color[d] == 0:
-          color[d] = 1
-          path.add (d, 0)
-      else:
-        color[src] = 2
-        path.setLen path.len - 1
-  result = true
-
-proc buildInto(pattern: string; flags: set[RegexFlag]; dest: var Regex;
-               err: var string; fastFail: var bool): bool =
-  var dfa = default(Dfa)
-  regexToDfa(pattern, flags, dfa, err)
-  result = err.len == 0
-  if result:
-    genBytecode(dfa, dest)
-    fastFail = failsFast(dfa)
-
-# ---------------------------------------------------------------------------
-# Search anchors
-# ---------------------------------------------------------------------------
-#
-# A search does not have to restart the automaton at every position. When
-# every match contains a literal at the top level of the pattern,
-# `P = A lit B`, `std/rex` finds `lit` with a string search and runs the
-# automaton only from the starts `A` can reach it from. `litBack` describes
-# `A` from right to left so the search can bound those starts without a
-# reverse automaton: each factor of `A` is at most so many bytes long and made
-# of bytes from some set, and walking back over such bytes from the literal
-# can only stop early, never late.
-
-const
-  Unbounded = -1
-  AllBytes* = {'\0' .. '\255'}
-
-proc utf8Len(r: int): int =
-  if r < 0x80: 1
-  elif r < 0x800: 2
-  elif r < 0x10000: 3
-  else: 4
-
-proc lenRange(n: RegexNode; mn, mx: var int) =
-  ## The fewest and the most bytes a match of `n` spans; `mx` is `Unbounded`
-  ## when there is no limit.
-  var amn = 0
-  var amx = 0
-  case n.kind
-  of reEps, reBegin, reEnd, reWordBoundary, reWordBoundaryNot, reCaptureEnd:
-    mn = 0
-    mx = 0
-  of reChar:
-    mx = utf8Len(int(n.r))
-    # 128..255 also match the single byte of that value
-    mn = if int(n.r) in 0x80..0xFF: 1 else: mx
-  of reStr:
-    mn = n.s.len
-    mx = mn
-  of reCClass:
-    if n.cc.len == 0:
-      mn = 0
-      mx = 0
-    else:
-      mn = if n.cc[0].a <= 0xFF: 1 else: utf8Len(n.cc[0].a)
-      mx = utf8Len(n.cc[n.cc.len - 1].b)
-  of reCat, reAlt:
-    lenRange(n.a, amn, amx)
-    lenRange(n.b, mn, mx)
-    if n.kind == reCat:
-      mn = mn + amn
-      mx = if mx == Unbounded or amx == Unbounded: Unbounded else: mx + amx
-    else:
-      mn = min(mn, amn)
-      mx = if mx == Unbounded or amx == Unbounded: Unbounded else: max(mx, amx)
-  of reStar, rePlus, reOpt:
-    lenRange(n.a, amn, amx)
-    mn = if n.kind == rePlus: amn else: 0
-    mx = if n.kind == reOpt or amx == 0: amx else: Unbounded
-  of reCapture:
-    lenRange(n.a, mn, mx)
-  of reBackref:
-    mn = 0
-    mx = Unbounded
-
-proc addBytes(n: RegexNode; dest: var set[char]) =
-  ## Every byte a match of `n` can contain.
-  case n.kind
-  of reChar:
-    for b in toUTF8(n.r): dest.incl b
-    if int(n.r) in 0x80..0xFF: dest.incl char(int(n.r))
-  of reStr:
-    for i in 0 ..< n.s.len: dest.incl n.s[i]
-  of reCClass:
-    for i in 0 ..< n.cc.len:
-      let rg = n.cc[i]
-      if rg.a < 0x80:
-        for c in rg.a .. min(rg.b, 0x7F): dest.incl char(c)
-      if rg.b >= 0x80:
-        dest = dest + {'\128' .. '\255'}
-  of reBackref:
-    dest = AllBytes
-  else:
-    if n.a != nil: addBytes(n.a, dest)
-    if n.b != nil: addBytes(n.b, dest)
-
 proc factors(n: RegexNode; dest: var seq[RegexNode]) =
   ## `n` as the sequence of parts every match is a concatenation of. A group is
   ## its content as far as matching goes, and `x+` is `x x*`, so the first
@@ -1439,88 +1306,153 @@ proc literalOf(n: RegexNode; dest: var string): bool =
   else:
     result = false
 
-proc addSoloBytes(n: RegexNode; dest: var set[char]) =
-  ## The bytes that match the character or class `n` on their own: ASCII, and
-  ## `128..255` where that code point is in it.
-  if n.kind == reChar:
-    if int(n.r) <= 0xFF: dest.incl char(int(n.r))
-  else:
-    for i in 0 ..< n.cc.len:
-      let rg = n.cc[i]
-      for c in max(rg.a, 0) .. min(rg.b, 0xFF): dest.incl char(c)
-
-proc hasKind(n: RegexNode; kinds: set[RegexKind]): bool =
-  n != nil and (n.kind in kinds or hasKind(n.a, kinds) or hasKind(n.b, kinds))
-
-proc findLeadingLoop(fs: seq[RegexNode]; rex: RegexNode; dest: var Regex) =
-  ## `leadBytes`. For `P = C* R` a match from `j'` is also one from any `j`
-  ## before it as long as `s[j ..< j']` is made of `C`: `C* C* = C*`, and the
-  ## same goes for `C+`. `^` (relative to the attempt) and back references
-  ## (which would see a longer group) break that, so they rule it out.
-  if fs.len == 0 or hasKind(rex, {reBegin, reBackref}): return
-  var c: RegexNode = nil
-  if fs[0].kind == reStar and fs[0].a.kind in {reChar, reCClass}:
-    c = fs[0].a
-  elif fs.len >= 2 and fs[0].kind in {reChar, reCClass} and
-      fs[1].kind == reStar and fs[1].a == fs[0]:
-    c = fs[0] # `C+`, which `factors` spells `C C*`
-  if c != nil: addSoloBytes(c, dest.leadBytes)
-
-proc findAnchor(rex: RegexNode; dest: var Regex) =
-  ## Fills in the search hints: `lit`, `litMin`, `litBack` and `litBackSets`
-  ## for the longest run of literal factors and what precedes it, and
-  ## `leadBytes`.
+proc findLiteral(rex: RegexNode): string =
+  ## A required literal is only an absence prefilter. Correctness and search
+  ## complexity do not depend on its position, length, or existence.
   var fs: seq[RegexNode] = @[]
   factors(rex, fs)
-  findLeadingLoop(fs, rex, dest)
-  var best = ""
-  var bestAt = 0
-  var i = 0
-  while i < fs.len:
-    var run = ""
-    var j = i
-    var mn = 0
-    var mx = 0
-    # zero-width factors (`\b`, `$`) do not interrupt a run
-    while j < fs.len:
-      if not literalOf(fs[j], run):
-        lenRange(fs[j], mn, mx)
-        if mx != 0: break
-      inc j
-    if run.len > best.len:
-      best = run
-      bestAt = i
-    i = max(j, i + 1)
-  if best.len == 0: return
-  # `bestAt` is where the run starts, possibly on a zero-width factor that
-  # precedes its first literal; those cost nothing either way.
-  dest.lit = best
-  dest.litMin = 0
-  var k = bestAt - 1
-  while k >= 0:
-    var mn = 0
-    var mx = 0
-    lenRange(fs[k], mn, mx)
-    inc dest.litMin, mn
-    if mx != 0:
-      var bytes: set[char] = {}
-      addBytes(fs[k], bytes)
-      dest.litBack.add mx
-      dest.litBackSets.add bytes
-    dec k
+  result = ""
+  var run = ""
+  for n in fs:
+    if not literalOf(n, run):
+      if run.len > result.len: result = run
+      run = ""
+  if run.len > result.len: result = run
+
+proc tableStep(r: Regex; pcStart, byte: int; initial: bool;
+               labels: seq[int]; cell: var int32): bool =
+  ## Partially evaluate the assertion VM for one byte (256 means EOF).
+  ## Acceptance precedes consumption. Complementing the destination records
+  ## it without adding a second word to every transition.
+  var pc = pcStart
+  var accepts = false
+  var steps = 0
+  while steps <= r.code.len:
+    inc steps
+    let instr = r.code[pc]
+    let arg = int(instr.arg)
+    var take = false
+    case instr.opc
+    of opcAccept:
+      accepts = true
+      inc pc
+    of opcRet, opcRetAccept:
+      cell = if accepts or instr.opc == opcRetAccept: -1'i32 else: 0'i32
+      return true
+    of opcTestSet, opcTestChar:
+      take = byte < 256 and (if instr.opc == opcTestChar: byte == arg
+                             else: char(byte) in r.data[arg])
+      if take:
+        cell = int32(labels[int(r.code[pc + 1].arg)])
+        if accepts: cell = not cell
+        return true
+      inc pc, 2
+    of opcBegin, opcEnd, opcWordBound:
+      case instr.opc
+      of opcBegin: take = initial
+      of opcEnd: take = byte == 256
+      else: take = byte == 256 or initial or char(byte) notin r.data[arg]
+      if take: pc = int(r.code[pc + 1].arg)
+      else: inc pc, 2
+    else:
+      return false # captures/backreferences require the VM's registers
+  # A zero-width cycle cannot be flattened; preserve its VM behavior.
+  result = false
+
+proc genTable(a: Dfa; r: var Regex): bool =
+  ## Byte classes already partition the NFA. Assertions additionally distinguish
+  ## word/nonword bytes; no Unicode operation remains in the executor.
+  var hasAssertions = false
+  for edges in a.trans:
+    for edge in edges:
+      if edge.letter >= classCount(a.letters): hasAssertions = true
+  if hasAssertions: genBytecode(a, r)
+  var starts: set[char] = {'\0'}
+  for i in 0 ..< classCount(a.letters): starts.incl char(a.letters.firstByte[i])
+  for instr in r.code:
+    if instr.opc == opcWordBound:
+      let cs = r.data[int(instr.arg)]
+      for b in 1 .. 255:
+        if (char(b) in cs) != (char(b-1) in cs): starts.incl char(b)
+  var bytes: seq[int] = @[]
+  r.byteClass = ""
+  for b in 0 .. 255:
+    if char(b) in starts: bytes.add b
+    r.byteClass.add char(bytes.len - 1)
+  bytes.add 256
+  r.stride = bytes.len
+  r.firstBytes = firstBytes(a)
+  r.firstByte = onlyByte(r.firstBytes)
+  if not hasAssertions:
+    # The common path lowers straight from the DFA. No VM program, jump
+    # patching, character-set interning, or initial-context row is needed.
+    r.entry = a.startState
+    r.transitions = newSeq[int32]((a.stateCount + 1) * r.stride)
+    for state in 1 .. a.stateCount:
+      for edge in a.trans[state]:
+        r.transitions[state * r.stride + edge.letter] = edge.dest
+      if getRule(a, state) != 0:
+        for c in 0 ..< r.stride:
+          let at = state * r.stride + c
+          let dest = r.transitions[at]
+          # An accepting successor supersedes this position. Record it only
+          # on a stop or on departure from the accepting part of the DFA.
+          if dest == 0 or getRule(a, int(dest)) == 0:
+            r.transitions[at] = not dest
+    return true
+  var pcs: seq[int] = @[r.startAt]
+  var labels = newSeq[int](r.code.len)
+  labels[r.startAt] = 1
+  for instr in r.code:
+    if instr.opc == opcTJmp and labels[int(instr.arg)] == 0:
+      pcs.add int(instr.arg)
+      labels[int(instr.arg)] = pcs.len
+  r.entry = pcs.len + 1
+  var cells = newSeq[int32]((pcs.len + 2) * r.stride)
+  for state in 1 .. r.entry:
+    let pc = if state == r.entry: r.startAt else: pcs[state - 1]
+    for c in 0 ..< bytes.len:
+      var cell = 0'i32
+      if not tableStep(r, pc, bytes[c], state == r.entry, labels, cell): return false
+      cells[state * r.stride + c] = cell
+  r.transitions = move cells
+  r.code = @[]
+  r.data = @[]
+  result = true
+
+proc compactColumns(r: var Regex) =
+  ## NFA range boundaries can cease to matter after DFA minimization. Join
+  ## adjacent identical columns, including the UTF-8 partitions of `.+`.
+  let rows = r.transitions.len div r.stride
+  var columns: seq[int] = @[0]
+  var remap = newSeq[int](r.stride)
+  for c in 1 ..< r.stride - 1:
+    var same = true
+    for state in 1 ..< rows:
+      if r.transitions[state * r.stride + c] != r.transitions[state * r.stride + c-1]:
+        same = false
+        break
+    if not same: columns.add c
+    remap[c] = columns.len - 1
+  columns.add r.stride - 1 # EOF remains a separate input symbol
+  if columns.len < r.stride:
+    var cells = newSeq[int32](rows * columns.len)
+    for state in 1 ..< rows:
+      for c in 0 ..< columns.len:
+        cells[state * columns.len + c] = r.transitions[state * r.stride + columns[c]]
+    for b in 0 ..< r.byteClass.len:
+      r.byteClass[b] = char(remap[ord(r.byteClass[b])])
+    r.stride = columns.len
+    r.transitions = move cells
 
 proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
                    err: var string; requireAnchor = false): bool =
   ## Pattern text to finished automaton. `false` with a message in `err` for a
   ## pattern this engine cannot express; `dest` then matches nothing.
   ##
-  ## With `requireAnchor` (and without `reUnanchored`) a pattern must also be
-  ## safe to search with: every match contains a literal (`\w+@\w+`), or an
-  ## attempt cannot fail after reading more than a bounded number of bytes
-  ## (`\d+`, `\w\d+`, `a{3,9}b`; see `failsFast`). Otherwise a search can
-  ## take time quadratic in the subject: `^\d+$` (`^` is relative to the
-  ## attempt), `a|a*b`. A literal is a heuristic, not a guarantee:
-  ## `(?:a|ab)*c` passes and is still quadratic on `"abab…abbc"`.
+  ## `requireAnchor` and `reUnanchored` are retained for source compatibility.
+  ## Regular searches now merge equivalent attempts rather than rejecting
+  ## patterns based on a heuristic. Backreferences still use the register VM.
   dest = emptyRegex()
   err = ""
   var e = ""
@@ -1542,32 +1474,18 @@ proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
   # pattern that has one must decide its match on the automaton that tracks the
   # groups. Everything else decides on the capture-free one — see `Regex`.
   let splitCaptures = caps > 0 and backs == 0
-  let matchFlags = if splitCaptures: flags + {reNoCaptures} else: flags
-  var fastFail = false
-  if not buildInto(pattern, matchFlags, dest, err, fastFail):
-    dest = emptyRegex()
-    return false
-  findAnchor(rex, dest)
-  if requireAnchor and reUnanchored notin flags and dest.lit.len == 0 and
-      not fastFail:
-    dest = emptyRegex()
-    err = "regular expression without an anchor: searching with it can " &
-          "take time quadratic in the subject. Give it a literal that " &
-          "every match contains, or add `reUnanchored` to the flags (keeping " &
-          "`reExtended`) when it is only used with `match` or on short " &
-          "subjects"
-    return false
+  rex.rule = 1
+  let dfa = buildDfa(rex, not splitCaptures)
+  if backs == 0:
+    if genTable(dfa, dest): compactColumns(dest)
+  else: genBytecode(dfa, dest)
+  dest.lit = findLiteral(rex)
   if splitCaptures:
     var withCaps = emptyRegex()
-    var unused = false
-    if buildInto(pattern, flags, withCaps, err, unused):
-      dest.capCode = withCaps.code
-      dest.capData = withCaps.data
-      dest.capStartAt = withCaps.startAt
-    else:
-      # The capture automaton is an extra, never a reason to reject the
-      # pattern: matching still works, `capture` just returns "".
-      err = ""
+    genBytecode(buildDfa(rex), withCaps)
+    dest.capCode = move withCaps.code
+    dest.capData = move withCaps.data
+    dest.capStartAt = withCaps.startAt
   dest.captures = caps
   result = true
 
@@ -1694,20 +1612,106 @@ func matchWithCaptures(code: seq[RegexInstr]; data: seq[set[char]];
   ## `caps` to the last accepting state.
   result = run[true](code, data, startAt, s, caps, start, endPos)
 
+func tableMatch(r: Regex; s: string; start: Natural; endPos: var int): int =
+  result = 0
+  endPos = start
+  var state = r.entry
+  var pos = start
+  while state != 0:
+    let col = if pos < s.len: ord(r.byteClass[ord(s[pos])]) else: r.stride - 1
+    var cell = r.transitions[state * r.stride + col]
+    if cell < 0:
+      result = 1
+      endPos = pos
+      cell = not cell
+    state = int(cell)
+    inc pos
+
+type
+  SearchThread = object
+    state, first: int
+
+func findByte*(s: string; b: char; pos, stop: Natural): int
+    {.requires: stop <= s.len, ensures: result >= 0 and result <= s.len.} =
+  ## The first position of `b` in `pos ..< stop`; `stop` when there is none.
+  var i: Natural = pos
+  # Eight bytes at a time: `w` has a zero byte where `s` has `b`, and the
+  # test below is true exactly when it has one. The byte loop then finds it.
+  let ones = 0x0101010101010101'u64
+  let pattern = ones * uint64(ord(b))
+  let raw = readRawData(s)
+  while i < stop - 7:
+    var w = 0'u64
+    copyMem(addr w, addr raw[i], 8)
+    w = w xor pattern
+    if ((w - ones) and not w and (ones shl 7)) != 0: break
+    inc i, 8
+  while i < stop:
+    if s[i] == b: return i
+    inc i
+  result = stop
+
+func skipToCandidate*(s: string; r: Regex; pos, stop: Natural): int
+    {.requires: stop <= s.len, ensures: result >= 0 and result <= s.len.} =
+  ## The first position in `pos ..< stop` where a match can start; `stop` when
+  ## there is none.
+  if r.firstByte >= 0: return findByte(s, char(r.firstByte), pos, stop)
+  var i: Natural = pos
+  let first = r.firstBytes # read in the loop, it is copied every iteration
+  while i < stop:
+    if s[i] in first: return i
+    inc i
+  result = stop
+
+func searchTable*(r: Regex; s: string; start: Natural): (int, int) =
+  ## All attempts advance together. At a byte boundary, equal states have
+  ## identical futures, so the oldest attempt dominates every newer one.
+  ## Frontiers stay ordered by start; the first arrival owns each next state.
+  ## O(subject bytes * DFA states) time and O(DFA states) scratch space.
+  result = (-1, 0)
+  var active: seq[SearchThread] = @[]
+  var next: seq[SearchThread] = @[]
+  var seen = newSeq[int](r.transitions.len div r.stride)
+  var pos = start
+  var best = -1
+  var endPos = start
+  while pos <= s.len:
+    if active.len == 0 and best < 0:
+      pos = skipToCandidate(s, r, pos, s.len)
+    if best < 0: active.add SearchThread(state: r.entry, first: pos)
+    let col = if pos < s.len: ord(r.byteClass[ord(s[pos])]) else: r.stride - 1
+    for t in active:
+      if best < 0 or t.first <= best:
+        var cell = r.transitions[t.state * r.stride + col]
+        if cell < 0:
+          best = t.first
+          endPos = pos
+          cell = not cell
+        let state = int(cell)
+        if state != 0 and seen[state] != pos + 1:
+          seen[state] = pos + 1
+          next.add SearchThread(state: state, first: t.first)
+    swap(active, next)
+    next.setLen 0
+    if active.len == 0 and best >= 0: break
+    inc pos
+  if best >= 0: result = (best, endPos - best)
+
 func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
            endPos: var int): int =
   ## Matches `r` at `start`. Returns the rule that matched (`0` for none),
   ## reports the position just past the match in `endPos` and fills `caps` with
   ## the capture bounds.
   ##
-  ## The match is decided by `r.code`; `r.capCode`, when present, runs
+  ## The table (or backreference VM) decides the match; `capCode` runs
   ## afterwards purely for the bounds and is allowed to come up empty-handed
   ## without changing the answer.
   caps.setLen 0
-  # Only a pattern without groups is known to need no capture bookkeeping.
-  # With groups but no back references `code` has none either, but telling
-  # the two apart costs more per call than the bookkeeping saves.
-  if r.captures == 0:
+  # Regular matching never touches capture registers. The register VM is
+  # retained for backreferences and for the best-effort capture replay.
+  if r.transitions.len > 0:
+    result = tableMatch(r, s, start, endPos)
+  elif r.captures == 0:
     result = matchOnly(r.code, r.data, r.startAt, s, caps, start, endPos)
   else:
     result = matchWithCaptures(r.code, r.data, r.startAt, s, caps, start, endPos)

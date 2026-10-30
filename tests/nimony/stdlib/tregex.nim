@@ -186,9 +186,9 @@ proc literalSearch() =
   # a pattern from outside the program is checked like a literal one
   var r = default(Regex)
   var err = ""
-  assert not tryRe(r"^\d+$", r, err)
-  assert err.len > 0
-  assert isEmpty(r)
+  assert tryRe(r"^\d+$", r, err)
+  assert err.len == 0
+  assert not isEmpty(r)
   assert tryRe(r"^\d+$", r, err, {reExtended, reUnanchored})
   assert fullMatch("123", r)
   assert tryRe(r"\w+@\w+", r, err)

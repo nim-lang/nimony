@@ -9,8 +9,8 @@
 
 ## Regular expressions, and a lexer generator built on the same engine.
 ##
-## The engine is a DFA: a pattern is turned into a deterministic automaton
-## once, and matching then costs one table step per input character with no
+## The engine is a byte DFA: a pattern is turned into a deterministic automaton
+## once, and matching then costs one table step per input byte with no
 ## backtracking. That is what makes the worst case linear — there is no input
 ## that makes `(a+)+b` take exponential time here — and it is also what bounds
 ## what the module can express: a capture must lie on every accepting path
@@ -59,35 +59,21 @@
 ## =========
 ##
 ## `find`, `findBounds`, `findAll`, `replace` and `split` look for a match
-## anywhere in the subject. A naive search restarts the automaton at every
-## position, and a pattern whose attempts read far before they fail —
-## `\w+@\w+` over a long run of letters — then costs time quadratic in the
-## subject. Two things keep that from happening:
+## anywhere in the subject. Search advances candidate starts together and
+## retains only the earliest start reaching each automaton state. For a fixed
+## pattern, a search is linear in the subject even without a required literal.
+## Its scratch space is proportional to the automaton, not the subject.
+## Repeated searches (`findAll`, `replace`, `split`) can still rescan suffixes
+## when a short successful match required long lookahead.
+## A required literal, when available, also provides a fast absence check.
 ##
-## * When every match contains a literal (the `@` above), the search looks for
-##   the literal with a string search and runs the automaton only from the
-##   starts that can reach it. No occurrence means no automaton at all.
-## * When the pattern starts with a loop (`\w+`, `.*`), a failed attempt rules
-##   out the whole run of bytes that loop could have read.
-##
-## A `re` without an anchor is a **compile-time error**: one with no such
-## literal and whose attempts can fail after reading an unbounded number of
-## bytes — `^\d+$` (`^` is relative to the attempt), `a|a*b`. Patterns whose
-## attempts cannot fail late are fine without a literal: `\d+`, `[a-z]\w*`,
-## `\w\d+`, `a{2,9}b`. The check catches the common mistakes; it is not a
-## proof. A literal only guarantees that a subject without it costs one scan:
-## `(?:a|ab)*c` on `"abab…abbc"` is still quadratic. When the
-## pattern is only used with `match` and friends, or on subjects known to be
-## short, say so with `reUnanchored`. Explicit flags replace the default, so
-## keep `reExtended`:
-##
-##   ```nim
-##   let line = re(r"^\d+$", {reExtended, reUnanchored})
-##   ```
-##
-## `tryRe` applies the same check and reports it through `err`: a pattern
-## from outside the program is exactly where a careless or hostile one comes
-## from.
+## This bound applies to regular patterns, including assertions and captures
+## without backreferences. Backreferences depend on captured text and keep
+## the register interpreter; searching with those can still be quadratic.
+## Zero-width assertion cycles also retain the interpreter's behavior.
+## `reUnanchored` remains accepted for source compatibility but is no longer
+## needed: patterns such as `^\d+$` can be compiled normally. As before, `^`
+## is relative to each attempted match, not to the beginning of the subject.
 ##
 ## Captures
 ## ========
@@ -188,12 +174,8 @@ template re*(pattern: string): Regex {.plugin: "deps/regex".}
   ##   ```
   ##
   ## `pattern` must be a string literal. A malformed one is a compile-time
-  ## error naming what is wrong with it, and so is one that searching could
-  ## make quadratic (see *Searching*). No automaton is built at run time:
-  ## what reaches the binary is the finished program the matcher walks. That
-  ## matters more than it sounds — the subset construction runs over a
-  ## 260-letter alphabet, so building even a small regex at start-up costs far
-  ## more than matching with it ever will.
+  ## error naming what is wrong with it. No automaton is built at run time:
+  ## what reaches the binary is the finished byte-class transition table.
   ##
   ## A `re` in a loop still rebuilds its (small) literal on every iteration;
   ## bind it to a `let` outside the loop, as above.
@@ -214,15 +196,13 @@ proc tryRe*(pattern: string; dest: var Regex; err: var string;
   ##
   ## This is the form to use on a pattern that came from outside the program.
   ## An invalid pattern is then an ordinary input rather than a bug, and its
-  ## diagnostic is something to show, not something to crash on. A pattern
-  ## that searching could make quadratic is rejected just like with `re`
-  ## (see *Searching*) unless `flags` contains `reUnanchored`.
+  ## diagnostic is something to show, not something to crash on.
   compileRegex(pattern, flags, dest, err, requireAnchor = true)
 
 func isEmpty*(r: Regex): bool {.inline.} =
   ## True for a regex that never matches — what `tryRe` leaves behind when it
   ## fails.
-  r.code.len == 0
+  r.code.len == 0 and r.transitions.len == 0
 
 func captureCount*(r: Regex): int {.inline.} =
   ## The number of capture groups in `r`.
@@ -231,38 +211,6 @@ func captureCount*(r: Regex): int {.inline.} =
 # ---------------------------------------------------------------------------
 # Matching
 # ---------------------------------------------------------------------------
-
-func findByte(s: string; b: char; pos, stop: Natural): int
-    {.requires: stop <= s.len, ensures: result >= 0 and result <= s.len.} =
-  ## The first position of `b` in `pos ..< stop`; `stop` when there is none.
-  var i: Natural = pos
-  # Eight bytes at a time: `w` has a zero byte where `s` has `b`, and the
-  # test below is true exactly when it has one. The byte loop then finds it.
-  let ones = 0x0101010101010101'u64
-  let pattern = ones * uint64(ord(b))
-  let raw = readRawData(s)
-  while i < stop - 7:
-    var w = 0'u64
-    copyMem(addr w, addr raw[i], 8)
-    w = w xor pattern
-    if ((w - ones) and not w and (ones shl 7)) != 0: break
-    inc i, 8
-  while i < stop:
-    if s[i] == b: return i
-    inc i
-  result = stop
-
-func skipToCandidate(s: string; r: Regex; pos, stop: Natural): int
-    {.requires: stop <= s.len, ensures: result >= 0 and result <= s.len.} =
-  ## The first position in `pos ..< stop` where a match can start; `stop` when
-  ## there is none.
-  if r.firstByte >= 0: return findByte(s, char(r.firstByte), pos, stop)
-  var i: Natural = pos
-  let first = r.firstBytes # read in the loop, it is copied every iteration
-  while i < stop:
-    if s[i] in first: return i
-    inc i
-  result = stop
 
 func matchLen*(s: string; r: Regex; caps: var seq[Capture]; start = 0): int =
   ## The length of the longest match of `r` starting exactly at `start`, or
@@ -298,11 +246,8 @@ func fullMatch*(s: string; r: Regex; caps: var seq[Capture]; start = 0): bool =
 # Search
 # ---------------------------------------------------------------------------
 #
-# A pattern with a literal every match contains (`regexcore.findAnchor`) is
-# not restarted at every position. The search finds the literal first and
-# asks the automaton only about the starts that can reach that occurrence.
-# Every start is tried at most once, in increasing order, so the first that
-# matches is the leftmost match — exactly what the per-position loop finds.
+# The literal is an absence prefilter only. The automaton owns candidate
+# merging and longest-match selection; there is no backwards prefix walk.
 
 func findLit(s, lit: string; start: Natural): int
     {.requires: lit.len > 0, ensures: result < s.len.} =
@@ -320,64 +265,34 @@ func findLit(s, lit: string; start: Natural): int
     inc i
   result = -1
 
-func lowerBound(s: string; r: Regex; k, floor: int): int
-    {.requires: k <= s.len and floor >= 0, ensures: result >= floor.} =
-  ## The leftmost start a match using the literal at `k` can have, but never
-  ## less than `floor`. Walking back over the bytes the factors before the
-  ## literal are made of can only stop early, and it never moves left when `k`
-  ## moves right, so starts the search skips below it are never needed later.
-  var e = k
-  for i in 0 ..< min(r.litBack.len, r.litBackSets.len):
-    let limit = r.litBack[i]
-    let bytes = r.litBackSets[i]
-    if limit < 0 and bytes == AllBytes: return floor
-    var stop: Natural = floor
-    if limit >= 0:
-      let x = e - limit
-      if x > floor: stop = x
-    while e > stop and e <= s.len and s[e - 1] in bytes: dec e
-    if e <= floor: return floor
-  result = max(e, floor)
-
-func pastFailure(s: string; r: Regex; j: Natural): int
-    {.ensures: result > j.} =
-  ## The next start worth trying after an attempt at `j` failed: past the run
-  ## of `leadBytes` at `j`, and past the byte that ends it.
-  var p: Natural = j
-  while p < s.len and s[p] in r.leadBytes: inc p
-  result = p + 1
-
 func search(s: string; r: Regex; caps: var seq[Capture];
-            start: Natural): (int, int) {.inline.} =
-  ## The leftmost match at or after `start` as `(first, length)`, or `(-1, 0)`.
-  if r.lit.len == 0:
+            start: Natural): (int, int) =
+  caps.setLen 0
+  if start > s.len: return (-1, 0)
+  # A singleton first byte already gets the same word-at-a-time scan when
+  # seeding the automaton; do not scan twice for that same literal.
+  if r.lit.len > 0 and (r.lit.len != 1 or r.firstByte != ord(r.lit[0])):
+    if findLit(s, r.lit, start) < 0: return (-1, 0)
+  if r.transitions.len > 0:
+    # The first candidate often succeeds (tokenization, anchored inputs).
+    # One scalar attempt avoids frontier allocation in that case. On failure
+    # the merged search still bounds the whole operation by O(bytes * states).
+    let first = skipToCandidate(s, r, start, s.len)
+    let length = matchLen(s, r, caps, first)
+    if length >= 0: return (first, length)
+    result = searchTable(r, s, first + 1)
+    if result[0] >= 0 and r.captures > 0:
+      discard matchLen(s, r, caps, result[0])
+  else:
+    # Backreferences depend on captured text, so state equality alone cannot
+    # merge these attempts. Keep their established register-VM semantics.
     var i: Natural = start
     while i <= s.len:
       i = skipToCandidate(s, r, i, s.len)
-      let L = matchLen(s, r, caps, i)
-      if L >= 0: return (i, L)
-      i = pastFailure(s, r, i)
-    return (-1, 0)
-  var tried: Natural = start # every start below this one has been ruled out
-  var k = start + max(r.litMin, 0)
-  while true:
-    k = findLit(s, r.lit, k)
-    if k < 0: return (-1, 0)
-    var hi = k - r.litMin
-    if hi >= s.len: hi = s.len - 1
-    var j: int = tried
-    if r.litBack.len > 0: j = lowerBound(s, r, k, tried)
-    elif k > tried: j = k
-    while j <= hi:
-      # only an optimization: `matchLen` at a byte no match starts with fails
-      # at once
-      if j < hi: j = skipToCandidate(s, r, j, hi + 1)
-      if j > hi: break
-      let L = matchLen(s, r, caps, j)
-      if L >= 0: return (j, L)
-      j = pastFailure(s, r, j)
-    if j > tried: tried = j
-    inc k
+      let length = matchLen(s, r, caps, i)
+      if length >= 0: return (i, length)
+      inc i
+    result = (-1, 0)
 
 func findBounds*(s: string; r: Regex; caps: var seq[Capture];
                  start = 0): (int, int) =
