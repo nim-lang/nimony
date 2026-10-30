@@ -10,7 +10,7 @@ proc basics =
   assert match("(a b c)", re"\( .* \)")
   assert match("while", re"while")
   assert match("0158787", re"\d+")
-  assert match("ABC 0232", re"\w+\s+\d+")
+  assert match("ABC 0232", re(r"\w+\s+\d+", {reExtended, reUnanchored}))
   assert match("ABC", re"\d+ | \w+")
   assert matchLen("key", re"\w+") == 3
   assert matchLen("key1=  cal9", re"[a-z0-9]+\s*=\s*[a-z0-9]+") == 11
@@ -85,7 +85,7 @@ proc capturing =
   assert capture("key=value", caps, 1) == "value"
   assert captureTexts("key=value", caps).len == 2
   # a back reference has to repeat what the group captured
-  assert matchLen("'haha'", re"(\`|\')[^`']*\1") == 6
+  assert matchLen("'haha'", re(r"(\`|\')[^`']*\1", {reExtended, reUnanchored})) == 6
   assert matchLen("aaaaabcc", re"((a+)b(c)\2)") == 8
   echo "capturing ok"
 
@@ -151,6 +151,49 @@ proc runtimePatterns =
   assert not fullMatch("abbbbbbbbb", r)
   echo "runtime patterns ok"
 
+proc literalSearch() =
+  # adjacent loops are separate loops: `a*b*` does not read an `a` after a `b`
+  assert matchLen("ababc", re"a*b*c") == -1
+  assert matchLen("aabbc", re"a*b*c") == 5
+  assert findBounds("ababc abc", re"a*b*c") == (2, 4)
+
+  # a search finds the literal first and only then runs the automaton; the
+  # result must be the one the per-position search gives
+  proc perPosition(s: string; r: Regex): (int, int) =
+    var i = 0
+    while i <= s.len:
+      let L = matchLen(s, r, i)
+      if L >= 0: return (i, i + L - 1)
+      inc i
+    result = (-1, 0)
+  let pats = @[re"\w+@\w+", re"a+b", re"[a-z]{1,3}@", re"(\w+)\s*=\s*(\w+)",
+               re"x\w*y", re"\d\d-\d+", re"(?:ab)+c", re"\bfoo\b", re"a*b*c",
+               re"[^,]*,x", re"ab|abc", re"\w+(@)x", re"\s*=", re"é+x", re"é\w+",
+               re"\w+\s+0"]
+  let subjects = @["", "a", "abc", "aaaab", "x@y@z", "foo bar foo",
+    "aa ab@ abcd@e", "k = v", "xyy xzy", "12-345 6-7", "ababc abc", "aabbcc c",
+    ",x a,,x", "abcabc", "a@x b@@x", "  =", "ééx éx", "aaaa!@x", "foofoo foo.",
+    "éa é", "ab 0 cd  0"]
+  for p in pats:
+    for s in subjects:
+      assert findBounds(s, p) == perPosition(s, p)
+  assert find("aaaa!@x", re"\w+@x") == -1
+  var n = 0
+  for (a, b) in findAll("a@b c@d", re"\w@\w"): inc n
+  assert n == 2
+  assert replace("k=v, k2 = v2", re"\w+\s*=\s*\w+", "X") == "X, X"
+  assert split("a;b;;c", re";") == @["a", "b", "", "c"]
+  # a pattern from outside the program is checked like a literal one
+  var r = default(Regex)
+  var err = ""
+  assert not tryRe(r"^\d+$", r, err)
+  assert err.len > 0
+  assert isEmpty(r)
+  assert tryRe(r"^\d+$", r, err, {reExtended, reUnanchored})
+  assert fullMatch("123", r)
+  assert tryRe(r"\w+@\w+", r, err)
+  echo "literal search ok"
+
 basics()
 anchoring()
 searching()
@@ -159,3 +202,4 @@ capturing()
 captureDegradation()
 characterClasses()
 runtimePatterns()
+literalSearch()

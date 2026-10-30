@@ -69,7 +69,9 @@ type
   RegexFlag* = enum ## how a pattern is parsed
     reExtended,     ## ignore unescaped spaces and tabs
     reNoBackrefs,   ## treat `\1` as a character literal, not a back reference
-    reNoCaptures    ## `(x)` means the same as `(?:x)`
+    reNoCaptures,   ## `(x)` means the same as `(?:x)`
+    reUnanchored    ## accept a pattern without a search anchor (see
+                    ## `compileRegex`); searching with it can be quadratic
 
 const
   wordChars* = {'A'..'Z', 'a'..'z', '0'..'9', '_', '\128'..'\255'}
@@ -704,11 +706,13 @@ proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
       transBytes a, src, sq.lo[sq.len - 1], sq.hi[sq.len - 1], exit
     result = exit
   of reStar:
-    # one transition too many is drawn here, which is harmless
-    let aa = auxRegExprToNfa(r.a, a, result)
-    eps a, result, aa + 1
-    eps a, aa, aa + 1
-    eps a, aa + 1, result
+    # The loop needs an entry state of its own: looping back to `result`, where
+    # the preceding factor ends, made `a*b*` read an `a` after a `b`.
+    let entry = result + 1
+    eps a, result, entry
+    let aa = auxRegExprToNfa(r.a, a, entry)
+    eps a, aa, entry
+    eps a, entry, aa + 1
     result = aa + 1
   of rePlus:
     result = auxRegExprToNfa(catExpr(r.a, starExpr(r.a)), a, result)
@@ -1171,6 +1175,18 @@ type
                            ## when a match can start without reading one
     firstByte*: int        ## the only byte in `firstBytes`, or `-1`; search
                            ## scans for it a word at a time
+    lit*: string           ## a literal every match contains, or `""`; search
+                           ## looks for it first and asks the automaton only
+                           ## at the starts that can reach it
+    litMin*: int           ## a match has at least this many bytes before `lit`
+    litBack*: seq[int]     ## from `lit` leftwards, how to bound the match's
+                           ## start: step back over at most `litBack[i]` bytes
+    litBackSets*: seq[set[char]] ## …that are in `litBackSets[i]`; `-1` means
+                                 ## no limit
+    leadBytes*: set[char]  ## the pattern is `C* R` or `C+ R` and these bytes
+                           ## match `C` on their own: an attempt that fails at
+                           ## `j` rules out every start in the run of them
+                           ## beginning at `j`, and the one just past it
 
   Capture* = object ## The bounds of one capture group, both ends inclusive.
     first*: Natural  ## a position in the subject, so never negative
@@ -1182,7 +1198,8 @@ const
 func emptyRegex*(): Regex =
   Regex(code: @[], data: @[], startAt: 0, captures: 0,
         capCode: @[], capData: @[], capStartAt: 0, firstBytes: {},
-        firstByte: -1)
+        firstByte: -1, lit: "", litMin: 0, litBack: @[], litBackSets: @[],
+        leadBytes: {})
 
 func genData(c: var Regex; data: set[char]): int32 =
   ## Interns a character set. Sets repeat heavily across a DFA's states, so the
@@ -1268,17 +1285,242 @@ proc countUses(r: RegexNode; caps, backs: var int) =
   countUses(r.a, caps, backs)
   countUses(r.b, caps, backs)
 
+func failsFast(a: Dfa): bool =
+  ## No cycle runs through nonaccepting states only. An attempt then reads at
+  ## most `stateCount` bytes past its last accepting state: a failed attempt is
+  ## short, and a successful one has consumed what it read, so restarting the
+  ## automaton at every position stays linear in the subject.
+  var succs = newSeq[seq[int]](a.stateCount + 1)
+  for src in 1 .. a.stateCount:
+    if getRule(a, src) == 0:
+      for d in allDests(a, src):
+        if getRule(a, d) == 0: succs[src].add d
+  # iterative DFS; `a{2000}` is a chain of 2000 states
+  var color = newSeq[int](a.stateCount + 1) # 0 unseen, 1 on the path, 2 done
+  for root in 1 .. a.stateCount:
+    if color[root] != 0 or getRule(a, root) != 0: continue
+    var path = @[(root, 0)]
+    color[root] = 1
+    while path.len > 0:
+      let (src, i) = path[path.len - 1]
+      if i < succs[src].len:
+        path[path.len - 1] = (src, i + 1)
+        let d = succs[src][i]
+        if color[d] == 1: return false
+        if color[d] == 0:
+          color[d] = 1
+          path.add (d, 0)
+      else:
+        color[src] = 2
+        path.setLen path.len - 1
+  result = true
+
 proc buildInto(pattern: string; flags: set[RegexFlag]; dest: var Regex;
-               err: var string): bool =
+               err: var string; fastFail: var bool): bool =
   var dfa = default(Dfa)
   regexToDfa(pattern, flags, dfa, err)
   result = err.len == 0
-  if result: genBytecode(dfa, dest)
+  if result:
+    genBytecode(dfa, dest)
+    fastFail = failsFast(dfa)
+
+# ---------------------------------------------------------------------------
+# Search anchors
+# ---------------------------------------------------------------------------
+#
+# A search does not have to restart the automaton at every position. When
+# every match contains a literal at the top level of the pattern,
+# `P = A lit B`, `std/rex` finds `lit` with a string search and runs the
+# automaton only from the starts `A` can reach it from. `litBack` describes
+# `A` from right to left so the search can bound those starts without a
+# reverse automaton: each factor of `A` is at most so many bytes long and made
+# of bytes from some set, and walking back over such bytes from the literal
+# can only stop early, never late.
+
+const
+  Unbounded = -1
+  AllBytes* = {'\0' .. '\255'}
+
+proc utf8Len(r: int): int =
+  if r < 0x80: 1
+  elif r < 0x800: 2
+  elif r < 0x10000: 3
+  else: 4
+
+proc lenRange(n: RegexNode; mn, mx: var int) =
+  ## The fewest and the most bytes a match of `n` spans; `mx` is `Unbounded`
+  ## when there is no limit.
+  var amn = 0
+  var amx = 0
+  case n.kind
+  of reEps, reBegin, reEnd, reWordBoundary, reWordBoundaryNot, reCaptureEnd:
+    mn = 0
+    mx = 0
+  of reChar:
+    mx = utf8Len(int(n.r))
+    # 128..255 also match the single byte of that value
+    mn = if int(n.r) in 0x80..0xFF: 1 else: mx
+  of reStr:
+    mn = n.s.len
+    mx = mn
+  of reCClass:
+    if n.cc.len == 0:
+      mn = 0
+      mx = 0
+    else:
+      mn = if n.cc[0].a <= 0xFF: 1 else: utf8Len(n.cc[0].a)
+      mx = utf8Len(n.cc[n.cc.len - 1].b)
+  of reCat, reAlt:
+    lenRange(n.a, amn, amx)
+    lenRange(n.b, mn, mx)
+    if n.kind == reCat:
+      mn = mn + amn
+      mx = if mx == Unbounded or amx == Unbounded: Unbounded else: mx + amx
+    else:
+      mn = min(mn, amn)
+      mx = if mx == Unbounded or amx == Unbounded: Unbounded else: max(mx, amx)
+  of reStar, rePlus, reOpt:
+    lenRange(n.a, amn, amx)
+    mn = if n.kind == rePlus: amn else: 0
+    mx = if n.kind == reOpt or amx == 0: amx else: Unbounded
+  of reCapture:
+    lenRange(n.a, mn, mx)
+  of reBackref:
+    mn = 0
+    mx = Unbounded
+
+proc addBytes(n: RegexNode; dest: var set[char]) =
+  ## Every byte a match of `n` can contain.
+  case n.kind
+  of reChar:
+    for b in toUTF8(n.r): dest.incl b
+    if int(n.r) in 0x80..0xFF: dest.incl char(int(n.r))
+  of reStr:
+    for i in 0 ..< n.s.len: dest.incl n.s[i]
+  of reCClass:
+    for i in 0 ..< n.cc.len:
+      let rg = n.cc[i]
+      if rg.a < 0x80:
+        for c in rg.a .. min(rg.b, 0x7F): dest.incl char(c)
+      if rg.b >= 0x80:
+        dest = dest + {'\128' .. '\255'}
+  of reBackref:
+    dest = AllBytes
+  else:
+    if n.a != nil: addBytes(n.a, dest)
+    if n.b != nil: addBytes(n.b, dest)
+
+proc factors(n: RegexNode; dest: var seq[RegexNode]) =
+  ## `n` as the sequence of parts every match is a concatenation of. A group is
+  ## its content as far as matching goes, and `x+` is `x x*`, so the first
+  ## copy of a repeated literal is at a fixed place too.
+  case n.kind
+  of reCat:
+    factors(n.a, dest)
+    factors(n.b, dest)
+  of reCapture:
+    factors(n.a, dest)
+  of rePlus:
+    factors(n.a, dest)
+    dest.add starExpr(n.a)
+  else:
+    dest.add n
+
+proc literalOf(n: RegexNode; dest: var string): bool =
+  ## Appends the bytes `n` matches when it matches exactly one byte string.
+  ## `\128`..`\255` do not: they also match the single byte.
+  case n.kind
+  of reChar:
+    result = int(n.r) notin 0x80..0xFF
+    if result: dest.add toUTF8(n.r)
+  of reStr:
+    result = true
+    dest.add n.s
+  else:
+    result = false
+
+proc addSoloBytes(n: RegexNode; dest: var set[char]) =
+  ## The bytes that match the character or class `n` on their own: ASCII, and
+  ## `128..255` where that code point is in it.
+  if n.kind == reChar:
+    if int(n.r) <= 0xFF: dest.incl char(int(n.r))
+  else:
+    for i in 0 ..< n.cc.len:
+      let rg = n.cc[i]
+      for c in max(rg.a, 0) .. min(rg.b, 0xFF): dest.incl char(c)
+
+proc hasKind(n: RegexNode; kinds: set[RegexKind]): bool =
+  n != nil and (n.kind in kinds or hasKind(n.a, kinds) or hasKind(n.b, kinds))
+
+proc findLeadingLoop(fs: seq[RegexNode]; rex: RegexNode; dest: var Regex) =
+  ## `leadBytes`. For `P = C* R` a match from `j'` is also one from any `j`
+  ## before it as long as `s[j ..< j']` is made of `C`: `C* C* = C*`, and the
+  ## same goes for `C+`. `^` (relative to the attempt) and back references
+  ## (which would see a longer group) break that, so they rule it out.
+  if fs.len == 0 or hasKind(rex, {reBegin, reBackref}): return
+  var c: RegexNode = nil
+  if fs[0].kind == reStar and fs[0].a.kind in {reChar, reCClass}:
+    c = fs[0].a
+  elif fs.len >= 2 and fs[0].kind in {reChar, reCClass} and
+      fs[1].kind == reStar and fs[1].a == fs[0]:
+    c = fs[0] # `C+`, which `factors` spells `C C*`
+  if c != nil: addSoloBytes(c, dest.leadBytes)
+
+proc findAnchor(rex: RegexNode; dest: var Regex) =
+  ## Fills in the search hints: `lit`, `litMin`, `litBack` and `litBackSets`
+  ## for the longest run of literal factors and what precedes it, and
+  ## `leadBytes`.
+  var fs: seq[RegexNode] = @[]
+  factors(rex, fs)
+  findLeadingLoop(fs, rex, dest)
+  var best = ""
+  var bestAt = 0
+  var i = 0
+  while i < fs.len:
+    var run = ""
+    var j = i
+    var mn = 0
+    var mx = 0
+    # zero-width factors (`\b`, `$`) do not interrupt a run
+    while j < fs.len:
+      if not literalOf(fs[j], run):
+        lenRange(fs[j], mn, mx)
+        if mx != 0: break
+      inc j
+    if run.len > best.len:
+      best = run
+      bestAt = i
+    i = max(j, i + 1)
+  if best.len == 0: return
+  # `bestAt` is where the run starts, possibly on a zero-width factor that
+  # precedes its first literal; those cost nothing either way.
+  dest.lit = best
+  dest.litMin = 0
+  var k = bestAt - 1
+  while k >= 0:
+    var mn = 0
+    var mx = 0
+    lenRange(fs[k], mn, mx)
+    inc dest.litMin, mn
+    if mx != 0:
+      var bytes: set[char] = {}
+      addBytes(fs[k], bytes)
+      dest.litBack.add mx
+      dest.litBackSets.add bytes
+    dec k
 
 proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
-                   err: var string): bool =
+                   err: var string; requireAnchor = false): bool =
   ## Pattern text to finished automaton. `false` with a message in `err` for a
   ## pattern this engine cannot express; `dest` then matches nothing.
+  ##
+  ## With `requireAnchor` (and without `reUnanchored`) a pattern must also be
+  ## safe to search with: every match contains a literal (`\w+@\w+`), or an
+  ## attempt cannot fail after reading more than a bounded number of bytes
+  ## (`\d+`, `\w\d+`, `a{3,9}b`; see `failsFast`). Otherwise a search can
+  ## take time quadratic in the subject: `^\d+$` (`^` is relative to the
+  ## attempt), `a|a*b`. A literal is a heuristic, not a guarantee:
+  ## `(?:a|ab)*c` passes and is still quadratic on `"abab…abbc"`.
   dest = emptyRegex()
   err = ""
   var e = ""
@@ -1301,12 +1543,24 @@ proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
   # groups. Everything else decides on the capture-free one — see `Regex`.
   let splitCaptures = caps > 0 and backs == 0
   let matchFlags = if splitCaptures: flags + {reNoCaptures} else: flags
-  if not buildInto(pattern, matchFlags, dest, err):
+  var fastFail = false
+  if not buildInto(pattern, matchFlags, dest, err, fastFail):
     dest = emptyRegex()
+    return false
+  findAnchor(rex, dest)
+  if requireAnchor and reUnanchored notin flags and dest.lit.len == 0 and
+      not fastFail:
+    dest = emptyRegex()
+    err = "regular expression without an anchor: searching with it can " &
+          "take time quadratic in the subject. Give it a literal that " &
+          "every match contains, or add `reUnanchored` to the flags (keeping " &
+          "`reExtended`) when it is only used with `match` or on short " &
+          "subjects"
     return false
   if splitCaptures:
     var withCaps = emptyRegex()
-    if buildInto(pattern, flags, withCaps, err):
+    var unused = false
+    if buildInto(pattern, flags, withCaps, err, unused):
       dest.capCode = withCaps.code
       dest.capData = withCaps.data
       dest.capStartAt = withCaps.startAt
