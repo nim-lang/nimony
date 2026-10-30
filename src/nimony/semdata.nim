@@ -255,6 +255,13 @@ type
     meta*: MetaInfo
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
     typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
+    groupHooks*: ptr Table[SymId, HooksPerType]
+      ## In a `{.cyclic.}` group, the one frontend hook table every member
+      ## shares (a module outside a group uses its own `typeHooks`). It is
+      ## seeded with every member's sem-declared hooks before lowering, and
+      ## the lifter caches forged hooks there, so a type's hook is generated
+      ## once and the owner publishes the symbol its consumers already call.
+      ## `nil` outside a cycle group.
     errorHooks*: HashSet[SymId] # the `.error` hooks among `typeHooks`
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
@@ -319,6 +326,12 @@ type
       ## module so they do not leak into the export index. See
       ## tests/nimony/lookups/tforward_decl_export.nim.
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
+    cycleGroup*: HashSet[string]
+      ## Module suffixes of this `{.cyclic.}` group, including this module.
+      ## Any import of a member is deferred like an explicit `{.cyclic.}`
+      ## edge: within a group no member's interface exists yet, so a plain
+      ## import of a sibling could not be loaded even though the build did
+      ## classify the edge as an ordinary one.
     inTypeInst*: int # > 0 means we're inside a generic type instantiation
     inGenericDefinition*: int
       ## > 0 while semchecking a generic (or template) definition that has not

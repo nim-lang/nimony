@@ -267,8 +267,12 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   # in type pragmas yet - that happens in injectDerefs at the end).
   # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
   let moduleSuffix = pool.symModule(symId)
+  # A `{.cyclic.}` member's hooks are not in its type pragmas yet either, so
+  # the shared table is consulted before falling back to the written interface.
   let hooks = if moduleSuffix == c.thisModuleSuffix:
       c.typeHooks.getOrDefault(symId)
+    elif c.groupHooks != nil and c.groupHooks[].hasKey(symId):
+      c.groupHooks[].getOrQuit(symId)
     else:
       tryLoadAllHooks(symId)
   var needsSomething = false
@@ -507,7 +511,10 @@ proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
       endRead(r)
   var finalBuf = beginRead afterSem
-  result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
+  # The frontend hook table the lifter reads and extends: the group's shared
+  # one when there is a group, this module's own otherwise.
+  let hooks = if c.groupHooks != nil: c.groupHooks else: addr c.typeHooks
+  result = injectDerefs(finalBuf, hooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
                         cycles = c.g.config.cycles)
   when defined(dumpPhases):
     block:
@@ -603,7 +610,14 @@ proc resolveCyclicImports(c: var SemContext) =
     for symId in prog.mem.symIds:
       let symName = pool.symString(symId)
       let modSuffix = pool.symModule(symId)
-      if modSuffix == targetSuffix:
+      # An instantiated generic (`seq[char]`, the `Sender[Message]` of a cycle
+      # member's own field) is published under the module that instantiated it
+      # but is not a name that module exports. Importing those would put `seq`
+      # -- and every other container a cycle member happens to use -- into the
+      # importer's scope, where it shadows the system one and makes each plain
+      # `seq[T]` ambiguous. The base declaration is what the importer needs;
+      # it instantiates from that itself.
+      if modSuffix == targetSuffix and not pool.symIsInstantiation(symId):
         let nameId = pool.symNameId(symId)
         c.importTab.mgetOrPut(nameId, @[]).addIfAbsent(moduleSym)
         module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
@@ -729,6 +743,16 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
       let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
       importSingleFile(modules[i].c, modules[i].dest, systemFile, "", ImportFilter(kind: ImportAll), modules[i].n0.info)
 
+  # Every module here is a member of one cycle group. Record the group so any
+  # import into it is deferred: a group member cannot have a readable
+  # interface yet, even when the source did not put `{.cyclic.}` on this
+  # particular edge.
+  var cycleGroup = initHashSet[string]()
+  for i in 0..<modules.len:
+    cycleGroup.incl modules[i].c.thisModuleSuffix
+  for i in 0..<modules.len:
+    modules[i].c.cycleGroup = cycleGroup
+
   # Phase 1: Register toplevel symbols for ALL modules
   for i in 0..<modules.len:
     var (buf1, lineInfo) = phase1(modules[i].c, modules[i].dest, modules[i].n0)
@@ -757,8 +781,27 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   for i in 0..<modules.len:
     modules[i].dest = phase3(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
 
-  # Post-processing and output for each module
+  # Post-processing and output for each module. `groupHooks` is the group's
+  # frontend hook table: exactly the one a single module gets to itself, only
+  # shared. The lifter already reads such a table and caches forged hooks in
+  # it, so the hook machinery needs no cyclic knowledge — this table is the
+  # whole cyclic hook change.
+  var groupHooks = initTable[SymId, HooksPerType]()
+  # A hook written in source (`=destroy` for a nominal type, say) reaches the
+  # type's pragmas only when its owner is lowered: `derefs.trType` reads the
+  # sem-side `typeHooks`. A member lowered before the owner would not see it
+  # and would forge a structural hook that skips the owner's body. That is not
+  # theoretical: `std/channels` (lowered before `std/streamio`) forged a
+  # `=destroy` for `Writer` that never called `finishImpl`, so `ringWriterGone`
+  # never ran and a channel reader waited forever. Seed the group table with
+  # every member's sem-declared hooks.
   for i in 0..<modules.len:
+    for typ, hooks in modules[i].c.typeHooks:
+      let dst = addr groupHooks.mgetOrPut(typ, HooksPerType())
+      for op in low(AttachedOp)..high(AttachedOp):
+        if hooks.a[op] != SymId(0): dst[].a[op] = hooks.a[op]
+  for i in 0..<modules.len:
+    modules[i].c.groupHooks = addr groupHooks
     semcheckPostProcess modules[i].c, modules[i].dest
     if reportErrors(modules[i].dest) == 0:
       maybeValidatePostSem modules[i].dest, modules[i].outfile
