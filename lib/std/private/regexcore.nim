@@ -65,13 +65,17 @@ type
     cc*: RuneSet      ## the code points for `reCClass`
     rule*: int        ## `> 0` marks a final state and names the rule that
                       ## matched there; `0` means "not final"
+    at, width: int    ## where in the pattern a character, class or back
+                      ## reference was written; for the diagnostics
 
   RegexFlag* = enum ## how a pattern is parsed
     reExtended,     ## ignore unescaped spaces and tabs
     reNoBackrefs,   ## treat `\1` as a character literal, not a back reference
     reNoCaptures,   ## `(x)` means the same as `(?:x)`
-    reUnanchored    ## accept a pattern without a search anchor (see
-                    ## `compileRegex`); searching with it can be quadratic
+    reAllowEvil     ## accept an ambiguous pattern (see `checkDeterministic`):
+                    ## `.*x`, `\d+|\w+`. It then means what the automaton
+                    ## makes of it, and compiling it can take exponential
+                    ## time and memory
 
 const
   wordChars* = {'A'..'Z', 'a'..'z', '0'..'9', '_', '\128'..'\255'}
@@ -84,7 +88,7 @@ const
 
 proc newNode(kind: RegexKind): RegexNode =
   result = RegexNode(kind: kind, a: nil, b: nil, r: Rune(0), c: '\0', s: "",
-                     cc: @[], rule: 0)
+                     cc: @[], rule: 0, at: 0, width: 0)
 
 proc epsExpr*(): RegexNode =
   result = newNode(reEps)
@@ -140,21 +144,19 @@ proc captureExpr*(a: RegexNode): RegexNode =
   result.a = a
 
 proc mnExpr(r: RegexNode; m, n: int): RegexNode =
-  ## `r{m,n}`, expanded to `r^m | r^(m+1) | … | r^n`.
-  var ri: RegexNode = nil
+  ## `r{m,n}`, expanded to `r^m (r (r …)?)?` with `n - m` optional copies.
+  ## Nesting the options rather than alternating `r^m | … | r^n` keeps a
+  ## deterministic `r` deterministic: after each copy the next character
+  ## decides between another copy and what follows.
   if m > n or n == 0:
     result = epsExpr()
   else:
-    if m == 0:
-      ri = epsExpr()
-    else:
-      ri = r
-      for i in 2 .. m: ri = catExpr(ri, r)
-    result = ri
+    var tail: RegexNode = nil
     for i in m + 1 .. n:
-      if ri.kind == reEps: ri = r
-      else: ri = catExpr(ri, r)
-      result = altExpr(result, ri)
+      tail = optExpr(if tail == nil: r else: catExpr(r, tail))
+    result = tail
+    for i in 1 .. m:
+      result = if result == nil: r else: catExpr(r, result)
 
 # ---------------------------------------------------------------------------
 # Code-point sets
@@ -354,8 +356,11 @@ proc parseStr(c: var ReCtx): RegexNode =
     if c.buf[c.pos] == '\r' or c.buf[c.pos] == '\L':
       error c, "'\"' expected"
       return epsExpr()
+    let at = c.pos
     let al = getChar(c, false)
     if al.kind == reChar:
+      al.at = at
+      al.width = c.pos - at
       result = catExpr(result, al)
     else:
       error c, "only single characters are allowed in a quoted string"
@@ -422,7 +427,19 @@ proc parseNum(c: var ReCtx): int =
 
 proc parseRegExprImpl(c: var ReCtx): RegexNode
 
+proc setSpan(n: RegexNode; at, width: int) =
+  ## Records where the characters and classes in `n` were written, unless an
+  ## inner factor already did.
+  if n == nil: return
+  if n.kind in {reChar, reStr, reCClass, reBackref} and n.width == 0:
+    n.at = at
+    n.width = width
+  setSpan(n.a, at, width)
+  setSpan(n.b, at, width)
+
 proc factor(c: var ReCtx): RegexNode =
+  skipSpaces c
+  let at = c.pos
   case getNext(c)
   of '\"':
     result = parseStr(c)
@@ -467,6 +484,7 @@ proc factor(c: var ReCtx): RegexNode =
   else:
     result = readRune(c)
   if c.err.len > 0: return result
+  setSpan(result, at, c.pos - at)
   # postfix operators bind tighter than concatenation:
   var running = true
   while running:
@@ -540,6 +558,313 @@ proc containsInvalidCapture*(r: RegexNode): bool =
   ## `(abc)|(xyz)` is not expressible. Callers use this to say so up front
   ## instead of returning wrong capture bounds.
   result = containsInvCap(r, false)
+
+# ---------------------------------------------------------------------------
+# Left factoring
+# ---------------------------------------------------------------------------
+#
+# `if|in|int` has to read the `i` before it can tell the keywords apart, which
+# the determinism check below would reject. Factoring the heads the branches
+# share out of the alternation, `i(?:f|n(?:t)?)`, fixes that without changing
+# the language.
+
+proc sameSet(a, b: RuneSet): bool =
+  result = a.len == b.len
+  if result:
+    for i in 0 ..< a.len:
+      if a[i].a != b[i].a or a[i].b != b[i].b: return false
+
+proc sameNode(a, b: RegexNode): bool =
+  if a == b: return true
+  if a == nil or b == nil or a.kind != b.kind: return false
+  case a.kind
+  of reChar: result = int(a.r) == int(b.r)
+  of reStr: result = a.s == b.s
+  of reCClass: result = sameSet(a.cc, b.cc)
+  of reCapture, reCaptureEnd, reBackref:
+    result = a.c == b.c and sameNode(a.a, b.a)
+  else: result = sameNode(a.a, b.a) and sameNode(a.b, b.b)
+
+proc addFactors(n: RegexNode; dest: var seq[RegexNode]) =
+  ## `n` as a list of factors; a literal run is one factor per character, so
+  ## `abc|abd` shares its first two.
+  case n.kind
+  of reCat:
+    addFactors(n.a, dest)
+    addFactors(n.b, dest)
+  of reEps: discard
+  of reStr:
+    var i = 0
+    while i < n.s.len:
+      let x = charExpr(runeAt(n.s, i))
+      x.at = n.at
+      x.width = n.width
+      dest.add x
+      inc i, runeLenAt(n.s, i)
+  else:
+    dest.add n
+
+proc catOf(fs: seq[RegexNode]; first: int): RegexNode =
+  result = nil
+  var i = fs.len - 1
+  while i >= first:
+    result = if result == nil: fs[i] else: catExpr(fs[i], result)
+    dec i
+  if result == nil: result = epsExpr()
+
+proc factorBranches(branches: seq[seq[RegexNode]]): RegexNode =
+  ## The alternation of `branches`, each a list of factors, with the branches
+  ## that start alike merged: `ab|ac|d` becomes `a(?:b|c)|d`, `a|ab` becomes
+  ## `a(?:b)?`.
+  var done = newSeq[bool](branches.len)
+  var alts: seq[RegexNode] = @[]
+  var hasEps = false
+  for i in 0 ..< branches.len:
+    if done[i]: continue
+    if branches[i].len == 0:
+      hasEps = true
+      continue
+    let head = branches[i][0]
+    var tails: seq[seq[RegexNode]] = @[]
+    for j in i ..< branches.len:
+      if not done[j] and branches[j].len > 0 and sameNode(branches[j][0], head):
+        done[j] = true
+        var t: seq[RegexNode] = @[]
+        for k in 1 ..< branches[j].len: t.add branches[j][k]
+        tails.add t
+    if tails.len == 1:
+      alts.add catOf(branches[i], 0)
+    else:
+      let rest = factorBranches(tails)
+      alts.add(if rest.kind == reEps: head else: catExpr(head, rest))
+  result = nil
+  for x in alts:
+    result = if result == nil: x else: altExpr(result, x)
+  if result == nil: result = epsExpr()
+  elif hasEps: result = optExpr(result)
+
+proc collectAlts(n: RegexNode; dest: var seq[RegexNode]) =
+  if n.kind == reAlt:
+    collectAlts(n.a, dest)
+    collectAlts(n.b, dest)
+  else:
+    dest.add n
+
+proc leftFactor*(n: RegexNode): RegexNode =
+  ## `n` with the common heads of every alternation's branches factored out.
+  ## The tree is copied, never changed: `x{m,n}` shares its `x`.
+  case n.kind
+  of reAlt:
+    var alts: seq[RegexNode] = @[]
+    collectAlts(n, alts)
+    var branches: seq[seq[RegexNode]] = @[]
+    for x in alts:
+      var fs: seq[RegexNode] = @[]
+      addFactors(leftFactor(x), fs)
+      branches.add fs
+    result = factorBranches(branches)
+  of reCat: result = catExpr(leftFactor(n.a), leftFactor(n.b))
+  of reStar: result = starExpr(leftFactor(n.a))
+  of rePlus: result = plusExpr(leftFactor(n.a))
+  of reOpt: result = optExpr(leftFactor(n.a))
+  of reCapture:
+    result = captureExpr(leftFactor(n.a))
+    result.c = n.c
+  else: result = n
+
+proc stripCaptures(n: RegexNode): RegexNode =
+  ## `n` with every group turned into a plain one.
+  case n.kind
+  of reCapture: result = stripCaptures(n.a)
+  of reCat: result = catExpr(stripCaptures(n.a), stripCaptures(n.b))
+  of reAlt: result = altExpr(stripCaptures(n.a), stripCaptures(n.b))
+  of reStar: result = starExpr(stripCaptures(n.a))
+  of rePlus: result = plusExpr(stripCaptures(n.a))
+  of reOpt: result = optExpr(stripCaptures(n.a))
+  else: result = n
+
+# ---------------------------------------------------------------------------
+# Determinism
+# ---------------------------------------------------------------------------
+#
+# A pattern is *deterministic* (Brüggemann-Klein and Wood's "1-unambiguous")
+# when, reading the subject from left to right, the next character always
+# says which character, class or back reference of the pattern it belongs to.
+# `\w+\s*=\s*\w+` is: after a `\w`, a word character continues the `\w+`,
+# a space starts the `\s*` and `=` is the `=`. `.*x` is not: after the `.`,
+# an `x` could be either. Glushkov's construction decides it: every
+# character, class and back reference is a *position*, `follow[p]` is where
+# the next character can go after `p`, and the pattern is deterministic when
+# no two positions it has to choose between share a character.
+#
+# Zero-width assertions count as nothing at all, and a back reference counts
+# as the characters its group can start with.
+
+type
+  Positions = object
+    atoms: seq[RegexNode]
+    sets: seq[RuneSet]
+    follow: seq[seq[int]]
+    groupFirst: seq[RuneSet] ## per group: the characters it can start with
+    groupNullable: seq[bool]
+    groupSeen: seq[bool]
+
+  Glu = object
+    nullable: bool
+    first, last: seq[int]
+
+proc newPosition(g: var Positions; n: RegexNode; cc: RuneSet;
+                 nullable: bool): Glu =
+  let p = g.atoms.len
+  g.atoms.add n
+  g.sets.add cc
+  g.follow.add @[]
+  result = Glu(nullable: nullable, first: @[p], last: @[p])
+
+proc catGlu(g: var Positions; a, b: Glu): Glu =
+  for p in a.last:
+    for q in b.first: g.follow[p].add q
+  result = Glu(nullable: a.nullable and b.nullable, first: a.first,
+               last: b.last)
+  if a.nullable:
+    for q in b.first: result.first.add q
+  if b.nullable:
+    for p in a.last: result.last.add p
+
+proc positions(g: var Positions; n: RegexNode): Glu =
+  case n.kind
+  of reEps, reBegin, reEnd, reWordBoundary, reWordBoundaryNot, reCaptureEnd:
+    result = Glu(nullable: true, first: @[], last: @[])
+  of reChar:
+    var cc: RuneSet = @[]
+    cc.incl int(n.r), int(n.r)
+    result = newPosition(g, n, cc, false)
+  of reStr:
+    var fs: seq[RegexNode] = @[]
+    addFactors(n, fs)
+    result = Glu(nullable: true, first: @[], last: @[])
+    for x in fs:
+      let next = positions(g, x)
+      result = catGlu(g, result, next)
+  of reCClass:
+    result = newPosition(g, n, n.cc, n.cc.len == 0)
+  of reBackref:
+    let k = int(n.c)
+    if k < g.groupSeen.len and g.groupSeen[k]:
+      let cc = g.groupFirst[k]
+      result = newPosition(g, n, cc, g.groupNullable[k])
+    else:
+      result = newPosition(g, n, complement(@[]), true)
+  of reCat:
+    let a = positions(g, n.a)
+    let b = positions(g, n.b)
+    result = catGlu(g, a, b)
+  of reAlt:
+    let a = positions(g, n.a)
+    let b = positions(g, n.b)
+    result = Glu(nullable: a.nullable or b.nullable, first: a.first,
+                 last: a.last)
+    for q in b.first: result.first.add q
+    for p in b.last: result.last.add p
+  of reStar, rePlus:
+    result = positions(g, n.a)
+    for p in result.last:
+      for q in result.first: g.follow[p].add q
+    if n.kind == reStar: result.nullable = true
+  of reOpt:
+    result = positions(g, n.a)
+    result.nullable = true
+  of reCapture:
+    result = positions(g, n.a)
+    let k = int(n.c)
+    if g.groupSeen.len <= k:
+      g.groupSeen.setLen k + 1
+      g.groupFirst.setLen k + 1
+      g.groupNullable.setLen k + 1
+    var cc: RuneSet = @[]
+    for p in result.first: cc.incl g.sets[p]
+    g.groupFirst[k] = cc
+    g.groupNullable[k] = result.nullable
+    g.groupSeen[k] = true
+
+proc overlap(a, b: RuneSet; sample: var int): bool =
+  ## Do `a` and `b` share a code point? `sample` is one of them.
+  var i = 0
+  var j = 0
+  while i < a.len and j < b.len:
+    let lo = max(a[i].a, b[j].a)
+    let hi = min(a[i].b, b[j].b)
+    if lo <= hi:
+      sample = lo
+      return true
+    if a[i].b < b[j].b: inc i
+    else: inc j
+  result = false
+
+proc findConflict(g: Positions; list: seq[int]; x, y, sample: var int): bool =
+  for i in 0 ..< list.len:
+    for j in i + 1 ..< list.len:
+      if list[i] != list[j] and
+          overlap(g.sets[list[i]], g.sets[list[j]], sample):
+        x = list[i]
+        y = list[j]
+        return true
+  result = false
+
+proc runeText(c: int): string =
+  ## `c` the way a pattern would spell it.
+  if c > 32 and c < 127:
+    result = newString(1)
+    result[0] = char(c)
+  elif c == 32: result = "\\ "
+  elif c < 128: result = "\\0" & $c
+  else: result = toUTF8(Rune(c))
+
+proc atomText(pattern: string; n: RegexNode): string =
+  if n.width > 0 and n.at + n.width <= pattern.len:
+    result = substr(pattern, n.at, n.at + n.width - 1)
+  elif n.kind == reChar:
+    result = runeText(int(n.r))
+  else:
+    result = "[…]"
+
+proc checkDeterministic*(n: RegexNode; pattern: string;
+                         err: var string): bool =
+  ## Is `n` deterministic? If not, `err` names the two parts of `pattern`
+  ## the same character could belong to.
+  var g = Positions(atoms: @[], sets: @[], follow: @[], groupFirst: @[],
+                    groupNullable: @[], groupSeen: @[])
+  let root = positions(g, n)
+  var x = 0
+  var y = 0
+  var c = 0
+  var after = -1
+  var found = findConflict(g, root.first, x, y, c)
+  if not found:
+    for p in 0 ..< g.follow.len:
+      if findConflict(g, g.follow[p], x, y, c):
+        found = true
+        after = p
+        break
+  result = not found
+  if found:
+    var a = atomText(pattern, g.atoms[x])
+    var b = atomText(pattern, g.atoms[y])
+    if a == b:
+      a.add "` (column " & $(g.atoms[x].at + 1) & ")"
+      b.add "` (column " & $(g.atoms[y].at + 1) & ")"
+    else:
+      a.add "`"
+      b.add "`"
+    err = "ambiguous regular expression: "
+    if after < 0:
+      err.add "at the start"
+    else:
+      err.add "after `" & atomText(pattern, g.atoms[after]) & "`"
+    err.add ", the character `" & runeText(c) & "` could belong to either `" &
+            a & " or `" & b & ". Rewrite the pattern so that the next " &
+            "character always decides (`[^x]*x` rather than `.*x`), or add " &
+            "`reAllowEvil` to the flags (keeping `reExtended`)"
 
 
 # ---------------------------------------------------------------------------
@@ -1153,17 +1478,15 @@ type
     ## There may be **two** automata in here. `code` decides the match and is
     ## built with the capture groups turned into plain groups; `capCode`, when
     ## it is not empty, is the same pattern built with the groups kept, and is
-    ## run afterwards only to fill in where they landed.
+    ## run afterwards over the match only to find where they landed.
     ##
-    ## The split is what keeps a captured pattern matching at all. Capture
-    ## markers ride the DFA's alphabet as ordinary letters and the matcher takes
-    ## them unconditionally, so a group next to something optional
-    ## (`(\w+)\s*=`) reaches a state where closing the group and reading the
-    ## next character are both possible and the marker wins — the pattern then
-    ## matches nothing, which is what upstream lexim does to this day. Deciding
-    ## the match on the capture-free automaton makes that impossible: at worst
-    ## the second run fails and the caller sees a correct match with no capture
-    ## bounds.
+    ## Capture markers ride the DFA's alphabet as ordinary letters, so in
+    ## `capCode` a group next to something optional (`(\w+)\s*=`) reaches a
+    ## state where closing the group and reading the next character are both
+    ## possible. `captureWalk` follows both; a matcher that takes the marker
+    ## unconditionally matches nothing there, which is what upstream lexim
+    ## does to this day. A pattern with back references has no `capCode`: the
+    ## groups are part of what it matches, so `code` keeps them.
     code*: seq[RegexInstr]
     data*: seq[set[char]]
     startAt*: int
@@ -1175,6 +1498,7 @@ type
                            ## when a match can start without reading one
     firstByte*: int        ## the only byte in `firstBytes`, or `-1`; search
                            ## scans for it a word at a time
+    backrefs*: int         ## number of back references in the pattern
     lit*: string           ## a literal every match contains, or `""`; search
                            ## looks for it first and asks the automaton only
                            ## at the starts that can reach it
@@ -1183,10 +1507,6 @@ type
                            ## start: step back over at most `litBack[i]` bytes
     litBackSets*: seq[set[char]] ## …that are in `litBackSets[i]`; `-1` means
                                  ## no limit
-    leadBytes*: set[char]  ## the pattern is `C* R` or `C+ R` and these bytes
-                           ## match `C` on their own: an attempt that fails at
-                           ## `j` rules out every start in the run of them
-                           ## beginning at `j`, and the one just past it
 
   Capture* = object ## The bounds of one capture group, both ends inclusive.
     first*: Natural  ## a position in the subject, so never negative
@@ -1198,8 +1518,8 @@ const
 func emptyRegex*(): Regex =
   Regex(code: @[], data: @[], startAt: 0, captures: 0,
         capCode: @[], capData: @[], capStartAt: 0, firstBytes: {},
-        firstByte: -1, lit: "", litMin: 0, litBack: @[], litBackSets: @[],
-        leadBytes: {})
+        firstByte: -1, backrefs: 0, lit: "", litMin: 0, litBack: @[],
+        litBackSets: @[])
 
 func genData(c: var Regex; data: set[char]): int32 =
   ## Interns a character set. Sets repeat heavily across a DFA's states, so the
@@ -1224,10 +1544,10 @@ func genTest(c: var Regex; x: Alphabet; dest: int) =
     gen c, opcEnd, 0
     gen c, opcTJmp, dest
   of reWordBoundary:
-    gen c, opcWordBound, genData(c, wordChars)
+    gen c, opcWordBound, 0
     gen c, opcTJmp, dest
   of reWordBoundaryNot:
-    gen c, opcWordBound, genData(c, {'\1'..'\255'} - wordChars)
+    gen c, opcWordBound, 1
     gen c, opcTJmp, dest
   else: discard
 
@@ -1284,45 +1604,6 @@ proc countUses(r: RegexNode; caps, backs: var int) =
   elif r.kind == reBackref: backs = max(backs, int(r.c))
   countUses(r.a, caps, backs)
   countUses(r.b, caps, backs)
-
-func failsFast(a: Dfa): bool =
-  ## No cycle runs through nonaccepting states only. An attempt then reads at
-  ## most `stateCount` bytes past its last accepting state: a failed attempt is
-  ## short, and a successful one has consumed what it read, so restarting the
-  ## automaton at every position stays linear in the subject.
-  var succs = newSeq[seq[int]](a.stateCount + 1)
-  for src in 1 .. a.stateCount:
-    if getRule(a, src) == 0:
-      for d in allDests(a, src):
-        if getRule(a, d) == 0: succs[src].add d
-  # iterative DFS; `a{2000}` is a chain of 2000 states
-  var color = newSeq[int](a.stateCount + 1) # 0 unseen, 1 on the path, 2 done
-  for root in 1 .. a.stateCount:
-    if color[root] != 0 or getRule(a, root) != 0: continue
-    var path = @[(root, 0)]
-    color[root] = 1
-    while path.len > 0:
-      let (src, i) = path[path.len - 1]
-      if i < succs[src].len:
-        path[path.len - 1] = (src, i + 1)
-        let d = succs[src][i]
-        if color[d] == 1: return false
-        if color[d] == 0:
-          color[d] = 1
-          path.add (d, 0)
-      else:
-        color[src] = 2
-        path.setLen path.len - 1
-  result = true
-
-proc buildInto(pattern: string; flags: set[RegexFlag]; dest: var Regex;
-               err: var string; fastFail: var bool): bool =
-  var dfa = default(Dfa)
-  regexToDfa(pattern, flags, dfa, err)
-  result = err.len == 0
-  if result:
-    genBytecode(dfa, dest)
-    fastFail = failsFast(dfa)
 
 # ---------------------------------------------------------------------------
 # Search anchors
@@ -1439,40 +1720,11 @@ proc literalOf(n: RegexNode; dest: var string): bool =
   else:
     result = false
 
-proc addSoloBytes(n: RegexNode; dest: var set[char]) =
-  ## The bytes that match the character or class `n` on their own: ASCII, and
-  ## `128..255` where that code point is in it.
-  if n.kind == reChar:
-    if int(n.r) <= 0xFF: dest.incl char(int(n.r))
-  else:
-    for i in 0 ..< n.cc.len:
-      let rg = n.cc[i]
-      for c in max(rg.a, 0) .. min(rg.b, 0xFF): dest.incl char(c)
-
-proc hasKind(n: RegexNode; kinds: set[RegexKind]): bool =
-  n != nil and (n.kind in kinds or hasKind(n.a, kinds) or hasKind(n.b, kinds))
-
-proc findLeadingLoop(fs: seq[RegexNode]; rex: RegexNode; dest: var Regex) =
-  ## `leadBytes`. For `P = C* R` a match from `j'` is also one from any `j`
-  ## before it as long as `s[j ..< j']` is made of `C`: `C* C* = C*`, and the
-  ## same goes for `C+`. `^` (relative to the attempt) and back references
-  ## (which would see a longer group) break that, so they rule it out.
-  if fs.len == 0 or hasKind(rex, {reBegin, reBackref}): return
-  var c: RegexNode = nil
-  if fs[0].kind == reStar and fs[0].a.kind in {reChar, reCClass}:
-    c = fs[0].a
-  elif fs.len >= 2 and fs[0].kind in {reChar, reCClass} and
-      fs[1].kind == reStar and fs[1].a == fs[0]:
-    c = fs[0] # `C+`, which `factors` spells `C C*`
-  if c != nil: addSoloBytes(c, dest.leadBytes)
-
 proc findAnchor(rex: RegexNode; dest: var Regex) =
   ## Fills in the search hints: `lit`, `litMin`, `litBack` and `litBackSets`
-  ## for the longest run of literal factors and what precedes it, and
-  ## `leadBytes`.
+  ## for the longest run of literal factors and what precedes it.
   var fs: seq[RegexNode] = @[]
   factors(rex, fs)
-  findLeadingLoop(fs, rex, dest)
   var best = ""
   var bestAt = 0
   var i = 0
@@ -1509,66 +1761,52 @@ proc findAnchor(rex: RegexNode; dest: var Regex) =
       dest.litBackSets.add bytes
     dec k
 
+proc accepting(n: RegexNode): RegexNode =
+  ## `n` as rule 1. The rule goes on a node of its own: the trees share
+  ## subtrees, and a rule on one of those would make it accept in the other.
+  result = catExpr(n, epsExpr())
+  result.rule = 1
+
 proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
-                   err: var string; requireAnchor = false): bool =
+                   err: var string): bool =
   ## Pattern text to finished automaton. `false` with a message in `err` for a
-  ## pattern this engine cannot express; `dest` then matches nothing.
-  ##
-  ## With `requireAnchor` (and without `reUnanchored`) a pattern must also be
-  ## safe to search with: every match contains a literal (`\w+@\w+`), or an
-  ## attempt cannot fail after reading more than a bounded number of bytes
-  ## (`\d+`, `\w\d+`, `a{3,9}b`; see `failsFast`). Otherwise a search can
-  ## take time quadratic in the subject: `^\d+$` (`^` is relative to the
-  ## attempt), `a|a*b`. A literal is a heuristic, not a guarantee:
-  ## `(?:a|ab)*c` passes and is still quadratic on `"abab…abbc"`.
+  ## pattern this engine cannot express, or, without `reAllowEvil`, one that
+  ## is not deterministic (see `checkDeterministic`); `dest` then matches
+  ## nothing.
   dest = emptyRegex()
   err = ""
   var e = ""
-  let rex = parseRegExpr(pattern, flags, e)
+  let parsed = parseRegExpr(pattern, flags, e)
   if e.len > 0:
     # `err` is a whole sentence: it is shown as-is both by `tryRe` and by the
     # compile-time `re`, and neither knows any more about it than this does.
     err = "invalid regular expression: " & e
     return false
+  let rex = leftFactor(parsed)
+  if reAllowEvil notin flags and not checkDeterministic(rex, pattern, err):
+    return false
   var caps = 0
   var backs = 0
   countUses(rex, caps, backs)
-  if caps > 0 and containsInvalidCapture(rex):
-    err = "invalid regular expression: captures inside an alternation are " &
-          "not supported; write `(abc|xyz)` rather than `(abc)|(xyz)`"
+  if backs > 0 and containsInvalidCapture(rex):
+    err = "invalid regular expression: a back reference cannot be used " &
+          "with captures inside an alternation; write `(abc|xyz)` rather " &
+          "than `(abc)|(xyz)`"
     return false
-
   # A back reference is part of the *language*, not just bookkeeping, so a
-  # pattern that has one must decide its match on the automaton that tracks the
-  # groups. Everything else decides on the capture-free one — see `Regex`.
-  let splitCaptures = caps > 0 and backs == 0
-  let matchFlags = if splitCaptures: flags + {reNoCaptures} else: flags
-  var fastFail = false
-  if not buildInto(pattern, matchFlags, dest, err, fastFail):
-    dest = emptyRegex()
-    return false
+  # pattern that has one must decide its match on the automaton that tracks
+  # the groups. Everything else decides on the capture-free one — see `Regex`.
+  genBytecode(buildDfa(accepting(if backs == 0: stripCaptures(rex) else: rex)),
+              dest)
   findAnchor(rex, dest)
-  if requireAnchor and reUnanchored notin flags and dest.lit.len == 0 and
-      not fastFail:
-    dest = emptyRegex()
-    err = "regular expression without an anchor: searching with it can " &
-          "take time quadratic in the subject. Give it a literal that " &
-          "every match contains, or add `reUnanchored` to the flags (keeping " &
-          "`reExtended`) when it is only used with `match` or on short " &
-          "subjects"
-    return false
-  if splitCaptures:
+  if caps > 0 and backs == 0:
     var withCaps = emptyRegex()
-    var unused = false
-    if buildInto(pattern, flags, withCaps, err, unused):
-      dest.capCode = withCaps.code
-      dest.capData = withCaps.data
-      dest.capStartAt = withCaps.startAt
-    else:
-      # The capture automaton is an extra, never a reason to reject the
-      # pattern: matching still works, `capture` just returns "".
-      err = ""
+    genBytecode(buildDfa(accepting(rex)), withCaps)
+    dest.capCode = withCaps.code
+    dest.capData = withCaps.data
+    dest.capStartAt = withCaps.startAt
   dest.captures = caps
+  dest.backrefs = backs
   result = true
 
 # ---------------------------------------------------------------------------
@@ -1587,13 +1825,21 @@ func backrefMatches(s: string; sp: Natural; c: Capture): bool
     inc k
     inc i
 
+func atWordBoundary(s: string; sp: int): bool {.inline.} =
+  ## Is `sp` between a word character and something else?
+  let before = sp > 0 and sp <= s.len and s[sp - 1] in wordChars
+  let after = sp >= 0 and sp < s.len and s[sp] in wordChars
+  result = before != after
+
 func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]];
          startAt: int; s: string; caps: var seq[Capture]; start: Natural;
-         endPos: var int): int =
+         endPos, reach: var int): int =
   ## One automaton over `s` from `start`. Returns the rule that matched (`0`
-  ## for none) and reports the position just past the match in `endPos`.
+  ## for none) and reports the position just past the match in `endPos`, and
+  ## the last position it looked at in `reach`.
   result = 0
   endPos = start
+  reach = start
   if code.len == 0: return
   var pc = startAt
   var sp = start
@@ -1631,23 +1877,23 @@ func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]
     of opcRet:
       when trackCaptures:
         caps = acceptedCaps
+      reach = sp
       return result
     of opcRetAccept:
       endPos = sp
+      reach = sp
       return arg
     of opcAccept:
       return 0 # an accept is always followed by a test or return
     of opcBegin:
-      if sp == start: pc = int(code[pc+1].arg)
+      if sp == 0: pc = int(code[pc+1].arg)
       else: inc pc, 2
     of opcEnd:
       if sp >= s.len: pc = int(code[pc+1].arg)
       else: inc pc, 2
     of opcWordBound:
-      if sp >= s.len or sp == start or s[sp] notin data[arg]:
-        pc = int(code[pc+1].arg)
-      else:
-        inc pc, 2
+      if atWordBoundary(s, sp) == (arg == 0): pc = int(code[pc+1].arg)
+      else: inc pc, 2
     of opcCaptureBegin:
       when trackCaptures:
         if caps.len <= arg: setLen(caps, arg + 1)
@@ -1685,14 +1931,91 @@ func matchOnly(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
                endPos: var int): int {.inline.} =
   ## `run` for code without capture groups: no capture bookkeeping, and
   ## `caps` is left alone.
-  result = run[false](code, data, startAt, s, caps, start, endPos)
+  var reach = start
+  result = run[false](code, data, startAt, s, caps, start, endPos, reach)
 
 func matchWithCaptures(code: seq[RegexInstr]; data: seq[set[char]];
                        startAt: int; s: string; caps: var seq[Capture];
                        start: Natural; endPos: var int): int {.inline.} =
   ## `run` for code that keeps its groups; a failed longer match rewinds
   ## `caps` to the last accepting state.
-  result = run[true](code, data, startAt, s, caps, start, endPos)
+  var reach = start
+  result = run[true](code, data, startAt, s, caps, start, endPos, reach)
+
+func captureWalk(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
+                 s: string; captures: int; start, endPos: int;
+                 caps: var seq[Capture]): bool =
+  ## Where the groups of a match from `start` to `endPos` landed. Every way
+  ## through the automaton that reads `s[start ..< endPos]` is followed at
+  ## once, a capture marker being a step that reads nothing, so closing a
+  ## group early cannot lose the match. Two ways that reach the same state at
+  ## the same position have the same future and the first one is kept; for a
+  ## deterministic pattern there is only ever one way to read the match.
+  var unset = newSeq[Capture](captures)
+  for i in 0 ..< captures: unset[i] = Capture(first: 0, last: -1)
+  var cur: seq[(int, seq[Capture])] = @[(startAt, unset)]
+  var next: seq[(int, seq[Capture])] = @[]
+  var seenCur = newSeq[int](code.len)  # the position + 1 a state was reached at
+  var seenNext = newSeq[int](code.len)
+  seenCur[startAt] = start + 1
+  var sp = start
+  while true:
+    var t = 0
+    while t < cur.len:
+      var pc = cur[t][0]
+      let tc = cur[t][1]
+      inc t
+      while true:
+        let instr = code[pc]
+        let arg = int(instr.arg)
+        var spawn = -1
+        case instr.opc
+        of opcAccept:
+          if sp == endPos:
+            caps = tc
+            return true
+          inc pc
+          continue
+        of opcRetAccept:
+          if sp == endPos:
+            caps = tc
+            return true
+          break
+        of opcRet: break
+        of opcTestSet, opcTestChar:
+          if sp < endPos and (if instr.opc == opcTestSet: s[sp] in data[arg]
+                              else: s[sp] == char(arg)):
+            let d = int(code[pc+1].arg)
+            if seenNext[d] != sp + 2:
+              seenNext[d] = sp + 2
+              next.add (d, tc)
+        of opcBegin:
+          if sp == 0: spawn = int(code[pc+1].arg)
+        of opcEnd:
+          if sp >= s.len: spawn = int(code[pc+1].arg)
+        of opcWordBound:
+          if atWordBoundary(s, sp) == (arg == 0): spawn = int(code[pc+1].arg)
+        of opcCaptureBegin, opcCaptureEnd:
+          let d = int(code[pc+1].arg)
+          if seenCur[d] != sp + 1:
+            seenCur[d] = sp + 1
+            var moved = tc
+            if instr.opc == opcCaptureBegin:
+              moved[arg] = Capture(first: sp, last: CaptureOpen)
+            else:
+              moved[arg].last = sp - 1
+            cur.add (d, moved)
+        of opcBackref, opcTJmp:
+          discard # `capCode` has no back references
+        if spawn >= 0 and seenCur[spawn] != sp + 1:
+          seenCur[spawn] = sp + 1
+          cur.add (spawn, tc)
+        inc pc, 2
+    if sp >= endPos or next.len == 0: return false
+    swap cur, next
+    next.setLen 0
+    swap seenCur, seenNext
+    inc sp
 
 func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
            endPos: var int): int =
@@ -1704,16 +2027,144 @@ func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
   ## afterwards purely for the bounds and is allowed to come up empty-handed
   ## without changing the answer.
   caps.setLen 0
-  # Only a pattern without groups is known to need no capture bookkeeping.
-  # With groups but no back references `code` has none either, but telling
-  # the two apart costs more per call than the bookkeeping saves.
-  if r.captures == 0:
+  if r.backrefs == 0:
     result = matchOnly(r.code, r.data, r.startAt, s, caps, start, endPos)
+    if result > 0 and r.capCode.len > 0:
+      var found: seq[Capture] = @[]
+      if captureWalk(r.capCode, r.capData, r.capStartAt, s, r.captures, start,
+                     endPos, found):
+        caps = found
   else:
     result = matchWithCaptures(r.code, r.data, r.startAt, s, caps, start, endPos)
-  if result > 0 and r.capCode.len > 0:
-    var found: seq[Capture] = @[]
-    var ignored = start
-    if matchWithCaptures(r.capCode, r.capData, r.capStartAt, s, found, start,
-                         ignored) > 0:
-      caps = found
+
+# ---------------------------------------------------------------------------
+# Searching
+# ---------------------------------------------------------------------------
+#
+# A search tries the next start that can match with one plain run of the
+# automaton (`attempt`). That is all a search ever does when the attempt
+# matches, which is the common case. When it fails, the bytes it read may
+# hold a match from a later start, and trying those one by one is what makes
+# a naive search quadratic. Instead, the starts up to where the attempt gave
+# up run as *threads*, all of them in one pass (`runThreads`). Two threads in
+# the same state have the same future, so the one that started later can
+# never win and is dropped: there are never more threads than states. The
+# next attempt starts past the bytes the last one read, so no byte is read by
+# more than one attempt, and a search costs `O(subject × states)` whatever
+# the pattern. `std/rex` skips ahead between attempts (see `findAnchor`).
+#
+# The match code has no capture markers when the pattern has no back
+# references, and `^`, `$` and `\b` depend only on the position, so a state
+# is all there is to a thread. Patterns with back references are searched
+# start by start.
+
+type
+  Threads* = object
+    ## The threads of a search, ordered by start.
+    pc, start: seq[int]
+    nextPc, nextStart: seq[int]
+    seen: seq[int] ## per state: the step that last put a thread into it
+    step: int
+
+func initThreads*(t: var Threads; r: Regex) =
+  ## Clears `t` for a search with `r`.
+  t.pc.setLen 0
+  t.start.setLen 0
+  if t.seen.len < r.code.len: t.seen.setLen r.code.len
+  inc t.step
+
+func alive*(t: Threads): bool {.inline.} = t.pc.len > 0
+
+func spawn*(t: var Threads; r: Regex; sp: int) =
+  ## A thread for a match starting at `sp`, unless one that started earlier
+  ## is in the start state already.
+  if t.seen[r.startAt] != t.step:
+    t.seen[r.startAt] = t.step
+    t.pc.add r.startAt
+    t.start.add sp
+
+func stepState(r: Regex; pc: int; s: string; sp: int;
+               accepted: var bool): int =
+  ## Runs the state at `pc` over `s[sp]`, the way `run` does: the state the
+  ## byte leads to, or `-1`. `accepted` is set when a match ends at `sp`.
+  var pc = pc
+  while true:
+    let instr = r.code[pc]
+    let arg = int(instr.arg)
+    case instr.opc
+    of opcAccept:
+      accepted = true
+      inc pc
+    of opcTestSet:
+      if sp < s.len and s[sp] in r.data[arg]: return int(r.code[pc+1].arg)
+      inc pc, 2
+    of opcTestChar:
+      if sp < s.len and s[sp] == char(arg): return int(r.code[pc+1].arg)
+      inc pc, 2
+    of opcRetAccept:
+      accepted = true
+      return -1
+    of opcBegin:
+      if sp == 0: pc = int(r.code[pc+1].arg)
+      else: inc pc, 2
+    of opcEnd:
+      if sp >= s.len: pc = int(r.code[pc+1].arg)
+      else: inc pc, 2
+    of opcWordBound:
+      if atWordBoundary(s, sp) == (arg == 0): pc = int(r.code[pc+1].arg)
+      else: inc pc, 2
+    else:
+      return -1 # `opcRet`; the match code of a searched pattern has no groups
+
+func advance*(t: var Threads; r: Regex; s: string; sp: int;
+              best, bestEnd: var int) =
+  ## Moves every thread over `s[sp]`. A thread whose match ends at `sp`
+  ## updates `best` (the leftmost start that has matched, `-1` before) and
+  ## `bestEnd`; the threads that started after `best` are dropped.
+  inc t.step
+  t.nextPc.setLen 0
+  t.nextStart.setLen 0
+  for i in 0 ..< t.pc.len:
+    let st = t.start[i]
+    if best >= 0 and st > best: break
+    var accepted = false
+    let d = stepState(r, t.pc[i], s, sp, accepted)
+    if accepted:
+      if best < 0 or st < best:
+        best = st
+        bestEnd = sp
+      elif st == best and sp > bestEnd:
+        bestEnd = sp
+    if d >= 0 and t.seen[d] != t.step and (best < 0 or st <= best):
+      t.seen[d] = t.step
+      t.nextPc.add d
+      t.nextStart.add st
+  swap t.pc, t.nextPc
+  swap t.start, t.nextStart
+
+func canStart*(r: Regex; s: string; sp: int): bool {.inline.} =
+  ## Can a match start at `sp`?
+  result = r.firstBytes == AllBytes or (sp >= 0 and sp < s.len and
+                                        s[sp] in r.firstBytes)
+
+func attempt*(r: Regex; s: string; start: Natural; reach: var int): int =
+  ## `matchLen` for a pattern without back references, also reporting the
+  ## last position the automaton looked at in `reach`.
+  var caps: seq[Capture] = @[]
+  var endPos = start
+  let rule = run[false](r.code, r.data, r.startAt, s, caps, start, endPos,
+                        reach)
+  result = if rule <= 0: -1 else: endPos - start
+
+func runThreads*(t: var Threads; r: Regex; s: string; sp: var Natural;
+                 until: int; best, bestEnd: var int) =
+  ## Runs a thread for every start from `sp` on that can match, at least up
+  ## to `until` and then until no thread is alive. `sp` is left where the
+  ## threads gave out, past `s.len` when they reached the end.
+  initThreads t, r
+  while true:
+    if best < 0 and canStart(r, s, sp): spawn t, r, sp
+    advance t, r, s, sp, best, bestEnd
+    inc sp
+    if sp > s.len: return
+    if not alive(t) and (best >= 0 or sp > until): return

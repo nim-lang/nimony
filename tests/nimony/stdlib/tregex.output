@@ -3,7 +3,8 @@ anchoring ok
 searching ok
 rewriting ok
 capturing ok
-capture degradation ok
+capture bounds ok
 character classes ok
 runtime patterns ok
 literal search ok
+determinism ok

@@ -11,13 +11,15 @@
 ##
 ## The engine is a DFA: a pattern is turned into a deterministic automaton
 ## once, and matching then costs one table step per input character with no
-## backtracking. That is what makes the worst case linear — there is no input
-## that makes `(a+)+b` take exponential time here — and it is also what bounds
-## what the module can express: a capture must lie on every accepting path
-## (`(abc)|(xyz)` is rejected, `(abc|xyz)` is fine). The automaton's size is
-## not capped, and it can be exponential in the pattern's: `(a|b)*a(a|b){20}`
-## needs two million states. Matching stays linear, but compiling a pattern
-## from an untrusted source with `tryRe` can take unbounded time and memory.
+## backtracking. There is no input that makes `(a+)+b` take exponential time
+## here, and a search costs time linear in the subject whatever the pattern
+## (see *Searching*).
+##
+## A pattern means what it says because it has to be **deterministic**: read
+## from left to right, the next character must always decide which part of
+## the pattern it belongs to. `\w+\s*=\s*\w+` is "a key, optional spaces,
+## `=`, optional spaces, a value" and nothing else, because a word character,
+## a space and `=` can never be confused. See *Deterministic patterns*.
 ##
 ## Two ways to use it:
 ##
@@ -55,39 +57,76 @@
 ## Match lengths, positions, and capture bounds are byte offsets into the
 ## original string.
 ##
+## Deterministic patterns
+## ======================
+##
+## `re` and `tryRe` reject a pattern in which one character could belong to
+## two different parts of it, and the error says where:
+##
+##   ```
+##   re".*x"  # at the start, the character `x` could belong to either `.` or `x`
+##   ```
+##
+## The `.*` would read the `x` as well as the `x` itself; `[^x]*x` says what
+## was meant. Most such patterns are a bug waiting for an input, and the
+## rewrite the check forces is the pattern that was meant all along:
+##
+## ===========  ===============  ============================
+## Rejected     Write instead    Why
+## ===========  ===============  ============================
+## `\".*\"`     `\"[^"]*\"`      `.*` also reads quotes
+## `\d+|\w+`    `\w+`            a digit starts both branches
+## `\d+\.?\d*`  `\d+(?:\.\d*)?`  digits after a missing `.`
+## `a|a*b`      `a(?:a*b)?|b`    an `a` starts both branches
+## ===========  ===============  ============================
+##
+## Alternatives that merely start alike are fine: they are factored before
+## the check, so `if|in|int` is read as `i(?:f|n(?:t)?)` and `ab|abc` as
+## `ab(?:c)?`. That works for identical prefixes, not for overlapping
+## classes, which is why `\d+|\w+` still has to be written `\w+`.
+##
+## A deterministic pattern has exactly one way of reading any match, and the
+## rest of this module relies on it: the capture bounds are exact, the
+## automaton stays small, at roughly one state per character of the
+## pattern, so `tryRe` on a pattern from outside the program does not blow
+## up, and a search keeps at most that many threads alive.
+##
+## `reAllowEvil` turns the check off. The pattern then means whatever the
+## automaton makes of it — the longest match from the leftmost start — its
+## capture bounds are one of several possible readings, and compiling it can
+## take time and memory exponential in its length: `(?:a|b)*a(?:a|b){20}`
+## needs two million states. Explicit flags replace the default, so keep
+## `reExtended`:
+##
+##   ```nim
+##   let quoted = re(r"\( .* \)", {reExtended, reAllowEvil})
+##   ```
+##
+## `lex` and `rematch` do not apply the check: overlapping rules (a keyword
+## and the identifier pattern that also covers it) are their point.
+##
 ## Searching
 ## =========
 ##
-## `find`, `findBounds`, `findAll`, `replace` and `split` look for a match
-## anywhere in the subject. A naive search restarts the automaton at every
-## position, and a pattern whose attempts read far before they fail —
-## `\w+@\w+` over a long run of letters — then costs time quadratic in the
-## subject. Two things keep that from happening:
+## `find`, `findBounds`, `findAll`, `replace` and `split` look for the
+## leftmost match and take the longest one from there. A search does not
+## simply restart the automaton at every position, which costs time
+## quadratic in the subject for a pattern like `\w+@\w+` over a long run of
+## letters. It tries one start, and when that fails, the starts among the
+## bytes the attempt read run together in one pass, a start being dropped as
+## soon as an earlier one is in the same state: from there on they would
+## match alike, and the earlier one wins. No byte is read by two attempts,
+## so the cost is linear in the subject for every pattern, times the number
+## of starts alive at once, which for a deterministic pattern is at most its
+## number of positions and usually one or two.
 ##
-## * When every match contains a literal (the `@` above), the search looks for
-##   the literal with a string search and runs the automaton only from the
-##   starts that can reach it. No occurrence means no automaton at all.
-## * When the pattern starts with a loop (`\w+`, `.*`), a failed attempt rules
-##   out the whole run of bytes that loop could have read.
+## Between attempts the search skips ahead: to the next byte a match can
+## start with, and, when every match contains a literal (the `@` above), to
+## the lowest start that can reach the literal's next occurrence. A subject
+## without it costs one scan.
 ##
-## A `re` without an anchor is a **compile-time error**: one with no such
-## literal and whose attempts can fail after reading an unbounded number of
-## bytes — `^\d+$` (`^` is relative to the attempt), `a|a*b`. Patterns whose
-## attempts cannot fail late are fine without a literal: `\d+`, `[a-z]\w*`,
-## `\w\d+`, `a{2,9}b`. The check catches the common mistakes; it is not a
-## proof. A literal only guarantees that a subject without it costs one scan:
-## `(?:a|ab)*c` on `"abab…abbc"` is still quadratic. When the
-## pattern is only used with `match` and friends, or on subjects known to be
-## short, say so with `reUnanchored`. Explicit flags replace the default, so
-## keep `reExtended`:
-##
-##   ```nim
-##   let line = re(r"^\d+$", {reExtended, reUnanchored})
-##   ```
-##
-## `tryRe` applies the same check and reports it through `err`: a pattern
-## from outside the program is exactly where a careless or hostile one comes
-## from.
+## A pattern with back references is the exception: what a group matched is
+## part of each start's state, so its search tries the starts one by one.
 ##
 ## Captures
 ## ========
@@ -97,25 +136,20 @@
 ##
 ##   ```nim
 ##   var caps: seq[Capture] = @[]
-##   if match("key=value", re"(\w+)=(\w+)", caps):
-##     echo capture("key=value", caps, 0)   # key
-##     echo capture("key=value", caps, 1)   # value
+##   if match("key = value", re"(\w+) \s* = \s* (\w+)", caps):
+##     echo capture("key = value", caps, 0)   # key
+##     echo capture("key = value", caps, 1)   # value
 ##   ```
 ##
-## A DFA is a poor place to track captures, and this one is honest about it
-## rather than clever. Two limits follow:
+## `caps` has one entry per group. A group that took no part in the match,
+## such as the `(xyz)` of `(abc)|(xyz)` matching `"abc"`, has `last <
+## first`, and `capture` returns `""` for it. The match is decided without
+## the groups and they are located afterwards, by following every way the
+## automaton could have read the match; a deterministic pattern has only one.
 ##
-## * A capture must lie on every accepting path, so `(abc)|(xyz)` is a
-##   compile-time error. Write `(abc|xyz)`.
-## * Otherwise the *match* is always right, but the capture bounds are
-##   best-effort: for a group sitting next to something of variable length
-##   (`(\w+)\s*=`) the engine cannot say where the group ended, and `caps`
-##   comes back empty. `capture` then returns `""`. Check for it during
-##   development rather than assuming; a fixed-shape pattern always works.
-##
-## Where captures are essential and the pattern is awkward, split it: match the
-## overall shape with one regex and pull the pieces out with `split` or plain
-## string operations.
+## With a back reference the groups are part of what is matched, and the
+## old limits of a DFA apply: a capture must lie on every accepting path, so
+## `(abc)|(xyz)` is an error there.
 ##
 ## Syntax
 ## ======
@@ -125,6 +159,10 @@
 ## `(?:x)` grouping without a capture · `"abc"` a literal run · `\d \D \s \S
 ## \w \W` classes · `\A` (`^`) start, `\Z` (`$`) end, `\b` `\B` word boundary ·
 ## `\1` back reference · `\n \r \t \e \a \v \f \b` and `\123` escapes.
+##
+## `^` and `\A` match at the start of the subject only, also for `match` and
+## searches that begin further in. `\b` is between a word character (`\w`'s
+## ASCII part and every non-ASCII byte) and something else.
 ##
 ## By default patterns are parsed with `reExtended`, so unescaped spaces and
 ## tabs are ignored and a pattern may be laid out for reading. Match a literal
@@ -142,6 +180,9 @@
 ##
 ## * **Whitespace is ignored by default.** Patterns are parsed with
 ##   `reExtended`, so `re"a b"` matches `"ab"`. In Nim only `rex` does that.
+## * **Patterns must be deterministic** (see *Deterministic patterns*):
+##   `.*x`, `\".*\"` and `\d+|\w+` are compile-time errors unless they are
+##   given `reAllowEvil`.
 ## * **The longest match wins**, not the first alternative that works:
 ##   `a|ab` matches all of `"ab"`; PCRE stops after `"a"`.
 ## * `"..."` is a literal run, as in `std/pegs`. In PCRE `"` is an ordinary
@@ -154,8 +195,7 @@
 ## * `re` takes only a string literal and compiles it with the program;
 ##   `re(someVar)` is `tryRe` here, which reports an error instead of raising.
 ## * Captures are positions (`seq[Capture]`, read with `capture`), not a
-##   `var openArray[string]`, and are subject to the limits described under
-##   *Captures*.
+##   `var openArray[string]`.
 ## * `findAll` yields `(first, last)` bounds, not strings.
 ## * Not provided: `=~`/`matches`, `replacef` with `$1`, `multiReplace`,
 ##   `transformFile`, `endsWith`, `escapeRe`, `rex`, the `split` iterator and
@@ -170,7 +210,7 @@
 
 import std / private / regexcore
 
-export RegexFlag, reExtended, reNoBackrefs, reNoCaptures, reUnanchored
+export RegexFlag, reExtended, reNoBackrefs, reNoCaptures, reAllowEvil
 export Regex, Capture, RegexOpcode, RegexInstr
 export opcRet, opcRetAccept, opcAccept, opcTestSet, opcTestChar, opcTJmp, opcBegin, opcEnd,
        opcWordBound, opcCaptureBegin, opcCaptureEnd, opcBackref
@@ -188,8 +228,8 @@ template re*(pattern: string): Regex {.plugin: "deps/regex".}
   ##   ```
   ##
   ## `pattern` must be a string literal. A malformed one is a compile-time
-  ## error naming what is wrong with it, and so is one that searching could
-  ## make quadratic (see *Searching*). No automaton is built at run time:
+  ## error naming what is wrong with it, and so is an ambiguous one (see
+  ## *Deterministic patterns*). No automaton is built at run time:
   ## what reaches the binary is the finished program the matcher walks. That
   ## matters more than it sounds — the subset construction runs over a
   ## 260-letter alphabet, so building even a small regex at start-up costs far
@@ -214,10 +254,11 @@ proc tryRe*(pattern: string; dest: var Regex; err: var string;
   ##
   ## This is the form to use on a pattern that came from outside the program.
   ## An invalid pattern is then an ordinary input rather than a bug, and its
-  ## diagnostic is something to show, not something to crash on. A pattern
-  ## that searching could make quadratic is rejected just like with `re`
-  ## (see *Searching*) unless `flags` contains `reUnanchored`.
-  compileRegex(pattern, flags, dest, err, requireAnchor = true)
+  ## diagnostic is something to show, not something to crash on. An
+  ## ambiguous pattern is rejected just like with `re` (see *Deterministic
+  ## patterns*). Passing `reAllowEvil` for an outside pattern hands its author
+  ## the time and memory compiling it takes, which can be exponential.
+  compileRegex(pattern, flags, dest, err)
 
 func isEmpty*(r: Regex): bool {.inline.} =
   ## True for a regex that never matches — what `tryRe` leaves behind when it
@@ -298,11 +339,11 @@ func fullMatch*(s: string; r: Regex; caps: var seq[Capture]; start = 0): bool =
 # Search
 # ---------------------------------------------------------------------------
 #
-# A pattern with a literal every match contains (`regexcore.findAnchor`) is
-# not restarted at every position. The search finds the literal first and
-# asks the automaton only about the starts that can reach that occurrence.
-# Every start is tried at most once, in increasing order, so the first that
-# matches is the leftmost match — exactly what the per-position loop finds.
+# The threads (`regexcore.Threads`) find the leftmost-longest match in one
+# pass. While none is alive the search skips to the next start that can
+# match: the next byte a match starts with, and, for a pattern with a literal
+# every match contains (`regexcore.findAnchor`), the lowest start that can
+# reach the literal's next occurrence.
 
 func findLit(s, lit: string; start: Natural): int
     {.requires: lit.len > 0, ensures: result < s.len.} =
@@ -339,52 +380,56 @@ func lowerBound(s: string; r: Regex; k, floor: int): int
     if e <= floor: return floor
   result = max(e, floor)
 
-func pastFailure(s: string; r: Regex; j: Natural): int
-    {.ensures: result > j.} =
-  ## The next start worth trying after an attempt at `j` failed: past the run
-  ## of `leadBytes` at `j`, and past the byte that ends it.
-  var p: Natural = j
-  while p < s.len and s[p] in r.leadBytes: inc p
-  result = p + 1
-
-func search(s: string; r: Regex; caps: var seq[Capture];
-            start: Natural): (int, int) {.inline.} =
+func search(s: string; r: Regex; caps: var seq[Capture]; start: Natural;
+            t: var Threads): (int, int) =
   ## The leftmost match at or after `start` as `(first, length)`, or `(-1, 0)`.
-  if r.lit.len == 0:
+  if start > s.len: return (-1, 0)
+  if r.backrefs > 0:
     var i: Natural = start
     while i <= s.len:
       i = skipToCandidate(s, r, i, s.len)
       let L = matchLen(s, r, caps, i)
       if L >= 0: return (i, L)
-      i = pastFailure(s, r, i)
+      inc i
     return (-1, 0)
-  var tried: Natural = start # every start below this one has been ruled out
-  var k = start + max(r.litMin, 0)
-  while true:
-    k = findLit(s, r.lit, k)
-    if k < 0: return (-1, 0)
-    var hi = k - r.litMin
-    if hi >= s.len: hi = s.len - 1
-    var j: int = tried
-    if r.litBack.len > 0: j = lowerBound(s, r, k, tried)
-    elif k > tried: j = k
-    while j <= hi:
-      # only an optimization: `matchLen` at a byte no match starts with fails
-      # at once
-      if j < hi: j = skipToCandidate(s, r, j, hi + 1)
-      if j > hi: break
-      let L = matchLen(s, r, caps, j)
-      if L >= 0: return (j, L)
-      j = pastFailure(s, r, j)
-    if j > tried: tried = j
-    inc k
+  var best = -1     # the leftmost start that has matched
+  var bestEnd = 0   # and where its longest match ends
+  var k = -1        # the occurrence of `lit` the last skip found
+  var kLow = 0      # and the lowest start that can reach it
+  var sp: Natural = start
+  while best < 0:
+    if r.lit.len > 0:
+      let fromPos = sp + max(r.litMin, 0)
+      if k < fromPos:
+        k = findLit(s, r.lit, fromPos)
+        if k < 0: break
+        kLow = k - r.litMin
+        if r.litBack.len > 0: kLow = lowerBound(s, r, k, sp)
+      if kLow > sp: sp = kLow
+    sp = skipToCandidate(s, r, sp, s.len)
+    var reach = 0
+    let L = attempt(r, s, sp, reach)
+    if L >= 0:
+      best = sp
+      bestEnd = sp + L
+    elif sp >= s.len:
+      break
+    else:
+      var next: Natural = sp + 1
+      runThreads t, r, s, next, reach, best, bestEnd
+      if next > s.len: break
+      sp = next
+  if best < 0: return (-1, 0)
+  if r.captures > 0: discard matchLen(s, r, caps, best)
+  result = (best, bestEnd - best)
 
 func findBounds*(s: string; r: Regex; caps: var seq[Capture];
                  start = 0): (int, int) =
   ## The bounds of the first match at or after `start`, both ends inclusive, or
   ## `(-1, 0)` when there is none. An empty match reports `last == first - 1`.
   if start < 0: return (-1, 0)
-  let (first, L) = search(s, r, caps, start)
+  var t = default(Threads)
+  let (first, L) = search(s, r, caps, start, t)
   result = if first < 0: (-1, 0) else: (first, first + L - 1)
 
 func findBounds*(s: string; r: Regex; start = 0): (int, int) =
@@ -426,9 +471,10 @@ iterator findAll*(s: string; r: Regex; start = 0): (int, int) =
   ## inclusive. An empty match advances by one byte, so the loop always
   ## terminates.
   var caps: seq[Capture] = @[]
+  var t = default(Threads)
   var i: Natural = max(start, 0)
   while i <= s.len:
-    let (first, L) = search(s, r, caps, i)
+    let (first, L) = search(s, r, caps, i, t)
     if first < 0: break
     yield (first, first + L - 1)
     i = first + max(L, 1)
@@ -438,9 +484,10 @@ func replace*(s: string; r: Regex; by: string): string =
   ## literally — there is no `$1` substitution.
   result = ""
   var caps: seq[Capture] = @[]
+  var t = default(Threads)
   var i: Natural = 0
   while i < s.len:
-    let (first, L) = search(s, r, caps, i)
+    let (first, L) = search(s, r, caps, i, t)
     if first < 0 or first >= s.len: break
     while i < first:
       result.add s[i]
@@ -461,10 +508,11 @@ func split*(s: string; r: Regex): seq[string] =
   ## reconstruct `s`.
   result = @[]
   var caps: seq[Capture] = @[]
+  var t = default(Threads)
   var piece = ""
   var i: Natural = 0
   while i < s.len:
-    let (first, L) = search(s, r, caps, i)
+    let (first, L) = search(s, r, caps, i, t)
     if first < 0 or first >= s.len: break
     while i < first:
       piece.add s[i]

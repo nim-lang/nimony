@@ -6,12 +6,12 @@
 import std / [syncio, assertions, rex]
 
 proc basics =
-  # lexim's tests.nim
-  assert match("(a b c)", re"\( .* \)")
+  # lexim's tests.nim; two of its patterns are ambiguous
+  assert match("(a b c)", re(r"\( .* \)", {reExtended, reAllowEvil}))
   assert match("while", re"while")
   assert match("0158787", re"\d+")
-  assert match("ABC 0232", re(r"\w+\s+\d+", {reExtended, reUnanchored}))
-  assert match("ABC", re"\d+ | \w+")
+  assert match("ABC 0232", re"\w+\s+\d+")
+  assert match("ABC", re(r"\d+ | \w+", {reExtended, reAllowEvil}))
   assert matchLen("key", re"\w+") == 3
   assert matchLen("key1=  cal9", re"[a-z0-9]+\s*=\s*[a-z0-9]+") == 11
   assert match("abc", re"\Aabc\Z")
@@ -85,28 +85,38 @@ proc capturing =
   assert capture("key=value", caps, 1) == "value"
   assert captureTexts("key=value", caps).len == 2
   # a back reference has to repeat what the group captured
-  assert matchLen("'haha'", re(r"(\`|\')[^`']*\1", {reExtended, reUnanchored})) == 6
+  assert matchLen("'haha'", re"(\`|\')[^`']*\1") == 6
   assert matchLen("aaaaabcc", re"((a+)b(c)\2)") == 8
   echo "capturing ok"
 
-proc captureDegradation =
-  ## The match is decided by the capture-free automaton, so a group next to
-  ## something of variable length still MATCHES — upstream lexim returns "no
-  ## match" for exactly this pattern. The bounds are what is missing, and
-  ## `capture` says so by returning "".
+proc captureBounds =
+  ## The match is decided by the capture-free automaton and the groups are
+  ## located afterwards, following every way the automaton could read the
+  ## match. A group next to something of variable length is where a DFA that
+  ## takes the capture marker eagerly loses the match (upstream lexim does).
   var caps: seq[Capture] = @[]
   assert matchLen("key = value", re"(\w+) \s* = \s* (\w+)", caps) == 11
-  assert caps.len == 0
-  assert capture("key = value", caps, 0) == ""
-  # a fixed-shape neighbourhood keeps the bounds
-  assert matchLen("key = value", re"(\w+) \  = \  (\w+)", caps) == 11
   assert caps.len == 2
   assert capture("key = value", caps, 0) == "key"
   assert capture("key = value", caps, 1) == "value"
+  assert matchLen("key = value", re"(\w+) \  = \  (\w+)", caps) == 11
+  assert capture("key = value", caps, 1) == "value"
+  # a group that took no part in the match is there, and empty
+  assert matchLen("xyz!", re"(abc)|(xyz)", caps) == 3
+  assert caps.len == 2
+  assert capture("xyz!", caps, 0) == ""
+  assert capture("xyz!", caps, 1) == "xyz"
+  assert matchLen("aab", re"(a*)(b)?", caps) == 3
+  assert capture("aab", caps, 0) == "aa" and capture("aab", caps, 1) == "b"
+  assert matchLen("aa", re"(a*)(b)?", caps) == 2
+  assert capture("aa", caps, 0) == "aa" and capture("aa", caps, 1) == ""
+  # `findBounds` reports the groups of the match it found
+  assert findBounds("-- k=v --", re"(\w+)=(\w+)", caps) == (3, 5)
+  assert capture("-- k=v --", caps, 0) == "k"
   # `caps` is cleared per match, never appended to
   assert matchLen("ab", re"[a-z]+", caps) == 2
   assert caps.len == 0
-  echo "capture degradation ok"
+  echo "capture bounds ok"
 
 proc characterClasses =
   # `\n` inside a class is the line feed alone; outside it, it is a newline in
@@ -142,9 +152,11 @@ proc runtimePatterns =
   assert fullMatch("ab", r)
 
   # "the 9th character from the end is an `a`" has no automaton smaller than
-  # 512 states
-  assert tryRe("(?:a|b)* a (?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)",
-               r, err)
+  # 512 states. It is not deterministic either, and that is no coincidence.
+  let ninth = "(?:a|b)* a (?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)"
+  assert not tryRe(ninth, r, err)
+  assert isEmpty(r)
+  assert tryRe(ninth, r, err, {reExtended, reAllowEvil})
   assert fullMatch("abbbbbbbb", r)
   assert fullMatch("babababbbb", r)
   assert not fullMatch("bbbbbbbbb", r)
@@ -167,13 +179,18 @@ proc literalSearch() =
       inc i
     result = (-1, 0)
   let pats = @[re"\w+@\w+", re"a+b", re"[a-z]{1,3}@", re"(\w+)\s*=\s*(\w+)",
-               re"x\w*y", re"\d\d-\d+", re"(?:ab)+c", re"\bfoo\b", re"a*b*c",
+               re(r"x\w*y", {reExtended, reAllowEvil}), re"\d\d-\d+", re"(?:ab)+c", re"\bfoo\b", re"a*b*c",
                re"[^,]*,x", re"ab|abc", re"\w+(@)x", re"\s*=", re"é+x", re"é\w+",
-               re"\w+\s+0"]
+               re"\w+\s+0", re(r"(?:a|ab)*c", {reExtended, reAllowEvil}),
+               re(r"\w+@.*c$", {reExtended, reAllowEvil}),
+               re(r"a|a*b", {reExtended, reAllowEvil}),
+               re(r".*x", {reExtended, reAllowEvil}), re"if|in|int|i",
+               re(r"(?:\bab|a)c", {reExtended, reAllowEvil}), re"^a\w*"]
   let subjects = @["", "a", "abc", "aaaab", "x@y@z", "foo bar foo",
     "aa ab@ abcd@e", "k = v", "xyy xzy", "12-345 6-7", "ababc abc", "aabbcc c",
     ",x a,,x", "abcabc", "a@x b@@x", "  =", "ééx éx", "aaaa!@x", "foofoo foo.",
-    "éa é", "ab 0 cd  0"]
+    "éa é", "ab 0 cd  0", "ababbc", "a@a@c a@c", "aab", "intx in if",
+    "xabc abc", "abac"]
   for p in pats:
     for s in subjects:
       assert findBounds(s, p) == perPosition(s, p)
@@ -183,23 +200,48 @@ proc literalSearch() =
   assert n == 2
   assert replace("k=v, k2 = v2", re"\w+\s*=\s*\w+", "X") == "X, X"
   assert split("a;b;;c", re";") == @["a", "b", "", "c"]
+  echo "literal search ok"
+
+proc determinism() =
   # a pattern from outside the program is checked like a literal one
   var r = default(Regex)
   var err = ""
-  assert not tryRe(r"^\d+$", r, err)
-  assert err.len > 0
-  assert isEmpty(r)
-  assert tryRe(r"^\d+$", r, err, {reExtended, reUnanchored})
-  assert fullMatch("123", r)
-  assert tryRe(r"\w+@\w+", r, err)
-  echo "literal search ok"
+  for bad in [r".*x", r"\d+|\w+", r"a|a*b", r"x\w*y", r"\d+\.?\d*",
+              "\\\".*\\\""]:
+    assert not tryRe(bad, r, err)
+    assert err.len > 0
+    assert isEmpty(r)
+    assert tryRe(bad, r, err, {reExtended, reAllowEvil})
+  for good in [r"[^x]*x", r"\w+", r"a(?:a*b)?|b", r"\d+(?:\.\d*)?",
+               "(\\\"[^\"]*\\\")", r"(?:a|ab)*c",
+               r"\w+\s*=\s*\w+", r"^\d+$", r"if|in|int|i", r"ab|abc|abd",
+               r"(?:ab)*c", r"\d{1,3}(?:\.\d{1,3}){3}"]:
+    assert tryRe(good, r, err)
+  assert not tryRe(".*x", r, err)
+  assert err == "ambiguous regular expression: at the start, the character " &
+    "`x` could belong to either `.` or `x`. Rewrite the pattern so that the " &
+    "next character always decides (`[^x]*x` rather than `.*x`), or add " &
+    "`reAllowEvil` to the flags (keeping `reExtended`)"
+  # left factoring keeps the language
+  assert fullMatch("int", re"if|in|int") and fullMatch("in", re"if|in|int")
+  assert not fullMatch("i", re"if|in|int")
+  assert matchLen("abcd", re"ab|abc") == 3
+  # `^` is the start of the subject, not of the search
+  assert replace("aaa", re"^a", "-") == "-aa"
+  assert matchLen("xab", re"^ab", 1) == -1
+  # `\b` looks at both sides
+  assert find("xfoo foo", re"\bfoo\b") == 5
+  assert matchLen("xfoo", re"\bfoo", 1) == -1
+  assert matchLen("x foo", re"\bfoo", 2) == 3
+  echo "determinism ok"
 
 basics()
 anchoring()
 searching()
 rewriting()
 capturing()
-captureDegradation()
+captureBounds()
 characterClasses()
 runtimePatterns()
 literalSearch()
+determinism()
