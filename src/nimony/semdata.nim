@@ -254,14 +254,11 @@ type
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
-    typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
-    groupHooks*: ptr Table[SymId, HooksPerType]
-      ## In a `{.cyclic.}` group, the one frontend hook table every member
-      ## shares (a module outside a group uses its own `typeHooks`). It is
-      ## seeded with every member's sem-declared hooks before lowering, and
-      ## the lifter caches forged hooks there, so a type's hook is generated
-      ## once and the owner publishes the symbol its consumers already call.
-      ## `nil` outside a cycle group.
+    typeHooks*: ref Table[SymId, HooksPerType]
+      ## Hooks per type, for embedding in type declarations. A `{.cyclic.}`
+      ## group's members share one table: none of them has written its
+      ## interface yet, so this is the only place a member's hooks can be
+      ## seen by its siblings, at sem time and when lifting.
     errorHooks*: HashSet[SymId] # the `.error` hooks among `typeHooks`
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
@@ -355,6 +352,16 @@ type
       ## it as OkExistingFresh) so the body phase does not redeclare it and the
       ## symbol keeps the same name as if it had never been resolved early.
       ## Persists phase 2 → phase 3; cleared per module at phase-2 start.
+
+proc hooksOf*(c: SemContext; typ: SymId): HooksPerType =
+  ## The hooks of `typ` as sem knows them. The hooks of this module (and of
+  ## its `{.cyclic.}` siblings) are not embedded in type declarations until
+  ## `derefs` runs; any other module's are read from its type's pragmas.
+  let m = pool.symModule(typ)
+  if m == c.thisModuleSuffix or m in c.cycleGroup:
+    result = c.typeHooks[].getOrDefault(typ)
+  else:
+    result = tryLoadAllHooks(typ)
 
 proc recordFileDep*(c: var SemContext; path: string) =
   ## `path` was read while semchecking this module; see `fileDeps`. Only a

@@ -868,9 +868,7 @@ proc hookToAttachedOp(op: HookKind): AttachedOp =
 proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isGeneric: bool) =
   let attachedOp = hookToAttachedOp(op)
   # track per-type for embedding in type declarations:
-  if not c.typeHooks.hasKey(obj):
-    c.typeHooks[obj] = HooksPerType(a: default(array[AttachedOp, SymId]))
-  c.typeHooks.getOrQuit(obj).a[attachedOp] = symId
+  c.typeHooks[].mgetOrPut(obj, HooksPerType()).a[attachedOp] = symId
 
 proc checkCopyDupAgree(c: var SemContext; dest: var TokenBuf; obj, symId: SymId;
                        op: HookKind; isError: bool; info: NifLineInfo) =
@@ -879,7 +877,7 @@ proc checkCopyDupAgree(c: var SemContext; dest: var TokenBuf; obj, symId: SymId;
   if isError: c.errorHooks.incl symId
   if op in {CopyH, DupH}:
     let other = if op == CopyH: attachedDup else: attachedCopy
-    let otherSym = c.typeHooks.getOrDefault(obj).a[other]
+    let otherSym = c.typeHooks[].getOrDefault(obj).a[other]
     if otherSym != SymId(0) and otherSym != symId and
         (otherSym in c.errorHooks) != isError:
       let (e, o) = if isError: (hookName(hookToAttachedOp(op)), hookName(other))
@@ -1358,6 +1356,17 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
           semBodyCheckBody(c, dest, it, kind, crucial, symId,
                            beforeGenericParams, beforeParams, hookName, info)
         of checkSignatures:
+          if hk notin {NoHook, CopyH, DupH}:
+            # Known from the signature already, so a body checked before the
+            # hook's own (`when` asking `needsDestroy`, a `{.cyclic.}` sibling
+            # instantiating the type) sees it. The body pass registers it
+            # again, after validating the signature. `=copy` and `=dup` wait
+            # for it: `checkCopyDupAgree` reports on the second of the two.
+            let params = getParamsType(c, dest, beforeParams)
+            if params.len >= 1:
+              let obj = getObjSymId(c, params[0])
+              if obj != SymId(0):
+                registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
           dest.takeTree it.n
           c.closeScope() # close parameter scope
         of checkConceptProc:

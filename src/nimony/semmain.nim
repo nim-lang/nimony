@@ -263,18 +263,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
 
   let symId = typevars.symId
 
-  # For types from the current module, use typeHooks (hooks haven't been embedded
-  # in type pragmas yet - that happens in injectDerefs at the end).
-  # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
-  let moduleSuffix = pool.symModule(symId)
-  # A `{.cyclic.}` member's hooks are not in its type pragmas yet either, so
-  # the shared table is consulted before falling back to the written interface.
-  let hooks = if moduleSuffix == c.thisModuleSuffix:
-      c.typeHooks.getOrDefault(symId)
-    elif c.groupHooks != nil and c.groupHooks[].hasKey(symId):
-      c.groupHooks[].getOrQuit(symId)
-    else:
-      tryLoadAllHooks(symId)
+  let hooks = hooksOf(c, symId)
   var needsSomething = false
   for op in low(AttachedOp)..high(AttachedOp):
     let h = hooks.a[op]
@@ -511,10 +500,7 @@ proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
       endRead(r)
   var finalBuf = beginRead afterSem
-  # The frontend hook table the lifter reads and extends: the group's shared
-  # one when there is a group, this module's own otherwise.
-  let hooks = if c.groupHooks != nil: c.groupHooks else: addr c.typeHooks
-  result = injectDerefs(finalBuf, hooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
+  result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits,
                         cycles = c.g.config.cycles)
   when defined(dumpPhases):
     block:
@@ -528,10 +514,15 @@ proc checkDestroysHaveWasMoved(c: var SemContext; dest: var TokenBuf) =
   ## in this module are in its scope; generic instances are not, so they do
   ## not report the same error again.
   var missing: seq[(SymId, SymId)] = @[]
-  for obj, hooks in c.typeHooks:
+  # moved out for the loop: the table is behind a `ref`
+  var typeHooks = move c.typeHooks[]
+  for obj, hooks in typeHooks:
     let destroy = hooks.a[attachedDestroy]
-    if destroy != SymId(0) and hooks.a[attachedWasMoved] == SymId(0):
+    # a `{.cyclic.}` sibling's hooks are in the shared table too
+    if destroy != SymId(0) and hooks.a[attachedWasMoved] == SymId(0) and
+        pool.symModule(destroy) == c.thisModuleSuffix:
       missing.add (obj, destroy)
+  c.typeHooks[] = move typeHooks
   for (obj, destroy) in missing:
     if fetchSym(c, destroy).pos < 0: continue
     # the scope's `pos` is from the phase that declared the hook, so find the
@@ -638,6 +629,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     toBuild: initTokenBuf(),
     toBundle: initTokenBuf(),
     pending: createTokenBuf(),
+    typeHooks: (ref Table[SymId, HooksPerType])(),
     importSnippets: initTokenBuf(),
     expanded: initTokenBuf(),
     executeExpr: exprexec.executeExpr,
@@ -746,12 +738,16 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   # Every module here is a member of one cycle group. Record the group so any
   # import into it is deferred: a group member cannot have a readable
   # interface yet, even when the source did not put `{.cyclic.}` on this
-  # particular edge.
+  # particular edge. For the same reason the members share one hook table:
+  # a sibling's hooks are not in its type pragmas before it is lowered, and
+  # a hook the lifter forges for a type is then forged once for the group,
+  # which the vtable of an RTTI class depends on.
   var cycleGroup = initHashSet[string]()
   for i in 0..<modules.len:
     cycleGroup.incl modules[i].c.thisModuleSuffix
   for i in 0..<modules.len:
     modules[i].c.cycleGroup = cycleGroup
+    modules[i].c.typeHooks = modules[0].c.typeHooks
 
   # Phase 1: Register toplevel symbols for ALL modules
   for i in 0..<modules.len:
@@ -781,27 +777,8 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   for i in 0..<modules.len:
     modules[i].dest = phase3(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
 
-  # Post-processing and output for each module. `groupHooks` is the group's
-  # frontend hook table: exactly the one a single module gets to itself, only
-  # shared. The lifter already reads such a table and caches forged hooks in
-  # it, so the hook machinery needs no cyclic knowledge — this table is the
-  # whole cyclic hook change.
-  var groupHooks = initTable[SymId, HooksPerType]()
-  # A hook written in source (`=destroy` for a nominal type, say) reaches the
-  # type's pragmas only when its owner is lowered: `derefs.trType` reads the
-  # sem-side `typeHooks`. A member lowered before the owner would not see it
-  # and would forge a structural hook that skips the owner's body. That is not
-  # theoretical: `std/channels` (lowered before `std/streamio`) forged a
-  # `=destroy` for `Writer` that never called `finishImpl`, so `ringWriterGone`
-  # never ran and a channel reader waited forever. Seed the group table with
-  # every member's sem-declared hooks.
+  # Post-processing and output for each module.
   for i in 0..<modules.len:
-    for typ, hooks in modules[i].c.typeHooks:
-      let dst = addr groupHooks.mgetOrPut(typ, HooksPerType())
-      for op in low(AttachedOp)..high(AttachedOp):
-        if hooks.a[op] != SymId(0): dst[].a[op] = hooks.a[op]
-  for i in 0..<modules.len:
-    modules[i].c.groupHooks = addr groupHooks
     semcheckPostProcess modules[i].c, modules[i].dest
     if reportErrors(modules[i].dest) == 0:
       maybeValidatePostSem modules[i].dest, modules[i].outfile
