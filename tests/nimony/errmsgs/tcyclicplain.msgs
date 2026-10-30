@@ -1,0 +1,1 @@
+Error: import cycle: 'tests/nimony/errmsgs/deps/mcycplain_a.nim' imports 'tests/nimony/errmsgs/deps/mcycplain_b.nim' without {.cyclic.}; every import on a cycle needs it

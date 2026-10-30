@@ -1,7 +1,4 @@
-# Deliberately WITHOUT `{.cyclic.}`: the build still classifies the module as
-# part of the group through the other edges (chan -> stream -> dns), so this
-# intra-group import has to be deferred anyway.
-import mcyc4_chan
+import mcyc4_chan {.cyclic.}
 
 type
   Box* = object
