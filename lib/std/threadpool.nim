@@ -95,6 +95,22 @@ proc tryEnqueue(s: int; t: Task): bool {.inline.} =
   let i = s mod workerCount
   return localQueues[i].tryEnqueue(t)
 
+var
+  inTrampoline {.threadvar.}: bool
+    ## True while THIS thread executes a drained task's body (drainOnce's
+    ## trampoline or `submit`'s caller-runs path). Gates the foreign-submit
+    ## rotation in `submit`: a foreign thread that is *helping* must keep the
+    ## old single-stripe targeting (see parSubmit's comment in parfor.nim);
+    ## a foreign thread running its own code is a fan-out and rotates.
+  foreignRR: int
+    ## Round-robin stripe target for hint-less submits from a foreign thread
+    ## that is NOT currently trampolining a task. Without rotation every such
+    ## submit lands on stripe 0 (`threadIdx` defaults to 0 on foreign threads),
+    ## so ceil(N/BulkSize) bulk claims cap the engaged lanes regardless of
+    ## pool size, and one claim can hold a contiguous run of expensive chunks
+    ## (a contiguous-heavy-tail workload serializes inside a single claim).
+    ## Accessed only atomically; `tryEnqueue` applies `mod workerCount`.
+
 proc submit*(t: Task; h = 0) =
   ## Submit a task to the pool. **Non-lossy with "caller-runs" backpressure:**
   ## try the hinted stripe, then the others (absorbing bursts); if *every*
@@ -116,12 +132,15 @@ proc submit*(t: Task; h = 0) =
   if injectQueue.tryEnqueue(t): return
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
   # `fn` is nil when the task completes or parks (I/O will resume a parked one).
+  let wasTrampolining = inTrampoline
+  inTrampoline = true
   var c = t.con
   while true:
     let next = c.fn(c.env)
     if next.fn == nil: break
     if tryEnqueue(h, toTask(next)): break
     c = next
+  inTrampoline = wasTrampolining
 
 # --- Per-worker staging ring ---
 
@@ -184,7 +203,17 @@ proc submit*(c: Continuation; hint = -1) {.inline.} =
   if hint != -1 or not isWorker:
     var hint = hint
     if hint == -1:
-      hint = threadIdx
+      if isWorker or inTrampoline:
+        hint = threadIdx
+      else:
+        # Foreign thread running its OWN code = a fan-out: rotate. A foreign
+        # thread INSIDE a trampoline (helping via poolHelp/passiveWait) keeps
+        # the old single-stripe targeting: concentrating a helper's
+        # resubmissions is what makes nested `||` cheap (see parSubmit's
+        # comment in parfor.nim -- the hinted-from-non-workers variant of
+        # #2390 measured 3.4x worse exactly because helpers' submissions
+        # were spread).
+        hint = atomicFetchAdd(foreignRR, 1, moRelaxed) and 0x7FFF_FFFF
     submit(toTask(c), hint)
   elif not stageTask(toTask(c)):
     # Ring full: drain it into the stripes, then stage again — after a full
@@ -215,6 +244,8 @@ proc drainOnce(startStripe: int): bool =
   for attempt in 0 ..< workerCount:
     let n = tryBulkDequeue(startStripe + attempt, buf)
     if n > 0:
+      let wasTrampolining = inTrampoline # `poolHelp` inside a task body nests
+      inTrampoline = true
       for i in 0 ..< n:
         let c = buf[i].con
         when trampolineSteps > 0:
@@ -229,6 +260,7 @@ proc drainOnce(startStripe: int): bool =
           let next = c.fn(c.env)
           if next.fn != nil:
             submit(next, startStripe)
+      inTrampoline = wasTrampolining
       countMetric(workerMetrics[threadIdx].tasksHandled, n)
       if attempt != 0:
         countMetric(workerMetrics[threadIdx].tasksStealed, n)

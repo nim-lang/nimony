@@ -154,8 +154,10 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## thread is a full participant through `parWait`'s `poolHelp` and its locked
   ## submissions contend with every worker. On a flat top-level `||` — the case
   ## the spread was supposed to help — the two are indistinguishable (45ms
-  ## either way): `submit`'s try-the-other-stripes fallback and work stealing
-  ## already balance it.
+  ## either way) at fine grain. At coarse grain they are not (#2825): with
+  ## every chunk on stripe 0, `BulkSize` claims cap the engaged lanes, so
+  ## `submit` rotates hint-less submissions from a foreign thread that is not
+  ## itself running a pool task. Helpers keep the single-stripe targeting.
   ##
   ## The parameter stays because the chunk number is the plugin's to say and a
   ## future scheduler may want it; what it is NOT is a stripe index.
