@@ -339,8 +339,12 @@ The ones hit most often:
 | `strutils.toOctal`, `toHex`, `toBin` | write the digit loop locally |
 | `x.isNil` on a `ref`/`ptr` | `x == nil` (`isNil` exists only for `cstring`) |
 | `system.insert(s, item, i)` | `sequtils.insert(s, [item], i)` (openArray only) |
-| `$someTuple` | build the string by hand; `$` is not defined for tuples |
 | `$aDistinct` | `$Base(x)` — `$` is not borrowed automatically |
+
+Generic `$` for sequences, arrays, open arrays, sets, tuples, and slices comes
+from `system`. Objects deliberately have no generic `$`: define one for the
+object type instead. `char`/`cstring` conversions live in `strutils`, and
+`typedesc` in `typetraits`.
 
 When the gap is a small, genuinely general routine (`strutils.join` was
 one) or a whole general-purpose module (`std/packedsets`), port it into

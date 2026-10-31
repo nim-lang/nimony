@@ -1,6 +1,7 @@
 import std/[syncio, sequtils]
 
-# nimony has no `$` for seq/tuple, so fixtures render collections by hand.
+# Render collections by hand here to exercise sequtils without depending on the
+# generic `$` formatting in system.
 proc show(xs: seq[int]): string =
   result = "@["
   for i in 0 ..< xs.len:

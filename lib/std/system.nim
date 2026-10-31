@@ -729,3 +729,5 @@ template uncheckedBorrow*(x: untyped): untyped =
   ## of its location for the loop and back in afterwards; neither needs such
   ## a promise.
   addr(x)[]
+
+include "system/dollars"
