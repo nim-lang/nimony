@@ -2588,12 +2588,12 @@ parameter — is rejected when the source is a local:
     g = toOpenArray(a)   # Error: borrow of 'a' escapes the proc
   ```
 
-Borrowing from a global is fine, because it outlives the call. A view the
-routine *returns* follows the rule `var T` results follow: it may borrow from
-the routine's **first parameter**, and from no other. The first parameter of a
-routine that returns a view is passed by reference, so the view points into
-the caller's storage; any other parameter may be the callee's own copy (a
-short `string` keeps its characters inline), and a view of it would dangle:
+A view the routine *returns* follows the rule `var T` results follow: it may
+borrow from the routine's **first parameter**, and from nothing else. The first
+parameter of a routine that returns a view is passed by reference, so the view
+points into the caller's storage; any other parameter may be the callee's own
+copy (a short `string` keeps its characters inline), and a view of it would
+dangle:
 
   ```nim
   proc slice(s: seq[int]): openArray[int] =
