@@ -34,7 +34,7 @@ import std/assertions
 import std/crypto/sysrand
 import std/tables
 import std/threadpool
-import std/channels
+import channels {.cyclic.}
 
 from std/ioring import Sockaddr_storage, earlier, never, afterMs, submitTimeout, monoNow
 

@@ -19,6 +19,7 @@ when defined(nimony):
   {.feature: "untyped".}
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
 import semos, nifconfig, nimony_model, semdata, langmodes
+from reporters import shortenDir
 import ".." / gear2 / modnames
 import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs, lengiface]
 import ".." / models / nifindex_tags
@@ -205,10 +206,6 @@ type
     isSystem: bool
     plugin: string
     cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
-    mergeInto: int ## -1, or the node this one is part of the same `{.cyclic.}`
-                   ## group with. A cycle edge can point at a module whose node
-                   ## was reached before the group was known; the post-pass
-                   ## `mergeCyclicGroups` folds that node and this one together.
     plugins: HashSet[string] ## exe basenames of the `{.plugin.}`s this module may
                              ## run: the ones it declares plus, after
                              ## `propagatePlugins`, those of its import closure
@@ -334,6 +331,27 @@ proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
     it = c.nodes[it].parent
   return false
 
+proc entryOfCycle(c: DepContext; ancestor: int; current: Node): int =
+  ## When node `ancestor` is still being traversed, i.e. lies on `current`'s
+  ## parent chain, an edge into it from `current` closes an import cycle. The
+  ## result is then the node through which the cycle left `ancestor`, else -1.
+  ## Nodes are only created by plain imports, so that edge was a plain one.
+  result = -1
+  var it = current.id
+  while it != -1:
+    let parent = c.nodes[it].parent
+    if parent == ancestor: return it
+    it = parent
+
+proc cycleError(c: DepContext; importer, imported: string) =
+  ## Every import on a cycle must be `{.cyclic.}`: following them from
+  ## whichever member the traversal reaches first then puts the whole cycle
+  ## into that member's node, with no plain edge left inside the group.
+  ## (nifler's deps output has no line information to point at.)
+  quit "Error: import cycle: '" & shortenDir(importer) &
+    "' imports '" & shortenDir(imported) &
+    "' without {.cyclic.}; every import on a cycle needs it"
+
 proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
                       current: Node; isSystem: bool) =
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
@@ -342,11 +360,16 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
   if existingNode == -1:
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: isSystem,
-                        plugin: current.plugin, mergeInto: -1)
+                        plugin: current.plugin)
     current.deps.add imported.id
     c.processedModules[p.modname] = imported.id
     c.nodes.add imported
     traverseDeps c, p, imported
+  elif not c.isGeneratingFinal and not c.inPluginImports and
+      (existingNode == current.id or entryOfCycle(c, existingNode, current) >= 0):
+    # `.s.deps.nif` does not keep `{.cyclic.}`, so only the first pass knows
+    # which import was meant to close the cycle.
+    cycleError c, current.files[current.active].nimFile, p.nimFile
   else:
     # add the dependency anyway unless it creates a cycle:
     if wouldCreateCycle(c, current, p):
@@ -364,8 +387,7 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineIn
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
   if existingNode == -1:
     var imported = Node(files: @[p], id: c.nodes.len,
-                        parent: current.id, isSystem: false, plugin: f.plugin,
-                        mergeInto: -1)
+                        parent: current.id, isSystem: false, plugin: f.plugin)
     current.deps.add imported.id
     c.processedModules[p.modname] = imported.id
     c.nodes.add imported
@@ -373,44 +395,26 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineIn
   else:
     current.deps.add existingNode
 
-proc findMergeRoot(c: DepContext; start: int): int =
-  ## The representative of `start`'s pending cycle-group merge. `mergeInto` is
-  ## a union-find parent chain: `-1` means the node is its own group.
-  result = start
-  while c.nodes[result].mergeInto >= 0:
-    result = c.nodes[result].mergeInto
-
-proc unionMerge(c: var DepContext; a, b: int) =
-  ## Put two already-reached nodes into one cycle group. The earlier node (the
-  ## lower index) stays the representative so the group keeps the order the
-  ## traversal gave it.
-  if a == b: return
-  if a < b:
-    c.nodes[b].mergeInto = a
-  else:
-    c.nodes[a].mergeInto = b
-
 proc importCyclicModule(c: var DepContext; f1: string; info: NifLineInfo;
                         current: Node) =
-  ## Merge a cyclic import target into the current node's cycle group.
+  ## Add a cyclic import target to the current node's cycle group.
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
   let existing = c.processedModules.getOrDefault(p.modname, -1)
-  if existing >= 0:
-    # The target belongs to a node that was already built — the cycle was
-    # entered through a plain import before this `{.cyclic.}` edge was seen
-    # (`dns` imports `channels`, `channels` imports `streamio {.cyclic.}`,
-    # `streamio` imports `dns {.cyclic.}`). That node and this one are one
-    # cycle group; remember it and let `mergeCyclicGroups` fold them once the
-    # traversal is done. Returning here would leave two groups and the back
-    # edge dangling, so the semmed group could not see the target's symbols.
-    if existing != current.id:
-      let otherRoot = findMergeRoot(c, existing)
-      if current.mergeInto == -1:
-        current.mergeInto = otherRoot
-      else:
-        unionMerge(c, findMergeRoot(c, current.mergeInto), otherRoot)
+  if existing == current.id:
+    return # already a member of this group
+  elif existing >= 0:
+    let entry = entryOfCycle(c, existing, current)
+    if entry >= 0:
+      # The cycle was entered through a plain import, which gave the module
+      # behind it a node of its own: name that import.
+      let importer = c.nodes[existing]
+      cycleError c, importer.files[importer.active].nimFile,
+        c.nodes[entry].files[0].nimFile
+    # A finished node is no cycle: an ordinary dependency, which sem treats
+    # as a plain import since the target is not in the group.
+    current.deps.add existing
     return
   # Add to current node as a cyclic group member:
   let idx = current.files.len
@@ -764,8 +768,7 @@ proc importSystem(c: var DepContext; current: Node) =
   if existingNode == -1:
     #echo "NIFLING ", p.nimFile, " -> ", c.config.parsedFile(p)
     execNifler c, p
-    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true,
-                        mergeInto: -1)
+    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
     c.nodes.add imported
     c.processedModules[p.modname] = imported.id
     traverseDeps c, p, imported
@@ -834,66 +837,6 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   processDeps c, beginRead(buf), current
   if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
     importSystem c, current
-
-proc mergeCyclicGroups(c: var DepContext) =
-  ## Fold together the nodes a cross-node `{.cyclic.}` edge joined. Traversal
-  ## can enter a cycle through a plain import (the cycle is only discovered
-  ## later, on a back edge); the back edge's target then already owns a node of
-  ## its own. Leaving them apart would semcheck the two halves in separate
-  ## `nimsem` runs, and the group half would not see the target's symbols at
-  ## all ("undeclared identifier" for an ordinary proc of the module it
-  ## cyclically imports).
-  ##
-  ## The earlier node stays the group root; every member contributes its files
-  ## (as cyclic members, i.e. after the primary file) and its dependencies.
-  ## Merged nodes then disappear from the node list, and dependency indices are
-  ## rewritten to the roots (self-edges, which the plain intra-group import
-  ## created, are dropped).
-  var anyMerged = false
-  for i in 0 ..< c.nodes.len:
-    if c.nodes[i].mergeInto >= 0:
-      anyMerged = true
-      break
-  if not anyMerged: return
-
-  var rootOf = newSeq[int](c.nodes.len)
-  for i in 0 ..< c.nodes.len:
-    rootOf[i] = findMergeRoot(c, i)
-  for i in 0 ..< c.nodes.len:
-    let r = rootOf[i]
-    if r == i: continue
-    let root = c.nodes[r]
-    let member = c.nodes[i]
-    let first = root.files.len
-    for j in 0 ..< member.files.len: root.files.add member.files[j]
-    for k in first ..< root.files.len: root.cyclicFiles.add k
-    for j in 0 ..< member.deps.len: root.deps.add member.deps[j]
-    # `uncheckedBorrow`: the set is not mutated while it is walked, but the
-    # borrow checker cannot see that through the `ref`.
-    for p in uncheckedBorrow(member.plugins): root.plugins.incl p
-    root.isSystem = root.isSystem or member.isSystem
-    for j in 0 ..< member.fileDeps.len: root.fileDeps.add member.fileDeps[j]
-
-  var indexMap = newSeq[int](c.nodes.len)
-  var kept: seq[Node] = @[]
-  for i in 0 ..< c.nodes.len:
-    if rootOf[i] == i:
-      indexMap[i] = kept.len
-      kept.add c.nodes[i]
-    else:
-      indexMap[i] = -1
-
-  for i in 0 ..< kept.len:
-    let node = kept[i]
-    var deps: seq[int] = @[]
-    for j in 0 ..< node.deps.len:
-      let r = rootOf[node.deps[j]]
-      if indexMap[r] < 0 or indexMap[r] == i: continue
-      if indexMap[r] notin deps: deps.add indexMap[r]
-    node.deps = deps
-    node.id = i
-
-  c.nodes = kept
 
 proc propagatePlugins(c: var DepContext) =
   ## A plugin declared in module A runs whenever a module importing A is
@@ -2246,13 +2189,11 @@ proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebui
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
     cmd: cmd, isGeneratingFinal: isFinal)
   let p = result.toPair(project)
-  let root = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags,
-                  mergeInto: -1)
+  let root = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
   result.rootNode = root
   result.nodes.add root
   result.processedModules[p.modname] = 0
   traverseDeps result, p, root
-  mergeCyclicGroups result
   if not isFinal:
     propagatePlugins result
 

@@ -61,7 +61,7 @@ type
     hookNames: Table[string, int]
     thisModuleSuffix: string
     bits*: int
-    frontendHooks*: ptr Table[SymId, HooksPerType]
+    frontendHooks*: ref Table[SymId, HooksPerType]
       ## Hooks not yet embedded in a type's pragmas. The lifter reads this
       ## table and caches every hook it forges for a nominal type there, so
       ## the next lookup finds it instead of generating a second symbol. A
@@ -1539,7 +1539,7 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
   if c.dest.len > 0:
     dest.add c.dest
 
-proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil;
+proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ref Table[SymId, HooksPerType] = nil;
                        cycles = false): ref LiftingCtx =
   (ref LiftingCtx)(dest: initTokenBuf(), op: attachedDestroy, info: NoLineInfo,
                    thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY,

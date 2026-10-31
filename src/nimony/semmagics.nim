@@ -828,10 +828,7 @@ proc semCanFormCycles*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   commonType c, dest, it, beforeExpr, expected
 
 proc hasDestroyHook(c: var SemContext; s: SymId): bool =
-  ## This module's hooks are not embedded in its type declarations yet.
-  let hooks = if pool.symModule(s) == c.thisModuleSuffix: c.typeHooks.getOrDefault(s)
-              else: tryLoadAllHooks(s)
-  result = hooks.a[attachedDestroy] != NoSymId
+  result = hooksOf(c, s).a[attachedDestroy] != NoSymId
 
 proc needsDestroy(c: var SemContext; t: TypeCursor; depth: int): bool =
   ## Does a value of type `t` own something its `=destroy` must release? The

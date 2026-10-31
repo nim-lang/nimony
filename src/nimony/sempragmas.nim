@@ -1429,23 +1429,30 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       c.passC.add pool.strings[s]
     closePragmaLine()
   of FeatureP:
-    toPragmaArgs()
     let info = it.n.info
-    let start = dest.len
-    let stringType = c.types.stringType
-    let s = evalConstStrExpr(c, dest, it.n, stringType)
-    if s != StrId(0):
-      dest.shrink start
-      let features = parseFeatures(pool.strings[s])
-      if features == {}:
-        while it.n.hasMore: skip it.n
-        buildErr c, dest, info, "unknown `feature`"
-      else:
-        c.features.incl features
-        closePragmaLine()
+    if c.routine.kind != NoSym:
+      # Features are module-scoped: written in a routine body, the pragma
+      # would read as local to that routine, but change every other one (#2784).
+      buildErr c, dest, info, "`feature` pragma is only allowed at module top level"
+      if hasScope: it.n = start
+      skip it.n
     else:
-      while it.n.hasMore: skip it.n
-      buildErr c, dest, info, "`feature` pragma takes a string literal"
+      toPragmaArgs()
+      let start = dest.len
+      let stringType = c.types.stringType
+      let s = evalConstStrExpr(c, dest, it.n, stringType)
+      if s != StrId(0):
+        dest.shrink start
+        let features = parseFeatures(pool.strings[s])
+        if features == {}:
+          while it.n.hasMore: skip it.n
+          buildErr c, dest, info, "unknown `feature`"
+        else:
+          c.features.incl features
+          closePragmaLine()
+      else:
+        while it.n.hasMore: skip it.n
+        buildErr c, dest, info, "`feature` pragma takes a string literal"
   of EnableTraceP:
     # In the body of a runtime's `nimTraceRef`: the runtime collects cycles.
     # A runtime shared with Nim says `when defined(nimony): {.enableTrace.}`.

@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tfeatureinproc.nim(7, 5) Error: `feature` pragma is only allowed at module top level

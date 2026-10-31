@@ -88,7 +88,7 @@ type
     dest: TokenBuf
     r: CurrentRoutine
     typeCache: TypeCache
-    hooks: ptr Table[SymId, HooksPerType]
+    hooks: ref Table[SymId, HooksPerType]
       ## The frontend hook table: this module's own, or the shared one of its
       ## `{.cyclic.}` group. The lifter both reads it and caches forged hooks
       ## there, so a hook is generated once per table, not once per module.
@@ -1836,7 +1836,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
     # classic model, a real ParRi scope-close: copy the token verbatim.
     takeTree c, n
 
-proc injectDerefs*(n: Cursor; hooks: ptr Table[SymId, HooksPerType];
+proc injectDerefs*(n: Cursor; hooks: ref Table[SymId, HooksPerType];
                    classes: sink Classes;
                    thisModuleSuffix: string; bits: int; cycles = false): TokenBuf =
   ## `cycles`: the runtime collects cycles (`NifConfig.cycles`).
@@ -1848,10 +1848,10 @@ proc injectDerefs*(n: Cursor; hooks: ptr Table[SymId, HooksPerType];
     dest: createTokenBuf(inputWidth + inputWidth div 4), # about 1.12x the input
     hooks: hooks,
     classes: ensureMove(classes),
-    lifter: nil) # set below after hooks is moved
+    lifter: nil) # set below
   c.errorCodeType = createTokenBuf(1)
   c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
-  # Pass address of hooks to lifter so it can look up hooks from current module
+  # the lifter shares the hook table: it reads it and caches forged hooks there
   c.lifter = createLiftingCtx(thisModuleSuffix, bits, c.hooks, cycles = cycles)
   c.typeCache.openScope()
   var n2 = n
