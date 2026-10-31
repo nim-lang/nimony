@@ -32,8 +32,11 @@ import std/locks
 import std/atomics
 import std/assertions
 import std/crypto/sysrand
+import std/tables
+import std/threadpool
+import channels {.cyclic.}
 
-from std/ioring import Sockaddr_storage
+from std/ioring import Sockaddr_storage, earlier, never, afterMs, submitTimeout, monoNow
 
 const
   MaxPtrLabels = 64
@@ -279,11 +282,19 @@ proc isDots4(s: string): bool =
 # ------------------------------------------------------------------ client ---
 
 type
-  Resolver* = object
+  PendingQuery = object
+    tx: Sender[Message]
+
+  Resolver* = ref object
     hosts: StringTableRef           ## canonical name -> dotted quad. Never `nil`:
                                     ## every constructor makes the table, so no
                                     ## reader has to prove it is there.
     servers*: seq[string]           ## nameserver addresses, dotted quads
+    sock: UdpSocket                 ## one socket shared by every query
+    sockOpen: bool
+    sockLock: Lock
+    pendingLock: Lock
+    pending: Table[uint16, PendingQuery]
 
 proc nextToken(s: string; i: var int): string =
   ## The next whitespace-delimited run of `s`, and the index past it. A line
@@ -432,12 +443,64 @@ proc initResolver*(dl = never): Resolver {.passive, raises.} =
   ## used partially: a broken hosts file does not take the resolver down with
   ## it. The hosts file is read through the ring (`asyncio`), so construction
   ## is `{.passive.}` and bounded by `dl` like everything else here.
-  result = Resolver(hosts: newStringTable(modeCaseInsensitive), servers: @[])
+  result = Resolver(hosts: newStringTable(modeCaseInsensitive), servers: @[],
+                    sock: UdpSocket(fd: -1, deadline: never,
+                                    peer: PeerAddr(raw: Sockaddr_storage())),
+                    sockOpen: false,
+                    pending: initTable[uint16, PendingQuery]())
+  initLock(result.sockLock)
+  initLock(result.pendingLock)
   readHosts(result.hosts, dl)
   when defined(windows):
     readNameServers(result)
   else:
     readNameServers(result, dl)
+
+proc getTx(r: Resolver; id: uint16; tx: var Sender[Message]): bool =
+  ## The sender registered for `id`, if any. The table outlives a query: only
+  ## the query itself removes its entry, so a late reply still finds the waiter
+  ## it was meant for.
+  withLock(r.pendingLock):
+    result = r.pending.hasKey(id)
+    if result:
+      tx = r.pending.getOrDefault(id).tx
+
+proc receiverLoop(r: Resolver) {.passive.} =
+  ## The long-lived half of a resolver: one socket, every waiter, routed by
+  ## the DNS id the query drew. A datagram nobody waits for is dropped, which
+  ## is what the old one-socket-per-query loop did with a mismatched id too.
+  var peer = PeerAddr(raw: Sockaddr_storage())
+  var buf = newSeq[char](512)
+  while true:
+    var n = 0
+    try:
+      n = recvFrom(r.sock, toOpenArray(buf, 0, buf.len - 1), peer, never)
+    except ErrorCode:
+      break
+    var m = Message(id: 0'u16, flags: 0'u16)
+    if not decodeMessage(toOpenArray(buf, 0, n - 1), m):
+      continue
+    var tx = Sender[Message]()
+    if getTx(r, m.id, tx):
+      try:
+        discard tx.send(m)
+      except ErrorCode:
+        discard                  # the waiter is gone; drop the datagram
+
+proc recvBounded(rx: Receiver[Message]; dest: var Message;
+                 dl: Deadline): bool {.passive, raises.} =
+  ## `channels.recv` parks without a deadline. Poll the query's one-record ring
+  ## on the ring's own timer instead: a DNS answer is one round trip, and the
+  ## one-millisecond tick is the same shape of wait `awaitFlagPassive` uses.
+  ## `false` when `dl` passed with nothing in the inbox.
+  result = false
+  while true:
+    if rx.tryRecv(dest): return true
+    if dl != never and dl <= monoNow(): return false
+    var res = 0
+    let c = delay()
+    discard submitTimeout(earlier(afterMs(1), dl), c, addr res)
+    suspend()
 
 proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
             dl: Deadline): Message {.passive, raises.} =
@@ -454,6 +517,10 @@ proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
   ## answer accepted. A datagram that fails either check is dropped and the
   ## wait for the real one goes on, so a forgery cannot even make the query
   ## fail early.
+  ##
+  ## The socket is the resolver's, opened on the first query and shared by
+  ## every query that follows; a background task reads it and routes each
+  ## reply to the waiter that drew its id.
   var id = default(array[2, byte])
   if not urandom(id): raise IOError
   let question = Question(name: canon(host), rtype: RTypeA, rclass: 1'u16)
@@ -462,25 +529,43 @@ proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
                   flags: 0x0100'u16)   # RD
   q.questions.add question
   encodeMessage(q, wire)
-  var sock = openUdp(0, dl)
-  var d = budget(sock, dl)
-  udpConnect(sock, r.servers[serverIdx], port, d)
-  sendDatagram(sock, wire, d)
-  var respBuf = newSeq[char](512)
+  # One critical section for the whole "open if needed, then read what was
+  # published": a second task cannot observe a half-initialised resolver or
+  # open a second socket for the same resolver.
+  withLock(r.sockLock):
+    if not r.sockOpen:
+      r.sock = openUdp(0, never)
+      r.sockOpen = true
+      submit(delay(receiverLoop(r)))
+  let (rx, tx) = channel[Message](1)
+  withLock(r.pendingLock):
+    r.pending[q.id] = PendingQuery(tx: tx)
+  try:
+    sendTo(r.sock, wire, r.servers[serverIdx], port, dl)
+  except ErrorCode:
+    withLock(r.pendingLock):
+      r.pending.del(q.id)
+    raise
   var m = Message(id: 0'u16, flags: 0'u16)
-  while true:
-    let n = recvDatagram(sock, toOpenArray(respBuf, 0, respBuf.len - 1), d)
-    m = Message(id: 0'u16, flags: 0'u16)
-    if decodeMessage(toOpenArray(respBuf, 0, n - 1), m) and m.id == q.id and
-        (m.flags and 0x8000'u16) != 0 and m.questions.len == 1 and
-        m.questions[0].rtype == question.rtype and
-        m.questions[0].rclass == question.rclass and
-        canon(m.questions[0].name) == question.name:
-      break
-  let rcode = m.flags and 0x000F'u16
-  if rcode != 0:
-    raise NameNotFound          # NXDOMAIN and every other refusal
-  result = m
+  try:
+    while true:
+      var reply = Message(id: 0'u16, flags: 0'u16)
+      if not recvBounded(rx, reply, dl):
+        raise TimeoutError      # the budget ran out
+      m = reply
+      if m.id == q.id and (m.flags and 0x8000'u16) != 0 and
+          m.questions.len == 1 and
+          m.questions[0].rtype == question.rtype and
+          m.questions[0].rclass == question.rclass and
+          canon(m.questions[0].name) == question.name:
+        break
+    let rcode = m.flags and 0x000F'u16
+    if rcode != 0:
+      raise NameNotFound        # NXDOMAIN and every other refusal
+    result = m
+  finally:
+    withLock(r.pendingLock):
+      r.pending.del(q.id)
 
 proc resolveOne(r: var Resolver; hostIn: string; serverIdx: int;
                 dl: Deadline): string {.passive, raises.} =
@@ -553,7 +638,11 @@ proc resolve*(r: var Resolver; hostIn: string; dl = never): string {.passive, ra
 
 var
   gDefaultResolver = Resolver(hosts: newStringTable(modeCaseInsensitive),
-                              servers: @[])
+                              servers: @[],
+                              sock: UdpSocket(fd: -1, deadline: never,
+                                              peer: PeerAddr(raw: Sockaddr_storage())),
+                              sockOpen: false,
+                              pending: initTable[uint16, PendingQuery]())
     ## An empty resolver until the first `defaultResolver` replaces it: the
     ## table is not-nil, so the global is born with one rather than with a
     ## hole every reader would have to prove away.
@@ -561,6 +650,8 @@ var
   gDefaultResolverInited: int     ## 0 = not yet, 1 = ready
 
 initLock(gDefaultResolverLock)
+initLock(gDefaultResolver.sockLock)
+initLock(gDefaultResolver.pendingLock)
 
 proc defaultResolver(dl: Deadline): Resolver {.passive, raises.} =
   ## The process-wide resolver, initialised on first use under a lock (the
@@ -570,14 +661,11 @@ proc defaultResolver(dl: Deadline): Resolver {.passive, raises.} =
   ## `/etc/hosts`/`/etc/resolv.conf` read, which goes through the ring like
   ## the rest of this module.
   if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
-    acquire(gDefaultResolverLock)
-    try:
+    withLock(gDefaultResolverLock):
       if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
         {.cast(assumeSync).}: # written under `gDefaultResolverLock`
           gDefaultResolver = initResolver(dl)
         atomicStore(gDefaultResolverInited, 1, moRelease)
-    finally:
-      release(gDefaultResolverLock)
   {.cast(assumeSync).}: # published by the release-store above, never written again
     result = gDefaultResolver
 

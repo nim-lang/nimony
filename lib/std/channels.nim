@@ -21,7 +21,8 @@
 ## `Writer` or `Reader`, so a stream never has more than one of each and its
 ## lifecycle stays that of a connection: the last copy gone is the end gone.
 
-import std/[streamio, threadpool, ticketlocks, typetraits]
+import streamio {.cyclic.}
+import std/[threadpool, ticketlocks, typetraits]
 
 export streamio.Reader, streamio.Writer
 

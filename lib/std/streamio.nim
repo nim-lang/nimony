@@ -53,7 +53,8 @@
 ## waits on a pipe, `sendfile`/`splice`/kTLS fast paths in `copy`, and
 ## cross-thread close of a descriptor another lane is parked on.
 
-import std/[ioring, socket, dns, paths, commonio, strutils, threadpool, ticketlocks]
+import dns {.cyclic.}
+import std/[ioring, socket, paths, commonio, strutils, threadpool, ticketlocks]
 import std/compress/gzip
 
 export ioring.Deadline, ioring.never, ioring.afterMs

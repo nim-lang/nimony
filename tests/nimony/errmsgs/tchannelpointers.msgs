@@ -1,2 +1,2 @@
 tests/nimony/errmsgs/tchannelpointers.nim(9, 27) Trace: instantiation from here
-lib/std/channels.nim(196, 7) Error: T contains pointers; use channel[T]()
+lib/std/channels.nim(197, 7) Error: T contains pointers; use channel[T]()
