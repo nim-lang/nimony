@@ -193,6 +193,8 @@ type
     ownOlds: Table[string, VarId]
       ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
+    laterParams: HashSet[SymId]        # the current proc's params after the first;
+                                       # see `checkResultBorrow`
     assumeSync: bool                   # inside `{.cast(assumeSync).}:`; see
                                        # "Shared globals" below
     syncArgs: HashSet[int]             # positions of global symbols passed to a
@@ -645,9 +647,23 @@ proc checkBorrowOutlivesProc(c: var FirContext; value: Cursor) =
     buildErr c, value.info, "borrow of " & borrowedName(c, root) &
       " escapes the proc; it does not live long enough"
 
+proc checkResultBorrow(c: var FirContext; value: Cursor) =
+  ## A view the routine returns may only borrow from its first parameter — the
+  ## rule `var T` results follow, and the one parameter the calling convention
+  ## guarantees to be the caller's own storage (`firstParamPassedByRef`). Any
+  ## other parameter can be a copy that dies with the call: a short `string`
+  ## keeps its characters inline (#2837).
+  if not canCarryBorrow(c, value): return
+  let borrowed = borrowCarriedBy(c, value).loc
+  let root = locRootSym(c, borrowed)
+  if root in c.laterParams and borrowMode(c, borrowed) == IsBorrowable:
+    buildErr c, value.info, "borrow of " & borrowedName(c, root) &
+      " escapes the proc; a returned view can only borrow from the first parameter"
+
 proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
   if destRoot != NoSymId and outlivesProc(c, destRoot):
     checkBorrowOutlivesProc(c, value)
+    if destRoot == c.resultSym: checkResultBorrow(c, value)
 
 proc endBorrow(c: var FirContext; sym: SymId) =
   c.flow.borrows.endBorrowsOf sym
@@ -5009,6 +5025,7 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
         # `return toOpenArray(a)` returns the value directly rather than storing
         # it into `result` first, so `traverseAsgn`'s escape check never sees it.
         checkBorrowOutlivesProc(c, n)
+        checkResultBorrow(c, n)
       traverseExpr c, n, call
       if providesResult:
         markInit(c, c.resultSym)
@@ -5352,6 +5369,8 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   if nested:
     inheritInits(c.flow, oldFlow)
   let oldResultSym = c.resultSym
+  let oldLaterParams = move c.laterParams
+  c.laterParams = initHashSet[SymId]()
   let oldInlineVars = move c.inlineVars
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
@@ -5388,8 +5407,11 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
       if n.isTagLit:
         var p = n
         p = sub(p) # peek only, never left
+        var isFirst = true
         while p.hasMore:
           let r = takeLocal(p, SkipFinalParRi)
+          if not isFirst: c.laterParams.incl r.name.symId
+          isFirst = false
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
             outParams.add r.name.symId
@@ -5446,6 +5468,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.tr = ensureMove oldTr
   c.flow = ensureMove oldFlow
   c.resultSym = oldResultSym
+  c.laterParams = ensureMove oldLaterParams
   c.inlineVars = ensureMove oldInlineVars
   c.currentProcStart = oldProcStart
   c.stmtContext = oldStmtContext

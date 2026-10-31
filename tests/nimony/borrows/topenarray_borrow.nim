@@ -182,17 +182,19 @@ proc testViewOfTemp =
 testViewOfTemp()
 
 # `result` holds a borrow like any other view variable, so reassigning it
-# releases the previous source.
-proc resultRebind(a: var seq[int]; b: seq[int]): openArray[int] =
-  result = toOpenArray(a)
+# releases the previous source. (The view it returns has to come from the
+# first parameter, so the first borrow is of a global.)
+var rebindSrc = @[1, 2, 3]
+
+proc resultRebind(b: seq[int]): openArray[int] =
+  result = toOpenArray(rebindSrc)
   result = toOpenArray(b)
-  a.add 4
+  rebindSrc.add 4
 
 proc testResultRebind =
-  var x = @[1, 2, 3]
   let y = @[7, 8]
-  assert sum(resultRebind(x, y)) == 15
-  assert x.len == 4
+  assert sum(resultRebind(y)) == 15
+  assert rebindSrc.len == 4
 
 testResultRebind()
 

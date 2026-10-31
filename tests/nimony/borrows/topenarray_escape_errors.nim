@@ -85,4 +85,18 @@ proc escapeViaLoop =
 
 escapeViaLoop()
 
+# 10. A returned view may only borrow from the first parameter, the one the
+#     calling convention guarantees to be the caller's storage. A later
+#     by-value parameter can be the callee's copy — a short string keeps its
+#     characters inline — so the view would dangle (#2837).
+proc viewOfSecondParam(i: int; s: string): openArray[char] = s.toOpenArray(0, 1)
+
+discard viewOfSecondParam(0, "abc")
+
+# 11. Same through an explicit `return`.
+proc viewOfSecondParamViaReturn(i: int; s: seq[int]): openArray[int] =
+  return toOpenArray(s)
+
+discard viewOfSecondParamViaReturn(0, @[1])
+
 {.feature: "assumeSync".}  # test program: globals shared freely
