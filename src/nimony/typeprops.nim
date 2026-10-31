@@ -374,6 +374,33 @@ proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoTyp
 proc isViewType*(n: Cursor): bool =
   typeHasPragma(n, ViewP)
 
+proc firstParamPassedByRef*(params: Cursor): bool =
+  ## A routine whose result is a view (`openArray`, a `.view` object) borrows
+  ## from its first parameter. When that parameter is passed by value the view
+  ## would point into the callee's copy — a short `string` keeps its characters
+  ## inline — and dangle once the callee returns (#2837). So such a parameter is
+  ## passed by reference, exactly as if it were `{.byref.}` (which
+  ## `system.toOpenArray` spells out by hand). `lent T` needs no such
+  ## rule: sem already refuses to borrow a `lent` from a by-value parameter's
+  ## own storage.
+  ## `params` is the `(params …)` of a routine or proc type; its return type
+  ## follows it. Every pass that decides how a parameter is passed has to ask
+  ## this, or the callee and its callers disagree on the calling convention.
+  var ret = params
+  skip ret
+  var p = params
+  p = sub(p)
+  if isViewType(ret) and p.hasMore:
+    let t = takeLocal(p, SkipFinalParRi).typ
+    # Nothing to fix for a parameter that already is an address (`var`,
+    # `lent`, `ptr`, `ref`, a view), that the callee owns (`sink`), or that
+    # has no runtime existence.
+    result = t.typeKind notin {SinkT, MutT, OutT, LentT, PtrT, RefT, VarargsT,
+                               TypekindT, UntypedT, TypedT, TypedescT, StaticT} and
+             not isViewType(t)
+  else:
+    result = false
+
 proc isVoidType*(t: Cursor): bool {.inline.} =
   t.isDotToken or t.typeKind == VoidT
 

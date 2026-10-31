@@ -801,12 +801,16 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
   else:
     error c, "type expected but got: ", n
 
-proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor;
+                     forced: bool) =
+  ## `forced`: the routine returns a view of this parameter
+  ## (`firstParamPassedByRef`).
   let param = asLocal(n)
   if param.typ.typeKind in {TypedescT, StaticT}:
     # do not produce any code for this as it's a compile-time parameter
     skip n, SkipFull
-  elif passByConstRef(param.typ, param.pragmas, c.bits div 8, c.sizeofCache) or typeprops.isInheritable(param.typ, false):
+  elif forced or passByConstRef(param.typ, param.pragmas, c.bits div 8, c.sizeofCache) or
+      typeprops.isInheritable(param.typ, false):
     var paramBuf = createTokenBuf()
     paramBuf.addParLe("param", n.info)
     paramBuf.addSubtree param.name
@@ -834,12 +838,14 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
     dest.addSubtree n
     inc n
   elif n.isTagLit and n.substructureKind == ParamsU:
+    var byRefFirst = firstParamPassedByRef(n)
     dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         if not isParamLike(n.symKind):
           error c, "expected (param) but got: ", n
-        maybeByConstRef(c, dest, n)
+        maybeByConstRef(c, dest, n, byRefFirst)
+        byRefFirst = false
       dest.addParRi(n.endInfo)
   else:
     error c, "expected (params) but got: ", n

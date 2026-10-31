@@ -53,9 +53,20 @@ type
     argConstRef     ## has to arrive as an address
     argCompileTime  ## `typedesc`/`static`: a value with no runtime existence
 
-proc nextArgRole*(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): ArgRole =
+  ArgWalker* = object
+    ## Walks the formal parameters of a call's callee in step with its actuals.
+    formals: Cursor   ## the formals not consumed yet
+    byRefFirst: bool  ## the next formal is the first one and the routine
+                      ## returns a view of it (`firstParamPassedByRef`)
+
+proc initArgWalker*(params: Cursor): ArgWalker =
+  ## `params` is the `(params …)` of the callee's type. It is only peeked
+  ## into, never left.
+  ArgWalker(formals: sub(params), byRefFirst: firstParamPassedByRef(params))
+
+proc nextArgRole*(w: var ArgWalker; ptrSize: int; cache: var SizeofCache): ArgRole =
   ## Classify the next actual against the formal parameter list, advancing
-  ## `fnType` past the formal it consumed.
+  ## past the formal it consumed.
   ##
   ## Answers "how does this actual reach the callee?" — and `argConstRef` is
   ## the interesting one: the callee gets an ADDRESS, so the actual needs
@@ -68,33 +79,43 @@ proc nextArgRole*(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): Arg
   ## lacks does not fail — it silently pairs an argument with the wrong
   ## parameter from that point on. So the rules live here once: a `varargs`
   ## formal serves every remaining actual and must not be advanced past; a
-  ## closure's environment actual has no formal at all; and the const-ref
+  ## closure's environment actual has no formal at all; the first parameter of
+  ## a routine returning a view of it arrives by reference; and the const-ref
   ## question is asked before the compile-time one. What the two walkers *do*
   ## with a role is where they are allowed to differ.
-  if not fnType.hasMore: return argPlain
-  assert fnType.isTagLit
-  let previousFormalParam = fnType
-  let param = takeLocal(fnType, SkipFinalParRi)
-  let pk = param.typ.typeKind
-  if pk in {MutT, OutT, LentT}:
-    result = argPlain
-  elif pk == VarargsT:
-    fnType = previousFormalParam
-    result = argPlain
-  elif passByConstRef(param.typ, param.pragmas, ptrSize, cache):
-    result = argConstRef
-  elif pk in {TypedescT, StaticT}:
-    result = argCompileTime
+  if w.formals.hasMore:
+    assert w.formals.isTagLit
+    let previousFormalParam = w.formals
+    let param = takeLocal(w.formals, SkipFinalParRi)
+    let pk = param.typ.typeKind
+    let forced = w.byRefFirst
+    w.byRefFirst = false
+    if forced:
+      result = argConstRef
+    elif pk in {MutT, OutT, LentT}:
+      result = argPlain
+    elif pk == VarargsT:
+      w.formals = previousFormalParam
+      result = argPlain
+    elif passByConstRef(param.typ, param.pragmas, ptrSize, cache):
+      result = argConstRef
+    elif pk in {TypedescT, StaticT}:
+      result = argCompileTime
+    else:
+      result = argPlain
   else:
     result = argPlain
 
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   if not params.isTagLit: return
+  var byRefFirst = firstParamPassedByRef(params)
   var n = params
   n = sub(n) # skips (params; bounds the walk under vpr
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
-    if r.name.kind == SymbolDef and passByConstRef(c, r.typ, r.pragmas):
+    let forced = byRefFirst
+    byRefFirst = false
+    if r.name.kind == SymbolDef and (forced or passByConstRef(c, r.typ, r.pragmas)):
       c.constRefParams.incl r.name.symId
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -172,9 +193,9 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n.into: # skip `(call)`
     tr c, dest, n # handle `fn`
 
-    fnType = sub(fnType) # peek only, never left
+    var w = initArgWalker(fnType)
     while n.hasMore:
-      case nextArgRole(fnType, c.ptrSize, c.sizeofCache)
+      case nextArgRole(w, c.ptrSize, c.sizeofCache)
       of argPlain: tr c, dest, n
       of argConstRef: trConstRef c, dest, n
       of argCompileTime: skip n  # a compile-time value produces no code
