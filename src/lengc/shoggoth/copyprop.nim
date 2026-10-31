@@ -377,9 +377,9 @@ proc resolve(c: Context; s: SymId): SymId =
 
 # ---- invalidation ---------------------------------------------------------
 
-proc snapshot(c: Context; v: int): lent Snapshot {.inline.} =
+proc snapshot(c: Context; v: int): Snapshot {.inline.} =
   ## The snapshot behind a nonzero `snapOf` value.
-  c.snaps[v - 1]
+  c.snaps.getOrDefault(v - 1)
 
 proc invalidate(c: var Context; s: SymId) =
   ## `s` was written: it is no longer a copy of anything and no longer holds
@@ -491,7 +491,7 @@ proc dropUnsequencedLocs(c: var Context; mark: int) =
   ## with it — C may run the call first — so those reading memory go.
   var kept: seq[LocUse] = @[]
   for i in 0 ..< c.locPending.len:
-    if i >= mark or not c.snaps[c.locPending[i].locPos].inMemory:
+    if i >= mark or not c.snaps.getOrDefault(c.locPending[i].locPos).inMemory:
       kept.add c.locPending[i]
   c.locPending = ensureMove(kept)
 
@@ -504,7 +504,7 @@ proc commitLocs(c: var Context) =
     c.substCount.mgetOrPut(u.sym, 0) += 1
     # The spliced location reads its spine symbols, but `useCount` was
     # taken before splicing — never delete their decls.
-    for d in c.snaps[u.locPos].deps: c.pinned.incl d
+    for d in c.snaps.getOrDefault(u.locPos).deps: c.pinned.incl d
   c.locPending.setLen 0
 
 # ---- branch-state forwarding (same surface as cse.nim) --------------------
