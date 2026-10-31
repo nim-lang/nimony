@@ -19,6 +19,7 @@ when defined(nimony):
   {.feature: "untyped".}
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
 import semos, nifconfig, nimony_model, semdata, langmodes
+from reporters import shortenDir
 import ".." / gear2 / modnames
 import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs, lengiface]
 import ".." / models / nifindex_tags
@@ -330,6 +331,27 @@ proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
     it = c.nodes[it].parent
   return false
 
+proc entryOfCycle(c: DepContext; ancestor: int; current: Node): int =
+  ## When node `ancestor` is still being traversed, i.e. lies on `current`'s
+  ## parent chain, an edge into it from `current` closes an import cycle. The
+  ## result is then the node through which the cycle left `ancestor`, else -1.
+  ## Nodes are only created by plain imports, so that edge was a plain one.
+  result = -1
+  var it = current.id
+  while it != -1:
+    let parent = c.nodes[it].parent
+    if parent == ancestor: return it
+    it = parent
+
+proc cycleError(c: DepContext; importer, imported: string) =
+  ## Every import on a cycle must be `{.cyclic.}`: following them from
+  ## whichever member the traversal reaches first then puts the whole cycle
+  ## into that member's node, with no plain edge left inside the group.
+  ## (nifler's deps output has no line information to point at.)
+  quit "Error: import cycle: '" & shortenDir(importer) &
+    "' imports '" & shortenDir(imported) &
+    "' without {.cyclic.}; every import on a cycle needs it"
+
 proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
                       current: Node; isSystem: bool) =
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
@@ -343,6 +365,11 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
     c.processedModules[p.modname] = imported.id
     c.nodes.add imported
     traverseDeps c, p, imported
+  elif not c.isGeneratingFinal and not c.inPluginImports and
+      (existingNode == current.id or entryOfCycle(c, existingNode, current) >= 0):
+    # `.s.deps.nif` does not keep `{.cyclic.}`, so only the first pass knows
+    # which import was meant to close the cycle.
+    cycleError c, current.files[current.active].nimFile, p.nimFile
   else:
     # add the dependency anyway unless it creates a cycle:
     if wouldCreateCycle(c, current, p):
@@ -370,12 +397,25 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineIn
 
 proc importCyclicModule(c: var DepContext; f1: string; info: NifLineInfo;
                         current: Node) =
-  ## Merge a cyclic import target into the current node's cycle group.
+  ## Add a cyclic import target to the current node's cycle group.
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
-  if c.processedModules.hasKey(p.modname):
-    return # already part of this or another node
+  let existing = c.processedModules.getOrDefault(p.modname, -1)
+  if existing == current.id:
+    return # already a member of this group
+  elif existing >= 0:
+    let entry = entryOfCycle(c, existing, current)
+    if entry >= 0:
+      # The cycle was entered through a plain import, which gave the module
+      # behind it a node of its own: name that import.
+      let importer = c.nodes[existing]
+      cycleError c, importer.files[importer.active].nimFile,
+        c.nodes[entry].files[0].nimFile
+    # A finished node is no cycle: an ordinary dependency, which sem treats
+    # as a plain import since the target is not in the group.
+    current.deps.add existing
+    return
   # Add to current node as a cyclic group member:
   let idx = current.files.len
   current.files.add p

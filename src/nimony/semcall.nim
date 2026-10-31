@@ -69,7 +69,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           if n.exprKind in {DefinedX, DeclaredX, AstToStrX, CompilesX, StaticX, TypeofX,
               LowX, HighX, AddrX, EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX,
               ArratX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX, ProccallX, DelayX,
-              BindSymX, BindSymNameX, InstantiationinfoX}:
+              BindSymX, BindSymNameX, InstantiationinfoX, SupportsCopyMemX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:

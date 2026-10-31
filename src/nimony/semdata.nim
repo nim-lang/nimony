@@ -254,7 +254,11 @@ type
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
-    typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
+    typeHooks*: ref Table[SymId, HooksPerType]
+      ## Hooks per type, for embedding in type declarations. A `{.cyclic.}`
+      ## group's members share one table: none of them has written its
+      ## interface yet, so this is the only place a member's hooks can be
+      ## seen by its siblings, at sem time and when lifting.
     errorHooks*: HashSet[SymId] # the `.error` hooks among `typeHooks`
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
@@ -319,6 +323,12 @@ type
       ## module so they do not leak into the export index. See
       ## tests/nimony/lookups/tforward_decl_export.nim.
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
+    cycleGroup*: HashSet[string]
+      ## Module suffixes of this `{.cyclic.}` group, including this module.
+      ## Any import of a member is deferred like an explicit `{.cyclic.}`
+      ## edge: within a group no member's interface exists yet, so a plain
+      ## import of a sibling could not be loaded even though the build did
+      ## classify the edge as an ordinary one.
     inTypeInst*: int # > 0 means we're inside a generic type instantiation
     inGenericDefinition*: int
       ## > 0 while semchecking a generic (or template) definition that has not
@@ -342,6 +352,16 @@ type
       ## it as OkExistingFresh) so the body phase does not redeclare it and the
       ## symbol keeps the same name as if it had never been resolved early.
       ## Persists phase 2 → phase 3; cleared per module at phase-2 start.
+
+proc hooksOf*(c: SemContext; typ: SymId): HooksPerType =
+  ## The hooks of `typ` as sem knows them. The hooks of this module (and of
+  ## its `{.cyclic.}` siblings) are not embedded in type declarations until
+  ## `derefs` runs; any other module's are read from its type's pragmas.
+  let m = pool.symModule(typ)
+  if m == c.thisModuleSuffix or m in c.cycleGroup:
+    result = c.typeHooks[].getOrDefault(typ)
+  else:
+    result = tryLoadAllHooks(typ)
 
 proc recordFileDep*(c: var SemContext; path: string) =
   ## `path` was read while semchecking this module; see `fileDeps`. Only a

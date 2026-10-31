@@ -80,6 +80,24 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   producesVoid c, dest, info, it.typ
 
+proc deferCyclicModule(c: var SemContext; suffix, path, name: string;
+                       info: NifLineInfo) =
+  ## Register `suffix` as a member of this cycle group and defer loading its
+  ## interface until phase1/phase2 of every member has run.
+  if c.processedModules.contains(suffix): return
+  let moduleSym = identToSym(c, pool.strings.getOrIncl(name), ModuleY)
+  c.meta.importedFiles.add path
+  c.processedModules[suffix] = moduleSym
+  if name != "":
+    let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
+    c.currentScope.addOverloadable(pool.strings.getOrIncl(name), s)
+  var moduleDecl = createTokenBuf(2)
+  moduleDecl.addParLe(ModuleY, info)
+  moduleDecl.addParRi()
+  publish moduleSym, moduleDecl, SemcheckBodies
+  discard c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: path))
+  c.deferredCyclicImports.add (suffix, moduleSym)
+
 proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       mode: ImportFilter; exports: var seq[(string, ImportFilter)];
                       info: NifLineInfo): SymId =
@@ -185,24 +203,14 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
             c.buildErr dest, info, "file not found: " & f2
             continue
           let suffix = moduleSuffix(f2, c.g.config.paths)
-          var moduleSym = SymId(0)
-          if not c.processedModules.contains(suffix):
-            c.meta.importedFiles.add f2
-            let moduleName = pool.strings.getOrIncl(f1.name)
-            moduleSym = identToSym(c, moduleName, ModuleY)
-            c.processedModules[suffix] = moduleSym
-            let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
-            if f1.name != "":
-              c.currentScope.addOverloadable(moduleName, s)
-            var moduleDecl = createTokenBuf(2)
-            moduleDecl.addParLe(ModuleY, info)
-            moduleDecl.addParRi()
-            publish moduleSym, moduleDecl, SemcheckBodies
+          if suffix in c.cycleGroup:
+            # Defer the actual interface loading until after phase1/phase2.
+            deferCyclicModule(c, suffix, f2, f1.name, info)
           else:
-            moduleSym = c.processedModules.getOrQuit(suffix)
-          discard c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
-          # Defer the actual interface loading until after phase1/phase2
-          c.deferredCyclicImports.add (suffix, moduleSym)
+            # `{.cyclic.}` on an edge that closes no cycle: the build gave the
+            # target a node of its own, so its interface exists already.
+            importSingleFileConsiderExports c, dest, f1, origin,
+              ImportFilter(kind: ImportAll), info
     else:
       # Non-cyclic import in same statement; skip it (should not happen in practice)
       skip x

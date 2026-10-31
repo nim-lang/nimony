@@ -263,14 +263,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
 
   let symId = typevars.symId
 
-  # For types from the current module, use typeHooks (hooks haven't been embedded
-  # in type pragmas yet - that happens in injectDerefs at the end).
-  # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
-  let moduleSuffix = pool.symModule(symId)
-  let hooks = if moduleSuffix == c.thisModuleSuffix:
-      c.typeHooks.getOrDefault(symId)
-    else:
-      tryLoadAllHooks(symId)
+  let hooks = hooksOf(c, symId)
   var needsSomething = false
   for op in low(AttachedOp)..high(AttachedOp):
     let h = hooks.a[op]
@@ -521,10 +514,15 @@ proc checkDestroysHaveWasMoved(c: var SemContext; dest: var TokenBuf) =
   ## in this module are in its scope; generic instances are not, so they do
   ## not report the same error again.
   var missing: seq[(SymId, SymId)] = @[]
-  for obj, hooks in c.typeHooks:
+  # moved out for the loop: the table is behind a `ref`
+  var typeHooks = move c.typeHooks[]
+  for obj, hooks in typeHooks:
     let destroy = hooks.a[attachedDestroy]
-    if destroy != SymId(0) and hooks.a[attachedWasMoved] == SymId(0):
+    # a `{.cyclic.}` sibling's hooks are in the shared table too
+    if destroy != SymId(0) and hooks.a[attachedWasMoved] == SymId(0) and
+        pool.symModule(destroy) == c.thisModuleSuffix:
       missing.add (obj, destroy)
+  c.typeHooks[] = move typeHooks
   for (obj, destroy) in missing:
     if fetchSym(c, destroy).pos < 0: continue
     # the scope's `pos` is from the phase that declared the hook, so find the
@@ -603,7 +601,14 @@ proc resolveCyclicImports(c: var SemContext) =
     for symId in prog.mem.symIds:
       let symName = pool.symString(symId)
       let modSuffix = pool.symModule(symId)
-      if modSuffix == targetSuffix:
+      # An instantiated generic (`seq[char]`, the `Sender[Message]` of a cycle
+      # member's own field) is published under the module that instantiated it
+      # but is not a name that module exports. Importing those would put `seq`
+      # -- and every other container a cycle member happens to use -- into the
+      # importer's scope, where it shadows the system one and makes each plain
+      # `seq[T]` ambiguous. The base declaration is what the importer needs;
+      # it instantiates from that itself.
+      if modSuffix == targetSuffix and not pool.symIsInstantiation(symId):
         let nameId = pool.symNameId(symId)
         c.importTab.mgetOrPut(nameId, @[]).addIfAbsent(moduleSym)
         module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
@@ -624,6 +629,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     toBuild: initTokenBuf(),
     toBundle: initTokenBuf(),
     pending: createTokenBuf(),
+    typeHooks: (ref Table[SymId, HooksPerType])(),
     importSnippets: initTokenBuf(),
     expanded: initTokenBuf(),
     executeExpr: exprexec.executeExpr,
@@ -729,6 +735,20 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
       let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
       importSingleFile(modules[i].c, modules[i].dest, systemFile, "", ImportFilter(kind: ImportAll), modules[i].n0.info)
 
+  # Every module here is a member of one cycle group. Record the group so any
+  # import into it is deferred: a group member cannot have a readable
+  # interface yet, even when the source did not put `{.cyclic.}` on this
+  # particular edge. For the same reason the members share one hook table:
+  # a sibling's hooks are not in its type pragmas before it is lowered, and
+  # a hook the lifter forges for a type is then forged once for the group,
+  # which the vtable of an RTTI class depends on.
+  var cycleGroup = initHashSet[string]()
+  for i in 0..<modules.len:
+    cycleGroup.incl modules[i].c.thisModuleSuffix
+  for i in 0..<modules.len:
+    modules[i].c.cycleGroup = cycleGroup
+    modules[i].c.typeHooks = modules[0].c.typeHooks
+
   # Phase 1: Register toplevel symbols for ALL modules
   for i in 0..<modules.len:
     var (buf1, lineInfo) = phase1(modules[i].c, modules[i].dest, modules[i].n0)
@@ -757,7 +777,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   for i in 0..<modules.len:
     modules[i].dest = phase3(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
 
-  # Post-processing and output for each module
+  # Post-processing and output for each module.
   for i in 0..<modules.len:
     semcheckPostProcess modules[i].c, modules[i].dest
     if reportErrors(modules[i].dest) == 0:
