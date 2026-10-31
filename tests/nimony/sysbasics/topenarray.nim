@@ -89,3 +89,30 @@ block:
   assert sint.testToSeq == @[3, 2, 1]
   let sstr = @["bar", "foo"]
   assert sstr.testToSeq == @["bar", "foo"]
+
+# issue #2837: a view returned from a by-value parameter must not point into the
+# callee's copy. A short string keeps its characters inline, so the parameter
+# has to be passed by reference — inlined or not, called directly or through a
+# proc variable. Reading the characters back is not a reliable check (a dead
+# frame often still holds them), the address is.
+proc head(s: string): openArray[char] = s.toOpenArray(0, 1)
+
+proc headAt(s: string; at: int): openArray[char] {.noinline.} =
+  result = s.toOpenArray(at, at + 1)
+
+proc viewsOfByValueParams =
+  let short = "abc"
+  let all = short.toOpenArray(0, 2)
+  let base = cast[uint](addr all[0])
+  let v = head(short)
+  assert v.len == 2 and cast[uint](addr v[0]) == base
+  let w = headAt(short, 1)
+  assert w.len == 2 and cast[uint](addr w[0]) == base + 1
+  let p: proc (s: string; at: int): openArray[char] {.nimcall.} = headAt
+  let x = p(short, 0)
+  assert cast[uint](addr x[0]) == base
+  let long = "abcdefghijklmnopqrstuvwxyz"
+  let y = headAt(long, 24)
+  assert y[0] == 'y' and y[1] == 'z'
+
+viewsOfByValueParams()

@@ -3920,14 +3920,14 @@ proc ownsNoHeap(c: var FirContext; t: Cursor; depth: int): bool =
   else:
     result = false
 
-proc passedByPointer(c: var FirContext; param: Local): bool =
+proc passedByPointer(c: var FirContext; param: Local; forced: bool): bool =
   ## Can the callee's view of this immutable parameter be changed by a
   ## mutation through another argument? Yes when it reads the caller's storage
   ## through a pointer, and also for a copy that shares the caller's heap
   ## block. A plain-data copy cannot alias anything.
   let t = param.typ
   # a `sink` parameter receives a copy or the moved value: its own either way
-  result = t.typeKind != SinkT and
+  result = forced or t.typeKind != SinkT and
            (t.typeKind in {LentT, VarargsT} or isViewType(t) or
             passByConstRef(t, param.pragmas, c.bits div 8) or
             not ownsNoHeap(c, t, 0))
@@ -3952,6 +3952,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   let isSync = hasPragma(fnPragmas, SyncP)
   traverseExpr c, n, call # the `fn` itself
   let paramsStart = fnType
+  var byRefFirst = firstParamPassedByRef(fnType)
   fnType = sub(fnType)
   var paramMap = initTable[SymId, Cursor]()
   # Collect argument paths for aliasing check
@@ -3976,7 +3977,8 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     # advances `n`; the input buffer is never rewritten, so the cursor stays
     # valid for the rest of the call.
     paramMap[param.name.symId] = n
-    modes.add(if passedByPointer(c, param): amByPointer else: amByValue)
+    modes.add(if passedByPointer(c, param, byRefFirst): amByPointer else: amByValue)
+    byRefFirst = false
     let pk = param.typ.typeKind
     # Save arg info before traverseExpr advances n
     let isMut = n.exprKind == HaddrX

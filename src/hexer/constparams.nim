@@ -53,7 +53,8 @@ type
     argConstRef     ## has to arrive as an address
     argCompileTime  ## `typedesc`/`static`: a value with no runtime existence
 
-proc nextArgRole*(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): ArgRole =
+proc nextArgRole*(fnType: var Cursor; byRefFirst: var bool; ptrSize: int;
+                  cache: var SizeofCache): ArgRole =
   ## Classify the next actual against the formal parameter list, advancing
   ## `fnType` past the formal it consumed.
   ##
@@ -71,12 +72,20 @@ proc nextArgRole*(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): Arg
   ## closure's environment actual has no formal at all; and the const-ref
   ## question is asked before the compile-time one. What the two walkers *do*
   ## with a role is where they are allowed to differ.
+  ##
+  ## `byRefFirst` starts as `firstParamPassedByRef(params)` and is consumed by
+  ## the first formal: a routine returning a view of that one takes it by
+  ## reference.
   if not fnType.hasMore: return argPlain
   assert fnType.isTagLit
   let previousFormalParam = fnType
   let param = takeLocal(fnType, SkipFinalParRi)
   let pk = param.typ.typeKind
-  if pk in {MutT, OutT, LentT}:
+  let forced = byRefFirst
+  byRefFirst = false
+  if forced:
+    result = argConstRef
+  elif pk in {MutT, OutT, LentT}:
     result = argPlain
   elif pk == VarargsT:
     fnType = previousFormalParam
@@ -90,11 +99,14 @@ proc nextArgRole*(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): Arg
 
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   if not params.isTagLit: return
+  var byRefFirst = firstParamPassedByRef(params)
   var n = params
   n = sub(n) # skips (params; bounds the walk under vpr
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
-    if r.name.kind == SymbolDef and passByConstRef(c, r.typ, r.pragmas):
+    let forced = byRefFirst
+    byRefFirst = false
+    if r.name.kind == SymbolDef and (forced or passByConstRef(c, r.typ, r.pragmas)):
       c.constRefParams.incl r.name.symId
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -172,9 +184,10 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n.into: # skip `(call)`
     tr c, dest, n # handle `fn`
 
+    var byRefFirst = firstParamPassedByRef(fnType)
     fnType = sub(fnType) # peek only, never left
     while n.hasMore:
-      case nextArgRole(fnType, c.ptrSize, c.sizeofCache)
+      case nextArgRole(fnType, byRefFirst, c.ptrSize, c.sizeofCache)
       of argPlain: tr c, dest, n
       of argConstRef: trConstRef c, dest, n
       of argCompileTime: skip n  # a compile-time value produces no code
