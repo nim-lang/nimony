@@ -653,12 +653,12 @@ proc checkResultBorrow(c: var FirContext; value: Cursor) =
   ## guarantees to be the caller's own storage (`firstParamPassedByRef`). Any
   ## other parameter can be a copy that dies with the call: a short `string`
   ## keeps its characters inline (#2837).
-  if not canCarryBorrow(c, value): return
-  let borrowed = borrowCarriedBy(c, value).loc
-  let root = locRootSym(c, borrowed)
-  if root in c.laterParams and borrowMode(c, borrowed) == IsBorrowable:
-    buildErr c, value.info, "borrow of " & borrowedName(c, root) &
-      " escapes the proc; a returned view can only borrow from the first parameter"
+  if canCarryBorrow(c, value):
+    let borrowed = borrowCarriedBy(c, value).loc
+    let root = locRootSym(c, borrowed)
+    if root in c.laterParams and borrowMode(c, borrowed) == IsBorrowable:
+      buildErr c, value.info, "borrow of " & borrowedName(c, root) &
+        " escapes the proc; a returned view can only borrow from the first parameter"
 
 proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
   if destRoot != NoSymId and outlivesProc(c, destRoot):

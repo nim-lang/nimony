@@ -386,22 +386,20 @@ proc firstParamPassedByRef*(params: Cursor): bool =
   ## `params` is the `(params …)` of a routine or proc type; its return type
   ## follows it. Every pass that decides how a parameter is passed has to ask
   ## this, or the callee and its callers disagree on the calling convention.
-  result = false
-  if not params.isTagLit or params.substructureKind != ParamsU: return
   var ret = params
   skip ret
-  if not isViewType(ret): return
   var p = params
   p = sub(p)
-  if not p.hasMore or not isParamLike(p.symKind): return
-  let first = takeLocal(p, SkipFinalParRi)
-  let t = first.typ
-  # Nothing to fix for a parameter that already is an address (`var`, `lent`,
-  # `ptr`, `ref`, a view), that the callee owns (`sink`), or that has no
-  # runtime existence.
-  result = t.typeKind notin {SinkT, MutT, OutT, LentT, PtrT, RefT, VarargsT,
-                             TypekindT, UntypedT, TypedT, TypedescT, StaticT} and
-           not isViewType(t)
+  if isViewType(ret) and p.hasMore:
+    let t = takeLocal(p, SkipFinalParRi).typ
+    # Nothing to fix for a parameter that already is an address (`var`,
+    # `lent`, `ptr`, `ref`, a view), that the callee owns (`sink`), or that
+    # has no runtime existence.
+    result = t.typeKind notin {SinkT, MutT, OutT, LentT, PtrT, RefT, VarargsT,
+                               TypekindT, UntypedT, TypedT, TypedescT, StaticT} and
+             not isViewType(t)
+  else:
+    result = false
 
 proc isVoidType*(t: Cursor): bool {.inline.} =
   t.isDotToken or t.typeKind == VoidT
