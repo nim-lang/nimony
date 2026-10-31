@@ -261,6 +261,11 @@ proc boundsFrom*(facts: Facts; v: VarId; reverse = false): Table[VarId, xint] =
       let dst = if reverse: f.a else: f.b
       if src in result:
         let newDist = result.getOrDefault(src) + f.c
+        # A sum past `xint`'s range bounds nothing. Recording it anyway would
+        # be worse than useless: NaN compares false against everything, so a
+        # real, tighter chain found later could never replace it — and which
+        # chain is found first depends on the order of the facts.
+        if newDist.isNaN: continue
         if dst notin result or newDist < result.getOrDefault(dst):
           result[dst] = newDist
           changed = true
