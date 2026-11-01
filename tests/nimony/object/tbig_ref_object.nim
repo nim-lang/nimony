@@ -48,3 +48,13 @@ echo v.big[42]
 
 let bx = Box[int](n: 9)
 echo bx.payload[123], " ", bx.n
+
+# Given explicitly: stored after the payload, as a plain assignment.
+var arr: array[2_000_000, int]
+arr[0] = 11
+arr[1_999_999] = 12
+let given = Node(data: arr)
+echo given.data[0], " ", given.data[1_999_999]
+
+let d2 = Derived(id: 2, more: arr)
+echo d2.more[0], " ", d2.id, " ", describe(Base(d2))

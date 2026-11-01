@@ -1268,11 +1268,29 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
           takeTree c.dest, n
   finishOwningTemp c, ow
 
-proc trNewobjFields(c: var Context; n: var Cursor; objType: Cursor) =
+proc isSplitArrayField(c: var Context; objType, kv: Cursor): bool =
+  ## A `(kv f v)` of a zeroed `newobj` that `trNewobj` stores on its own,
+  ## after the payload: `f` is a zero-filled array and `v` a named one. Inside
+  ## the constructor `v` would be a nested aggregate; on its own it is a plain
+  ## assignment, which `lengcgen` turns into a `Memcpy` when it is big (#2846).
+  ## Fresh memory aliases nothing, so storing it last is unobservable.
+  var it = sub(kv)
+  let key = it
+  skip it
+  result = false
+  if key.kind == Symbol and it.kind == Symbol:
+    let typ = lookupField(c.typeCache, objType, key.symId)
+    result = not cursorIsNil(typ) and isZeroFilledArray(typ)
+
+proc trNewobjFields(c: var Context; n: var Cursor; objType: Cursor;
+                    split: var seq[Cursor]; splitArrays = false) =
   # drains the constructor fields; the enclosing scope's close is consumed
   # by `trNewobj`
   while n.hasMore:
-    if n.substructureKind == KvU:
+    if splitArrays and n.substructureKind == KvU and isSplitArrayField(c, objType, n):
+      split.add n
+      skip n
+    elif n.substructureKind == KvU:
       copyInto c.dest, n:
         let fieldKey = n
         takeTree c.dest, n # keep field name
@@ -1352,6 +1370,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
   # Sem leaves a zero-filled array field out of a `newobj` instead of
   # building its default in a stack temp (#2846); the allocation supplies it.
   let zeroed = kind == NewobjX and hasZeroFilledArrayField(baseType)
+  var split: seq[Cursor] = @[] # the `isSplitArrayField`s of a zeroed payload
   let alloc = if zeroed: "allocFixed0" else: "allocFixed"
   copyIntoKind c.dest, CastX, info:
     c.dest.addSubtree refType
@@ -1401,7 +1420,24 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         c.dest.addIntLit(0, info)
       copyIntoKind c.dest, OconstrX, info:
         c.dest.addSubtree baseType
-        trNewobjFields(c, n, baseType)
+        trNewobjFields(c, n, baseType, split, splitArrays = true)
+    for kv in split:
+      var it = sub(kv)
+      copyIntoKind c.dest, AsgnS, info:
+        copyIntoKind c.dest, DotX, info:
+          copyIntoKind c.dest, DotX, info:
+            copyIntoKind c.dest, DerefX, info:
+              c.dest.addSymUse(ow.s, info)
+            c.dest.addSymUse(pool.symId(DataField), info)
+            c.dest.addIntLit(0, info)
+          let key = it
+          skip it
+          var value = it
+          skip it
+          c.dest.addSubtree key
+          if it.hasMore: c.dest.addSubtree it # inheritance depth
+          else: c.dest.addIntLit(0, info)
+        tr(c, value, WantOwner)
   else:
     copyIntoKind c.dest, AsgnS, info:
       copyIntoKind c.dest, DerefX, info:
@@ -1424,7 +1460,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
             if n.hasMore:
               copyIntoKind c.dest, OconstrX, info:
                 c.dest.addSubtree baseType
-                trNewobjFields(c, n, baseType)
+                trNewobjFields(c, n, baseType, split)
             else:
               # A `newobj` that a hexer pass synthesized for a type it invented (a
               # closure environment, a coroutine frame) names no fields. The payload
