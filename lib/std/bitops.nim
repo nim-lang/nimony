@@ -44,7 +44,10 @@ func countSetBits*[T: BitInteger](x: T): int {.inline.} =
   var v = x
   result = 0
   while v != T(0):
-    v = v and (v - T(1))
+    # `low(T) - 1` must wrap for a signed `T`: a saturated result would keep
+    # the sign bit set forever
+    {.keepOverflowFlag.}:
+      v = v and (v - T(1))
     inc result
 
 func popcount*[T: BitInteger](x: T): int {.inline.} =

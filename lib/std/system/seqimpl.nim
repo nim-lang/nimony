@@ -218,11 +218,13 @@ func add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
     inc s.len
     seqFenceExit fenced
 
-func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result).} =
+func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result and result < high(int)).} =
   ## Number of elements in `s`.
   result = s.len
-  # every write to the `len` field stores a non-negative count
-  {.assume: 0 <= result.}
+  # every write to the `len` field stores a non-negative count, and no seq
+  # holds `high(int)` elements beside its header: the bound is what keeps
+  # `i + 1 <= s.len` from being a saturated `high(int)` (#2840)
+  {.assume: 0 <= result and result < high(int).}
 
 func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
   ## Unchecked pointer to `s`'s element storage (valid for `0 ..< s.len`).

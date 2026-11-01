@@ -73,6 +73,50 @@ The following integer types are pre-defined:
 **Note:** Unsigned operations all wrap around; they cannot lead to over- or underflow errors.
 
 
+### Signed overflow
+
+Signed arithmetic `saturates`:idx:. When the mathematical result of `+`, `-`,
+`*` or unary `-` on a signed integer type `T` does not fit `T`, the result is
+`low(T)` if it is too small and `high(T)` if it is too large. There is no
+overflow error and no wrap-around:
+
+  ```nim
+  assert 127'i8 + 1'i8 == 127'i8
+  assert -128'i8 - 1'i8 == -128'i8
+  assert high(int) * 2 == high(int)
+  assert -low(int) == high(int)
+  ```
+
+The same holds for the steps `inc` and `dec` take, so a signed counter only
+moves in the direction of its step. Saturation keeps the order of values:
+when the mathematical result lies on one side of a value of `T`, so does the
+saturated one. In particular the sum of two non-negative values is never
+negative. The contract prover (`staticContracts`) relies on this.
+
+Where the compiler can prove that an operation stays inside its type, it
+compiles it as the plain machine operation. Saturation costs nothing there,
+and in a loop like `while i < s.len: ...; inc i` it is the usual case.
+
+Inside a `{.keepOverflowFlag.}` block signed `+`, `-` and `*` wrap around
+instead, and `overflowFlag()` reports whether the last of them overflowed:
+
+  ```nim
+  proc checkedAdd(a, b: int): (int, bool) =
+    {.keepOverflowFlag.}:
+      let r = a + b
+      result = (r, overflowFlag())
+  ```
+
+A constant expression that overflows its type, such as
+`const X = 127'i8 + 1'i8`, is a compile-time error. `div` and `mod` do not
+saturate.
+
+The length of a `string`, `seq` or `openArray` is always below `high(int)`: no
+container fits that many elements beside its header. `len` states this in
+its postcondition, so `i + 1 <= s.len` is the same as `i < s.len` even though
+`i + 1` saturates.
+
+
 `Automatic type conversion`:idx: is performed in expressions where different
 kinds of integer types are used: the smaller type is converted to the larger.
 

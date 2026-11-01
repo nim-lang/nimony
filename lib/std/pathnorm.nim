@@ -59,7 +59,9 @@ func isDot(x: string; bounds: (int, int)): bool =
 
 func isDotDot(x: string; bounds: (int, int)): bool =
   result = false
-  if bounds[1] == bounds[0] + 1 and bounds[0] >= 0 and bounds[1] < x.len:
+  # `bounds[1] < x.len` first: it keeps `bounds[0] + 1` from saturating, which
+  # is what lets the equality say `bounds[1]` is one past `bounds[0]`
+  if bounds[0] >= 0 and bounds[1] < x.len and bounds[1] == bounds[0] + 1:
     result = x[bounds[0]] == '.' and x[bounds[0]+1] == '.'
 
 func isSlash(x: string; bounds: (int, int)): bool =

@@ -1,7 +1,7 @@
 # The proven side of `tests/nimony/errmsgs/tunsignedwrap.nim`: an unsigned `+`,
 # `-` or `inc` still reads mathematically once the facts keep it inside its
-# type. Signed arithmetic is read mathematically at every width: overflowing
-# it is an error, not a wrap.
+# type. Signed arithmetic saturates instead of wrapping, which keeps every
+# bound inside its type (`tsaturate.nim`).
 import std/syncio
 
 proc add(a: uint8): uint8 =

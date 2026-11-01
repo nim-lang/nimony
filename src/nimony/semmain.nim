@@ -469,7 +469,8 @@ proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
   var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
   when true: #defined(enableContracts):
     var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
-                                    c.g.config.bits, c.g.config.verbose)
+                                    c.g.config.bits, c.g.config.verbose,
+                                    saturate = SkipSystem notin c.moduleFlags)
     if reporters.reportErrors(moreErrors) > 0:
       quit 1
   dest = stripAnalysisFacts(ensureMove fir)

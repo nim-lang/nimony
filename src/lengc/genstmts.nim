@@ -449,6 +449,7 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
       c.add Semicolon
     else:
       var isLongLong = false
+      let opName = gcc
       n.into:  # (add | sub | mul | … <type> lhs rhs)
         if n.typeKind == IT:
           gcc = prefix & "s" & gcc
@@ -462,6 +463,11 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
             if bits == 64 or (bits == -1 and c.bits == 64):
               gcc.add "ll"
               isLongLong = true
+            elif (bits == 8 or bits == 16) and prefix == "__builtin_":
+              # `__builtin_[su]add_overflow` stores an `int` through its
+              # pointer; the type-generic builtin stores the narrow type and
+              # reports an overflow of that type
+              gcc = prefix & opName
             inc n
           else:
             error c.m, "expected integer literal but got: ", n
