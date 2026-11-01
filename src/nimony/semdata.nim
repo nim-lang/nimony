@@ -311,6 +311,12 @@ type
       ## into extra inputs of the *next* build's nimsem node — the depfile
       ## pattern, so the first build runs regardless and every later one is
       ## exact (nim-lang/nimony#1378). Filled through `recordFileDep`.
+    queriedIsMain*: bool
+      ## Whether semchecking this module consulted `isMainModule`. Its sem
+      ## output then depends on `--isMain`, which is not a file nifmake can
+      ## track, so `semmain.writeNewDepsFile` records the role and `deps.nim`
+      ## re-sems the module when the next build wants the other one
+      ## (nim-lang/nimony#2830).
     importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf

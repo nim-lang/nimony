@@ -468,6 +468,48 @@ proc incrementalTests*() =
                  "eval-stale-writenif: expected 'head-01234'"
     writeFile(evalSrc, originalEval)
 
+  # Phase 13: `isMainModule` is folded by sem, so a module's `.s.nif` depends
+  # on whether it was the main module, and `--isMain` is no file nifmake can
+  # see. Building a library as a program and then a program importing it in
+  # the same nimcache ran the library's `when isMainModule` section in the
+  # importer (nim-lang/nimony#2830). Each switch of role must re-sem it once.
+  let mainLib = "tests/incremental/mainlib.nim"
+  let mainUser = "tests/incremental/mainuser.nim"
+  let mainCache = "nimcache" / "incremental-main"
+  if fileExists(mainLib) and fileExists(mainUser):
+    inc phases
+    removeDir mainCache
+    var mainOutput = ""
+    proc runMain(label, file: string): seq[seq[ReportEntry]] =
+      let (output, ec) = execCmdEx(nimony.quoteShell &
+        " c -r --silentMake --report --nimcache:" & mainCache.quoteShell & " " &
+        file.quoteShell)
+      mainOutput = output
+      result = @[]
+      if ec != 0:
+        failures.add label & ": compile failed: " & output.strip.splitLines[^1]
+      else:
+        result = parseNifmakeReports(output)
+    block:
+      discard runMain("main-lib", mainLib)
+      expect mainOutput.contains("mainlib-as-main"),
+             "main-lib: the library's `when isMainModule` section did not run"
+      discard runMain("main-user", mainUser)
+      expect mainOutput.contains("mainuser 42"), "main-user: expected 'mainuser 42'"
+      expect not mainOutput.contains("mainlib-as-main"),
+             "main-user: the library's `when isMainModule` section leaked into its importer"
+      discard runMain("main-lib-again", mainLib)
+      expect mainOutput.contains("mainlib-as-main"),
+             "main-lib-again: the library was not re-semmed as the main module"
+      discard runMain("main-user-again", mainUser)
+      expect not mainOutput.contains("mainlib-as-main"),
+             "main-user-again: the library's `when isMainModule` section leaked into its importer"
+      let r = runMain("main-user-settle", mainUser)
+      if r.len == 2:
+        expect reportField(r[0], "total") == 0,
+               "main-user-settle: frontend re-ran " & $reportField(r[0], "total") &
+               " commands; a role switch must force ONE re-sem, not a loop"
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f

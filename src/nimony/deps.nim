@@ -198,6 +198,11 @@ proc exeFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
       base / ("lib" & baseName & ".a")
 
 type
+  SemmedRole = enum
+    RoleIrrelevant ## sem did not consult `isMainModule` (or never ran)
+    SemmedAsMain   ## sem ran with `--isMain`
+    SemmedAsLib    ## sem ran without it
+
   Node = ref object
     files: seq[FilePair]
     deps: seq[int] # index into c.nodes
@@ -212,6 +217,7 @@ type
     fileDeps: seq[string] ## the `(dependency …)` list the PREVIOUS build's nimsem
                           ## left in `.s.deps.nif`: files a plugin or a `slurp`
                           ## read while semchecking this module
+    semmedRole: SemmedRole ## the `(ismainmodule …)` entry of the same file
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -784,8 +790,9 @@ proc importPluginImports(c: var DepContext; src: string; current: Node) =
     importSingleFile c, path, NoLineInfo, current, false
   c.inPluginImports = oldInPluginImports
 
-proc readDependencies(depsFile: string; files: var seq[string]) =
-  ## Adds the files of the `(dependency …)` tree in `depsFile` to `files`.
+proc readDependencies(depsFile: string; files: var seq[string]; role: var SemmedRole) =
+  ## Adds the files of the `(dependency …)` tree in `depsFile` to `files` and
+  ## sets `role` from its `(ismainmodule …)` entry.
   var buf = loadDepsFile(depsFile)
   var n = beginRead(buf)
   if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
@@ -797,8 +804,16 @@ proc readDependencies(depsFile: string; files: var seq[string]) =
               assert n.isStringLit
               files.add pool.strings[n.strId]
               inc n
+        elif n.cursorTagId == TagId(IsmainmoduleX):
+          n.into:
+            role = if n.cursorTagId == TagId(TrueX): SemmedAsMain else: SemmedAsLib
+            skip n
         else:
           skip n
+
+proc readDependencies(depsFile: string; files: var seq[string]) =
+  var role = RoleIrrelevant
+  readDependencies depsFile, files, role
 
 proc writeDepFile(c: DepContext; depFile: string) =
   ## `--depfile`: the source files of the program, includes among them.
@@ -822,7 +837,7 @@ proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
   ## build's, and the caller has just read the current ones from nifler.
   let depsFile = c.config.deps2File(p)
   if semos.fileExists(depsFile):
-    readDependencies depsFile, current.fileDeps
+    readDependencies depsFile, current.fileDeps, current.semmedRole
 
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
@@ -1922,11 +1937,15 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
           b.addStrLit f
     # Outputs: semmed file and index file for primary module
     let docMode = c.cmd == DoDoc
-    if lostFileDep:
+    # A module whose sem consulted `isMainModule` and was last semchecked in
+    # the other role is stale although no input changed (nim-lang/nimony#2830).
+    let wrongRole = v.semmedRole == (if isMain: SemmedAsLib else: SemmedAsMain)
+    if lostFileDep or wrongRole:
       # A deleted file cannot be an input (nifmake wants a file or a rule for
-      # each), so the re-sem is forced by removing the output instead. That
-      # settles after one build: the re-sem no longer finds the file and so no
-      # longer records it.
+      # each), and the role is no file at all, so the re-sem is forced by
+      # removing the output instead. That settles after one build: the re-sem
+      # no longer finds the file and so no longer records it, and it records
+      # the role it ran with.
       vfsRemove(c.config.semmedFile(v.files[0], v.plugin, docMode))
     b.withTree "output":
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin, docMode)

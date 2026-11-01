@@ -112,6 +112,12 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       deps.buildTree TagId(DependencyIdx), NoLineInfo:
         for f in c.fileDeps:
           deps.addStrLit f
+    if c.queriedIsMain:
+      # `(ismainmodule (true))` / `(ismainmodule (false))`: the role this
+      # sem output was produced for, see `SemContext.queriedIsMain`.
+      deps.buildTree IsmainmoduleX, NoLineInfo:
+        deps.buildTree (if IsMain in c.moduleFlags: TrueX else: FalseX), NoLineInfo:
+          discard
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   onRaiseQuit writeFile(deps, depsFile)
 

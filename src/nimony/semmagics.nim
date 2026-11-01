@@ -421,6 +421,7 @@ proc semIsMainModule*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   skip it.n
   let isMainModule = IsMain in c.moduleFlags
+  c.queriedIsMain = true
   let beforeExpr = dest.len
   dest.addParLe(if isMainModule: TrueX else: FalseX, info)
   dest.addParRi()
