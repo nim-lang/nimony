@@ -1110,6 +1110,7 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
         cannotEval n
       else:
         let val = IsMain in c.c.moduleFlags
+        c.c.queriedIsMain = true
         result = boolValue(c, val)
     of AconstrX, SetconstrX, TupconstrX,
         BracketX, CurlyX, TupX:

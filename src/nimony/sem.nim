@@ -1628,6 +1628,7 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
         endRead atom
         var tag = n.cursorTagId
         if cast[TagEnum](tag) == IsmainmoduleTagId:
+          c.queriedIsMain = true
           if IsMain in c.moduleFlags:
             tag = TagId(TrueTagId)
           else:
