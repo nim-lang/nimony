@@ -1431,9 +1431,9 @@ proc trGotoCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe(n.cursorTagId, n.info)
   n.into:
     trGotoValue c, dest, n # the `fn`
-    fnType = sub(fnType)   # peek only, never left
+    var w = initArgWalker(fnType)
     while n.hasMore:
-      case nextArgRole(fnType, c.ptrSize, c.sizeofCache)
+      case nextArgRole(w, c.ptrSize, c.sizeofCache)
       of argConstRef: extendLifetime c, dest, n
       of argPlain, argCompileTime: trGotoValue c, dest, n
   dest.addParRi(n.endInfo)

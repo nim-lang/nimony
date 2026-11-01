@@ -9,3 +9,5 @@ tests/nimony/borrows/topenarray_escape_errors.nim(58, 12) Error: borrow of 's' e
 tests/nimony/borrows/topenarray_escape_errors.nim(68, 13) Error: borrow of 'a' escapes its scope; it does not live long enough [pass --verbose for the Final IR]
 tests/nimony/borrows/topenarray_escape_errors.nim(83, 13) Error: borrow of 'a' escapes its scope; it does not live long enough [pass --verbose for the Final IR]
 tests/nimony/borrows/topenarray_escape_errors.nim(84, 11) Error: cannot prove that outer has been initialized [pass --verbose for the Final IR]
+tests/nimony/borrows/topenarray_escape_errors.nim(92, 64) Error: borrow of 's' escapes the proc; a returned view can only borrow from the first parameter [pass --verbose for the Final IR]
+tests/nimony/borrows/topenarray_escape_errors.nim(98, 10) Error: borrow of 's' escapes the proc; a returned view can only borrow from the first parameter [pass --verbose for the Final IR]

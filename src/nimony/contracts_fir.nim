@@ -193,6 +193,8 @@ type
     ownOlds: Table[string, VarId]
       ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
+    laterParams: HashSet[SymId]        # the current proc's params after the first;
+                                       # see `checkResultBorrow`
     assumeSync: bool                   # inside `{.cast(assumeSync).}:`; see
                                        # "Shared globals" below
     syncArgs: HashSet[int]             # positions of global symbols passed to a
@@ -645,9 +647,23 @@ proc checkBorrowOutlivesProc(c: var FirContext; value: Cursor) =
     buildErr c, value.info, "borrow of " & borrowedName(c, root) &
       " escapes the proc; it does not live long enough"
 
+proc checkResultBorrow(c: var FirContext; value: Cursor) =
+  ## A view the routine returns may only borrow from its first parameter — the
+  ## rule `var T` results follow, and the one parameter the calling convention
+  ## guarantees to be the caller's own storage (`firstParamPassedByRef`). Any
+  ## other parameter can be a copy that dies with the call: a short `string`
+  ## keeps its characters inline (#2837).
+  if canCarryBorrow(c, value):
+    let borrowed = borrowCarriedBy(c, value).loc
+    let root = locRootSym(c, borrowed)
+    if root in c.laterParams and borrowMode(c, borrowed) == IsBorrowable:
+      buildErr c, value.info, "borrow of " & borrowedName(c, root) &
+        " escapes the proc; a returned view can only borrow from the first parameter"
+
 proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
   if destRoot != NoSymId and outlivesProc(c, destRoot):
     checkBorrowOutlivesProc(c, value)
+    if destRoot == c.resultSym: checkResultBorrow(c, value)
 
 proc endBorrow(c: var FirContext; sym: SymId) =
   c.flow.borrows.endBorrowsOf sym
@@ -3920,14 +3936,14 @@ proc ownsNoHeap(c: var FirContext; t: Cursor; depth: int): bool =
   else:
     result = false
 
-proc passedByPointer(c: var FirContext; param: Local): bool =
+proc passedByPointer(c: var FirContext; param: Local; forced: bool): bool =
   ## Can the callee's view of this immutable parameter be changed by a
   ## mutation through another argument? Yes when it reads the caller's storage
   ## through a pointer, and also for a copy that shares the caller's heap
   ## block. A plain-data copy cannot alias anything.
   let t = param.typ
   # a `sink` parameter receives a copy or the moved value: its own either way
-  result = t.typeKind != SinkT and
+  result = forced or t.typeKind != SinkT and
            (t.typeKind in {LentT, VarargsT} or isViewType(t) or
             passByConstRef(t, param.pragmas, c.bits div 8) or
             not ownsNoHeap(c, t, 0))
@@ -3952,6 +3968,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   let isSync = hasPragma(fnPragmas, SyncP)
   traverseExpr c, n, call # the `fn` itself
   let paramsStart = fnType
+  var byRefFirst = firstParamPassedByRef(fnType)
   fnType = sub(fnType)
   var paramMap = initTable[SymId, Cursor]()
   # Collect argument paths for aliasing check
@@ -3976,7 +3993,8 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     # advances `n`; the input buffer is never rewritten, so the cursor stays
     # valid for the rest of the call.
     paramMap[param.name.symId] = n
-    modes.add(if passedByPointer(c, param): amByPointer else: amByValue)
+    modes.add(if passedByPointer(c, param, byRefFirst): amByPointer else: amByValue)
+    byRefFirst = false
     let pk = param.typ.typeKind
     # Save arg info before traverseExpr advances n
     let isMut = n.exprKind == HaddrX
@@ -5007,6 +5025,7 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
         # `return toOpenArray(a)` returns the value directly rather than storing
         # it into `result` first, so `traverseAsgn`'s escape check never sees it.
         checkBorrowOutlivesProc(c, n)
+        checkResultBorrow(c, n)
       traverseExpr c, n, call
       if providesResult:
         markInit(c, c.resultSym)
@@ -5350,6 +5369,8 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   if nested:
     inheritInits(c.flow, oldFlow)
   let oldResultSym = c.resultSym
+  let oldLaterParams = move c.laterParams
+  c.laterParams = initHashSet[SymId]()
   let oldInlineVars = move c.inlineVars
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
@@ -5386,8 +5407,11 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
       if n.isTagLit:
         var p = n
         p = sub(p) # peek only, never left
+        var isFirst = true
         while p.hasMore:
           let r = takeLocal(p, SkipFinalParRi)
+          if not isFirst: c.laterParams.incl r.name.symId
+          isFirst = false
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
             outParams.add r.name.symId
@@ -5444,6 +5468,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.tr = ensureMove oldTr
   c.flow = ensureMove oldFlow
   c.resultSym = oldResultSym
+  c.laterParams = ensureMove oldLaterParams
   c.inlineVars = ensureMove oldInlineVars
   c.currentProcStart = oldProcStart
   c.stmtContext = oldStmtContext
