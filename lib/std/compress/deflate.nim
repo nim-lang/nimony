@@ -718,8 +718,11 @@ proc makeCodes(lens: openArray[int]; codes: var openArray[int]) =
 
 type
   BlockCodes = object
-    litLen: array[286, int]
-    litCode: array[286, int]
+    # The fixed literal/length alphabet has 288 symbols; 286 and 287 are
+    # unused but still occupy two 8-bit codes. Dropping them from the
+    # canonical table shifted every 9-bit literal (144..255) down by four.
+    litLen: array[288, int]
+    litCode: array[288, int]
     distLen: array[30, int]
     distCode: array[30, int]
 
@@ -728,7 +731,7 @@ proc fixedCodes(): BlockCodes =
   for i in 0..143: result.litLen[i] = 8
   for i in 144..255: result.litLen[i] = 9
   for i in 256..279: result.litLen[i] = 7
-  for i in 280..285: result.litLen[i] = 8
+  for i in 280..287: result.litLen[i] = 8
   for i in 0..29: result.distLen[i] = 5
   makeCodes(result.litLen, result.litCode)
   makeCodes(result.distLen, result.distCode)
