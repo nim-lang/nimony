@@ -29,7 +29,39 @@ concurrency:
 # Both jobs share the `.github/actions/setup` preamble; each adds one step.
 
 jobs:
+  # Routes the windows `build` row to the self-hosted runner (16 cores vs the
+  # hosted 4) when it is online and idle, and to `windows-2025` otherwise. A
+  # plain `runs-on: [self-hosted, windows]` would queue for up to 24h whenever
+  # that machine is off; GitHub has no fallback of its own.
+  #
+  # Listing runners needs Administration: read, which `GITHUB_TOKEN` lacks, so
+  # this reads RUNNER_STATUS_TOKEN (a fine-grained PAT scoped to that one
+  # permission). Secrets are not passed to PRs from forks: there the token is
+  # empty and the row stays hosted, so fork code never runs on the self-hosted
+  # machine. An expired token degrades the same way.
+  #
+  # `grep -i`: GitHub folds the runner's `windows` label into its built-in
+  # `Windows`. Two runs picking at the same moment may both see it idle; the
+  # loser then queues behind the winner rather than failing.
+  pick:
+    runs-on: ubuntu-latest
+    outputs:
+      windows: ${{ steps.p.outputs.windows }}
+    steps:
+      - id: p
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+        run: |
+          windows='"windows-2025"'
+          if [ -n "$GH_TOKEN" ]; then
+            idle=$(gh api repos/${{ github.repository }}/actions/runners \
+              --jq '.runners[] | select(.status=="online" and (.busy|not)) | .labels[].name' || true)
+            if grep -qix windows <<<"$idle"; then windows='["self-hosted","windows"]'; fi
+          fi
+          echo "windows=$windows" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: pick
     strategy:
       fail-fast: false
       max-parallel: 20
@@ -115,7 +147,9 @@ jobs:
               tests/boot;tests/nimony/macros;tests/nimony/plugins;tests/nimony/valgrind;tests/ithaqua;bench;tests/nimony/opt
 
     name: '${{ matrix.target.os }}-${{ matrix.target.cpu }}-nim-${{ matrix.target.nim_branch }} (${{ matrix.branch }})'
-    runs-on: ${{ matrix.target.builder }}
+    # The windows row only; `boot` stays hosted, since the one self-hosted
+    # runner takes one job at a time. See `pick`.
+    runs-on: ${{ matrix.target.os == 'windows' && fromJSON(needs.pick.outputs.windows) || matrix.target.builder }}
     env:
       NIM_DIR: nim-${{ matrix.target.nim_branch }}-${{ matrix.target.cpu }}
       NIM_BRANCH: ${{ matrix.target.nim_branch }}

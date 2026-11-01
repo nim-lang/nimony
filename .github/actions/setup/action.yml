@@ -168,7 +168,9 @@ runs:
         echo '${{ github.workspace }}'"/external/dlls-${{ inputs.cpu }}" >> $GITHUB_PATH
 
     - name: Install make dependencies with chocolatey (Windows)
-      if: runner.os == 'Windows'
+      # choco needs admin, which a self-hosted runner's service account is not;
+      # that machine has make preinstalled instead.
+      if: runner.os == 'Windows' && runner.environment == 'github-hosted'
       uses: crazy-max/ghaction-chocolatey@v4
       with:
         args: install make
