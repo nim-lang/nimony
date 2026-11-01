@@ -54,6 +54,8 @@ type
     liftingCtx*: ref LiftingCtx
     importedModuleSuffixes*: seq[string]
     initBody*: TokenBuf
+    usesAggrMemcpy*: bool  ## `lengcgen.trBigAggrCopy` emitted a `Memcpy`, so the
+                           ## module needs its intrinsic declaration
 
 proc dynlibIsStaticImport*(e: EContext): bool {.inline.} =
   ## How `{.dynlib.}` on an `importc` proc is mapped, which is hexer's call to
