@@ -709,6 +709,39 @@ proc toTypeImpl*(n: Cursor): Cursor =
     else:
       bug "could not load: " & pool.symString(result.symId)
 
+proc isZeroFilledArray*(typ: Cursor): bool =
+  ## An array (of arrays) of numbers, chars or bools: its `default` is the
+  ## all-zero bit pattern, but computing it is a call into `system/defaults`
+  ## that loops over a value the caller then copies. For a `ref` object that
+  ## value would be a stack temp as big as the field (#2846), so a `newobj`
+  ## leaves such a field to its zeroed allocation instead
+  ## (`hasZeroFilledArrayField`). `typ` must be free of generic params.
+  var t = toTypeImpl(typ)
+  if t.typeKind != ArrayT: return false
+  while t.typeKind == ArrayT:
+    t = toTypeImpl(t.childCursor)
+  result = t.typeKind in {IntT, UIntT, FloatT, CharT, BoolT}
+
+proc hasZeroFilledArrayField*(objType: Cursor): bool =
+  ## Whether the object type, an inherited part or any `case` branch has a
+  ## field sem's `newobj` leaves out: the `ref` payload must then be
+  ## allocated zeroed.
+  result = false
+  var t = toTypeImpl(objType)
+  while t.typeKind == ObjectT:
+    let obj = asObjectDecl(t)
+    var n = sub(obj.body) # past `(object`; bounds the walk
+    skip n                # the inheritance slot
+    if n.hasMore and not n.isDotToken:
+      var iter = initObjFieldIter()
+      while nextField(iter, n):
+        let field = takeLocal(n, SkipFinalParRi)
+        if isZeroFilledArray(field.typ): return true
+    if obj.parentType.isDotToken: break
+    t = obj.parentType
+    if t.typeKind in {RefT, PtrT}: inc t
+    t = toTypeImpl(t)
+
 proc isConceptSym*(s: SymId): bool =
   let section = getTypeSection(s)
   result = section.kind == TypeY and section.body.typeKind == ConceptT

@@ -242,7 +242,7 @@
 | `(ddot X Y INTLIT STRLIT?)` | NimonyExpr | deref dot: expression, field symbol, field index; optional trailing `STRLIT` is the same *access token* described on `(dot ...)` — names the module the private-field access was written in, which is what a re-check judges it against. |
 | `(haddr X)` | NimonyExpr, LengExpr | hidden address: an address the COMPILER took to bind a location, not one the user asked for. `derefs.nim` inserts it wherever a `var`/`out` parameter needs the argument's location. It survives into Leng — where `(addr X)` is the user's `addr` — because the two mean different things to a consumer: `(addr x)` says "x's address is a value now", so x must have one, while `(haddr x)` says only "the callee wants x's *location*". An `(instr …)` operand slot whose row is `inout` can therefore bind the local's home directly instead of forcing it to memory. Everywhere else it lowers exactly like `(addr X)` |
 | `(newref T X?)` | NimonyExpr | Nim's `new` magic proc that allocates a `ref T`; optional initializer expression |
-| `(newobj T (kv Y X)*)` | NimonyExpr | new object constructor |
+| `(newobj T (kv Y X)*)` | NimonyExpr | new object constructor. Total like `oconstr`, except that sem leaves out a field holding an array of numbers, chars or bools that the source did not set: the duplifier then allocates the object zeroed (`typeprops.hasZeroFilledArrayField`), so the array's default never exists as a stack temp (#2846) |
 | `(tup X+)` | NimonyExpr, NiflerKind | untyped tuple constructor |
 | `(tupconstr T X+)` | NimonyExpr | tuple constructor |
 | `(setconstr T X*)` | NimonyExpr | set constructor |

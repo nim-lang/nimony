@@ -38,7 +38,7 @@ include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
 import lifter, mover, hexer_context, passes, closuretypes, defaultvalues
 import ".." / finalir / finalir_model
-import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
+import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys, typeprops]
 include ".." / nimony / nif_annotations
 
 type
@@ -1349,10 +1349,14 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
   let typeKey = takeMangle(refTypeCopy, Frontend, c.lifter.bits)
   let typeSym = pool.symId(genericTypeName(typeKey, c.moduleSuffix))
 
+  # Sem leaves a zero-filled array field out of a `newobj` instead of
+  # building its default in a stack temp (#2846); the allocation supplies it.
+  let zeroed = kind == NewobjX and hasZeroFilledArrayField(baseType)
+  let alloc = if zeroed: "allocFixed0" else: "allocFixed"
   copyIntoKind c.dest, CastX, info:
     c.dest.addSubtree refType
     copyIntoKind c.dest, CallX, info:
-      c.dest.addSymUse(pool.symId("allocFixed.0." & SystemModuleSuffix), info)
+      c.dest.addSymUse(pool.symId(alloc & ".0." & SystemModuleSuffix), info)
       copyIntoKind c.dest, SizeofX, info:
         c.dest.addSymUse(typeSym, info)
   c.dest.addParRi() # finish temp declaration
@@ -1383,39 +1387,55 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         copyIntoKind c.dest, NilX, info: discard
     c.dest.addParLe(StmtsS, info)
 
-  copyIntoKind c.dest, AsgnS, info:
-    copyIntoKind c.dest, DerefX, info:
-      c.dest.addSymUse(ow.s, info)
-    copyIntoKind c.dest, OconstrX, info:
-      c.dest.addSymUse(typeSym, info)
-      copyIntoKind c.dest, KvU, info:
-        let rcField = pool.symId(RcField)
-        c.dest.addSymUse(rcField, info)
+  if zeroed:
+    # The zeroed allocation already holds `rc = 0` (and the cycle root index),
+    # so only the payload is stored, straight into `tmp.d`: wrapped in the rc
+    # object it would be a nested aggregate, which the native back end builds
+    # in a stack temp before copying it over.
+    skip n, SkipType
+    copyIntoKind c.dest, AsgnS, info:
+      copyIntoKind c.dest, DotX, info:
+        copyIntoKind c.dest, DerefX, info:
+          c.dest.addSymUse(ow.s, info)
+        c.dest.addSymUse(pool.symId(DataField), info)
         c.dest.addIntLit(0, info)
-      if c.lifter.cycles:
+      copyIntoKind c.dest, OconstrX, info:
+        c.dest.addSubtree baseType
+        trNewobjFields(c, n, baseType)
+  else:
+    copyIntoKind c.dest, AsgnS, info:
+      copyIntoKind c.dest, DerefX, info:
+        c.dest.addSymUse(ow.s, info)
+      copyIntoKind c.dest, OconstrX, info:
+        c.dest.addSymUse(typeSym, info)
         copyIntoKind c.dest, KvU, info:
-          c.dest.addSymUse(pool.symId(RootIdxField), info)
+          let rcField = pool.symId(RcField)
+          c.dest.addSymUse(rcField, info)
           c.dest.addIntLit(0, info)
-      copyIntoKind c.dest, KvU, info:
-        let dataField = pool.symId(DataField)
-        c.dest.addSymUse(dataField, info)
-        if kind == NewobjX:
-          skip n, SkipType
-          if n.hasMore:
-            copyIntoKind c.dest, OconstrX, info:
-              c.dest.addSubtree baseType
-              trNewobjFields(c, n, baseType)
+        if c.lifter.cycles:
+          copyIntoKind c.dest, KvU, info:
+            c.dest.addSymUse(pool.symId(RootIdxField), info)
+            c.dest.addIntLit(0, info)
+        copyIntoKind c.dest, KvU, info:
+          let dataField = pool.symId(DataField)
+          c.dest.addSymUse(dataField, info)
+          if kind == NewobjX:
+            skip n, SkipType
+            if n.hasMore:
+              copyIntoKind c.dest, OconstrX, info:
+                c.dest.addSubtree baseType
+                trNewobjFields(c, n, baseType)
+            else:
+              # A `newobj` that a hexer pass synthesized for a type it invented (a
+              # closure environment, a coroutine frame) names no fields. The payload
+              # is fresh, uninitialized memory, and an `oconstr` is TOTAL
+              # (`doc/tags.md`): the native back end stores exactly what is listed,
+              # so an empty one left the frame's fields holding whatever the stack
+              # temp it is built in held.
+              addDefaultValue(c.dest, baseType, info, c.lifter.bits div 8)
           else:
-            # A `newobj` that a hexer pass synthesized for a type it invented (a
-            # closure environment, a coroutine frame) names no fields. The payload
-            # is fresh, uninitialized memory, and an `oconstr` is TOTAL
-            # (`doc/tags.md`): the native back end stores exactly what is listed,
-            # so an empty one left the frame's fields holding whatever the stack
-            # temp it is built in held.
-            addDefaultValue(c.dest, baseType, info, c.lifter.bits div 8)
-        else:
-          skip n, SkipType
-          tr c, n, WantOwner # process default(T) call
+            skip n, SkipType
+            tr c, n, WantOwner # process default(T) call
   if guardStores:
     c.dest.addParRi()      # close the `stmts` of the guard
     c.dest.addDotToken()   # no else

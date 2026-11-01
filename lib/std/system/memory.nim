@@ -230,6 +230,11 @@ func allocFixed*(size: int): pointer =
   ## from generated `=destroy` hooks, so it must have external linkage.
   result = alloc(size)
 
+func allocFixed0*(size: int): pointer =
+  ## `allocFixed` for a `ref` object whose constructor leaves some fields to
+  ## zeroed memory (`typeprops.hasZeroFilledArrayField`, #2846).
+  result = alloc0(size)
+
 func deallocFixed*(p: pointer) =
   ## Frees memory allocated by `allocFixed`.
   dealloc(p)
