@@ -201,6 +201,19 @@ proc ringAt(data: seq[int]; at: int): int =
   if data.len > 0:
     result = data[at and (data.len - 1)]
 
+proc sumBelow(x, y: int) =
+  # `y + x` with `y < 0` is below `x` just like `x + y` is (#2859)
+  if y < 0:
+    let a = y + x
+    {.assert: a < x.}
+    let b = x + y
+    {.assert: b < x.}
+
+func fromEnd(s: string; i: int): int {.ensures: result < s.len.} =
+  # ... and a returned sum binds `result` the same either way round
+  if i < 0 and i >= -s.len: return i + s.len
+  return -1
+
 assert mask(-1) == 0
 assert maskedLocal(1000) == 0
 assert byteWidth(0x1200'u32) == 0x12
@@ -235,3 +248,5 @@ var blocks = default(array[40, int])
 for q in 0 ..< 40: blocks[q] = q
 assert blockSum(blocks) == 15 + 31
 assert ringAt(@[5, 6, 7, 8], 6) == 7
+sumBelow(3, -1)
+assert fromEnd("abc", -1) == 2

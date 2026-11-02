@@ -4221,36 +4221,45 @@ proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
   ## `x = y + d` or `x = y - d` for a location `y` and a `d` the facts bound
   ## (either end may be open). With `y` being `x` itself that moves what is
   ## known about `x` rather than erasing it (`variableMovedWithin`); otherwise
-  ## `x` lies within `d` of `y`. `x = d + y` is the same sum.
+  ## `x` lies within `d` of `y`. `x = d + y` is the same sum: both orientations
+  ## of a `+` contribute, so the facts do not depend on the operands' order.
   result = false
   let v = peelExpr(value)
   if v.exprKind notin {AddX, SubX} or not noWrap(c, v): return
   var r = v
   r = sub(r)
   skip r # the type operand
-  var first = r
+  let first = r
   skip r
-  var second = r
-  var y = plainLocationVarId(c, first)
-  if y == InvalidVarId and v.exprKind == AddX:
-    y = plainLocationVarId(c, second)
-    second = first
-  if y == InvalidVarId or y == VarId(0): return
-  var lo = createNaN()
-  var hi = createNaN()
-  operandRange(c, second, lo, hi)
-  if lo.isNaN and hi.isNaN: return
-  if v.exprKind == SubX:
-    swap lo, hi
-    lo = -lo
-    hi = -hi
-  if y == dest:
-    variableMovedWithin(c.facts, dest, lo, hi)
-  else:
+  let second = r
+  var ys: array[2, VarId] = [InvalidVarId, InvalidVarId]
+  var los: array[2, xint] = [createNaN(), createNaN()]
+  var his: array[2, xint] = [createNaN(), createNaN()]
+  let orientations = if v.exprKind == AddX: 2 else: 1
+  for i in 0 ..< orientations:
+    let y = plainLocationVarId(c, if i == 0: first else: second)
+    if y == InvalidVarId or y == VarId(0): continue
+    var lo = createNaN()
+    var hi = createNaN()
+    operandRange(c, if i == 0: second else: first, lo, hi)
+    if lo.isNaN and hi.isNaN: continue
+    if v.exprKind == SubX:
+      swap lo, hi
+      lo = -lo
+      hi = -hi
+    if y == dest:
+      variableMovedWithin(c.facts, dest, lo, hi)
+      return true
+    ys[i] = y
+    los[i] = lo
+    his[i] = hi
+    result = true
+  if result:
     projectOut(c.facts, dest)
-    if not lo.isNaN: c.facts.add query(y, dest, -lo)   # y + lo <= x
-    if not hi.isNaN: c.facts.add query(dest, y, hi)    # x <= y + hi
-  result = true
+    for i in 0 ..< orientations:
+      if ys[i] != InvalidVarId:
+        if not los[i].isNaN: c.facts.add query(ys[i], dest, -los[i])  # y + lo <= x
+        if not his[i].isNaN: c.facts.add query(dest, ys[i], his[i])   # x <= y + hi
 
 proc locationIsComputed(c: var FirContext; n: Cursor): bool =
   ## Whether the address of the location `n` is read from memory rather than
