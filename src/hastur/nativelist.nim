@@ -29,7 +29,10 @@ when defined(windows):
 const
   NativeTestDirs* = [
     "tests/nimony/arc",        # full ARC suite — byte-identical to the C backend
-    "tests/nimony/closures"
+    "tests/nimony/closures",
+    # Reduced `tools/difffuzz.nim` findings: programs where `nimony n` and
+    # `nimony c` disagreed. Each must now agree with its C-backend `.output`.
+    "tests/nimony/difffuzz"
   ]
 
   NativeTestDirsWindows* = [

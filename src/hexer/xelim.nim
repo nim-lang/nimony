@@ -1411,10 +1411,16 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   trExpr c, dest, n, srcTarget
   n = castStart; skip n
 
-  # Ensure source is a variable
+  # Ensure source is a variable. A `const` is a Symbol but not storage: it is
+  # inlined later, which would leave `addr <literal>` behind.
   var srcSym: SymId
   var srcCur = beginRead(srcTarget.t)
+  var srcIsConst = false
   if srcCur.kind == Symbol:
+    let res = tryLoadSym(srcCur.symId)
+    srcIsConst = res.status == LacksNothing and isLocal(res.decl.symKind) and
+                 asLocal(res.decl).kind == ConstY
+  if srcCur.kind == Symbol and not srcIsConst:
     srcSym = srcCur.symId
   else:
     srcSym = pool.symId(tempSymName(c))
