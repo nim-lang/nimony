@@ -504,7 +504,7 @@ proc addPem*(store: var TrustStore; pem: string): int =
     Begin = "-----BEGIN CERTIFICATE-----"
     End = "-----END CERTIFICATE-----"
   result = 0
-  var pos = 0
+  var pos: Natural = 0
   while true:
     let a = pem.find(Begin, pos)
     if a < 0: break

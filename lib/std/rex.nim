@@ -309,6 +309,7 @@ func matchLen*(s: string; r: Regex; caps: var seq[Capture]; start = 0): int =
   ## The length of the longest match of `r` starting exactly at `start`, or
   ## `-1` when there is none. Capture bounds are written to `caps`, which is
   ## grown as needed; its entries are absolute positions into `s`.
+  if start < 0: return -1
   var endPos = start
   let rule = exec(r, s, caps, start, endPos)
   result = if rule <= 0: -1 else: endPos - start

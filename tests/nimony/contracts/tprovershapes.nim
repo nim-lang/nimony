@@ -214,6 +214,17 @@ func fromEnd(s: string; i: int): int {.ensures: result < s.len.} =
   if i < 0 and i >= -s.len: return i + s.len
   return -1
 
+proc natArg(n: Natural): int = n
+
+proc rangeArgs(x: int; c: char): int =
+  # an argument bound to a `range` parameter is proven like a `let` of that
+  # type (#2856): by a guard, by an `in` a constant range, by a bit pattern
+  result = 0
+  if x >= 0: result = natArg(x)
+  if c in {'A'..'Z'}: result = result + ord(chr(ord(c) + 32))
+  result = result + ord(chr((x shr 6 and 0x3F) or 0x80))
+  result = result + natArg(2 * sizeof(int32))
+
 assert mask(-1) == 0
 assert maskedLocal(1000) == 0
 assert byteWidth(0x1200'u32) == 0x12
@@ -250,3 +261,4 @@ assert blockSum(blocks) == 15 + 31
 assert ringAt(@[5, 6, 7, 8], 6) == 7
 sumBelow(3, -1)
 assert fromEnd("abc", -1) == 2
+assert rangeArgs(5, 'B') == 5 + ord('b') + 0x80 + 8

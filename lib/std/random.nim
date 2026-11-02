@@ -76,7 +76,7 @@ proc rand*(r: var Rand; max: Natural): int =
   ## Random integer in `0 .. max` (inclusive) using `r`.
   int(randUint64(r, uint64(max)))
 
-proc rand*(max: int): int =
+proc rand*(max: Natural): int =
   ## Random integer in `0 .. max` using the default generator.
   rand(state, max)
 

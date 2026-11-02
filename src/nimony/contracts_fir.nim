@@ -830,6 +830,30 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
           lo = zero()
           hi = if leftBounded and zero() <= aLo: min(aHi, bHi) else: bHi
           result = true
+      of BitorX, BitxorX:
+        # Of two non-negative operands, `a or b` and `a xor b` set no bit above
+        # the higher one's top bit: `0 .. 2^bitlen(max(aHi, bHi)) - 1`. And
+        # `or` clears none, so it is at least the larger low bound. What the
+        # UTF-8 encoders hand `chr`: `chr((i shr 6) or 0b110_00000)`.
+        let isOr = n.exprKind == BitorX
+        var d = n
+        d = sub(d)
+        skip d # the type operand
+        var aLo = zero()
+        var aHi = zero()
+        if valueBounds(c, d, aLo, aHi, depth+1) and zero() <= aLo:
+          skip d
+          var bLo = zero()
+          var bHi = zero()
+          if valueBounds(c, d, bLo, bHi, depth+1) and zero() <= bLo:
+            let top = max(aHi, bHi)
+            var p = createXint(1'i64)
+            while p <= top and p < createXint(high(int64)) div createXint(2'i64):
+              p = p * createXint(2'i64)
+            if top < p:
+              lo = if isOr: max(aLo, bLo) else: zero()
+              hi = p - createXint(1'i64)
+              result = true
       of ShrX, AshrX:
         var d = n
         d = sub(d)
@@ -875,6 +899,14 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
             lo = if isSub: aLo - bHi else: aLo + bLo
             hi = if isSub: aHi - bLo else: aHi + bHi
             result = not lo.isNaN and not hi.isNaN
+      of SizeofX:
+        # `sizeof(T)` of a type whose layout is not up to the backend (`strict`
+        # gives up on objects): what `toHex[T](x)` hands its `len: Positive`
+        let s = getSize(n.childCursor, c.bits div 8, strict = true)
+        if not s.isNaN and zero() < s:
+          lo = s
+          hi = s
+          result = true
       of SufX:
         # `15'u8` is `(suf 15u "u8")`
         var d = n
@@ -2618,6 +2650,39 @@ proc analyseCondition(c: var FirContext; pc: var Cursor;
     pc = start
     skip pc
     return result
+  if pc.exprKind == InsetX:
+    # `c in {'A'..'Z'}`: one constant range (or value) bounds the element on
+    # the true path, the guard of every ASCII case fold `chr(ord(c) + 32)`.
+    # The false path learns nothing: outside a range is a disjunction.
+    result = 0
+    var r = sub(pc)
+    skip r # the set type
+    if r.exprKind == SetconstrX:
+      var e = sub(r)
+      skip e # the set type
+      if e.hasMore:
+        let only = e
+        skip e
+        if not e.hasMore:
+          var lo = createNaN()
+          var hi = createNaN()
+          if only.substructureKind == RangeU:
+            var b = sub(only)
+            lo = foldOrdinal(c.bits, b)
+            skip b
+            hi = foldOrdinal(c.bits, b)
+          else:
+            lo = foldOrdinal(c.bits, only)
+            hi = lo
+          skip r # the setconstr
+          let elem = plainLocationVarId(c, r)
+          if not lo.isNaN and not hi.isNaN and elem != InvalidVarId and elem != VarId(0):
+            traverseExpr c, pc, call
+            c.facts.add query(VarId(0), elem, -lo) # lo <= elem
+            c.facts.add query(elem, VarId(0), hi)  # elem <= hi
+            return 2
+    traverseExpr c, pc, call
+    return result
   var kind = ckPlain
   let fact = translateCond(c, pc, kind, call)
   if not fact.isValid:
@@ -4052,6 +4117,11 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       else:
         mutatesUnknown = true
     checkNilMatch c, n, param.typ
+    # Binding an argument to a `range[lo..hi]` parameter is the same narrowing
+    # as an assignment to one; the callee is proven from the declared type, so
+    # the obligation is the caller's (#2856). Sigmatch only matched the base type.
+    if pk notin {MutT, OutT, VarargsT}:
+      checkRangeAssign c, param.typ, n
     let syncRoot = if isSync and pk in {MutT, OutT, PtrT, PointerT}: sharedRootPos(c, n)
                    else: -1
     if syncRoot >= 0: c.syncArgs.incl syncRoot

@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/trangeargs.nim(8, 25) Error: cannot prove 'x' is in range 0..9223372036854775807 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/trangeargs.nim(12, 11) Error: value out of range: -1 notin 0..9223372036854775807 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/trangeargs.nim(14, 14) Error: value out of range: 4 notin 0..3 [pass --verbose for the Final IR]

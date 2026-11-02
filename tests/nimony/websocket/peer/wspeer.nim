@@ -100,7 +100,7 @@ proc encodeFrame(spec: WsFrameSpec): string =
   var maskBit = 0
   if spec.mask: maskBit = 0x80
   result = ""
-  result.add chr(b0)
+  result.add chr(b0 and 0xFF)
   if spec.wide or length >= 65536:
     result.add chr(maskBit or 127)
     for i in 0 ..< 8:
