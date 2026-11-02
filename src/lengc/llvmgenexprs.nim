@@ -451,6 +451,14 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
     result = callIntrinsic("llvm.bswap.i64", c.prim.i64)
   of "__builtin_expect":
     result = args[0]
+  of "__builtin_sqrt", "__builtin_sqrtf":
+    let t = c.nextTemp()
+    let res = llReg(t, retType)
+    c.emit LLInstr(kind: llCall, result: res,
+      callCallee: llGlobalRef(if externName == "__builtin_sqrtf": "llvm.sqrt.f32"
+                              else: "llvm.sqrt.f64", c.prim.ptrT),
+      callRetType: retType, callArgs: @[args[0]])
+    result = res
   else:
     discard
 

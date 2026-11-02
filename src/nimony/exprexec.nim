@@ -13,7 +13,7 @@ from std / os import `/`
 import std / [assertions, sets, tables, hashes, syncio]
 import ".." / models / tags
 import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops,
-  typenav, typekeys, expreval, semos, derefs
+  typenav, typekeys, expreval, semos, derefs, sembasics
 import ".." / lib / symparser
 
 const
@@ -686,20 +686,23 @@ proc collectSymDefs(n: Cursor; defs: var HashSet[SymId]) =
   var n = n
   collectSymDefsAux(n, defs)
 
-proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; expr: Cursor) =
-  ## Like `collectUsedSyms` but seeded from the symbols referenced *in the
-  ## expression itself* rather than a routine. Used by `executeExpr` to set
-  ## up the sub-compile when the const initializer is e.g. a `block:` rather
-  ## than a call. Symbols defined inline by the expression (local vars,
-  ## nested procs) are skipped — they would otherwise be re-emitted as
-  ## top-level decls and clash with their inline definitions.
-  var stack = newSeq[SymId]()
-  var handledSyms = initHashSet[SymId]()
-  var inlineDefs = initHashSet[SymId]()
-  collectSymDefs(expr, inlineDefs)
-  var e = expr
-  collectSyms(e, stack)
-  c.usedModules.incl(s.g.config.nifcachePath / SystemModuleSuffix)
+proc collectTopLevelIdents(s: var SemContext; n: var Cursor; stack: var seq[SymId]) =
+  ## A same-module routine whose body is still unchecked (consts are
+  ## evaluated during the signature phase) refers to its callees by
+  ## `Ident`. Resolve those against the module's top-level scope.
+  if not n.isTagLit:
+    if n.isIdent:
+      for sym in topLevelSyms(s, n.strId): stack.add sym
+    inc n
+  else:
+    n.loopInto:
+      collectTopLevelIdents(s, n, stack)
+
+proc emitUsedDecls(c: var SynthesizeSerializerCtx; s: var SemContext; stack: var seq[SymId];
+                   handledSyms, inlineDefs: var HashSet[SymId]) =
+  ## Emits the decls of the symbols in `stack` in dependency order: a decl's
+  ## own dependencies are emitted before it, because the sub-compile
+  ## semchecks the decls top-down (`newCamera` must follow `normalize`).
   while stack.len > 0:
     let sym = stack.pop()
     if sym in inlineDefs: continue
@@ -716,13 +719,34 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
       let owner = pool.symModule(sym)
       if owner == c.thisModuleSuffix:
         let res = tryLoadSym(sym)
-        if res.status == LacksNothing:
-          let before = c.dest.len
+        # A field / enum field resolves to a symbol of its own, but its decl
+        # is a part of the TYPE's, which travels with the type.
+        if res.status == LacksNothing and res.decl.symKind notin {FldY, EfldY}:
+          var deps = newSeq[SymId]()
+          var d = res.decl
+          collectSyms(d, deps)
+          d = res.decl
+          collectTopLevelIdents(s, d, deps)
+          emitUsedDecls(c, s, deps, handledSyms, inlineDefs)
           c.dest.addSubtree res.decl
-          var d = cursorAt(c.dest, before)
-          collectSyms(d, stack)
       elif owner.len > 0:
         c.usedModules.incl(s.g.config.nifcachePath / owner)
+
+proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; expr: Cursor) =
+  ## Like `collectUsedSyms` but seeded from the symbols referenced *in the
+  ## expression itself* rather than a routine. Used by `executeExpr` to set
+  ## up the sub-compile when the const initializer is e.g. a `block:` rather
+  ## than a call. Symbols defined inline by the expression (local vars,
+  ## nested procs) are skipped — they would otherwise be re-emitted as
+  ## top-level decls and clash with their inline definitions.
+  var stack = newSeq[SymId]()
+  var handledSyms = initHashSet[SymId]()
+  var inlineDefs = initHashSet[SymId]()
+  collectSymDefs(expr, inlineDefs)
+  var e = expr
+  collectSyms(e, stack)
+  c.usedModules.incl(s.g.config.nifcachePath / SystemModuleSuffix)
+  emitUsedDecls(c, s, stack, handledSyms, inlineDefs)
 
 proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
                   dest: var TokenBuf; info: NifLineInfo): string {.nimcall.} =
