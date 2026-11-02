@@ -295,29 +295,31 @@ template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untype
   ## * `toUTF8 func <#toUTF8,Rune>`_
   ## * `$ func <#$,Rune>`_ alias for `toUTF8`
   var i = RuneImpl(c)
-  if i <=% 127:
+  # `i >= 0 and i <= K` is the unsigned `i <=% K` a negative `i` fails in
+  # every arm, spelled so the prover sees the bound `chr` needs
+  if i >= 0 and i <= 127:
     s.setLen(pos+1)
     s[pos+0] = chr(i)
     when doInc: inc(pos)
-  elif i <=% 0x07FF:
+  elif i >= 0 and i <= 0x07FF:
     s.setLen(pos+2)
     s[pos+0] = chr((i shr 6) or 0b110_00000)
     s[pos+1] = chr((i and ones(6)) or 0b10_0000_00)
     when doInc: inc(pos, 2)
-  elif i <=% 0xFFFF:
+  elif i >= 0 and i <= 0xFFFF:
     s.setLen(pos+3)
     s[pos+0] = chr(i shr 12 or 0b1110_0000)
     s[pos+1] = chr(i shr 6 and ones(6) or 0b10_0000_00)
     s[pos+2] = chr(i and ones(6) or 0b10_0000_00)
     when doInc: inc(pos, 3)
-  elif i <=% 0x001FFFFF:
+  elif i >= 0 and i <= 0x001FFFFF:
     s.setLen(pos+4)
     s[pos+0] = chr(i shr 18 or 0b1111_0000)
     s[pos+1] = chr(i shr 12 and ones(6) or 0b10_0000_00)
     s[pos+2] = chr(i shr 6 and ones(6) or 0b10_0000_00)
     s[pos+3] = chr(i and ones(6) or 0b10_0000_00)
     when doInc: inc(pos, 4)
-  elif i <=% 0x03FFFFFF:
+  elif i >= 0 and i <= 0x03FFFFFF:
     s.setLen(pos+5)
     s[pos+0] = chr(i shr 24 or 0b111110_00)
     s[pos+1] = chr(i shr 18 and ones(6) or 0b10_0000_00)
@@ -325,7 +327,7 @@ template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untype
     s[pos+3] = chr(i shr 6 and ones(6) or 0b10_0000_00)
     s[pos+4] = chr(i and ones(6) or 0b10_0000_00)
     when doInc: inc(pos, 5)
-  elif i <=% 0x7FFFFFFF:
+  elif i >= 0 and i <= 0x7FFFFFFF:
     s.setLen(pos+6)
     s[pos+0] = chr(i shr 30 or 0b1111110_0)
     s[pos+1] = chr(i shr 24 and ones(6) or 0b10_0000_00)

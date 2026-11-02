@@ -2244,10 +2244,8 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
 
 proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
   ## Emit and discharge the `lo <= value <= hi` obligation for a value bound to a
-  ## `range[lo..hi]`-typed target. Value conversions are handled at the
-  ## conversion site (see the `ConvX`/`HconvX` case in `traverseExpr`), so we
-  ## skip them here to avoid double-reporting.
-  if value.exprKind in {ConvX, HconvX, CastX, BaseobjX}: return
+  ## `range[lo..hi]`-typed target. A `cast` is the unchecked escape hatch.
+  if value.exprKind in {CastX, BaseobjX}: return
   var lo = zero()
   var hi = zero()
   if not staticRangeBounds(targetType, lo, hi): return
@@ -2260,6 +2258,18 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
     needLo = lo > baseLo
     needHi = hi < baseHi
   if not needLo and not needHi: return
+  if value.exprKind in {ConvX, HconvX}:
+    # A conversion owes its own target's range at the conversion site (the
+    # `ConvX`/`HconvX` case in `traverseExpr`); where that range lies within
+    # this one, it is all there is to prove. Only there: `chr(int(i))` checked
+    # `i` against `int` and nothing more.
+    var t = value
+    t = sub(t)
+    var cLo = zero()
+    var cHi = zero()
+    if (staticRangeBounds(t, cLo, cHi) or integerTypeBounds(c.bits, t, cLo, cHi)) and
+        (not needLo or lo <= cLo) and (not needHi or cHi <= hi):
+      return
   checkInRange c, value, lo, hi, needLo, needHi
 
 proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =

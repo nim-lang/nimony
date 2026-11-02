@@ -9,6 +9,11 @@ proc g(x: int): int = h(x)
 
 proc low3(c: range[0..3]): int = c
 
+proc viaConv(i: int32): char =
+  # a conversion to `int` proves the fit to `int`, not to `chr`'s `0..255`
+  chr(int(i))
+
 discard h(-1)
 discard g(1)
 discard low3(4)
+discard viaConv(65)
