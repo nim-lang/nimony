@@ -175,22 +175,11 @@ type
                                        ## operand) when synthesising a LOAD scalar's `L.f`
     accessed: HashSet[SymId]           ## fields actually read/written via `.`
     disqualified: bool                 ## escaped → leave the object alone
-    uninit: bool                       ## `(var :o . T .)`: declared, defined later by a
-                                       ## whole-object assignment (the inliner's result var)
-    forward: bool                      ## a copy of IMMUTABLE memory: no scalars at all,
-                                       ## every `o.f` re-reads `L.f` in place
-    whole: bool                        ## copied as a whole object somewhere (see
-                                       ## `wholeAsgns`): needs its type's full field list
 
   Context = object
     orig: ptr TokenBuf
     candidates: Table[SymId, Candidate]
     accesses: seq[(SymId, SymId, int)] ## (object, field, dot-node position)
-    written: HashSet[SymId]            ## locals the body assigns or takes the address
-                                       ## of after their declaration
-    wholeAsgns: seq[(int, int, int)]   ## `(asgn D S)` with a candidate on either side:
-                                       ## (stmt, D, S) positions. Rewritten into one
-                                       ## assignment per field.
     patchset: Patchset
     synth: seq[TokenBuf]
     counter: int
@@ -290,7 +279,6 @@ proc collectCandidates(c: var Context; n: Cursor) =
     var oconstrCur = default(Cursor)
     var declTypePos = -1
     var loadPos = -1
-    var uninit = false
     v.into:
       if v.hasMore:
         if v.kind == SymbolDef: oSym = symId(v)
@@ -312,8 +300,6 @@ proc collectCandidates(c: var Context; n: Cursor) =
           # Whole-object copy `var o = src` or a field/deref path. A Symbol is
           # the inliner's `var tmp = s` for a by-value aggregate param.
           loadPos = cursorToPosition(c.orig[], v)
-        elif v.kind == DotToken:
-          uninit = true                          # defined by a later whole assignment
         skip v                                   # initializer
       while v.hasMore: skip v
     if oSym != SymId(0):
@@ -321,9 +307,6 @@ proc collectCandidates(c: var Context; n: Cursor) =
         recordOconstr(c, oSym, cursorToPosition(c.orig[], n), oconstrCur)
       elif loadPos >= 0:
         recordLoad(c, oSym, cursorToPosition(c.orig[], n), declTypePos, loadPos)
-      elif uninit and declTypePos >= 0 and c.m != nil:
-        recordLoad(c, oSym, cursorToPosition(c.orig[], n), declTypePos, -1)
-        if oSym in c.candidates: c.candidates.getOrQuit(oSym).uninit = true
   var m = n
   m.loopInto:
     collectCandidates(c, m)
@@ -349,113 +332,6 @@ proc addrEscapeRoot(n: Cursor): SymId =
       else: return rootOf(cur)                 # anything else: stay conservative
     else: return SymId(0)
 
-proc collectWritten(c: var Context; n: Cursor) =
-  ## Every symbol that is the root of an assignment target or of an `addr`.
-  if n.kind != TagLit: return
-  if n.stmtKind == AsgnS or n.exprKind in {AddrC, HaddrC}:
-    let r = rootOf(child0(n))
-    if r != SymId(0): c.written.incl r
-  var m = n
-  m.loopInto:
-    collectWritten(c, m)
-    skip m
-
-proc invariantPath(c: var Context; n: Cursor): bool =
-  ## True if the lvalue `n` denotes the same IMMUTABLE storage at every point of
-  ## the body: rooted at a `const`, selected through fields and array indexes
-  ## that are literals or locals the body never writes. Re-reading such a path
-  ## at each use is the same as reading it once — no copy is ever needed.
-  case n.kind
-  of Symbol:
-    if c.m == nil: return false
-    let d = c.m[].getDeclOrNil(symId(n))
-    result = d != nil and d.kind == ConstY
-  of TagLit:
-    case n.exprKind
-    of DotC:
-      result = invariantPath(c, child0(n))
-    of AtC:
-      var idx = child0(n)
-      skip idx
-      result = invariantPath(c, child0(n)) and
-               (idx.kind in {IntLit, UIntLit, CharLit} or
-                (idx.kind == Symbol and c.m != nil and
-                 c.m[].pool.symIsLocal(symId(idx)) and symId(idx) notin c.written))
-    else: result = false
-  else: result = false
-
-proc classify(c: var Context; n: Cursor)
-
-proc mentionsSym(n: Cursor; s: SymId): bool =
-  result = false
-  if n.kind == Symbol: return symId(n) == s
-  if n.kind != TagLit: return false
-  var m = n
-  m.loopInto:
-    if mentionsSym(m, s): return true
-    skip m
-
-proc isCandidateSym(c: Context; n: Cursor): bool {.inline.} =
-  n.kind == Symbol and symId(n) in c.candidates
-
-proc classifyWholeAsgn(c: var Context; n: Cursor): bool =
-  ## `(asgn D S)` where D or S is a candidate used as a WHOLE object. That is a
-  ## definition (D) or a copy (S) — both are per-field assignments over the
-  ## type's complete field list, not an escape. Legal shapes: D a candidate and
-  ## S an `oconstr`, a pure lvalue or another local; S a candidate and D a pure
-  ## lvalue. A side that mentions the other candidate (`o = T(a: o.b, b: o.a)`)
-  ## would see a half-updated object once split, so it disqualifies. Returns
-  ## false when neither side is a candidate (the ordinary walk handles it).
-  let dst = child0(n)
-  var src = dst
-  skip src
-  let dstCand = isCandidateSym(c, dst)
-  let srcCand = isCandidateSym(c, src)
-  if not dstCand and not srcCand: return false
-  result = true
-  var ok = true
-  if dstCand and srcCand and symId(dst) == symId(src):
-    ok = false
-  elif dstCand:
-    let srcOk = src.kind == Symbol or
-      (src.kind == TagLit and (src.exprKind == OconstrC or
-        (src.exprKind in {DotC, AtC, PatC, DerefC} and isPureLvaluePath(src))))
-    if not srcOk or mentionsSym(src, symId(dst)): ok = false
-  else:
-    if not isPureLvaluePath(dst) or mentionsSym(dst, symId(src)): ok = false
-  if ok:
-    c.wholeAsgns.add (cursorToPosition(c.orig[], n), cursorToPosition(c.orig[], dst),
-                      cursorToPosition(c.orig[], src))
-    if dstCand: c.candidates.getOrQuit(symId(dst)).whole = true
-    if srcCand: c.candidates.getOrQuit(symId(src)).whole = true
-  else:
-    if dstCand: c.candidates.getOrQuit(symId(dst)).disqualified = true
-    if srcCand: c.candidates.getOrQuit(symId(src)).disqualified = true
-  if not dstCand: classify(c, dst)
-  if not srcCand: classify(c, src)
-
-proc flatFields(c: var Context; typePos: int; fields: var seq[SymId]): bool =
-  ## The complete field list of a FLAT record type: an `object` with no base and
-  ## no `case` part. Only such a type can be copied field by field — a variant's
-  ## active branch is unknown at a whole-object copy.
-  if c.m == nil or typePos < 0: return false
-  var body = navigateToObjectBody(c.m[], cursorAt(c.orig[], typePos))
-  if body.kind != TagLit or body.typeKind != ObjectT: return false
-  result = true
-  body.into:
-    if body.kind != DotToken: result = false     # inheritance
-    skip body
-    while body.hasMore:
-      if body.substructureKind == FldU:
-        var b = body
-        let fd = takeFieldDecl(b)
-        if fd.name.kind == SymbolDef: fields.add symId(fd.name)
-        else: result = false
-      else:
-        result = false                           # `case` part / union branch
-      skip body
-  if fields.len == 0: result = false
-
 proc classify(c: var Context; n: Cursor) =
   ## Walk the body. A candidate that appears anywhere except as the base of a
   ## `(dot o field)` is disqualified; otherwise the accessed field is recorded.
@@ -465,7 +341,6 @@ proc classify(c: var Context; n: Cursor) =
     if s in c.candidates:
       c.candidates.getOrQuit(s).disqualified = true        # a bare whole-object use
   of TagLit:
-    if n.stmtKind == AsgnS and classifyWholeAsgn(c, n): return
     case n.exprKind
     of DotC:
       let base = child0(n)
@@ -502,23 +377,6 @@ proc classify(c: var Context; n: Cursor) =
 
 # ---- synthesis ------------------------------------------------------------
 
-proc emitRewritten(c: var Context; dest: var TokenBuf; n: Cursor)
-
-proc emitForwarded(c: var Context; dest: var TokenBuf; dotNode, base: Cursor) =
-  ## `(dot o f …)` of a forwarded candidate → `(dot <L> f …)`: the field symbol
-  ## and inherited-depth operand are kept, only the base is swapped.
-  let li = rawLineInfo(dotNode)
-  dest.openTag dotNode.cursorTagId
-  if li.isValid: dest.appendLineInfo li
-  var d = dotNode
-  d.into:
-    if d.hasMore: skip d
-    emitRewritten(c, dest, base)
-    while d.hasMore:
-      dest.addSubtree d
-      skip d
-  dest.closeTag()
-
 proc emitRewritten(c: var Context; dest: var TokenBuf; n: Cursor) =
   ## Copy the subtree at `n` into `dest`, replacing every `(dot X f)` whose object
   ## `X` is a survivor with its scalar. Needed because a replaced object decl's
@@ -534,10 +392,6 @@ proc emitRewritten(c: var Context; dest: var TokenBuf; n: Cursor) =
         if f.kind == Symbol and symId(f) in c.candidates.getOrQuit(oSym).names:
           dest.addSymUse c.candidates.getOrQuit(oSym).names.getOrQuit(symId(f))
           return
-      if base.kind == Symbol and symId(base) in c.candidates and
-         c.candidates.getOrQuit(symId(base)).forward:
-        emitForwarded(c, dest, n, cursorAt(c.orig[], c.candidates.getOrQuit(symId(base)).loadPos))
-        return
     let tag = n.cursorTagId
     let li = rawLineInfo(n)
     dest.openTag tag
@@ -616,92 +470,19 @@ proc buildSymUse(c: var Context; name: string): int =
 proc synthCursor(c: var Context; idx: int): Cursor {.inline.} =
   cursorAt(c.synth[idx], 0)
 
-proc emitFieldOf(c: var Context; buf: var TokenBuf; base: Cursor; f: SymId) =
-  ## `base.f` for a whole-object side: the survivor's scalar, or a synthesized
-  ## `(dot <base> f 0)` over the (rewritten) lvalue. Flat records only, so the
-  ## inherited-depth operand is always 0.
-  if base.kind == Symbol and symId(base) in c.candidates and
-     f in c.candidates.getOrQuit(symId(base)).names:
-    buf.addSymUse c.candidates.getOrQuit(symId(base)).names.getOrQuit(f)
-  else:
-    buf.openTag TagId(ord(DotTagId))
-    emitRewritten(c, buf, base)
-    buf.addSymUse f
-    buf.addIntLit 0
-    buf.closeTag()
-
-proc buildWholeFieldDecl(c: var Context; name: string; info: Cursor; base: Cursor;
-                         typePos: int; f: SymId; hasValue: bool): int =
-  ## `(var :name . <field type> <base.f | .>)` for a whole-object candidate.
-  result = c.synth.len
-  var buf = createTokenBuf(24, c.orig[].pool, c.orig[].tags)
-  buf.openTag TagId(ord(VarTagId))
-  let li = rawLineInfo(info)
-  if li.isValid: buf.appendLineInfo li
-  buf.addSymDef name
-  buf.addDotToken()                              # pragmas
-  emitScalarType(c, buf, typePos, f)
-  if hasValue: emitFieldOf(c, buf, base, f)
-  else: buf.addDotToken()                        # uninitialized, like the object was
-  buf.closeTag()
-  c.synth.add ensureMove(buf)
-
-proc oconstrFields(oconstr: Cursor): seq[SymId] =
-  ## The `kv` field names of `(oconstr T (kv f v)…)` in constructor order; empty
-  ## for a constructor with a base part.
-  result = @[]
-  var oc = oconstr
-  var bad = false
-  oc.into:
-    if oc.hasMore: skip oc                       # type T
-    while oc.hasMore:
-      if oc.kind == TagLit and oc.substructureKind == KvU:
-        var kv = oc
-        inc kv
-        if kv.kind == Symbol: result.add symId(kv)
-        else: bad = true
-      else:
-        bad = true
-      skip oc
-  if bad: result.setLen 0
-
-proc buildWholeAsgn(c: var Context; stmt, dst, src: Cursor; fields: seq[SymId]): int =
-  ## `(asgn D S)` → `(stmts (asgn D.f S.f)…)`. For an `oconstr` source the
-  ## assignments follow the CONSTRUCTOR order, so the values are evaluated in the
-  ## order the source wrote them.
-  result = c.synth.len
-  var buf = createTokenBuf(16 + 12 * fields.len, c.orig[].pool, c.orig[].tags)
-  let li = rawLineInfo(stmt)
-  buf.openTag TagId(ord(StmtsTagId))
-  if li.isValid: buf.appendLineInfo li
-  let isCtor = src.kind == TagLit and src.exprKind == OconstrC
-  let order = if isCtor: oconstrFields(src) else: fields
-  for f in order:
-    buf.openTag TagId(ord(AsgnTagId))
-    if li.isValid: buf.appendLineInfo li
-    emitFieldOf(c, buf, dst, f)
-    if isCtor:
-      var v = default(Cursor)
-      discard projectField(src, f, v)
-      emitRewritten(c, buf, v)
-    else:
-      emitFieldOf(c, buf, src, f)
-    buf.closeTag()
-  buf.closeTag()
-  c.synth.add ensureMove(buf)
-
 # ---- public entry ---------------------------------------------------------
 
-proc scalarizeOnce(buf: var TokenBuf; m: ptr MainModule; counter: var int): bool =
-  ## One round; true if anything was scalarized. `counter` carries the scalar
-  ## numbering across rounds so a body never mints the same name twice.
-  result = false
+proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
+  ## Scalar-replace non-escaping local objects in a single proc body. Names the
+  ## field scalars `` `sroa.<n> ``, which are locals of that body.
+  ## `m` is the module type context each scalar's declared type is resolved through;
+  ## without it the type slots are left empty and the backend re-infers them.
   var c = Context(orig: addr buf,
                   candidates: initTable[SymId, Candidate](),
                   accesses: @[],
                   patchset: initPatchset(addr buf),
                   synth: @[],
-                  counter: counter,
+                  counter: 0,
                   m: m)
   block:
     let n = beginRead(buf)
@@ -710,9 +491,6 @@ proc scalarizeOnce(buf: var TokenBuf; m: ptr MainModule; counter: var int): bool
   block:
     let n = beginRead(buf)
     classify(c, n)
-  block:
-    let n = beginRead(buf)
-    collectWritten(c, n)
 
   # A LOAD candidate has no constructor field list: its fields are exactly the ones
   # accessed, ordered by first access so the emitted decls are deterministic.
@@ -723,62 +501,20 @@ proc scalarizeOnce(buf: var TokenBuf; m: ptr MainModule; counter: var int): bool
       c.candidates.getOrQuit(oSym).fieldOrder.add fSym
 
   # Survivors: not escaped, and every accessed field was constructor-initialised.
-  # A candidate that is defined or copied as a WHOLE object (or declared
-  # uninitialized) instead covers its type's complete field list, so every
-  # whole-object copy has a scalar per field to move.
   var survPairs: seq[(int, SymId)] = @[]
-  var wholeFields = initTable[SymId, seq[SymId]]()
-  var wholeCands: seq[SymId] = @[]
   for oSym, cand in c.candidates:
-    if not cand.disqualified and (cand.whole or cand.uninit): wholeCands.add oSym
-  for oSym in wholeCands:
-    # By key, not by iterating `c.candidates`: `flatFields` needs `c` mutable.
-    var fields: seq[SymId] = @[]
-    if not flatFields(c, c.candidates.getOrQuit(oSym).typePos, fields): continue
-    var ok = true
-    if c.candidates.getOrQuit(oSym).loadPos < 0 and
-       not c.candidates.getOrQuit(oSym).uninit:   # constructor decl: needs every field
-      for f in fields:
-        if f notin c.candidates.getOrQuit(oSym).valuePos: ok = false; break
-    for f in c.candidates.getOrQuit(oSym).accessed:
-      if f notin fields: ok = false; break
-    if ok: wholeFields[oSym] = fields
-  for oSym, cand in c.candidates:
-    if cand.disqualified or cand.whole or cand.uninit: continue
+    if cand.disqualified: continue
     if cand.fieldOrder.len == 0: continue    # a load nobody reads by field: leave it
     var ok = true
     for f in cand.accessed:
       if f notin cand.valuePos: ok = false; break
     if ok: survPairs.add (cand.declPos, oSym)
-  # A whole-object definition from a constructor must set every field: an
-  # omitted one would leave its scalar holding the PREVIOUS value.
-  for (stmtPos, dstPos, srcPos) in c.wholeAsgns:
-    let dst = cursorAt(c.orig[], dstPos)
-    let src = cursorAt(c.orig[], srcPos)
-    if dst.kind == Symbol and symId(dst) in wholeFields and
-       src.kind == TagLit and src.exprKind == OconstrC:
-      let have = oconstrFields(src)
-      var complete = true
-      for f in wholeFields.getOrQuit(symId(dst)):
-        if f notin have: complete = false
-      if not complete: wholeFields.del symId(dst)
-  for oSym, fields in wholeFields:
-    c.candidates.getOrQuit(oSym).fieldOrder = fields
-    survPairs.add (c.candidates.getOrQuit(oSym).declPos, oSym)
   if survPairs.len == 0: return
-  result = true
   survPairs.sort(proc(a, b: (int, SymId)): int = cmp(a[0], b[0]))
-
-  for it in survPairs:
-    let oSym = it[1]
-    if c.candidates.getOrQuit(oSym).loadPos >= 0 and oSym notin wholeFields and
-       invariantPath(c, cursorAt(c.orig[], c.candidates.getOrQuit(oSym).loadPos)):
-      c.candidates.getOrQuit(oSym).forward = true
 
   # Assign scalar names in source order (deterministic output / codegen).
   for it in survPairs:
     let oSym = it[1]
-    if c.candidates.getOrQuit(oSym).forward: continue
     let fields = c.candidates.getOrQuit(oSym).fieldOrder
     for f in fields:
       let nm = freshScalarName(c)
@@ -791,29 +527,6 @@ proc scalarizeOnce(buf: var TokenBuf; m: ptr MainModule; counter: var int): bool
     let fields = c.candidates.getOrQuit(oSym).fieldOrder
     var first = true
     let isLoad = c.candidates.getOrQuit(oSym).loadPos >= 0
-    if c.candidates.getOrQuit(oSym).forward:
-      # A copy of immutable memory: drop the decl, re-read each field in place
-      # (the access loop below). Hoisting all its loads to the decl only made
-      # every field live across the whole body.
-      var empty = createTokenBuf(2, c.orig[].pool, c.orig[].tags)
-      empty.openTag TagId(ord(StmtsTagId))
-      empty.closeTag()
-      c.synth.add ensureMove(empty)
-      c.patchset.addSubst(declPos, synthCursor(c, c.synth.len - 1))
-      continue
-    if oSym in wholeFields and (isLoad or c.candidates.getOrQuit(oSym).uninit):
-      let typePos = c.candidates.getOrQuit(oSym).typePos
-      let loadPos = c.candidates.getOrQuit(oSym).loadPos
-      let base = if isLoad: cursorAt(c.orig[], loadPos) else: default(Cursor)
-      for f in fields:
-        let name = c.candidates.getOrQuit(oSym).names.getOrQuit(f) & ""
-        let idx = buildWholeFieldDecl(c, name, cursorAt(c.orig[], declPos), base,
-                                      typePos, f, isLoad)
-        if first:
-          c.patchset.addSubst(declPos, synthCursor(c, idx)); first = false
-        else:
-          c.patchset.addInsert(declPos, synthCursor(c, idx))
-      continue
     for f in fields:
       # Everything read out of `c` is copied into locals BEFORE `c` is passed
       # as the mutable argument; a borrowed read alongside it aliases.
@@ -836,48 +549,14 @@ proc scalarizeOnce(buf: var TokenBuf; m: ptr MainModule; counter: var int): bool
   # loop, and the body mutates it.
   for ai in 0 ..< c.accesses.len:
     let (oSym, fSym, pos) = c.accesses[ai]
-    if oSym in c.candidates and c.candidates.getOrQuit(oSym).forward:
-      var fb = createTokenBuf(16, c.orig[].pool, c.orig[].tags)
-      emitForwarded(c, fb, cursorAt(c.orig[], pos),
-                    cursorAt(c.orig[], c.candidates.getOrQuit(oSym).loadPos))
-      c.synth.add ensureMove(fb)
-      c.patchset.addSubst(pos, synthCursor(c, c.synth.len - 1))
-    elif oSym in c.candidates and fSym in c.candidates.getOrQuit(oSym).names:
+    if oSym in c.candidates and fSym in c.candidates.getOrQuit(oSym).names:
       let name = c.candidates.getOrQuit(oSym).names.getOrQuit(fSym) & ""
       let idx = buildSymUse(c, name)
       c.patchset.addSubst(pos, synthCursor(c, idx))
 
-  # Split every whole-object assignment that touches a survivor.
-  for wi in 0 ..< c.wholeAsgns.len:
-    let (stmtPos, dstPos, srcPos) = c.wholeAsgns[wi]
-    let dst = cursorAt(c.orig[], dstPos)
-    let src = cursorAt(c.orig[], srcPos)
-    let dstSurv = dst.kind == Symbol and symId(dst) in c.candidates and
-                  c.candidates.getOrQuit(symId(dst)).names.len > 0
-    let srcSurv = src.kind == Symbol and symId(src) in c.candidates and
-                  c.candidates.getOrQuit(symId(src)).names.len > 0
-    if not dstSurv and not srcSurv: continue
-    if not dstSurv and src.kind == TagLit and src.exprKind == OconstrC: continue
-    let fields = if dstSurv: c.candidates.getOrQuit(symId(dst)).fieldOrder
-                 else: c.candidates.getOrQuit(symId(src)).fieldOrder
-    let idx = buildWholeAsgn(c, cursorAt(c.orig[], stmtPos), dst, src, fields)
-    c.patchset.addSubst(stmtPos, synthCursor(c, idx))
-
-  counter = c.counter
   if not c.patchset.isEmpty:
     var nb = c.patchset.apply()
     buf = ensureMove(nb)
-
-proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
-  ## Scalar-replace non-escaping local objects in a single proc body. Names the
-  ## field scalars `` `sroa.<n> ``, which are locals of that body.
-  ## `m` is the module type context each scalar's declared type is resolved through;
-  ## without it the type slots are left empty and the backend re-infers them.
-  ## Iterated: a scalar that is itself an aggregate (`Thing.center: Vec3`) is a
-  ## candidate of the next round.
-  var counter = 0
-  for _ in 0 ..< 4:
-    if not scalarizeOnce(buf, m, counter): break
 
 # ---- self-tests -----------------------------------------------------------
 
