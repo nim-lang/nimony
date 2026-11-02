@@ -1,3 +1,4 @@
+{.feature: "saturatingArith".}
 # Signed arithmetic saturates (#2840). A comparison that admits the clamped
 # value says nothing about the mathematical one: `i + 1 <= n` holds for
 # `i == n == high(int)`, where `i + 1 > n`. Each claim below is false for some

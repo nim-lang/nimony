@@ -44,8 +44,9 @@ func countSetBits*[T: BitInteger](x: T): int {.inline.} =
   var v = x
   result = 0
   while v != T(0):
-    # `low(T) - 1` must wrap for a signed `T`: a saturated result would keep
-    # the sign bit set forever
+    # `low(T) - 1` must wrap for a signed `T`, also in a module with
+    # `.feature: "saturatingArith"`: a saturated result would keep the sign bit
+    # set forever
     {.keepOverflowFlag.}:
       v = v and (v - T(1))
     inc result

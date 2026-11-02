@@ -1,3 +1,4 @@
+{.feature: "saturatingArith".}
 # bug #2840: signed `+`, `-` and `*` saturate. `127'i8 + 1'i8` is `127`, not a
 # wrapped `-128`, so a sum of non-negative operands stays non-negative and the
 # index in `f` is in range for every input. The prover may read the sum

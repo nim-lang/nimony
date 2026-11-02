@@ -130,6 +130,9 @@ type
       ## The `old(e)` snapshots of the last call, which a store or a local that
       ## binds its result reads the callee's `.ensures` with.
 
+  ProofKind = enum
+    ProvenIndex, ProvenCall, ProvenExact
+
   FirContext = object
     flow: FlowState                    # the journaled analysis state: the
                                        # definite-assignment init-set and the
@@ -193,6 +196,20 @@ type
       ## only to rule out a wrap or a saturation.
     inKeepOvf: bool
       ## Inside a `{.keepOverflowFlag.}` block: signed arithmetic wraps there.
+    saturating: bool
+      ## `.feature: "saturatingArith"`: signed arithmetic clamps instead of
+      ## wrapping.
+    optimistic: HashSet[VarId]
+      ## Locations the enclosing loops' pre-scans took as monotone although
+      ## their step is in a type that wraps: the pre-scan has no facts to rule
+      ## the wrap out, so every such step is judged as the body is traversed.
+    brokenSteps: HashSet[VarId]
+      ## The `optimistic` locations a step could not be proven to keep in
+      ## their type; the loop is analysed again without the assumption.
+    proofLog: seq[(ProofKind, int)]
+      ## The positions added to `dischargedIndexes`, `provenCalls` or
+      ## `exactArith` while an `optimistic` assumption was in force, so that a
+      ## second analysis of the loop can take them back.
     exactArith: HashSet[int]
       ## Positions of the signed `+`, `-` and `*` proven to stay inside their
       ## type; every other one is lowered to its saturating form
@@ -294,6 +311,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext)
 proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext)
 proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext)
 proc stepFits(c: var FirContext; typ, base: Cursor; k: xint): bool
+proc noWrap(c: var FirContext; n: Cursor): bool
 
 proc nextSibling(n: Cursor): Cursor {.inline.} =
   result = n
@@ -785,28 +803,30 @@ proc typeWraps(typ: Cursor): bool =
   ## over- or underflow errors" (doc/language.md). Such an operation is not the
   ## mathematical one the difference rules read it as until its operands are
   ## known to keep it in range: `if i + 1 < 2` says nothing about `i` when `i`
-  ## may be `high(uint64)`. A signed operation that leaves its type is an
-  ## overflow error instead, so whatever the target, the value it produces
-  ## when it does produce one is the mathematical one.
+  ## may be `high(uint64)`. Signed arithmetic wraps too, unless the module
+  ## asks for saturation (`arithWraps`).
   result = arithType(typ).typeKind == UIntT
 
 proc typeSaturates(typ: Cursor): bool =
   ## Does `+`, `-` or `*` of type `typ` clamp a result outside the type to
-  ## `low(T)` or `high(T)`? That is what signed arithmetic does (#2840): the
-  ## value is not the mathematical one, but it is never on the other side of
-  ## a bound inside the type. `e <= B` gives `clamp(e) <= B` for every `B` of
-  ## the type, which is why an obligation may still be *proven* from the
-  ## mathematical reading. A fact *assumed* from a comparison may not: a
-  ## clamped `i + 1 <= n` with `n == high(T)` says nothing about `i + 1`.
+  ## `low(T)` or `high(T)` under `.feature: "saturatingArith"`? That is what
+  ## signed arithmetic does then (#2840): the value is not the mathematical
+  ## one, but it is never on the other side of a bound inside the type.
+  ## `e <= B` gives `clamp(e) <= B` for every `B` of the type, which is why an
+  ## obligation may still be *proven* from the mathematical reading. A fact
+  ## *assumed* from a comparison may not: a clamped `i + 1 <= n` with
+  ## `n == high(T)` says nothing about `i + 1`.
   result = arithType(typ).typeKind == IntT
 
 proc arithWraps(c: FirContext; typ: Cursor): bool {.inline.} =
-  ## `typeWraps`, and a signed operation inside `{.keepOverflowFlag.}`, which
-  ## sets the overflow flag and wraps instead of saturating.
-  result = typeWraps(typ) or (c.inKeepOvf and arithType(typ).typeKind == IntT)
+  ## `typeWraps`, and a signed operation that does not saturate: outside
+  ## `.feature: "saturatingArith"` (C compiled with `-fwrapv`) or inside
+  ## `{.keepOverflowFlag.}`, which sets the overflow flag and wraps.
+  result = typeWraps(typ) or
+    ((c.inKeepOvf or not c.saturating) and arithType(typ).typeKind == IntT)
 
 proc arithSaturates(c: FirContext; typ: Cursor): bool {.inline.} =
-  result = not c.inKeepOvf and typeSaturates(typ)
+  result = c.saturating and not c.inKeepOvf and typeSaturates(typ)
 
 proc foldWraps(bits: int; n: Cursor): bool =
   ## Does a wrapping or saturating operation inside the constant `n` fold to a
@@ -1578,12 +1598,15 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
         # ... with exactly that one argument, and a body `path ± k`
         var b = body
         b = sub(b)
-        # the body is in terms of the accessor's parameter, so no fact can
-        # rule out a wrap: only a type that does not wrap reads as `path ± k`
-        if arithWraps(c, b): return false
-        skip b # the type operand
         var inner = accessorSubst(acc)
         inner[acc.param] = argOf(arg, subst)
+        if arithWraps(c, b):
+          # the body is in terms of the accessor's parameter: the facts rule
+          # out a wrap of it with the argument in its place
+          var buf = createTokenBuf(16)
+          addSubstituted(buf, body, inner)
+          if not noWrap(c, c.typeCache.keepAlive(buf)): return false
+        skip b # the type operand
         # Not `locationVarId`: that asks the type cache about the path, which
         # names the accessor's own parameter.
         var root = NoSymId
@@ -1686,7 +1709,8 @@ proc directionOfDelta(delta: xint): IvKind =
   else: ivIncreasing
 
 proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
-                delta: var xint; stepArg: var Cursor; saturates: var bool): bool =
+                delta: var xint; stepArg: var Cursor; saturates: var bool;
+                wrapAssumed: var bool): bool =
   ## Is this a call to a step routine? Answers with the location it moves and by
   ## how much, signed. `inc(i, k)` with a `k` whose value is not known here is a
   ## write like any other — `inc` on an ordinal accepts a negative step.
@@ -1720,9 +1744,13 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
   if arithWraps(c, info.opType):
     # `inc` of a `uint8` at 255 makes it 0, not 256: the step only moves what
     # is known where the facts keep it inside the type. The loop pre-scan has
-    # no facts of the iteration to ask, so there it is a write like any other.
+    # no facts of the iteration to ask, so there the step is *assumed* to fit,
+    # and judged when the body is traversed (`optimistic`).
     let moved = if info.isSub: -step else: step
-    if c.prescanning or step.isNaN or not stepFits(c, info.opType, peelExpr(target), moved):
+    if c.prescanning and not step.isNaN:
+      wrapAssumed = true
+    elif step.isNaN or not stepFits(c, info.opType, peelExpr(target), moved):
+      if loc in c.optimistic: c.brokenSteps.incl loc
       loc = InvalidVarId
       stepArg = default(Cursor)
       return false
@@ -1735,14 +1763,15 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
               not stepFits(c, info.opType, peelExpr(target), delta)
   result = true
 
-proc stepCall(c: var FirContext; n: Cursor; loc: var VarId; delta: var xint): bool =
-  var saturates = false
+proc stepCall(c: var FirContext; n: Cursor; loc: var VarId; delta: var xint;
+              wrapAssumed: var bool): bool =
   ## `stepCallAt` for a cursor sitting on the whole `(call …)` node.
   if not n.isTagLit: return false
   var callee = n
   callee = sub(callee)
   var stepArg = default(Cursor)
-  result = stepCallAt(c, callee, loc, delta, stepArg, saturates)
+  var saturates = false
+  result = stepCallAt(c, callee, loc, delta, stepArg, saturates, wrapAssumed)
 
 proc isVarOpenArray(c: var FirContext; t: Cursor): bool =
   ## `var openArray[T]`: a view whose elements may be written but which itself
@@ -1926,6 +1955,19 @@ proc impliesNoWrap(c: var FirContext; fact: LeXplusC): bool =
     extended.add query(v, VarId(0), r.hi)
   result = implies(extended, fact)
 
+proc locFits(c: var FirContext; typ: Cursor; v: VarId; k: xint): bool =
+  ## Is `v + k` inside the type `typ`, for the location `v` (`VarId(0)`: the
+  ## constant `k`)? `v` itself is a value of the type.
+  var tLo = zero()
+  var tHi = zero()
+  if k.isNaN or not integerTypeBounds(c.bits, arithType(typ), tLo, tHi): return false
+  if v == VarId(0): return tLo <= k and k <= tHi
+  if k == zero(): return true
+  if zero() < k:
+    result = impliesNoWrap(c, query(v, VarId(0), tHi - k))   # v <= tHi - k
+  else:
+    result = impliesNoWrap(c, query(VarId(0), v, k - tLo))   # tLo - k <= v
+
 proc stepFits(c: var FirContext; typ, base: Cursor; k: xint): bool =
   ## Does `base + k` stay inside the type `typ` computes in? By the operand's
   ## bounds, or, for a location, by the facts: `i <= high(T) - k` is what an
@@ -1982,6 +2024,16 @@ proc noWrap(c: var FirContext; n: Cursor): bool =
                integerTypeBounds(c.bits, arithType(t), tLo, tHi) and
                impliesNoWrap(c, query(va, vb, tHi)) and
                impliesNoWrap(c, query(vb, va, -tLo))
+    if not result:
+      # `a ± e` with `e` known to lie in `eLo..eHi`, `o + runeLenAt(s, o)`:
+      # both ends of the step have to fit
+      var eLo = zero()
+      var eHi = zero()
+      if valueBounds(c, d, eLo, eHi):
+        result = if isSub: stepFits(c, t, a, -eHi) and stepFits(c, t, a, -eLo)
+                 else: stepFits(c, t, a, eHi) and stepFits(c, t, a, eLo)
+      elif not isSub and valueBounds(c, a, eLo, eHi):
+        result = stepFits(c, t, d, eHi) and stepFits(c, t, d, eLo)
 
 proc clampKeepsRange(c: var FirContext; n: Cursor; lo, hi: xint): bool =
   ## `n` is a saturating `+`, `-` or `*`: is `lo <= n <= hi` implied by the
@@ -2019,7 +2071,9 @@ proc noteExactArith(c: var FirContext; n: Cursor) =
     # a node of a buffer built on the side (a substituted contract) lies
     # outside the module's tokens: live buffers do not overlap
     let pos = cursorToPosition(c.root, n)
-    if pos >= 0 and pos < c.rootLen: c.exactArith.incl pos
+    if pos >= 0 and pos < c.rootLen and not c.exactArith.containsOrIncl(pos) and
+        c.optimistic.len > 0:
+      c.proofLog.add (ProvenExact, pos)
 
 proc cannotProve(c: var FirContext; info: NifLineInfo; report: bool; msg: string) =
   ## The "cannot prove" half of a range obligation, which not every caller
@@ -2738,10 +2792,21 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind;
     result.c = result.c + rightHi
     kind = ckImplied
     skip r
-  elif not rightHandSide(c, r, result, call,
+  elif (let cBefore = result.c; not rightHandSide(c, r, result, call,
       not cursorIsNil(cmpStart) and r.exprKind in {AddX, SubX} and
-      assumableSide(c, r, nextSibling(sub(cmpStart)), false, xk, plainReading())):
-    result.a = InvalidVarId
+      assumableSide(c, r, nextSibling(sub(cmpStart)), false, xk, plainReading()))):
+    var tLo = zero()
+    var tHi = zero()
+    if xk == LtX and kind != ckImplied and not cursorIsNil(cmpStart) and
+        integerTypeBounds(c.bits, arithType(sub(cmpStart)), tLo, tHi):
+      # `a < e` for an `e` nothing is known about, a wrapping `x - y` among
+      # them: `e` is still a value of the type, so `a < high(T)`. That is what
+      # keeps the `inc a` of `while a < e` from wrapping.
+      result.b = VarId(0)
+      result.c = cBefore + tHi
+      kind = ckImplied
+    else:
+      result.a = InvalidVarId
   # a < b  --> a <= b - 1:
   if xk == LtX:
     result.c = result.c - createXint(1'i32)
@@ -3259,10 +3324,8 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     let isSub = m.exprKind == SubX
     var r = m
     r = sub(r)
-    if arithWraps(c, r):
-      # Only the facts here can rule out a wrap, and they are about the
-      # operands only where nothing stands in for them.
-      if rd.args.len > 0 or rd.results.len > 0 or not noWrap(c, m): return false
+    let wraps = arithWraps(c, r)
+    let opType = r
     skip r # the type operand
     # the base is an operand of its own: a location, `old(e)`, `high(s)`, or a
     # literal a parameter stands for at this call site (`i + 2` with `i = 0`)
@@ -3280,7 +3343,20 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
       if off.isNaN: return false
     v = base
     cnst = baseConst + (if isSub: -off else: off)
-    return true
+    # ... once the facts about what the operands resolved to keep `v + cnst`
+    # inside the type: `old(s.len) - 1` under `old(s.len) > 0`
+    if not wraps: return true
+    # Only the facts here can rule out a wrap, and never the ones about a
+    # `result` a call site has not computed yet
+    for _, rv in rd.results:
+      if rv == v: return false
+    if locFits(c, opType, v, cnst): return true
+    # ... or the operands' own bounds do: a `len(s)` is non-negative
+    if rd.args.len == 0: return noWrap(c, m)
+    var buf = createTokenBuf(16)
+    addSubstituted(buf, m, rd.args)
+    result = noWrap(c, c.typeCache.keepAlive(buf))
+    return result
   var oldOf = default(Cursor)
   if oldArg(m, oldOf):
     # The snapshot `snapshotOlds` took before the call's mutations.
@@ -3958,8 +4034,9 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
       when defined(contractStats):
         stderr.writeLine "INDEX " & (if c.obligationOpen: "discharged" else: "checked") &
           " " & infoToStr(idx.info) & " " & asNimCode(idx)
-      if c.obligationOpen:
-        c.dischargedIndexes.incl nodePos
+      if c.obligationOpen and not c.dischargedIndexes.containsOrIncl(nodePos) and
+          c.optimistic.len > 0:
+        c.proofLog.add (ProvenIndex, nodePos)
     while pc.hasMore: skip pc
 
 # --- Shared globals ---
@@ -4338,7 +4415,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     # the mutation below invalidates it.
     if checkRequires(c, req, rd, callCursor.info) and callCursor.kind == Symbol and
         routineSplits(c, callCursor.symId):
-      c.provenCalls.incl cursorToPosition(c.root, callCursor)
+      let pos = cursorToPosition(c.root, callCursor)
+      if not c.provenCalls.containsOrIncl(pos) and c.optimistic.len > 0:
+        c.proofLog.add (ProvenCall, pos)
   # So is every `old(e)` of the postcondition.
   let ens = extractPragma(fnType, EnsuresP)
   if not cursorIsNil(ens):
@@ -4351,8 +4430,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   var delta = createNaN()
   var stepArg = default(Cursor)
   var saturates = false
-  var isStep = stepCallAt(c, callCursor, stepLoc, delta, stepArg, saturates) and
-               not delta.isNaN
+  var wrapAssumed = false
+  var isStep = stepCallAt(c, callCursor, stepLoc, delta, stepArg, saturates,
+                          wrapAssumed) and not delta.isNaN
   if isStep and saturates:
     variableMovedWithin(c.facts, stepLoc, min(zero(), delta), max(zero(), delta))
     call.stepped = stepLoc
@@ -4615,6 +4695,12 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip value
   let valueStart = value
   traverseExpr c, value, call
+  if c.optimistic.len > 0:
+    # a step the loop's pre-scan assumed does not wrap
+    let destLoc = plainLocationVarId(c, n)
+    if destLoc in c.optimistic:
+      let v = peelExpr(valueStart)
+      if v.exprKind in {AddX, SubX} and not noWrap(c, v): c.brokenSteps.incl destLoc
 
   # Check borrow conflicts for the destination
   if borrowMode(c, n).isTracked:
@@ -4833,6 +4919,7 @@ type
     pendingStep: VarId    ## the `(unknown v)` a step call emits right after
                           ## itself is that call's own doing, not a second,
                           ## unclassified write
+    optimistic: HashSet[VarId] ## monotone only if no step wraps (`FirContext.optimistic`)
 
 proc joinIv(a, b: IvKind): IvKind =
   ## What two writes in the same body jointly guarantee. Raising a non-negative
@@ -4918,7 +5005,7 @@ proc preservedByEnsures(c: var FirContext; call: Cursor): seq[VarId] =
       preservedLocations(c, ensuresProposition(ens), subst, result)
 
 proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
-                 value: Cursor): IvKind =
+                 value: Cursor; wrapAssumed: var bool): IvKind =
   ## `dest = dest ± k` written out, the form a loop that does not go through
   ## `inc` takes.
   result = ivUnknown
@@ -4943,8 +5030,8 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   var r = v
   r = sub(r)
   # a wrapping `+` is not monotone, and the pre-scan has no facts to rule the
-  # wrap out
-  if arithWraps(c, r): return
+  # wrap out: assumed here, judged by the traversal
+  wrapAssumed = arithWraps(c, r)
   skip r # the type operand
   var operand = r
   skip r
@@ -4997,7 +5084,10 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
   if loc == InvalidVarId:
     noteWrite(w, getVarId(c, root), ivUnknown)
     return
-  noteWrite(w, loc, stepOfValue(c, w, loc, value))
+  var wrapAssumed = false
+  let kind = stepOfValue(c, w, loc, value, wrapAssumed)
+  noteWrite(w, loc, kind)
+  if wrapAssumed and kind in {ivIncreasing, ivDecreasing}: w.optimistic.incl loc
   if loc != getVarId(c, root):
     # Writing `d.count` says nothing about `d` itself, but nil-ness and the
     # like are keyed on the root, so stay conservative there.
@@ -5032,8 +5122,11 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     w.preserved.setLen 0
     var stepLoc = InvalidVarId
     var delta = createNaN()
-    if stepCall(c, n, stepLoc, delta):
-      noteWrite(w, stepLoc, directionOfDelta(delta))
+    var wrapAssumed = false
+    if stepCall(c, n, stepLoc, delta, wrapAssumed):
+      let kind = directionOfDelta(delta)
+      noteWrite(w, stepLoc, kind)
+      if wrapAssumed and kind in {ivIncreasing, ivDecreasing}: w.optimistic.incl stepLoc
       w.pendingStep = stepLoc
       skip n
       return
@@ -5146,21 +5239,64 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
   ## via `(jmp loopExit)` and never falls through.
   var call = freshCall()
   block:
-    # Before the checkpoint, not after: the rollback below restores the state
-    # the checkpoint captured, so an invalidation made after it would be undone
-    # and the stale fact would be back in force *after* the loop — which is
-    # where `var colon = -1; while …: colon = i; …; if colon >= 0:` went wrong.
-    block:
-      var w = LoopWrites(kinds: initTable[VarId, IvKind](),
-                         nonNeg: initHashSet[VarId](), opaque: false,
-                         pendingStep: InvalidVarId)
-      var scan = n
-      c.prescanning = true
-      scanLoopWrites(c, scan, w)
-      c.prescanning = false
-      restrictFactsToLoopInvariants(c, w)
-    let cp = c.flow.checkpoint()
-    traverseStmt c, n, call        # the body `(stmts ...)`; ends by leaving
+    let bodyStart = n
+    let outerOptimistic = c.optimistic
+    let outerBroken = c.brokenSteps
+    let errMark = c.errors.len
+    let proofMark = c.proofLog.len
+    let exitsMark = exitsCheckpoint(c.tr)
+    let wasLive = c.tr.live
+    let base = c.flow.checkpoint()
+    var demoted = initHashSet[VarId]()
+    var cp = base
+    while true:
+      # Before the checkpoint, not after: the rollback below restores the state
+      # the checkpoint captured, so an invalidation made after it would be undone
+      # and the stale fact would be back in force *after* the loop — which is
+      # where `var colon = -1; while …: colon = i; …; if colon >= 0:` went wrong.
+      var mine = initHashSet[VarId]()
+      block:
+        var w = LoopWrites(kinds: initTable[VarId, IvKind](),
+                           nonNeg: initHashSet[VarId](), opaque: false,
+                           pendingStep: InvalidVarId,
+                           optimistic: initHashSet[VarId]())
+        var scan = n
+        c.prescanning = true
+        scanLoopWrites(c, scan, w)
+        c.prescanning = false
+        for v in demoted:
+          if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
+          w.optimistic.excl v
+        restrictFactsToLoopInvariants(c, w)
+        mine = w.optimistic
+      cp = c.flow.checkpoint()
+      c.optimistic = outerOptimistic
+      for v in mine: c.optimistic.incl v
+      traverseStmt c, n, call        # the body `(stmts ...)`; ends by leaving
+      c.optimistic = outerOptimistic
+      var broken = false
+      for v in mine:
+        if v in c.brokenSteps and v notin outerBroken:
+          # A step the assumption rests on may wrap: everything the body
+          # proved under it is void. Analyse it again with it demoted.
+          demoted.incl v
+          broken = true
+      if not broken: break
+      c.brokenSteps = outerBroken
+      c.errors.shrink errMark
+      for i in proofMark ..< c.proofLog.len:
+        let (kind, pos) = c.proofLog[i]
+        case kind
+        of ProvenIndex: c.dischargedIndexes.excl pos
+        of ProvenCall: c.provenCalls.excl pos
+        of ProvenExact: c.exactArith.excl pos
+      c.proofLog.setLen proofMark
+      rollbackExits(c.tr, exitsMark)
+      c.tr.live = wasLive
+      c.flow.rollbackTo base
+      call = freshCall()
+      n = bodyStart
+    if c.optimistic.len == 0: c.proofLog.setLen proofMark
     let backEdge = backEdgeBorrows(c.tr)
     dropContinue(c.tr)       # the loop header consumes the back-edge
     # The loop never falls through; reset the working state to the pre-loop base.
@@ -6261,8 +6397,11 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     forBinders: initHashSet[SymId](),
     declaredRange: initTable[VarId, RangeBounds](),
     typeRange: initTable[VarId, RangeBounds](),
+    optimistic: initHashSet[VarId](),
+    brokenSteps: initHashSet[VarId](),
     verbose: verbose,
     features: features,
+    saturating: saturate,
     bits: bits
   )
   c.typeCache.openScope()

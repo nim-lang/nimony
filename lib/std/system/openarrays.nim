@@ -12,7 +12,7 @@ func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and
 func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem
 
-func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
+func high*[T](a: openArray[T]): int {.inline.} = len(a) - 1
 func low*[T](a: openArray[T]): int {.inline.} = 0
 func len*[T](a: openArray[T]): int {.inline, ensures: (0 <= result and result < high(int)).} =
   result = a.len

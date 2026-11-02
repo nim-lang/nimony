@@ -1,7 +1,7 @@
 # The proven side of `tests/nimony/errmsgs/tunsignedwrap.nim`: an unsigned `+`,
 # `-` or `inc` still reads mathematically once the facts keep it inside its
-# type. Signed arithmetic saturates instead of wrapping, which keeps every
-# bound inside its type (`tsaturate.nim`).
+# type. Signed arithmetic wraps the same way (`tsignedwrap.nim`) unless a
+# module saturates it (`tsaturate.nim`).
 import std/syncio
 
 proc add(a: uint8): uint8 =
@@ -38,8 +38,9 @@ proc stepped(i: uint8): uint8 =
     {.assert: result >= 6.}
 
 proc signedNarrow(i: int8): int =
+  # signed arithmetic wraps too: `i < 100` keeps `i + 1` inside `int8`
   result = -1
-  if i >= 0 and i + 1 < 2:
+  if i >= 0 and i < 100 and i + 1 < 2:
     {.assert: i < 1.}
     result = int(i)
 

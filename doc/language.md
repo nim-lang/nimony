@@ -75,30 +75,20 @@ The following integer types are pre-defined:
 
 ### Signed overflow
 
-Signed arithmetic `saturates`:idx:. When the mathematical result of `+`, `-`,
-`*` or unary `-` on a signed integer type `T` does not fit `T`, the result is
-`low(T)` if it is too small and `high(T)` if it is too large. There is no
-overflow error and no wrap-around:
+Signed arithmetic wraps around like unsigned arithmetic does: when the
+mathematical result of `+`, `-`, `*` or unary `-` on a signed integer type
+`T` does not fit `T`, the result is that value modulo `2^bits` in two's
+complement. `127'i8 + 1'i8` is `-128'i8`. There is no overflow error, and the
+C backend compiles with `-fwrapv` so that the C compiler does not assume
+otherwise.
 
-  ```nim
-  assert 127'i8 + 1'i8 == 127'i8
-  assert -128'i8 - 1'i8 == -128'i8
-  assert high(int) * 2 == high(int)
-  assert -low(int) == high(int)
-  ```
+The contract prover (`staticContracts`) reads a signed operation as the
+mathematical one only where it can prove that it stays inside its type, just
+as it does for unsigned arithmetic. `if a >= 0 and b >= 0: s[a + b]` keeps its
+bounds check: `a + b` may be negative.
 
-The same holds for the steps `inc` and `dec` take, so a signed counter only
-moves in the direction of its step. Saturation keeps the order of values:
-when the mathematical result lies on one side of a value of `T`, so does the
-saturated one. In particular the sum of two non-negative values is never
-negative. The contract prover (`staticContracts`) relies on this.
-
-Where the compiler can prove that an operation stays inside its type, it
-compiles it as the plain machine operation. Saturation costs nothing there,
-and in a loop like `while i < s.len: ...; inc i` it is the usual case.
-
-Inside a `{.keepOverflowFlag.}` block signed `+`, `-` and `*` wrap around
-instead, and `overflowFlag()` reports whether the last of them overflowed:
+Inside a `{.keepOverflowFlag.}` block `overflowFlag()` reports whether the
+last signed `+`, `-` or `*` overflowed:
 
   ```nim
   proc checkedAdd(a, b: int): (int, bool) =
@@ -108,13 +98,38 @@ instead, and `overflowFlag()` reports whether the last of them overflowed:
   ```
 
 A constant expression that overflows its type, such as
-`const X = 127'i8 + 1'i8`, is a compile-time error. `div` and `mod` do not
-saturate.
+`const X = 127'i8 + 1'i8`, is a compile-time error.
 
 The length of a `string`, `seq` or `openArray` is always below `high(int)`: no
 container fits that many elements beside its header. `len` states this in
-its postcondition, so `i + 1 <= s.len` is the same as `i < s.len` even though
-`i + 1` saturates.
+its postcondition, so `i + 1` cannot wrap where `i < s.len`.
+
+
+#### Saturating arithmetic
+
+With `{.feature: "saturatingArith".}` a module's signed arithmetic
+`saturates`:idx: instead: a result that is too small is `low(T)`, one that is
+too large is `high(T)`.
+
+  ```nim
+  {.feature: "saturatingArith".}
+  assert 127'i8 + 1'i8 == 127'i8
+  assert -128'i8 - 1'i8 == -128'i8
+  assert high(int) * 2 == high(int)
+  assert -low(int) == high(int)
+  ```
+
+The same holds for the steps `inc` and `dec` take in the module, so a signed
+counter only moves in the direction of its step. Saturation keeps the order of
+values: when the mathematical result lies on one side of a value of `T`, so
+does the saturated one. In particular the sum of two non-negative values is
+never negative, and the prover may use that: `s[a + b]` above needs no bounds
+check below `0`.
+
+Where the compiler can prove that an operation stays inside its type, it
+compiles it as the plain machine operation. Saturation costs nothing there,
+and in a loop like `while i < s.len: ...; inc i` it is the usual case.
+Inside a `{.keepOverflowFlag.}` block signed arithmetic still wraps around.
 
 
 `Automatic type conversion`:idx: is performed in expressions where different

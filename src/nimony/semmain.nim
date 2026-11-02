@@ -26,7 +26,7 @@ import ".." / models / nifindex_tags
 import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptcache,
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
-  contracts_fir, exprexec, semimport, module_plugins, sem
+  contracts_fir, exprexec, semimport, module_plugins, sem, features
 import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
@@ -470,7 +470,8 @@ proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
   when true: #defined(enableContracts):
     var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
                                     c.g.config.bits, c.g.config.verbose,
-                                    saturate = SkipSystem notin c.moduleFlags)
+                                    saturate = SaturatingArithFeature in c.features and
+                                      SkipSystem notin c.moduleFlags)
     if reporters.reportErrors(moreErrors) > 0:
       quit 1
   dest = stripAnalysisFacts(ensureMove fir)

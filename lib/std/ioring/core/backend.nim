@@ -159,7 +159,7 @@ proc siftDown(h: var TimerHeap; i: int) =
     let l = 2 * i + 1
     if l >= h.a.len: break
     var small = l
-    if l + 1 < h.a.len and h.a[l + 1].at < h.a[l].at: small = l + 1
+    if l < h.a.len - 1 and h.a[l + 1].at < h.a[l].at: small = l + 1
     if e.at <= h.a[small].at: break
     let down = h.a[small]
     h.put(i, down)

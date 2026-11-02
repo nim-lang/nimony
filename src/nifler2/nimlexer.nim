@@ -410,8 +410,8 @@ proc numberValue(L: var Lexer; tok: var Token; start: int) =
       # Nim's third stage has rewound to the start of the digits
       error L, start, "number out of range: '" & litNumText(L, start) & "'"
       return
-    # negated as `uint64`, which wraps: `xi` may be `2^63`, whose signed
-    # negation saturates
+    # negated as `uint64`: `xi` may be `2^63`, whose signed negation
+    # overflows
     tok.iNumber = if negative: cast[int64](0'u64 - xi) else: cast[int64](xi)
     let tooWide =
       case tok.kind

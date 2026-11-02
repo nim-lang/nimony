@@ -407,7 +407,13 @@ func runeOffset*(s: openArray[char], pos: Natural, start: Natural = 0): int =
     i = 0
     o = start
   while i < pos:
-    o = o + runeLenAt(s, o)
+    # `start` may lie past the end: then so does every later offset
+    if o >= s.len:
+      return -1
+    let next = o + runeLenAt(s, o)
+    # `o < s.len` and a rune is at most 6 bytes wide: the sum does not wrap
+    {.assume: 0 <= next.}
+    o = next
     if o >= s.len:
       return -1
     inc i

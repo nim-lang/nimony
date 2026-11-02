@@ -71,6 +71,8 @@ func wrapWords*(s: string, maxLineWidth = 80,
             dec spaceLeft
             let L = graphemeLen(s, k+i)
             var p = i + k
+            # `k < j - i`: `p` lies inside `i ..< j`
+            {.assume: 0 <= p.}
             for m in 0 ..< L:
               if p >= s.len: break
               result.add s[p]

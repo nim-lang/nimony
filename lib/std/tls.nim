@@ -149,7 +149,7 @@ proc putStr(s: var seq[byte]; b: string) =
 
 proc patch16(s: var seq[byte]; at, v: int) =
   ## Back-fills a length that was reserved with `put16(0)`.
-  if at >= 0 and at + 1 < s.len:
+  if at >= 0 and at < s.len - 1:
     s[at] = byte((v shr 8) and 0xFF)
     s[at + 1] = byte(v and 0xFF)
 
@@ -164,16 +164,14 @@ proc get8(d: openArray[byte]; pos: var int; limit: int; v: var int): bool =
 
 proc get16(d: openArray[byte]; pos: var int; limit: int; v: var int): bool =
   result = false
-  # `limit > d.len` before `pos + 2 > limit`: a `limit` below `high(int)` is
-  # what keeps the saturating `pos + 2` exact
-  if pos < 0 or limit > d.len or pos + 2 > limit: return
+  if pos < 0 or limit > d.len or limit < 2 or pos > limit - 2: return
   v = int(d[pos]) shl 8 or int(d[pos + 1])
   pos = pos + 2
   result = true
 
 proc get24(d: openArray[byte]; pos: var int; limit: int; v: var int): bool =
   result = false
-  if pos < 0 or limit > d.len or pos + 3 > limit: return
+  if pos < 0 or limit > d.len or limit < 3 or pos > limit - 3: return
   v = int(d[pos]) shl 16 or int(d[pos + 1]) shl 8 or int(d[pos + 2])
   pos = pos + 3
   result = true

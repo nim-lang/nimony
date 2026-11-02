@@ -223,7 +223,7 @@ func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result and result < high(i
   result = s.len
   # every write to the `len` field stores a non-negative count, and no seq
   # holds `high(int)` elements beside its header: the bound is what keeps
-  # `i + 1 <= s.len` from being a saturated `high(int)` (#2840)
+  # `i + 1` from wrapping where `i < s.len` (#2840)
   {.assume: 0 <= result and result < high(int).}
 
 func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
@@ -345,7 +345,9 @@ proc newSeq*[T: HasDefault](s: out seq[T]; newLen: int) {.nodestroy, inline.} =
 
 func high*[T](s: seq[T]): int {.inline.} =
   ## Highest valid index (`len-1`), or `-1` when empty.
-  s.len - 1
+  # `len(s)`, not the field: its `.ensures` is what keeps the `- 1` from
+  # wrapping for the prover
+  len(s) - 1
 func low*[T](s: seq[T]): int {.inline.} =
   ## Lowest valid index (`0` for sequences).
   0

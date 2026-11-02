@@ -1350,6 +1350,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       ccArgs.add "-c"
       # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
       ccArgs.add "-Wno-attributes"
+      # Signed overflow wraps (doc/language.md "Signed overflow"); without
+      # this the C compiler may assume it never happens, which is what the
+      # prover must not be contradicted by.
+      ccArgs.add "-fwrapv"
       # gcc-14 on arm64/Linux emits a stringop-overflow false positive
       # ("writing 8 bytes into a region of size 0 ... destination object is
       # likely at address zero") from inlined refcount updates on paths the
@@ -2275,6 +2279,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         b.addStrLit flag
       b.addStrLit "-c"
       b.addStrLit "-Wno-attributes"
+      b.addStrLit "-fwrapv"
       # See the sibling cc cmd above: real-GCC-only workaround for the gcc-14
       # arm64 stringop-overflow false positive.
       if extractCCKey(config.cc) != "clang" and

@@ -196,11 +196,11 @@ template runnableExamples*(body: untyped) {.untyped.} =
 
 func overflowFlag*(): bool {.magic: "OverflowFlag".}
 
-# Signed `+`, `-` and `*` saturate: a result outside the type is `low(T)` or
-# `high(T)`, never a wrapped value (#2840). The compiler calls these for every
-# such operation the contract prover cannot keep inside its type, with that
-# type's bounds; below 64 bits nothing overflows `int64` here, so only the
-# clamp applies.
+# Under `.feature: "saturatingArith"` signed `+`, `-` and `*` saturate: a
+# result outside the type is `low(T)` or `high(T)`, never a wrapped value
+# (#2840). The compiler calls these for every such operation the contract
+# prover cannot keep inside its type, with that type's bounds; below 64 bits
+# nothing overflows `int64` here, so only the clamp applies.
 
 func nimSatAdd*(a, b, lo, hi: int64): int64 {.inline.} =
   {.keepOverflowFlag.}:
@@ -492,7 +492,7 @@ func `==`*[T: Equatable](x, y: seq[T]): bool =
   if x.len != y.len:
     return false
 
-  for i in 0..x.len-1:
+  for i in 0 ..< x.len:
     if x[i] != y[i]:
       return false
 

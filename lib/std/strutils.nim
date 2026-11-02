@@ -513,8 +513,9 @@ func delete*(s: var string, slice: Slice[int]) =
     var i = slice.a
     # if j < s.len: moveMem(addr s[i], addr s[j], s.len - j) # pending benchmark
     for j in slice.b + 1 ..< s.len:
-      # `i < j` always holds; the prover cannot see that, so it is checked
-      if i < s.len: s[i] = s[j]
+      # `i` starts at `slice.a <= slice.b < j` and both advance together
+      {.assume: i < j.}
+      s[i] = s[j]
       inc i
     shrink(s, i)
 
@@ -1332,10 +1333,8 @@ func fmtScientific(neg: bool; digits: string; exp, precision: int;
   result.add (if d.len > 0: d[0] else: '0')
   if precision > 0 or forcePoint:
     result.add decimalSep
-    var i = 1
-    while i <= precision:
+    for i in 1 .. precision:
       result.add (if i < d.len: d[i] else: '0')
-      inc i
   let e10 = e - 1
   result.add 'e'
   if e10 < 0: result.add '-' else: result.add '+'
@@ -1440,7 +1439,7 @@ func findNormalized(x: string, inArray: openArray[string]): int {.
   ## The index of the value that follows the key `x` in `inArray`, -1 if
   ## there is none.
   var i = 0
-  while i+1 < inArray.len:
+  while i < inArray.len - 1:
     if cmpIgnoreStyle(x, inArray[i]) == 0: return i+1
     inc(i, 2) # incrementing by 1 would probably lead to a
               # security hole...
@@ -1508,9 +1507,10 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
       case formatstr[i+1]
       of '#':
         if num >= a.len: invalidFormatString(formatstr)
-        else: add result, a[num]
+        else:
+          add result, a[num]
+          inc num
         inc i, 2
-        inc num
       of '$':
         add result, '$'
         inc(i, 2)
@@ -1540,6 +1540,8 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
           else:
             isNumber = -1
           inc(j)
+        # `j` started at most at `formatstr.len`: `i+1 < len(formatstr)`
+        {.assume: j <= formatstr.len.}
         if isNumber == 1:
           let idx = if not negative: k-1 else: a.len-k
           if idx >= 0 and idx < a.len: add result, a[idx]
