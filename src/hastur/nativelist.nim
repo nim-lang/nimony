@@ -189,6 +189,10 @@ const
     "tests/nimony/stdlib/tall"
   ]
   NativeTestFiles* = [
+    # Float codegen found by `bench/raytracer.nim`: the `Sqrt` row, a same-width
+    # `uint32 -> int32` cast that skipped sign-extension, a float fold computing
+    # into the register its rhs still read, and bit-casts kept as `cast`.
+    "tests/nimony/intrinsics/tfloatbits",
     # A `let` in a toplevel `while` condition (#2794). Sem made it a global, which
     # the C backend tolerated inside the init proc but arkham asserted on.
     "tests/nimony/sysbasics/twhileinfor",

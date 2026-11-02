@@ -266,6 +266,13 @@ type
     MemsetOp     # Memset(dest: pointer; byte: int; size: int)
     MemcpyOp     # Memcpy(dest, src: pointer; size: int) — the regions must not overlap
     MemcmpOp     # int32 = Memcmp(a, b: pointer; size: int)
+    # ── floating point. IEEE 754 requires `sqrt` to be correctly rounded, and
+    #    every FPU this table targets implements exactly that operation in one
+    #    instruction (`sqrtsd`/`sqrtss`, `fsqrt`) — a software root is the
+    #    fallback for a target without an FPU, not a portable spelling. As a
+    #    call it also made each float local live across it a spill on x86-64,
+    #    where no xmm register is callee-saved.
+    SqrtOp       # f = Sqrt(x: f)  — f32 or f64
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -433,7 +440,8 @@ const
     "adds3", "adcs3", "subs3", "sbcs3", "mul3", "umulh", "umull", "umlal", "bic3",
     "cseleq", "cselne", "csellt", "cselle", "cselgt", "cselge", "csello",
     "csells", "cselhi", "cselhs",
-    "Memset", "Memcpy", "Memcmp"]
+    "Memset", "Memcpy", "Memcmp",
+    "Sqrt"]
 
   Imm8 = [ptImmLit, ptNone, ptNone, ptNone, ptNone, ptNone]
     ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -443,6 +451,7 @@ const
   Un = [ptAnyIntW, ptNone, ptNone, ptNone, ptNone, ptNone]     ## one integer source
   UnCount = [ptAnyIntW, ptAnyInt, ptNone, ptNone, ptNone, ptNone] ## a value plus a count
   Bin = [ptAnyIntW, ptAnyIntW, ptNone, ptNone, ptNone, ptNone] ## two same-width int sources
+  FUn = [ptFloatW, ptNone, ptNone, ptNone, ptNone, ptNone]     ## one float source
 
   # ── atomic operand shapes ────────────────────────────────────────────────
   # Every one of them ends in a memory order, because the C builtins do and the
@@ -1152,10 +1161,14 @@ const
                  widths: {}, tie: -1, effects: {efReads, efWrites}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # Memcmp
                  params: MemBin, roles: AllIn, ret: ptInt32,
-                 widths: {}, tie: -1, effects: {efReads}, uses: {}, defs: {})
+                 widths: {}, tie: -1, effects: {efReads}, uses: {}, defs: {}),
+    # ── floating point ──
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Sqrt
+                 params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = MemcmpOp
+const LastIntrinsicOp* = SqrtOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
