@@ -29,8 +29,8 @@ proc main() =
     inc j
   while atomicLoad(done) < 8: cpuRelax()
   {.cast(assumeSync).}:
-    for x in got:
+    for i, x in got:
+      if i > 0: stdout.write " "
       stdout.write $x
-      stdout.write " "
   echo ""
 main()
