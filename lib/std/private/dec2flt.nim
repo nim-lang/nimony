@@ -938,7 +938,7 @@ func matchesIgnoreCase(s: openArray[char]; i: int; word: string): bool {.
       let at = i + k
       {.assume: 0 <= at and at < s.len.}  # `i + word.len <= s.len` holds while `result` does
       let c = s[at]
-      let lower = if c in {'A'..'Z'}: chr(ord(c) + (ord('a') - ord('A'))) else: c
+      let lower = if c >= 'A' and c <= 'Z': chr(ord(c) + (ord('a') - ord('A'))) else: c
       if lower != word[k]: result = false
 
 func scanSpecial(s: openArray[char]; isNan, negative: var bool): int =

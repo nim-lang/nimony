@@ -662,7 +662,7 @@ func normalize*(s: string): string =
     assert normalize("Foo Bar") == "foo bar"
   result = newStringOfCap(s.len)
   for c in items(s):
-    if c in {'A'..'Z'}:
+    if c >= 'A' and c <= 'Z':
       result.add chr(ord(c) + (ord('a') - ord('A')))
     elif c != '_':
       result.add c

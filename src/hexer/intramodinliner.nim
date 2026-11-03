@@ -1428,11 +1428,10 @@ proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
   ## discarded, as at statement position). `forwardResult` additionally hands
   ## the callee's result local — and the local a tail `result = L` copies from —
   ## the target's storage, so their decls fold away and the `target = result'`
-  ## self-copy never appears. That is only sound when the target is a fresh temp
-  ## nothing else can observe: an ordinary assignment destination is live before
-  ## the call (a global the body may read, a local an argument may alias), so it
-  ## must be written at the `(ret …)` points and nowhere else, exactly as the
-  ## call would have.
+  ## self-copy never appears. That is only sound when nothing reads the target
+  ## while the body runs: a fresh temp, or a caller local no argument mentions
+  ## (`trySpliceAsgn`). Otherwise it is written at the `(ret …)` points and
+  ## nowhere else, exactly as the call would have.
   ##
   ## Charges the caller's growth budget: every commit point goes through here.
   var rename = initTable[SymId, SymId]()
@@ -1545,9 +1544,12 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## (measured: 16 `isValid` call frames left in the native `nifbench` build,
   ## all of this shape). Emits one `(scope …)` and returns 1.
   ##
-  ## No result forwarding: `lhs` is live before the call, so the body's result
-  ## stays its own local and reaches `lhs` only at the `(ret …)` points — see
-  ## `emitSplice`. The residual `lhs = result'` copy is shoggoth's to clean.
+  ## `lhs` is the natural target and takes the result over (`forwardResult`)
+  ## unless an argument mentions it: a substituted argument is evaluated inside
+  ## the body, after the result was first written. The body cannot name a caller
+  ## local otherwise. Like NRVO, reading `lhs` through a raw pointer while the
+  ## body runs sees the partial result: `y = f(addr y)` is the programmer's
+  ## problem. A global `lhs` keeps the copy: the body may read it.
   if not n.isTagLit or n.stmtKind != AsgnS: return 0
   let entry = n
   var probe = n
@@ -1558,7 +1560,10 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
 
   var site = SpliceSite()
   if not prepareSplice(c, probe, site): return 0
-  emitSplice(c, dest, site, lhsSym, forwardResult = false, entry.info)
+  var forward = pool.symIsLocal(lhsSym)
+  for a in site.argCursors:
+    if forward and countSymUses(a, lhsSym) > 0: forward = false
+  emitSplice(c, dest, site, lhsSym, forward, entry.info)
 
   n = entry
   skip n
