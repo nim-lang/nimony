@@ -74,7 +74,7 @@ type
     forced*: bool              ## `{.alwaysInline.}`: splice regardless of size
                                ## and growth budget
     banned*: bool              ## a veto no rule may lift: `.noinline`, no body,
-                               ## importc, varargs, an overflow-flag body
+                               ## importc, varargs
   ModuleAnalysis = object
     ## Hexer-stage scratch: the inlinable procs `analyzeModule` found, so
     ## `intraModuleInline` knows which bodies to flatten. Importers never see
@@ -159,40 +159,11 @@ proc tokenCount(n: Cursor): int =
   var c = n
   result = tokenCountAux(c)
 
-proc bodyTouchesOverflowFlag(body: Cursor): bool =
-  ## `(keepovf …)` / `(ovf)` anywhere in `body`. Both work on the enclosing
-  ## PROC's overflow flag, which every backend keeps as one sticky
-  ## per-function flag: false on entry, set by a `(keepovf …)` that
-  ## overflowed, and nothing ever resets it. Spliced into a caller such a body
-  ## shares the CALLER's flag instead — set by an earlier inlined overflow, or
-  ## by the previous iteration of the loop the splice landed in — so its
-  ## `(ovf)` reports overflows that never happened here (measured:
-  ## `mulChecked` overflowing on purpose, then `newSeq`'s `memSizeInBytes`
-  ## spliced into the same `main` read the stale flag and asked the allocator
-  ## for `high(int)` bytes). Leng has no flag reset to emit at a splice entry,
-  ## so a body that touches the flag keeps its own frame.
-  proc walk(n: var Cursor): bool =
-    case n.kind
-    of TagLit:
-      if n.stmtKind == KeepovfS or n.exprKind == OvfC:
-        skip n
-        return true
-      result = false
-      n.into:
-        while n.hasMore:
-          if walk(n): result = true
-    else:
-      result = false
-      inc n
-  var b = body
-  result = walk(b)
-
 proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   ## The whole inlining policy, derived from the proc decl itself, and it is
   ## a size question only:
-  ##   - no body / `.noinline` / importc / assembler / interrupt / varargs /
-  ##     a body touching the overflow flag → BANNED, no rule may lift it (see
-  ##     `bodyTouchesOverflowFlag` for the last);
+  ##   - no body / `.noinline` / importc / assembler / interrupt / varargs
+  ##     → BANNED, no rule may lift it;
   ##   - body ≤ `InlineTinyBound` tokens, or `.inline` and ≤ `InlineHintBound`
   ##     → inlinable;
   ##   - `.alwaysInline` → inlinable and `forced` (it also skips the budget);
@@ -252,7 +223,6 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
         skip pr
   if vetoed: return                         # `banned` stays set
   if hasVarargsParam(pd.params): return
-  if bodyTouchesOverflowFlag(pd.body): return   # see `bodyTouchesOverflowFlag`
 
   result.banned = false
   let size = tokenCount(pd.body)
