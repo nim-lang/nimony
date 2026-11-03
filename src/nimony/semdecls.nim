@@ -1317,6 +1317,11 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
           intrinsicSignatureError(c, dest, beforeParams, crucial.intrinsic)
         elif InterruptP in crucial.flags:
           interruptSignatureError(dest, beforeParams)
+        elif ImportjsP in crucial.flags and not cursorIsNil(crucial.raisesType):
+          "an `importjs` proc can't be `.raises`: a JS template yields its " &
+            "value, not a Nim error code (catch the exception in JS)"
+        elif ImportjsP in crucial.flags:
+          importjsSignatureError(dest, beforeParams)
         else:
           ""
       if it.n.isDotToken:
