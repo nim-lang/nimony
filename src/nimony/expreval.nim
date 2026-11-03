@@ -792,24 +792,83 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   buf.bitSetToTokens(setRes, elementTyp, info)
   result = cursorAt(buf, 0)
 
-proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
+proc typeBits(typ: Cursor): int =
+  ## The `N` of `(f N)` / `(i N)` / `(u N)`; 64 for the platform-width `-1`.
+  result = -1
+  if typ.kind == TagLit and typ.typeKind in {FloatT, IntT, UIntT}:
+    var b = typ
+    inc b
+    if b.kind == IntLit:
+      result = int(b.intVal)
+      if result <= 0: result = 64
+
+proc floatWidthOf(n: Cursor): int =
+  ## The bit width of the float expression `n` BEFORE evaluation, or -1. The
+  ## evaluated value is a plain `FloatLit` and has lost it: `0.25'f32` and
+  ## `0.25` evaluate alike, but their bit patterns do not.
+  case n.kind
+  of FloatLit: result = 64
+  of Symbol:
+    result = -1
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing and res.decl.symKind in {ConstY, LetY, VarY, GletY, GvarY}:
+      result = typeBits(toTypeImpl(asLocal(res.decl).typ))
+  of TagLit:
+    result = -1
+    case n.exprKind
+    of SufX:
+      var x = n
+      inc x                                     # the literal
+      skip x
+      if x.kind == StrLit:
+        let sfx = pool.strings[x.strId]
+        result = (if sfx == "f32": 32 elif sfx in ["f64", "f"]: 64 else: -1)
+    of ConvX, CastX, HconvX, AddX, SubX, MulX, DivX, NegX:
+      var x = n
+      inc x                                     # typed node: its type comes first
+      result = typeBits(toTypeImpl(x))
+    of ParX:
+      var x = n
+      inc x
+      result = floatWidthOf(x)
+    else: discard
+  else: result = -1
+
+proc evalCast(c: var EvalContext; typ, val, opnd, nOrig: Cursor): Cursor =
+  ## `opnd` is the operand before evaluation: a cast is a bit reinterpretation,
+  ## so the widths on both sides matter, not only the values.
   let targetType = toTypeImpl(typ)
   let dtk = targetType.typeKind
   if dtk == FloatT:
+    let tb = typeBits(targetType)
     if val.kind == FloatLit:
-      result = val
-    elif val.isIntLit:
-      result = floatValue(c, cast[float64](val.intVal), nOrig.info)
-    elif val.kind == UIntLit:
-      result = floatValue(c, cast[float64](val.uintVal), nOrig.info)
+      if floatWidthOf(opnd) == tb: result = val
+      else: cannotEval nOrig
+    elif val.isIntLit or val.kind == UIntLit:
+      let bits = if val.isIntLit: cast[uint64](val.intVal) else: val.uintVal
+      if tb == 32:
+        result = floatValue(c, float64(cast[float32](uint32(bits and 0xffffffff'u64))), nOrig.info)
+      elif tb == 64:
+        result = floatValue(c, cast[float64](bits), nOrig.info)
+      else:
+        cannotEval nOrig
     else:
       cannotEval nOrig
   elif dtk in {IntT, UIntT}:
     if val.kind == FloatLit:
-      if dtk == IntT:
-        result = intValue(c, cast[int64](val.floatVal), nOrig.info)
+      let sb = floatWidthOf(opnd)
+      let tb = typeBits(targetType)
+      if sb == 32 and tb == 32:
+        let u = cast[uint32](float32(val.floatVal))
+        if dtk == IntT: result = intValue(c, int64(cast[int32](u)), nOrig.info)
+        else: result = uintValue(c, uint64(u), nOrig.info)
+      elif sb == 64 and tb == 64:
+        if dtk == IntT:
+          result = intValue(c, cast[int64](val.floatVal), nOrig.info)
+        else:
+          result = uintValue(c, cast[uint64](val.floatVal), nOrig.info)
       else:
-        result = uintValue(c, cast[uint64](val.floatVal), nOrig.info)
+        cannotEval nOrig
     else:
       let x = getConstOrdinalValue(val)
       if isNaN(x):
@@ -1026,11 +1085,13 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
       let nOrig = n
       var typ = default(Cursor)
       var val = default(Cursor)
+      var opnd = default(Cursor)
       n.into:
         typ = n
         skip n
+        opnd = n
         val = propagateError eval(c, n)
-      result = evalCast(c, typ, val, nOrig)
+      result = evalCast(c, typ, val, opnd, nOrig)
     of DconvX:
       n.into:
         skip n, SkipType # type

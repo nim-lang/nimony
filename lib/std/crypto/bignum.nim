@@ -110,7 +110,7 @@ func cmpLimbs(a, b: Limbs; n: LimbCount): int =
   result = 0
 
 func cmp*(a, b: BigNum): int =
-  let n = max(a.n, b.n)
+  let n = if a.n > b.n: a.n else: b.n # `max` would widen it to `int`
   result = cmpLimbs(a.limbs, b.limbs, n)
 
 func subLimbs(a: var Limbs; b: Limbs; n: LimbCount): uint32 =

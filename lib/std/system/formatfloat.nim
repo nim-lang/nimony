@@ -1523,6 +1523,8 @@ func formatDigits(buffer: var openArray[char]; pos: int; digits: uint64; decimal
     else:
       let q: uint32 = k div 100
       let r: uint32 = k mod 100
+      # a double's exponent is below 400
+      {.assume: q < 10.}
       put(buffer, pos, chr(ord('0') + int(q)))
       inc(pos)
       utoa2Digits(buffer, pos, r)

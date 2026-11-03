@@ -830,6 +830,30 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
           lo = zero()
           hi = if leftBounded and zero() <= aLo: min(aHi, bHi) else: bHi
           result = true
+      of BitorX, BitxorX:
+        # Of two non-negative operands, `a or b` and `a xor b` set no bit above
+        # the higher one's top bit: `0 .. 2^bitlen(max(aHi, bHi)) - 1`. And
+        # `or` clears none, so it is at least the larger low bound. What the
+        # UTF-8 encoders hand `chr`: `chr((i shr 6) or 0b110_00000)`.
+        let isOr = n.exprKind == BitorX
+        var d = n
+        d = sub(d)
+        skip d # the type operand
+        var aLo = zero()
+        var aHi = zero()
+        if valueBounds(c, d, aLo, aHi, depth+1) and zero() <= aLo:
+          skip d
+          var bLo = zero()
+          var bHi = zero()
+          if valueBounds(c, d, bLo, bHi, depth+1) and zero() <= bLo:
+            let top = max(aHi, bHi)
+            var p = createXint(1'i64)
+            while p <= top and p < createXint(high(int64)) div createXint(2'i64):
+              p = p * createXint(2'i64)
+            if top < p:
+              lo = if isOr: max(aLo, bLo) else: zero()
+              hi = p - createXint(1'i64)
+              result = true
       of ShrX, AshrX:
         var d = n
         d = sub(d)
@@ -875,6 +899,14 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
             lo = if isSub: aLo - bHi else: aLo + bLo
             hi = if isSub: aHi - bLo else: aHi + bHi
             result = not lo.isNaN and not hi.isNaN
+      of SizeofX:
+        # `sizeof(T)` of a type whose layout is not up to the backend (`strict`
+        # gives up on objects): what `toHex[T](x)` hands its `len: Positive`
+        let s = getSize(n.childCursor, c.bits div 8, strict = true)
+        if not s.isNaN and zero() < s:
+          lo = s
+          hi = s
+          result = true
       of SufX:
         # `15'u8` is `(suf 15u "u8")`
         var d = n
@@ -2212,10 +2244,8 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
 
 proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
   ## Emit and discharge the `lo <= value <= hi` obligation for a value bound to a
-  ## `range[lo..hi]`-typed target. Value conversions are handled at the
-  ## conversion site (see the `ConvX`/`HconvX` case in `traverseExpr`), so we
-  ## skip them here to avoid double-reporting.
-  if value.exprKind in {ConvX, HconvX, CastX, BaseobjX}: return
+  ## `range[lo..hi]`-typed target. A `cast` is the unchecked escape hatch.
+  if value.exprKind in {CastX, BaseobjX}: return
   var lo = zero()
   var hi = zero()
   if not staticRangeBounds(targetType, lo, hi): return
@@ -2228,6 +2258,18 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
     needLo = lo > baseLo
     needHi = hi < baseHi
   if not needLo and not needHi: return
+  if value.exprKind in {ConvX, HconvX}:
+    # A conversion owes its own target's range at the conversion site (the
+    # `ConvX`/`HconvX` case in `traverseExpr`); where that range lies within
+    # this one, it is all there is to prove. Only there: `chr(int(i))` checked
+    # `i` against `int` and nothing more.
+    var t = value
+    t = sub(t)
+    var cLo = zero()
+    var cHi = zero()
+    if (staticRangeBounds(t, cLo, cHi) or integerTypeBounds(c.bits, t, cLo, cHi)) and
+        (not needLo or lo <= cLo) and (not needHi or cHi <= hi):
+      return
   checkInRange c, value, lo, hi, needLo, needHi
 
 proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
@@ -2617,6 +2659,39 @@ proc analyseCondition(c: var FirContext; pc: var Cursor;
     elseFacts.setLen 0
     pc = start
     skip pc
+    return result
+  if pc.exprKind == InsetX:
+    # `c in {'A'..'Z'}`: one constant range (or value) bounds the element on
+    # the true path, the guard of every ASCII case fold `chr(ord(c) + 32)`.
+    # The false path learns nothing: outside a range is a disjunction.
+    result = 0
+    var r = sub(pc)
+    skip r # the set type
+    if r.exprKind == SetconstrX:
+      var e = sub(r)
+      skip e # the set type
+      if e.hasMore:
+        let only = e
+        skip e
+        if not e.hasMore:
+          var lo = createNaN()
+          var hi = createNaN()
+          if only.substructureKind == RangeU:
+            var b = sub(only)
+            lo = foldOrdinal(c.bits, b)
+            skip b
+            hi = foldOrdinal(c.bits, b)
+          else:
+            lo = foldOrdinal(c.bits, only)
+            hi = lo
+          skip r # the setconstr
+          let elem = plainLocationVarId(c, r)
+          if not lo.isNaN and not hi.isNaN and elem != InvalidVarId and elem != VarId(0):
+            traverseExpr c, pc, call
+            c.facts.add query(VarId(0), elem, -lo) # lo <= elem
+            c.facts.add query(elem, VarId(0), hi)  # elem <= hi
+            return 2
+    traverseExpr c, pc, call
     return result
   var kind = ckPlain
   let fact = translateCond(c, pc, kind, call)
@@ -4052,6 +4127,11 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       else:
         mutatesUnknown = true
     checkNilMatch c, n, param.typ
+    # Binding an argument to a `range[lo..hi]` parameter is the same narrowing
+    # as an assignment to one; the callee is proven from the declared type, so
+    # the obligation is the caller's (#2856). Sigmatch only matched the base type.
+    if pk notin {MutT, OutT, VarargsT}:
+      checkRangeAssign c, param.typ, n
     let syncRoot = if isSync and pk in {MutT, OutT, PtrT, PointerT}: sharedRootPos(c, n)
                    else: -1
     if syncRoot >= 0: c.syncArgs.incl syncRoot
@@ -4221,36 +4301,45 @@ proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
   ## `x = y + d` or `x = y - d` for a location `y` and a `d` the facts bound
   ## (either end may be open). With `y` being `x` itself that moves what is
   ## known about `x` rather than erasing it (`variableMovedWithin`); otherwise
-  ## `x` lies within `d` of `y`. `x = d + y` is the same sum.
+  ## `x` lies within `d` of `y`. `x = d + y` is the same sum: both orientations
+  ## of a `+` contribute, so the facts do not depend on the operands' order.
   result = false
   let v = peelExpr(value)
   if v.exprKind notin {AddX, SubX} or not noWrap(c, v): return
   var r = v
   r = sub(r)
   skip r # the type operand
-  var first = r
+  let first = r
   skip r
-  var second = r
-  var y = plainLocationVarId(c, first)
-  if y == InvalidVarId and v.exprKind == AddX:
-    y = plainLocationVarId(c, second)
-    second = first
-  if y == InvalidVarId or y == VarId(0): return
-  var lo = createNaN()
-  var hi = createNaN()
-  operandRange(c, second, lo, hi)
-  if lo.isNaN and hi.isNaN: return
-  if v.exprKind == SubX:
-    swap lo, hi
-    lo = -lo
-    hi = -hi
-  if y == dest:
-    variableMovedWithin(c.facts, dest, lo, hi)
-  else:
+  let second = r
+  var ys: array[2, VarId] = [InvalidVarId, InvalidVarId]
+  var los: array[2, xint] = [createNaN(), createNaN()]
+  var his: array[2, xint] = [createNaN(), createNaN()]
+  let orientations = if v.exprKind == AddX: 2 else: 1
+  for i in 0 ..< orientations:
+    let y = plainLocationVarId(c, if i == 0: first else: second)
+    if y == InvalidVarId or y == VarId(0): continue
+    var lo = createNaN()
+    var hi = createNaN()
+    operandRange(c, if i == 0: second else: first, lo, hi)
+    if lo.isNaN and hi.isNaN: continue
+    if v.exprKind == SubX:
+      swap lo, hi
+      lo = -lo
+      hi = -hi
+    if y == dest:
+      variableMovedWithin(c.facts, dest, lo, hi)
+      return true
+    ys[i] = y
+    los[i] = lo
+    his[i] = hi
+    result = true
+  if result:
     projectOut(c.facts, dest)
-    if not lo.isNaN: c.facts.add query(y, dest, -lo)   # y + lo <= x
-    if not hi.isNaN: c.facts.add query(dest, y, hi)    # x <= y + hi
-  result = true
+    for i in 0 ..< orientations:
+      if ys[i] != InvalidVarId:
+        if not los[i].isNaN: c.facts.add query(ys[i], dest, -los[i])  # y + lo <= x
+        if not his[i].isNaN: c.facts.add query(dest, ys[i], his[i])   # x <= y + hi
 
 proc locationIsComputed(c: var FirContext; n: Cursor): bool =
   ## Whether the address of the location `n` is read from memory rather than

@@ -1350,6 +1350,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       ccArgs.add "-c"
       # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
       ccArgs.add "-Wno-attributes"
+      # Nimony's float operations report through IEEE 754 values, never through
+      # `errno`, so nothing can observe what math-errno buys. Without this flag
+      # `__builtin_sqrt` (the `Sqrt` intrinsic) keeps a libm call for a
+      # negative operand — an extra branch, and a libm dependency the
+      # raw-syscall stdlib does not otherwise have.
+      ccArgs.add "-fno-math-errno"
       # gcc-14 on arm64/Linux emits a stringop-overflow false positive
       # ("writing 8 bytes into a region of size 0 ... destination object is
       # likely at address zero") from inlined refcount updates on paths the

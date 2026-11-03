@@ -10,8 +10,10 @@ const values: array[14, float] = [
   0.00000000001, 1e20, 1e-7, 3.141592653589793, 1.7976931348623157e308
 ]
 
+const precisions: array[7, range[-1..32]] = [-1, 0, 1, 2, 6, 16, 20]
+
 for v in values:
-  for p in [-1, 0, 1, 2, 6, 16, 20]:
+  for p in precisions:
     echo formatFloat(v, ffDefault, p), "|", formatFloat(v, ffDecimal, p), "|",
          formatFloat(v, ffScientific, p)
 echo formatFloat(Inf), " ", formatFloat(-Inf, ffDecimal, 3), " ", formatFloat(NaN, ffScientific, 3)

@@ -14,7 +14,7 @@
 import std/[strutils, unicode, assertions]
 
 
-func olen(s: string; start, lastExclusive: int): int =
+func olen(s: string; start: Natural; lastExclusive: int): int =
   var i = start
   result = 0
   while i < lastExclusive:

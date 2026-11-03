@@ -47,7 +47,7 @@ proc hexBytes(s: string): string =
     if hi < 0:
       hi = v
     else:
-      result.add chr((hi shl 4) or v)
+      result.add chr(((hi shl 4) or v) and 0xFF)
       hi = -1
   assert hi < 0, "an odd number of hex digits"
 

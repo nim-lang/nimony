@@ -95,14 +95,26 @@ func sqrtBits64(x: float64): float64 =
   s = s or (top shl 52)
   cast[float64](s)
 
-func sqrt*(x: float32): float32 =
-  ## Square root for f32: the correctly rounded f64 root rounds correctly to
-  ## f32 (binary64 carries more than 2*24 + 2 bits).
-  float32(sqrtBits64(float64(x)))
+const HardwareSqrt = defined(amd64) or defined(arm64) or
+                     not (defined(nimNativeBackend) or defined(wasm32))
+  ## Where the `Sqrt` intrinsic has a lowering: every C-backend target (a GCC
+  ## builtin) and the native targets whose row lists them. IEEE 754 requires
+  ## the same correctly rounded result from both arms.
 
-func sqrt*(x: float64): float64 =
-  ## Square root for f64, correctly rounded (musl sqrt.c).
-  sqrtBits64(x)
+when HardwareSqrt:
+  func sqrt*(x: float32): float32 {.intrinsic: "Sqrt".}
+    ## Square root for f32, correctly rounded (`sqrtss` / `fsqrt`).
+  func sqrt*(x: float64): float64 {.intrinsic: "Sqrt".}
+    ## Square root for f64, correctly rounded (`sqrtsd` / `fsqrt`).
+else:
+  func sqrt*(x: float32): float32 =
+    ## Square root for f32: the correctly rounded f64 root rounds correctly to
+    ## f32 (binary64 carries more than 2*24 + 2 bits).
+    float32(sqrtBits64(float64(x)))
+
+  func sqrt*(x: float64): float64 =
+    ## Square root for f64, correctly rounded (musl sqrt.c).
+    sqrtBits64(x)
 
 # ============================================================================
 # CBRT Implementation
@@ -677,7 +689,7 @@ func hypot*(x, y: float32): float32 =
   if large == 0.0:
     return 0'f32
   let ratio = small / large
-  float32(large * sqrtBits64(1.0 + ratio * ratio))
+  float32(large * sqrt(1.0 + ratio * ratio))
 
 func hypot*(x, y: float64): float64 =
   ## Euclidean distance (hypotenuse) for f64.
@@ -693,4 +705,4 @@ func hypot*(x, y: float64): float64 =
   if large == 0.0:
     return 0.0
   let ratio = small / large
-  large * sqrtBits64(1.0 + ratio * ratio)
+  large * sqrt(1.0 + ratio * ratio)

@@ -146,7 +146,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # converting them to the `hoisted` discipline is what would leave this pass
   # with nothing but its own two jobs. See `doc/final_ir.md`.
   pass.prepareForNext("xelim_final")
-  lowerExprs(pass, LowerCasts)
+  lowerExprs(pass, LowerCasts, bitCastsInBackend = c.nativeBackend)
   pass.finishPass()
 
   result = ensureMove(pass.dest)

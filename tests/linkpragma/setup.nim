@@ -2,9 +2,10 @@
 ## which must come from the compiler the tests use, so it cannot be checked in.
 ## Compile `deps/answer.c`, put `deps/tlink.nim` next to the object and run it.
 ##
-## On Linux/x86-64 the native backend is checked too: `nimony n -d:useLibc`
-## finishes the program with the system linker (nifasm writes an object), so it
-## runs `.link`, `.compile` and a variadic libc call.
+## On Linux (x86-64 and AArch64) the native backend is checked too: `nimony n
+## -d:useLibc` finishes the program with the system linker (nifasm writes an
+## object), so it runs `.link`, `.compile` and a variadic libc call. Without
+## libc, a call to an external symbol is a diagnostic that names the symbol.
 import std / [os, osproc, strutils]
 
 proc arg(name: string): string =
@@ -25,6 +26,7 @@ let work = absolutePath(cachedir / "linkpragma")
 createDir work
 copyFile dir / "deps" / "tlink.nim", work / "tlink.nim"
 copyFile dir / "deps" / "tprintf.nim", work / "tprintf.nim"
+copyFile dir / "deps" / "textern.nim", work / "textern.nim"
 
 # The illumos/Solaris compiler defaults to ILP32; Nimony targets LP64 here.
 let abiFlags = when defined(sunos) and defined(amd64): " -m64" else: ""
@@ -47,19 +49,24 @@ proc check(backend, file, expected: string; nimcache: string) =
     echo "FAILURE: ", cmd, "\n", output
     inc failures
 
+proc checkFails(file, expected, nimcache: string) =
+  let cmd = nimony & " n --silentMake --nimcache:" & quoteShell(work / nimcache) &
+            " " & forward & " " & quoteShell(file)
+  let (output, code) = execCmdEx(cmd)
+  if code != 0 and expected in output:
+    echo "SUCCESS tests/linkpragma: `nimony n` ", file.extractFilename, " says: ", expected
+  else:
+    echo "FAILURE: ", cmd, "\n", output
+    inc failures
+
 check "c", work / "tlink.nim", "42", "nc_c"
-when defined(linux) and defined(amd64):
+when defined(linux) and (defined(amd64) or defined(arm64)):
   if fileExists(bindir / "arkham".addFileExt(ExeExt)):
     check "n -d:useLibc", work / "tlink.nim", "42", "nc_n"
     check "n -d:useLibc", "tests/nimony/pragmas/tcompilepragma.nim", "322", "nc_compile"
     check "n -d:useLibc", work / "tprintf.nim", "42 1.5 libc", "nc_printf"
-    # Without libc the freestanding image cannot link a foreign object.
-    let cmd = nimony & " n --silentMake --nimcache:" & quoteShell(work / "nc_free") &
-              " " & forward & " " & quoteShell(work / "tlink.nim")
-    let (output, code) = execCmdEx(cmd)
-    if code != 0 and "-d:useLibc" in output:
-      echo "SUCCESS tests/linkpragma: `nimony n` without libc names -d:useLibc"
-    else:
-      echo "FAILURE: ", cmd, "\n", output
-      inc failures
+    # Without libc the freestanding image cannot link a foreign object, nor
+    # bind a libc function the syscall table does not know (nimony#2844).
+    checkFails work / "tlink.nim", "-d:useLibc", "nc_free"
+    checkFails work / "textern.nim", "`atoi` is an external symbol", "nc_extern"
 if failures > 0: quit 1

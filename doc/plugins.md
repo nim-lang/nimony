@@ -507,6 +507,45 @@ when textual names are needed; `$id` is intentionally not a text lookup.
 | `lineCol(info)` | `SourcePos(line, col)` (1-based), or `(0, 0)` |
 
 
+### Typed views of declarations
+
+Reading a declaration by child position (`n[4]` for the parameters of a `proc`)
+puts the slot numbers into every plugin. The typed views name the parts instead:
+`asRoutine(n)` returns an object whose fields are cursors at the named parts, and
+only `plugins` knows which slot is which. They follow `decls.nim`, which does the
+same inside the compiler.
+
+| View | Node | Fields |
+|------|------|--------|
+| `asLocal(n)` | `let`, `var`, `const`, `param`, `fld` | `name exported pragmas typ val` |
+| `asRoutine(n)` | `proc`, `func`, `iterator`, `template`, ... | `name exported pattern typevars params retType pragmas effects body` |
+| `asTypeDecl(n)` | `type` | `name exported typevars pragmas body` |
+| `asObjectDecl(n)` | `object` type | `parentType body`, and `fields(o)` |
+| `asForStmt(n)` | `for` | `iter vars body` |
+
+`isGeneric` tells whether a `Routine` or a `TypeDecl` has generic parameters, and
+`for c in n.children` visits the children of a node. `fields(o)` yields the fields
+declared directly in an object as `Local`s; fields inside a `case` or `when` part
+are not yielded.
+
+A view holds copies of cursors, so the node it was made from does not move, and
+the fields stay valid for as long as the input does.
+
+```nim
+import plugins
+
+proc describe(n: NifCursor): string =
+  result = ""
+  if n.stmtKind == ProcS:
+    let r = asRoutine(n)
+    result.add symBasename(r.name.symId) & "("
+    for p in r.params.children:         # each parameter is a Local
+      result.add symBasename(asLocal(p).name.symId) & " "
+    result.add ")"
+    if isGeneric(r): result.add " is generic"
+```
+
+
 ### NifBuilder — building NIF output
 
 A `NifBuilder` is a move-only alias for `nifcore.TokenBuf`. It cannot be copied.
