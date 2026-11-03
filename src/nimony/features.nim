@@ -66,13 +66,6 @@ type
       ## always a statically checked unique ownership annotation; this only
       ## opts a module into the discipline for values it never wrote `owned`
       ## for.
-    SaturatingArithFeature
-      ## Signed `+`, `-`, `*` and unary `-` clamp to `low(T)..high(T)` instead
-      ## of wrapping (#2840), and the prover reads them that way: clamping is
-      ## monotone, so `i + 1 < n` keeps telling it about `i`. Without the
-      ## feature signed arithmetic wraps like unsigned arithmetic and the
-      ## prover only reads an operation mathematically once its operands are
-      ## known to keep it inside its type.
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -101,7 +94,6 @@ proc parseFeatures*(s: string): set[Feature] =
   of "assumesync": {AssumeSyncFeature}
   of "staticoverloads": {StaticOverloadsFeature}
   of "ownedrefs": {OwnedRefsFeature}
-  of "saturatingarith": {SaturatingArithFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,

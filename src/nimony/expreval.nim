@@ -433,11 +433,10 @@ proc signedWidth(c: EvalContext; t: Cursor): int =
   var w = t
   inc w
   result = if w.kind == IntLit and w.intVal > 0: int(w.intVal) else: c.bits
-  if result <= 0 or result > 64: result = 64
 
 proc fitsSigned(v: int64; width: int): bool =
   ## A constant outside its type would be a different value at run time,
-  ## where signed arithmetic saturates: `127'i8 + 1'i8` is an overflow.
+  ## where signed arithmetic wraps: `127'i8 + 1'i8` is an overflow.
   result = width >= 64 or
     (v >= -(1'i64 shl (width - 1)) and v <= (1'i64 shl (width - 1)) - 1)
 
