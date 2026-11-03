@@ -473,6 +473,102 @@ proc firstChild*(n: NifCursor): NifCursor {.inline.} =
   ## itself is unchanged.
   result = nifcore.childCursor(n)
 
+iterator children*(n: NifCursor): NifCursor {.sideEffect.} =
+  ## Yields a cursor at each child of the compound node `n`, in order. Yields
+  ## nothing for an atom. `n` itself is unchanged.
+  if n.kind == TagLit:
+    var c = firstChild(n)
+    while c.hasMore:
+      yield c
+      skip c
+
+# ── Typed views of declarations ──────────────────────────────────────────
+# A declaration is read by name instead of by child position: `asRoutine(n)`
+# returns an object whose fields are cursors at the named parts, so the slot
+# numbers live here and nowhere else. The objects and their fields follow
+# `decls.nim`, which does the same inside the compiler. A view holds copies of
+# cursors; the node it was made from does not move.
+
+proc slot(n: NifCursor; i: int): NifCursor =
+  ## Cursor at child `i` of the compound node `n`.
+  assert n.kind == TagLit, "a typed view needs a compound node"
+  result = firstChild(n)
+  var k = 0
+  while k < i:
+    skip result
+    inc k
+
+type
+  Local* = object
+    ## `(let name export pragmas type value)`. The same layout is used by `var`,
+    ## `const`, `param`, `fld` and the other local-like declarations.
+    name*, exported*, pragmas*, typ*, val*: NifCursor
+
+  Routine* = object
+    ## `(proc name export pattern typevars params rettype pragmas effects body)`.
+    ## The same layout is used by `func`, `iterator`, `template` and the other
+    ## routines. Walk the parameters with `for p in r.params.children` and read
+    ## each one with `asLocal`.
+    name*, exported*, pattern*, typevars*, params*, retType*,
+      pragmas*, effects*, body*: NifCursor
+
+  TypeDecl* = object
+    ## `(type name export typevars pragmas body)`.
+    name*, exported*, typevars*, pragmas*, body*: NifCursor
+
+  ObjectDecl* = object
+    ## `(object parent field*)`. `body` is the `object` node itself, so that
+    ## `fields` can walk it.
+    parentType*, body*: NifCursor
+
+  ForStmt* = object
+    ## `(for iter vars body)`.
+    iter*, vars*, body*: NifCursor
+
+proc asLocal*(c: NifCursor): Local =
+  ## The named parts of a `let`, `var`, `const`, `param` or `fld` node.
+  Local(name: slot(c, 0), exported: slot(c, 1), pragmas: slot(c, 2),
+        typ: slot(c, 3), val: slot(c, 4))
+
+proc asRoutine*(c: NifCursor): Routine =
+  ## The named parts of a `proc`, `func`, `iterator`, `template`, ... node.
+  Routine(name: slot(c, 0), exported: slot(c, 1), pattern: slot(c, 2),
+          typevars: slot(c, 3), params: slot(c, 4), retType: slot(c, 5),
+          pragmas: slot(c, 6), effects: slot(c, 7), body: slot(c, 8))
+
+proc isGeneric*(r: Routine): bool =
+  ## True if the routine has generic parameters.
+  r.typevars.otherKind == TypevarsU
+
+proc asTypeDecl*(c: NifCursor): TypeDecl =
+  ## The named parts of a `type` node.
+  TypeDecl(name: slot(c, 0), exported: slot(c, 1), typevars: slot(c, 2),
+           pragmas: slot(c, 3), body: slot(c, 4))
+
+proc isGeneric*(t: TypeDecl): bool =
+  ## True if the type has generic parameters.
+  t.typevars.otherKind == TypevarsU
+
+proc asObjectDecl*(c: NifCursor): ObjectDecl =
+  ## The named parts of an `object` type node.
+  assert c.typeKind == ObjectT, "asObjectDecl needs an object type"
+  ObjectDecl(parentType: slot(c, 0), body: c)
+
+iterator fields*(o: ObjectDecl): Local {.sideEffect.} =
+  ## Yields the fields declared directly in the object. Fields inside a `case`
+  ## or `when` part are not yielded.
+  var first = true
+  for f in o.body.children:
+    if first:
+      first = false                     # the parent type
+    elif f.otherKind in {FldU, GfldU}:
+      yield asLocal(f)
+
+proc asForStmt*(c: NifCursor): ForStmt =
+  ## The named parts of a `for` statement.
+  assert c.stmtKind == ForS, "asForStmt needs a for statement"
+  ForStmt(iter: slot(c, 0), vars: slot(c, 1), body: slot(c, 2))
+
 # ── Traversal templates ──────────────────────────────────────────────────
 # Pure traversal helpers for reading/analyzing a tree without producing output.
 

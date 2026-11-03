@@ -662,7 +662,7 @@ func normalize*(s: string): string =
     assert normalize("Foo Bar") == "foo bar"
   result = newStringOfCap(s.len)
   for c in items(s):
-    if c in UppercaseLetters:
+    if c in {'A'..'Z'}:
       result.add chr(ord(c) + (ord('a') - ord('A')))
     elif c != '_':
       result.add c
@@ -899,7 +899,7 @@ func replace*(s, sub: string; by = ""): string =
     # char-based search that doesn't need a skip table:
     let c = sub[0]
     let last = s.high
-    var i = 0
+    var i: Natural = 0
     while true:
       let j = find(s, c, i, last)
       if j < 0: break
@@ -911,13 +911,16 @@ func replace*(s, sub: string; by = ""): string =
   else:
     var a = initSkipTable(sub)
     let last = s.high
-    var i = 0
+    var i: Natural = 0
     while true:
       let j = find(a, s, sub, i, last)
       if j < 0: break
       add result, substr(s, i, j - 1)
       add result, by
-      i = j + subLen
+      let next = j + subLen
+      # the match `s[j ..< next]` lies inside `s`: the sum does not wrap
+      {.assume: 0 <= next.}
+      i = next
     # copy the rest:
     add result, substr(s, i)
 
@@ -936,7 +939,7 @@ func replaceWord*(s, sub: string, by = ""): string =
   const wordChars = {'a'..'z', 'A'..'Z', '0'..'9', '_', '\128'..'\255'}
   result = ""
   var a = initSkipTable(sub)
-  var i = 0
+  var i: Natural = 0
   let last = s.high
   let sublen = sub.len
   if sublen > 0:
@@ -948,10 +951,16 @@ func replaceWord*(s, sub: string, by = ""): string =
           not s.charInSetAt(j+sub.len, wordChars):
         add result, substr(s, i, j - 1)
         add result, by
-        i = j + sublen
+        let next = j + sublen
+        # the match `s[j ..< next]` lies inside `s`: the sum does not wrap
+        {.assume: 0 <= next.}
+        i = next
       else:
         add result, substr(s, i, j)
-        i = j + 1
+        let next = j + 1
+        # `j` starts a match of a non-empty `sub`, so `j < s.len`
+        {.assume: 0 <= next.}
+        i = next
     # copy the rest:
     add result, substr(s, i)
 
@@ -1117,7 +1126,7 @@ func unescape*(s: string, prefix = "\"", suffix = "\""): string {.raises.} =
       of 'x':
         var c = 0
         inc i, parseutils.parseHex(s, c, i+2, maxLen = 2)
-        result.add(chr(c))
+        result.add(chr(c and 0xFF)) # two hex digits: `and` says so to the prover
       of '\\':
         result.add('\\')
       of '\'':

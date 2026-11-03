@@ -49,13 +49,16 @@ iterator pairs*(h: HttpHeaders): (string, string) =
   ## Every name and value in wire order, preserving duplicate fields and name
   ## spelling. Values have surrounding whitespace removed.
   let s = string(h)
-  var i = 0
+  var i: Natural = 0
   while i < s.len:
     let eol = s.find("\r\n", i)
-    let stop = if eol < 0: s.len else: eol
+    var stop = s.len
+    if eol >= 0: stop = eol
     let colon = s.find(':', i)
     if colon > i and colon < stop:
       yield (s.substr(i, colon - 1), s.substr(colon + 1, stop - 1).strip())
+    # no "\r\n" left: done (and `stop + 2` cannot wrap past here)
+    if stop > s.len - 2: break
     i = stop + 2
 
 iterator values*(h: HttpHeaders; name: string): string =

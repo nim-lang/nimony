@@ -94,6 +94,8 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     goal: Goal
+    bitCastsInBackend: bool  ## the backend reinterprets a cross-family `cast`
+                             ## itself (arkham: `movq`), so it stays a `cast`
 
 proc initTarget(m: Mode): Target {.inline.} =
   ## Every `Target` buffer is bound to the global pools up front: a `Target`
@@ -1392,7 +1394,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     return
 
   let srcType = getType(c, n)
-  if not needsBitCast(destType, srcType):
+  if c.bitCastsInBackend or not needsBitCast(destType, srcType):
     # Same-family cast (e.g. int-to-int) - use plain C cast
     var srcTarget = initTarget(IsEmpty)
     trExpr c, dest, n, srcTarget
@@ -1409,10 +1411,16 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   trExpr c, dest, n, srcTarget
   n = castStart; skip n
 
-  # Ensure source is a variable
+  # Ensure source is a variable. A `const` is a Symbol but not storage: it is
+  # inlined later, which would leave `addr <literal>` behind.
   var srcSym: SymId
   var srcCur = beginRead(srcTarget.t)
+  var srcIsConst = false
   if srcCur.kind == Symbol:
+    let res = tryLoadSym(srcCur.symId)
+    srcIsConst = res.status == LacksNothing and isLocal(res.decl.symKind) and
+                 asLocal(res.decl).kind == ConstY
+  if srcCur.kind == Symbol and not srcIsConst:
     srcSym = srcCur.symId
   else:
     srcSym = pool.symId(tempSymName(c))
@@ -1558,12 +1566,17 @@ proc preRegisterRoutines(c: var Context; n: Cursor) =
           skip h
     skip it
 
-proc lowerExprs*(pass: var Pass; goal: Goal) =
+proc lowerExprs*(pass: var Pass; goal: Goal; bitCastsInBackend = false) =
+  ## `bitCastsInBackend`: a cast between an integer and a float type is a bit
+  ## reinterpretation that only the C backend has to spell as `copyMem` — a C
+  ## cast would CONVERT the value. A backend with its own bit-cast keeps the
+  ## `cast`, instead of a memory round trip it would have to optimize away.
   var n = pass.n  # Extract cursor locally
   # Inherit the temp counter via `pass.nextTemp`: `lowerExprs` runs for
   # `finalir` and again as `xelim_final`, and restarting from 0 would mint
   # colliding `\`x.<n>` names within one function.
-  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, goal: goal)
+  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, goal: goal,
+                  bitCastsInBackend: bitCastsInBackend)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   preRegisterRoutines(c, n)

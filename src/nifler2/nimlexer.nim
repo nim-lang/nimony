@@ -345,8 +345,9 @@ proc normalizeBasePrefix(tok: var Token) =
   ## spellings of it.
   if tok.base == 10: return
   let i = if tok.s.len > 0 and tok.s[0] == '-': 2 else: 1
-  if i < tok.s.len and tok.s[i] >= 'A' and tok.s[i] <= 'Z':
-    tok.s[i] = chr(ord(tok.s[i]) - ord('A') + ord('a'))
+  if i < tok.s.len:
+    let c = tok.s[i]
+    if c in {'A'..'Z'}: tok.s[i] = chr(ord(c) - ord('A') + ord('a'))
 
 proc hexVal(c: char): int {.inline.} =
   if c >= '0' and c <= '9': ord(c) - ord('0')
@@ -702,6 +703,7 @@ proc handleHexChar(L: var Lexer; xi: var int; position: range[0..4]) =
 proc addUnicodeCodePoint(s: var string; i: int) =
   ## UTF-8 encode; the only place `nimlexer` produces multi-byte output of its
   ## own rather than copying input.
+  let i = i and 0x1F_FFFF # a code point's 21 bits; a bigger one was reported
   if i <= 127:
     s.add chr(i)
   elif i <= 0x07FF:
@@ -742,7 +744,7 @@ proc getEscapedChar(L: var Lexer; tok: var Token) =
     var xi = 0
     handleHexChar L, xi, 1
     handleHexChar L, xi, 2
-    tok.s.add chr(xi)
+    tok.s.add chr(xi and 0xFF) # two hex digits
   of 'u', 'U':
     if tok.kind == tkCharLit:
       error L, L.pos, "\\u not allowed in character literal"
@@ -768,7 +770,7 @@ proc getEscapedChar(L: var Lexer; tok: var Token) =
     while L.ch(L.pos) >= '0' and L.ch(L.pos) <= '9':
       xi = xi * 10 + (ord(L.ch(L.pos)) - ord('0'))
       inc L.pos
-    if xi <= 255: tok.s.add chr(xi)
+    if xi >= 0 and xi <= 255: tok.s.add chr(xi)
     else: error L, L.pos, "invalid character constant"
   else:
     error L, L.pos, "invalid character constant"

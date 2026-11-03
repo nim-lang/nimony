@@ -167,11 +167,13 @@ when not (defined(cpu16) or defined(cpu8)):
 
     var i = 0
     while w[i].int16 != 0'i16:
-      var ch = ord(w[i])
+      # a UTF-16 code unit is unsigned: `ord` of the `int16` made every unit
+      # from 0x8000 on negative, surrogates included
+      var ch = int(cast[uint16](w[i]))
       inc i
       if ch >= UNI_SUR_HIGH_START and ch <= UNI_SUR_HIGH_END:
         # If the 16 bits following the high surrogate are in the source buffer...
-        let ch2 = ord(w[i])
+        let ch2 = int(cast[uint16](w[i]))
 
         # If it's a low surrogate, convert to UTF32:
         if ch2 >= UNI_SUR_LOW_START and ch2 <= UNI_SUR_LOW_END:
@@ -184,6 +186,7 @@ when not (defined(cpu16) or defined(cpu8)):
         #invalid UTF-16
         ch = replacement
 
+      {.assume: ch >= 0.}
       if ch < 0x80:
         result.add chr(ch)
       elif ch < 0x800:

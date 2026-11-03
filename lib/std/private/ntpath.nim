@@ -46,7 +46,7 @@ func splitDrive*(p: string): tuple[drive, path: string] =
       else:
         2
     let index = normp.find(sep, start)
-    if index == -1:
+    if index < 0:
       return
     var index2 = normp.find(sep, index + 1)
 

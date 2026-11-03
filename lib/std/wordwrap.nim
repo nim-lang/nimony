@@ -14,7 +14,7 @@
 import std/[strutils, unicode, assertions]
 
 
-func olen(s: string; start, lastExclusive: int): int =
+func olen(s: string; start: Natural; lastExclusive: int): int =
   var i = start
   result = 0
   while i < lastExclusive:
@@ -69,10 +69,10 @@ func wrapWords*(s: string, maxLineWidth = 80,
               spaceLeft = maxLineWidth
               result.add newLine
             dec spaceLeft
-            let L = graphemeLen(s, k+i)
             var p = i + k
             # `k < j - i`: `p` lies inside `i ..< j`
             {.assume: 0 <= p.}
+            let L = graphemeLen(s, p)
             for m in 0 ..< L:
               if p >= s.len: break
               result.add s[p]

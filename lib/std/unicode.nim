@@ -219,7 +219,7 @@ func runeAt*(s: openArray[char], i: Natural): Rune =
   ## Returns the rune in ``s`` at **byte index** ``i``.
   ##
   ## See also:
-  ## * `runeAtPos func <#runeAtPos,string,int>`_
+  ## * `runeAtPos func <#runeAtPos,string,Natural>`_
   ## * `runeStrAtPos func <#runeStrAtPos,string,Natural>`_
   ## * `fastRuneAt template <#fastRuneAt.t,string,int,untyped>`_
   runnableExamples:
@@ -295,22 +295,27 @@ template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untype
   ## * `toUTF8 func <#toUTF8,Rune>`_
   ## * `$ func <#$,Rune>`_ alias for `toUTF8`
   var i = RuneImpl(c)
+  # the prover cannot read `<=%`; each arm states the bound `chr` needs
   if i <=% 127:
+    {.assume: 0 <= i and i <= 127.}
     s.setLen(pos+1)
     s[pos+0] = chr(i)
     when doInc: inc(pos)
   elif i <=% 0x07FF:
+    {.assume: 0 <= i and i <= 0x07FF.}
     s.setLen(pos+2)
     s[pos+0] = chr((i shr 6) or 0b110_00000)
     s[pos+1] = chr((i and ones(6)) or 0b10_0000_00)
     when doInc: inc(pos, 2)
   elif i <=% 0xFFFF:
+    {.assume: 0 <= i and i <= 0xFFFF.}
     s.setLen(pos+3)
     s[pos+0] = chr(i shr 12 or 0b1110_0000)
     s[pos+1] = chr(i shr 6 and ones(6) or 0b10_0000_00)
     s[pos+2] = chr(i and ones(6) or 0b10_0000_00)
     when doInc: inc(pos, 3)
   elif i <=% 0x001FFFFF:
+    {.assume: 0 <= i and i <= 0x001FFFFF.}
     s.setLen(pos+4)
     s[pos+0] = chr(i shr 18 or 0b1111_0000)
     s[pos+1] = chr(i shr 12 and ones(6) or 0b10_0000_00)
@@ -318,6 +323,7 @@ template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untype
     s[pos+3] = chr(i and ones(6) or 0b10_0000_00)
     when doInc: inc(pos, 4)
   elif i <=% 0x03FFFFFF:
+    {.assume: 0 <= i and i <= 0x03FFFFFF.}
     s.setLen(pos+5)
     s[pos+0] = chr(i shr 24 or 0b111110_00)
     s[pos+1] = chr(i shr 18 and ones(6) or 0b10_0000_00)
@@ -326,6 +332,7 @@ template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untype
     s[pos+4] = chr(i and ones(6) or 0b10_0000_00)
     when doInc: inc(pos, 5)
   elif i <=% 0x7FFFFFFF:
+    {.assume: 0 <= i and i <= 0x7FFFFFFF.}
     s.setLen(pos+6)
     s[pos+0] = chr(i shr 30 or 0b1111110_0)
     s[pos+1] = chr(i shr 24 and ones(6) or 0b10_0000_00)
@@ -436,18 +443,21 @@ func runeReverseOffset*(s: openArray[char], rev: Positive): (int, int) =
   ## * `runeOffset func <#runeOffset,string,Natural,Natural>`_
   var
     a = rev.int
-    o = 0
+    o: Natural = 0
     x = 0
   let times = 2*rev.int-s.runeLen # transformed from rev.int - a < s.runeLen - rev.int
   while o < s.len:
     let r = runeLenAt(s, o)
-    o = o + r
+    let next = o + r
+    # `o < s.len` and a rune is at most 6 bytes: the sum does not wrap
+    {.assume: 0 <= next.}
+    o = next
     if a > times:
       x = x + r
     dec a
   result = if a > 0: (-a, rev.int-a) else: (x, -a+rev.int)
 
-func runeAtPos*(s: openArray[char], pos: int): Rune =
+func runeAtPos*(s: openArray[char], pos: Natural): Rune =
   ## Returns the rune at **code-point index** ``pos`` (not a UTF-8 byte index; see `runeAt`).
   ##
   ## **Beware:** This can lead to unoptimized code and slow execution!
@@ -469,9 +479,10 @@ func runeStrAtPos*(s: openArray[char], pos: Natural): string =
   ##
   ## See also:
   ## * `runeAt func <#runeAt,string,Natural>`_
-  ## * `runeAtPos func <#runeAtPos,string,int>`_
+  ## * `runeAtPos func <#runeAtPos,string,Natural>`_
   ## * `fastRuneAt template <#fastRuneAt.t,string,int,untyped>`_
   let o = runeOffset(s, pos)
+  if o < 0: return "" # `pos` is past the last code point
   substr(s.toOpenArray(o, (o+runeLenAt(s, o)-1)))
 
 func runeSubStr*(s: openArray[char], pos: int, len: int = int.high): string =
@@ -491,15 +502,24 @@ func runeSubStr*(s: openArray[char], pos: int, len: int = int.high): string =
     assert(runeSubStr(s, -6, 3) == "10,")
 
   if pos < 0:
-    let (o, rl) = runeReverseOffset(s, -pos)
+    # `-low(int)` wraps; no string has that many runes, so `high(int)` counts
+    # back just as far
+    var back = high(int)
+    if pos > low(int): back = -pos
+    {.assume: back >= 1.} # `pos < 0`
+    let (start, rl) = runeReverseOffset(s, back)
+    # too few runes: the substring starts at the beginning
+    var o: Natural = 0
+    if start > 0: o = start
     if len >= rl:
       result = s.substr(o, s.high)
     elif len < 0:
       let e = rl + len
-      if e < 0:
+      let n = e - (rl + pos) # the runes left after dropping `-len` from the end
+      if e < 0 or n < 0:
         result = ""
       else:
-        result = s.substr(o, runeOffset(s, e-(rl+pos), o)-1)
+        result = s.substr(o, runeOffset(s, n, o)-1)
     else:
       result = s.substr(o, runeOffset(s, len, o)-1)
   else:
@@ -509,7 +529,10 @@ func runeSubStr*(s: openArray[char], pos: int, len: int = int.high): string =
     elif len == int.high:
       result = s.substr(o, s.len-1)
     elif len < 0:
-      let (e, rl) = runeReverseOffset(s, -len)
+      var back = high(int) # see `pos` above
+      if len > low(int): back = -len
+      {.assume: back >= 1.} # `len < 0`
+      let (e, rl) = runeReverseOffset(s, back)
       discard rl
       if e <= 0:
         result = ""
@@ -909,11 +932,14 @@ iterator utf8*(s: openArray[char]): string =
   ## * `toUTF8 func <#toUTF8,Rune>`_
   ## * `$ func <#$,Rune>`_ alias for `toUTF8`
   ## * `fastToUTF8Copy template <#fastToUTF8Copy.t,Rune,string,int>`_
-  var o = 0
+  var o: Natural = 0
   while o < s.len:
     let n = runeLenAt(s, o)
     yield substr(s.toOpenArray(o, (o+n-1)))
-    o = o + n
+    let next = o + n
+    # `o < s.len` and a rune is at most 6 bytes: the sum does not wrap
+    {.assume: 0 <= next.}
+    o = next
 
 func toRunes*(s: openArray[char]): seq[Rune] =
   ## Obtains a sequence containing the Runes in ``s``.
@@ -1050,7 +1076,7 @@ template splitCommon(s: untyped #[openArray[char]]#, sep: untyped#[openArray[Run
   let
     sLen = len(s)
   var
-    last = 0
+    last: Natural = 0
     splits = maxsplit
   if sLen > 0:
     while last <= sLen:
@@ -1270,7 +1296,7 @@ func runeAt*(s: string, i: Natural): Rune {.inline.} =
   ## Returns the rune in ``s`` at **byte index** ``i``.
   ##
   ## See also:
-  ## * `runeAtPos func <#runeAtPos,string,int>`_
+  ## * `runeAtPos func <#runeAtPos,string,Natural>`_
   ## * `runeStrAtPos func <#runeStrAtPos,string,Natural>`_
   ## * `fastRuneAt template <#fastRuneAt.t,string,int,untyped>`_
   runnableExamples:
@@ -1325,7 +1351,7 @@ func runeReverseOffset*(s: string, rev: Positive): (int, int) {.inline.} =
   ## * `runeOffset func <#runeOffset,string,Natural,Natural>`_
   runeReverseOffset(toOa(s), rev)
 
-func runeAtPos*(s: string, pos: int): Rune {.inline.} =
+func runeAtPos*(s: string, pos: Natural): Rune {.inline.} =
   ## Returns the rune at **code-point index** ``pos`` (not a UTF-8 byte index; see `runeAt`).
   ##
   ## **Beware:** This can lead to unoptimized code and slow execution!
@@ -1347,9 +1373,10 @@ func runeStrAtPos*(s: string, pos: Natural): string {.inline.} =
   ##
   ## See also:
   ## * `runeAt func <#runeAt,string,Natural>`_
-  ## * `runeAtPos func <#runeAtPos,string,int>`_
+  ## * `runeAtPos func <#runeAtPos,string,Natural>`_
   ## * `fastRuneAt template <#fastRuneAt.t,string,int,untyped>`_
   let o = runeOffset(s, pos)
+  if o < 0: return "" # `pos` is past the last code point
   substr(s.toOpenArray(o, (o+runeLenAt(s, o)-1)))
 
 func runeSubStr*(s: string, pos: int, len: int = int.high): string {.inline.} =

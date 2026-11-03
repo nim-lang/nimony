@@ -48,7 +48,7 @@ proc intrinsicOfCallee*(m: var MainModule; callee: Cursor;
       p.loopInto:
         if p.substructureKind == ParamU and bits == 0:
           let pd = takeParamDecl(p)
-          if pd.typ.kind == TagLit and pd.typ.typeKind in {IT, UT, CT}:
+          if pd.typ.kind == TagLit and pd.typ.typeKind in {IT, UT, CT, FT}:
             var b = pd.typ
             inc b
             if b.kind == IntLit: bits = int(b.intVal)
@@ -114,6 +114,9 @@ proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
   of MemsetOp: "__builtin_memset"
   of MemcpyOp: "__builtin_memcpy"
   of MemcmpOp: "__builtin_memcmp"
+  # gcc/clang expand these inline (`sqrtsd`), with an errno slow path for a
+  # negative operand unless `-fno-math-errno`.
+  of SqrtOp: (if bits == 32: "__builtin_sqrtf" else: "__builtin_sqrt")
   else: ""
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =

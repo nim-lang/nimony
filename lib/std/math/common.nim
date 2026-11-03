@@ -393,6 +393,7 @@ func binom*(n, k: Natural): int =
     assert binom(6, 0) == 1
 
   if k <= 0: return 1
+  if k > n: return 0
   if 2 * k > n: return binom(n, n - k)
   result = n
   for i in 2 .. k:
