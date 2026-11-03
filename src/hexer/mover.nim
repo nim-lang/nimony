@@ -94,14 +94,14 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
         break
     of NoExpr, ErrX, SufX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX,
        AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX,
-       AconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX,
+       AconstrX, ArepconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
        LeX, LtX, CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX, NewrefX,
        NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX, CompilesX, StaticX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
        HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
-       DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
+       DefaultdistinctX, DefaultarrX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
        MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX,
        InternalFieldPairsX, FailedX, IsX, EnvpX, ToClosureX, PluginCallX:

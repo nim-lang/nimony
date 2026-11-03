@@ -524,6 +524,10 @@ proc isLiteral(n: var Cursor): bool =
     of FalseC, TrueC, InfC, NeginfC, NanC, SufC, NilC:
       result = true
       skip n
+    of ArepconstrC:
+      n.into:
+        skip n # type
+        result = isLiteral(n)
     of AconstrC, OconstrC, CastC, ConvC:
       result = true
       n.into:

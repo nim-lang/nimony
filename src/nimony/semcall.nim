@@ -67,7 +67,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
         inc n # skip the SymbolDef
         if n.isTagLit:
           if n.exprKind in {DefinedX, DeclaredX, AstToStrX, CompilesX, StaticX, TypeofX,
-              LowX, HighX, AddrX, EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+              LowX, HighX, AddrX, EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX,
               ArratX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX, ProccallX, DelayX,
               BindSymX, BindSymNameX, InstantiationinfoX, SupportsCopyMemX}:
             # magic needs semchecking after overloading

@@ -33,7 +33,14 @@ func default*[T: distinct](x: typedesc[T]): T {.magic: DefaultDistinct.}
 func default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 func default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
-func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
+func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.magic: DefaultArr.}
+  ## `(arepconstr array[I, T] X)` when `default(T)` is a constant `X`, which
+  ## keeps an `array[HugeN, T]` from becoming `HugeN` elements in the IR;
+  ## otherwise a call of `defaultArrayLoop`.
+
+func defaultArrayLoop*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
+  ## The element-wise `default(array[I, T])`, for an element type whose
+  ## default is not a constant. Called by the compiler; not meant for user code.
   for i in low(array[I, T]) .. high(array[I, T]):
     result[i] = default(T)
 

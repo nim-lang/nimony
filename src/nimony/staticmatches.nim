@@ -59,7 +59,7 @@ proc isConstantImpl(n: Cursor; allowOps: bool): bool =
       var elem = n
       inc elem
       result = isConstantImpl(elem, allowOps)
-    of AconstrX, SetconstrX, TupconstrX, OconstrX:
+    of AconstrX, ArepconstrX, SetconstrX, TupconstrX, OconstrX:
       var elem = n
       elem = sub(elem)
       skip elem # type
@@ -126,7 +126,7 @@ proc staticValueType*(a: Cursor): Cursor =
       result = asLocal(res.decl).typ
   of TagLit:
     case a.exprKind
-    of AconstrX, SetconstrX, TupconstrX, OconstrX:
+    of AconstrX, ArepconstrX, SetconstrX, TupconstrX, OconstrX:
       var typ = a
       inc typ
       result = typ

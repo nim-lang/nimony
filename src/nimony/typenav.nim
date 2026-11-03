@@ -569,7 +569,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX,
      PlussetX, MinussetX, MulsetX, XorsetX,
      CastX, ConvX, HconvX, DconvX, BaseobjX,
-     OconstrX, NewobjX, AconstrX, SetconstrX, TupconstrX, NewrefX:
+     OconstrX, NewobjX, AconstrX, ArepconstrX, SetconstrX, TupconstrX, NewrefX,
+     DefaultarrX:
     result = n.childCursor
   of ParX, EmoveX:
     result = getTypeImpl(c, n.childCursor, flags)

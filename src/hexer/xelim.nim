@@ -419,7 +419,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
         else:
           # Inheritance-style first-child: another constructor expression.
           trExpr c, dest, n, tar
-    of TupconstrX, AconstrX:
+    of TupconstrX, AconstrX, ArepconstrX:
       # `(tupconstr T X+)`, `(aconstr T X*)` — type then values.
       if n.hasMore:
         tar.t.takeTree n
@@ -611,7 +611,7 @@ proc mayBindToTemp(n: Cursor): bool =
   var n = n
   case n.kind
   of TagLit:
-    if n.exprKind in {OconstrX, NewobjX, NewrefX, AconstrX, TupconstrX,
+    if n.exprKind in {OconstrX, NewobjX, NewrefX, AconstrX, ArepconstrX, TupconstrX,
                       SetconstrX, TabconstrX}:
       return true
     n.loopInto:
@@ -1487,7 +1487,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
         trCast c, dest, n, tar
       else:
         trExprLoop c, dest, n, tar
-    of OconstrX, NewobjX, TupconstrX, TupX, AconstrX, BracketX,
+    of OconstrX, NewobjX, TupconstrX, TupX, AconstrX, ArepconstrX, BracketX,
        CurlyX, SetconstrX, TabconstrX:
       trAggregate c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
@@ -1501,7 +1501,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX,
        TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
-       DefaultdistinctX, Delay0X, SuspendX, DoX, ArratX, TupatX,
+       DefaultdistinctX, DefaultarrX, Delay0X, SuspendX, DoX, ArratX, TupatX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
        LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
        WasmovedX, SinkhX, TraceX, InternalTypeNameX,

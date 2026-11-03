@@ -26,6 +26,7 @@
 | `(offsetof T Y)`       | LengExpr, NimonyExpr | `offsetof` operation |
 | `(oconstr T (kv Y X)*)`; `(oconstr T (oconstr...)? (kv Y X*))` | LengExpr, NimonyExpr, NiflerKind | object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named |
 | `(aconstr T X*)`       | LengExpr, NimonyExpr | array constructor |
+| `(arepconstr T X)`     | LengExpr, NimonyExpr | array constructor whose every element is `X`; the length is `T`'s. `X` is evaluated once and copied, so it must be a constant: a literal, `nil`, `true`/`false`, a `const`, or an `oconstr`/`tupconstr`/`aconstr`/`arepconstr`/`dconv`/`suf` of those — no calls, no locals. It keeps `default(array[HugeN, T])` from expanding into `HugeN` NIF elements |
 | `(bracket X*)`         | NimonyExpr, NiflerKind | untyped array constructor |
 | `(curly X*)`           | NimonyExpr, NiflerKind | untyped set constructor |
 | `(curlyat X X)`        | NimonyExpr, NiflerKind | curly expression `a{i}` |
@@ -275,6 +276,7 @@
 | `(defaultobj T)` | NimonyExpr | |
 | `(defaulttup T)` | NimonyExpr | |
 | `(defaultdistinct T)` | NimonyExpr | |
+| `(defaultarr T)` | NimonyExpr | `default(array[I, T])`; sem turns it into an `(arepconstr T X)` when `default(T)` is a constant, else into a call of the element-wise `defaultArrayLoop` |
 | `(delay X X*)` | NimonyExpr | `delay(fn args)` builtin for delayed continuation creation |
 | `(delay0)` | NimonyExpr | `delay()` no-arg: capture current coroutine's own continuation |
 | `(suspend)` | NimonyExpr | `suspend()` magic proc: parks the coroutine and returns Continuation(nil, env) |

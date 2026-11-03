@@ -1981,13 +1981,13 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
           dest.takeTree value
   of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
      FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, KvX, OconstrX,
-     AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+     AconstrX, ArepconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
-     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+     DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
      FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
@@ -2292,13 +2292,13 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semDotAsgn c, dest, it, info, asgnStart
   of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
      FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, KvX, OconstrX,
-     AconstrX, BracketX, CurlyX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+     AconstrX, ArepconstrX, BracketX, CurlyX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
-     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+     DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
      FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
@@ -5183,6 +5183,53 @@ proc semDefaultDistinct(c: var SemContext; dest: var TokenBuf; it: var Item) =
   dest.addParRi()
   commonType c, dest, it, exprStart, expected
 
+proc semArepConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## Re-semchecking the `(arepconstr T X)` that `semDefaultArray` built (a
+  ## generic instantiation or a template body does that): `X` is a constant
+  ## of the element type and stays one.
+  let start = dest.len
+  let expected = it.typ
+  takeInto dest, it.n:
+    it.typ = semLocalType(c, dest, it.n)
+    var elem = Item(n: it.n, typ: toTypeImpl(it.typ).childCursor)
+    semExpr c, dest, elem
+    it.n = elem.n
+  commonType c, dest, it, start, expected
+
+proc semDefaultArray(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(defaultarr T)`: `(arepconstr T X)` when the element's `default` is the
+  ## constant `X`, so `array[HugeN, T]` stays one element in the IR; else the
+  ## element-wise `defaultArrayLoop(T)`.
+  let exprStart = dest.len
+  let expected = it.typ
+  let info = it.n.info
+  it.n.into:
+    it.typ = semLocalType(c, dest, it.n)
+    dest.shrink exprStart
+  if containsGenericParams(it.typ):
+    # Instantiation re-`semExpr`s it with a concrete type.
+    dest.addParLe(DefaultarrX, info)
+    dest.addSubtree it.typ
+    dest.addParRi()
+  else:
+    var elem = createTokenBuf(16)
+    callDefault c, elem, toTypeImpl(it.typ).childCursor, info
+    let x = beginRead(elem)
+    if isConstElemDefault(x):
+      dest.addParLe(ArepconstrX, info)
+      dest.addSubtree it.typ
+      addConstElemDefault(dest, x)
+      dest.addParRi()
+    else:
+      var callBuf = createTokenBuf(16)
+      callBuf.addParLe(CallX, info)
+      discard buildSymChoice(c, callBuf, pool.strings.getOrIncl("defaultArrayLoop"), info, FindAll)
+      callBuf.addSubtree it.typ
+      callBuf.addParRi()
+      var call = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
+      semCall c, dest, call, {}
+  commonType c, dest, it, exprStart, expected
+
 proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # has already been semchecked but we do it again:
   let exprStart = dest.len
@@ -6098,6 +6145,10 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semTupleDefault c, dest, it
     of DefaultdistinctX:
       semDefaultDistinct c, dest, it
+    of DefaultarrX:
+      semDefaultArray c, dest, it
+    of ArepconstrX:
+      semArepConstr c, dest, it
     of LowX:
       semLow c, dest, it
     of HighX:

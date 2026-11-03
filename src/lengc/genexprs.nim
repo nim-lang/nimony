@@ -452,6 +452,32 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       if not isUncheckedArray:
         c.add CurlyRi
       c.add CurlyRi
+  of ArepconstrC:
+    # `(arepconstr T X)`: `len(T)` copies of the constant `X`. All-zero bits
+    # need no element at all; otherwise C's range designator (GNU, which is
+    # what we emit for anyway) says it once — C++ has none, so there the
+    # element is written out.
+    n.into:
+      let len = arrayLenOf(c.m, n)
+      c.objConstrType(n)
+      c.add CurlyLe
+      c.add ".a = "
+      c.add CurlyLe
+      if isZeroConst(n):
+        c.add "0"
+        skip n
+      elif c.m.config.backend == backendCpp:
+        let elem = n
+        for i in 0 ..< len:
+          if i > 0: c.add Comma
+          var e = elem
+          c.genx e
+        skip n
+      else:
+        c.add "[0 ... " & $(len - 1) & "] = "
+        c.genx n
+      c.add CurlyRi
+      c.add CurlyRi
   of OconstrC:
     n.into:
       let objType = n

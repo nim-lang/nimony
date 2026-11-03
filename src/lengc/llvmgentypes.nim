@@ -919,6 +919,28 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
         else:
           resultVal = "{ " & valStr & " }"
       result = rawConst(resultTyp, resultVal)
+    of ArepconstrC:
+      # `len(T)` copies of the constant `X`. LLVM has no splat for an array
+      # constant, so a non-zero element is written out; all-zero bits are one
+      # `zeroinitializer`.
+      n.into:
+        var elemTypeCursor = navigateToObjectBody(c.m, n)
+        let len = fixedArrayLen(c, n)
+        inc elemTypeCursor
+        let elemType = genTypeLLVMReadOnly(c, elemTypeCursor)
+        let arrTyp = newLLArrayType(max(len, 0), elemType)
+        skip n # type
+        if isZeroConst(n):
+          result = llZeroInit(arrTyp)
+          skip n
+        else:
+          let elem = n
+          var elems = newSeq[string](max(len, 0))
+          for i in 0 ..< elems.len:
+            var e = elem
+            elems[i] = operandStr(genGlobalConstr(c, e, elemTypeCursor))
+          skip n
+          result = rawConst(arrTyp, "[ " & elems.join(", ") & " ]")
     of AconstrC:
       n.into:
         var elemTypeCursor = declaredType

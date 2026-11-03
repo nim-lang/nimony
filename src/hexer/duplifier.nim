@@ -134,7 +134,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
         echo infoToStr(n.info), " LastUse: ", result
 
 const
-  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupconstrX, TupX, NewrefX}
+  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, ArepconstrX, TupconstrX, TupX, NewrefX}
 
 proc constructsValue*(n: Cursor; derefConstructs = true): bool =
   var n = n
@@ -156,7 +156,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
       while not isLastSon(n): skip n
     of ErrX, SufX, AtX, DotX, PatX, ParX, AddrX, NilX, InfX,
         NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX,
-        SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
+        SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX, AconstrX, ArepconstrX, BracketX,
         CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
         ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
         LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
@@ -165,7 +165,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX, Delay0X,
         SuspendX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX,
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
@@ -184,7 +184,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
       inc n
     of ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX,
         NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX,
-        AlignofX, OffsetofX, OconstrX, AconstrX, BracketX, CurlyX,
+        AlignofX, OffsetofX, OconstrX, AconstrX, ArepconstrX, BracketX, CurlyX,
         CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
         BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
         CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
@@ -193,7 +193,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
-        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX,
         DelayX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
         MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
         EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
@@ -371,7 +371,7 @@ proc isDefaultValue(c: Context; n: Cursor): bool =
       inc it
       if k != SufX: skip it # the type
       result = isDefaultValue(c, it)
-    elif k in {OconstrX, TupconstrX, AconstrX}:
+    elif k in {OconstrX, TupconstrX, AconstrX, ArepconstrX}:
       var it = sub(n)
       skip it # the type
       result = true
@@ -428,7 +428,7 @@ proc isSimpleExpression(n: var Cursor): bool =
       else:
         result = false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX, XorX,
-        NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX, AconstrX,
+        NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX, AconstrX, ArepconstrX,
         BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX,
         NeqX, LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
@@ -437,7 +437,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
-        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX,
         DelayX, Delay0X, SuspendX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX,
         CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX,
@@ -986,7 +986,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
     of ErrX, SufX, AtX, DerefX, HderefX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX,
-        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+        AconstrX, ArepconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
         MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX,
@@ -995,7 +995,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
         UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX,
         Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
         InsetX, CardX, EmoveX, InternalTypeNameX,
@@ -1725,7 +1725,7 @@ proc trConstructing(c: var Context; n: var Cursor; e: Expects; k: ExprKind)
   case k
   of OconstrX: trObjConstr c, n, e
   of NewobjX, NewrefX: trNewobj c, n, e, k
-  of AconstrX, TupconstrX: trRawConstructor c, n, e
+  of AconstrX, ArepconstrX, TupconstrX: trRawConstructor c, n, e
   else: trCall c, n, e
   if outermost:
     c.constr = default(Cursor)
@@ -1778,7 +1778,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trStmtListExpr c, n, e
     of EmoveX:
       trEnsureMove c, n, e
-    of AconstrX, TupconstrX:
+    of AconstrX, ArepconstrX, TupconstrX:
       trConstructing c, n, e, n.exprKind
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, SetconstrX,
        OchoiceX, CchoiceX, XorX,
@@ -1795,7 +1795,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       bug "nodekind should have been eliminated in desugar.nim"
     of EnvpX:
       bug "envp should have been eliminated in lambdalifting.nim"
-    of DefaultobjX, DefaulttupX, DefaultdistinctX, BracketX, CurlyX, TupX:
+    of DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, BracketX, CurlyX, TupX:
       bug "nodekind should have been eliminated in sem.nim"
     of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX, Delay0X, SuspendX:
       trSons c, n, e

@@ -441,7 +441,7 @@ proc locRootSym(c: var FirContext; n: Cursor; follow = true): SymId =
 proc isConstantValue(n: Cursor): bool =
   result = n.isIntLit or n.isUIntLit or n.isCharLit or n.isFloatLit or
     n.isStringLit or
-    (n.isTagLit and n.exprKind in {AconstrX, SetconstrX, TupconstrX, OconstrX,
+    (n.isTagLit and n.exprKind in {AconstrX, ArepconstrX, SetconstrX, TupconstrX, OconstrX,
                                    NilX, TrueX, FalseX})
 
 proc borrowMode(c: var FirContext; n: Cursor; follow = true): BorrowableCheck =
@@ -3880,7 +3880,7 @@ proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
       analyseArrAt c, pc, call
     of OconstrX, NewobjX:
       analyseOconstr c, pc
-    of AconstrX:
+    of AconstrX, ArepconstrX:
       analyseArrayConstr c, pc
     of TupconstrX:
       analyseTupConstr c, pc

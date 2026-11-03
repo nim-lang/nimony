@@ -1644,7 +1644,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of TraceX:
       gcallsystem(g, n, "=trace")
 
-    of DefaultobjX, DefaulttupX, DefaultdistinctX:
+    of DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX:
       gcallsystem(g, n, "default")
 
     of InsetX:
@@ -1683,6 +1683,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
     of AconstrX:
       gconstr(g, n, bkBracket)
+
+    of ArepconstrX:
+      # only ever built for a `default(array[…])`, which is how it reads best
+      n.into:
+        put(g, tkSymbol, "default")
+        put(g, tkParLe, "(")
+        gsub(g, n)
+        put(g, tkParRi, ")")
+        skip n # the element
 
     of SetconstrX:
       gconstr(g, n, bkCurly)

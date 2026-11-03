@@ -380,7 +380,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         analyseExpr c, pc
     of OconstrX, NewobjX:
       analyseOconstr c, pc
-    of AconstrX:
+    of AconstrX, ArepconstrX:
       analyseArrayConstr c, pc
     of TupconstrX:
       analyseTupConstr c, pc

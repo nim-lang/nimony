@@ -1173,11 +1173,11 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
         let val = IsMain in c.c.moduleFlags
         c.c.queriedIsMain = true
         result = boolValue(c, val)
-    of AconstrX, SetconstrX, TupconstrX,
+    of AconstrX, ArepconstrX, SetconstrX, TupconstrX,
         BracketX, CurlyX, TupX:
       var buf = createTokenBuf(16)
       copyInto buf, n:
-        if exprKind in {AconstrX, SetconstrX, TupconstrX}:
+        if exprKind in {AconstrX, ArepconstrX, SetconstrX, TupconstrX}:
           # add type
           takeTree buf, n
         while n.hasMore:
@@ -1654,6 +1654,18 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           buf.shrink start
         else:
           buf.addParRi()
+      else: err = true
+    of ArepconstrX:
+      if typ.typeKind == ArrayT:
+        buf.addParLe(ArepconstrX, n.info)
+        buf.addSubtree typ
+        var elem = n
+        inc elem # tag
+        skip elem # type
+        var elemType = typ
+        inc elemType # tag, get to element type
+        annotateConstantType(buf, elemType, elem)
+        buf.addParRi()
       else: err = true
     of BracketX, AconstrX:
       if typ.typeKind == ArrayT: # XXX seq?

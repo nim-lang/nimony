@@ -526,7 +526,7 @@ proc argContainsConstructor(callNode: Cursor): bool =
   proc walk(n: var Cursor): bool =
     case n.kind
     of TagLit:
-      if n.exprKind in {OconstrC, AconstrC}:
+      if n.exprKind in {OconstrC, AconstrC, ArepconstrC}:
         skip n
         return true
       result = false

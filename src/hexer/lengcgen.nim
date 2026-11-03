@@ -1479,7 +1479,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
           if not isSimpleLiteral(nb): return false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
         XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX,
-        OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
+        OconstrX, AconstrX, ArepconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
         BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CallX,
         CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
@@ -1489,7 +1489,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX,
         Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
         PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
         LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
@@ -1710,8 +1710,8 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trType(c, dest, n)
         dest.shrink beforeType
         trExpr(c, dest, n)
-    of AconstrX:
-      dest.addParLe("aconstr", n.info)
+    of AconstrX, ArepconstrX:
+      dest.addParLe((if n.exprKind == AconstrX: "aconstr" else: "arepconstr"), n.info)
       let constrStart = n
       n = sub(n)
       trType(c, dest, n)
@@ -1844,7 +1844,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         dest.addParRi(n.endInfo)
     of ErrX, NewobjX, NewrefX, SetconstrX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
        InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
-       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
+       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX,
        PluginCallX:
@@ -2096,75 +2096,6 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trStmt c, dest, n
   n = tryStart; skip n
 
-const
-  BigAggrCopyBytes = 512
-    ## A whole-aggregate assignment above this size becomes a `Memcpy`. Below
-    ## it the back ends copy inline; arkham unrolls a copy into a pair of
-    ## `mov`s per word, which for an `array[2_000_000, int]` was four million
-    ## of them. The intrinsic is what its copy loops already lower to.
-  AggrMemcpyName = "memcpy.agg."
-
-proc bigAggrCopySize(c: var EContext; asgn: Cursor): int =
-  ## The byte count of the `(asgn LHS RHS)` that `trBigAggrCopy` turns into
-  ## a `Memcpy`, else 0: RHS is an addressable aggregate (not a constructor,
-  ## a call or a `const`) larger than `BigAggrCopyBytes`.
-  result = 0
-  var lhs = sub(asgn)
-  var rhs = lhs
-  skip rhs
-  let addressable =
-    if rhs.kind == Symbol: fetchSymKind(c.typeCache, rhs.symId) != ConstY
-    else: rhs.exprKind in {DerefX, HderefX, DotX, DdotX, AtX, ArratX, PatX, TupatX}
-  if addressable and toTypeImpl(getType(c.typeCache, lhs)).typeKind in {ArrayT, ObjectT, TupleT}:
-    var err = false
-    let size = asSigned(getSize(getType(c.typeCache, lhs), c.bits div 8, c.sizeofCache), err)
-    if not err and size > BigAggrCopyBytes:
-      result = int(size)
-
-proc trBigAggrCopy(c: var EContext; dest: var TokenBuf; n: var Cursor; size: int) =
-  ## `(instr memcpy (addr LHS) (addr RHS) SIZE)`. Two lvalues of the same
-  ## aggregate type are either the same location or disjoint, which is all
-  ## `Memcpy` asks.
-  let info = n.info
-  c.usesAggrMemcpy = true
-  dest.addParLe("instr", info)
-  dest.addSymUse(pool.symId(AggrMemcpyName & c.main), info)
-  n.into:
-    for _ in 0 ..< 2:
-      dest.addParLe("addr", info)
-      trExpr c, dest, n
-      dest.addParRi()
-  dest.addIntLit(size, info)
-  dest.addParRi()
-
-proc genAggrMemcpyDecl(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
-  ## The `{.intrinsic: "memcpy".}` declaration `trBigAggrCopy` names, shaped
-  ## like shoggoth's `memidioms.addMemIntrinsicDecl`: no body, so there is
-  ## nothing for DCE to keep alive and nothing a back end emits.
-  let name = AggrMemcpyName & c.main
-  dest.addParLe("proc", info)
-  dest.addSymDef(pool.symId(name), info)
-  dest.addParLe("params", info)
-  for i in 0 ..< 3:
-    dest.addParLe("param", info)
-    dest.addSymDef(pool.symId("a" & $i & "." & name), info)
-    dest.addDotToken()
-    if i < 2: dest.addParLe("ptr", info)
-    dest.addParLe((if i < 2: "u" else: "i"), info)
-    dest.addIntLit(-1, info)
-    dest.addParRi()
-    if i < 2: dest.addParRi()
-    dest.addParRi() # param
-  dest.addParRi() # params
-  dest.addDotToken() # void result
-  dest.addParLe("pragmas", info)
-  dest.addParLe("intrinsic", info)
-  dest.addStrLit(IntrinsicNames[MemcpyOp], info)
-  dest.addParRi()
-  dest.addParRi() # pragmas
-  dest.addDotToken() # no body
-  dest.addParRi() # proc
-
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner) =
   case n.kind
   of DotToken:
@@ -2245,13 +2176,9 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
           else:
             trExpr c, dest, n
     of AsgnS, RetS:
-      let copySize = if n.stmtKind == AsgnS: bigAggrCopySize(c, n) else: 0
-      if copySize > 0:
-        trBigAggrCopy c, dest, n, copySize
-      else:
-        takeInto dest, n:
-          while n.hasMore:
-            trExpr c, dest, n
+      takeInto dest, n:
+        while n.hasMore:
+          trExpr c, dest, n
     of DiscardS:
       let discardToken = n
       let discardStart = n
@@ -2807,7 +2734,7 @@ proc isStaticInitValue(c: var EContext; n: var Cursor): bool =
       n.into:
         if n.kind == Symbol: result = true
         while n.hasMore: skip n
-    elif n.exprKind in {SufX, ParX, CastX, ConvX, NegX, AconstrX, OconstrX}:
+    elif n.exprKind in {SufX, ParX, CastX, ConvX, NegX, AconstrX, ArepconstrX, OconstrX}:
       result = true
       n.into:
         while n.hasMore:
@@ -2939,8 +2866,6 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
 
   if isMain and appType in {appConsole, appGui}:
     genMainProc(c, cdest, rootInfo, isWindows)
-  if c.usesAggrMemcpy:
-    genAggrMemcpyDecl(c, cdest, rootInfo)
 
   # the module's close was consumed by `trToplevel`
   let destfileName = c.dir / c.main & ".x.nif"

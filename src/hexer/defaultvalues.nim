@@ -26,7 +26,9 @@ nimsem's machinery to do it: `default(T)` there is an overloaded *call*
 resolved against `system/defaults.nim`, and by the time a hexer pass runs,
 sem and the desugaring, duplifier and destroyer passes are long done —
 there is no introducing a call, let alone the loop that
-`default(array[I, T])` expands into. So this module rebuilds the same
+`default(array[I, T])` expands into when its element's default is not a
+constant (otherwise it is an `(arepconstr T X)`, which this module emits
+too). So this module rebuilds the same
 value directly, as a literal expression tree, and every emitted form is
 one that survives untouched to `lengcgen`.
 
@@ -256,12 +258,24 @@ proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSiz
     if err:
       error "cannot determine array length of type: ", typ
     else:
-      dest.addParLe(AconstrX, info)
-      dest.addSubtree typ
-      let elem = impl.childCursor
-      for _ in 0 ..< len:
-        addDefaultValue(dest, elem, info, ptrSize)
-      dest.addParRi()
+      # One element, repeated: a closure environment or a coroutine frame that
+      # holds an `array[2_000_000, int]` must not turn into two million zeros
+      # in the IR. A field default that is not a constant (`x: seq[int] =
+      # newSeq(4)`) cannot be copied and is written out per element.
+      var elemBuf = createTokenBuf(16)
+      addDefaultValue(elemBuf, impl.childCursor, info, ptrSize)
+      let elem = beginRead(elemBuf)
+      if isConstElemDefault(elem):
+        dest.addParLe(ArepconstrX, info)
+        dest.addSubtree typ
+        dest.addSubtree elem
+        dest.addParRi()
+      else:
+        dest.addParLe(AconstrX, info)
+        dest.addSubtree typ
+        for _ in 0 ..< len:
+          dest.addSubtree elem
+        dest.addParRi()
   of RangetypeT:
     # `system/defaults.nim` has no `default` for a range type, so nimsem
     # never reaches this; a range-typed location always carries an

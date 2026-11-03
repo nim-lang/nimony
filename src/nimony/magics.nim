@@ -101,6 +101,7 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "DefaultObj": res DefaultobjX
   of "DefaultTup": res DefaulttupX
   of "DefaultDistinct": res DefaultdistinctX
+  of "DefaultArr": res DefaultarrX
   of "PlusSet": res PlussetX, TypedMagic
   of "MinusSet": res MinussetX, TypedMagic
   of "MulSet": res MulsetX, TypedMagic
