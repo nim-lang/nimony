@@ -2660,39 +2660,6 @@ proc analyseCondition(c: var FirContext; pc: var Cursor;
     pc = start
     skip pc
     return result
-  if pc.exprKind == InsetX:
-    # `c in {'A'..'Z'}`: one constant range (or value) bounds the element on
-    # the true path, the guard of every ASCII case fold `chr(ord(c) + 32)`.
-    # The false path learns nothing: outside a range is a disjunction.
-    result = 0
-    var r = sub(pc)
-    skip r # the set type
-    if r.exprKind == SetconstrX:
-      var e = sub(r)
-      skip e # the set type
-      if e.hasMore:
-        let only = e
-        skip e
-        if not e.hasMore:
-          var lo = createNaN()
-          var hi = createNaN()
-          if only.substructureKind == RangeU:
-            var b = sub(only)
-            lo = foldOrdinal(c.bits, b)
-            skip b
-            hi = foldOrdinal(c.bits, b)
-          else:
-            lo = foldOrdinal(c.bits, only)
-            hi = lo
-          skip r # the setconstr
-          let elem = plainLocationVarId(c, r)
-          if not lo.isNaN and not hi.isNaN and elem != InvalidVarId and elem != VarId(0):
-            traverseExpr c, pc, call
-            c.facts.add query(VarId(0), elem, -lo) # lo <= elem
-            c.facts.add query(elem, VarId(0), hi)  # elem <= hi
-            return 2
-    traverseExpr c, pc, call
-    return result
   var kind = ckPlain
   let fact = translateCond(c, pc, kind, call)
   if not fact.isValid:

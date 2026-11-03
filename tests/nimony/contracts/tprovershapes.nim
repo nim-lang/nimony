@@ -218,10 +218,10 @@ proc natArg(n: Natural): int = n
 
 proc rangeArgs(x: int; c: char): int =
   # an argument bound to a `range` parameter is proven like a `let` of that
-  # type (#2856): by a guard, by an `in` a constant range, by a bit pattern
+  # type (#2856): by a guard, by a bit pattern
   result = 0
   if x >= 0: result = natArg(x)
-  if c in {'A'..'Z'}: result = result + ord(chr(ord(c) + 32))
+  if c >= 'A' and c <= 'Z': result = result + ord(chr(ord(c) + 32))
   result = result + ord(chr((x shr 6 and 0x3F) or 0x80))
   result = result + natArg(2 * sizeof(int32))
 

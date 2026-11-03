@@ -347,7 +347,7 @@ proc normalizeBasePrefix(tok: var Token) =
   let i = if tok.s.len > 0 and tok.s[0] == '-': 2 else: 1
   if i < tok.s.len:
     let c = tok.s[i]
-    if c in {'A'..'Z'}: tok.s[i] = chr(ord(c) - ord('A') + ord('a'))
+    if c >= 'A' and c <= 'Z': tok.s[i] = chr(ord(c) - ord('A') + ord('a'))
 
 proc hexVal(c: char): int {.inline.} =
   if c >= '0' and c <= '9': ord(c) - ord('0')
