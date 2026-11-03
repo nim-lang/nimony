@@ -110,7 +110,7 @@ func runeLen*(s: openArray[char]): int =
     else: inc i
     inc(result)
 
-func runeLenAt*(s: openArray[char], i: Natural): Positive =
+func runeLenAt*(s: openArray[char], i: Natural): Positive {.ensures: result <= 6.} =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
   ##
   ## The result type says 1..6: a rune is never zero bytes wide, and a caller
@@ -417,10 +417,7 @@ func runeOffset*(s: openArray[char], pos: Natural, start: Natural = 0): int =
     # `start` may lie past the end: then so does every later offset
     if o >= s.len:
       return -1
-    let next = o + runeLenAt(s, o)
-    # `o < s.len` and a rune is at most 6 bytes wide: the sum does not wrap
-    {.assume: 0 <= next.}
-    o = next
+    o = o + runeLenAt(s, o)
     if o >= s.len:
       return -1
     inc i
@@ -448,10 +445,7 @@ func runeReverseOffset*(s: openArray[char], rev: Positive): (int, int) =
   let times = 2*rev.int-s.runeLen # transformed from rev.int - a < s.runeLen - rev.int
   while o < s.len:
     let r = runeLenAt(s, o)
-    let next = o + r
-    # `o < s.len` and a rune is at most 6 bytes: the sum does not wrap
-    {.assume: 0 <= next.}
-    o = next
+    o = o + r
     if a > times:
       x = x + r
     dec a
@@ -936,10 +930,7 @@ iterator utf8*(s: openArray[char]): string =
   while o < s.len:
     let n = runeLenAt(s, o)
     yield substr(s.toOpenArray(o, (o+n-1)))
-    let next = o + n
-    # `o < s.len` and a rune is at most 6 bytes: the sum does not wrap
-    {.assume: 0 <= next.}
-    o = next
+    o = o + n
 
 func toRunes*(s: openArray[char]): seq[Rune] =
   ## Obtains a sequence containing the Runes in ``s``.
@@ -1281,7 +1272,7 @@ func runeLen*(s: string): int {.inline.} =
     ## note: a.len == 8
   runeLen(toOa(s))
 
-func runeLenAt*(s: string, i: Natural): Positive {.inline.} =
+func runeLenAt*(s: string, i: Natural): Positive {.inline, ensures: result <= 6.} =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
   ##
   ## See also:

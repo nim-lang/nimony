@@ -508,15 +508,10 @@ proc addPem*(store: var TrustStore; pem: string): int =
   while true:
     let a = pem.find(Begin, pos)
     if a < 0: break
-    let afterBegin = a + Begin.len
-    # the match `pem[a ..< afterBegin]` lies inside `pem`: no wrap
-    {.assume: 0 <= afterBegin.}
-    let b = pem.find(End, afterBegin)
+    let b = pem.find(End, a + Begin.len)
     if b < 0: break
-    let body = pem.substr(afterBegin, b - 1)
-    let afterEnd = b + End.len
-    {.assume: 0 <= afterEnd.} # as `afterBegin`
-    pos = afterEnd
+    let body = pem.substr(a + Begin.len, b - 1)
+    pos = b + End.len
     let raw = decode(body)
     var bytes: seq[byte] = @[]
     for ch in raw: bytes.add byte(ch)

@@ -785,7 +785,8 @@ func initSkipTable*(sub: string): SkipTable {.noinit.} =
   ## * `find func<#find,SkipTable,string,string,Natural,int>`_
   initSkipTable(result, sub)
 
-func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
+func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int {.
+    ensures: result <= s.len.} =
   ## Searches for `sub` in `s` inside range `start..last` using preprocessed
   ## table `a`. If `last` is unspecified, it defaults to `s.high` (the last
   ## element).
@@ -802,6 +803,7 @@ func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
   if subLast == -1:
     # this was an empty needle string,
     # we count this as match in the first possible position:
+    if start > s.len: return -1 # there is none past the end
     return start
 
   # This is an implementation of the Boyer-Moore Horspool algorithms
@@ -809,14 +811,17 @@ func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
   result = -1
   var skip = int(start)
 
-  while last - skip >= subLast:
+  # `skip <= last` follows from the second test (`subLast >= 0`); stated
+  # alone it is a fact the prover can keep, and `result < s.len` with it
+  while skip <= last and last - skip >= subLast:
     if s.continuesWith(sub, skip):
       return skip
     let e = skip + subLast
     if e >= 0 and e < s.len: inc skip, a[s[e]]
     else: break
 
-func find*(s, sub: string; start: Natural = 0; last = -1): int =
+func find*(s, sub: string; start: Natural = 0; last = -1): int {.
+    ensures: result <= s.len.} =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included).
   ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
   ##
@@ -917,10 +922,7 @@ func replace*(s, sub: string; by = ""): string =
       if j < 0: break
       add result, substr(s, i, j - 1)
       add result, by
-      let next = j + subLen
-      # the match `s[j ..< next]` lies inside `s`: the sum does not wrap
-      {.assume: 0 <= next.}
-      i = next
+      i = j + subLen
     # copy the rest:
     add result, substr(s, i)
 
@@ -951,16 +953,10 @@ func replaceWord*(s, sub: string, by = ""): string =
           not s.charInSetAt(j+sub.len, wordChars):
         add result, substr(s, i, j - 1)
         add result, by
-        let next = j + sublen
-        # the match `s[j ..< next]` lies inside `s`: the sum does not wrap
-        {.assume: 0 <= next.}
-        i = next
+        i = j + sublen
       else:
         add result, substr(s, i, j)
-        let next = j + 1
-        # `j` starts a match of a non-empty `sub`, so `j < s.len`
-        {.assume: 0 <= next.}
-        i = next
+        i = j + 1
     # copy the rest:
     add result, substr(s, i)
 

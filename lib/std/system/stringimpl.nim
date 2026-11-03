@@ -77,14 +77,14 @@ func rawData(s {.byref.}: string): ptr UncheckedArray[char] {.inline.} =
 # ---- length ----
 
 func len*(s: string): int {.alwaysInline, semantics: "string.len",
-    ensures: (0 <= result and result < high(int)).} =
+    ensures: (0 <= result and result <= MaxContainerLen).} =
   result = ssLen(s)
   if result > PayloadSize:
     result = s.more.fullLen
   # A length is never negative: `ssLen` is one byte of the header, and `fullLen`
-  # is only ever set from a non-negative length. Nor is it `high(int)`: no
-  # string fits that many bytes beside its header.
-  {.assume: 0 <= result and result < high(int).}
+  # is only ever set from a non-negative length within the capacity. Nor is it
+  # past `MaxContainerLen`: `allocLong` refuses such a capacity.
+  {.assume: 0 <= result and result <= MaxContainerLen.}
 
 func high*(s: string): int {.alwaysInline.} = len(s) - 1
 func low*(s: string): int {.inline.} = 0
@@ -346,12 +346,26 @@ when defined(nimNativeIo):
 else:
   func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 
-func len*(a: cstring): int {.inline, ensures: (0 <= result and result < high(int)).} =
+func len*(a: cstring): int {.inline, ensures: (0 <= result and result <= MaxContainerLen).} =
   if a == nil: result = 0
   else:
     result = a.strlen.int
-    # `strlen` counts bytes; no C string is `high(int)` bytes long.
-    {.assume: 0 <= result and result < high(int).}
+    # `strlen` counts bytes of one block in the address space, which holds
+    # less than `MaxContainerLen` of them.
+    {.assume: 0 <= result and result <= MaxContainerLen.}
+
+func allocLong(cap: int): ptr LongString {.inline.} =
+  ## A block for a long string of capacity `cap`, nil on failure. A capacity past
+  ## `MaxContainerLen` fails like an exhausted heap: that is what bounds `len`
+  ## (and keeps the header offset from wrapping).
+  if cap > MaxContainerLen: result = nil
+  else: result = cast[ptr LongString](alloc(LongStringDataOffset + cap))
+
+func growCap(newLen, grown: int): int {.inline.} =
+  ## `grown` (a growth policy's answer, at least `newLen`) without letting the
+  ## policy alone push a valid length past `MaxContainerLen`.
+  result = grown
+  if result > MaxContainerLen and newLen <= MaxContainerLen: result = MaxContainerLen
 
 func initLongString(p: ptr LongString; len, cap: int) {.inline.} =
   ## Sets up the header of a freshly allocated, not yet shared block.
@@ -379,8 +393,8 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
     if oldLen < AlwaysAvail:
       copyMem(inlinePtrV(s), addr s.more.data[0], oldLen)
   else:
-    let newCap = if newLen > cap: max(newLen, ssResize(cap)) else: cap
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
+    let newCap = if newLen > cap: growCap(newLen, max(newLen, ssResize(cap))) else: cap
+    let p = allocLong(newCap)
     if p != nil:
       initLongString(p, newLen, newCap)
       if isHeap:
@@ -413,8 +427,8 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       strOom s, LongStringDataOffset + newCap
 
 func transitionToLong(s: var string; sl: int; newLen: int) =
-  let newCap = max(newLen, ssResize(newLen))
-  let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
+  let newCap = growCap(newLen, max(newLen, ssResize(newLen)))
+  let p = allocLong(newCap)
   if p != nil:
     initLongString(p, newLen, newCap)
     copyMem(addr p.data[0], inlinePtrV(s), sl)
@@ -453,7 +467,7 @@ func prepareMutation*(s: var string) =
       discard arcDec(s.more.rc)
     let old = s.more
     let oldLen = old.fullLen
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + oldLen))
+    let p = allocLong(oldLen)
     if p != nil:
       initLongString(p, oldLen, oldLen)
       copyMem(addr p.data[0], addr old.data[0], oldLen)
@@ -658,7 +672,7 @@ func substr*(s: string; first, last: int): string =
     setSSLen(result, newLen)
     copyMem(inlinePtrV(result), cast[pointer](cast[uint](src) + uint(f)), newLen)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + newLen))
+    let p = allocLong(newLen)
     if p != nil:
       initLongString(p, newLen, newLen)
       copyMem(addr p.data[0], cast[pointer](cast[uint](src) + uint(f)), newLen)
@@ -944,7 +958,7 @@ func newString*(len: int): string =
     setSSLen(result, len)
     zeroMem(inlinePtrV(result), len)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
+    let p = allocLong(len)
     if p != nil:
       zeroMem(p, LongStringDataOffset + len)
       initLongString(p, len, len)
@@ -959,7 +973,7 @@ func newStringOfCap*(len: int): string =
   ## (`newString` zeros because its length is `len` and callers see those bytes.)
   result = string(bytes: 0'u, more: nil)
   if len <= PayloadSize: return  # inline capacity always available
-  let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
+  let p = allocLong(len)
   if p != nil:
     initLongString(p, 0, len)
     result.more = p
@@ -979,7 +993,7 @@ func `&`*(a, b: string): string {.semantics: "string.&".} =
     if al > 0: copyMem(inlinePtrV(result), rawData(a), al)
     if b.len > 0: copyMem(inlinePtrAt(result, al), rawData(b), b.len)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + rlen))
+    let p = allocLong(rlen)
     if p != nil:
       initLongString(p, rlen, rlen)
       let al = a.len
@@ -1017,7 +1031,7 @@ func borrowCStringUnsafe*(s: cstring; l: int): string =
     setSSLen(result, l)
     copyMem(inlinePtrV(result), s, l)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
+    let p = allocLong(l)
     if p != nil:
       initLongString(p, l, l)
       copyMem(addr p.data[0], s, l)
@@ -1052,7 +1066,7 @@ func fromCString*(s: cstring): string =
     setSSLen(result, l)
     copyMem(inlinePtrV(result), s, l)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
+    let p = allocLong(l)
     if p != nil:
       initLongString(p, l, l)
       copyMem(addr p.data[0], s, l)

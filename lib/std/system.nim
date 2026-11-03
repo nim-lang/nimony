@@ -175,6 +175,14 @@ template linear*() {.pragma.}
   ## this to allow parallel `c[i] = …` writes. `seq`/array indexing is linear;
   ## `Table` indexing is not (it may rehash and relocate other slots).
 
+const MaxContainerLen* = high(int) div 2
+  ## No seq, string or openArray is longer than this: the allocator refuses
+  ## to grow one past it, and an openArray view that would be longer is empty.
+  ## It is what makes `i + n.len` provably wrap-free for an index `i < s.len`:
+  ## the sum of two such lengths is at most `high(int) - 1`. It costs nothing
+  ## real — a 64-bit address space holds far less, a 32-bit one no single
+  ## 2 GiB block.
+
 include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"

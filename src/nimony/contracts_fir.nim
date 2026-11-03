@@ -2066,6 +2066,22 @@ proc noWrap(c: var FirContext; n: Cursor): bool =
                  else: stepFits(c, t, a, eHi) and stepFits(c, t, a, eLo)
       elif not isSub and valueBounds(c, a, eLo, eHi):
         result = stepFits(c, t, d, eHi) and stepFits(c, t, d, eLo)
+    if not result and integerTypeBounds(c.bits, arithType(t), tLo, tHi):
+      # Both operands bounded by the facts, each against a constant: `j + n`
+      # for `j < s.len` and `n == sub.len` fits because every length is at
+      # most `MaxContainerLen` (half of `high(int)`) — interval arithmetic,
+      # where the difference facts cannot relate three locations.
+      var aLo = zero()
+      var aHi = zero()
+      var bLo = zero()
+      var bHi = zero()
+      operandRange(c, a, aLo, aHi)
+      operandRange(c, d, bLo, bHi)
+      if not (aLo.isNaN or aHi.isNaN or bLo.isNaN or bHi.isNaN):
+        if isSub:
+          result = tLo <= aLo - bHi and aHi - bLo <= tHi
+        else:
+          result = tLo <= aLo + bLo and aHi + bHi <= tHi
 
 proc clampKeepsRange(c: var FirContext; n: Cursor; lo, hi: xint): bool =
   ## `n` is a saturating `+`, `-` or `*`: is `lo <= n <= hi` implied by the
