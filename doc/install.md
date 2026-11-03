@@ -101,7 +101,9 @@ freestanding executable, which cannot bind a foreign symbol. On Linux,
 `nimony n -d:useLibc` builds a program **linked with libc** instead:
 
 - nifasm writes a relocatable object and the system linker finishes the program
-  (`--linker` picks it; the default is `clang`), so foreign objects from
+  (`--linker` picks it; the default is `clang`; a cross build such as
+  `--cpu:arm64` on an x86-64 host needs one that targets that machine and its
+  libc), so foreign objects from
   `{.compile.}` and `{.link.}` can be linked in. A program that uses either
   pragma requires `-d:useLibc` on Linux, and says so when it is missing.
 - Every `importc` proc calls libc, where the freestanding build turns a known
