@@ -57,6 +57,8 @@ iterator pairs*(h: HttpHeaders): (string, string) =
     let colon = s.find(':', i)
     if colon > i and colon < stop:
       yield (s.substr(i, colon - 1), s.substr(colon + 1, stop - 1).strip())
+    # no "\r\n" left: done (and `stop + 2` cannot wrap past here)
+    if stop > s.len - 2: break
     i = stop + 2
 
 iterator values*(h: HttpHeaders; name: string): string =
@@ -81,7 +83,7 @@ func spelledLineEnds*(s: string): string =
   result = newStringOfCap(s.len)
   var i = 0
   while i < s.len:
-    if s[i] == '\\' and i + 3 < s.len and s[i+1] == 'r' and s[i+2] == '\\' and
+    if s[i] == '\\' and i < s.len - 3 and s[i+1] == 'r' and s[i+2] == '\\' and
        s[i+3] == 'n':
       result.add "\r\n"
       i += 4
@@ -111,7 +113,7 @@ func headerBlockError*(s: string): string =
     while i < s.len and s[i] != '\r':
       if s[i] == '\n': return "line " & $line & ": a bare LF inside a value"
       inc i
-    if i + 1 >= s.len or s[i+1] != '\n':
+    if i >= s.len - 1 or s[i+1] != '\n':
       return "line " & $line & ": every line must end in \\r\\n"
     i += 2
     inc line

@@ -1030,7 +1030,7 @@ func computeProductApprox(q: int; w: uint64; precision: int; lo, hi: var uint64)
   let mask = if precision < 64: 0xFFFFFFFFFFFFFFFF'u64 shr precision
              else: 0xFFFFFFFFFFFFFFFF'u64
   let index = 2 * (q - SmallestPowerOfFive)
-  {.assume: index + 1 < PowerOfFive128.len.}
+  {.assume: index < PowerOfFive128.len - 1.}
   var firstHi = 0'u64
   var firstLo = fullMul(w, PowerOfFive128[index], firstHi)
   if (firstHi and mask) == mask:
@@ -1194,6 +1194,9 @@ func rightShift(d: var DecimalSeq; shift: int) =
     else:
       while (n shr shift) == 0'u64:
         n = n * 10'u64
+        # at most 19 more digits before `n` exceeds 2^60: `readIndex` cannot
+        # wrap
+        {.assume: readIndex < MaxDigits + 20.}
         inc readIndex
   if not empty:
     d.decimalPoint = d.decimalPoint - (readIndex - 1)
@@ -1242,6 +1245,8 @@ func parseDecimalSeq(s: openArray[char]; n: Number; d: var DecimalSeq) =
       else:
         if nd < MaxDigits: d.digits[nd] = dig
         elif dig != 0'u8: d.truncated = true
+        # one digit per character of `s`
+        {.assume: nd < s.len.}
         inc nd
         if not inFraction: inc dp
   if nd > MaxDigits: d.numDigits = MaxDigits

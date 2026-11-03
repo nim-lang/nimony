@@ -219,7 +219,7 @@ when defined(nimNativeIo):
   proc readByte(f: File): int {.inline.} = readByte(f[])
 
   proc readInto(fo: var FileObj; dest: ptr UncheckedArray[char]; size: int): int =
-    var off = 0
+    var off: Natural = 0
     while off < size:
       if fo.rpos >= fo.rbuf.len:
         if not fillBuf(fo): break
@@ -227,8 +227,13 @@ when defined(nimNativeIo):
       var take: Natural = fo.rbuf.len - fo.rpos
       if take > size - off: take = size - off
       copyMem(addr dest[off], addr fo.rbuf[fo.rpos], take)
-      fo.rpos = fo.rpos + take
-      off += take
+      let newPos = fo.rpos + take
+      let newOff = off + take
+      # `take` is at most what is left of `rbuf` and of `dest`: neither sum
+      # wraps
+      {.assume: 0 <= newPos and 0 <= newOff.}
+      fo.rpos = newPos
+      off = newOff
     result = off
 
   proc flushStdStreams() {.nimcall.} =

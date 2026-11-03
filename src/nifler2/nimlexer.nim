@@ -411,8 +411,9 @@ proc numberValue(L: var Lexer; tok: var Token; start: int) =
       # Nim's third stage has rewound to the start of the digits
       error L, start, "number out of range: '" & litNumText(L, start) & "'"
       return
-    tok.iNumber = cast[int64](xi)
-    if negative: tok.iNumber = -tok.iNumber
+    # negated as `uint64`: `xi` may be `2^63`, whose signed negation
+    # overflows
+    tok.iNumber = if negative: cast[int64](0'u64 - xi) else: cast[int64](xi)
     let tooWide =
       case tok.kind
       of tkInt8Lit: tok.iNumber > 127'i64 or tok.iNumber < -128'i64
@@ -424,7 +425,8 @@ proc numberValue(L: var Lexer; tok: var Token; start: int) =
       of tkUInt32Lit: tok.iNumber > 4294967295'i64 or tok.iNumber < 0'i64
       else: false
     if tooWide: error L, start, "number out of range: '" & litNumText(L, start) & "'"
-  if tok.base != 10 and negative: tok.iNumber = -tok.iNumber
+  if tok.base != 10 and negative:
+    tok.iNumber = cast[int64](0'u64 - cast[uint64](tok.iNumber))
   # "Promote int literal to int64? Not always necessary, but more consistent"
   if tok.kind == tkIntLit and
      (tok.iNumber > 2147483647'i64 or tok.iNumber < -2147483648'i64):

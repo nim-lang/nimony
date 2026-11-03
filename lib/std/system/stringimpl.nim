@@ -76,13 +76,15 @@ func rawData(s {.byref.}: string): ptr UncheckedArray[char] {.inline.} =
 
 # ---- length ----
 
-func len*(s: string): int {.alwaysInline, semantics: "string.len", ensures: (0 <= result).} =
+func len*(s: string): int {.alwaysInline, semantics: "string.len",
+    ensures: (0 <= result and result < high(int)).} =
   result = ssLen(s)
   if result > PayloadSize:
     result = s.more.fullLen
   # A length is never negative: `ssLen` is one byte of the header, and `fullLen`
-  # is only ever set from a non-negative length.
-  {.assume: 0 <= result.}
+  # is only ever set from a non-negative length. Nor is it `high(int)`: no
+  # string fits that many bytes beside its header.
+  {.assume: 0 <= result and result < high(int).}
 
 func high*(s: string): int {.alwaysInline.} = len(s) - 1
 func low*(s: string): int {.inline.} = 0
@@ -344,12 +346,12 @@ when defined(nimNativeIo):
 else:
   func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 
-func len*(a: cstring): int {.inline, ensures: (0 <= result).} =
+func len*(a: cstring): int {.inline, ensures: (0 <= result and result < high(int)).} =
   if a == nil: result = 0
   else:
     result = a.strlen.int
-    # `strlen` counts bytes; no C string is longer than `high(int)`.
-    {.assume: 0 <= result.}
+    # `strlen` counts bytes; no C string is `high(int)` bytes long.
+    {.assume: 0 <= result and result < high(int).}
 
 func initLongString(p: ptr LongString; len, cap: int) {.inline.} =
   ## Sets up the header of a freshly allocated, not yet shared block.

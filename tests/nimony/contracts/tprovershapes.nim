@@ -119,10 +119,9 @@ proc chained(s: string): int =
   var j = 0
   while j < s.len and s[j] == ' ': inc j
   i = j
-  let p = i + j
   result = 0
-  if p < s.len:
-    result = ord(s[i]) + ord(s[p])
+  if i < s.len - 1:
+    result = ord(s[i]) + ord(s[i + 1])
 
 proc windowStart(i, k: int): int =
   # `i - k` with `k` in `0..3` lies within 3 of `i`
@@ -168,7 +167,7 @@ proc toneName(t: Tone): string =
   result = ""
   if ord(t) >= 0 and ord(t) <= ord(high(Tone)): result = toneNames[t]
 
-proc putPair(dest: var openArray[char]; i: int) {.requires: 0 <= i and i + 1 < dest.len.} =
+proc putPair(dest: var openArray[char]; i: int) {.requires: 0 <= i and i < dest.len - 1.} =
   dest[i] = '<'
   dest[i + 1] = '>'
 
@@ -187,7 +186,7 @@ proc blockSum(data: openArray[int]): int =
   var blk = default(array[16, int])
   result = 0
   var j = 0
-  while j + 16 <= data.len:
+  while j <= data.len - 16:
     let start = j
     for p in start ..< start + 16:
       blk[p - start] = data[p]
@@ -202,8 +201,9 @@ proc ringAt(data: seq[int]; at: int): int =
     result = data[at and (data.len - 1)]
 
 proc sumBelow(x, y: int) =
-  # `y + x` with `y < 0` is below `x` just like `x + y` is (#2859)
-  if y < 0:
+  # `y + x` with `y < 0` is below `x` just like `x + y` is (#2859). `x >= 0`
+  # keeps the sum from wrapping: `low(int) + -1` is `high(int)` (#2840)
+  if y < 0 and x >= 0:
     let a = y + x
     {.assert: a < x.}
     let b = x + y

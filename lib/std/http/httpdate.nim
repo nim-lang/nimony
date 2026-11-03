@@ -52,19 +52,19 @@ const
 # ------------------------------------------------------------- writing ----
 
 proc put2(dest: var openArray[char]; i: int; v: int) {.inline,
-    requires: 0 <= i and i + 1 < dest.len.} =
+    requires: 0 <= i and i < dest.len - 1.} =
   dest[i] = char(ord('0') + (v div 10) mod 10)
   dest[i + 1] = char(ord('0') + v mod 10)
 
 proc put4(dest: var openArray[char]; i: int; v: int) {.inline,
-    requires: 0 <= i and i + 3 < dest.len.} =
+    requires: 0 <= i and i < dest.len - 3.} =
   dest[i] = char(ord('0') + (v div 1000) mod 10)
   dest[i + 1] = char(ord('0') + (v div 100) mod 10)
   dest[i + 2] = char(ord('0') + (v div 10) mod 10)
   dest[i + 3] = char(ord('0') + v mod 10)
 
 proc put3(dest: var openArray[char]; i: int; s: string) {.inline,
-    requires: 0 <= i and i + 2 < dest.len.} =
+    requires: 0 <= i and i < dest.len - 2.} =
   if s.len >= 3:
     dest[i] = s[0]
     dest[i + 1] = s[1]
@@ -151,8 +151,10 @@ proc digit(c: char): int {.inline.} =
 proc num(buf: openArray[char]; i, n: Natural): int =
   ## Exactly `n` digits at `i`, or `-1`. Exactly, not at least: a two-digit
   ## field that accepts three silently reinterprets every field after it.
+  if i > buf.len or n > buf.len - i: return -1
   let stop = i + n
-  if stop > buf.len: return -1   # `i >= 0` comes from its type
+  # the check above: `i + n <= buf.len`, so the sum does not wrap
+  {.assume: 0 <= stop and stop <= buf.len.}
   result = 0
   for p in i..<stop:
     let d = digit(buf[p])
@@ -163,7 +165,7 @@ proc monthFrom(buf: openArray[char]; i: Natural): int =
   ## The 1-based month for a three-letter abbreviation at `i`, or `-1`.
   ## Case-sensitive on purpose: the abbreviations are spelled one way in the
   ## grammar, and accepting `nOv` here means accepting it nowhere else.
-  if i + 3 > buf.len: return -1
+  if i > buf.len - 3: return -1
   for m in 0..11:
     let s = MonthNames[m]
     if s.len >= 3 and buf[i] == s[0] and buf[i + 1] == s[1] and buf[i + 2] == s[2]:
@@ -172,12 +174,12 @@ proc monthFrom(buf: openArray[char]; i: Natural): int =
 
 proc isGmt(buf: openArray[char]; i: Natural): bool {.inline.} =
   result = false
-  if i + 3 <= buf.len:
+  if i <= buf.len - 3:
     result = buf[i] == 'G' and buf[i + 1] == 'M' and buf[i + 2] == 'T'
 
 proc timeOfDay(buf: openArray[char]; i: Natural; h, mi, s: var int): bool =
   ## `HH:MM:SS` at `i`.
-  if i + 8 > buf.len: return false
+  if i > buf.len - 8: return false
   h = num(buf, i, 2)
   mi = num(buf, i + 3, 2)
   s = num(buf, i + 6, 2)
@@ -237,7 +239,7 @@ proc parseRfc850(buf: openArray[char]; t: var Time): bool =
   if not ok: return false
   let p = c + 2                     # past ", ", where the day-of-month starts
   # From `p`: DD-Mmm-YY HH:MM:SS GMT — 22 bytes, every field fixed.
-  if p + 22 > buf.len: return false
+  if p > buf.len - 22: return false
   if buf[c + 1] != ' ' or buf[p + 2] != '-' or buf[p + 6] != '-' or
      buf[p + 9] != ' ' or buf[p + 18] != ' ': return false
   if not isGmt(buf, p + 19): return false

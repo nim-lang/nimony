@@ -176,7 +176,7 @@ proc incl(s: var RuneSet; lo, hi: int) =
   else:
     s[i].a = min(s[i].a, lo)
     s[i].b = max(s[i].b, hi)
-    while i + 1 < s.len and s[i + 1].a <= s[i].b + 1:
+    while i < s.len - 1 and s[i + 1].a <= s[i].b + 1:
       s[i].b = max(s[i].b, s[i + 1].b)
       s.delete i + 1
 
@@ -269,7 +269,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   if c.pos < c.buf.len and c.buf[c.pos] != '\\':
     result = readRune(c)
   else:
-    let ch = if c.pos + 1 < c.buf.len: c.buf[c.pos + 1] else: '\0'
+    let ch = if c.pos < c.buf.len - 1: c.buf[c.pos + 1] else: '\0'
     case ch
     of 'n':
       # Outside a class, `\n` is a newline in any of its three spellings,
@@ -451,7 +451,7 @@ proc factor(c: var ReCtx): RegexNode =
   of '(':
     inc c.pos
     var isCapture = reNoCaptures notin c.flags
-    if c.pos + 1 < c.buf.len and c.buf[c.pos] == '?' and c.buf[c.pos+1] == ':':
+    if c.pos < c.buf.len - 1 and c.buf[c.pos] == '?' and c.buf[c.pos+1] == ':':
       inc c.pos, 2
       isCapture = false
     result = parseRegExprImpl(c)

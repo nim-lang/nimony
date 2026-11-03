@@ -465,7 +465,7 @@ func `==`*[T: Equatable](x, y: seq[T]): bool =
   if x.len != y.len:
     return false
 
-  for i in 0..x.len-1:
+  for i in 0 ..< x.len:
     if x[i] != y[i]:
       return false
 

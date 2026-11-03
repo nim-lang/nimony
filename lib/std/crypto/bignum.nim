@@ -77,7 +77,8 @@ func fromBytesBE*(data: openArray[byte]; res: var BigNum): bool =
     shift = shift + 8
     if shift == 32:
       shift = 0
-      inc limb
+      # past the last limb every further byte is dropped anyway
+      if limb < MaxLimbs: inc limb
     dec i
   var used = (significant + 3) div 4
   if used < 1: used = 1

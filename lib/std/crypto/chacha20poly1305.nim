@@ -26,7 +26,7 @@ func rotl(x: uint32; n: int): uint32 {.inline.} =
   (x shl n) or (x shr (32 - n))
 
 func load32le(b: openArray[byte]; o: int): uint32 {.inline,
-    requires: o >= 0 and o + 3 < b.len.} =
+    requires: o >= 0 and o < b.len - 3.} =
   uint32(b[o]) or (uint32(b[o+1]) shl 8) or (uint32(b[o+2]) shl 16) or
     (uint32(b[o+3]) shl 24)
 
@@ -122,7 +122,7 @@ when defined(nimNativeBackend) and defined(amd64):
       buf: array[16, byte]
       bufLen: range[0..15]
 
-  func le64at(b: openArray[byte]; o: int): uint64 {.requires: o >= 0 and o + 7 < b.len.} =
+  func le64at(b: openArray[byte]; o: int): uint64 {.requires: o >= 0 and o < b.len - 7.} =
     result = uint64(b[o]) or (uint64(b[o+1]) shl 8) or (uint64(b[o+2]) shl 16) or
       (uint64(b[o+3]) shl 24) or (uint64(b[o+4]) shl 32) or (uint64(b[o+5]) shl 40) or
       (uint64(b[o+6]) shl 48) or (uint64(b[o+7]) shl 56)
