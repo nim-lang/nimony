@@ -415,6 +415,14 @@ proc stopped*(): bool {.inline.} =
   atomicLoad(stopFlag, moRelaxed)
 
 proc shutdownPool*() =
+  ## Stop and join the workers. The pool returns to its unstarted state, so a
+  ## later `initPool` starts a fresh one; without a running pool this does
+  ## nothing — a second shutdown must not join the same threads again.
+  if atomicLoad(poolState, moAcquire) != 2: return
   atomicStore(stopFlag, true, moRelaxed)
   for i in 0 ..< workerCount:
     workers[i].join()
+  workers.setLen(0)
+  workerCount = 0
+  atomicStore(stopFlag, false, moRelaxed)
+  atomicStore(poolState, 0, moRelease)
