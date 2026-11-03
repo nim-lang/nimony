@@ -186,9 +186,7 @@ when not (defined(cpu16) or defined(cpu8)):
         #invalid UTF-16
         ch = replacement
 
-      # a `replacement` that is no code point
-      if ch < 0: ch = 0xFFFD
-      if ch > 0x10FFFF: ch = 0xFFFD
+      {.assume: ch >= 0.}
       if ch < 0x80:
         result.add chr(ch)
       elif ch < 0x800:
