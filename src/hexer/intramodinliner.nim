@@ -309,6 +309,11 @@ type
       # Module suffixes with no `.c.nif` to open (asked once, not per call).
     foreignInfo: Table[SymId, InlineInfo]
       # Cross-module policy verdicts, computed on first ask per callee.
+    forwardTargets: Table[SymId, Cursor]
+      # The locals and params of the proc being walked whose address it never
+      # takes, with their declared types: the `lhs` of an `lhs = f(args)` a
+      # splice may hand the callee's result local (`canForwardInto`). Set per
+      # proc by `enterCaller`; the cursors point into the walked buffer.
     inProgress*: HashSet[SymId]
       # Currently-being-spliced procs. Recursive `.inline` (direct or
       # mutual) would otherwise cause the splice + re-tr loop in dce2 to
@@ -338,6 +343,7 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
              foreign: initTable[string, ForeignModule](),
              noForeign: initHashSet[string](),
              foreignInfo: initTable[SymId, InlineInfo](),
+             forwardTargets: initTable[SymId, Cursor](),
              inProgress: initHashSet[SymId]())
 
 proc growthBudget*(bodySize: int): int =
@@ -1537,6 +1543,77 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   skip n
   result = 2                               # `(var …)` + `(scope …)`
 
+proc collectLocalDecls(n: Cursor; decls: var Table[SymId, Cursor];
+                       addrTaken: var HashSet[SymId]) =
+  if not n.isTagLit: return
+  if n.stmtKind == VarS:
+    var d = n.childCursor
+    if d.isSymbolDef:
+      let s = d.symId
+      skip d                                 # name
+      skip d                                 # pragmas
+      decls[s] = d
+  elif n.exprKind in AddrKinds:
+    let s = slotRootOf(n.childCursor)
+    if s != SymId(0): addrTaken.incl s
+  var it = n
+  it.into:
+    while it.hasMore:
+      collectLocalDecls(it, decls, addrTaken)
+      skip it
+
+proc enterCaller(c: var InlinerCtx; params, body: Cursor) =
+  ## Computes `forwardTargets` for the proc about to be walked.
+  c.forwardTargets.clear()
+  var decls = initTable[SymId, Cursor]()
+  var addrTaken = initHashSet[SymId]()
+  var pSyms: seq[SymId] = @[]
+  var pTypes: seq[Cursor] = @[]
+  collectParams(params, pSyms, pTypes)
+  for i in 0 ..< pSyms.len: decls[pSyms[i]] = pTypes[i]
+  collectLocalDecls(body, decls, addrTaken)
+  for s, t in decls:
+    if s notin addrTaken and pool.symIsLocal(s):
+      c.forwardTargets[s] = t
+
+proc sameType(a, b: Cursor): bool =
+  ## Token-wise equality of two NIFC types (line info ignored).
+  if a.kind != b.kind: return false
+  case a.kind
+  of TagLit:
+    if a.cursorTagId != b.cursorTagId: return false
+    var x = a
+    var y = b
+    result = true
+    x.into:
+      y.into:
+        while x.hasMore and y.hasMore:
+          if result and not sameType(x, y): result = false
+          skip x
+          skip y
+        if x.hasMore or y.hasMore: result = false
+        while x.hasMore: skip x
+        while y.hasMore: skip y
+  of Symbol: result = a.symId == b.symId
+  of IntLit: result = intVal(a) == intVal(b)
+  of UIntLit: result = uintVal(a) == uintVal(b)
+  of DotToken: result = true
+  else: result = false
+
+proc canForwardInto(c: InlinerCtx; lhs: SymId; site: SpliceSite): bool =
+  ## May the splice of `lhs = f(args)` hand `lhs` the callee's result local,
+  ## as `trySpliceVarInit` does its temp? Only if nothing reads `lhs` while the
+  ## body runs, since the result is then written into it early. The body cannot
+  ## name a caller local, so the ways in are an argument that mentions `lhs`
+  ## (a substituted one is evaluated inside the body) and a pointer, which
+  ## `forwardTargets` rules out. The types must agree too: the result local's
+  ## arithmetic then happens in `lhs`.
+  if not c.forwardTargets.hasKey(lhs): return false
+  if not sameType(c.forwardTargets.getOrQuit(lhs), site.pd.returnType): return false
+  for a in site.argCursors:
+    if countSymUses(a, lhs) > 0: return false
+  result = true
+
 proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## `(asgn lhs (call f arg…))` with a symbol `lhs` — Final IR's "a call binds
   ## directly to its destination" form, which is how a non-void call reaches
@@ -1545,9 +1622,11 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## (measured: 16 `isValid` call frames left in the native `nifbench` build,
   ## all of this shape). Emits one `(scope …)` and returns 1.
   ##
-  ## No result forwarding: `lhs` is live before the call, so the body's result
-  ## stays its own local and reaches `lhs` only at the `(ret …)` points — see
-  ## `emitSplice`. The residual `lhs = result'` copy is shoggoth's to clean.
+  ## `lhs` is live before the call, so in general the body's result stays its
+  ## own local and reaches `lhs` only at the `(ret …)` points — see
+  ## `emitSplice`. When `canForwardInto` shows nothing can observe `lhs`
+  ## meanwhile, `lhs` is the natural target and takes the result over instead,
+  ## so no `lhs = result'` copy is left behind.
   if not n.isTagLit or n.stmtKind != AsgnS: return 0
   let entry = n
   var probe = n
@@ -1558,7 +1637,7 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
 
   var site = SpliceSite()
   if not prepareSplice(c, probe, site): return 0
-  emitSplice(c, dest, site, lhsSym, forwardResult = false, entry.info)
+  emitSplice(c, dest, site, lhsSym, canForwardInto(c, lhsSym, site), entry.info)
 
   n = entry
   skip n
@@ -1995,6 +2074,56 @@ proc prunedInto(dest: var TokenBuf; expanded: var TokenBuf) =
 
 # ---- Same-module inliner pass (called from hexer.nim) ----
 
+type
+  ForwardUndo = object
+    removed: seq[(SymId, Cursor)]
+    added: seq[SymId]
+
+proc enterSplice(c: var InlinerCtx; n: Cursor; nEmitted: int): ForwardUndo =
+  ## Brings `forwardTargets` up to date for the re-walk of a splice: its own
+  ## locals are natural targets for the splices nested in it, and it may take
+  ## an address the caller never did (`addr result` once `result` was forwarded
+  ## to `x` reads `haddr x`). `leaveSplice` undoes both: the locals do not
+  ## outlive the splice, and no address it takes may either.
+  result = ForwardUndo()
+  var decls = initTable[SymId, Cursor]()
+  var addrTaken = initHashSet[SymId]()
+  var it = n
+  for _ in 0 ..< nEmitted:
+    collectLocalDecls(it, decls, addrTaken)
+    skip it
+  for s in addrTaken:
+    if c.forwardTargets.hasKey(s):
+      result.removed.add (s, c.forwardTargets.getOrQuit(s))
+      c.forwardTargets.del s
+  for s, t in decls:
+    if s notin addrTaken and not c.forwardTargets.hasKey(s) and pool.symIsLocal(s):
+      c.forwardTargets[s] = t
+      result.added.add s
+
+proc leaveSplice(c: var InlinerCtx; undo: ForwardUndo) =
+  for s in undo.added: c.forwardTargets.del s
+  for (s, t) in undo.removed: c.forwardTargets[s] = t
+
+proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor)
+
+proc rewalkSplice(c: var InlinerCtx; dest: var TokenBuf; spliced: var TokenBuf;
+                  nEmitted: int; callee: SymId) =
+  ## Nested splices first, into a scratch buffer; THEN prune the branches the
+  ## substituted arguments decided — only after the nested walk are inlined
+  ## guards (`!=` forwarders) reduced to the literal comparisons `condVal` can
+  ## judge.
+  if callee != SymId(0): c.inProgress.incl callee
+  var expanded = createTokenBuf(spliced.len)
+  var inner = beginRead(spliced)
+  let undo = enterSplice(c, inner, nEmitted)
+  for _ in 0 ..< nEmitted:
+    trIntra(c, expanded, inner)
+  endRead(inner)
+  leaveSplice(c, undo)
+  if callee != SymId(0): c.inProgress.excl callee
+  prunedInto(dest, expanded)
+
 proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
   ## Walks `n` and splices `.inline` calls in-place. Mirrors `dce2.tr`'s
   ## splice paths but without liveness / generic-instance resolution.
@@ -2025,20 +2154,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             var spliced = createTokenBuf(32)
             let nEmitted = trySplice(c, spliced, n)
             if nEmitted > 0:
-              if calleeSym != SymId(0):
-                c.inProgress.incl calleeSym
-              # Nested splices first, into a scratch buffer; THEN prune the
-              # branches the substituted arguments decided — only after the
-              # nested walk are inlined guards (`!=` forwarders) reduced to
-              # the literal comparisons `condVal` can judge.
-              var expanded = createTokenBuf(spliced.len)
-              var inner = beginRead(spliced)
-              for _ in 0 ..< nEmitted:
-                trIntra(c, expanded, inner)
-              endRead(inner)
-              if calleeSym != SymId(0):
-                c.inProgress.excl calleeSym
-              prunedInto(dest, expanded)
+              rewalkSplice(c, dest, spliced, nEmitted, calleeSym)
               continue
           if n.isTagLit and n.stmtKind == VarS:
             # `(var :tmp T (call …))` immediately guarding an `if` — fold the
@@ -2048,14 +2164,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             var spliced = createTokenBuf(32)
             let nEmitted = trySpliceCond(c, spliced, n, condCallee)
             if nEmitted > 0:
-              c.inProgress.incl condCallee
-              var expanded = createTokenBuf(spliced.len)
-              var inner = beginRead(spliced)
-              for _ in 0 ..< nEmitted:
-                trIntra(c, expanded, inner)
-              endRead(inner)
-              c.inProgress.excl condCallee
-              prunedInto(dest, expanded)
+              rewalkSplice(c, dest, spliced, nEmitted, condCallee)
               continue
           if n.isTagLit and n.stmtKind == AsgnS:
             # `(asgn lhs (call …))` — the destination-bound call form.
@@ -2072,14 +2181,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
               var spliced = createTokenBuf(32)
               let nEmitted = trySpliceAsgn(c, spliced, n)
               if nEmitted > 0:
-                c.inProgress.incl asgnCallee
-                var expanded = createTokenBuf(spliced.len)
-                var inner = beginRead(spliced)
-                for _ in 0 ..< nEmitted:
-                  trIntra(c, expanded, inner)
-                endRead(inner)
-                c.inProgress.excl asgnCallee
-                prunedInto(dest, expanded)
+                rewalkSplice(c, dest, spliced, nEmitted, asgnCallee)
                 continue
           trIntra(c, dest, n)
       dest.addParRi()
@@ -2096,6 +2198,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
         let bodySize = (if pd.body.isTagLit: tokenCount(pd.body) else: 0)
         let savedGrowth = c.growthLeft
         c.growthLeft = growthBudget(bodySize)
+        enterCaller(c, pd.params, pd.body)
         dest.addParLe(n.cursorTagId, n.info)
         into n:
           while n.hasMore:
@@ -2119,14 +2222,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
           var spliced = createTokenBuf(32)
           let nEmitted = trySpliceVarInit(c, spliced, n)
           if nEmitted > 0:
-            c.inProgress.incl calleeSym
-            var expanded = createTokenBuf(spliced.len)
-            var inner = beginRead(spliced)
-            for _ in 0 ..< nEmitted:
-              trIntra(c, expanded, inner)
-            endRead(inner)
-            c.inProgress.excl calleeSym
-            prunedInto(dest, expanded)
+            rewalkSplice(c, dest, spliced, nEmitted, calleeSym)
             return
       dest.addParLe(n.cursorTagId, n.info)
       into n:
@@ -2192,6 +2288,7 @@ proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
         dest.addSubtree d.pragmas
         var body = d.body
         ctx.growthLeft = growthBudget(tokenCount(body))
+        enterCaller(ctx, d.params, body)
         trIntra(ctx, dest, body)
         dest.addParRi()
       else:
