@@ -1668,6 +1668,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       else:
         let typeStart = dest.len
+        c.typesInProgress.add delayed.s.name
         case n.typeKind
         of EnumT, HoleyEnumT:
           semEnumType(c, dest, n, delayed.s.name, beforeExportMarker, crucial.size)
@@ -1693,6 +1694,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
            DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
            UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
           semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, ownerSym
+        discard c.typesInProgress.pop()
         fitTypeToPragmas(c, dest, crucial, typeStart)
     else:
       if n.typeKind in {RefT, PtrT}:

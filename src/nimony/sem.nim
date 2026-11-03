@@ -1736,11 +1736,16 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: NifLineInfo
             pathInfo = p.info
           if path != StrId(0) and path notin c.pluginBlacklist:
             c.pendingTypePlugins[s.name] = PluginObj(path: path, info: pathInfo)
+      elif s.name in c.typesInProgress:
+        dest.shrink lastValueStart(dest)
+        c.buildErr dest, typ.name.info, "illegal recursion in type '" & pool.symBasename(s.name) & "'"
       else:
         # remove symbol, inline type:
         dest.shrink lastValueStart(dest)
         var t = typ.body
+        c.typesInProgress.add s.name
         semLocalTypeImpl c, dest, t, context
+        discard c.typesInProgress.pop()
   else:
     # non type symbol, treat as expression
     # mirror semTypeExpr but just call semExprSym
