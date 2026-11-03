@@ -189,23 +189,20 @@ else:
   func alloc*(size: int): pointer =
     ## Allocates `size` bytes of uninitialized memory.
     {.cast(noSideEffect).}:
-      # a negative size is a request no allocation satisfies
-      result = nil
-      if size >= 0: result = alloc(allocator, size)
+      {.assume: size >= 0.}
+      result = alloc(allocator, size)
 
   func alloc0*(size: int): pointer =
     ## Allocates `size` bytes of zero-initialized memory.
     {.cast(noSideEffect).}:
-      # a negative size is a request no allocation satisfies
-      result = nil
-      if size >= 0: result = alloc0(allocator, size)
+      {.assume: size >= 0.}
+      result = alloc0(allocator, size)
 
   func realloc*(p: pointer; size: int): pointer =
     ## Grows or shrinks the allocation `p` to `size` bytes, preserving contents.
     {.cast(noSideEffect).}:
-      # a negative size is a request no allocation satisfies
-      result = nil
-      if size >= 0: result = realloc(allocator, p, size)
+      {.assume: size >= 0.}
+      result = realloc(allocator, p, size)
 
   func dealloc*(p: pointer) =
     ## Frees memory previously returned by `alloc`/`alloc0`/`realloc`.
