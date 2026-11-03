@@ -594,7 +594,7 @@ proc addFactors(n: RegexNode; dest: var seq[RegexNode]) =
     addFactors(n.b, dest)
   of reEps: discard
   of reStr:
-    var i = 0
+    var i: Natural = 0
     while i < n.s.len:
       let x = charExpr(runeAt(n.s, i))
       x.at = n.at
@@ -2017,7 +2017,7 @@ func captureWalk(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
     swap seenCur, seenNext
     inc sp
 
-func exec*(r: Regex; s: string; caps: var seq[Capture]; start: int;
+func exec*(r: Regex; s: string; caps: var seq[Capture]; start: Natural;
            endPos: var int): int =
   ## Matches `r` at `start`. Returns the rule that matched (`0` for none),
   ## reports the position just past the match in `endPos` and fills `caps` with

@@ -148,7 +148,7 @@ proc nowHttpDate*(dest: var openArray[char]): int =
 proc digit(c: char): int {.inline.} =
   if c >= '0' and c <= '9': ord(c) - ord('0') else: -1
 
-proc num(buf: openArray[char]; i: Natural; n: int): int =
+proc num(buf: openArray[char]; i, n: Natural): int =
   ## Exactly `n` digits at `i`, or `-1`. Exactly, not at least: a two-digit
   ## field that accepts three silently reinterprets every field after it.
   let stop = i + n

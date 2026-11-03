@@ -343,11 +343,11 @@ proc fillHeader(dest: var openArray[char]; opcode: WsOpcode; payloadLen: int;
   ## many connections spells one header per delivery, and an allocation there
   ## is a cost the message does not deserve.
   var i = 0
-  dest[i] = chr((if fin: 0x80 else: 0) or ord(opcode))
+  dest[i] = chr(((if fin: 0x80 else: 0) or ord(opcode)) and 0xFF)
   inc i
   let maskBit = if masked: 0x80 else: 0
   if payloadLen < 126:
-    dest[i] = chr(payloadLen or maskBit)
+    dest[i] = chr((payloadLen or maskBit) and 0xFF)
     inc i
   elif payloadLen <= 65535:
     dest[i] = chr(126 or maskBit)
