@@ -130,6 +130,9 @@ type
       ## The `old(e)` snapshots of the last call, which a store or a local that
       ## binds its result reads the callee's `.ensures` with.
 
+  ProofKind = enum
+    ProvenIndex, ProvenCall
+
   FirContext = object
     flow: FlowState                    # the journaled analysis state: the
                                        # definite-assignment init-set and the
@@ -178,6 +181,19 @@ type
                                        # instances included (see `collectAccessors`)
     steps: Table[SymId, StepInfo]      # routines that are just `x = x ± k`
     notSteps: HashSet[SymId]           # negative cache for the lookup above
+    assumedSteps: HashSet[VarId]
+      ## Locations the enclosing loops' pre-scans took as monotone although
+      ## their step is in a type that wraps, and on which a fact kept across
+      ## the back-edge depends. The pre-scan has no facts of the iteration to
+      ## rule the wrap out, so the traversal judges every such step
+      ## (`analyseLoopBody` explains the whole scheme).
+    brokenSteps: HashSet[VarId]
+      ## The `assumedSteps` whose step the traversal could not keep inside
+      ## their type: the assumption was wrong.
+    proofLog: seq[(ProofKind, int)]
+      ## The positions added to `dischargedIndexes` or `provenCalls` while an
+      ## assumption was in force, so that a second analysis of the loop can
+      ## take them back.
     prescanning: bool
       ## True while `scanLoopWrites` walks a loop body ahead of its traversal.
       ## The body's own locals are not registered with the type cache yet, so
@@ -1680,8 +1696,20 @@ proc directionOfDelta(delta: xint): IvKind =
   elif delta < createXint(0'i32): ivDecreasing
   else: ivIncreasing
 
+proc declaredStepFits(c: FirContext; t: Cursor; loc: VarId; k: xint): bool =
+  ## Does `loc + k` stay inside the type `t` for every value of `loc`'s
+  ## declared `range`? That range holds in every iteration, so the loop
+  ## pre-scan may ask it: `offset - 4` of a `Natural` cannot wrap.
+  result = false
+  if not c.declaredRange.hasKey(loc): return false
+  var tLo = zero()
+  var tHi = zero()
+  if not integerTypeBounds(c.bits, arithType(t), tLo, tHi): return false
+  let r = c.declaredRange.getOrQuit(loc)
+  result = tLo <= r.lo + k and r.hi + k <= tHi
+
 proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
-                delta: var xint; stepArg: var Cursor): bool =
+                delta: var xint; stepArg: var Cursor; mayWrap: var bool): bool =
   ## Is this a call to a step routine? Answers with the location it moves and by
   ## how much, signed. `inc(i, k)` with a `k` whose value is not known here is a
   ## write like any other — `inc` on an ordinal accepts a negative step.
@@ -1715,10 +1743,17 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
   if typeWraps(info.opType):
     # `inc` of a `uint8` at 255 makes it 0, not 256: the step only moves what
     # is known where the facts keep it inside the type. The loop pre-scan has
-    # no facts of the iteration to ask, so there it is a write like any other.
+    # no facts of the iteration to ask, only the location's declared range;
+    # short of that the step is *assumed* to fit (`assumedSteps`).
     let moved = if info.isSub: -step else: step
-    if c.prescanning or step.isNaN or
-        not stepFits(c, info.opType, peelExpr(target), moved):
+    if step.isNaN:
+      loc = InvalidVarId
+      stepArg = default(Cursor)
+      return false
+    if c.prescanning:
+      if not declaredStepFits(c, info.opType, loc, moved): mayWrap = true
+    elif not stepFits(c, info.opType, peelExpr(target), moved):
+      if loc in c.assumedSteps: c.brokenSteps.incl loc
       loc = InvalidVarId
       stepArg = default(Cursor)
       return false
@@ -1726,13 +1761,14 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
   delta = if info.isSub: -step else: step
   result = true
 
-proc stepCall(c: var FirContext; n: Cursor; loc: var VarId; delta: var xint): bool =
+proc stepCall(c: var FirContext; n: Cursor; loc: var VarId; delta: var xint;
+              mayWrap: var bool): bool =
   ## `stepCallAt` for a cursor sitting on the whole `(call …)` node.
   if not n.isTagLit: return false
   var callee = n
   callee = sub(callee)
   var stepArg = default(Cursor)
-  result = stepCallAt(c, callee, loc, delta, stepArg)
+  result = stepCallAt(c, callee, loc, delta, stepArg, mayWrap)
 
 proc isVarOpenArray(c: var FirContext; t: Cursor): bool =
   ## `var openArray[T]`: a view whose elements may be written but which itself
@@ -3922,7 +3958,9 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
       when defined(contractStats):
         stderr.writeLine "INDEX " & (if c.obligationOpen: "discharged" else: "checked") &
           " " & infoToStr(idx.info) & " " & asNimCode(idx)
-      if c.obligationOpen: c.dischargedIndexes.incl nodePos
+      if c.obligationOpen and not c.dischargedIndexes.containsOrIncl(nodePos) and
+          c.assumedSteps.len > 0:
+        c.proofLog.add (ProvenIndex, nodePos)
     while pc.hasMore: skip pc
 
 # --- Shared globals ---
@@ -4306,7 +4344,8 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     if checkRequires(c, req, rd, callCursor.info) and callCursor.kind == Symbol and
         routineSplits(c, callCursor.symId):
       let pos = cursorToPosition(c.root, callCursor)
-      c.provenCalls.incl pos
+      if not c.provenCalls.containsOrIncl(pos) and c.assumedSteps.len > 0:
+        c.proofLog.add (ProvenCall, pos)
   # So is every `old(e)` of the postcondition.
   let ens = extractPragma(fnType, EnsuresP)
   if not cursorIsNil(ens):
@@ -4318,7 +4357,8 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   var stepLoc = InvalidVarId
   var delta = createNaN()
   var stepArg = default(Cursor)
-  var isStep = stepCallAt(c, callCursor, stepLoc, delta, stepArg) and
+  var mayWrap = false
+  var isStep = stepCallAt(c, callCursor, stepLoc, delta, stepArg, mayWrap) and
                not delta.isNaN
   if isStep:
     variableChangedByDiff(c.facts, stepLoc, delta)
@@ -4582,6 +4622,12 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip value
   let valueStart = value
   traverseExpr c, value, call
+  if c.assumedSteps.len > 0:
+    # `i = i ± k`, a step the loop's pre-scan may have assumed not to wrap
+    let destLoc = plainLocationVarId(c, n)
+    if destLoc in c.assumedSteps:
+      let v = peelExpr(valueStart)
+      if v.exprKind in {AddX, SubX} and not noWrap(c, v): c.brokenSteps.incl destLoc
 
   # Check borrow conflicts for the destination
   if borrowMode(c, n).isTracked:
@@ -4797,6 +4843,7 @@ type
     preserved: seq[VarId] ## derived locations the call just scanned promises
                           ## to leave alone (`s.len == old(s.len)`); holds
                           ## for the `(unknown …)` that follows it too
+    assumed: HashSet[VarId] ## stepped by a wrapping step taken as monotone
     pendingStep: VarId    ## the `(unknown v)` a step call emits right after
                           ## itself is that call's own doing, not a second,
                           ## unclassified write
@@ -4885,7 +4932,7 @@ proc preservedByEnsures(c: var FirContext; call: Cursor): seq[VarId] =
       preservedLocations(c, ensuresProposition(ens), subst, result)
 
 proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
-                 value: Cursor): IvKind =
+                 value: Cursor; mayWrap: var bool): IvKind =
   ## `dest = dest ± k` written out, the form a loop that does not go through
   ## `inc` takes.
   result = ivUnknown
@@ -4909,9 +4956,11 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   if v.exprKind notin {AddX, SubX}: return
   var r = v
   r = sub(r)
-  # a wrapping `+` is not monotone, and the pre-scan has no facts to rule the
-  # wrap out
-  if typeWraps(r): return
+  # a wrapping `+` is monotone only if it does not wrap, and the pre-scan has
+  # no facts of the iteration to rule that out: short of the destination's
+  # declared range, it is assumed (`assumedSteps`)
+  let opType = r
+  let wraps = typeWraps(r)
   skip r # the type operand
   var operand = r
   skip r
@@ -4930,9 +4979,12 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
     # Not a constant, but a value the body declared as non-negative moves the
     # destination just as monotonically.
     let kv = plainLocationVarId(c, konst)
-    if kv != InvalidVarId and kv in w.nonNeg:
+    if not wraps and kv != InvalidVarId and kv in w.nonNeg:
       return if v.exprKind == SubX: ivDecreasing else: ivIncreasing
     return ivUnknown
+  if wraps and not declaredStepFits(c, opType, destLoc,
+                                    if v.exprKind == SubX: -k else: k):
+    mayWrap = true
   result = directionOf(v.exprKind == SubX, k)
 
 proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
@@ -4964,7 +5016,10 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
   if loc == InvalidVarId:
     noteWrite(w, getVarId(c, root), ivUnknown)
     return
-  noteWrite(w, loc, stepOfValue(c, w, loc, value))
+  var mayWrap = false
+  let kind = stepOfValue(c, w, loc, value, mayWrap)
+  noteWrite(w, loc, kind)
+  if mayWrap: w.assumed.incl loc
   if loc != getVarId(c, root):
     # Writing `d.count` says nothing about `d` itself, but nil-ness and the
     # like are keyed on the root, so stay conservative there.
@@ -4999,8 +5054,10 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     w.preserved.setLen 0
     var stepLoc = InvalidVarId
     var delta = createNaN()
-    if stepCall(c, n, stepLoc, delta):
+    var mayWrap = false
+    if stepCall(c, n, stepLoc, delta, mayWrap):
       noteWrite(w, stepLoc, directionOfDelta(delta))
+      if mayWrap: w.assumed.incl stepLoc
       w.pendingStep = stepLoc
       skip n
       return
@@ -5108,11 +5165,72 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for ch in bypasses:
     c.facts.add ch
 
+proc factsMention(c: FirContext; v: VarId): bool =
+  result = false
+  for i in 0 ..< c.facts.len:
+    if c.facts[i].a == v or c.facts[i].b == v: return true
+
+proc revokeProofs(c: var FirContext; mark: int) =
+  ## Takes back what was proven since `mark` of `proofLog`.
+  for i in mark ..< c.proofLog.len:
+    let (kind, pos) = c.proofLog[i]
+    case kind
+    of ProvenIndex: c.dischargedIndexes.excl pos
+    of ProvenCall: c.provenCalls.excl pos
+  c.proofLog.setLen mark
+
 proc analyseLoopBody(c: var FirContext; n: var Cursor) =
   ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
   ## via `(jmp loopExit)` and never falls through.
+  ##
+  ## **Why the body may be analysed more than once.** Before the body is
+  ## traversed, `scanLoopWrites` decides which facts survive the back-edge
+  ## (`restrictFactsToLoopInvariants`): `0 <= i` survives a loop whose only
+  ## write to `i` is `inc i`, since `i` only moves up. But signed and
+  ## unsigned arithmetic wrap (#2840): `inc i` at `high(int)` makes `i`
+  ## negative, so `i` only moves up if the step does not wrap. Whether it
+  ## does depends on the facts *at the step* — the loop guard `i < n` rules
+  ## it out — and those exist only once the body is traversed. The pre-scan
+  ## cannot know them.
+  ##
+  ## So the pre-scan *assumes* the step fits (`assumedSteps`) unless the
+  ## location's declared `range` already says so (`declaredStepFits`), and
+  ## the traversal judges every assumed step where it happens (`stepCallAt`,
+  ## `traverseAsgn`). If one cannot be shown to fit (`brokenSteps`), the
+  ## facts the traversal ran on were too strong: everything it concluded is
+  ## void. The body is then analysed again from the same entry state, with
+  ## the broken locations demoted to "unknown" writes, which keeps none of
+  ## their facts. That rollback covers the errors reported, the flow state,
+  ## the recorded loop exits and the positions proven along the way
+  ## (`proofLog`).
+  ##
+  ## **Termination.** Each round either confirms all of its assumptions or
+  ## demotes at least one location; demoted locations are never assumed
+  ## again. So the body is traversed at most once more than the number of
+  ## assumed locations, and in practice once: a guarded `while i < n: inc i`
+  ## proves its step on the first round. Nested loops each run their own
+  ## rounds, which multiplies in the worst case; a re-analysis happens only
+  ## for a step nothing bounds, which is rare.
+  ##
+  ## Only an assumption some fact kept across the back-edge rests on is made
+  ## at all (`factsMention`): without such a fact, the monotonicity of the
+  ## location changes nothing and its step need not be judged.
   var call = freshCall()
-  block:
+  let bodyStart = n
+  let errMark = c.errors.len
+  let proofMark = c.proofLog.len
+  let exitsMark = exitsCheckpoint(c.tr)
+  let wasLive = c.tr.live
+  let base = c.flow.checkpoint()
+  # The enclosing loops' broken steps, set aside: `brokenSteps` then holds
+  # only what this body breaks, and they are merged back at the end. A
+  # `move` rather than a copy of the set.
+  var outerBroken = move c.brokenSteps
+  c.brokenSteps = initHashSet[VarId]()
+  var demoted = initHashSet[VarId]()
+  var added: seq[VarId] = @[]   # this loop's own `assumedSteps`, undone after
+  var cp = base
+  while true:
     # Before the checkpoint, not after: the rollback below restores the state
     # the checkpoint captured, so an invalidation made after it would be undone
     # and the stale fact would be back in force *after* the loop — which is
@@ -5120,25 +5238,55 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     block:
       var w = LoopWrites(kinds: initTable[VarId, IvKind](),
                          nonNeg: initHashSet[VarId](), opaque: false,
+                         assumed: initHashSet[VarId](),
                          pendingStep: InvalidVarId)
       var scan = n
       c.prescanning = true
       scanLoopWrites(c, scan, w)
       c.prescanning = false
+      for v in demoted:
+        if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
       restrictFactsToLoopInvariants(c, w)
-    let cp = c.flow.checkpoint()
+      for v in w.assumed:
+        if v notin demoted and v notin c.assumedSteps and
+            w.kinds.getOrDefault(v, ivUnknown) in {ivIncreasing, ivDecreasing} and
+            factsMention(c, v):
+          added.add v
+    for v in added: c.assumedSteps.incl v
+    cp = c.flow.checkpoint()
     traverseStmt c, n, call        # the body `(stmts ...)`; ends by leaving
-    let backEdge = backEdgeBorrows(c.tr)
-    dropContinue(c.tr)       # the loop header consumes the back-edge
-    # The loop never falls through; reset the working state to the pre-loop base.
-    # A following `(lab loopExit)` installs the join of the states its exits
-    # jumped with (`bindLoopExit`).
-    c.flow.rollbackTo cp
-    # Borrows are the exception to the pre-loop base: what the body leaves
-    # borrowed stays borrowed when the loop stops (see `backEdgeBorrows`).
-    # Borrows of the body's own locals are not among them, their `kill`
-    # ends them before the back-edge.
-    c.flow.inclBorrows backEdge
+    for v in added: c.assumedSteps.excl v
+    var broken = false
+    for v in added:
+      if v in c.brokenSteps:
+        demoted.incl v
+        broken = true
+    added.setLen 0
+    if not broken: break
+    # A step an assumption rests on may wrap: undo the round, try again.
+    c.brokenSteps.clear()
+    c.errors.shrink errMark
+    revokeProofs(c, proofMark)
+    rollbackExits(c.tr, exitsMark)
+    c.tr.live = wasLive
+    c.flow.rollbackTo base
+    call = freshCall()
+    n = bodyStart
+  # What this body broke of the enclosing loops' assumptions is theirs to judge.
+  for v in outerBroken: c.brokenSteps.incl v
+  # Outside every loop no assumption can be taken back any more.
+  if c.assumedSteps.len == 0: c.proofLog.setLen proofMark
+  let backEdge = backEdgeBorrows(c.tr)
+  dropContinue(c.tr)       # the loop header consumes the back-edge
+  # The loop never falls through; reset the working state to the pre-loop base.
+  # A following `(lab loopExit)` installs the join of the states its exits
+  # jumped with (`bindLoopExit`).
+  c.flow.rollbackTo cp
+  # Borrows are the exception to the pre-loop base: what the body leaves
+  # borrowed stays borrowed when the loop stops (see `backEdgeBorrows`).
+  # Borrows of the body's own locals are not among them, their `kill`
+  # ends them before the back-edge.
+  c.flow.inclBorrows backEdge
 
 proc recordLoopExitLabel(c: var FirContext; n: Cursor) =
   ## The trailing `(lab loopExit)` is this loop's exit; record it so
@@ -6139,6 +6287,8 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     forBinders: initHashSet[SymId](),
     declaredRange: initTable[VarId, RangeBounds](),
     typeRange: initTable[VarId, RangeBounds](),
+    assumedSteps: initHashSet[VarId](),
+    brokenSteps: initHashSet[VarId](),
     verbose: verbose,
     features: features,
     bits: bits
