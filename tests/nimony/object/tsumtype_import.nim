@@ -1,11 +1,14 @@
-import std/[syncio, assertions]
+import std/[assertions, repr, syncio]
 import deps/msumtype
 
 let v: Node = Value(val: 42)
 assert eval(v) == 42
+assert repr(v) == "Node(Value(val: 42))"
 
 let add: Node = AddOpr(a: Value(val: 10), b: Value(val: 20))
 assert eval(add) == 30
+assert repr(add) ==
+  "Node(AddOpr(a: Node(Value(val: 10)), b: Node(Value(val: 20))))"
 
 let sub: Node = SubOpr(a: Value(val: 100), b: Value(val: 30))
 assert eval(sub) == 70

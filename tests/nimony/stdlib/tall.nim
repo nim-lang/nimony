@@ -90,6 +90,7 @@ import std/parseutils
 import std/pathnorm
 import std/paths
 import std/random
+import std/repr
 import std/rex
 import std/rawthreads
 import std/result
