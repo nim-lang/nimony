@@ -33,10 +33,9 @@ func default*[T: distinct](x: typedesc[T]): T {.magic: DefaultDistinct.}
 func default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 func default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
-func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
-  # `hexer/desugar` replaces the loop with one `zeroMem` when `default(T)` is
-  # all zero bits.
-  {.semantics: "defaultArrayLoop".}
+func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy, semantics: "defaultArray".} =
+  # `hexer/desugar` replaces a call with `(aconstr array[I, T])` when
+  # `default(T)` is all zero bits.
   for i in low(array[I, T]) .. high(array[I, T]):
     result[i] = default(T)
 

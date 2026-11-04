@@ -28,7 +28,7 @@ type
     AlignofX = (ord(AlignofTagId), "alignof")  ## `alignof` operation
     OffsetofX = (ord(OffsetofTagId), "offsetof")  ## `offsetof` operation
     OconstrX = (ord(OconstrTagId), "oconstr")  ## object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named
-    AconstrX = (ord(AconstrTagId), "aconstr")  ## array constructor. Without any `X` it is the all-zero array of type `T`, whatever its length: `hexer/defaultvalues` writes it so that a default of `array[2_000_000, int]` is not two million zeros
+    AconstrX = (ord(AconstrTagId), "aconstr")  ## array constructor
     BracketX = (ord(BracketTagId), "bracket")  ## untyped array constructor
     CurlyX = (ord(CurlyTagId), "curly")  ## untyped set constructor
     CurlyatX = (ord(CurlyatTagId), "curlyat")  ## curly expression `a{i}`
@@ -356,7 +356,7 @@ type
     DeprecatedP = (ord(DeprecatedTagId), "deprecated")  ## `deprecated` pragma
     SideEffectP = (ord(SideEffectTagId), "sideEffect")  ## explicit `sideEffect` pragma
     KeepOverflowFlagP = (ord(KeepOverflowFlagTagId), "keepOverflowFlag")  ## keep overflow flag
-    SemanticsP = (ord(SemanticsTagId), "semantics")  ## proc with builtin behavior for expreval and the hexer. Also a statement, `{.semantics: "defaultArrayLoop".}` in a routine body, which tells `hexer/desugar` what the rest of the body does (there: zero `result` when the element default is all zero bits)
+    SemanticsP = (ord(SemanticsTagId), "semantics")  ## proc with builtin behavior for expreval
     InheritableP = (ord(InheritableTagId), "inheritable")  ## `inheritable` pragma
     BaseP = (ord(BaseTagId), "base")  ## `base` pragma (currently ignored)
     PureP = (ord(PureTagId), "pure")  ## `pure` pragma (currently ignored)

@@ -315,7 +315,7 @@
 | `(deprecated X?)` | NimonyPragma | `deprecated` pragma |
 | `(sideEffect)` | NimonyPragma | explicit `sideEffect` pragma |
 | `(keepOverflowFlag)` | NimonyPragma | keep overflow flag |
-| `(semantics STR)` | NimonyPragma | proc with builtin behavior for expreval and the hexer. Also a statement, `{.semantics: "defaultArrayLoop".}` in a routine body, which tells `hexer/desugar` what the rest of the body does (there: zero `result` when the element default is all zero bits) |
+| `(semantics STR)` | NimonyPragma | proc with builtin behavior for expreval |
 | `(inheritable)` | NimonyPragma | `inheritable` pragma |
 | `(base)` | NimonyPragma | `base` pragma (currently ignored) |
 | `(pure)` | NimonyPragma | `pure` pragma (currently ignored) |

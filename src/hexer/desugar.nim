@@ -142,27 +142,6 @@ proc trStmtList(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = 
     while n.hasMore:
       trStmt(c, dest, n, isTopScope)
 
-proc semanticsMarker(n: Cursor): string =
-  ## `(pragmas (semantics "name"))`, the statement form of the pragma, or "".
-  result = ""
-  if n.stmtKind == PragmasS:
-    var p = n
-    inc p
-    if p.pragmaKind == SemanticsP:
-      inc p
-      if p.kind == StrLit: result = pool.strings[p.strId]
-
-proc zeroResult(dest: var TokenBuf; res: SymId; typ: Cursor; info: NifLineInfo) =
-  ## `zeroMem(addr result[0], sizeof(T))`
-  copyIntoKind dest, CallS, info:
-    dest.addSymUse(pool.symId("zeroMem.0." & SystemModuleSuffix), info)
-    copyIntoKind dest, AddrX, info:
-      copyIntoKind dest, ArratX, info:
-        dest.addSymUse(res, info)
-        dest.addIntLit(0, info)
-    copyIntoKind dest, SizeofX, info:
-      dest.addSubtree typ
-
 proc isZeroArray(t: Cursor): bool =
   let impl = toTypeImpl(t)
   var err = false
@@ -170,28 +149,15 @@ proc isZeroArray(t: Cursor): bool =
     not err and isZeroDefault(impl.childCursor)
 
 proc zeroDefaultArrayOf(decl: Cursor; arrType: var Cursor): bool =
-  ## Is `decl` `default(array[I, T])` (`system/defaults.nim`, the body marked
-  ## `{.semantics: "defaultArrayLoop".}`) for a `T` whose default is all zero
-  ## bits? Then a call of it is `(aconstr array[I, T])`, the all-zero array,
-  ## and the caller need not materialize the result to copy it: a `Node()`
-  ## with an `array[2_000_000, int]` field built a 16 MB temporary on the
-  ## stack.
-  result = false
-  let r = asRoutine(decl, SkipInclBody)
-  if r.body.stmtKind != StmtsS: return
-  var body = sub(r.body)
-  var resType = default(Cursor)
-  while body.hasMore:
-    if body.stmtKind == ResultS:
-      resType = asLocal(body).typ
-    elif semanticsMarker(body) == "defaultArrayLoop":
-      if resType != default(Cursor) and isZeroArray(resType):
-        arrType = resType
-        result = true
-      return
-    elif body.stmtKind != PragmasS:
-      return # the marker is at the top of the body or nowhere
-    skip body
+  ## Is `decl` `default(array[I, T])` (`system/defaults.nim`, marked
+  ## `.semantics: "defaultArray"`) for a `T` whose default is all zero bits?
+  ## Then a call of it is `(aconstr array[I, T])`, the all-zero array, and the
+  ## caller need not materialize the result to copy it: a `Node()` with an
+  ## `array[2_000_000, int]` field built a 16 MB temporary on the stack.
+  let r = asRoutine(decl)
+  result = hasPragmaOfValue(r.pragmas, SemanticsP, "defaultArray") and
+    isZeroArray(r.retType)
+  if result: arrType = r.retType
 
 proc isZeroDefaultArrayCall(c: var Context; n: Cursor; arrType: var Cursor): bool =
   var n = n
@@ -225,27 +191,8 @@ proc tryDropZeroArrayTemp(c: var Context; dest: var TokenBuf; n: var Cursor): bo
     result = true
 
 proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var res = default(SymId)
-  var resType = default(Cursor)
   n.into:
     while n.hasMore:
-      if n.stmtKind == ResultS:
-        let r = asLocal(n)
-        res = r.name.symId
-        resType = r.typ
-      elif res != default(SymId) and semanticsMarker(n) == "defaultArrayLoop":
-        # `default(array[I, T])`'s loop (`system/defaults.nim`): when
-        # `default(T)` is all zero bits, the array's is too, and one
-        # `zeroMem` replaces the N iterations — which the inliner would
-        # otherwise unroll for a small N and the back end would keep for a
-        # big one.
-        if isZeroArray(resType):
-          let info = n.info
-          # The marker, then the loop as the iterinliner left it, up to the
-          # `ret result`: nothing outside the loop jumps into it.
-          while n.hasMore and n.stmtKind != RetS: skip n
-          zeroResult dest, res, resType, info
-          continue
       trStmt(c, dest, n)
 
 proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cursor; pragmas: var Cursor): bool =

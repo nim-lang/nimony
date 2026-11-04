@@ -1470,23 +1470,6 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       dest.addParRi()
       closePragmaLine()
       producesVoid c, dest, info, it.typ
-  of SemanticsP:
-    # In a routine body: tells a hexer pass what the body does, so it can
-    # substitute a cheaper equivalent (`hexer/desugar`'s "defaultArrayLoop").
-    # Kept as a `(pragmas (semantics "name"))` statement that lengcgen skips.
-    let info = it.n.info
-    toPragmaArgs()
-    dest.addParLe(PragmasS, info)
-    dest.addParLe(SemanticsP, info)
-    if it.n.hasMore and it.n.kind in {StrLit, Ident}:
-      dest.addStrLit(pool.strings[it.n.strId], it.n.info)
-      inc it.n
-    else:
-      buildErr c, dest, info, "`semantics` pragma takes a string literal"
-    dest.addParRi()
-    dest.addParRi()
-    closePragmaLine()
-    producesVoid c, dest, info, it.typ
   else:
     if (let psym = c.resolveCustomPragma(it.n); psym != NoSymId):
       # A custom pragma as a *statement*. It marks the region it stands in
