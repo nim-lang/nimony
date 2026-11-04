@@ -187,6 +187,28 @@ type
                                        ## backend re-infer (the pre-existing behaviour, kept
                                        ## for the self-tests, which parse a body in isolation)
 
+proc maxScalarName(n: Cursor): int =
+  ## The highest `n` of a `` `sroa.<n> `` this body already declares: a later
+  ## run (the optimizer runs SROA again after constant folding) must not mint a
+  ## name the first one used.
+  result = 0
+  case n.kind
+  of SymbolDef:
+    let s = symName(n)
+    const P = "`sroa."
+    if s.len > P.len and s[0 ..< P.len] == P:
+      var v = 0
+      for i in P.len ..< s.len:
+        if s[i] in {'0'..'9'}: v = v * 10 + (ord(s[i]) - ord('0'))
+        else: return 0
+      result = v
+  of TagLit:
+    var it = n
+    it.loopInto:
+      result = max(result, maxScalarName(it))
+      skip it
+  else: discard
+
 proc freshScalarName(c: var Context): string =
   ## A field scalar is a LOCAL of the body being scalarized, so its name is a
   ## local's: `<ident>.<disamb>` and nothing else. Two bodies both minting
@@ -488,6 +510,7 @@ proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
     let n = beginRead(buf)
     collectCandidates(c, n)
   if c.candidates.len == 0: return
+  c.counter = maxScalarName(beginRead(buf))
   block:
     let n = beginRead(buf)
     classify(c, n)
