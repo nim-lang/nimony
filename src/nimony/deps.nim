@@ -2216,6 +2216,11 @@ proc frontendMemoFile(config: NifConfig): string =
 proc backendMemoFile(c: DepContext): string =
   c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0]) / "config.nif"
 
+proc sharedBackendMemoFile(c: DepContext): string =
+  ## The memo of what every main built with this backend shares: the
+  ## imported modules' `.x.nif` (`hexedFile`).
+  c.config.nifcachePath / c.config.backendTag / "config.nif"
+
 proc frontendMemo(config: NifConfig): string =
   var b = nifbuilder.open(200)
   b.addHeader()
@@ -2232,6 +2237,23 @@ proc backendMemo(c: DepContext; passC, passL: string): string =
   b.withTree "config":
     addFrontendKey b, c.config
     addBackendKey b, c, passC, passL
+  result = b.extract()
+
+proc sharedBackendMemo(c: DepContext): string =
+  ## What the shared `.x.nif` depend on: the frontend key plus the backend
+  ## options short of the C compiler and linker ones, which only the
+  ## per-main nodes (`.o` files, the link) read.
+  var b = nifbuilder.open(200)
+  b.addHeader()
+  b.withTree "config":
+    addFrontendKey b, c.config
+    b.withTree "backend":
+      b.withTree "opt":
+        b.addStrLit $c.config.optLevel
+      if c.config.layoutFile.len > 0:
+        b.withTree "layout":
+          b.addStrLit c.config.layoutFile
+      if c.config.jsBrowser: b.addKeyw "browser"
   result = b.extract()
 
 proc memoDiffers(c: DepContext; path, memo: string): bool =
@@ -2261,11 +2283,16 @@ proc execFrontend(cmd, memoPath, memo: string; changed: bool) =
     if changed: onRaiseQuit writeFile(memoPath, "")
     quit("FAILURE: " & cmd)
 
-proc execBackend(cmd, memoPath, memo: string; changed: bool) =
-  ## Runs the backend stage. Nothing else builds into this main's directory,
-  ## so its memo is recorded only once the stage has gone through.
+proc writeMemo(path, memo: string) =
+  if not semos.fileExists(path) or onRaiseQuit(readFile(path)) != memo:
+    onRaiseQuit writeFile(path, memo)
+
+proc execBackend(cmd, sharedMemoPath, sharedMemo, memoPath, memo: string) =
+  ## Runs the backend stage. Its memos are recorded only once the stage has
+  ## gone through.
   exec cmd
-  if changed: onRaiseQuit writeFile(memoPath, memo)
+  writeMemo sharedMemoPath, sharedMemo
+  writeMemo memoPath, memo
 
 proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
   # `--docs` is nifler's alone: it attaches `##` comments the way Nim's parser
@@ -2575,6 +2602,16 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # https://github.com/nim-lang/nimony/issues/985
     c = initDepContext(config, project, true, forceRebuild, moduleFlags, cmd)
     let backend = c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0])
+    let beMemoFile = backendMemoFile(c)
+    if not semos.fileExists(beMemoFile):
+      # Nothing in this main's directory is known to come from this
+      # configuration (a first build, or one that stopped half way), so it
+      # starts empty — rather than `--rerun` the whole stage, which would
+      # remake the `.x.nif` every main shares with it as well: a second
+      # program built into a nimcache re-hexed the stdlib, and the macro
+      # plugins compiled in one host cache (`semos.macroHostDir`) rewrote
+      # those files under each other.
+      vfsRemoveTree backend
     onRaiseQuit createDir(path(backend))
     onRaiseQuit createDir(path(sharedObjDir()))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsLengc, passC, passL)
@@ -2590,12 +2627,16 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
-    let beMemoFile = backendMemoFile(c)
     let beMemo = backendMemo(c, passC, passL)
-    let backendChanged = memoDiffers(c, beMemoFile, beMemo)
+    let sharedMemoFile = sharedBackendMemoFile(c)
+    let sharedMemo = sharedBackendMemo(c)
+    # A missing per-main memo is no reason to rerun: that directory was just
+    # emptied, so mtimes alone remake all of it.
+    let backendChanged = memoDiffers(c, sharedMemoFile, sharedMemo) or
+      (semos.fileExists(beMemoFile) and memoDiffers(c, beMemoFile, beMemo))
     execBackend nifmakeBase & (if backendChanged: " --rerun" else: "") &
         jobsArg(config) & " run " & progArg(flags, 50, 100) & quoteShell(buildFinalFilename),
-      beMemoFile, beMemo, backendChanged
+      sharedMemoFile, sharedMemo, beMemoFile, beMemo
 
   if Stats in flags:
     # Walk every source module in the dep graph and sum line counts. Counting
