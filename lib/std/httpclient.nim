@@ -37,10 +37,12 @@
 ##   `User-Agent` and `Accept-Encoding` have defaults a user header replaces.
 ##
 ## One request per connection (`Connection: close`). `httpGet`, `httpPost` and
-## `httpPut` raise for a redirect, not follow it; `httpRequest` returns a
-## response of any status as an `HttpResponse` (code, reason, headers, final
-## URL, body) and follows redirects. Every request takes a deadline `dl`
-## (`afterMs(10_000)`), which bounds it as a whole.
+## `httpPut` do not follow redirects: a 3xx raises its `httpToErrorCode`.
+## `httpRequest` returns a response of any status as an `HttpResponse` (code,
+## reason, headers, final URL, body) and follows redirects. Every request takes
+## a deadline `dl` (`afterMs(10_000)`) that bounds connecting, sending the
+## request and reading the response head; as with every `streamio` connection
+## constructor, the returned body `Reader` starts with `never`.
 
 {.feature: "lenientnils".}
 
@@ -254,7 +256,9 @@ proc readHead(r: var Reader; response: var HttpHeaders;
 proc setBodyAdapter(r: var Reader; code: int; response: HttpHeaders;
                     noBody: bool) {.passive, raises.} =
   ## Puts the body adapter into `r`'s adapter slot. `noBody`: the response to a
-  ## `HEAD`, whose framing headers describe a body that is not sent.
+  ## `HEAD`, whose framing headers describe a body that is not sent. `HEAD`,
+  ## 204 and 304 have no body: the rule `httpserver` sends by
+  ## (doc/internals/http.md).
   var a = HttpBodyAdapter(framing: frUntilClose, left: 0, state: csSize, line: "",
                           coded: false, dec: initDecoder(fmtDetect), decDone: false,
                           framingDone: false)
@@ -301,9 +305,9 @@ proc readResponse(r: var Reader; response: var HttpHeaders) {.passive, raises.} 
 
 proc httpGet*(url: string; headers: HttpHeaders; response: out HttpHeaders;
               tls: nil TlsEngine = nil; dl = never): Reader {.passive, raises.} =
-  ## The body of `url`; the response headers in `response`. `dl` bounds the
-  ## whole exchange and stays the returned reader's standing deadline
-  ## (`renew` lifts it); `TimeoutError` on expiry.
+  ## The body of `url`; the response headers in `response`. `dl` bounds
+  ## connecting, sending and reading the response head (`TimeoutError` on
+  ## expiry); the returned reader starts with `never` (`renew` sets one).
   let t = targetOf(url)
   let req = requestHead("GET", t, headers, "")
   var (r, w) = connect(t.address, req, engineFor(t, tls), dl)
@@ -311,6 +315,7 @@ proc httpGet*(url: string; headers: HttpHeaders; response: out HttpHeaders;
   r.renew(dl)
   response = HttpHeaders("")
   readResponse(r, response)
+  r.renew(never)
   result = r
 
 proc httpGet*(url: string; headers = HttpHeaders("");
@@ -346,6 +351,7 @@ proc upload(meth, url: string; body: sink Reader; contentType: string;
   w.flush()
   w.detachWriter()
   readResponse(r, response)
+  r.renew(never)
   result = r
 
 proc httpPost*(url: string; body: sink Reader;
@@ -382,7 +388,12 @@ type
                            ## the last redirect target that was followed
     body*: Reader          ## the de-framed, decoded body, whatever the status
 
-proc isRedirect*(code: int): bool {.inline.} =
+const
+  DefaultMaxRedirects* = 5
+    ## Redirects `httpRequest` follows by default: enough for the usual
+    ## http→https, host and trailing-slash hops, few enough to stop a loop.
+
+func isRedirect(code: int): bool {.inline.} =
   ## Whether `code` is a redirect `httpRequest` follows: 301, 302, 303, 307
   ## or 308.
   code == 301 or code == 302 or code == 303 or code == 307 or code == 308
@@ -392,7 +403,7 @@ proc checkMethod(meth: string) {.raises.} =
   for c in meth:
     if not isTokenChar(c): raise BadOperation
 
-proc withoutHeaders(h: HttpHeaders; names: openArray[string]): HttpHeaders =
+func withoutHeaders(h: HttpHeaders; names: openArray[string]): HttpHeaders =
   var s = ""
   for (n, v) in pairs(h):
     var keep = true
@@ -405,20 +416,14 @@ proc withoutHeaders(h: HttpHeaders; names: openArray[string]): HttpHeaders =
       s.add "\r\n"
   result = HttpHeaders(s)
 
-proc effectivePort(u: Uri): string =
-  if u.port.len > 0: u.port
-  elif cmpIgnoreCase(u.scheme, "https") == 0: "443"
-  else: "80"
-
-proc sameOrigin(a, b: Uri): bool =
-  ## Same scheme, host and port.
-  result = cmpIgnoreCase(a.scheme, b.scheme) == 0 and
-    cmpIgnoreCase(a.hostname, b.hostname) == 0 and
-    effectivePort(a) == effectivePort(b)
+func sameOrigin(a, b: Target): bool =
+  ## Same scheme, host and port (`address` carries the effective port).
+  result = a.secure == b.secure and cmpIgnoreCase(a.address, b.address) == 0
 
 proc exchange(meth, url, body: string; headers: HttpHeaders;
-              tls: nil TlsEngine; dl: Deadline): HttpResponse {.passive, raises.} =
-  ## One request, one response of any status.
+              dl: Deadline): HttpResponse {.passive, raises.} =
+  ## One request, one response of any status. `dl` bounds everything up to
+  ## the response head; the body starts with `never`.
   let t = targetOf(url)
   let framing =
     if body.len > 0 or meth == "POST" or meth == "PUT" or meth == "PATCH":
@@ -426,18 +431,19 @@ proc exchange(meth, url, body: string; headers: HttpHeaders;
     else: ""
   var req = requestHead(meth, t, headers, framing)
   req.add body
-  var (r, w) = connect(t.address, req, engineFor(t, tls), dl)
+  var (r, w) = connect(t.address, req, engineFor(t, nil), dl)
   w.detachWriter()
   r.renew(dl)
   var response = HttpHeaders("")
   var reason = ""
   let code = readHead(r, response, reason)
   setBodyAdapter(r, code, response, meth == "HEAD")
+  r.renew(never)
   result = HttpResponse(code: code, reason: reason, headers: response,
                         url: url, body: r)
 
 proc httpRequest*(meth, url: string; body = ""; headers = HttpHeaders("");
-                  maxRedirects = 5; tls: nil TlsEngine = nil;
+                  maxRedirects = DefaultMaxRedirects;
                   dl = never): HttpResponse {.passive, raises.} =
   ## Sends `meth` to `url` and returns the response whatever its status: a
   ## 403 or 404 is an answer here, not an error, so `code` and `body` can be
@@ -447,34 +453,38 @@ proc httpRequest*(meth, url: string; body = ""; headers = HttpHeaders("");
   ## in the URL).
   ##
   ## `body` is sent with `Content-Length`; set `Content-Type` in `headers`.
+  ## It is a `string`, not a `Reader`, because a 307 or 308 must send it again
+  ## and a `Reader` cannot be replayed.
   ##
-  ## Redirects (`isRedirect`) are followed up to `maxRedirects` times (`0`
-  ## follows none), the rules of Nim's `std/httpclient`:
+  ## Redirects (301, 302, 303, 307, 308) are followed up to `maxRedirects`
+  ## times (`0` follows none), as RFC 9110 §15.4 describes them. An `https`
+  ## hop uses `std/tls`'s `newTlsEngine()` and its default trust store.
   ##
   ## * 301, 302, 303: the next request is a `GET` (a `HEAD` stays `HEAD`),
-  ##   without the body and without the `Content-Type` header.
+  ##   without the body and without the `Content-Type` header. §15.4 requires
+  ##   this for 303 and allows it for 301 and 302.
   ## * 307, 308: method and body are sent again unchanged.
   ## * `Location` is resolved against the URL that answered (`combine`), so a
   ##   relative one works. A redirect without `Location` is returned as is.
   ## * Once a redirect leaves the origin (scheme, host, port) of `url`, the
-  ##   `Authorization` and `Cookie` headers are not sent any more.
-  ## * A `tls` engine is single-use, and replacing it would discard whatever
-  ##   it trusts: with one given, redirects are returned, not followed.
+  ##   `Authorization` and `Cookie` headers are not sent any more:
+  ##   credentials belong to the origin they were given for (RFC 9110
+  ##   §11.6.2, §15.4).
   ##
   ## When the limit is reached, the last redirect response is returned. `url`
   ## of the result is the URL that answered.
   ##
-  ## `dl` bounds the whole exchange, redirects included, and stays the
-  ## standing deadline of `body` (`renew(resp.body, never)` lifts it):
+  ## `dl` bounds connecting, the redirect chain and reading the final
+  ## response head; the returned `body` starts with `never`, so the deadline
+  ## does not limit how long the body may be read (`renew` sets one):
   ##
   ## .. code-block:: nim
   ##   var resp = httpRequest("GET", "https://example.com/", dl = afterMs(10_000))
   ##   if resp.code == 403: echo "refused (", resp.code, ")"
   ##   else: echo resp.url, ": ", resp.body.readAll()
   checkMethod(meth)
-  result = exchange(meth, url, body, headers, tls, dl)
-  if tls != nil: return
-  let origin = parseUri(url)
+  result = exchange(meth, url, body, headers, dl)
+  let origin = targetOf(url)
   var m = meth
   var b = body
   var hs = headers
@@ -483,15 +493,15 @@ proc httpRequest*(meth, url: string; body = ""; headers = HttpHeaders("");
   while left > 0 and isRedirect(result.code):
     let location = result.headers.get("Location")
     if location.len == 0: break
-    let next = combine(parseUri(result.url), parseUri(location))
+    let next = $combine(parseUri(result.url), parseUri(location))
     if result.code == 301 or result.code == 302 or result.code == 303:
       if m != "GET" and m != "HEAD": m = "GET"
       b = ""
       hs = withoutHeaders(hs, ["Content-Type"])
-    if not crossed and not sameOrigin(next, origin):
+    if not crossed and not sameOrigin(targetOf(next), origin):
       # credentials stay with the origin they were given for, also when a
       # later redirect leads back
       crossed = true
       hs = withoutHeaders(hs, ["Authorization", "Cookie"])
-    result = exchange(m, $next, b, hs, nil, dl)
+    result = exchange(m, next, b, hs, dl)
     dec left

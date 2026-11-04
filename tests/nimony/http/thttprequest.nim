@@ -2,10 +2,10 @@
 # the status code and reason of every response (non-2xx included, with its
 # body), redirects (absolute path, relative, absolute URL, 303 and 307 after
 # a POST, the loop limit, `maxRedirects = 0`, no `Location`), credentials
-# dropped across origins, `HEAD`, and a deadline that expires.
+# dropped across origins, `HEAD`, and a deadline that expires while waiting
+# for the response head but does not limit the body.
 #
-# Redirect rules and their cases follow Nim's `lib/pure/httpclient.nim`
-# (`request`) and `tests/stdlib/thttpclient.nim`.
+# Redirect rules follow RFC 9110 §15.4.
 
 import std / [httpserver, httpclient, ioring, threadpool, atomics, assertions,
               syncio, strutils]
@@ -16,6 +16,7 @@ var serverDone: int = 0
 var clientDone: int = 0
 var gPort: int = 0
 var listening: int = 0
+var stopping: int = 0
 var log = ""
 
 proc awaitFlag(flag: var int) =
@@ -69,12 +70,7 @@ proc handle(c: sink HttpConnection) {.passive.} =
         c.respond(200, "auth=" & c.requestHeader("Authorization") & " cookie=" &
                   c.requestHeader("Cookie") & "\n", "text/plain")
       elif p == "/slow":
-        # Never answer: wait, parked rather than blocking a worker, until the
-        # client gives up and closes the connection, so its deadline is the
-        # only way out. A blocking `sleep` here stalled this worker's ring
-        # lane, and when the client's read was armed on the same lane its
-        # deadline could not fire before the late answer arrived. The
-        # deadline below only bounds a client that never closes.
+        # never answer (parked, not sleeping): the client's deadline must end it
         var (r, w) = c.takeStreams()
         r.renew(afterMs(20_000))
         discard r.readAll()
@@ -83,19 +79,17 @@ proc handle(c: sink HttpConnection) {.passive.} =
     except ErrorCode:
       c.close()
 
-var gServer = 0
-
 proc serverChain() {.passive.} =
   var s = listenHttp(0'u16, tags)
   s.serverName = "t"
   gPort = int(boundPort(s.fd))
   atomicStore(listening, 1, moRelease)
-  var left = gServer
-  while left > 0:
+  while true:
     let c = s.accept()
     if c.isClosed: break
     submit(delay(handle(c)), -1)
-    dec left
+    # `stopping` is set before the client's last request
+    if atomicLoad(stopping, moAcquire) == 1: break
   s.close()
   atomicStore(serverDone, 1, moRelease)
 
@@ -136,6 +130,12 @@ proc clientChain() {.passive.} =
     var r10 = httpRequest("HEAD", url("/"))
     show("[10] HEAD:", r10)
 
+    # the deadline bounds the head; the body starts with `never`
+    var r11b = httpRequest("GET", url("/"), dl = afterMs(5000))
+    let unbounded = r11b.body.deadline == never
+    log.add "[11] body deadline never: " & $unbounded & " [" &
+            r11b.body.readAll().strip() & "]\n"
+
     try:
       var r11 = httpRequest("GET", url("/slow"), dl = afterMs(300))
       log.add "[11] no error: " & $r11.code & "\n"
@@ -164,12 +164,17 @@ proc clientChain() {.passive.} =
       log.add "[15] bad method: " & $e & "\n"
   except ErrorCode as e:
     log.add "CLIENT FAILED: " & $e & "\n"
+  # the sentinel: the server stops after accepting it
+  atomicStore(stopping, 1, moRelease)
+  try:
+    var last = httpRequest("GET", url("/"))
+    discard last.body.readAll()
+  except ErrorCode as e:
+    log.add "SENTINEL FAILED: " & $e & "\n"
   atomicStore(clientDone, 1, moRelease)
 
 proc main =
   initIoRing()
-  # connections: 4 + 2*3 + 2*2 + 4 + 1 + 1 + 1 + 1 + 2*2 + 1
-  gServer = 27
   submit(delay(serverChain()), 0)
   let start = monoNow()
   while atomicLoad(listening, moAcquire) == 0:

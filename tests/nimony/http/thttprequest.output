@@ -11,6 +11,7 @@
 [8] maxRedirects 0: 301 Location /target
 [9] no Location: 302 Found /nolocation []
 [10] HEAD: 200 OK / []
+[11] body deadline never: true [hello]
 [11] deadline: TimeoutError
 [12] same origin: 200 OK /auth [auth=Bearer t cookie=s=1]
 [13] cross origin: 200 auth= cookie=
