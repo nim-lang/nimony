@@ -1324,6 +1324,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           # with strict aliasing does — there the merged `uint16` store over
           # two `uint8` fields is undefined behavior.
           b.addStrLit "--merge-stores:" & $c.config.bits
+        if native:
+          # full unrolling of small constant-trip loops: arkham does not
+          # unroll, a C compiler does (and better, after its own inliner)
+          b.addStrLit "--unroll"
         b.addKeyw "input"
         b.addKeyw "output"
 

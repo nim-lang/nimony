@@ -54,7 +54,7 @@ let disabledPasses = block:
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## memidioms, vectorize, sinkret, tailcall.
+  ## unroll, memidioms, vectorize, sinkret, tailcall.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -91,7 +91,7 @@ proc extractModuleSuffix(filename: string): string =
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                   params: Cursor = default(Cursor); eng: Engine = nil;
-                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true)) =
+                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true); unroll = false) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported.
   ##
@@ -122,7 +122,12 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # copyprop: before it, a `for` loop's bounds are still the iterator's temps
   # and its `inc` still writes through `(deref (haddr i))`. Copyprop runs again
   # to delete those temps once nothing reads them.
-  if passOn("unroll"):
+  # Native back end only (`shoggoth opt --unroll`): a C compiler unrolls by
+  # itself, and better — it decides after ITS inliner ran, while unrolling
+  # first multiplies the call sites and talks gcc out of inlining them (the ray
+  # tracer's `for i in 0 ..< 3: objectIntersect(i, ray)` kept 17 calls and ran
+  # 25 % slower under `nimony c`).
+  if unroll and passOn("unroll"):
     let n = runUnroll(buf)
     st.unrolled += n
     if n > 0 and passOn("copyprop"): runCopyProp(buf, params, summaries, m)
@@ -196,7 +201,7 @@ proc isAssemblerProc(pragmas: Cursor): bool =
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                 eng: Engine = nil; vecMode = vecOff; memOpts = MemOpts(intrinsics: true)) =
+                 eng: Engine = nil; vecMode = vecOff; memOpts = MemOpts(intrinsics: true); unroll = false) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
@@ -222,7 +227,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m, d.params, eng, vecMode, memOpts)
+        optimizeBody(body, suffix, st, summaries, m, d.params, eng, vecMode, memOpts, unroll)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb
@@ -236,7 +241,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st, summaries, m, eng, vecMode, memOpts)
+          rebuildTree(dest, n, suffix, st, summaries, m, eng, vecMode, memOpts, unroll)
       dest.closeTag()
   else:
     dest.addSubtree n
@@ -244,7 +249,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
 
 proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
                      m: ptr MainModule = nil; eng: Engine = nil;
-                     vecMode = vecOff; memOpts = MemOpts(intrinsics: true)): TokenBuf =
+                     vecMode = vecOff; memOpts = MemOpts(intrinsics: true); unroll = false): TokenBuf =
   ## Rebuild the single module-level root tree (`(stmts …)`), optimizing bodies.
   ## `m` is the module type context for the alias pass (nil ⇒ coarse aliasing);
   ## `eng` the structural rewrite engine (nil ⇒ the rewriter stage is skipped);
@@ -263,14 +268,14 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
     if li.isValid: result.appendLineInfo li
     n.into:
       while n.hasMore:
-        rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)
+        rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts, unroll)
     if st.vectorized > 0:
       addVecIntrinsicDecls(result, "vec." & suffix)
     if MemsetOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemsetOp)
     if MemcpyOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemcpyOp)
     result.closeTag()
   else:
-    rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)
+    rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts, unroll)
 
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
@@ -279,7 +284,7 @@ proc checkWellFormed(buf: var TokenBuf) =
   while n.hasMore: skip n
 
 proc processFile*(input, output: string; verify = false;
-                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true)): Stats =
+                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true); unroll = false): Stats =
   ## Optimize one NIFC file. Seeds the tag pool so `cursorTagId` aligns with the
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
@@ -306,7 +311,7 @@ proc processFile*(input, output: string; verify = false;
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
-  var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode, memOpts)
+  var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode, memOpts, unroll)
   checkWellFormed(optimized)
   onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
   onRaiseQuit writeLengInterface(optimized, output)

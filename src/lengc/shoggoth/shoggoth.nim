@@ -157,8 +157,8 @@ proc hexerMain() =
       writeHelp()
 
 proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode;
-            memOpts: MemOpts) =
-  let st = processFile(input, output, verify, vecMode, memOpts)
+            memOpts: MemOpts; unroll: bool) =
+  let st = processFile(input, output, verify, vecMode, memOpts, unroll)
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
@@ -174,6 +174,7 @@ proc optimizeMain(args: seq[string]) =
   var stats = false
   var vecMode = vecOff
   var memOpts = MemOpts(intrinsics: true)
+  var unroll = false
   for a in args:
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
     elif a == "--verify": verify = true
@@ -181,6 +182,7 @@ proc optimizeMain(args: seq[string]) =
     elif a == "--vectorize": vecMode = vecNeon
     elif a == "--vectorize:sse": vecMode = vecSse
     elif a == "--no-mem-intrinsics": memOpts.intrinsics = false   # a back end without the Memset/Memcpy rows
+    elif a == "--unroll": unroll = true         # arkham only; see `optdriver`
     elif a.startsWith("--merge-stores:"):
       # adjacent constant field stores -> one wider store; the value is the
       # target's word in bits. Little-endian and type-agnostic back ends only.
@@ -193,18 +195,18 @@ proc optimizeMain(args: seq[string]) =
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--no-mem-intrinsics] [--merge-stores:BITS] [--unroll] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
     onRaiseQuit createDir(path(outdir))
     for inp in positional:
-      runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode, memOpts)
+      runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode, memOpts, unroll)
   elif positional.len == 2:
-    runOne(positional[0], positional[1], verify, stats, vecMode, memOpts)
+    runOne(positional[0], positional[1], verify, stats, vecMode, memOpts, unroll)
   else:
     # in-place rewrite of each input
     for inp in positional:
-      runOne(inp, inp, verify, stats, vecMode, memOpts)
+      runOne(inp, inp, verify, stats, vecMode, memOpts, unroll)
 
 proc main =
   # `commandLineParams` rather than `paramStr`: Nimony's `parseopt` exports a
