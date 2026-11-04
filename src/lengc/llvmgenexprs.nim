@@ -859,7 +859,7 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       while n.hasMore: skip n
   of SufC, ParC, AddrC, HaddrC, NilC, InfC, NeginfC, NanC, FalseC, TrueC,
      AndC, OrC, NotC, NegC, SizeofC, AlignofC, OffsetofC,
-     OconstrC, AconstrC, ArepconstrC,
+     OconstrC, AconstrC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
      BitandC, BitorC, BitxorC, BitnotC,
      EqC, NeqC, LeC, LtC, CastC, ConvC, CallC, InstrC:
@@ -1274,12 +1274,6 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
             [llIntTextC("0", c.prim.i32), llIntTextC("0", c.prim.i32)])
           c.emitStore(baseVal, basePtr)
       result = c.emitLoad(llReg(tmpName, c.prim.ptrT), typ)
-  of ArepconstrC:
-    # Its element is a constant by the tag's contract, so the whole value is
-    # the constant aggregate `genGlobalConstr` builds.
-    var typeCur = n
-    inc typeCur
-    result = genGlobalConstr(c, n, typeCur)
   of AconstrC:
     var arrayTypeCursor: Cursor
     var typ: LLType
@@ -1291,8 +1285,9 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       var elemBody = navigateToObjectBody(c.m, arrayTypeCursor)
       inc elemBody
       let elemTyp = genTypeLLVMReadOnly(c, elemBody)
-      var current = llUndef(typ)
-      var idx = 0
+      # `(aconstr T)` without elements is the all-zero array.
+      var current = if n.hasMore: llUndef(typ) else: llZeroInit(typ)
+      var idx = if n.hasMore: 0 else: expectedLen
       while n.hasMore:
         var elemVal = LLValue(); genExprLLVM(c, n, elemVal)
         if elemVal.kind == llvInt:

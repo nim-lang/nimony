@@ -678,13 +678,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of InstanceofX:
       trInstanceof c, dest, n
     of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-       FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, AconstrX, ArepconstrX,
+       FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, AconstrX,
        BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
        BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
        TupconstrX, SetconstrX, TabconstrX, AshrX, HconvX, DconvX, CompilesX, StaticX, DeclaredX,
        DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX,
-       FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX,
+       FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
        Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
        EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
        SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,

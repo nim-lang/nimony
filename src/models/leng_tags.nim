@@ -26,8 +26,7 @@ type
     AlignofC = (ord(AlignofTagId), "alignof")  ## `alignof` operation
     OffsetofC = (ord(OffsetofTagId), "offsetof")  ## `offsetof` operation
     OconstrC = (ord(OconstrTagId), "oconstr")  ## object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named
-    AconstrC = (ord(AconstrTagId), "aconstr")  ## array constructor
-    ArepconstrC = (ord(ArepconstrTagId), "arepconstr")  ## array constructor whose every element is `X`; the length is `T`'s. `X` is evaluated once and copied, so it must be a constant: a literal, `nil`, `true`/`false`, a `const`, or an `oconstr`/`tupconstr`/`aconstr`/`arepconstr`/`dconv`/`suf` of those — no calls, no locals. It keeps `default(array[HugeN, T])` from expanding into `HugeN` NIF elements
+    AconstrC = (ord(AconstrTagId), "aconstr")  ## array constructor. Without any `X` it is the all-zero array of type `T`, whatever its length: `hexer/defaultvalues` writes it so that a default of `array[2_000_000, int]` is not two million zeros
     OvfC = (ord(OvfTagId), "ovf")  ## access overflow flag
     AddC = (ord(AddTagId), "add")
     SubC = (ord(SubTagId), "sub")
@@ -53,7 +52,7 @@ type
     InstrC = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
 
 proc rawTagIsLengExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, ArepconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, HaddrTagId, BaseobjTagId, ErrvTagId, InstrTagId}
+  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, HaddrTagId, BaseobjTagId, ErrvTagId, InstrTagId}
 
 type
   LengStmt* = enum

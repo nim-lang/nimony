@@ -218,53 +218,6 @@ proc navigateToObjectBody*(c: var MainModule; n: Cursor): Cursor =
     else:
       break
 
-proc isZeroConst*(n: Cursor): bool =
-  ## Is the constant `n` all-zero bits? The question an `(arepconstr T X)`
-  ## asks of its `X` before a back end emits `{0}` or a `memset` instead of
-  ## writing the element out `len(T)` times. `-0.0` is not zero bits, and a
-  ## constructor that names a non-field child (an RTTI slot) is not either.
-  case n.kind
-  of IntLit: result = intVal(n) == 0
-  of UIntLit: result = uintVal(n) == 0'u64
-  of FloatLit:
-    let f = floatVal(n)
-    result = f == 0.0 and 1.0 / f > 0.0
-  of CharLit: result = charLit(n) == '\0'
-  of TagLit:
-    case n.exprKind
-    of FalseC, NilC: result = true
-    of SufC, ConvC, CastC:
-      var x = n
-      x = sub(x)
-      if n.exprKind != SufC: skip x # the type
-      result = isZeroConst(x)
-    of AconstrC, OconstrC, ArepconstrC:
-      var x = n
-      x = sub(x)
-      skip x # the type
-      result = true
-      while result and x.hasMore:
-        if x.substructureKind == KvU:
-          var kv = sub(x)
-          skip kv # the field
-          result = isZeroConst(kv)
-        else:
-          result = isZeroConst(x)
-        skip x
-    else: result = false
-  else: result = false
-
-proc arrayLenOf*(c: var MainModule; typ: Cursor): int =
-  ## The element count of the array type `typ`, a symbol naming
-  ## `(array ELEM LEN)` or that type itself; -1 when it is no such type.
-  var t = navigateToObjectBody(c, typ)
-  result = -1
-  if t.typeKind == ArrayT:
-    t = sub(t)
-    skip t # the element type
-    if t.kind == IntLit: result = int(intVal(t))
-    elif t.kind == UIntLit: result = int(uintVal(t))
-
 # ---- the navigator --------------------------------------------------------
 
 proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
@@ -348,7 +301,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
     of AddrC, HaddrC:                       # both are `&lvalue`
       let x = getTypeImpl(c, firstChild(n))
       result = ptrTypeOf(c, x)
-    of ConvC, CastC, AconstrC, ArepconstrC, OconstrC, BaseobjC:
+    of ConvC, CastC, AconstrC, OconstrC, BaseobjC:
       result = firstChild(n)
     of NegC, AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
        BitandC, BitorC, BitxorC, BitnotC:

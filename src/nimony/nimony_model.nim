@@ -603,7 +603,7 @@ proc needsTemp*(n: Cursor): bool =
           return true
         skip n
     of ErrX, DerefX, AndX, OrX, XorX, NotX, NegX, AlignofX,
-        OffsetofX, OconstrX, AconstrX, ArepconstrX, BracketX, CurlyX, CurlyatX,
+        OffsetofX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX,
         OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
         BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
         ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
@@ -612,7 +612,7 @@ proc needsTemp*(n: Cursor): bool =
         PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
         Delay0X, SuspendX, DoX, PlussetX, MinussetX, MulsetX,
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,

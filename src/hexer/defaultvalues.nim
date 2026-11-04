@@ -26,9 +26,7 @@ nimsem's machinery to do it: `default(T)` there is an overloaded *call*
 resolved against `system/defaults.nim`, and by the time a hexer pass runs,
 sem and the desugaring, duplifier and destroyer passes are long done —
 there is no introducing a call, let alone the loop that
-`default(array[I, T])` expands into when its element's default is not a
-constant (otherwise it is an `(arepconstr T X)`, which this module emits
-too). So this module rebuilds the same
+`default(array[I, T])` expands into. So this module rebuilds the same
 value directly, as a literal expression tree, and every emitted form is
 one that survives untouched to `lengcgen`.
 
@@ -174,6 +172,59 @@ proc addDefaultObjConstr(dest: var TokenBuf; typ, impl: Cursor;
     addDefaultFields(dest, currentField, info, ptrSize, isUnion = isUnion)
   dest.addParRi()
 
+proc isZeroDefault*(typ: Cursor): bool =
+  ## Is `default(typ)` — what `addDefaultValue` builds — all zero bits?
+  ## Conservative: `false` means "not known to be", never "known not to be".
+  ## A field with a declared default counts as non-zero whatever its value,
+  ## and a case object's branches are all checked, not just the first one.
+  let impl = toTypeImpl(typ)
+  case impl.typeKind
+  of IntT, UIntT, FloatT, CharT, BoolT, SetT,
+     PtrT, RefT, RoutineTypes, CstringT, PointerT, NiltT, OutT:
+    result = true
+  of EnumT, HoleyEnumT, AnumT:
+    var err = false
+    result = asSigned(enumBounds(impl).lo, err) == 0 and not err
+  of MutT, LentT:
+    let base = impl.childCursor
+    result = not isViewType(base) or isZeroDefault(base)
+  of ObjectT:
+    if typ.isSymbol:
+      let decl = getTypeSection(typ.symId)
+      # A union constructor is partial; an RTTI object's vtable slot is
+      # not zero (`vtables_backend` fills it in).
+      if decl.kind == TypeY and hasPragma(decl.pragmas, UnionP) or
+          hasRtti(typ.symId):
+        return false
+    elif not impl.childCursor.isDotToken:
+      return false # an anonymous `object of Base`: its RTTI is not ours to judge
+    result = true
+    var obj = asObjectDecl(impl)
+    while true:
+      var fields = sub(obj.body) # past `(object`; bounds the walk
+      skip fields                # the inheritance slot
+      if fields.hasMore and not fields.isDotToken:
+        var iter = initObjFieldIter()
+        while nextField(iter, fields):
+          let field = takeLocal(fields, SkipFinalParRi)
+          if not field.val.isDotToken or not isZeroDefault(field.typ):
+            return false
+      if obj.parentType.isDotToken: break
+      var parentImpl = obj.parentType
+      if parentImpl.typeKind in {RefT, PtrT}:
+        inc parentImpl
+      obj = asObjectDecl(toTypeImpl(parentImpl))
+  of TupleT, ClosureTupleT:
+    result = true
+    var field = sub(impl)
+    while field.hasMore:
+      if not isZeroDefault(getTupleFieldType(field)): return false
+      skip field
+  of ArrayT, DistinctT, SinkT, StaticT:
+    result = isZeroDefault(impl.childCursor)
+  else:
+    result = false
+
 proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSize: int) =
   ## Emit the default value of `typ` as a single expression.
   ##
@@ -258,24 +309,16 @@ proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSiz
     if err:
       error "cannot determine array length of type: ", typ
     else:
-      # One element, repeated: a closure environment or a coroutine frame that
-      # holds an `array[2_000_000, int]` must not turn into two million zeros
-      # in the IR. A field default that is not a constant (`x: seq[int] =
-      # newSeq(4)`) cannot be copied and is written out per element.
-      var elemBuf = createTokenBuf(16)
-      addDefaultValue(elemBuf, impl.childCursor, info, ptrSize)
-      let elem = beginRead(elemBuf)
-      if isConstElemDefault(elem):
-        dest.addParLe(ArepconstrX, info)
-        dest.addSubtree typ
-        dest.addSubtree elem
-        dest.addParRi()
-      else:
-        dest.addParLe(AconstrX, info)
-        dest.addSubtree typ
+      dest.addParLe(AconstrX, info)
+      dest.addSubtree typ
+      let elem = impl.childCursor
+      # An `(aconstr T)` without elements is the all-zero array
+      # (`doc/tags.md`): a closure environment that captures an
+      # `array[2_000_000, int]` must not spell out two million zeros.
+      if not isZeroDefault(elem):
         for _ in 0 ..< len:
-          dest.addSubtree elem
-        dest.addParRi()
+          addDefaultValue(dest, elem, info, ptrSize)
+      dest.addParRi()
   of RangetypeT:
     # `system/defaults.nim` has no `default` for a range type, so nimsem
     # never reaches this; a range-typed location always carries an

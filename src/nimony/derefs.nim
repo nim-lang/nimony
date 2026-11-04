@@ -406,7 +406,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
     else:
       result = false
   elif n.hasMore and (n.kind in {StrLit, IntLit, UIntLit, FloatLit, CharLit} or
-       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX, ArepconstrX}):
+       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}):
     result = true
   else:
     result = false
@@ -1777,8 +1777,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
         while n.hasMore:
           tr c, n, WantT, opType
 
-    of AconstrX, ArepconstrX:
-      # `(aconstr (array E N) X*)`, `(arepconstr (array E N) X)`
+    of AconstrX:
+      # `(aconstr (array E N) X*)`
       takeInto c.dest, n:
         var elemType = n
         if elemType.typeKind == ArrayT:

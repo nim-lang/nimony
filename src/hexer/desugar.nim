@@ -6,11 +6,11 @@ when defined(nimony):
 else:
   {.pragma: untyped.}
 
-import std / [assertions, tables, hashes, sets, syncio]
+import std / [assertions, tables, hashes, sets, syncio, strutils]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
-import hexer_context, passes, closuretypes, lifter
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
+import hexer_context, passes, closuretypes, lifter, defaultvalues
 import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
 
@@ -36,6 +36,12 @@ type
       ## only asked whether a type has a `=destroy` (`delayWrapper`)
     delayWrappers: Table[SymId, SymId]
       ## callee -> its `delay` wrapper, one per callee and module
+    zeroArrayTemps: Table[SymId, Cursor]
+      ## xelim temps bound to such a call -> `array[I, T]`
+      ## (`tryDropZeroArrayTemp`)
+    zeroArrayDefaults: Table[SymId, Cursor]
+      ## this module's `default(array[I, T])` instances whose result is
+      ## all zero bits -> `array[I, T]` (`zeroDefaultArrayOf`)
 
 proc freshLabel(c: var Context): SymId =
   result = pool.symId("`desugarL." & $c.counter)
@@ -136,9 +142,110 @@ proc trStmtList(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = 
     while n.hasMore:
       trStmt(c, dest, n, isTopScope)
 
+proc semanticsMarker(n: Cursor): string =
+  ## `(pragmas (semantics "name"))`, the statement form of the pragma, or "".
+  result = ""
+  if n.stmtKind == PragmasS:
+    var p = n
+    inc p
+    if p.pragmaKind == SemanticsP:
+      inc p
+      if p.kind == StrLit: result = pool.strings[p.strId]
+
+proc zeroResult(dest: var TokenBuf; res: SymId; typ: Cursor; info: NifLineInfo) =
+  ## `zeroMem(addr result[0], sizeof(T))`
+  copyIntoKind dest, CallS, info:
+    dest.addSymUse(pool.symId("zeroMem.0." & SystemModuleSuffix), info)
+    copyIntoKind dest, AddrX, info:
+      copyIntoKind dest, ArratX, info:
+        dest.addSymUse(res, info)
+        dest.addIntLit(0, info)
+    copyIntoKind dest, SizeofX, info:
+      dest.addSubtree typ
+
+proc isZeroArray(t: Cursor): bool =
+  let impl = toTypeImpl(t)
+  var err = false
+  result = impl.typeKind == ArrayT and asSigned(getArrayLen(impl), err) > 0 and
+    not err and isZeroDefault(impl.childCursor)
+
+proc zeroDefaultArrayOf(decl: Cursor; arrType: var Cursor): bool =
+  ## Is `decl` `default(array[I, T])` (`system/defaults.nim`, the body marked
+  ## `{.semantics: "defaultArrayLoop".}`) for a `T` whose default is all zero
+  ## bits? Then a call of it is `(aconstr array[I, T])`, the all-zero array,
+  ## and the caller need not materialize the result to copy it: a `Node()`
+  ## with an `array[2_000_000, int]` field built a 16 MB temporary on the
+  ## stack.
+  result = false
+  let r = asRoutine(decl, SkipInclBody)
+  if r.body.stmtKind != StmtsS: return
+  var body = sub(r.body)
+  var resType = default(Cursor)
+  while body.hasMore:
+    if body.stmtKind == ResultS:
+      resType = asLocal(body).typ
+    elif semanticsMarker(body) == "defaultArrayLoop":
+      if resType != default(Cursor) and isZeroArray(resType):
+        arrType = resType
+        result = true
+      return
+    elif body.stmtKind != PragmasS:
+      return # the marker is at the top of the body or nowhere
+    skip body
+
+proc isZeroDefaultArrayCall(c: var Context; n: Cursor; arrType: var Cursor): bool =
+  var n = n
+  inc n # the call tag
+  if n.kind != Symbol: return false
+  let local = c.zeroArrayDefaults.getOrDefault(n.symId)
+  if local != default(Cursor):
+    arrType = local
+    return true
+  let res = tryLoadSym(n.symId) # fails for this module's own: those are `local`
+  result = res.status == LacksNothing and isRoutine(res.decl.symKind) and
+    zeroDefaultArrayOf(res.decl, arrType)
+
+proc tryDropZeroArrayTemp(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
+  ## `(let :\`x.N . . T <zero default(array) call>)`: a temp that xelim binds
+  ## a call to (`trExprCall`, `trAggregateValue`; `tempSymName` is where the
+  ## name comes from), read exactly once. It goes, and
+  ## its one read becomes the `(aconstr T)` itself (`tr`'s `Symbol` case), so
+  ## that `Node()` writes its zero `array[2_000_000, int]` field in place
+  ## rather than copying it out of a 16 MB stack temp.
+  result = false
+  if n.stmtKind != LetS: return
+  let decl = asLocal(n)
+  var arrType = default(Cursor)
+  if decl.name.kind == SymbolDef and pool.symString(decl.name.symId).startsWith("`x.") and
+      decl.val.exprKind == CallX and isZeroDefaultArrayCall(c, decl.val, arrType):
+    c.zeroArrayTemps[decl.name.symId] = arrType
+    skip n
+    dest.addParLe(StmtsS, decl.name.info)
+    dest.addParRi()
+    result = true
+
 proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  var res = default(SymId)
+  var resType = default(Cursor)
   n.into:
     while n.hasMore:
+      if n.stmtKind == ResultS:
+        let r = asLocal(n)
+        res = r.name.symId
+        resType = r.typ
+      elif res != default(SymId) and semanticsMarker(n) == "defaultArrayLoop":
+        # `default(array[I, T])`'s loop (`system/defaults.nim`): when
+        # `default(T)` is all zero bits, the array's is too, and one
+        # `zeroMem` replaces the N iterations — which the inliner would
+        # otherwise unroll for a small N and the back end would keep for a
+        # big one.
+        if isZeroArray(resType):
+          let info = n.info
+          # The marker, then the loop as the iterinliner left it, up to the
+          # `ret result`: nothing outside the loop jumps into it.
+          while n.hasMore and n.stmtKind != RetS: skip n
+          zeroResult dest, res, resType, info
+          continue
       trStmt(c, dest, n)
 
 proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cursor; pragmas: var Cursor): bool =
@@ -1346,7 +1453,15 @@ proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
-  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
+  of Symbol:
+    let zeroArray = c.zeroArrayTemps.getOrDefault(n.symId)
+    if zeroArray != default(Cursor):
+      copyIntoKind dest, AconstrX, n.info:
+        dest.addSubtree zeroArray
+      inc n, SkipFull # the temp, replaced by its value
+    else:
+      takeTree dest, n
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of TagLit:
     case n.exprKind
@@ -1384,7 +1499,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
                 FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
               tr(c, dest, n)
       of LocalDecls:
-        trLocal c, dest, n
+        if not tryDropZeroArrayTemp(c, dest, n):
+          trLocal c, dest, n
       of ProcS, FuncS, MethodS, ConverterS:
         trProc c, dest, n
       of IteratorS:
@@ -1466,7 +1582,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
     of ExprX:
       trExpr c, dest, n
     of CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX:
-      trSons(c, dest, n)
+      var arrType = default(Cursor)
+      if n.exprKind == CallX and isZeroDefaultArrayCall(c, n, arrType):
+        copyIntoKind dest, AconstrX, n.info:
+          dest.addSubtree arrType
+        skip n, SkipFull # the call, replaced by its value
+      else:
+        trSons(c, dest, n)
     of EqX, NeqX:
       # A `.closure` value is an (fn, env) pair, so C's `==` cannot compare it:
       # the operands are structs. Project the halves and compare those instead.
@@ -1490,7 +1612,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, XorX,
         NotX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX,
-        AconstrX, ArepconstrX, BracketX, CurlyX, CurlyatX, OvfX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, CastX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
@@ -1499,7 +1621,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         CompilesX, StaticX, DeclaredX, DefinedX, ProccallX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX,
         Delay0X, SuspendX, DoX, TupatX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
@@ -1525,6 +1647,13 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]; lifter: ref LiftingC
   # ahead of it: a `const` the C backend meets only after the function reading
   # it is a use before declaration.
   var body = createTokenBuf()
+  var decls = sub(n)
+  while decls.hasMore:
+    if decls.stmtKind in {ProcS, FuncS}:
+      var arrType = default(Cursor)
+      if zeroDefaultArrayOf(decls, arrType):
+        c.zeroArrayDefaults[asRoutine(decls).name.symId] = arrType
+    skip decls
   n.into:
     while n.hasMore:
       trStmt c, body, n, isTopScope = true

@@ -1479,7 +1479,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
           if not isSimpleLiteral(nb): return false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
         XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX,
-        OconstrX, AconstrX, ArepconstrX, BracketX, CurlyX, CurlyatX, OvfX,
+        OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
         BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CallX,
         CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
@@ -1489,7 +1489,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
         Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
         PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
         LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
@@ -1710,8 +1710,8 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trType(c, dest, n)
         dest.shrink beforeType
         trExpr(c, dest, n)
-    of AconstrX, ArepconstrX:
-      dest.addParLe((if n.exprKind == AconstrX: "aconstr" else: "arepconstr"), n.info)
+    of AconstrX:
+      dest.addParLe("aconstr", n.info)
       let constrStart = n
       n = sub(n)
       trType(c, dest, n)
@@ -1844,7 +1844,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         dest.addParRi(n.endInfo)
     of ErrX, NewobjX, NewrefX, SetconstrX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
        InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
-       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DoX, CchoiceX, OchoiceX,
+       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX,
        PluginCallX:
@@ -2734,7 +2734,7 @@ proc isStaticInitValue(c: var EContext; n: var Cursor): bool =
       n.into:
         if n.kind == Symbol: result = true
         while n.hasMore: skip n
-    elif n.exprKind in {SufX, ParX, CastX, ConvX, NegX, AconstrX, ArepconstrX, OconstrX}:
+    elif n.exprKind in {SufX, ParX, CastX, ConvX, NegX, AconstrX, OconstrX}:
       result = true
       n.into:
         while n.hasMore:
