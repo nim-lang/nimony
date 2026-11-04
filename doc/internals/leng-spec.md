@@ -387,7 +387,7 @@ be done with the `(keepovf)` construct:
 (var :a.0 . (i +32) +90)
 (var :b.0 . (i +32) +223231343)
 (keepovf (add (i +32) a.0 b.0) x.0)
-(if (elif (ovf) (stmts (asgn (ovf) (false)) (call printf.c "overflow")))
+(if (elif (ovf) (stmts (call printf.c "overflow")))
     (else (call printf.c "no overflow")))
 ```
 
@@ -396,13 +396,12 @@ As `keepovf` is a statement and not an expression, a code generator typically ha
 introduce temporaries for nested expressions. This is also required for
 GCC's `__builtin_saddll_overflow` construct and is the real reason for this strange design.
 
-The `(ovf)` flag is an lvalue and can be set to `(false)` to reset the flag:
-
-```
-(asgn (ovf) (false))
-```
-
-This is not optional! It is required for reliable native code generation.
+The flag is not sticky: every `keepovf` sets it to whether *its* operation
+overflowed, so `(ovf)` reports the most recent `keepovf` of the function and
+nothing earlier. A body that reads the flag therefore stays correct when it is
+inlined into a caller with checked arithmetic of its own. Read `(ovf)` right
+after its `keepovf`; a call in between may be inlined and bring a `keepovf` of
+its own. Native code generation relies on this: there the flag is the CPU's.
 
 
 NJ instructions

@@ -105,33 +105,6 @@ container fits that many elements beside its header. `len` states this in
 its postcondition, so `i + 1` cannot wrap where `i < s.len`.
 
 
-#### Saturating arithmetic
-
-With `{.feature: "saturatingArith".}` a module's signed arithmetic
-`saturates`:idx: instead: a result that is too small is `low(T)`, one that is
-too large is `high(T)`.
-
-  ```nim
-  {.feature: "saturatingArith".}
-  assert 127'i8 + 1'i8 == 127'i8
-  assert -128'i8 - 1'i8 == -128'i8
-  assert high(int) * 2 == high(int)
-  assert -low(int) == high(int)
-  ```
-
-The same holds for the steps `inc` and `dec` take in the module, so a signed
-counter only moves in the direction of its step. Saturation keeps the order of
-values: when the mathematical result lies on one side of a value of `T`, so
-does the saturated one. In particular the sum of two non-negative values is
-never negative, and the prover may use that: `s[a + b]` above needs no bounds
-check below `0`.
-
-Where the compiler can prove that an operation stays inside its type, it
-compiles it as the plain machine operation. Saturation costs nothing there,
-and in a loop like `while i < s.len: ...; inc i` it is the usual case.
-Inside a `{.keepOverflowFlag.}` block signed arithmetic still wraps around.
-
-
 `Automatic type conversion`:idx: is performed in expressions where different
 kinds of integer types are used: the smaller type is converted to the larger.
 

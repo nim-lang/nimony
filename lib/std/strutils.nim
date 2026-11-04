@@ -662,7 +662,7 @@ func normalize*(s: string): string =
     assert normalize("Foo Bar") == "foo bar"
   result = newStringOfCap(s.len)
   for c in items(s):
-    if c in {'A'..'Z'}:
+    if c >= 'A' and c <= 'Z':
       result.add chr(ord(c) + (ord('a') - ord('A')))
     elif c != '_':
       result.add c
@@ -1338,7 +1338,8 @@ func fmtScientific(neg: bool; digits: string; exp, precision: int;
   result.add (if d.len > 0: d[0] else: '0')
   if precision > 0 or forcePoint:
     result.add decimalSep
-    for i in 1 .. precision:
+    for k in 0 ..< precision:
+      let i = k + 1 # `1 .. precision` could not be shown to end
       result.add (if i < d.len: d[i] else: '0')
   let e10 = e - 1
   result.add 'e'

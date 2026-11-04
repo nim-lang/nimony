@@ -204,33 +204,6 @@ template runnableExamples*(body: untyped) {.untyped.} =
 
 func overflowFlag*(): bool {.magic: "OverflowFlag".}
 
-# Under `.feature: "saturatingArith"` signed `+`, `-` and `*` saturate: a
-# result outside the type is `low(T)` or `high(T)`, never a wrapped value
-# (#2840). The compiler calls these for every such operation the contract
-# prover cannot keep inside its type, with that type's bounds; below 64 bits
-# nothing overflows `int64` here, so only the clamp applies.
-
-func nimSatAdd*(a, b, lo, hi: int64): int64 {.inline.} =
-  {.keepOverflowFlag.}:
-    result = a + b
-    if overflowFlag(): result = if b < 0'i64: lo else: hi
-  if result < lo: result = lo
-  elif result > hi: result = hi
-
-func nimSatSub*(a, b, lo, hi: int64): int64 {.inline.} =
-  {.keepOverflowFlag.}:
-    result = a - b
-    if overflowFlag(): result = if b > 0'i64: lo else: hi
-  if result < lo: result = lo
-  elif result > hi: result = hi
-
-func nimSatMul*(a, b, lo, hi: int64): int64 {.inline.} =
-  {.keepOverflowFlag.}:
-    result = a * b
-    if overflowFlag(): result = if (a < 0'i64) != (b < 0'i64): lo else: hi
-  if result < lo: result = lo
-  elif result > hi: result = hi
-
 template ord*[T: Ordinal|enum](x: T): int =
   ## Returns the internal `int` value of `x`, including for enum with holes
   ## and distinct ordinal types.

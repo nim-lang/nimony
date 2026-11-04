@@ -559,6 +559,8 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let symId = r.name.symId
       if isLocalDecl(symId):
         c2.typeCache.registerLocal(symId, r.kind, decl)
+    if isConcrete and not isAsm and n.kind != DotToken:
+      # No body (`.`): an importc or forward declaration stays bodyless.
       c2.typeCache.openScope()
       let info = n.info
       copyIntoKind dest, StmtsS, info:

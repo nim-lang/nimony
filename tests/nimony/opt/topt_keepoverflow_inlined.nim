@@ -1,13 +1,11 @@
 import std/syncio
 
-# A `{.keepOverflowFlag.}` block reads and sets the enclosing PROC's overflow
-# flag, which the backends keep as ONE sticky per-function flag: false on
-# entry, set by a checked operation that overflowed, never reset. Splicing
-# such a body into its caller would make it share the caller's flag, so an
-# earlier inlined overflow -- or the previous loop iteration's -- leaks into
-# the next `overflowFlag()` read. The inliner therefore never inlines a proc
-# that touches the flag. Both callees are tiny and `.inline`: exactly what it
-# would otherwise splice.
+# A `{.keepOverflowFlag.}` block reads the enclosing PROC's overflow flag. The
+# flag is not sticky -- each checked operation sets it to its own verdict -- so
+# a body that reads it can be spliced into its caller: an earlier inlined
+# overflow, or the previous loop iteration's, must not leak into the next
+# `overflowFlag()` read. Both callees are tiny and `.inline`, so they are
+# spliced.
 
 proc mulChecked(x, y: int): int {.inline.} =
   {.keepOverflowFlag.}:

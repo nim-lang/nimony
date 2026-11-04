@@ -1,3 +1,0 @@
-tests/nimony/errmsgs/tsaturatecmp.nim(10, 7) Error: cannot prove assertion: i < n [pass --verbose for the Final IR]
-tests/nimony/errmsgs/tsaturatecmp.nim(16, 7) Error: cannot prove assertion: i < n [pass --verbose for the Final IR]
-tests/nimony/errmsgs/tsaturatecmp.nim(22, 7) Error: cannot prove assertion: n < i [pass --verbose for the Final IR]

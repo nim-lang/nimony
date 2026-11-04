@@ -97,7 +97,7 @@ func hashIgnoreStyle*(x: string): Hash =
     if c == '_':
       inc(i)
     else:
-      if c in {'A'..'Z'}:
+      if c >= 'A' and c <= 'Z':
         c = chr(ord(c) + (ord('a') - ord('A'))) # toLower()
       h = h !& uint(ord(c))
       inc(i)
@@ -123,7 +123,7 @@ func hashIgnoreStyle*(sBuf: string, sPos, ePos: int): Hash {.
     if c == '_':
       inc(i)
     else:
-      if c in {'A'..'Z'}:
+      if c >= 'A' and c <= 'Z':
         c = chr(ord(c) + (ord('a') - ord('A'))) # toLower()
       h = h !& uint(ord(c))
       inc(i)
@@ -143,7 +143,7 @@ func hashIgnoreCase*(x: string): Hash =
   var h: Hash = 0
   for i in 0..x.len-1:
     var c = x[i]
-    if c in {'A'..'Z'}:
+    if c >= 'A' and c <= 'Z':
       c = chr(ord(c) + (ord('a') - ord('A'))) # toLower()
     h = h !& uint(ord(c))
   result = !$h
@@ -164,7 +164,7 @@ func hashIgnoreCase*(sBuf: string, sPos, ePos: int): Hash {.
   var h: Hash = 0
   for i in sPos..ePos:
     var c = sBuf[i]
-    if c in {'A'..'Z'}:
+    if c >= 'A' and c <= 'Z':
       c = chr(ord(c) + (ord('a') - ord('A'))) # toLower()
     h = h !& uint(ord(c))
   result = !$h
