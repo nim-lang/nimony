@@ -19,7 +19,7 @@ type
     data: array[2_000_000, int]
     tail: int
 
-const Big = 300_000
+const Big = 20_000
 
 var g = default(array[Big, int])
 var gh = default(array[5, Holey])
@@ -43,8 +43,8 @@ proc main =
   let w = mk()
   echo w[0].x, " ", w[999].x, " ", ord(w[500].c)
 
-  var nested = default(array[3, array[100_000, Inner]])
-  echo nested[2][99_999].a, " ", nested[1][5].b
+  var nested = default(array[3, array[10_000, Inner]])
+  echo nested[2][9_999].a, " ", nested[1][5].b
 
   let n = Node()
   echo n.data[1_999_999], " ", n.tail

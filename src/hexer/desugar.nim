@@ -167,6 +167,11 @@ proc isZeroDefaultArrayCall(c: var Context; n: Cursor; arrType: var Cursor): boo
   if local != default(Cursor):
     arrType = local
     return true
+  # Only an instance of `default` can carry the pragma. Loading any other
+  # callee would read its module's `.s.nif` for nothing — and a module this
+  # one does not need may not exist yet: the program of a compile-time
+  # evaluation is built while a parallel build is still writing them.
+  if not pool.symString(n.symId).startsWith("default."): return false
   let res = tryLoadSym(n.symId) # fails for this module's own: those are `local`
   result = res.status == LacksNothing and isRoutine(res.decl.symKind) and
     zeroDefaultArrayOf(res.decl, arrType)

@@ -224,6 +224,28 @@ proc isImportedArray(c: var GeneratedCode; n: Cursor): bool =
   else:
     result = false
 
+proc isZeroLenArray(c: var GeneratedCode; typ: Cursor): bool =
+  ## `array[0, T]`, which C sees as a struct around a zero-length member: a
+  ## GNU extension whose storage is nothing at all.
+  var t = navigateToObjectBody(c.m, typ)
+  result = false
+  if t.typeKind == ArrayT:
+    inc t
+    skip t                # the element type
+    result = (t.kind == IntLit and intVal(t) == 0) or
+             (t.kind == UIntLit and uintVal(t) == 0'u64)
+
+proc isZeroLenFieldInit(c: var GeneratedCode; kv: Cursor; objBody: Cursor): bool =
+  ## `(kv fld X)` for an `array[0, T]` field whose `X` has no side effect.
+  var n = kv
+  inc n # the `kv` tag
+  if n.kind != Symbol: return false
+  var body = objBody
+  let fldType = typeOfField(c.m, body, n.symId)
+  if cursorIsNil(fldType) or not isZeroLenArray(c, fldType): return false
+  skip n
+  result = n.exprKind == AconstrC or n.kind == Symbol
+
 proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -439,14 +461,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
   of AconstrC:
     n.into:
       let isUncheckedArray = n.typeKind in {PtrT, AptrT, FlexarrayT}
-      var isZeroLen = false   # `array[0, T]`: `{0}` would be an excess element
-      if not isUncheckedArray:
-        var t = navigateToObjectBody(c.m, n)
-        if t.typeKind == ArrayT:
-          inc t
-          skip t                # the element type
-          isZeroLen = (t.kind == IntLit and intVal(t) == 0) or
-                      (t.kind == UIntLit and uintVal(t) == 0'u64)
+      # `array[0, T]`: `{0}` would be an excess element
+      let isZeroLen = not isUncheckedArray and isZeroLenArray(c, n)
       c.objConstrType(n)
       c.add CurlyLe
       if not isUncheckedArray:
@@ -470,6 +486,13 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add CurlyLe
       var i = 0
       while n.hasMore:
+        if n.substructureKind == KvU and isZeroLenFieldInit(c, n, objBody):
+          # Nothing to store, and naming it is harmful: GCC lets the
+          # designator of a zero-sized member override whatever an earlier
+          # designator wrote at the same offset — the next field's value is
+          # dropped (a coroutine frame lost its `HttpConnection` that way).
+          skip n
+          continue
         if i > 0: c.add Comma
         if n.substructureKind == KvU:
           n.into:
