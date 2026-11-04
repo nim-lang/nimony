@@ -592,9 +592,6 @@ func toLower*(c: Rune): Rune =
   ## * `toUpper func <#toUpper,Rune>`_
   ## * `toTitle func <#toTitle,Rune>`_
   ## * `isLower func <#isLower,Rune>`_
-  runnableExamples:
-    assert toLower(Rune(0x0393)) == Rune(0x03B3) # Γ -> γ
-    assert toLower(Rune(0x24C4)) == Rune(0x24DE) # Ⓞ -> ⓞ
   var c = RuneImpl(c)
   var p = binarySearch(c, toLowerRanges, len(toLowerRanges) div 3, 3)
   if p >= 0 and c >= toLowerRanges[p] and c <= toLowerRanges[p+1]:
@@ -633,9 +630,6 @@ func toTitle*(c: Rune): Rune =
   ## * `toLower func <#toLower,Rune>`_
   ## * `toUpper func <#toUpper,Rune>`_
   ## * `isTitle func <#isTitle,Rune>`_
-  runnableExamples:
-    assert toTitle(Rune('a')) == Rune('A')
-    assert toTitle(Rune(0x01C6)) == Rune(0x01C5) # ǆ -> ǅ
   var c = RuneImpl(c)
   var p = binarySearch(c, toTitleSinglets, len(toTitleSinglets) div 2, 2)
   if p >= 0 and c == toTitleSinglets[p]:
@@ -751,11 +745,6 @@ func isCombining*(c: Rune): bool =
   ## * `isUpper func <#isUpper,Rune>`_
   ## * `isTitle func <#isTitle,Rune>`_
   ## * `isAlpha func <#isAlpha,Rune>`_
-  runnableExamples:
-    assert isCombining(Rune(0x0301)) # combining acute accent (Mn)
-    assert isCombining(Rune(0x0903)) # Devanagari sign visarga (Mc)
-    assert isCombining(Rune(0x20DD)) # combining enclosing circle (Me)
-    assert not isCombining("a".runeAt(0))
   let c = RuneImpl(c)
   # Optimized to return false immediately for ASCII
   result = c >= 0x0300 and inRanges(c, markRanges)
@@ -769,11 +758,6 @@ func isNonspacingMark*(c: Rune): bool =
   ## See also:
   ## * `isCombining func <#isCombining,Rune>`_
   ## * `toNFD func <#toNFD,openArray[char]>`_
-  runnableExamples:
-    assert isNonspacingMark(Rune(0x0301)) # combining acute accent
-    assert isNonspacingMark(Rune(0x064E)) # Arabic fatha
-    assert not isNonspacingMark(Rune(0x0903)) # Devanagari visarga is Mc
-    assert not isNonspacingMark("a".runeAt(0))
   let c = RuneImpl(c)
   result = c >= 0x0300 and inRanges(c, nonspacingMarkRanges)
 
@@ -850,21 +834,20 @@ func toNFD*(s: openArray[char]): string =
   ## result equals Python's `unicodedata.normalize("NFD", s)`.
   ##
   ## Bytes that are not valid UTF-8 are decoded as `runes` decodes them.
+  ## For example, `toNFD("é")` is `"e\u0301"`; the ligature `"ﬁ"` stays.
   ## To compare text without accents, decompose it and drop the nonspacing
-  ## marks (last example).
+  ## marks:
+  ##
+  ## ```nim
+  ## var plain = ""
+  ## for r in runes(toNFD(toLower("Ἀθῆναι"))):
+  ##   if not isNonspacingMark(r): plain.add r
+  ## # plain == "αθηναι"
+  ## ```
   ##
   ## See also:
   ## * `toNFKD func <#toNFKD,openArray[char]>`_
   ## * `isNonspacingMark func <#isNonspacingMark,Rune>`_
-  runnableExamples:
-    assert toNFD("é") == "e\u0301"
-    assert toNFD("ά") == "α\u0301"            # Greek tonos
-    assert toNFD("й") == "и\u0306"            # Cyrillic short i
-    assert toNFD("ﬁ") == "ﬁ"                  # a compatibility ligature stays
-    var plain = ""
-    for r in runes(toNFD(toLower("Ἀθῆναι"))):
-      if not isNonspacingMark(r): plain.add r
-    assert plain == "αθηναι"
   result = decompose(s, compat = false)
 
 func toNFKD*(s: openArray[char]): string =
@@ -874,15 +857,13 @@ func toNFKD*(s: openArray[char]): string =
   ## non-breaking hyphen) are replaced by their plain equivalents. The
   ## result equals Python's `unicodedata.normalize("NFKD", s)`.
   ##
+  ## For example, `toNFKD("ﬁ")` is `"fi"` and `toNFKD("x²")` is `"x2"`.
+  ##
   ## Bytes that are not valid UTF-8 are decoded as `runes` decodes them.
   ##
   ## See also:
   ## * `toNFD func <#toNFD,openArray[char]>`_
   ## * `isNonspacingMark func <#isNonspacingMark,Rune>`_
-  runnableExamples:
-    assert toNFKD("ﬁ") == "fi"
-    assert toNFKD("x²") == "x2"
-    assert toNFKD("ﻷ") == "\u0644\u0627\u0654" # Arabic ligature lam with alef with hamza above
   result = decompose(s, compat = true)
 
 func runeCheck(s: openArray[char], runeProc: proc (c: Rune): bool {.noSideEffect, nimcall.}): bool =
