@@ -5763,6 +5763,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   var isGeneric = false
   var isExternProc = false
   var isAsm = false
+  var isNoReturn = false
   var ownContract = default(Cursor)
   var ownEnsures = default(Cursor)
   let oldOwnEnsures = c.ownEnsures
@@ -5774,6 +5775,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
       isExternProc = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP) or
                      hasPragma(n, ImportjsP)
       isAsm = hasPragma(n, AssemblerP)
+      isNoReturn = hasPragma(n, NoreturnP)
       ownContract = extractPragma(n, RequiresP)
       # An iterator's `.ensures` is about what it yields, not about an exit.
       if decl.symKind != IteratorY:
@@ -5833,7 +5835,12 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
     # `return`) must `result`/out-params be initialized. A proc whose every path
     # raises or otherwise never returns (`c.tr.live == false` here) has no normal
     # exit, so the init obligation is vacuous — e.g. `proc f: string = raise X`.
-    if c.tr.live:
+    if c.tr.live and isNoReturn:
+      # Every call site trusts the pragma: `analyseCall` ends the path after
+      # the call, so a guard `if i >= a.len: fail()` proves `a[i]`. A body
+      # that can return breaks that proof (nim-lang/nimony#2858).
+      buildErr c, info, asNimCode(symId) & " is marked .noreturn but can return"
+    elif c.tr.live:
       if c.resultSym != NoSymId and not isInitialized(c, c.resultSym):
         buildErr c, info, "cannot prove that " & asNimCode(c.resultSym) & " has been initialized"
       for sym in outParams:
