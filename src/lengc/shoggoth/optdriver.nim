@@ -26,6 +26,7 @@ import cse                                     # runCSE + collectFunctionSummari
 import scalarizer                              # runScalarize (object → field scalars / SROA)
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import unswitch                                # runUnswitch (loop unswitching)
+import unroll                                  # runUnroll (full loop unrolling)
 import imi_bridge                             # runImi/parseModule (inter-module inliner)
 import vectorizer                             # runVectorizer (map loops -> (instr ...))
 export VecMode                                # the driver flag's type, for shoggoth.nim
@@ -68,6 +69,7 @@ type
   Stats* = object
     procs*, bodies*, intermodChanged*: int
     checksRemoved*: int
+    unrolled*: int                        ## loops fully unrolled
     vectorized*: int
     memOps*: set[IntrinsicOp]                 ## the mem rows memidioms emitted
 
@@ -114,6 +116,16 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   if passOn("ctorproj"): runConstructorProjection(buf)
   if passOn("scalarize"): runScalarize(buf, m)
   if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
+  # Fully unroll small constant-trip loops: every copy reads its iteration's
+  # index as a literal, so `(at a i)` becomes a constant index for CSE and the
+  # rewriter below, and the per-iteration compare-and-branch is gone. AFTER
+  # copyprop: before it, a `for` loop's bounds are still the iterator's temps
+  # and its `inc` still writes through `(deref (haddr i))`. Copyprop runs again
+  # to delete those temps once nothing reads them.
+  if passOn("unroll"):
+    let n = runUnroll(buf)
+    st.unrolled += n
+    if n > 0 and passOn("copyprop"): runCopyProp(buf, params, summaries, m)
   # Hoist loop-invariant `if` conditions out of small loops by duplicating them
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
   # of per character. AFTER copyprop so propagated copies make structurally

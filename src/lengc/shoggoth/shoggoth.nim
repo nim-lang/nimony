@@ -162,6 +162,7 @@ proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode;
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
+    if st.unrolled > 0: parts.add "unrolled=" & $st.unrolled
     echo "  ", extractFilename(input), ": ", st.procs, " procs, ",
          st.bodies, " bodies",
          (if parts.len > 0: "  [" & parts.join(" ") & "]" else: "")
