@@ -582,7 +582,9 @@ func binarySearch(c: RuneImpl, tab: openArray[int32], len, stride: int): int =
   return -1
 
 func toLower*(c: Rune): Rune =
-  ## Converts ``c`` into lower case. This works for any rune.
+  ## Converts ``c`` into lower case. This works for any rune: it is the
+  ## simple lowercase mapping of UnicodeData.txt, so symbols such as
+  ## Ⓞ and Ⅹ are mapped too. Runes without a mapping are returned unchanged.
   ##
   ## If possible, prefer ``toLower`` over ``toUpper``.
   ##
@@ -590,6 +592,9 @@ func toLower*(c: Rune): Rune =
   ## * `toUpper func <#toUpper,Rune>`_
   ## * `toTitle func <#toTitle,Rune>`_
   ## * `isLower func <#isLower,Rune>`_
+  runnableExamples:
+    assert toLower(Rune(0x0393)) == Rune(0x03B3) # Γ -> γ
+    assert toLower(Rune(0x24C4)) == Rune(0x24DE) # Ⓞ -> ⓞ
   var c = RuneImpl(c)
   var p = binarySearch(c, toLowerRanges, len(toLowerRanges) div 3, 3)
   if p >= 0 and c >= toLowerRanges[p] and c <= toLowerRanges[p+1]:
@@ -600,7 +605,9 @@ func toLower*(c: Rune): Rune =
   return Rune(c)
 
 func toUpper*(c: Rune): Rune =
-  ## Converts ``c`` into upper case. This works for any rune.
+  ## Converts ``c`` into upper case. This works for any rune: it is the
+  ## simple uppercase mapping of UnicodeData.txt. Runes without a mapping
+  ## are returned unchanged.
   ##
   ## If possible, prefer ``toLower`` over ``toUpper``.
   ##
@@ -618,20 +625,27 @@ func toUpper*(c: Rune): Rune =
   return Rune(c)
 
 func toTitle*(c: Rune): Rune =
-  ## Converts ``c`` to title case.
+  ## Converts ``c`` to title case: the simple titlecase mapping of
+  ## UnicodeData.txt, which is the uppercase mapping except for a few
+  ## digraphs and Georgian letters.
   ##
   ## See also:
   ## * `toLower func <#toLower,Rune>`_
   ## * `toUpper func <#toUpper,Rune>`_
   ## * `isTitle func <#isTitle,Rune>`_
+  runnableExamples:
+    assert toTitle(Rune('a')) == Rune('A')
+    assert toTitle(Rune(0x01C6)) == Rune(0x01C5) # ǆ -> ǅ
   var c = RuneImpl(c)
   var p = binarySearch(c, toTitleSinglets, len(toTitleSinglets) div 2, 2)
   if p >= 0 and c == toTitleSinglets[p]:
     return Rune(c + toTitleSinglets[p+1] - 500)
-  return Rune(c)
+  return toUpper(Rune(c))
 
 func isLower*(c: Rune): bool =
-  ## Returns true if ``c`` is a lower case rune.
+  ## Returns true if ``c`` is a lower case rune, that is, a rune with an
+  ## uppercase mapping (see `toUpper`). Lower case letters without one,
+  ## such as ß, are not lower case here.
   ##
   ## If possible, prefer ``isLower`` over ``isUpper``.
   ##
@@ -651,7 +665,8 @@ func isLower*(c: Rune): bool =
     return false
 
 func isUpper*(c: Rune): bool =
-  ## Returns true if ``c`` is a upper case rune.
+  ## Returns true if ``c`` is an upper case rune, that is, a rune with a
+  ## lowercase mapping (see `toLower`).
   ##
   ## If possible, prefer ``isLower`` over ``isUpper``.
   ##
@@ -673,7 +688,8 @@ func isUpper*(c: Rune): bool =
     return false
 
 func isAlpha*(c: Rune): bool =
-  ## Returns true if ``c`` is an *alpha* rune (i.e., a letter).
+  ## Returns true if ``c`` is an *alpha* rune, i.e., a letter (general
+  ## category L).
   ##
   ## See also:
   ## * `isLower func <#isLower,Rune>`_
@@ -681,8 +697,6 @@ func isAlpha*(c: Rune): bool =
   ## * `isAlpha func <#isAlpha,Rune>`_
   ## * `isWhiteSpace func <#isWhiteSpace,Rune>`_
   ## * `isCombining func <#isCombining,Rune>`_
-  if isUpper(c) or isLower(c):
-    return true
   var c = RuneImpl(c)
   var p = binarySearch(c, alphaRanges, len(alphaRanges) div 2, 2)
   if p >= 0 and c >= alphaRanges[p] and c <= alphaRanges[p+1]:
@@ -694,7 +708,8 @@ func isAlpha*(c: Rune): bool =
     return false
 
 func isTitle*(c: Rune): bool =
-  ## Returns true if ``c`` is a Unicode titlecase code point.
+  ## Returns true if ``c`` is a Unicode titlecase code point, i.e., it has
+  ## both a lowercase and an uppercase mapping, such as ǅ.
   ##
   ## See also:
   ## * `toTitle func <#toTitle,Rune>`_
@@ -705,7 +720,8 @@ func isTitle*(c: Rune): bool =
   return isUpper(c) and isLower(c)
 
 func isWhiteSpace*(c: Rune): bool =
-  ## Returns true if ``c`` is a Unicode whitespace code point.
+  ## Returns true if ``c`` is a Unicode whitespace code point: general
+  ## category Z, plus the controls U+0009..U+000D and U+0085.
   ##
   ## See also:
   ## * `isLower func <#isLower,Rune>`_
