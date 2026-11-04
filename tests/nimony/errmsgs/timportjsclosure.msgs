@@ -1,4 +1,0 @@
-tests/nimony/errmsgs/timportjsclosure.nim(3, 1) Error: parameter `cb` of an `importjs` proc holds a `{.closure.}` proc; closures can't cross into JS (use a `nimcall` proc)
-tests/nimony/errmsgs/timportjsclosure.nim(4, 1) Error: the result of an `importjs` proc is a `{.closure.}` proc; closures can't cross into JS (use a `nimcall` proc)
-tests/nimony/errmsgs/timportjsclosure.nim(5, 1) Error: parameter `cb` of an `importjs` proc holds a `{.closure.}` proc; closures can't cross into JS (use a `nimcall` proc)
-tests/nimony/errmsgs/timportjsclosure.nim(13, 1) Error: an `importjs` proc can't be `.raises`: a JS template yields its value, not a Nim error code (catch the exception in JS)

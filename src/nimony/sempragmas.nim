@@ -965,44 +965,6 @@ proc interruptSignatureError*(dest: var TokenBuf; paramsAt: int): string =
              "caller, so it must not return a value"
   endRead n
 
-proc hasClosureType(typ: Cursor): bool =
-  ## True if `typ` is a `{.closure.}` proc type, seen through type aliases.
-  ## Generic types are checked after instantiation.
-  result = false
-  let t = skipModifierAndOwned(typ)
-  if t.isSymbol:
-    let res = tryLoadSym(t.symId)
-    if res.status == LacksNothing:
-      let decl = asTypeDecl(res.decl)
-      if decl.kind == TypeY and decl.typevars.substructureKind != TypevarsU:
-        result = hasClosureType(decl.body)
-  elif t.typeKind in {ProctypeT, ItertypeT}:
-    result = procHasPragma(t, ClosureP)
-
-proc importjsSignatureError*(dest: var TokenBuf; paramsAt: int): string =
-  ## The message for an `importjs` routine with a parameter or result holding a
-  ## closure (JS can only be handed its code pointer), or "".
-  result = ""
-  var n = cursorAt(dest, paramsAt)
-  if n.substructureKind == ParamsU:
-    var p = sub(n)
-    while p.hasMore and result.len == 0:
-      let param = asLocal(p)
-      if hasClosureType(param.typ):
-        result = "parameter `" & pool.symBasename(param.name.symId) &
-                 "` of an `importjs` proc holds a `{.closure.}` proc; " &
-                 "closures can't cross into JS (use a `nimcall` proc)"
-      skip p
-    endRead n
-    if result.len > 0: return
-    n = cursorAt(dest, paramsAt)
-  var ret = n
-  skip ret # past the (params ...) -> the return type
-  if hasClosureType(ret):
-    result = "the result of an `importjs` proc is a `{.closure.}` proc; " &
-             "closures can't cross into JS (use a `nimcall` proc)"
-  endRead n
-
 proc semAssumeAssert*(c: var SemContext; dest: var TokenBuf; it: var Item; kind: StmtKind) =
   let info = it.n.info
   dest.addParLe(kind, info)
