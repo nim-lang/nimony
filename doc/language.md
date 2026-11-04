@@ -4194,6 +4194,11 @@ type definitions. A type definition binds a type to a name. Type definitions
 can be recursive or even mutually recursive. Nominal types like `objects`
 or `enums` can only be defined in a `type` section.
 
+A type must not contain itself by value, through object fields, base objects,
+tuple or array elements or a `distinct` base type: `type O = object x: O`
+and `type D = distinct D` are invalid. The recursion has to pass through an
+indirection such as `ref`, `ptr` or `seq`.
+
 
 
 ## Concepts
