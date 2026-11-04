@@ -13,9 +13,18 @@ proc addFieldsAccessToken(buf: var TokenBuf; info: NifLineInfo; ownerSym: SymId)
   ## token it would be judged against the module the `for` loop was written
   ## in, which for a generic `==` is `system`, and rejected (#1988).
   buf.addIntLit(0, info)
-  buf.addStrLit(pool.symModule(ownerSym), info)
+  let ownerModule = pool.symModule(ownerSym)
+  if ownerModule.len > 0:
+    buf.addStrLit(ownerModule, info)
+  else:
+    # A field of a type declared in the module being compiled has a local
+    # symbol: its module suffix is empty even though the type has one. This
+    # access was synthesized from the field declaration, so mark it as already
+    # authorized instead of losing the owner module and re-judging it against
+    # whichever module later re-checks the generated tree.
+    buf.addStrLit(AlreadyChecked, info)
 
-proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym, ownerSym: SymId; body: Cursor) =
+proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym, ownerSym: SymId; internalName: bool; body: Cursor) =
   ## Copies the single tree/token at `body` into `buf`, substituting the
   ## loop variables.
   var n = body
@@ -24,20 +33,28 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
     # substitute direct idents for now, symbols would work the same way
     let s = n.strId
     if s == iter.nameVar:
-      if fieldSym == SymId(0):
-        buf.addStrLit(fieldName, n.info)
-      else:
+      if internalName and fieldSym != SymId(0):
         buf.addStrLit pool.symString(fieldSym)
+      else:
+        buf.addStrLit(fieldName, n.info)
     elif s == iter.fieldVar1:
       buf.addParLe(DotX, n.info)
       buf.addSubtree iter.obj1
-      buf.addIdent(fieldName, n.info)
+      if fieldSym != SymId(0):
+        # A resolved field symbol both avoids a second lookup and is the
+        # compiler's certificate that guarded (sum-type) access is intentional.
+        buf.addSymUse(fieldSym, n.info)
+      else:
+        buf.addIdent(fieldName, n.info)
       addFieldsAccessToken(buf, n.info, ownerSym)
       buf.addParRi()
     elif s == iter.fieldVar2:
       buf.addParLe(DotX, n.info)
       buf.addSubtree iter.obj2
-      buf.addIdent(fieldName, n.info)
+      if fieldSym != SymId(0):
+        buf.addSymUse(fieldSym, n.info)
+      else:
+        buf.addIdent(fieldName, n.info)
       addFieldsAccessToken(buf, n.info, ownerSym)
       buf.addParRi()
     else:
@@ -46,7 +63,8 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
     buf.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
-        expandNamedFieldBody(buf, iter, fieldName, fieldSym, ownerSym, n)
+        expandNamedFieldBody(buf, iter, fieldName, fieldSym, ownerSym,
+                             internalName, n)
         skip n
       buf.addParRi(n.endInfo)
   else:
@@ -54,17 +72,125 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
     # bounded scope); nifcore has no ParRi kind at all.
     buf.addSubtree n
 
-proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym, ownerSym: SymId; body: Cursor) =
+proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym, ownerSym: SymId; internalName: bool; body: Cursor) =
   # use `if true` to open a new scope without interfering with `break`:
   buf.addParLe(IfS, body.info)
   buf.addParLe(ElifU, body.info)
   buf.addParLe(TrueX, body.info)
   buf.addParRi()
   buf.addParLe(StmtsS, body.info)
-  expandNamedFieldBody(buf, iter, fieldName, fieldSym, ownerSym, body)
+  expandNamedFieldBody(buf, iter, fieldName, fieldSym, ownerSym, internalName,
+                       body)
   buf.addParRi() # (stmts)
   buf.addParRi() # (elif)
   buf.addParRi() # (if)
+
+proc addObjectFieldAccess(buf: var TokenBuf; info: NifLineInfo; obj: Cursor;
+                          fieldName: StrId; fieldSym, ownerSym: SymId) =
+  ## Emit `obj.field` using the declaring module as the access token. This is
+  ## the same privileged access used by the field body expansion below.
+  buf.addParLe(DotX, info)
+  buf.addSubtree obj
+  if fieldSym != SymId(0):
+    buf.addSymUse(fieldSym, info)
+  else:
+    buf.addIdent(fieldName, info)
+  addFieldsAccessToken(buf, info, ownerSym)
+  buf.addParRi()
+
+proc emitObjectComponent(buf: var TokenBuf; iter: FieldsIter; n: var Cursor;
+                         isInternalSym: bool; body: Cursor)
+
+proc emitObjectBody(buf: var TokenBuf; iter: FieldsIter; n: var Cursor;
+                    isInternalSym: bool; body: Cursor) =
+  ## Emit the field iterations for one object-body fragment. The fragment is
+  ## either a single field, `(stmts ...)`, `(nil)`, or a nested case section.
+  case n.substructureKind
+  of StmtsU:
+    n.into:
+      while n.hasMore:
+        emitObjectComponent(buf, iter, n, isInternalSym, body)
+  of NilU:
+    discard
+  of FldU, GfldU:
+    emitObjectComponent(buf, iter, n, isInternalSym, body)
+  of CaseU:
+    let caseStart = n
+    n.into:
+      # The discriminator is a normal field and must still be visible to the
+      # loop body. The remaining fields are only live in the selected branch.
+      var selectorName = StrId(0)
+      var selectorOwner = SymId(0)
+      if n.hasMore and n.substructureKind in {FldU, GfldU}:
+        let selectorStart = n
+        let field = takeLocal(n, SkipFinalParRi)
+        selectorName = getIdent(field.name)
+        selectorOwner = field.name.symId
+        buildNamedFieldIter(buf, iter, selectorName, field.name.symId,
+                            field.name.symId, isInternalSym, body)
+        n = selectorStart
+        skip n
+      if selectorName != StrId(0):
+        buf.addParLe(CaseS, n.info)
+        addObjectFieldAccess(buf, n.info, iter.obj1, selectorName,
+                             selectorOwner, selectorOwner)
+        while n.hasMore and n.substructureKind == OfU:
+          let ofStart = n
+          buf.addParLe(OfU, n.info)
+          n.into:
+            if n.hasMore:
+              # Keep the original branch values verbatim: they may contain
+              # symbols and ranges that have already been resolved.
+              buf.addSubtree n
+              skip n
+            buf.addParLe(StmtsS, n.info)
+            if n.hasMore:
+              emitObjectBody(buf, iter, n, isInternalSym, body)
+            buf.addParRi() # (stmts)
+          buf.addParRi() # (of)
+          n = ofStart
+          skip n
+        if n.hasMore and n.substructureKind == ElseU:
+          let elseStart = n
+          buf.addParLe(ElseU, n.info)
+          n.into:
+            buf.addParLe(StmtsS, n.info)
+            if n.hasMore:
+              emitObjectBody(buf, iter, n, isInternalSym, body)
+            buf.addParRi() # (stmts)
+          buf.addParRi() # (else)
+          n = elseStart
+          skip n
+        buf.addParRi() # (case)
+      while n.hasMore:
+        skip n
+    n = caseStart
+    skip n
+  of WhenU:
+    # An unresolved object `when` only occurs in an uninstantiated generic
+    # object; `fieldPairs` leaves the loop untyped in that case and never
+    # reaches this emitter with a concrete object. Anything else is malformed.
+    skip n
+  else:
+    skip n
+
+proc emitObjectComponent(buf: var TokenBuf; iter: FieldsIter; n: var Cursor;
+                         isInternalSym: bool; body: Cursor) =
+  case n.substructureKind
+  of FldU, GfldU:
+    let field = takeLocal(n, SkipFinalParRi)
+    buildNamedFieldIter(buf, iter, getIdent(field.name), field.name.symId,
+                        field.name.symId, isInternalSym, body)
+  of StmtsU:
+    n.into:
+      while n.hasMore:
+        emitObjectComponent(buf, iter, n, isInternalSym, body)
+  of NilU, WhenU:
+    skip n
+  of CaseU:
+    emitObjectBody(buf, iter, n, isInternalSym, body)
+  else:
+    skip n
 
 proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intVal: int64; name: StrId; body: Cursor) =
   ## Copies the single tree/token at `body` into `buf`, substituting the
@@ -227,11 +353,7 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
         if obj.kind == ObjectT:
           skip currentField, AnyType  # parent type / inheritance slot
         while currentField.hasMore:
-          let field = takeLocal(currentField, SkipFinalParRi)
-          let fieldSym = if isInternalSym: field.name.symId else: SymId(0)
-          # field name is enough:
-          buildNamedFieldIter(iterBuf, iter, getIdent(field.name), fieldSym,
-                              field.name.symId, body)
+          emitObjectComponent(iterBuf, iter, currentField, isInternalSym, body)
       objType = obj.parentType
       if objType.isDotToken:
         break
