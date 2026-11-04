@@ -162,6 +162,8 @@ proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode;
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
+    if st.unswitched > 0: parts.add "unswitched=" & $st.unswitched
+    if st.fused > 0: parts.add "fused=" & $st.fused
     echo "  ", extractFilename(input), ": ", st.procs, " procs, ",
          st.bodies, " bodies",
          (if parts.len > 0: "  [" & parts.join(" ") & "]" else: "")

@@ -68,6 +68,7 @@ type
   Stats* = object
     procs*, bodies*, intermodChanged*: int
     checksRemoved*: int
+    unswitched*, fused*: int              ## loops unswitched, `if` runs fused
     vectorized*: int
     memOps*: set[IntrinsicOp]                 ## the mem rows memidioms emitted
 
@@ -117,8 +118,15 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # Hoist loop-invariant `if` conditions out of small loops by duplicating them
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
   # of per character. AFTER copyprop so propagated copies make structurally
-  # identical conditions actually identical.
-  if passOn("unswitch") and runUnswitch(buf) > 0 and passOn("copyprop"):
+  # identical conditions actually identical. The same pass fuses straight-line
+  # runs of tests of one condition (`if a: x; if a: y` → `if a: (x; y)`), and
+  # does so BEFORE CSE: a fused arm is one block, so CSE sees `x`'s values as
+  # available in `y`, which a sibling `if` never dominated.
+  var fused = 0
+  let changed = if passOn("unswitch"): runUnswitch(buf, fused) else: 0
+  st.unswitched += changed - fused
+  st.fused += fused
+  if changed > 0 and passOn("copyprop"):
     # A specialized copy no longer READS the temps that fed the hoisted test —
     # but it still computes them, once per iteration, which is most of what the
     # unswitch was meant to remove. Copy propagation's dead-store elimination is

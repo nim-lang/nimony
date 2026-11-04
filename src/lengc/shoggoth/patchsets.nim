@@ -18,7 +18,7 @@ import std / [tables, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 
 type
-  PatchKind* = enum pkInsert, pkSubst
+  PatchKind* = enum pkInsert, pkSubst, pkDelete
 
   Patch = object
     kind: PatchKind
@@ -40,6 +40,10 @@ proc addInsert*(p: var Patchset; pos: int; src: Cursor) =
 proc addSubst*(p: var Patchset; pos: int; src: Cursor) =
   p.patches.mgetOrPut(pos, @[]).add Patch(kind: pkSubst, src: src)
 
+proc addDelete*(p: var Patchset; pos: int) =
+  ## Drop the subtree at `pos` (inserts recorded at `pos` are still emitted).
+  p.patches.mgetOrPut(pos, @[]).add Patch(kind: pkDelete)
+
 proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor) =
   let pos = cursorToPosition(p.orig[], n)
   var substituted = false
@@ -52,6 +56,8 @@ proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor) =
         if not substituted:
           dest.addSubtree patch.src
           substituted = true
+      of pkDelete:
+        substituted = true
     if substituted:
       skip n
       return

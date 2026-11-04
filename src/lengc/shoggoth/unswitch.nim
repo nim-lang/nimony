@@ -42,6 +42,16 @@
 ## one loop per round; iterated rounds hoist a condition out of nested loops
 ## level by level (the inner unswitch leaves `(if C (while…)…)` directly in the
 ## outer body, which the next round can hoist again).
+##
+## The same transform over a straight-line RUN of statements is `if` fusion:
+##
+##   (if (elif A X) (else U)) (if (elif A Y) (else W))
+##     →  (if (elif A (stmts X Y)) (else (stmts U W)))
+##
+## — the region duplicated is the run instead of a loop, and the two copies
+## fold every test of A just the same. It is what two back-to-back inlined
+## accessors leave in straight-line code; see "straight-line runs" below. A
+## round that finds no loop to unswitch fuses one run.
 
 import std / [assertions, tables, sets]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
@@ -322,20 +332,25 @@ proc collectLoopDefs(c: var Context; whileCur: Cursor) =
     for s in multi: c.defs.del s
 
 proc expandCond(c: Context; dest: var TokenBuf; n: Cursor; bound: int;
-                depth: int; active: var HashSet[SymId]) =
+                depth: int; active: var HashSet[SymId]; minDef: var int) =
   ## Copy the expression at `n` into `dest`, replacing every chaseable symbol by
   ## its defining expression, so the result speaks only of symbols that exist
   ## OUTSIDE the loop. `bound` is the position of the condition being
   ## canonicalized: a definition that comes after it did not produce the value
-  ## the test reads, so it is not substituted.
+  ## the test reads, so it is not substituted. `minDef` is lowered to the
+  ## position of every definition substituted.
   case n.kind
   of Symbol:
     let s = symId(n)
     let dp = c.defs.getOrDefault(s, -1)
     if dp >= 0 and dp < bound and depth < MaxSubstDepth and s notin active:
       active.incl s
+      if dp < minDef: minDef = dp
       let d = cursorAt(c.orig[], dp)
-      expandCond(c, dest, d, bound, depth + 1, active)
+      # The definition's own symbols are chased with the DEFINITION's position
+      # as the bound: a symbol reassigned between the definition and the test
+      # did not feed the value (`x = s.f; s = t; if x …` tests the old `s`).
+      expandCond(c, dest, d, dp, depth + 1, active, minDef)
       active.excl s
     else:
       dest.addSubtree n
@@ -345,21 +360,26 @@ proc expandCond(c: Context; dest: var TokenBuf; n: Cursor; bound: int;
     if li.isValid: dest.appendLineInfo li
     var it = n
     it.loopInto:
-      expandCond(c, dest, it, bound, depth, active)
+      expandCond(c, dest, it, bound, depth, active, minDef)
       skip it
     dest.closeTag()
   else:
     dest.addSubtree n
+
+proc canonCondMin(c: Context; condPos: int; minDef: var int): TokenBuf =
+  ## `canonCond`, also lowering `minDef` to the earliest definition it chased.
+  result = createTokenBuf(32, c.orig[].pool, c.orig[].tags)
+  var active = initHashSet[SymId]()
+  let cur = cursorAt(c.orig[], condPos)
+  expandCond(c, result, cur, condPos, 0, active, minDef)
 
 proc canonCond(c: Context; condPos: int): TokenBuf =
   ## The condition at `condPos` with every chaseable temp substituted away.
   ## This is what gets hoisted, and what conditions are compared BY: two tests
   ## reading two different inlined copies of the same accessor are the same
   ## test, and only the canonical form says so.
-  result = createTokenBuf(32, c.orig[].pool, c.orig[].tags)
-  var active = initHashSet[SymId]()
-  let cur = cursorAt(c.orig[], condPos)
-  expandCond(c, result, cur, condPos, 0, active)
+  var minDef = condPos
+  result = canonCondMin(c, condPos, minDef)
 
 proc canonAt(c: Context; cond: Cursor): TokenBuf {.inline.} =
   canonCond(c, cursorToPosition(c.orig[], cond))
@@ -654,11 +674,239 @@ proc applyCandidate(c: var Context; cand: Candidate): TokenBuf =
   ps.addSubst(cand.whilePos, cursorAt(repl, 0))
   result = ps.apply()
 
+# ── straight-line runs: `if` fusion ──────────────────────────────────────────
+#
+# The same transform applied to a RUN of statements instead of a `while`:
+#
+#   (if (elif A X) (else U)) S (if (elif A Y) (else W))
+#     →  (if (elif A (stmts X S Y)) (else (stmts U S W)))
+#
+# `emitSpec` builds both copies exactly as it builds a loop's, and in each copy
+# every test of A folds to its known branch, so with nothing in between (`S`
+# empty — the shape two back-to-back inlined accessors leave) the code does not
+# grow at all: two tests become one. A statement in between is duplicated, so
+# the duplicated span is budgeted (`MaxFuseDup`).
+#
+# What differs from a loop:
+#  * the run starts AT the first test, so A is evaluated where it always was —
+#    nothing moves in front of a guard. Purity is still required: the canonical
+#    form substitutes chased temps by their defining expressions;
+#  * A's inputs must not change from the earliest definition the canonical form
+#    chases up to the end of the run (every test in the copies is folded, the
+#    nested ones too, so they all must see the first test's value);
+#  * a `stmts` is not a scope but an `if` arm is: a declaration at the top of
+#    the run would vanish from the statements after it. Those declarations are
+#    hoisted in front of the fused `if` (`(var x … .)`) and their initializers
+#    stay in place as assignments;
+#  * a run is straight-line: a top-level `lab` (a join point) ends it. Jumps
+#    need no other care — they are forward and scoped (multi-join IR), so a
+#    label nested in the run is only reached from the same subtree and moves,
+#    renamed together, with its jumps; a jump out of an arm stays one.
+
+const
+  MaxFuseDup = 120
+    ## tokens of non-matching statements inside a run we are willing to
+    ## duplicate (they land in both arms)
+
+type
+  RunCandidate = object
+    stmtsPos: int               ## the `(stmts …)` holding the run
+    first, last: int            ## child indexes of the first and last fused if
+    condPos: int                ## the first test's condition (orig position)
+
+proc childPositions(c: Context; n: Cursor): seq[int] =
+  result = @[]
+  var it = n
+  it.loopInto:
+    result.add cursorToPosition(c.orig[], it)
+    skip it
+
+proc collectRunDefs(c: var Context; stmtsCur: Cursor) =
+  ## `collectLoopDefs` for a statement list: the straight-line single
+  ## definitions among its children. An address-taken temp can change behind
+  ## the scan's back, so it is never chased.
+  c.defs = initTable[SymId, int]()
+  var multi = initHashSet[SymId]()
+  var blocked = false
+  var it = stmtsCur
+  it.loopInto:
+    scanLoopDefs(c.orig, it, true, c.defs, multi, blocked)
+    skip it
+  if blocked:
+    c.defs.clear()
+  else:
+    for s in multi: c.defs.del s
+    for s in c.procAddrTaken: c.defs.del s
+
+proc firstElifCond(n: Cursor; cond: var Cursor): bool =
+  ## The condition of `n`'s FIRST elif when `n` is an `if`. Only the first one
+  ## qualifies: a later elif's test does not run when an earlier one holds.
+  result = false
+  if n.kind == TagLit and n.stmtKind == IfS:
+    let e = child0(n)
+    if e.kind == TagLit and e.substructureKind == ElifU:
+      cond = child0(e)
+      result = not (cond.kind == TagLit and cond.exprKind in {TrueC, FalseC})
+
+proc killsCond(c: Context; n: Cursor; syms: seq[SymId]): bool =
+  ## Could statement `n` change the value of a condition reading `syms`?
+  var assigned = initHashSet[SymId]()
+  var opaque = false
+  scanEffects(n, assigned, opaque)
+  result = false
+  for s in syms:
+    if s in assigned: return true
+    if opaque and (s in c.procAddrTaken or not isLocalSym(c, s)): return true
+
+proc scanRuns(c: var Context; n: Cursor; cands: var seq[RunCandidate]) =
+  ## Find the first fusable run (outermost statement list first; one per round,
+  ## the fixpoint driver rescans).
+  if n.kind != TagLit or cands.len > 0: return
+  if n.stmtKind in {StmtsS, ScopeS}:
+    collectRunDefs(c, n)
+    let kids = childPositions(c, n)
+    var i = 0
+    while i < kids.len and cands.len == 0:
+      let ki = cursorAt(c.orig[], kids[i])
+      var cond = default(Cursor)
+      if firstElifCond(ki, cond):
+        let condPos = cursorToPosition(c.orig[], cond)
+        var minDef = condPos
+        var canon = canonCondMin(c, condPos, minDef)
+        let a = cursorAt(canon, 0)
+        var syms: seq[SymId] = @[]
+        if pureCond(a, syms) and syms.len > 0 and not killsCond(c, ki, syms):
+          var cnt = 1
+          var last = i
+          var dup = 0
+          var k = i + 1
+          while k < kids.len:
+            let kk = cursorAt(c.orig[], kids[k])
+            # a top-level `lab` is a join point: control arrives there without
+            # having passed the first test, so the run ends in front of it
+            if kk.kind == TagLit and kk.stmtKind == LabS: break
+            if killsCond(c, kk, syms): break
+            var kc = default(Cursor)
+            var matched = false
+            if firstElifCond(kk, kc):
+              let kcPos = cursorToPosition(c.orig[], kc)
+              var md = kcPos
+              var kcanon = canonCondMin(c, kcPos, md)
+              if sameTree(cursorAt(kcanon, 0), a):
+                matched = true
+                if md < minDef: minDef = md
+            if matched:
+              inc cnt
+              last = k
+            else:
+              dup += subtreeSpan(c.orig, kk)
+              if dup > MaxFuseDup: break
+            inc k
+          if cnt >= 2:
+            # a chased definition in front of the run computed A from inputs
+            # that must still hold at the first test
+            var ok = true
+            for j in 0 ..< i:
+              if kids[j + 1] > minDef and
+                 killsCond(c, cursorAt(c.orig[], kids[j]), syms):
+                ok = false
+                break
+            if ok:
+              cands.add RunCandidate(stmtsPos: cursorToPosition(c.orig[], n),
+                                     first: i, last: last, condPos: condPos)
+      inc i
+  if cands.len > 0: return
+  var it = n
+  it.loopInto:
+    scanRuns(c, it, cands)
+    skip it
+
+proc topVarSym(n: Cursor): SymId =
+  result = SymId(0)
+  if n.kind == TagLit and n.stmtKind == VarS:
+    let d = child0(n)
+    if d.kind == SymbolDef: result = d.symId
+
+proc emitRun(c: var Context; dest: var TokenBuf; kids: seq[int];
+             cand: RunCandidate; cond: Cursor; condTrue: bool;
+             rename: Table[SymId, string]) =
+  ## One arm of a fused run: its statements specialized for `condTrue`, with
+  ## the hoisted declarations reduced to their initializing assignment.
+  for k in cand.first .. cand.last:
+    let kk = cursorAt(c.orig[], kids[k])
+    let s = topVarSym(kk)
+    if s != SymId(0):
+      var it = child0(kk)
+      skip it                                    # name
+      skip it                                    # pragmas
+      skip it                                    # type
+      if it.kind != DotToken:
+        dest.openTag TagId(ord(AsgnTagId))
+        dest.addSymUse s
+        emitSpec(c, dest, it, cond, condTrue, rename)
+        dest.closeTag()
+    else:
+      emitSpec(c, dest, kk, cond, condTrue, rename)
+
+proc applyRun(c: var Context; cand: RunCandidate): TokenBuf =
+  let stmtsCur = cursorAt(c.orig[], cand.stmtsPos)
+  collectRunDefs(c, stmtsCur)                    # `scanRuns` moved on
+  var canon = canonCond(c, cand.condPos)
+  let cond = cursorAt(canon, 0)
+  let kids = childPositions(c, stmtsCur)
+  var repl = createTokenBuf(256, c.orig[].pool, c.orig[].tags)
+  repl.openTag TagId(ord(StmtsTagId))
+  # the run's own declarations, hoisted out of the arms
+  var hoisted = initHashSet[SymId]()
+  for k in cand.first .. cand.last:
+    let kk = cursorAt(c.orig[], kids[k])
+    let s = topVarSym(kk)
+    if s != SymId(0):
+      hoisted.incl s
+      let li = rawLineInfo(kk)
+      repl.openTag kk.cursorTagId
+      if li.isValid: repl.appendLineInfo li
+      var it = child0(kk)
+      repl.addSubtree it                         # name
+      skip it
+      repl.addSubtree it                         # pragmas
+      skip it
+      repl.addSubtree it                         # type
+      repl.addDotToken()
+      repl.closeTag()
+  repl.openTag TagId(ord(IfTagId))
+  block trueArm:
+    repl.openTag TagId(ord(ElifTagId))
+    repl.addSubtree cond
+    repl.openTag TagId(ord(StmtsTagId))
+    let empty = initTable[SymId, string]()
+    emitRun(c, repl, kids, cand, cond, true, empty)
+    repl.closeTag()
+    repl.closeTag()
+  block falseArm:
+    repl.openTag TagId(ord(ElseTagId))
+    repl.openTag TagId(ord(StmtsTagId))
+    var rename = initTable[SymId, string]()
+    for k in cand.first .. cand.last:
+      collectDefs(cursorAt(c.orig[], kids[k]), c, rename)
+    for s in hoisted: rename.del s
+    emitRun(c, repl, kids, cand, cond, false, rename)
+    repl.closeTag()
+    repl.closeTag()
+  repl.closeTag()
+  repl.closeTag()
+  var ps = initPatchset(c.orig)
+  ps.addSubst(kids[cand.first], cursorAt(repl, 0))
+  for k in cand.first + 1 .. cand.last:
+    ps.addDelete(kids[k])
+  result = ps.apply()
+
 # ── public entry ─────────────────────────────────────────────────────────────
 
-proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
+proc runUnswitch*(buf: var TokenBuf; fused: var int): int {.discardable.} =
   ## Fixpoint: unswitch one loop per round (the innermost candidate), rebuild,
-  ## rescan. Returns the number of loops unswitched.
+  ## rescan; a round with no loop to unswitch fuses one straight-line run
+  ## instead. Returns the number of loops unswitched plus runs fused.
   result = 0
   var rounds = 0
   var minted = 0
@@ -673,12 +921,25 @@ proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
     block:
       let root = beginRead(buf)
       scanWhiles(c, root, cands)
-    if cands.len == 0:
-      break
-    var newBuf = applyCandidate(c, cands[0])
+    var newBuf: TokenBuf
+    if cands.len > 0:
+      newBuf = applyCandidate(c, cands[0])
+    else:
+      var runs: seq[RunCandidate] = @[]
+      block:
+        let root = beginRead(buf)
+        scanRuns(c, root, runs)
+      if runs.len == 0:
+        break
+      newBuf = applyRun(c, runs[0])
+      inc fused
     minted = c.counter
     buf = ensureMove(newBuf)
     inc result
+
+proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
+  var fused = 0
+  result = runUnswitch(buf, fused)
 
 # ── self-tests ───────────────────────────────────────────────────────────────
 
@@ -736,7 +997,11 @@ when isMainModule:
       "(if (elif flag.0.M (stmts (asgn b.0.M 1))) (else (stmts (asgn b.0.M 2)))) " &
       "(call f.0.M) " &
       "(asgn i.0.M (add (i 64) i.0.M 1)))))"
-    doAssert unswitched(src) == canon(src)
+    # the loop is not duplicated; the two adjacent tests (no call between
+    # them) still fuse into one as a straight-line run
+    let got = unswitched(src)
+    doAssert got.count("(while") == 1, got
+    doAssert got.count("(if") == 1, got
 
   block call_in_loop_ok_for_plain_local:
     # same loop, but the condition symbol is a LOCAL (single-dot name) whose
@@ -759,7 +1024,10 @@ when isMainModule:
       "(if (elif flag.0.M (stmts (asgn b.0.M 1))) (else (stmts (asgn b.0.M 2)))) " &
       "(call f.0.M) " &
       "(asgn i.0.M (add (i 64) i.0.M 1)))))"
-    doAssert unswitched(src) == canon(src)
+    # no loop duplication; the adjacent pair still fuses (no call between them)
+    let got = unswitched(src)
+    doAssert got.count("(while") == 1, got
+    doAssert got.count("(if") == 1, got
 
   block duplicate_defs_renamed:
     # a local declared inside the loop must not collide between the two copies
@@ -781,7 +1049,10 @@ when isMainModule:
       "(if (elif (le t.1 14) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
       "(if (elif (le t.1 14) (stmts (asgn b.0 1))) (else (stmts (asgn b.0 2)))) " &
       "(asgn i.0 (add (i 64) i.0 1)))))"
-    doAssert unswitched(src) == canon(src)
+    # not hoisted out of the loop; within one iteration the pair still fuses
+    let got = unswitched(src)
+    doAssert got.count("(while") == 1, got
+    doAssert got.count("(if") == 1, got
 
   block repeated_condition_deduped:
     # the SAME test twice in the body: unswitching once removes both
@@ -852,6 +1123,145 @@ when isMainModule:
       "(var :x.1 . (i 64) (add (i 64) i.0 1)) " &
       "(if (elif (lt 14 x.1) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
       "(asgn i.0 (add (i 64) i.0 1)))))"
+    doAssert unswitched(src) == canon(src)
+
+  block loop_chased_def_input_reassigned_later:
+    # `x.1` is computed from `s.0` BEFORE the loop reassigns `s.0`: its value
+    # is the old `s.0`'s, so the canonical form must not chase `s.0` into
+    # `t.0` (it used to, and hoisted a test of `t.0` — wrong on the first
+    # iteration)
+    let got = unswitched(
+      "(stmts (while (lt i.0 n.0) (stmts " &
+      "(var :x.1 . (u 64) (dot s.0 bytes.0.M 0)) " &
+      "(asgn s.0 t.0) " &
+      "(if (elif (lt 14u x.1) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
+      "(if (elif (lt 14u x.1) (stmts (asgn b.0 1))) (else (stmts (asgn b.0 2)))) " &
+      "(asgn i.0 (add (i 64) i.0 1)))))")
+    doAssert got.count("(while") == 1, got
+    doAssert "t.0 bytes" notin got, got
+
+  # ── if fusion over straight-line runs ──
+
+  block run_adjacent_fused:
+    # two back-to-back tests of the same flag: one test, no growth
+    let got = unswitched(
+      "(stmts " &
+      "(if (elif flag.0 (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
+      "(if (elif flag.0 (stmts (asgn b.0 1))) (else (stmts (asgn b.0 2)))))")
+    doAssert got.count("flag.0") == 1, got
+    doAssert got.count("(if") == 1, got
+    doAssert got.count("(asgn a.0 1)") == 1 and got.count("(asgn b.0 2)") == 1, got
+    # the true arm runs both true branches in order
+    doAssert got.find("(asgn a.0 1)") < got.find("(asgn b.0 1)"), got
+    doAssert got.find("(asgn b.0 1)") < got.find("(else"), got
+
+  block run_without_else:
+    let got = unswitched(
+      "(stmts (if (elif flag.0 (stmts (asgn a.0 1)))) " &
+      "(if (elif flag.0 (stmts (asgn b.0 1)))))")
+    doAssert got.count("(if") == 1, got
+    doAssert got.count("flag.0") == 1, got
+
+  block run_assignment_between_blocks:
+    let src =
+      "(stmts (if (elif flag.0 (stmts (asgn a.0 1)))) " &
+      "(asgn flag.0 (false)) " &
+      "(if (elif flag.0 (stmts (asgn b.0 1)))))"
+    doAssert unswitched(src) == canon(src)
+
+  block run_assignment_inside_first_arm_blocks:
+    # the second test would read the arm's new value
+    let src =
+      "(stmts (if (elif flag.0 (stmts (asgn flag.0 (false))))) " &
+      "(if (elif flag.0 (stmts (asgn b.0 1)))))"
+    doAssert unswitched(src) == canon(src)
+
+  block run_call_kills_global:
+    let src =
+      "(stmts (if (elif flag.0.M (stmts (asgn a.0 1)))) " &
+      "(call foo.0.M) " &
+      "(if (elif flag.0.M (stmts (asgn b.0 1)))))"
+    doAssert unswitched(src) == canon(src)
+
+  block run_call_keeps_local:
+    # a local whose address is never taken survives a call
+    let got = unswitched(
+      "(stmts (if (elif flag.0 (stmts (asgn a.0 1)))) " &
+      "(call foo.0.M) " &
+      "(if (elif flag.0 (stmts (asgn b.0 1)))))")
+    doAssert got.count("(if") == 1, got
+    doAssert got.count("(call foo.0.M)") == 2, got   # duplicated into both arms
+
+  block run_jump_out_of_arm_fused:
+    # a forward exit from the first arm stays a forward exit from the fused one
+    let got = unswitched(
+      "(stmts (if (elif flag.0 (stmts (jmp L.0)))) " &
+      "(if (elif flag.0 (stmts (asgn b.0 1)))) (lab :L.0))")
+    doAssert got.count("(if") == 1, got
+    doAssert got.count("(jmp L.0)") == 1 and got.count("(lab :L.0)") == 1, got
+    doAssert got.find("(jmp L.0)") < got.find("(asgn b.0 1)"), got
+
+  block run_label_inside_arm_fused:
+    # a nested label and its jump live in one arm; the false copy (empty here)
+    # needs no label at all
+    let got = unswitched(
+      "(stmts (if (elif flag.0 (stmts (if (elif c.0 (stmts (jmp L.0)))) " &
+      "(asgn a.0 1) (lab :L.0)))) " &
+      "(if (elif flag.0 (stmts (asgn b.0 1)))))")
+    doAssert got.count("(if") == 2, got            # the fused one + the inner one
+    doAssert got.count("(lab :L.0)") == 1, got
+
+  block run_top_level_label_ends_run:
+    # `(lab :L.0)` is a join point: the path through `jmp L.0` never ran the
+    # first test, so the two tests are not one run
+    let src =
+      "(stmts (if (elif c.0 (stmts (jmp L.0)))) " &
+      "(if (elif flag.0 (stmts (asgn a.0 1)))) " &
+      "(lab :L.0) " &
+      "(if (elif flag.0 (stmts (asgn b.0 1)))))"
+    doAssert unswitched(src) == canon(src)
+
+  block run_single_test_left_alone:
+    let src =
+      "(stmts (if (elif flag.0 (stmts (asgn a.0 1)))) (asgn b.0 2))"
+    doAssert unswitched(src) == canon(src)
+
+  block run_inlined_accessors_fused:
+    # two inlined SSO tests, each through its own temp; the second accessor's
+    # result slot is declared inside the run and used after it, so it is
+    # hoisted in front of the fused if
+    let got = unswitched(
+      "(stmts " &
+      "(var :x.1 . (u 64) (dot s.0 bytes.0.M 0)) " &
+      "(if (elif (lt 14u x.1) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
+      "(var :x.2 . (u 64) (dot s.0 bytes.0.M 0)) " &
+      "(var :r.2 . (i 64) .) " &
+      "(if (elif (lt 14u x.2) (stmts (asgn r.2 1))) (else (stmts (asgn r.2 2)))) " &
+      "(asgn c.0 r.2))")
+    doAssert got.count("(if") == 1, got
+    doAssert got.find("(var :r.2") < got.find("(if"), got
+    doAssert got.find("(var :x.2") < got.find("(if"), got
+    doAssert got.count("(asgn x.2") == 2, got        # its initializer, per arm
+    doAssert got.find("(asgn c.0 r.2)") > got.rfind("(asgn r.2 2)"), got
+
+  block run_chased_def_input_changed_blocks:
+    # x.1 was computed from s.0 BEFORE s.0 changed: the canonical form would
+    # test the new s.0
+    let src =
+      "(stmts " &
+      "(var :x.1 . (u 64) (dot s.0 bytes.0.M 0)) " &
+      "(asgn s.0 t.0) " &
+      "(if (elif (lt 14u x.1) (stmts (asgn a.0 1)))) " &
+      "(var :x.2 . (u 64) (dot s.0 bytes.0.M 0)) " &
+      "(if (elif (lt 14u x.2) (stmts (asgn b.0 1)))))"
+    doAssert unswitched(src) == canon(src)
+
+  block run_budget:
+    var mid = ""
+    for i in 0 ..< 60: mid.add "(asgn z.0 " & $i & ") "
+    let src =
+      "(stmts (if (elif flag.0 (stmts (asgn a.0 1)))) " & mid &
+      "(if (elif flag.0 (stmts (asgn b.0 1)))))"
     doAssert unswitched(src) == canon(src)
 
   echo "unswitch.nim: all self-tests passed"
