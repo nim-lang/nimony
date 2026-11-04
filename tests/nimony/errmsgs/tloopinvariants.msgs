@@ -1,4 +1,4 @@
-tests/nimony/errmsgs/tloopinvariants.nim(8, 5) Error: cannot prove assertion: j <= len(s) [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tloopinvariants.nim(8, 5) Error: assertion violated: j <= len(s) [pass --verbose for the Final IR]
 tests/nimony/errmsgs/tloopinvariants.nim(14, 5) Error: cannot prove assertion: j <= len(s) [pass --verbose for the Final IR]
 tests/nimony/errmsgs/tloopinvariants.nim(23, 5) Error: cannot prove assertion: j <= len(s) [pass --verbose for the Final IR]
 tests/nimony/errmsgs/tloopinvariants.nim(33, 5) Error: cannot prove assertion: j <= len(s) [pass --verbose for the Final IR]

@@ -63,8 +63,9 @@ func `=wasMoved`*[T](s: var seq[T]) {.inline.} =
 func memSizeInBytes[T](size: int): int {.inline.} =
   {.keepOverflowFlag.}:
     result = size * sizeof(T)
-    if overflowFlag():
-      # When required memory size is overflowed, cause out of memory.
+    if overflowFlag() or size > MaxContainerLen:
+      # When required memory size is overflowed, cause out of memory. So does a
+      # count past `MaxContainerLen`, which is what bounds every `len`.
       result = high(int)
 
 func newSeq*[T](): seq[T] {.nodestroy, inline.} =
@@ -153,6 +154,9 @@ func recalcCap(oldCap, addedElements: int): int {.inline.} =
         result = requiredLen
       else:
         result = max(result, requiredLen)
+      # growing by half must not be what pushes a valid length over the limit
+      if result > MaxContainerLen and requiredLen <= MaxContainerLen:
+        result = MaxContainerLen
 
 func resize[T](dest: var seq[T]; addedElements: int): bool {.nodestroy.} =
   let oldCap = dest.capInBytes div sizeof(T)
@@ -218,13 +222,13 @@ func add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
     inc s.len
     seqFenceExit fenced
 
-func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result and result < high(int)).} =
+func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result and result <= MaxContainerLen).} =
   ## Number of elements in `s`.
   result = s.len
-  # every write to the `len` field stores a non-negative count, and no seq
-  # holds `high(int)` elements beside its header: the bound is what keeps
-  # `i + 1` from wrapping where `i < s.len` (#2840)
-  {.assume: 0 <= result and result < high(int).}
+  # every write to the `len` field stores a non-negative count within the
+  # capacity, and no buffer holds more than `MaxContainerLen` elements
+  # (`memSizeInBytes`): the bound is what keeps `i + n` from wrapping (#2840)
+  {.assume: 0 <= result and result <= MaxContainerLen.}
 
 func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
   ## Unchecked pointer to `s`'s element storage (valid for `0 ..< s.len`).
@@ -297,7 +301,7 @@ func shrink*[T](s: var seq[T]; newLen: int) =
 func growUnsafeImpl[T](s: var seq[T]; newLen: int) =
   {.keepOverflowFlag.}:
     let newSize = newLen * sizeof(T)
-    if overflowFlag():
+    if overflowFlag() or newLen > MaxContainerLen:
       {.cast(noSideEffect).}:
         oomHandler high(int)
       return
