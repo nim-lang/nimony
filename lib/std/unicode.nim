@@ -20,7 +20,9 @@ import syncio, assertions, strutils
 ## procedures for ``seq[Rune]`` in this module because the generic variants
 ## of these procedures in the system module already work with it.
 ##
-## The current version is compatible with Unicode v12.0.0.
+## The case mappings and the letter and space tests follow Unicode v12.0.0;
+## the normalization forms (`toNFD`, `toNFKD`) and the mark tests
+## (`isCombining`, `isNonspacingMark`) follow Unicode v16.0.0.
 ##
 ## **See also:**
 ## * `strutils module <strutils.html>`_
@@ -562,6 +564,7 @@ func `==`*(a, b: Rune): bool =
 
 
 include "includes/unicode_ranges"
+include "includes/unicode_normdata"
 
 func binarySearch(c: RuneImpl, tab: openArray[int32], len, stride: int): int =
   var n = len
@@ -716,23 +719,155 @@ func isWhiteSpace*(c: Rune): bool =
   else:
     return false
 
+func inRanges(c: RuneImpl; tab: openArray[int32]): bool {.inline.} =
+  ## `tab` holds sorted, disjoint `first, last` pairs.
+  let p = binarySearch(c, tab, len(tab) div 2, 2)
+  result = p >= 0 and c <= tab[p+1]
+
 func isCombining*(c: Rune): bool =
-  ## Returns true if ``c`` is a Unicode combining code unit.
+  ## Returns true if ``c`` is a combining mark: a code point of the Unicode
+  ## general category M (Mn, Mc or Me). `graphemeLen` and `reversed` keep
+  ## such marks with the character before them.
   ##
   ## See also:
+  ## * `isNonspacingMark func <#isNonspacingMark,Rune>`_
   ## * `isLower func <#isLower,Rune>`_
   ## * `isUpper func <#isUpper,Rune>`_
   ## * `isTitle func <#isTitle,Rune>`_
   ## * `isAlpha func <#isAlpha,Rune>`_
-  var c = RuneImpl(c)
-
+  runnableExamples:
+    assert isCombining(Rune(0x0301)) # combining acute accent (Mn)
+    assert isCombining(Rune(0x0903)) # Devanagari sign visarga (Mc)
+    assert isCombining(Rune(0x20DD)) # combining enclosing circle (Me)
+    assert not isCombining("a".runeAt(0))
+  let c = RuneImpl(c)
   # Optimized to return false immediately for ASCII
-  return c >= 0x0300 and (c <= 0x036f or
-    (c >= 0x1ab0 and c <= 0x1aff) or
-    (c >= 0x1dc0 and c <= 0x1dff) or
-    (c >= 0x20d0 and c <= 0x20ff) or
-    (c >= 0xfe20 and c <= 0xfe2f))
+  result = c >= 0x0300 and inRanges(c, markRanges)
 
+func isNonspacingMark*(c: Rune): bool =
+  ## Returns true if ``c`` is a nonspacing mark: a code point of the Unicode
+  ## general category Mn, the accents, Greek tonos and dialytika, Arabic
+  ## harakat and similar marks that `toNFD` splits from their letters.
+  ## This is the test of Python's `unicodedata.category(c) == "Mn"`.
+  ##
+  ## See also:
+  ## * `isCombining func <#isCombining,Rune>`_
+  ## * `toNFD func <#toNFD,openArray[char]>`_
+  runnableExamples:
+    assert isNonspacingMark(Rune(0x0301)) # combining acute accent
+    assert isNonspacingMark(Rune(0x064E)) # Arabic fatha
+    assert not isNonspacingMark(Rune(0x0903)) # Devanagari visarga is Mc
+    assert not isNonspacingMark("a".runeAt(0))
+  let c = RuneImpl(c)
+  result = c >= 0x0300 and inRanges(c, nonspacingMarkRanges)
+
+func combiningClass(c: Rune): int32 =
+  ## The canonical combining class of ``c``; 0 for a starter.
+  let c = RuneImpl(c)
+  if c < 0x0300: return 0
+  let p = binarySearch(c, combiningClassRanges, len(combiningClassRanges) div 3, 3)
+  if p >= 0 and c <= combiningClassRanges[p+1]:
+    result = combiningClassRanges[p+2]
+  else:
+    result = 0
+
+const
+  # Hangul syllables decompose algorithmically (Unicode 16.0, section 3.12).
+  hangulSBase = 0xAC00'i32
+  hangulLBase = 0x1100'i32
+  hangulVBase = 0x1161'i32
+  hangulTBase = 0x11A7'i32
+  hangulTCount = 28'i32
+  hangulNCount = 21'i32 * hangulTCount
+  hangulSCount = 19'i32 * hangulNCount
+
+func addDecomposed(dest: var seq[Rune]; c: RuneImpl; compat: bool) =
+  ## Appends the full canonical (or, with `compat`, compatibility)
+  ## decomposition of ``c`` to `dest`.
+  if c >= hangulSBase and c < hangulSBase + hangulSCount:
+    let s = c - hangulSBase
+    dest.add Rune(hangulLBase + s div hangulNCount)
+    dest.add Rune(hangulVBase + (s mod hangulNCount) div hangulTCount)
+    if s mod hangulTCount != 0:
+      dest.add Rune(hangulTBase + s mod hangulTCount)
+    return
+  let p = binarySearch(c, decompositions, len(decompositions) div 2, 2)
+  if p >= 0 and c == decompositions[p]:
+    let packed = decompositions[p+1]
+    if compat or (packed and 1) == 0:
+      let first = int(packed shr 6)
+      for i in first ..< first + int((packed shr 1) and 31):
+        addDecomposed(dest, decompData[i], compat)
+      return
+  dest.add Rune(c)
+
+func sortMarks(runes: var seq[Rune]) =
+  ## Canonical ordering: sorts every run of non-starters by combining class.
+  ## Stable, so marks of one class keep their order.
+  for i in 1 ..< runes.len:
+    let cc = combiningClass(runes[i])
+    if cc != 0:
+      var j = i
+      while j > 0 and combiningClass(runes[j-1]) > cc:
+        swap(runes[j-1], runes[j])
+        dec j
+
+func decompose(s: openArray[char]; compat: bool): string =
+  var ascii = true
+  for c in s:
+    if c >= '\x80':
+      ascii = false
+      break
+  if ascii: return substr(s)
+  var runes: seq[Rune] = @[]
+  for r in s.runes:
+    addDecomposed(runes, RuneImpl(r), compat)
+  sortMarks(runes)
+  result = newStringOfCap(s.len + s.len div 2)
+  for r in runes:
+    result.add r
+
+func toNFD*(s: openArray[char]): string =
+  ## Returns ``s`` in Unicode Normalization Form D (canonical
+  ## decomposition): every precomposed character is split into its base
+  ## and its combining marks, and marks are put in canonical order. The
+  ## result equals Python's `unicodedata.normalize("NFD", s)`.
+  ##
+  ## Bytes that are not valid UTF-8 are decoded as `runes` decodes them.
+  ## To compare text without accents, decompose it and drop the nonspacing
+  ## marks (last example).
+  ##
+  ## See also:
+  ## * `toNFKD func <#toNFKD,openArray[char]>`_
+  ## * `isNonspacingMark func <#isNonspacingMark,Rune>`_
+  runnableExamples:
+    assert toNFD("é") == "e\u0301"
+    assert toNFD("ά") == "α\u0301"            # Greek tonos
+    assert toNFD("й") == "и\u0306"            # Cyrillic short i
+    assert toNFD("ﬁ") == "ﬁ"                  # a compatibility ligature stays
+    var plain = ""
+    for r in runes(toNFD(toLower("Ἀθῆναι"))):
+      if not isNonspacingMark(r): plain.add r
+    assert plain == "αθηναι"
+  result = decompose(s, compat = false)
+
+func toNFKD*(s: openArray[char]): string =
+  ## Returns ``s`` in Unicode Normalization Form KD (compatibility
+  ## decomposition): like `toNFD`, and compatibility characters
+  ## (ligatures, presentation forms, width and font variants, the
+  ## non-breaking hyphen) are replaced by their plain equivalents. The
+  ## result equals Python's `unicodedata.normalize("NFKD", s)`.
+  ##
+  ## Bytes that are not valid UTF-8 are decoded as `runes` decodes them.
+  ##
+  ## See also:
+  ## * `toNFD func <#toNFD,openArray[char]>`_
+  ## * `isNonspacingMark func <#isNonspacingMark,Rune>`_
+  runnableExamples:
+    assert toNFKD("ﬁ") == "fi"
+    assert toNFKD("x²") == "x2"
+    assert toNFKD("ﻷ") == "\u0644\u0627\u0654" # Arabic ligature lam with alef with hamza above
+  result = decompose(s, compat = true)
 
 func runeCheck(s: openArray[char], runeProc: proc (c: Rune): bool {.noSideEffect, nimcall.}): bool =
   ## Common code for isAlpha and isSpace.
@@ -1414,6 +1549,21 @@ func toLower*(s: string): string {.noSideEffect, inline.} =
   runnableExamples:
     assert toLower("ABΓ") == "abγ"
   toLower(toOa(s))
+
+func toNFD*(s: string): string {.inline.} =
+  ## Returns ``s`` in Unicode Normalization Form D (canonical decomposition).
+  ##
+  ## See also:
+  ## * `toNFD func <#toNFD,openArray[char]>`_
+  result = toNFD(s.toOa())
+
+func toNFKD*(s: string): string {.inline.} =
+  ## Returns ``s`` in Unicode Normalization Form KD (compatibility
+  ## decomposition).
+  ##
+  ## See also:
+  ## * `toNFKD func <#toNFKD,openArray[char]>`_
+  result = toNFKD(s.toOa())
 
 func swapCase*(s: string): string {.noSideEffect, inline.} =
   ## Swaps the case of runes in ``s``.
