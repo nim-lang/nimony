@@ -1278,8 +1278,12 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
               # Later re-checks (template expansion, generic instantiation,
               # exprexec serialization) happen in a different module, so they
               # judge the access against this suffix rather than against
-              # whichever module they are running in.
-              dest.addStrLit(visibilityModule(c, info), info)
+              # whichever module they are running in. Never replace a token
+              # that is already there: it records the original authorization.
+              let token =
+                if accessToken.len > 0: accessToken
+                else: visibilityModule(c, info)
+              dest.addStrLit(token, info)
             it.typ = field.typ # will be fit later with commonType
             it.kind = FldY
           else:
