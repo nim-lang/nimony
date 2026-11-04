@@ -8,7 +8,7 @@
 # (`request`) and `tests/stdlib/thttpclient.nim`.
 
 import std / [httpserver, httpclient, ioring, threadpool, atomics, assertions,
-              syncio, strutils, os]
+              syncio, strutils]
 
 let tags = newHttpTags()
 
@@ -69,8 +69,15 @@ proc handle(c: sink HttpConnection) {.passive.} =
         c.respond(200, "auth=" & c.requestHeader("Authorization") & " cookie=" &
                   c.requestHeader("Cookie") & "\n", "text/plain")
       elif p == "/slow":
-        sleep(1500)               # the client's deadline expires meanwhile
-        c.respond(200, "late\n", "text/plain")
+        # Never answer: wait, parked rather than blocking a worker, until the
+        # client gives up and closes the connection, so its deadline is the
+        # only way out. A blocking `sleep` here stalled this worker's ring
+        # lane, and when the client's read was armed on the same lane its
+        # deadline could not fire before the late answer arrived. The
+        # deadline below only bounds a client that never closes.
+        var (r, w) = c.takeStreams()
+        r.renew(afterMs(20_000))
+        discard r.readAll()
       else:
         c.respond(404, "no\n", "text/plain")
     except ErrorCode:
