@@ -19,3 +19,12 @@ for i in 1'u .. 3'u:
   for j in 0'u .. 3'u:
     testCountdown(j, 0'u, i)
     testCountdown(j, 1'u, i)
+
+type
+  Color = enum
+    red
+    green
+    blue
+
+for clr in Color:
+  echo clr
