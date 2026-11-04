@@ -45,7 +45,7 @@ export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
 export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
 export types.readyEvents, types.toIoEvents, types.toEventMask, types.ECancelled
 export types.Deadline, types.never, types.earlier, types.monoNow
-export types.after, types.afterMs, types.millisUntil, types.`<`, types.`<=`
+export types.after, types.afterMs, types.millisUntil, types.expired, types.`<`, types.`<=`
 export types.`==`
 export backend.IoTimedOut
 export backend.BackendRelays, backend.CqSize

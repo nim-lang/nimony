@@ -52,6 +52,10 @@ proc earlier*(a, b: Deadline): Deadline {.inline.} =
   ## its caller's budget, never widen it.
   if a < b: a else: b
 
+proc expired*(d: Deadline): bool {.inline.} =
+  ## Return whether `d` has arrived. Never true for `never`.
+  d != never and int64(monoNow()) >= int64(d)
+
 when defined(posix):
   when defined(linux):
     const RingClock = ClockId(7)
