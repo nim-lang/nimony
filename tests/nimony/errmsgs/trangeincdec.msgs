@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/trangeincdec.nim(11, 21) Error: cannot prove 'd.n' stays in range 0..2 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/trangeincdec.nim(15, 3) Error: cannot prove 'i' stays in range 0..9223372036854775807 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/trangeincdec.nim(20, 11) Error: cannot prove value is in range 0..9223372036854775807 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/trangeincdec.nim(25, 14) Error: cannot prove value is in range 0..9223372036854775807 [pass --verbose for the Final IR]

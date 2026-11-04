@@ -2057,6 +2057,10 @@ proc cannotProve(c: var FirContext; info: NifLineInfo; report: bool; msg: string
   c.obligationOpen = false
   if report: buildErr c, info, msg
 
+const
+  ArithmeticExprs = {AddX, SubX, MulX, DivX, ModX, NegX, ShlX, ShrX, AshrX,
+                     BitandX, BitorX, BitxorX, BitnotX}
+
 proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
                   needLo, needHi: bool; reportUnprovable = true) =
   ## Discharge `lo <= value <= hi` from what is known here. The obligation's
@@ -2074,7 +2078,12 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   var aLo = zero()
   var aHi = zero()
   let valueType = getType(c.typeCache, value)
-  if staticRangeBounds(valueType, aLo, aHi) and lo <= aLo and aHi <= hi: return
+  # Not for arithmetic: `succ`/`pred` on a range type compute in that type,
+  # and their result is typed as the range without having been checked
+  # against it (nim-lang/nimony#2855). Only a location, a conversion or a call
+  # result of the range type has met the range already.
+  if value.exprKind notin ArithmeticExprs and
+      staticRangeBounds(valueType, aLo, aHi) and lo <= aLo and aHi <= hi: return
   if integerTypeBounds(c.bits, valueType, aLo, aHi) and lo <= aLo and aHi <= hi: return
   if valueBounds(c, value, aLo, aHi) and lo <= aLo and aHi <= hi: return
 

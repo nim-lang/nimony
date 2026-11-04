@@ -22,16 +22,26 @@ iterator `..`*[T: Ordinal](a, b: T): T {.inline,
   ##
   ## The loop ends when `inc` takes `i` past `b`. At `b == high(T)` there is
   ## no such value: `inc` wraps and the loop never ends, so `b` must lie
-  ## below `high(T)`. Unless `T` has bits to spare — an enum or a `range`
-  ## whose `high` is below what its storage holds: `inc` is not checked, so
-  ## `i` steps past `high(T)` and the loop ends after all. `for e in ea..ec`
-  ## and `for i in 0..10` are fine, `for i in 0..high(int)` is a
-  ## compile-time error. (`ord(high(uint64))` does not fold, so a `uint64`
-  ## loop up to `high` is not caught.)
+  ## below `high(T)`. Unless `T` has bits to spare — an enum whose `high` is
+  ## below what its storage holds: `inc` is not checked for it, so `i` steps
+  ## past `high(T)` and the loop ends after all. `for e in ea..ec` and
+  ## `for i in 0..10` are fine, `for i in 0..high(int)` is a compile-time
+  ## error. (`ord(high(uint64))` does not fold, so a `uint64` loop up to
+  ## `high` is not caught.)
   var i = a
-  while i <= b:
-    yield i
-    inc i
+  when T is range:
+    # A `range` value past `b` is not one: `inc` on it owes the range
+    # (nim-lang/nimony#2855), so the step is only taken below `b`, and the
+    # test that says so is fresh on every round.
+    var more = i <= b
+    while more:
+      yield i
+      if i < b: inc i
+      else: more = false
+  else:
+    while i <= b:
+      yield i
+      inc i
 
 iterator `>..`*[T: Ordinal](a, b: T): T {.inline,
     ensures: (b <= result and result <= a).} =

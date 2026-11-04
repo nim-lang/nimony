@@ -197,7 +197,7 @@ func reduce*(ctx: Mont; a: BigNum): Limbs =
   ## generally for any `a` that fits `m.n` limbs: subtract until below.
   result = a.limbs
   let n = ctx.m.n
-  var i = n
+  var i: int = n # not a `LimbCount`: it runs up to `MaxLimbs`, past `high(LimbCount)`
   while i < MaxLimbs:
     result[i] = 0'u32
     inc i

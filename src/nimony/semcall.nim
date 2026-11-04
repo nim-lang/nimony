@@ -1091,6 +1091,86 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   else:
     buildErr c, dest, cs.callNodeInfo, "macro '" & pool.symString(finalFn) & "' not compiled"
 
+proc isSystemRoutine(sym: SymId; names: openArray[string]): bool =
+  ## `sym` is one of system's routines called `names`, whatever its overload
+  ## number: `inc.1.<system suffix>` for `inc`.
+  if sym == SymId(0): return false
+  let s = pool.symString(sym)
+  if not s.endsWith("." & SystemModuleSuffix): return false
+  let dot = s.find('.')
+  result = dot > 0 and s.substr(0, dot-1) in names
+
+proc isDuplicableLocation(n: Cursor): bool =
+  ## A location that can be evaluated twice without a difference: no calls, an
+  ## index that is a symbol or a literal.
+  if n.kind == Symbol:
+    result = true
+  elif n.exprKind in {DotX, DdotX, HderefX, DerefX, TupatX}:
+    result = isDuplicableLocation(sub(n))
+  elif n.exprKind in {ArratX, AtX}:
+    var i = sub(n)
+    result = isDuplicableLocation(i)
+    if result:
+      skip i
+      result = i.kind in {Symbol, IntLit, UIntLit, CharLit}
+  else:
+    result = false
+
+proc rangeIncDecBase(c: var SemContext; m: Match; cs: CallState): TypeCursor =
+  ## The base type when the call is system's `inc`/`dec` on a duplicable
+  ## location of a `range` type, otherwise nil. Such a call is lowered to the
+  ## assignment it stands for, see `lowerRangeIncDec`.
+  result = default(TypeCursor)
+  if m.err or cs.hasNamedArgs or cs.args.len notin 1..2: return
+  if cs.source notin {RegularCall, MethodCall, DotCall}: return
+  if not isSystemRoutine(m.fn.sym, ["inc", "dec"]): return
+  if not isDuplicableLocation(cs.args[0].n): return
+  var isDistinct = false
+  let t = skipDistinct(skipModifier(cs.args[0].typ), isDistinct)
+  if not isDistinct and t.typeKind == RangetypeT:
+    result = t
+    inc result # the base type
+
+proc lowerRangeIncDec(c: var SemContext; dest: var TokenBuf; it: var Item;
+                      cs: var CallState; base: TypeCursor; isDec: bool) =
+  ## `inc x, y` on a `range`-typed `x` becomes `x = x + y`, computed in the
+  ## base type like the source-level assignment. Called through `succ` inside
+  ## the generic `inc`, the step had the range type and the sum was typed as
+  ## the range, so nothing checked it (nim-lang/nimony#2855). Spelled out here,
+  ## the contract analysis owes `lo <= x + y <= hi` at the call site, where
+  ## the caller's guards are known.
+  closeArgsScope c, cs
+  let info = cs.callNodeInfo
+  let x = cs.args[0].n
+  dest.addParLe(AsgnS, info)
+  dest.addSubtree x
+  dest.addParLe((if isDec: SubX else: AddX), info)
+  dest.addSubtree base
+  dest.addSubtree x
+  if cs.args.len == 2:
+    let y = cs.args[1]
+    if sameTrees(skipModifier(y.typ), base):
+      dest.addSubtree y.n
+    else:
+      dest.addParLe(HconvX, info)
+      dest.addSubtree base
+      dest.addSubtree y.n
+      dest.addParRi()
+  elif base.typeKind == UIntT:
+    dest.addUIntLit(1'u64, info)
+  elif base.typeKind == IntT:
+    dest.addIntLit(1, info)
+  else:
+    dest.addParLe(ConvX, info)
+    dest.addSubtree base
+    dest.addIntLit(1, info)
+    dest.addParRi()
+  dest.addParRi() # add/sub
+  dest.addParRi() # asgn
+  it.n = cs.scope; skip it.n
+  let voidType = c.types.voidType
+  typeofCallIs c, dest, it, cs.beforeCall, voidType
+
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   # Everything the candidate collection below writes to `dest` is a
   # DIAGNOSTIC ("attempt to call routine", a symchoice element that cannot be
@@ -1262,7 +1342,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # restore original args for error message generation:
       cs.args = csArgsOrig
 
-  if idx >= 0:
+  let incDecBase = if idx >= 0: rangeIncDecBase(c, m[idx], cs) else: default(TypeCursor)
+  if not cursorIsNil(incDecBase):
+    lowerRangeIncDec c, dest, it, cs, incDecBase,
+      isDec = isSystemRoutine(m[idx].fn.sym, ["dec"])
+  elif idx >= 0:
     dest.addParLe(cs.callNode.tagId, cs.callNodeInfo)
     let finalFn = m[idx].fn
     # only merge symbols defined in args to scope if we did not match a macro/template:

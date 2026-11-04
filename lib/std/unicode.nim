@@ -142,7 +142,11 @@ template fastRuneAt*(s: openArray[char], i: int, result: untyped, doInc = true):
   if i < 0 or i >= s.len:
     # no rune starts outside `s`
     result = replRune
-    when doInc: inc(i)
+    # Past the end `i` only has to stay past it: an unguarded `inc(i)` would
+    # owe `i + 1 <= high(int)` for an `i` that nothing bounds (a `Natural`).
+    # Still a step, not an assignment, so `i` only ever grows.
+    when doInc:
+      if i <= s.len: inc(i)
   elif uint(s[i]) <= 127:
     result = Rune(uint(s[i]))
     when doInc: inc(i)
@@ -1034,7 +1038,7 @@ func lastRune*(s: openArray[char]; last: int): (Rune, int) =
     fastRuneAt(s, last-L, r, false)
     result = (r, L+1)
 
-func size*(r: Rune): int {.noSideEffect.} =
+func size*(r: Rune): int {.noSideEffect, ensures: 1 <= result and result <= 6.} =
   ## Returns the number of bytes the rune ``r`` takes.
   runnableExamples:
     let a = toRunes "aá"
@@ -1077,8 +1081,11 @@ template splitCommon(s: untyped #[openArray[char]]#, sep: untyped#[openArray[Run
       if splits == 0: last = sLen
       yield substr(s.toOpenArray(first, (last - 1)))
       if splits == 0: break
+      # `last >= sLen`: the step would end the loop anyway. Leaving here tells
+      # the prover `last < sLen`, which the inner `while` made it forget.
+      if last >= sLen: break
       dec(splits)
-      inc(last, if last < sLen: runeLenAt(s, last) else: 1)
+      inc(last, runeLenAt(s, last))
 
 iterator split*(s: openArray[char], seps: openArray[Rune] = unicodeSpaces,
   maxsplit: int = -1): string =
