@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tcyclicalias.nim(2, 3) Error: illegal recursion in type 'A'
+tests/nimony/errmsgs/tcyclicalias.nim(3, 3) Error: illegal recursion in type 'B'
+tests/nimony/errmsgs/tcyclicalias.nim(6, 3) Error: illegal recursion in type 'R'
+tests/nimony/errmsgs/tcyclicalias.nim(7, 3) Error: illegal recursion in type 'P'
+tests/nimony/errmsgs/tcyclicalias.nim(8, 11) Error: illegal recursion in type 'G'
+tests/nimony/errmsgs/tcyclicalias.nim(10, 11) Error: illegal recursion in type 'H'

@@ -1309,15 +1309,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `lhsIsResult` is the shortcut that keeps the call in place when the lhs
     # is already a sym; both nj.nim and finalir.nim handle it via
     # `trBoundExpr` (a call binds directly to its destination — doc/final_ir.md).
-    # `LowerCasts` always binds — the dce2 inliner wants every call to appear
-    # as the value of a let/var binding.
-    var lhsIsResult = false
-    if c.goal == TowardsFinalIr:
-      let peek = n.childCursor
-      lhsIsResult = peek.kind == Symbol
+    # `LowerCasts` keeps it too: the inliner splices `lhs = f(args)` straight
+    # into `lhs` (`trySpliceAsgn`), so a temp would only add a copy.
+    let lhsIsResult = n.childCursor.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      if c.goal == TowardsFinalIr and lhsIsResult:
+      if lhsIsResult:
         tar.m = IsBound
       # else: tar.m stays IsAppend so trExprCall can bind
       trExpr c, dest, n, tar

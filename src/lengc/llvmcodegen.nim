@@ -756,6 +756,11 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       "`{.interrupt.}` handler in; use `{.exportc: \"...\".}` to bind one by name " &
       "against a startup file, or compile it with arkham",
       prc.name
+  if {ImportcP, ImportcppP} * prag.flags != {} and InlineP notin prag.flags and
+      prc.body.kind != DotToken:
+    # The back end emits only a declaration for an imported proc; a body here
+    # is a hexer bug, not something to drop silently.
+    errorAt c.m, "BUG: imported proc reached Leng with a body", prc.name
 
   let name = genSymDefLLVM(c, prc.name, prag)
 

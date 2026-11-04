@@ -185,7 +185,7 @@ proc decodeName(buf: openArray[char]; pos: var int; name: var string): bool =
       if not jumped: pos = p + 1
       return true
     if (l and 0xC0) == 0xC0:
-      if p + 1 >= buf.len: return false
+      if p >= buf.len - 1: return false
       let off = ((l and 0x3F) shl 8) or ord(buf[p + 1])
       if not jumped: pos = p + 2
       jumped = true
@@ -196,7 +196,7 @@ proc decodeName(buf: openArray[char]; pos: var int; name: var string): bool =
     elif (l and 0xC0) != 0:
       return false      # label type 10/01 does not exist
     else:
-      if l > 63 or p + l + 1 > buf.len: return false
+      if l > 63 or p + l > buf.len - 1: return false
       if name.len > 0: name.add '.'
       for i in 1 .. l:
         let c = buf[p + i]
@@ -217,7 +217,7 @@ proc decodeMessage*(buf: openArray[char]; m: var Message): bool =
   for i in 0 ..< qd:
     var q = Question(name: "")
     if not decodeName(buf, pos, q.name): return false
-    if pos + 4 > buf.len: return false
+    if pos > buf.len - 4: return false
     q.rtype = uw16(buf[pos], buf[pos + 1])
     q.rclass = uw16(buf[pos + 2], buf[pos + 3])
     pos += 4
@@ -226,7 +226,7 @@ proc decodeMessage*(buf: openArray[char]; m: var Message): bool =
   for i in 0 ..< an:
     var a = Answer(name: "")
     if not decodeName(buf, pos, a.name): return false
-    if pos + 10 > buf.len: return false
+    if pos > buf.len - 10: return false
     a.rtype = uw16(buf[pos], buf[pos + 1])
     discard uw16(buf[pos + 2], buf[pos + 3])   # class
     a.ttl = uw32(buf[pos + 4], buf[pos + 5], buf[pos + 6], buf[pos + 7])

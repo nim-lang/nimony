@@ -16,7 +16,7 @@ const
     ## copied from strutils
 
 func toLower(c: char): char {.inline.} =
-  result = if c in {'A'..'Z'}: chr(ord(c)-ord('A')+ord('a')) else: c
+  result = if c >= 'A' and c <= 'Z': chr(ord(c)-ord('A')+ord('a')) else: c
 
 func parseHex*[T: SomeInteger](s: openArray[char], number: var T, maxLen = 0): int {.untyped.} =
   ## Parses a hexadecimal number and stores its value in ``number``.

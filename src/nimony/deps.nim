@@ -1350,6 +1350,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       ccArgs.add "-c"
       # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
       ccArgs.add "-Wno-attributes"
+      # Signed overflow wraps (doc/language.md "Signed overflow"); without
+      # this the C compiler may assume it never happens, which is what the
+      # prover must not be contradicted by.
+      ccArgs.add "-fwrapv"
       # Nimony's float operations report through IEEE 754 values, never through
       # `errno`, so nothing can observe what math-errno buys. Without this flag
       # `__builtin_sqrt` (the `Sqrt` intrinsic) keeps a libm call for a
@@ -2281,6 +2285,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         b.addStrLit flag
       b.addStrLit "-c"
       b.addStrLit "-Wno-attributes"
+      b.addStrLit "-fwrapv"
       # See the sibling cc cmd above: real-GCC-only workaround for the gcc-14
       # arm64 stringop-overflow false positive.
       if extractCCKey(config.cc) != "clang" and

@@ -401,6 +401,8 @@ func search(s: string; r: Regex; caps: var seq[Capture]; start: Natural;
   while best < 0:
     if r.lit.len > 0:
       let fromPos = sp + max(r.litMin, 0)
+      # `sp` is inside `s` and `litMin` is a pattern's prefix length: no wrap
+      {.assume: 0 <= fromPos.}
       if k < fromPos:
         k = findLit(s, r.lit, fromPos)
         if k < 0: break
@@ -478,7 +480,10 @@ iterator findAll*(s: string; r: Regex; start = 0): (int, int) =
     let (first, L) = search(s, r, caps, i, t)
     if first < 0: break
     yield (first, first + L - 1)
-    i = first + max(L, 1)
+    let next = first + max(L, 1)
+    # the match `s[first ..< first + L]` lies inside `s`: the sum does not wrap
+    {.assume: 0 <= next.}
+    i = next
 
 func replace*(s: string; r: Regex; by: string): string =
   ## Every non-overlapping match of `r` replaced by `by`, which is inserted
@@ -495,7 +500,9 @@ func replace*(s: string; r: Regex; by: string): string =
       inc i
     if L > 0:
       result.add by
-      i = first + L
+      let next = first + L
+      {.assume: 0 <= next.} # the match lies inside `s`: no wrap
+      i = next
     else:
       result.add s[first]
       i = first + 1
@@ -521,7 +528,9 @@ func split*(s: string; r: Regex): seq[string] =
     if L > 0:
       result.add piece
       piece = ""
-      i = first + L
+      let next = first + L
+      {.assume: 0 <= next.} # the match lies inside `s`: no wrap
+      i = next
     else:
       piece.add s[first]
       i = first + 1

@@ -53,6 +53,12 @@ proc validatePassesFlag(): string =
   else:
     ""
 
+proc hostNimcache(name: string; debug: bool): string =
+  ## Host Nim's default cache, `~/.cache/nim/<project>_r`, is keyed by project
+  ## name, so two checkouts building the same tool at once would share it.
+  "--nimcache:" & quoteShell("nimcache_static" / "host" /
+                             name & (if debug: "_d" else: "_r")) & " "
+
 proc toolCmd(name, source: string; extraFlags = ""): string =
   ## Build one host-Nim tool STRAIGHT into `binDir()`. `-o:` rather than
   ## compiling next to the source and moving the result afterwards: the binary
@@ -60,7 +66,7 @@ proc toolCmd(name, source: string; extraFlags = ""): string =
   ## `src/` for someone to run by accident, and the outcome no longer depends on
   ## whether the tool's own directory happens to carry an `--outdir` in its
   ## `nim.cfg`.
-  nimcPrefix() & extraFlags & "-o:" &
+  nimcPrefix() & hostNimcache(name, debugBuild) & extraFlags & "-o:" &
     (binDir() / name.addFileExt(ExeExt)).quoteShell & " " & source
 
 proc buildTool(name, source: string; showProgress: bool; extraFlags = "") =
@@ -68,7 +74,8 @@ proc buildTool(name, source: string; showProgress: bool; extraFlags = "") =
   exec toolCmd(name, source, extraFlags), showProgress
 
 proc nativeToolCmd(tool: string): string =
-  nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
+  nativeToolPrefix() & hostNimcache(tool, nativeToolsDebug) &
+    "--outdir:" & binDir() & " " & NativenifDir &
     "/src/" & tool & "/" & tool & ".nim"
 
 proc buildNifler*(showProgress = false) =

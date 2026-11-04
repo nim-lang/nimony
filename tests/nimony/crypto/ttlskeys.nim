@@ -11,7 +11,7 @@ proc nibble(ch: char): int =
 proc unhex(s: string): seq[byte] =
   result = @[]
   var i = 0
-  while i + 1 < s.len:
+  while i < s.len - 1:
     result.add byte(nibble(s[i]) * 16 + nibble(s[i + 1]))
     i += 2
 

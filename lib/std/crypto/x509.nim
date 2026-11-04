@@ -82,7 +82,7 @@ func readTlv(d: openArray[byte]; pos, limit: int; t: var Tlv): bool =
   ## One DER element at `pos`, which must end at or before `limit`. Only the
   ## definite length forms DER allows, and lengths below 2^24.
   result = false
-  if limit > d.len or pos < 0 or pos + 2 > limit: return
+  if limit > d.len or limit < 2 or pos < 0 or pos > limit - 2: return
   let tag = d[pos]
   let b = int(d[pos + 1])
   var p = pos + 2

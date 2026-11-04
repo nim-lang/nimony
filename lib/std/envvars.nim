@@ -130,7 +130,7 @@ else:
   proc findEnvVar(key: string): int =
     getEnvVarsC()
     var temp = key & "="
-    for i in 0..high(environment):
+    for i in 0 ..< environment.len:
       when defined(windows):
         if skipIgnoreCase(environment[i], temp) == len(temp): return i
       else:
@@ -280,7 +280,7 @@ else:
     ## * `putEnv proc <#putEnv,string,string>`_
     ## * `delEnv proc <#delEnv,string>`_
     getEnvVarsC()
-    for i in 0..high(environment):
+    for i in 0 ..< environment.len:
       var p = find(environment[i], '=')
       yield (substr(environment[i], 0, p-1),
              substr(environment[i], p+1))

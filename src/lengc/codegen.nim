@@ -661,6 +661,11 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       "handler in; use `{.exportc: \"...\".}` to bind one by name against a " &
       "startup file, or compile it with arkham",
       prc.name
+  if {ImportcP, ImportcppP} * prag.flags != {} and InlineP notin prag.flags and
+      prc.body.kind != DotToken:
+    # The back end emits only a declaration for an imported proc; a body here
+    # is a hexer bug, not something to drop silently.
+    errorAt c.m, "BUG: imported proc reached Leng with a body", prc.name
   if prag.flags * {InstructionP, IntrinsicP} != {}:
     # No C declaration: an intrinsic has no definition to link against, and
     # every application of it is an `(instr …)` lowered at the use site.

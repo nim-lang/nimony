@@ -110,7 +110,7 @@ func runeLen*(s: openArray[char]): int =
     else: inc i
     inc(result)
 
-func runeLenAt*(s: openArray[char], i: Natural): Positive =
+func runeLenAt*(s: openArray[char], i: Natural): Positive {.ensures: result <= 6.} =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
   ##
   ## The result type says 1..6: a rune is never zero bytes wide, and a caller
@@ -414,6 +414,9 @@ func runeOffset*(s: openArray[char], pos: Natural, start: Natural = 0): int =
     i = 0
     o = start
   while i < pos:
+    # `start` may lie past the end: then so does every later offset
+    if o >= s.len:
+      return -1
     o = o + runeLenAt(s, o)
     if o >= s.len:
       return -1
@@ -437,7 +440,7 @@ func runeReverseOffset*(s: openArray[char], rev: Positive): (int, int) =
   ## * `runeOffset func <#runeOffset,string,Natural,Natural>`_
   var
     a = rev.int
-    o = 0
+    o: Natural = 0
     x = 0
   let times = 2*rev.int-s.runeLen # transformed from rev.int - a < s.runeLen - rev.int
   while o < s.len:
@@ -493,7 +496,12 @@ func runeSubStr*(s: openArray[char], pos: int, len: int = int.high): string =
     assert(runeSubStr(s, -6, 3) == "10,")
 
   if pos < 0:
-    let (start, rl) = runeReverseOffset(s, -pos)
+    # `-low(int)` wraps; no string has that many runes, so `high(int)` counts
+    # back just as far
+    var back = high(int)
+    if pos > low(int): back = -pos
+    {.assume: back >= 1.} # `pos < 0`
+    let (start, rl) = runeReverseOffset(s, back)
     # too few runes: the substring starts at the beginning
     var o: Natural = 0
     if start > 0: o = start
@@ -515,7 +523,10 @@ func runeSubStr*(s: openArray[char], pos: int, len: int = int.high): string =
     elif len == int.high:
       result = s.substr(o, s.len-1)
     elif len < 0:
-      let (e, rl) = runeReverseOffset(s, -len)
+      var back = high(int) # see `pos` above
+      if len > low(int): back = -len
+      {.assume: back >= 1.} # `len < 0`
+      let (e, rl) = runeReverseOffset(s, back)
       discard rl
       if e <= 0:
         result = ""
@@ -915,7 +926,7 @@ iterator utf8*(s: openArray[char]): string =
   ## * `toUTF8 func <#toUTF8,Rune>`_
   ## * `$ func <#$,Rune>`_ alias for `toUTF8`
   ## * `fastToUTF8Copy template <#fastToUTF8Copy.t,Rune,string,int>`_
-  var o = 0
+  var o: Natural = 0
   while o < s.len:
     let n = runeLenAt(s, o)
     yield substr(s.toOpenArray(o, (o+n-1)))
@@ -1261,7 +1272,7 @@ func runeLen*(s: string): int {.inline.} =
     ## note: a.len == 8
   runeLen(toOa(s))
 
-func runeLenAt*(s: string, i: Natural): Positive {.inline.} =
+func runeLenAt*(s: string, i: Natural): Positive {.inline, ensures: result <= 6.} =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
   ##
   ## See also:
