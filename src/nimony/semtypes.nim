@@ -655,6 +655,9 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
       while c.currentScope.up != nil:
         c.currentScope = c.currentScope.up
       inc c.inTypeInst
+      # the instance is checked as a declaration of its own:
+      var typesInProgress: seq[SymId] = @[]
+      swap c.typesInProgress, typesInProgress
       var phase = SemcheckTopLevelSyms
       var topLevel = createTokenBuf(30)
       swap c.phase, phase
@@ -665,6 +668,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
       tn = beginRead(topLevel)
       semTypeSection c, instance, tn
       swap c.phase, phase
+      swap c.typesInProgress, typesInProgress
       dec c.inTypeInst
       c.currentScope = oldScope
       publish targetSym, ensureMove instance
