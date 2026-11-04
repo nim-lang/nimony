@@ -17,7 +17,7 @@ import ".." / lib / nifreader
 from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
 import nimony_model, decls, programs
-from semos import shellArgs
+from semos import shellArgs, macroHostDir, macroHostStamp, pluginDepFile
 
 type
   MacroPlugin* = object
@@ -289,12 +289,83 @@ proc macroPluginExists*(nifcachePath: string; macroSym: SymId): bool =
   ## plugin into the same nifcache we read here.
   fileExists(getMacroPluginPath(nifcachePath, macroSym))
 
+proc hostToolArgs(hostCommandLineArgs, cacheDir: string): string =
+  ## The options every host-cache sub-compile shares: the outer command line
+  ## minus its target triple, plus `-d:nimonyMacroHost`. The define has to be
+  ## on BOTH the setup and the per-macro `nimony s`, so that the two compute
+  ## the same frontend key and the second finds the first's work current. It
+  ## also keeps the setup, which imports `std/macros` itself, from scheduling
+  ## a `macrohost` node of its own (`deps.macrosNode`).
+  ##
+  ## The outer compile's args (notably `--cc`) are forwarded so the nested
+  ## build's nifmake-cmd signatures match the outer's. Otherwise nifmake's
+  ## per-cmd staleness check sees a different argv for `nimsem ... m
+  ## sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is stale, and
+  ## tries to overwrite it — which on Windows fails because the outer nimsem
+  ## (currently paused waiting on this exec) still has it mmap'd. Same
+  ## rationale as `semos.runProgram` / `semos.prepareEval`.
+  let srcLibPath = getAppDir().parentDir() / "src" / "lib"
+  result = quoteShell(getAppDir() / "nimony") & shellArgs(hostCommandLineArgs) &
+           " -d:nimonyMacroHost" &
+           " --path:" & quoteShell(srcLibPath) &
+           " --nimcache:" & quoteShell(cacheDir)
+
+proc setupHostCache(cacheDir, hostCommandLineArgs: string; depFile = ""): bool =
+  ## Pre-populate the host cache `cacheDir` with a HOST-bits stdlib. `nimony s`
+  ## only READS its imports' `.s.nif` — it does not build them — so the stdlib
+  ## the plugin imports must be materialised first. The plugin scaffold
+  ## imports exactly `std/[syncio, macros]` (see `emitImportStdMacros`);
+  ## compiling those pulls in the whole host-bits stdlib closure the plugin
+  ## needs (incl. the NimNode/NIF-reader machinery and the parser). The native
+  ## link of this setup may fail (harmless — we only need the `.s.nif`/
+  ## `.c.nif`), and `nimony c` is incremental so repeat calls are cheap.
+  let setupFile = cacheDir / "macro_setup.nim"
+  try:
+    createDir path(cacheDir)
+    writeFile(setupFile, "import std/[syncio, macros]\n")
+  except:
+    echo "Macro plugin: failed to write ", setupFile
+    return false
+  var setupCmd = hostToolArgs(hostCommandLineArgs, cacheDir)
+  if depFile.len > 0:
+    setupCmd.add " --depfile:"
+    setupCmd.add quoteShell(depFile)
+  setupCmd.add " c "
+  setupCmd.add quoteShell(setupFile)
+  try:
+    discard execCmdEx(setupCmd)   # ignore exit: a failed native link still leaves the .s.nif/.c.nif
+  except:
+    echo "Macro plugin: failed to setup host stdlib: ", setupCmd
+    return false
+  result = true
+
+proc buildMacroHost*(nifcachePath, hostCommandLineArgs: string) =
+  ## `nimsem macrohost`: the build graph's node for `semos.macroHostDir`. It
+  ## runs once, before every sem node that may compile a macro, so the setup
+  ## never races a sibling (two of them building the parser's plugins in one
+  ## cache would corrupt each other's incremental caches). The per-macro
+  ## sub-compiles that follow only read it: their writes are per-macro files
+  ## and the shared `.x.nif`, which `shoggoth` installs by rename.
+  let stamp = macroHostStamp(nifcachePath)
+  if not setupHostCache(macroHostDir(nifcachePath), hostCommandLineArgs,
+                        pluginDepFile(stamp)):
+    quit 1
+  try:
+    writeFile(stamp, "")
+  except:
+    quit "Macro plugin: failed to write " & stamp
+
 proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymId;
                          info: NifLineInfo;
-                         hostCommandLineArgs: string): string =
+                         hostCommandLineArgs: string; sharedHost: bool): string =
   ## Build the plugin module straight from NIF (no Nim text round-trip), write
   ## it as a `.p.nif`, and have Nimony compile it through `s` (the NIF-input
   ## entry point — same one CTFE uses in `semos.runEval`).
+  ##
+  ## `sharedHost` says the build graph already built `semos.macroHostDir`
+  ## (`SharedMacroHost`). Without it — a module the graph did not see import
+  ## `std/macros` — the plugin gets a host cache of its own and builds the
+  ## stdlib there first, as every macro used to.
   let exePath = getMacroPluginPath(nifcachePath, macroSym)
   let pluginBaseName = macroFileStem(macroSym)
 
@@ -305,12 +376,12 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # plugin's `nimony s` sub-compile reuses whatever stdlib artifacts already sit
   # in the nifcache it is pointed at. Sharing the outer nifcache would hand the
   # 64-bit plugin a 32-bit stdlib (mismatched type sizes) → a plugin that builds
-  # but SEGFAULTS at run. So give the plugin its OWN nifcache subdir, built fresh
+  # but SEGFAULTS at run. So the plugin builds in a nimcache subdir of its own
   # at host bits: `hostCommandLineArgs` is the outer command line minus its
   # target triple (`parseCommonOption` decides what a compile-time-eval
-  # process may see). The `macro_*` prefix keeps it out of any target-side
-  # artifact collection.
-  let pluginCache = nifcachePath / pluginBaseName & ".host"
+  # process may see).
+  let pluginCache = if sharedHost: macroHostDir(nifcachePath)
+                    else: nifcachePath / pluginBaseName & ".host"
   try:
     createDir path(pluginCache)
   except:
@@ -338,48 +409,14 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
     echo "Macro plugin: failed to write ", depsFile
     return ""
 
-  let nimonyExe = getAppDir() / "nimony"
-  let srcLibPath = getAppDir().parentDir() / "src" / "lib"
-
-  # Pre-populate the isolated plugin cache with a HOST-bits stdlib. `nimony s`
-  # only READS its imports' `.s.nif` — it does not build them — so in a fresh
-  # per-plugin cache we must first materialise the stdlib the plugin imports.
-  # The plugin scaffold imports exactly `std/[syncio, macros]` (see
-  # `emitImportStdMacros`); compiling those pulls in the whole host-bits stdlib
-  # closure the plugin needs (incl. the NimNode/NIF-reader machinery). The
-  # native link of this setup may fail (harmless — we only need the `.s.nif`/
-  # `.c.nif`), and `nimony c` is incremental so repeat calls are cheap.
-  let setupFile = pluginCache / "macro_setup.nim"
-  try:
-    writeFile(setupFile, "import std/[syncio, macros]\n")
-  except:
-    echo "Macro plugin: failed to write ", setupFile
-    return ""
-  let setupCmd = quoteShell(nimonyExe) & shellArgs(hostCommandLineArgs) &
-                 " --path:" & quoteShell(srcLibPath) &
-                 " --nimcache:" & quoteShell(pluginCache) &
-                 " c " & quoteShell(setupFile)
-  try:
-    discard execCmdEx(setupCmd)   # ignore exit: a failed native link still leaves the .s.nif/.c.nif
-  except:
-    echo "Macro plugin: failed to setup host stdlib: ", setupCmd
+  if not sharedHost and not setupHostCache(pluginCache, hostCommandLineArgs):
     return ""
 
-  # Forward `--nimcache:` so the sub-compile reads the `.p.deps.nif` from the
-  # same per-worker directory we wrote it to. Without this, `nimony s` falls
-  # back to its default `nimcache/` and can't find the deps file under
+  # `--nimcache:` (in `hostToolArgs`) so the sub-compile reads the
+  # `.p.deps.nif` from the directory we wrote it to. Without it, `nimony s`
+  # falls back to its default `nimcache/` and can't find the deps file under
   # parallel test execution (CI uses `nimcache/.par/<n>/` per worker).
-  #
-  # Forward the outer compile's command-line args (notably `--cc`) so the
-  # nested build's nifmake-cmd signatures match the outer's. Otherwise
-  # nifmake's per-cmd staleness check sees a different argv for `nimsem ...
-  # m sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is stale,
-  # and tries to overwrite it — which on Windows fails because the outer
-  # nimsem (currently paused waiting on this exec) still has it mmap'd.
-  # Same rationale as `semos.runProgram` / `semos.prepareEval`.
-  let cmd = quoteShell(nimonyExe) & shellArgs(hostCommandLineArgs) &
-            " --path:" & quoteShell(srcLibPath) &
-            " --nimcache:" & quoteShell(pluginCache) &
+  let cmd = hostToolArgs(hostCommandLineArgs, pluginCache) &
             " -o:" & quoteShell(exePath) &
             " s " & quoteShell(progfile)
 

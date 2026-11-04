@@ -218,6 +218,8 @@ type
                           ## left in `.s.deps.nif`: files a plugin or a `slurp`
                           ## read while semchecking this module
     semmedRole: SemmedRole ## the `(ismainmodule …)` entry of the same file
+    usesMacros: bool ## imports `std/macros`, directly or not, so its sem may
+                     ## compile a macro: ordered after the `macrohost` node
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -275,6 +277,7 @@ type
     foundPlugins: HashSet[string]
     pluginSources: Table[string, string] ## exe basename -> resolved `.nim` source
                                          ## of every `{.plugin.}` in the graph
+    macroHost: bool ## some module imports `std/macros`: emit the `macrohost` node
     toBuild: seq[CFile]
     linkFiles: seq[string] ## `{.link.}` objects/libraries, absolute, deduplicated
     backendTools: seq[BackendTool]
@@ -871,6 +874,31 @@ proc propagatePlugins(c: var DepContext) =
         for p in uncheckedBorrow(c.nodes[d].plugins):
           if not v.plugins.containsOrIncl(p):
             changed = true
+
+proc markMacroUsers(c: var DepContext) =
+  ## Set `usesMacros` on every module whose import closure reaches
+  ## `std/macros`: the ones whose sem may compile a macro plugin. They are
+  ## ordered after the `macrohost` node, which builds the host cache all of
+  ## the build's macro plugins share (`semos.macroHostDir`) once and before
+  ## any of them, so no two setups race. Not inside a host-cache sub-compile
+  ## (`-d:nimonyMacroHost`): the setup imports `std/macros` itself.
+  if c.config.isDefined("nimonyMacroHost"): return
+  let macros = c.processedModules.getOrDefault(
+    moduleSuffix(stdlibDir() / "std" / "macros.nim", c.config.paths), -1)
+  if macros < 0: return
+  c.macroHost = true
+  # A fixpoint for the reason `propagatePlugins` gives.
+  var changed = true
+  while changed:
+    changed = false
+    for v in c.nodes:
+      if not v.usesMacros:
+        for i in 0 ..< v.deps.len:
+          let d = v.deps[i]
+          if d == macros or c.nodes[d].usesMacros:
+            v.usesMacros = true
+            changed = true
+            break
 
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
@@ -1904,6 +1932,8 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
         b.addStrLit "--isSystem"
       elif isMain:
         b.addStrLit "--isMain"
+      if v.usesMacros:
+        b.addStrLit "--macroHost"
       # Module files are passed as args (primary first, then cyclic members)
       b.addStrLit c.config.parsedFile(v.files[0], c.cmd == DoDoc)
       for i in 0 ..< v.cyclicFiles.len:
@@ -1933,6 +1963,9 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     for p in plugins:
       b.withTree "input":
         b.addStrLit c.pluginExe(p)
+    if v.usesMacros:
+      b.withTree "input":
+        b.addStrLit macroHostStamp(c.config.nifcachePath)
     # Input: the files last build's sem READ — what `plugins.dependsOn`
     # reported and what `slurp` folded. Nothing in the module's own source
     # names them, so without this a changed data file leaves the `.s.nif`
@@ -2028,6 +2061,14 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         b.addKeyw "input"
         b.addKeyw "output"
 
+    if c.macroHost:
+      # `nimsem <frontend args> macrohost`: fills `semos.macroHostDir`.
+      b.withTree "cmd":
+        b.addSymbolDef "macrohost"
+        b.addStrLit c.nimsem
+        emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
+        b.addStrLit "macrohost"
+
     for plugin in c.foundPlugins:
       b.withTree "cmd":
         b.addSymbolDef plugin
@@ -2063,6 +2104,22 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
                 b.addStrLit f
         b.withTree "output":
           b.addStrLit c.pluginExe(name)
+
+    if c.macroHost:
+      let stamp = macroHostStamp(c.config.nifcachePath)
+      b.withTree "do":
+        b.addIdent "macrohost"
+        # what the setup read last time, as for `pluginbuild`:
+        let inputs = pluginDepFile(stamp)
+        if semos.fileExists(inputs):
+          var files: seq[string] = @[]
+          readDependencies inputs, files
+          for f in files:
+            if semos.fileExists(f):
+              b.withTree "input":
+                b.addStrLit f
+        b.withTree "output":
+          b.addStrLit stamp
 
     # Build rules for semantic checking
     var i = 0
@@ -2225,6 +2282,7 @@ proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebui
   traverseDeps result, p, root
   if not isFinal:
     propagatePlugins result
+    markMacroUsers result
 
 proc jobsArg(config: NifConfig): string =
   if config.parallelBuild > 0: " -j:" & $config.parallelBuild

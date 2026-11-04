@@ -636,6 +636,17 @@ proc pluginDepFile*(exefile: string): string =
   ## the next build's `pluginbuild` node (#2785), the depfile pattern.
   exefile & ".deps.nif"
 
+proc macroHostDir*(nifcachePath: string): string =
+  ## The host-bits nimcache every macro plugin of a build is compiled in: the
+  ## stdlib closure of `std/[syncio, macros]` (parser and its plugins
+  ## included), built ONCE by the `macrohost` node of the build graph and then
+  ## only read by the per-macro sub-compiles (`macro_plugin`).
+  nifcachePath / "macro_host"
+
+proc macroHostStamp*(nifcachePath: string): string =
+  ## Output of the `macrohost` node; its depfile lists what the setup read.
+  macroHostDir(nifcachePath) / "setup.stamp"
+
 proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string; depFile = "") =
   ## Build a plugin's `.nim` source `nf` as the executable `exefile`. Plugins
   ## import `lib/plugins.nim` and are compiled by Nimony itself. The

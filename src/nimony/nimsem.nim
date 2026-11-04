@@ -13,6 +13,7 @@ import ".." / lib / [argsfinder, symparser, nifpools, nifreader,
                      nifbuilder, nifindexes, tooldirs, vfs, nimversion]
 import semmain, sem, nifconfig, semos, semdata, indexgen, programs,
        derefs, deps, idetools, cli, langmodes
+from macro_plugin import buildMacroHost
 
 const
   Usage = "Nimsem Semantic Checker. Version " & Version & """
@@ -25,6 +26,7 @@ Command:
   x file.nif                  generate the .idx.nif file from a .nif file
   e file.nif [dep1.nif ...]   execute the given .nif file
   idetools file1.nif [file2.nif ...]  list usages and definitions
+  macrohost                   build the host cache the build's macro plugins compile in
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
@@ -32,6 +34,7 @@ Options:
   --compat                  turn on compatibility mode
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
+  --macroHost               the `macrohost` node ran: compile macros in its cache
   --noSystem                do not auto-import `system.nim`
   --mm:STRATEGY|PATH        select the memory management strategy; a name maps
                             to `system/<strategy>.nim` in the stdlib (possible
@@ -58,7 +61,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 type
   Command = enum
-    None, SingleModule, GenerateIdx, Execute, Idetools, BuildPlugin
+    None, SingleModule, GenerateIdx, Execute, Idetools, BuildPlugin, BuildMacroHost
 
 proc processModules(infiles: seq[string]; config: sink NifConfig;
                     moduleFlags: set[ModuleFlag]; commandLineArgs, hostCommandLineArgs: string) =
@@ -124,6 +127,8 @@ proc handleCmdLine() =
           cmd = Idetools
         of "plugin":
           cmd = BuildPlugin
+        of "macrohost":
+          cmd = BuildMacroHost
         else:
           quit "command expected"
       else:
@@ -180,6 +185,10 @@ proc handleCmdLine() =
     if args.len != 2:
       quit "want exactly 2 command line arguments: <plugin.nim> <executable>"
     buildPlugin(config, args[0], args[1])
+  of BuildMacroHost:
+    if args.len != 0:
+      quit "`macrohost` takes no arguments"
+    buildMacroHost(config.nifcachePath, hostCommandLineArgs)
   of Idetools:
     if args.len == 0:
       quit "want more than 0 command line argument"

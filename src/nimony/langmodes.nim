@@ -12,7 +12,9 @@ type
     RangeCheck
 
   ModuleFlag* = enum
-    IsSystem, IsMain, SkipSystem
+    IsSystem, IsMain, SkipSystem,
+    SharedMacroHost ## the build graph built `semos.macroHostDir` before this
+                    ## module's sem: its macros compile there
 
 const
   DefaultSettings* = {BoundCheck, RangeCheck}

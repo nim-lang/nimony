@@ -99,6 +99,11 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "ismain":
     moduleFlags.incl IsMain
     forwardArg = false
+  of "macrohost":
+    # internal: deps.nim passes it to the sem nodes it orders after the
+    # `macrohost` node
+    moduleFlags.incl SharedMacroHost
+    forwardArg = false
   of "cycles":
     # internal: the driver passes it to nimsem when the runtime says
     # `{.enableTrace.}` (see `NifConfig.cycles`), so it is not forwarded
