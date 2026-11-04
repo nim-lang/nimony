@@ -436,9 +436,10 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
       # `(mul T x 0)` and `(sub T x x)` to `0`, and constant folding turns
       # literal operands into a literal. Every rewrite that can leave a
       # non-arithmetic node here yields a value that provably cannot overflow,
-      # so there is no check to emit: store the value and leave the flag as it
-      # was. Erroring out instead made `newSeq[T](1)` fail to compile at
-      # `-d:release`, where `(mul T 1 (sizeof T))` folds to `(sizeof T)`.
+      # so there is no check to emit: store the value and clear the flag, this
+      # `keepovf` did not overflow. Erroring out instead made `newSeq[T](1)`
+      # fail to compile at `-d:release`, where `(mul T 1 (sizeof T))` folds to
+      # `(sizeof T)`.
       checkable = false
     if not checkable:
       var value = n
@@ -446,6 +447,11 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
       genLvalue c, n    # the destination
       c.add AsgnOpr
       genx c, value
+      c.add Semicolon
+      c.currentProc.needsOverflowFlag = true
+      c.add OvfToken
+      c.add AsgnOpr
+      c.add "NIM_FALSE"
       c.add Semicolon
     else:
       var isLongLong = false
@@ -473,8 +479,9 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
             error c.m, "expected integer literal but got: ", n
           while n.hasMore: skip n
         c.currentProc.needsOverflowFlag = true
-        c.add IfKeyword
-        c.add ParLe
+        # Not sticky: the flag is this operation's verdict alone.
+        c.add OvfToken
+        c.add AsgnOpr
         gcc.add "_overflow"
         c.add gcc
         c.add ParLe
@@ -491,15 +498,7 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
       if isLongLong:
         c.add ParRi
       c.add ParRi
-      c.add ParRi # end of condition
-      c.add CurlyLe
-      c.add OvfToken
-      c.add AsgnOpr
-      c.add OvfToken
-      c.add " || "
-      c.add "NIM_TRUE"
       c.add Semicolon
-      c.add CurlyRi
     while n.hasMore: skip n
 
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
