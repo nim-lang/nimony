@@ -1858,7 +1858,7 @@ proc checkFloatLitRange(context: ptr SemContext; f: Cursor; floatLit: Cursor): b
       # makes `x * 0.1` a `float64` while `x * 0.5` stays `float32`
       # (nim-lang/nimony#2864).
       let val = floatLit.floatVal
-      result = abs(val) <= float32.high.float64
+      result = abs(val) <= 3.4028234663852886e38 # float32.high
     else:
       result = true
 
