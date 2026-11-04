@@ -427,13 +427,28 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     else:
       result = forwardToExecute(c, n, routine, args)
 
+proc signedWidth(c: EvalContext; t: Cursor): int =
+  ## The bit width of the signed integer type `t`: `(i 8)`, or `(i -1)` for
+  ## `int`, which is as wide as the target's pointer.
+  var w = t
+  inc w
+  result = if w.kind == IntLit and w.intVal > 0: int(w.intVal) else: c.bits
+
+proc fitsSigned(v: int64; width: int): bool =
+  ## A constant outside its type would be a different value at run time,
+  ## where signed arithmetic wraps: `127'i8 + 1'i8` is an overflow.
+  result = width >= 64 or
+    (v >= -(1'i64 shl (width - 1)) and v <= (1'i64 shl (width - 1)) - 1)
+
 template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
   var isSigned = false
   var a = createNaN()
   var b = createNaN()
+  var width = 64
   n.into:
     isSigned = n.typeKind == IntT
+    if isSigned: width = signedWidth(c, n)
     skip n, SkipType # type
     a = getConstOrdinalValue propagateError eval(c, n)
     b = getConstOrdinalValue propagateError eval(c, n)
@@ -442,7 +457,7 @@ template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
     var err = false
     if isSigned:
       let ri = asSigned(rx, err)
-      if err:
+      if err or not fitsSigned(ri, width):
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
         result = intValue(c, ri, orig.info)
@@ -503,8 +518,10 @@ template evalOrdUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} 
   let orig = n
   var isSigned = false
   var a = createNaN()
+  var width = 64
   n.into:
     isSigned = n.typeKind == IntT
+    if isSigned: width = signedWidth(c, n)
     skip n, SkipType # type
     a = getConstOrdinalValue propagateError eval(c, n)
   if not isNaN(a):
@@ -512,7 +529,7 @@ template evalOrdUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} 
     var err = false
     if isSigned:
       let ri = asSigned(rx, err)
-      if err:
+      if err or not fitsSigned(ri, width):
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
         result = intValue(c, ri, orig.info)

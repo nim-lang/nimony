@@ -1620,6 +1620,55 @@ proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; obj
     # enough to use object sym directly
     dest.addSymUse(objSym, info)
 
+proc holdsByValue(t: Cursor; target: SymId; visited: var HashSet[SymId]): bool
+
+proc componentsHoldByValue(n: Cursor; target: SymId; visited: var HashSet[SymId]): bool =
+  ## Walks the fields of an object body from `n` on, into `case` and `when`
+  ## branches. Skips anything else, such as an `err` left by a field that did
+  ## not semcheck, which `nextField` would reject.
+  result = false
+  var n = n
+  while not result and n.hasMore:
+    let k = n.substructureKind
+    if k in {FldU, GfldU}:
+      result = holdsByValue(asLocal(n).typ, target, visited)
+    elif k in {CaseU, WhenU, StmtsU, ElseU, OfU, ElifU}:
+      var branch = sub(n)
+      if k in {OfU, ElifU}:
+        skip branch # the `of` values or the `elif` condition
+      result = componentsHoldByValue(branch, target, visited)
+    skip n
+
+proc holdsByValue(t: Cursor; target: SymId; visited: var HashSet[SymId]): bool =
+  ## Does a value of type `t` store a `target` inline: through object fields
+  ## and base objects, tuple and array elements or a distinct base? Every
+  ## other type, `ref` and `ptr` among them, stores its target elsewhere.
+  ## A declaration whose body is not semchecked yet has no symbols to follow.
+  result = false
+  if t.kind == Symbol:
+    let s = t.symId
+    if s == target: return true
+    if visited.containsOrIncl(s): return false
+    let res = tryLoadSym(s)
+    if res.status == LacksNothing and res.decl.symKind == TypeY:
+      let decl = asTypeDecl(res.decl)
+      result = not decl.isGeneric and holdsByValue(decl.body, target, visited)
+  elif t.typeKind in {DistinctT, ArrayT, UarrayT}:
+    result = holdsByValue(t.childCursor, target, visited)
+  elif t.typeKind == TupleT:
+    var n = sub(t)
+    while not result and n.hasMore:
+      result = holdsByValue(getTupleFieldType(n), target, visited)
+      skip n
+  elif t.typeKind == ObjectT:
+    var n = sub(t)
+    var base = n
+    if base.typeKind in {RefT, PtrT}:
+      inc base # `ref object of B` names B's object as `ref B.Obj`
+    result = holdsByValue(base, target, visited)
+    skip n
+    result = result or componentsHoldByValue(n, target, visited)
+
 proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let startCursor = n
   let declStart = dest.len
@@ -1695,6 +1744,14 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
            UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
           semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, ownerSym
         discard c.typesInProgress.pop()
+        if c.inGenericDefinition == 0:
+          # a cycle is found once its last member is checked: every other
+          # member's body is semchecked by then
+          var visited = initHashSet[SymId]()
+          if holdsByValue(cursorAt(dest, typeStart), delayed.s.name, visited):
+            dest.shrink typeStart
+            c.buildErr dest, delayed.info,
+              "illegal recursion in type '" & pool.symBasename(ownerSym) & "'"
         fitTypeToPragmas(c, dest, crucial, typeStart)
     else:
       if n.typeKind in {RefT, PtrT}:

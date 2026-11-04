@@ -154,10 +154,9 @@ already emits (`lengc/genstmts.nim`); on LLVM, `add` without `nsw` or
 
 ### Do not route default arithmetic through `keepovf`
 
-`(keepovf …)` is a *statement* with a sticky flag that must be reset
+`(keepovf …)` is a *statement* whose flag reports only the latest `keepovf`
 (`leng-spec.md`). Making it the lowering for all arithmetic would flatten every
-arithmetic expression into statements with temporaries through `xelim` and cse,
-and it already defeats the inliner (`tests/nimony/opt/topt_keepoverflow_inlined.nim`).
+arithmetic expression into statements with temporaries through `xelim` and cse.
 The trapping/flag-setting form stays an *expression* in the compiler's IR;
 temporaries appear only in the C backend, where they appear anyway.
 

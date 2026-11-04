@@ -124,7 +124,7 @@ proc parseSectionHeader(line: string): SectionKind =
 proc parseEntryHead(line: string): string =
   result = line.strip(trailing = false)
   var i = 0
-  while i + 1 < result.len:
+  while i < result.len - 1:
     if result[i] in Whitespace and result[i + 1] in Whitespace:
       return result.substr(0, i - 1)
     inc i

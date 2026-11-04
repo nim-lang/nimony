@@ -12,12 +12,13 @@ func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and
 func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem
 
-func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
+func high*[T](a: openArray[T]): int {.inline.} = len(a) - 1
 func low*[T](a: openArray[T]): int {.inline.} = 0
-func len*[T](a: openArray[T]): int {.inline, ensures: (0 <= result).} =
+func len*[T](a: openArray[T]): int {.inline, ensures: (0 <= result and result < high(int)).} =
   result = a.len
-  # a view is made from a container's non-negative length
-  {.assume: 0 <= result.}
+  # a view is made from a container's length, which is non-negative and
+  # below `high(int)`
+  {.assume: 0 <= result and result < high(int).}
 
 # special cased in compiler as "toOpenArray.0.<system suffix>" for empty array type inference:
 converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline, establishesBorrow,

@@ -74,7 +74,7 @@ type
     forced*: bool              ## `{.alwaysInline.}`: splice regardless of size
                                ## and growth budget
     banned*: bool              ## a veto no rule may lift: `.noinline`, no body,
-                               ## importc, varargs, an overflow-flag body
+                               ## importc, varargs
   ModuleAnalysis = object
     ## Hexer-stage scratch: the inlinable procs `analyzeModule` found, so
     ## `intraModuleInline` knows which bodies to flatten. Importers never see
@@ -159,40 +159,11 @@ proc tokenCount(n: Cursor): int =
   var c = n
   result = tokenCountAux(c)
 
-proc bodyTouchesOverflowFlag(body: Cursor): bool =
-  ## `(keepovf …)` / `(ovf)` anywhere in `body`. Both work on the enclosing
-  ## PROC's overflow flag, which every backend keeps as one sticky
-  ## per-function flag: false on entry, set by a `(keepovf …)` that
-  ## overflowed, and nothing ever resets it. Spliced into a caller such a body
-  ## shares the CALLER's flag instead — set by an earlier inlined overflow, or
-  ## by the previous iteration of the loop the splice landed in — so its
-  ## `(ovf)` reports overflows that never happened here (measured:
-  ## `mulChecked` overflowing on purpose, then `newSeq`'s `memSizeInBytes`
-  ## spliced into the same `main` read the stale flag and asked the allocator
-  ## for `high(int)` bytes). Leng has no flag reset to emit at a splice entry,
-  ## so a body that touches the flag keeps its own frame.
-  proc walk(n: var Cursor): bool =
-    case n.kind
-    of TagLit:
-      if n.stmtKind == KeepovfS or n.exprKind == OvfC:
-        skip n
-        return true
-      result = false
-      n.into:
-        while n.hasMore:
-          if walk(n): result = true
-    else:
-      result = false
-      inc n
-  var b = body
-  result = walk(b)
-
 proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   ## The whole inlining policy, derived from the proc decl itself, and it is
   ## a size question only:
-  ##   - no body / `.noinline` / importc / assembler / interrupt / varargs /
-  ##     a body touching the overflow flag → BANNED, no rule may lift it (see
-  ##     `bodyTouchesOverflowFlag` for the last);
+  ##   - no body / `.noinline` / importc / assembler / interrupt / varargs
+  ##     → BANNED, no rule may lift it;
   ##   - body ≤ `InlineTinyBound` tokens, or `.inline` and ≤ `InlineHintBound`
   ##     → inlinable;
   ##   - `.alwaysInline` → inlinable and `forced` (it also skips the budget);
@@ -252,7 +223,6 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
         skip pr
   if vetoed: return                         # `banned` stays set
   if hasVarargsParam(pd.params): return
-  if bodyTouchesOverflowFlag(pd.body): return   # see `bodyTouchesOverflowFlag`
 
   result.banned = false
   let size = tokenCount(pd.body)
@@ -1428,11 +1398,10 @@ proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
   ## discarded, as at statement position). `forwardResult` additionally hands
   ## the callee's result local — and the local a tail `result = L` copies from —
   ## the target's storage, so their decls fold away and the `target = result'`
-  ## self-copy never appears. That is only sound when the target is a fresh temp
-  ## nothing else can observe: an ordinary assignment destination is live before
-  ## the call (a global the body may read, a local an argument may alias), so it
-  ## must be written at the `(ret …)` points and nowhere else, exactly as the
-  ## call would have.
+  ## self-copy never appears. That is only sound when nothing reads the target
+  ## while the body runs: a fresh temp, or a caller local no argument mentions
+  ## (`trySpliceAsgn`). Otherwise it is written at the `(ret …)` points and
+  ## nowhere else, exactly as the call would have.
   ##
   ## Charges the caller's growth budget: every commit point goes through here.
   var rename = initTable[SymId, SymId]()
@@ -1545,9 +1514,12 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## (measured: 16 `isValid` call frames left in the native `nifbench` build,
   ## all of this shape). Emits one `(scope …)` and returns 1.
   ##
-  ## No result forwarding: `lhs` is live before the call, so the body's result
-  ## stays its own local and reaches `lhs` only at the `(ret …)` points — see
-  ## `emitSplice`. The residual `lhs = result'` copy is shoggoth's to clean.
+  ## `lhs` is the natural target and takes the result over (`forwardResult`)
+  ## unless an argument mentions it: a substituted argument is evaluated inside
+  ## the body, after the result was first written. The body cannot name a caller
+  ## local otherwise. Like NRVO, reading `lhs` through a raw pointer while the
+  ## body runs sees the partial result: `y = f(addr y)` is the programmer's
+  ## problem. A global `lhs` keeps the copy: the body may read it.
   if not n.isTagLit or n.stmtKind != AsgnS: return 0
   let entry = n
   var probe = n
@@ -1558,7 +1530,10 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
 
   var site = SpliceSite()
   if not prepareSplice(c, probe, site): return 0
-  emitSplice(c, dest, site, lhsSym, forwardResult = false, entry.info)
+  var forward = pool.symIsLocal(lhsSym)
+  for a in site.argCursors:
+    if forward and countSymUses(a, lhsSym) > 0: forward = false
+  emitSplice(c, dest, site, lhsSym, forward, entry.info)
 
   n = entry
   skip n

@@ -59,7 +59,9 @@ func isDot(x: string; bounds: (int, int)): bool =
 
 func isDotDot(x: string; bounds: (int, int)): bool =
   result = false
-  if bounds[1] == bounds[0] + 1 and bounds[0] >= 0 and bounds[1] < x.len:
+  # `bounds[0] < x.len - 1` first: it keeps `bounds[0] + 1` from wrapping,
+  # which is what lets the equality say `bounds[1]` is one past `bounds[0]`
+  if bounds[0] >= 0 and bounds[0] < x.len - 1 and bounds[1] == bounds[0] + 1:
     result = x[bounds[0]] == '.' and x[bounds[0]+1] == '.'
 
 func isSlash(x: string; bounds: (int, int)): bool =
@@ -105,7 +107,8 @@ func addNormalizePath*(x: string; result: var string; state: var int;
         # but right now we instead handle it inside os.joinPath
 
         # strip path component: foo/bar => foo
-        while (d-1) > (state and 1) and result[d-1] notin {DirSep, AltSep}:
+        let keep = (state and 1) + 1
+        while d > keep and result[d-1] notin {DirSep, AltSep}:
           dec d
         if d > 0:
           setLen(result, d-1)

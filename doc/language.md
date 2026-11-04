@@ -73,6 +73,38 @@ The following integer types are pre-defined:
 **Note:** Unsigned operations all wrap around; they cannot lead to over- or underflow errors.
 
 
+### Signed overflow
+
+Signed arithmetic wraps around like unsigned arithmetic does: when the
+mathematical result of `+`, `-`, `*` or unary `-` on a signed integer type
+`T` does not fit `T`, the result is that value modulo `2^bits` in two's
+complement. `127'i8 + 1'i8` is `-128'i8`. There is no overflow error, and the
+C backend compiles with `-fwrapv` so that the C compiler does not assume
+otherwise.
+
+The contract prover (`staticContracts`) reads a signed operation as the
+mathematical one only where it can prove that it stays inside its type, just
+as it does for unsigned arithmetic. `if a >= 0 and b >= 0: s[a + b]` keeps its
+bounds check: `a + b` may be negative.
+
+Inside a `{.keepOverflowFlag.}` block `overflowFlag()` reports whether the
+last signed `+`, `-` or `*` overflowed:
+
+  ```nim
+  proc checkedAdd(a, b: int): (int, bool) =
+    {.keepOverflowFlag.}:
+      let r = a + b
+      result = (r, overflowFlag())
+  ```
+
+A constant expression that overflows its type, such as
+`const X = 127'i8 + 1'i8`, is a compile-time error.
+
+The length of a `string`, `seq` or `openArray` is always below `high(int)`: no
+container fits that many elements beside its header. `len` states this in
+its postcondition, so `i + 1` cannot wrap where `i < s.len`.
+
+
 `Automatic type conversion`:idx: is performed in expressions where different
 kinds of integer types are used: the smaller type is converted to the larger.
 
@@ -4161,6 +4193,11 @@ A type section begins with the `type` keyword. It contains multiple
 type definitions. A type definition binds a type to a name. Type definitions
 can be recursive or even mutually recursive. Nominal types like `objects`
 or `enums` can only be defined in a `type` section.
+
+A type must not contain itself by value, through object fields, base objects,
+tuple or array elements or a `distinct` base type: `type O = object x: O`
+and `type D = distinct D` are invalid. The recursion has to pass through an
+indirection such as `ref`, `ptr` or `seq`.
 
 
 

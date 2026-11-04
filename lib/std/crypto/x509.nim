@@ -82,7 +82,7 @@ func readTlv(d: openArray[byte]; pos, limit: int; t: var Tlv): bool =
   ## One DER element at `pos`, which must end at or before `limit`. Only the
   ## definite length forms DER allows, and lengths below 2^24.
   result = false
-  if limit > d.len or pos < 0 or pos + 2 > limit: return
+  if limit > d.len or limit < 2 or pos < 0 or pos > limit - 2: return
   let tag = d[pos]
   let b = int(d[pos + 1])
   var p = pos + 2
@@ -508,10 +508,15 @@ proc addPem*(store: var TrustStore; pem: string): int =
   while true:
     let a = pem.find(Begin, pos)
     if a < 0: break
-    let b = pem.find(End, a + Begin.len)
+    let afterBegin = a + Begin.len
+    # the match `pem[a ..< afterBegin]` lies inside `pem`: no wrap
+    {.assume: 0 <= afterBegin.}
+    let b = pem.find(End, afterBegin)
     if b < 0: break
-    let body = pem.substr(a + Begin.len, b - 1)
-    pos = b + End.len
+    let body = pem.substr(afterBegin, b - 1)
+    let afterEnd = b + End.len
+    {.assume: 0 <= afterEnd.} # as `afterBegin`
+    pos = afterEnd
     let raw = decode(body)
     var bytes: seq[byte] = @[]
     for ch in raw: bytes.add byte(ch)
