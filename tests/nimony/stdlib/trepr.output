@@ -1,0 +1,79 @@
+42
+1.5
+true
+red
+'a'
+'\10'
+'\\'
+"a"
+"a\9b"
+"a\n
+b"
+"\192\128"
+'\255'
+'''
+@[1, 2, 3]
+@[]
+@[@[1], @[2]]
+[4, 5]
+{'a', 'b'}
+{}
+{ea, eb}
+[ea, eb]
+(a: 1, b: "x")
+(1, (a: 2, b: "x"))
+(1, "x")
+(1,)
+1 .. 3
+"a" .. "c"
+1 .. "c"
+Plain(x: 1, y: "a")
+RefPlain(value: 2)
+nil
+Box[int](value: 3)
+Box[int](value: 3)
+RefBox[int](value: 4)
+Node(name: "x", next: RefBox[int](value: 1))
+Empty()
+(1, @[2], Plain(x: 3, y: "z"))
+VarNode(name: "n", kind: red, bits: 7)
+VarNode(name: "s", kind: green, inner: Inner(active: true, iv: 8), text: "hi")
+VarNode(name: "e", kind: blue)
+Maybe[int](Some(val: 42))
+Maybe[int](None())
+SharedSum(First(shared: 10, a: 1))
+SharedSum(Second(shared: 20, b: "y"))
+SharedSum(Third(shared: 30))
+RefSum(RValue(val: 5))
+RefSum(RAdd(a: RefSum(RValue(val: 5)), b: RefSum(RValue(val: 7))))
+3
+"hi"
+6
+3
+'c'
+3
+@[1, 2]
+[1, 2]
+(Field1: 1, Field2: 2)
+DistinctHolder(value: 3)
+Box[MyDistinct](value: 3)
+RefBox[MyDistinct](value: 3)
+BaseObj(a: 4)
+@[1, 2]
+3
+3
+3
+Box[int]
+RefBox[int]
+RefPlain
+seq[int]
+ref int
+ptr int
+ref Plain
+ptr Plain
+"a"
+""
+nil
+ptr 7
+A(c: ptr 1)
+[6, 7]
