@@ -646,13 +646,16 @@ invalid field names and CR/LF in values with `BadOperation`.
 [Source](../lib/std/httpclient.nim)
 
 `httpGet`, `httpPost`, `httpPut`: the constructor sends the request, reads the
-status and headers, and returns the BODY as a `Reader`.
+status and headers, and returns the BODY as a `Reader`. `httpRequest` returns
+a response of any status and follows redirects.
 
 ```nim
 var page = httpGet("https://example.com/")
 var r = httpPost(url, openReader(path"big.bin"))     # streamed, chunked
 var resp = HttpHeaders("")
 var r2 = httpGet(url, headers"Accept: application/json\r\n", resp)
+var res = httpRequest("GET", url, dl = afterMs(10_000))
+if res.code == 404: echo "not there"
 ```
 
 - A status outside 2xx raises `httpToErrorCode(status)` (404 is
@@ -666,7 +669,20 @@ var r2 = httpGet(url, headers"Accept: application/json\r\n", resp)
   a malformed literal — a missing `\r\n`, a bad name, a lone line break —
   is a compile-time error at the literal, judged by the same rules
   (`std/http/httpheaders`) that `add` applies at run time.
-- One request per connection; redirects raise `RedirectError`.
+- One request per connection. `httpGet`, `httpPost` and `httpPut` do not
+  follow redirects: a 3xx raises its `httpToErrorCode`.
+- `httpRequest(meth, url, body, headers, maxRedirects, dl)` returns an
+  `HttpResponse` (`code`, `reason`, `headers`, final `url`, `body` as a
+  `Reader`) for every status and follows up to `DefaultMaxRedirects` (5)
+  redirects by RFC 9110 §15.4: 301/302/303 become `GET` without the body,
+  307/308 resend method and body, and `Authorization` and `Cookie` are
+  dropped once a redirect leaves the origin. It raises only when there is no
+  response (network, TLS, a malformed reply, `TimeoutError`) or for a bad
+  request (`BadOperation`).
+- Every call takes a deadline `dl` (`afterMs(10_000)`) that bounds connecting,
+  sending, any redirects and reading the response head. The returned body
+  `Reader` starts with `never`, as `streamio`'s connection constructors' streams
+  do; `renew` sets a deadline for reading it.
 
 ## crypto
 

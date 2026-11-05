@@ -19,9 +19,14 @@
 ##
 ## * `https` in the URL means TLS (`std/tls`'s `newTlsEngine()` unless an
 ##   engine is passed). An engine on a plain `http` URL raises.
-## * A status outside 2xx RAISES the `ErrorCode` `httpToErrorCode` maps it to
-##   (404 is `NameNotFound`, 401/403 `PermissionDenied`, ...), so a `Reader`
-##   returned from here always carries a successful body.
+## * In `httpGet`, `httpPost` and `httpPut` a status outside 2xx RAISES the
+##   `ErrorCode` `httpToErrorCode` maps it to (404 is `NameNotFound`, 401/403
+##   `PermissionDenied`, ...), so a `Reader` returned from them always carries
+##   a successful body. `httpRequest` returns every status as a number instead:
+##
+##   .. code-block:: nim
+##     var resp = httpRequest("GET", "https://example.com/", dl = afterMs(10_000))
+##     echo resp.code, " ", resp.reason, " ", resp.url
 ## * The body is de-framed (`Content-Length`, chunked, or until the server
 ##   closes) and its content coding undone (gzip, deflate) by an adapter in the
 ##   reader's adapter slot. Trailers are read and dropped.
@@ -31,8 +36,13 @@
 ##   (conflicting framing headers are how request smuggling works).
 ##   `User-Agent` and `Accept-Encoding` have defaults a user header replaces.
 ##
-## One request per connection (`Connection: close`); redirects are raised
-## (`RedirectError`), not followed.
+## One request per connection (`Connection: close`). `httpGet`, `httpPost` and
+## `httpPut` do not follow redirects: a 3xx raises its `httpToErrorCode`.
+## `httpRequest` returns a response of any status as an `HttpResponse` (code,
+## reason, headers, final URL, body) and follows redirects. Every request takes
+## a deadline `dl` (`afterMs(10_000)`) that bounds connecting, sending the
+## request and reading the response head; as with every `streamio` connection
+## constructor, the returned body `Reader` starts with `never`.
 
 {.feature: "lenientnils".}
 
@@ -214,20 +224,23 @@ proc engineFor(t: Target; tls: nil TlsEngine): nil TlsEngine {.raises.} =
     if tls != nil: raise BadOperation   # an engine on plain http is a mistake
     result = nil
 
-proc readResponse(r: var Reader; response: var HttpHeaders) {.passive, raises.} =
-  ## The status line and headers; raises for a status outside 2xx, then puts
-  ## the body adapter into `r`'s adapter slot.
-  var code = 0
+proc readHead(r: var Reader; response: var HttpHeaders;
+              reason: var string): int {.passive, raises.} =
+  ## The status line and headers of the final (non-1xx) response: answers the
+  ## status code, puts the reason phrase into `reason`.
+  result = 0
   while true:
     let status = r.readLine()
     # `HTTP/1.1 200 OK`
     let sp = status.find(' ')
     if not status.startsWith("HTTP/1.") or sp < 0 or status.len < sp + 4:
       raise ProtocolError
-    code = 0
+    result = 0
     for k in sp + 1 .. sp + 3:
       if status[k] notin {'0'..'9'}: raise ProtocolError
-      code = code * 10 + (ord(status[k]) - ord('0'))
+      result = result * 10 + (ord(status[k]) - ord('0'))
+    if status.len > sp + 4 and status[sp + 4] != ' ': raise ProtocolError
+    reason = status.substr(sp + 5).strip()
     var h = ""
     var count = 0
     while true:
@@ -238,15 +251,22 @@ proc readResponse(r: var Reader; response: var HttpHeaders) {.passive, raises.} 
       h.add line
       h.add "\r\n"
     response = HttpHeaders(h)
-    if code >= 200 or code == 101: break        # 1xx interim responses are skipped
-  if code < 200 or code > 299:
-    raise httpToErrorCode(code)
+    if result >= 200 or result == 101: break    # 1xx interim responses are skipped
+
+proc setBodyAdapter(r: var Reader; code: int; response: HttpHeaders;
+                    noBody: bool) {.passive, raises.} =
+  ## Puts the body adapter into `r`'s adapter slot. `noBody`: the response to a
+  ## `HEAD`, whose framing headers describe a body that is not sent. `HEAD`,
+  ## 204 and 304 have no body: the rule `httpserver` sends by
+  ## (doc/internals/http.md).
   var a = HttpBodyAdapter(framing: frUntilClose, left: 0, state: csSize, line: "",
                           coded: false, dec: initDecoder(fmtDetect), decDone: false,
                           framingDone: false)
   let te = toLowerAscii(response.get("Transfer-Encoding"))
   let cl = response.get("Content-Length")
-  if te.len > 0:
+  if noBody or code == 204 or code == 205 or code == 304:
+    discard                                     # framed as empty below
+  elif te.len > 0:
     if not te.endsWith("chunked"): raise UnimplementedOperation
     a.framing = frChunked
   elif cl.len > 0:
@@ -256,12 +276,15 @@ proc readResponse(r: var Reader; response: var HttpHeaders) {.passive, raises.} 
       n = n * 10 + int64(ord(c) - ord('0'))
     a.framing = frLength
     a.left = n
-  if code == 204 or code == 205 or (a.framing == frLength and a.left == 0):
+  if noBody or code == 204 or code == 205 or code == 304 or
+      (a.framing == frLength and a.left == 0):
     a.framing = frLength
     a.left = 0
     a.framingDone = true
   let ce = toLowerAscii(response.get("Content-Encoding"))
-  if ce == "gzip" or ce == "x-gzip":
+  if a.framingDone:
+    discard                                     # nothing to decode
+  elif ce == "gzip" or ce == "x-gzip":
     a.coded = true
     a.dec = initDecoder(fmtGzip)
   elif ce == "deflate":
@@ -271,31 +294,45 @@ proc readResponse(r: var Reader; response: var HttpHeaders) {.passive, raises.} 
     raise UnimplementedOperation
   r.setAdapter a
 
+proc readResponse(r: var Reader; response: var HttpHeaders) {.passive, raises.} =
+  ## The status line and headers; raises for a status outside 2xx, then puts
+  ## the body adapter into `r`'s adapter slot.
+  var reason = ""
+  let code = readHead(r, response, reason)
+  if code < 200 or code > 299:
+    raise httpToErrorCode(code)
+  setBodyAdapter(r, code, response, false)
+
 proc httpGet*(url: string; headers: HttpHeaders; response: out HttpHeaders;
-              tls: nil TlsEngine = nil): Reader {.passive, raises.} =
-  ## The body of `url`; the response headers in `response`.
+              tls: nil TlsEngine = nil; dl = never): Reader {.passive, raises.} =
+  ## The body of `url`; the response headers in `response`. `dl` bounds
+  ## connecting, sending and reading the response head (`TimeoutError` on
+  ## expiry); the returned reader starts with `never` (`renew` sets one).
   let t = targetOf(url)
   let req = requestHead("GET", t, headers, "")
-  var (r, w) = connect(t.address, req, engineFor(t, tls))
+  var (r, w) = connect(t.address, req, engineFor(t, tls), dl)
   w.detachWriter()
+  r.renew(dl)
   response = HttpHeaders("")
   readResponse(r, response)
+  r.renew(never)
   result = r
 
 proc httpGet*(url: string; headers = HttpHeaders("");
-              tls: nil TlsEngine = nil): Reader {.passive, raises.} =
+              tls: nil TlsEngine = nil; dl = never): Reader {.passive, raises.} =
   ## The body of `url`.
   var response = HttpHeaders("")
-  result = httpGet(url, headers, response, tls)
+  result = httpGet(url, headers, response, tls, dl)
 
 proc upload(meth, url: string; body: sink Reader; contentType: string;
             headers: HttpHeaders; response: var HttpHeaders;
-            tls: nil TlsEngine): Reader {.passive, raises.} =
+            tls: nil TlsEngine; dl: Deadline): Reader {.passive, raises.} =
   let t = targetOf(url)
   var hs = headers
   if not hs.has("Content-Type"): hs.add("Content-Type", contentType)
   let req = requestHead(meth, t, hs, "Transfer-Encoding: chunked\r\n")
-  var (r, w) = connect(t.address, tls = engineFor(t, tls))
+  var (r, w) = connect(t.address, tls = engineFor(t, tls), dl = dl)
+  w.renew(dl)
   var b = body
   w.write req
   var chunk = newString(16 * 1024)
@@ -314,25 +351,157 @@ proc upload(meth, url: string; body: sink Reader; contentType: string;
   w.flush()
   w.detachWriter()
   readResponse(r, response)
+  r.renew(never)
   result = r
 
 proc httpPost*(url: string; body: sink Reader;
                contentType = "application/octet-stream";
-               headers = HttpHeaders(""); tls: nil TlsEngine = nil): Reader {.
-    passive, raises.} =
+               headers = HttpHeaders(""); tls: nil TlsEngine = nil;
+               dl = never): Reader {.passive, raises.} =
   ## Sends `body` (streamed, chunked) and returns the response body.
   var response = HttpHeaders("")
-  result = upload("POST", url, body, contentType, headers, response, tls)
+  result = upload("POST", url, body, contentType, headers, response, tls, dl)
 
 proc httpPost*(url: string; body: sink Reader; contentType: string;
                headers: HttpHeaders; response: out HttpHeaders;
-               tls: nil TlsEngine = nil): Reader {.passive, raises.} =
+               tls: nil TlsEngine = nil; dl = never): Reader {.
+    passive, raises.} =
   response = HttpHeaders("")
-  result = upload("POST", url, body, contentType, headers, response, tls)
+  result = upload("POST", url, body, contentType, headers, response, tls, dl)
 
 proc httpPut*(url: string; body: sink Reader;
               contentType = "application/octet-stream";
-              headers = HttpHeaders(""); tls: nil TlsEngine = nil): Reader {.
-    passive, raises.} =
+              headers = HttpHeaders(""); tls: nil TlsEngine = nil;
+              dl = never): Reader {.passive, raises.} =
   var response = HttpHeaders("")
-  result = upload("PUT", url, body, contentType, headers, response, tls)
+  result = upload("PUT", url, body, contentType, headers, response, tls, dl)
+
+# ------------------------------------------------- any status, redirects --
+
+type
+  HttpResponse* = object
+    ## A response of any status, as `httpRequest` returns it.
+    code*: int             ## the status code: 200, 301, 403, 404, ...
+    reason*: string        ## the reason phrase of the status line; may be empty
+    headers*: HttpHeaders  ## the response headers
+    url*: string           ## the URL that answered: the request's own, or
+                           ## the last redirect target that was followed
+    body*: Reader          ## the de-framed, decoded body, whatever the status
+
+const
+  DefaultMaxRedirects* = 5
+    ## Redirects `httpRequest` follows by default: enough for the usual
+    ## http→https, host and trailing-slash hops, few enough to stop a loop.
+
+func isRedirect(code: int): bool {.inline.} =
+  ## Whether `code` is a redirect `httpRequest` follows: 301, 302, 303, 307
+  ## or 308.
+  code == 301 or code == 302 or code == 303 or code == 307 or code == 308
+
+proc checkMethod(meth: string) {.raises.} =
+  if meth.len == 0: raise BadOperation
+  for c in meth:
+    if not isTokenChar(c): raise BadOperation
+
+func withoutHeaders(h: HttpHeaders; names: openArray[string]): HttpHeaders =
+  var s = ""
+  for (n, v) in pairs(h):
+    var keep = true
+    for d in names:
+      if cmpIgnoreCase(n, d) == 0: keep = false
+    if keep:
+      s.add n
+      s.add ": "
+      s.add v
+      s.add "\r\n"
+  result = HttpHeaders(s)
+
+func sameOrigin(a, b: Target): bool =
+  ## Same scheme, host and port (`address` carries the effective port).
+  result = a.secure == b.secure and cmpIgnoreCase(a.address, b.address) == 0
+
+proc exchange(meth, url, body: string; headers: HttpHeaders;
+              dl: Deadline): HttpResponse {.passive, raises.} =
+  ## One request, one response of any status. `dl` bounds everything up to
+  ## the response head; the body starts with `never`.
+  let t = targetOf(url)
+  let framing =
+    if body.len > 0 or meth == "POST" or meth == "PUT" or meth == "PATCH":
+      "Content-Length: " & $body.len & "\r\n"
+    else: ""
+  var req = requestHead(meth, t, headers, framing)
+  req.add body
+  var (r, w) = connect(t.address, req, engineFor(t, nil), dl)
+  w.detachWriter()
+  r.renew(dl)
+  var response = HttpHeaders("")
+  var reason = ""
+  let code = readHead(r, response, reason)
+  setBodyAdapter(r, code, response, meth == "HEAD")
+  r.renew(never)
+  result = HttpResponse(code: code, reason: reason, headers: response,
+                        url: url, body: r)
+
+proc httpRequest*(meth, url: string; body = ""; headers = HttpHeaders("");
+                  maxRedirects = DefaultMaxRedirects;
+                  dl = never): HttpResponse {.passive, raises.} =
+  ## Sends `meth` to `url` and returns the response whatever its status: a
+  ## 403 or 404 is an answer here, not an error, so `code` and `body` can be
+  ## inspected. Raises only when there is no response to look at (DNS, TCP,
+  ## TLS, a malformed reply, `TimeoutError`) or for a bad request
+  ## (`BadOperation`: a method that is not a token, a reserved header, CR/LF
+  ## in the URL).
+  ##
+  ## `body` is sent with `Content-Length`; set `Content-Type` in `headers`.
+  ## It is a `string`, not a `Reader`, because a 307 or 308 must send it again
+  ## and a `Reader` cannot be replayed.
+  ##
+  ## Redirects (301, 302, 303, 307, 308) are followed up to `maxRedirects`
+  ## times (`0` follows none), as RFC 9110 §15.4 describes them. An `https`
+  ## hop uses `std/tls`'s `newTlsEngine()` and its default trust store.
+  ##
+  ## * 301, 302, 303: the next request is a `GET` (a `HEAD` stays `HEAD`),
+  ##   without the body and without the `Content-Type` header. §15.4 requires
+  ##   this for 303 and allows it for 301 and 302.
+  ## * 307, 308: method and body are sent again unchanged.
+  ## * `Location` is resolved against the URL that answered (`combine`), so a
+  ##   relative one works. A redirect without `Location` is returned as is.
+  ## * Once a redirect leaves the origin (scheme, host, port) of `url`, the
+  ##   `Authorization` and `Cookie` headers are not sent any more:
+  ##   credentials belong to the origin they were given for (RFC 9110
+  ##   §11.6.2, §15.4).
+  ##
+  ## When the limit is reached, the last redirect response is returned. `url`
+  ## of the result is the URL that answered.
+  ##
+  ## `dl` bounds connecting, the redirect chain and reading the final
+  ## response head; the returned `body` starts with `never`, so the deadline
+  ## does not limit how long the body may be read (`renew` sets one):
+  ##
+  ## .. code-block:: nim
+  ##   var resp = httpRequest("GET", "https://example.com/", dl = afterMs(10_000))
+  ##   if resp.code == 403: echo "refused (", resp.code, ")"
+  ##   else: echo resp.url, ": ", resp.body.readAll()
+  checkMethod(meth)
+  result = exchange(meth, url, body, headers, dl)
+  let origin = targetOf(url)
+  var m = meth
+  var b = body
+  var hs = headers
+  var crossed = false
+  var left = maxRedirects
+  while left > 0 and isRedirect(result.code):
+    let location = result.headers.get("Location")
+    if location.len == 0: break
+    let next = $combine(parseUri(result.url), parseUri(location))
+    if result.code == 301 or result.code == 302 or result.code == 303:
+      if m != "GET" and m != "HEAD": m = "GET"
+      b = ""
+      hs = withoutHeaders(hs, ["Content-Type"])
+    if not crossed and not sameOrigin(targetOf(next), origin):
+      # credentials stay with the origin they were given for, also when a
+      # later redirect leads back
+      crossed = true
+      hs = withoutHeaders(hs, ["Authorization", "Cookie"])
+    result = exchange(m, next, b, hs, dl)
+    dec left

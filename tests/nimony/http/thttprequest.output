@@ -1,0 +1,19 @@
+[1.403] 403 Forbidden /code/403 [status 403]
+[1.401] 401 Unauthorized /code/401 [status 401]
+[1.404] 404 Not Found /code/404 [status 404]
+[1.500] 500 Internal Server Error /code/500 [status 500]
+[2] 301 absolute path: 200 OK /target [target]
+[3] 302 relative: 200 OK /rel/c?q=1 [rel c q=1]
+[4] 302 absolute URL: 200 OK /target [target]
+[5] POST 303: 200 OK /echo [GET body= type=]
+[6] POST 307: 200 OK /echo [POST body=x=1 type=application/x-www-form-urlencoded]
+[7] loop, limit 3: 302 Found /loop []
+[8] maxRedirects 0: 301 Location /target
+[9] no Location: 302 Found /nolocation []
+[10] HEAD: 200 OK / []
+[11] body deadline never: true [hello]
+[11] deadline: TimeoutError
+[12] same origin: 200 OK /auth [auth=Bearer t cookie=s=1]
+[13] cross origin: 200 auth= cookie=
+[14] httpGet 403: PermissionDenied
+[15] bad method: BadOperation
