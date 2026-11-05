@@ -399,7 +399,7 @@ func binom*(n, k: Natural): int =
   for i in 2 .. k:
     result = (result * (n + 1 - i)) div i
 
-func gcd*[T: SignedArithmetic](x, y: T): T =
+func gcd*[T: Arithmetic](x, y: T): T =
   ## Computes the greatest common (positive) divisor of `x` and `y`.
   ##
   ## Note that for floats, the result cannot always be interpreted as
@@ -407,18 +407,19 @@ func gcd*[T: SignedArithmetic](x, y: T): T =
   ## where N and M are positive integers".
   ##
   ## **See also:**
-  ## * `gcd func <#gcd,SomeInteger,SomeInteger>`_ for an integer version
   ## * `lcm func <#lcm,T,T>`_
   runnableExamples:
     assert gcd(13.5, 9.0) == 4.5
 
   var (x, y) = (x, y)
+  if x < T(0): x = T(0) - x
+  if y < T(0): y = T(0) - y
   while y != T(0):
     x = x mod y
     swap x, y
-  abs x
+  x
 
-func gcd*[T: SignedArithmetic](x: openArray[T]): T =
+func gcd*[T: Arithmetic](x: openArray[T]): T =
   ## Computes the greatest common (positive) divisor of the elements of `x`.
   ##
   ## **See also:**
@@ -430,7 +431,7 @@ func gcd*[T: SignedArithmetic](x: openArray[T]): T =
   for i in 1 ..< x.len:
     result = gcd(result, x[i])
 
-func lcm*[T: IntegerArithmetic and SignedArithmetic](x, y: T): T {.inline.} =
+func lcm*[T: IntegerArithmetic](x, y: T): T {.inline.} =
   ## Computes the least common multiple of `x` and `y`.
   ##
   ## **See also:**
@@ -441,7 +442,7 @@ func lcm*[T: IntegerArithmetic and SignedArithmetic](x, y: T): T {.inline.} =
 
   x div gcd(x, y) * y
 
-func lcm*[T: IntegerArithmetic and SignedArithmetic](x: openArray[T]): T =
+func lcm*[T: IntegerArithmetic](x: openArray[T]): T =
   ## Computes the least common multiple of the elements of `x`.
   ##
   ## **See also:**
