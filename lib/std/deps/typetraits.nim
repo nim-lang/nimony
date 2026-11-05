@@ -15,58 +15,18 @@
 import plugins
 import typetraits_render
 
-const
-  # Child slots of a `(type :Name <export> <typevars> <pragmas> <body>)` decl.
-  NameSlot = 0
-  TypevarsSlot = 2
-  BodySlot = 4
-
-proc slot(decl: NifCursor; idx: int): NifCursor =
-  ## Cursor at child `idx` of a declaration.
-  result = firstChild(decl)
-  for _ in 0 ..< idx:
-    skip result
-
-proc findDecl(defs: NifCursor; s: SymId; found: var bool): NifCursor =
-  ## Linear scan of the declarations provided so far. Only what this plugin
-  ## asked for is ever in there, so the list stays short and a scan beats
-  ## building a table.
-  result = defs
-  found = false
-  var n = defs
-  if n.stmtKind == StmtsS:
-    n.into:
-      while n.hasMore:
-        if not found:
-          var name = slot(n, NameSlot)
-          if name.symId == s:
-            result = n
-            found = true
-        skip n
-
-proc findTypeDecl(defs: NifCursor; s: SymId; found: var bool): NifCursor =
-  ## As `findDecl`, but reports "not found" for anything that is not a
-  ## `(type …)` section — a type variable in particular.
-  result = findDecl(defs, s, found)
-  if found and result.stmtKind != TypeS:
-    found = false
-
 proc isTypevar(defs: NifCursor; s: SymId): bool =
   ## The compiler answers a request for a type variable with its `(typevar …)`
   ## declaration, so this is a positive test. Inferring "typevar" from a symbol's
   ## absence would instead report every not-yet-requested type as one.
-  var found = false
-  let decl = findDecl(defs, s, found)
-  result = found and decl.otherKind in {TypevarU, StaticTypevarU}
+  isTypevarDecl(findDecl(defs, s))
 
 proc collectUnknown(defs: NifCursor; n: NifCursor; missing: var seq[SymId]) =
   ## Every symbol in `n` that has not been provided yet. Collected across the
   ## whole argument, so one request covers a level instead of one round each.
   var n = n
   if n.kind == Symbol:
-    var found = false
-    discard findDecl(defs, n.symId, found)
-    if not found:
+    if not findDecl(defs, n.symId).hasMore:
       missing.add n.symId
   elif n.kind == TagLit:
     n.into:
@@ -90,12 +50,11 @@ proc distinctBase(defs, arg: NifCursor; recursive: bool;
   var fuel = 100
   while fuel > 0 and result.kind == Symbol:
     dec fuel
-    var found = false
-    let decl = findTypeDecl(defs, result.symId, found)
-    if not found:
+    let decl = findTypeDecl(defs, result.symId)
+    if not decl.hasMore:
       missing.add result.symId
       break
-    let body = slot(decl, BodySlot)
+    let body = asTypeDecl(decl).body
     if body.typeKind != DistinctT: break
     result = firstChild(body)
     if not recursive: break
@@ -107,10 +66,9 @@ proc genericHead(defs, arg: NifCursor; o: var NifBuilder): bool =
   ## Emits nothing and returns false when `arg` is not a generic instance.
   result = false
   if arg.kind != Symbol: return
-  var declFound = false
-  let decl = findTypeDecl(defs, arg.symId, declFound)
-  if not declFound: return
-  let typevars = slot(decl, TypevarsSlot)
+  let decl = findTypeDecl(defs, arg.symId)
+  if not decl.hasMore: return
+  let typevars = asTypeDecl(decl).typevars
   if typevars.typeKind != AtT: return
   o.addSubtree firstChild(typevars)
   result = true

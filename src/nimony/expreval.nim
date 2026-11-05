@@ -470,6 +470,51 @@ template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   else:
     cannotEval orig
 
+template evalSuccPred(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  ## `(succ T x y?)` / `(pred T x y?)`: like `add`/`sub` with a step of 1 when
+  ## none is given, and for a `range` `T` the result has to lie in the range.
+  let orig = n
+  var a = createNaN()
+  var b = createXint(1'i64)
+  var base = default(Cursor)
+  var lo = createNaN()
+  var hi = createNaN()
+  n.into:
+    base = toTypeImpl(n)
+    if base.typeKind == RangetypeT:
+      var r = base
+      inc r
+      base = r
+      skip r # base type
+      if r.kind == IntLit: lo = createXint(r.intVal)
+      elif r.kind == UIntLit: lo = createXint(r.uintVal)
+      inc r
+      if r.kind == IntLit: hi = createXint(r.intVal)
+      elif r.kind == UIntLit: hi = createXint(r.uintVal)
+    skip n, SkipType # type
+    a = getConstOrdinalValue propagateError eval(c, n)
+    if n.hasMore:
+      b = getConstOrdinalValue propagateError eval(c, n)
+  if not isNaN(a) and not isNaN(b):
+    let rx = opr(a, b)
+    var err = false
+    if (not isNaN(lo) and rx < lo) or (not isNaN(hi) and hi < rx):
+      error "value out of range: " & asNimCode(orig), orig.info
+    elif base.typeKind == IntT:
+      let ri = asSigned(rx, err)
+      if err or not fitsSigned(ri, signedWidth(c, base)):
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = intValue(c, ri, orig.info)
+    else:
+      let ru = asUnsigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = uintValue(c, ru, orig.info)
+  else:
+    cannotEval orig
+
 template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
   var a = default(Cursor)
@@ -1143,6 +1188,10 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
       evalBinOp(c, n, `+`)
     of SubX:
       evalBinOp(c, n, `-`)
+    of SuccX:
+      evalSuccPred(c, n, `+`)
+    of PredX:
+      evalSuccPred(c, n, `-`)
     of DivX:
       var t = n
       inc t

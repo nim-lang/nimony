@@ -569,6 +569,28 @@ proc asForStmt*(c: NifCursor): ForStmt =
   assert c.stmtKind == ForS, "asForStmt needs a for statement"
   ForStmt(iter: slot(c, 0), vars: slot(c, 1), body: slot(c, 2))
 
+proc findDecl*(defs: NifCursor; s: SymId): NifCursor =
+  ## Finds the `(type …)` or `(typevar …)` declaration for `s` in `defs`.
+  ## Returns an exhausted cursor when there is no such declaration.
+  result = default(NifCursor)
+  if defs.stmtKind != StmtsS:
+    return
+  for n in defs.children:
+    if n.kind == TagLit and
+        (n.stmtKind == TypeS or n.otherKind in {TypevarU, StaticTypevarU}):
+      if firstChild(n).symId == s:
+        return n
+
+proc findTypeDecl*(defs: NifCursor; s: SymId): NifCursor =
+  ## Like `findDecl`, but only accepts `(type …)` declarations.
+  result = findDecl(defs, s)
+  if result.hasMore and result.stmtKind != TypeS:
+    result = default(NifCursor)
+
+proc isTypevarDecl*(decl: NifCursor): bool {.inline.} =
+  ## Whether `decl` is a `(typevar …)` or `(statictypevar …)` declaration.
+  decl.hasMore and decl.otherKind in {TypevarU, StaticTypevarU}
+
 # ── Traversal templates ──────────────────────────────────────────────────
 # Pure traversal helpers for reading/analyzing a tree without producing output.
 

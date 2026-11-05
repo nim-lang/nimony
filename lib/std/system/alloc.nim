@@ -494,7 +494,7 @@ proc addHeapLink(a: var MemRegion; p: PBigChunk, size: int): ptr HeapLinks =
     # The search above stops at the first node that is not full.
     {.assume: L < HeapLinksCap.}
     it.chunks[L] = (p, size)
-    inc it.count
+    it.count = L + 1 # not `inc it.count`: the write above forgets `it.count`
     result = it
 
 when not UseDestructors:

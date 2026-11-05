@@ -43,7 +43,7 @@ when defined(nimNativeIo):
 
   proc die(value: int32) {.noreturn.} = cExit(value.int)
 else:
-  proc die(value: int32) {.importc: "exit", header: "<stdlib.h>".}
+  proc die(value: int32) {.importc: "exit", header: "<stdlib.h>", noreturn.}
 
   # Yes, that is a tiny bit of duplication from syncio.nim. Get over it.
   type

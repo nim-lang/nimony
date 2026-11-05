@@ -1822,25 +1822,20 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         else:
           singleArgImpl(m, impl, arg)
 
-proc isPlatformNumeric(context: ptr SemContext; kind: TypeKind; bits: Cursor): bool =
-  let plat = case kind
-  of IntT: context.types.intType
-  of UIntT: context.types.uintType
-  of FloatT: context.types.floatType
-  else: return false
-  var p = plat
-  inc p
-  cmpTypeBits(context, bits, p) == 0
-
-proc incIntegralWidenCost(m: var Match; kind: TypeKind; bits: Cursor; intLit = false, floatLit = false) =
+proc incIntegralWidenCost(m: var Match; kind: TypeKind; narrowing, intLit, floatLit: bool) =
+  ## Every widening costs the same, whatever its target width: preferring
+  ## `int32` over `int64` for an `int16` argument is not decided here but by
+  ## specificity in `mutualGenericMatch` (`int32` converts to `int64`, not the
+  ## other way round). A per-width cost would let the platform type win any
+  ## multi-argument call (nim-lang/nimony#2869).
   if intLit and kind in {IntT, UIntT, FloatT}:
     inc m.intLitCosts
   elif floatLit and kind == FloatT:
     inc m.intLitCosts
-  elif isPlatformNumeric(m.context, kind, bits):
-    inc m.intConvCosts
+  elif narrowing:
+    inc m.convCosts # `lenientFloats` narrowing loses precision
   else:
-    inc m.convCosts
+    inc m.intConvCosts
 
 proc checkIntLitRange(context: ptr SemContext; f: Cursor; intLit: Cursor): bool =
   if f.typeKind == FloatT:
@@ -1857,8 +1852,13 @@ proc checkFloatLitRange(context: ptr SemContext; f: Cursor; floatLit: Cursor): b
     inc f # skip to size
     let bits = typebits(f.load)
     if bits == 32:
+      # A float literal adapts to a `float32` operand like an int literal
+      # adapts to an `int8` one: it must be in range, not exactly
+      # representable -- `22.2'f32` is not exact either. An exactness rule
+      # makes `x * 0.1` a `float64` while `x * 0.5` stays `float32`
+      # (nim-lang/nimony#2864).
       let val = floatLit.floatVal
-      result = val == val.float32.float64
+      result = abs(val) <= 3.4028234663852886e38 # float32.high
     else:
       result = true
 
@@ -1907,7 +1907,8 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
     else:
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
-      incIntegralWidenCost m, forig.typeKind, f, isIntLit, isFloatLit
+      incIntegralWidenCost m, forig.typeKind, cmp < 0 and not (isIntLit or isFloatLit),
+        isIntLit, isFloatLit
       inc m.opened
   else:
     m.error InvalidMatch, f, a
@@ -3112,7 +3113,15 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
     let bFormal = bParam.typ
     let aMatch = crosswiseRelation(c, aFormal, bFormal)
     let bMatch = crosswiseRelation(c, bFormal, aFormal)
-    if aMatch == GenericMatch and bMatch == NoMatch:
+    if aMatch == IntConvMatch and bMatch in {NoMatch, ConvertibleMatch}:
+      # b's formal widens implicitly to a's but not vice versa, e.g.
+      # `int32` vs `int64`: b is the narrower and thus more specific one
+      if result == FirstWins: return NobodyWins
+      result = SecondWins
+    elif bMatch == IntConvMatch and aMatch in {NoMatch, ConvertibleMatch}:
+      if result == SecondWins: return NobodyWins
+      result = FirstWins
+    elif aMatch == GenericMatch and bMatch == NoMatch:
       # a accepts b's formal but not vice versa: b is more specific
       if result == FirstWins: return NobodyWins
       result = SecondWins

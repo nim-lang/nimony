@@ -850,6 +850,22 @@ proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects;
   else:
     tr c, ri, e, expected
 
+proc trIncDec(c: var Context; n: var Cursor) =
+  ## `(inc T x y?)` mutates the location `x` in place, as the call it used to
+  ## be did through its `var` parameter: the same checks apply, a `let` or a
+  ## `ref` reached from a `.noSideEffect` routine cannot be stepped.
+  takeInto c.dest, n:
+    takeTree c.dest, n # the type
+    if checkPointerMutation(c, n):
+      skip n # the error stands in for the location
+    elif borrowsFromReadonly(c, n):
+      cannotPassToVar c.dest, n.info, n
+      skip n
+    else:
+      tr c, n, WantT
+    while n.hasMore:
+      tr c, n, WantT # the step
+
 proc trAsgn(c: var Context; n: var Cursor) =
   takeInto c.dest, n:
     var e = WantT
@@ -1804,6 +1820,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
         trYield(c, n)
       of AsgnS:
         trAsgn c, n
+      of IncS, DecS:
+        trIncDec c, n
       of LocalDecls:
         trLocal c, n
       of ForS:

@@ -931,8 +931,17 @@ proc pointerCompRoots(c: var Context; sc: var StabScan; n: Cursor;
     case n.exprKind
     of AddrC, HaddrC:
       let root = addrRootOf(child0(n))
-      if root != SymId(0): roots.add root
-      result = true                   # spine symbols are reads; nothing to flag
+      if root != SymId(0):
+        roots.add root
+      else:
+        # The spine crosses a `deref`/`pat`: the result points into the
+        # pointee, so it is computed from the base pointer's VALUE, which now
+        # has a second name. A derived pointer used here is no longer a mere
+        # load base (`(haddr (dot (deref p) f))` then a store through the new
+        # pointer writes p's origin), so it must taint its origins like any
+        # other value escape.
+        flagSyms(sc, child0(n))
+      result = true
     of ConvC, CastC:
       var m = child0(n)               # the type
       skip m                          # -> the operand
@@ -1619,6 +1628,37 @@ when isMainModule:
       "(asgn (deref (haddr y.0.M)) 1) " &
       "(call use.0.M y.0.M))",
       RoDecl)
+
+  block rederived_pointer_store_blocks:
+    # The inlined `=wasMoved` of a `sink` param's nested field: `d` points into
+    # x, `d2` is formed from d's VALUE, and the store through d2 writes x. x is
+    # not read-only, so the copy taken before the store must stay (substituting
+    # x for y moved the cleared field into `use` — std/tables' `rawPut` stored
+    # nil refs under `--opt:speed`).
+    # (`d2` itself is a stable address and folds into the store; `y` stays.)
+    chkS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :d.0.M . . (haddr (dot x.0.M b.0.M 0))) " &
+      "(var :d2.0.M . . (haddr (dot (deref d.0.M) p.0.M 0))) " &
+      "(asgn (deref d2.0.M) 1) " &
+      "(call use.0.M y.0.M))",
+      RoDecl,
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :d.0.M . . (haddr (dot x.0.M b.0.M 0))) . " &
+      "(asgn (deref (haddr (dot (deref d.0.M) p.0.M 0))) 1) " &
+      "(call use.0.M y.0.M))")
+
+  block rederived_pointer_to_writing_callee_blocks:
+    # The same re-derived address handed to a callee that writes through it.
+    assertUnchangedS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :d.0.M . . (haddr (dot x.0.M b.0.M 0))) " &
+      "(call wr.0.M (haddr (dot (deref d.0.M) p.0.M 0))) " &
+      "(call use.0.M y.0.M))",
+      WrDecl)
 
   block cast_addr_binding_tracked:
     # The inlined `readRawData` SHORT branch: a cast only re-types the pointer,

@@ -33,7 +33,18 @@ proc nimonyDir(): string =
   ## matched so the boot bootstrap can stage toolchains under sibling
   ## directories like `bin0`, `bin1`, `bin2` and still find `lib/` next to
   ## them.
-  let appDir = getAppDir()
+  var appDir = getAppDir()
+  # `getAppDir` follows the executable on Linux and is absolute there, but it
+  # can stay relative on macOS and Windows. Normalize it before comparing
+  # directories: `resolvedImports` compares absolute import paths against
+  # `pluginLibDir`, and a relative plugin dir makes the plugin API look like a
+  # regular program import.
+  if not appDir.isAbsolute:
+    try:
+      appDir = normalizedPath(os.getCurrentDir() / appDir)
+    except:
+      discard
+  appDir = normalizedPath(appDir)
   let (head, tail) = splitPath(appDir)
   if tail.startsWith("bin"):
     result = head
@@ -498,11 +509,11 @@ proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: st
             if kind != ImportS:
               while x.hasMore: skip x # the imported/excluded names
       skip n
-  let pluginDir = pluginLibDir()
+  let pluginDir = normalizedPath(pluginLibDir())
   for f in files:
-    let path = resolveImport(paths, nimFile, f.path)
-    if fileExists(path) and toAbsolutePath(path).parentDir != pluginDir:
-      result.add toAbsolutePath(path)
+    let path = toAbsolutePath(resolveImport(paths, nimFile, f.path))
+    if fileExists(path) and cmpPaths(path.parentDir, pluginDir) != 0:
+      result.add path
     else:
       allResolve = false
 

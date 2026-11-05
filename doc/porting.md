@@ -335,7 +335,6 @@ The ones hit most often:
 
 | Nim | Nimony |
 |---|---|
-| `for e in MyEnum:` | `for e in low(MyEnum)..high(MyEnum):` |
 | `strutils.toOctal`, `toHex`, `toBin` | write the digit loop locally |
 | `x.isNil` on a `ref`/`ptr` | `x == nil` (`isNil` exists only for `cstring`) |
 | `system.insert(s, item, i)` | `sequtils.insert(s, [item], i)` (openArray only) |

@@ -2057,6 +2057,12 @@ proc cannotProve(c: var FirContext; info: NifLineInfo; report: bool; msg: string
   c.obligationOpen = false
   if report: buildErr c, info, msg
 
+const
+  ArithmeticExprs = {AddX, SubX, MulX, DivX, ModX, NegX, ShlX, ShrX, AshrX,
+                     BitandX, BitorX, BitxorX, BitnotX}
+
+proc normalizedArith(c: var FirContext; n: Cursor): Cursor
+
 proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
                   needLo, needHi: bool; reportUnprovable = true) =
   ## Discharge `lo <= value <= hi` from what is known here. The obligation's
@@ -2066,6 +2072,17 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   ## the `(arrat …)` node carries (`analyseArrAt`). Everything below — the
   ## structural answers for `a + k`, `a - b`, `a shr k`, `a and k`, a call's
   ## `.ensures`, a literal — is the same question either way.
+  if value.exprKind in {SuccX, PredX}:
+    # A `succ` that owed its type's range has met it already (`checkSuccPred`);
+    # where that type is not the target's (a template's `inc(i)` resolved
+    # against an `int` parameter, stepping a `Natural`), the step is judged
+    # in its arithmetic form.
+    var sLo = zero()
+    var sHi = zero()
+    if staticRangeBounds(getType(c.typeCache, value), sLo, sHi) and lo <= sLo and sHi <= hi:
+      return
+    checkInRange c, normalizedArith(c, value), lo, hi, needLo, needHi, reportUnprovable
+    return
   # 1. The value's own *declared type* may already be a `range` that fits: a
   #    subset `range[aLo..aHi]` with `lo <= aLo` and `aHi <= hi` is provably in
   #    range. This is the type acting as its own proof (proper subtyping such as
@@ -2074,7 +2091,12 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   var aLo = zero()
   var aHi = zero()
   let valueType = getType(c.typeCache, value)
-  if staticRangeBounds(valueType, aLo, aHi) and lo <= aLo and aHi <= hi: return
+  # Not for arithmetic: `succ`/`pred` on a range type compute in that type,
+  # and their result is typed as the range without having been checked
+  # against it (nim-lang/nimony#2855). Only a location, a conversion or a call
+  # result of the range type has met the range already.
+  if value.exprKind notin ArithmeticExprs and
+      staticRangeBounds(valueType, aLo, aHi) and lo <= aLo and aHi <= hi: return
   if integerTypeBounds(c.bits, valueType, aLo, aHi) and lo <= aLo and aHi <= hi: return
   if valueBounds(c, value, aLo, aHi) and lo <= aLo and aHi <= hi: return
 
@@ -2428,6 +2450,55 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
         (not needLo or lo <= cLo) and (not needHi or cHi <= hi):
       return
   checkInRange c, value, lo, hi, needLo, needHi
+
+proc normalizedArith(c: var FirContext; n: Cursor): Cursor =
+  ## `(succ T x y?)` as `(add T x y)` and `pred` as `sub`, a missing step as
+  ## `1`: the shape every arithmetic rule here reads. Anything else is `n`
+  ## itself. Only for reading facts: the copy is not part of the proc's tree.
+  if n.exprKind notin {SuccX, PredX}: return n
+  let info = n.info
+  var buf = createTokenBuf(16)
+  buf.addParLe((if n.exprKind == SuccX: AddX else: SubX), info)
+  var r = n
+  r = sub(r)
+  # In the base type, like a hand-written `i + 1`: the wrap and interval rules
+  # read integer types, and the range is `checkSuccPred`'s business.
+  var t = r
+  var guard = 0
+  while t.isSymbol and guard < 8:
+    let s = tryLoadSym(t.symId)
+    if s.status != LacksNothing or s.decl.symKind != TypeY: break
+    t = asTypeDecl(s.decl).body
+    inc guard
+  if t.typeKind == RangetypeT: buf.addSubtree t.childCursor
+  else: buf.addSubtree r
+  skip r # the type
+  buf.addSubtree r # the operand
+  skip r
+  if r.hasMore: buf.addSubtree r
+  else: buf.addIntLit(1, info)
+  buf.addParRi()
+  result = c.typeCache.keepAlive(buf)
+
+proc checkSuccPred(c: var FirContext; n: Cursor) =
+  ## `succ`/`pred` of a `range` type owe the range: their result is a `T`
+  ## (nim-lang/nimony#2855). Proven here, where the operation is written, a
+  ## `succ` is in its range for whatever it is stored to afterwards.
+  var t = n
+  t = sub(t)
+  var lo = zero()
+  var hi = zero()
+  if not staticRangeBounds(t, lo, hi): return
+  var baseLo = zero()
+  var baseHi = zero()
+  var needLo = true
+  var needHi = true
+  if baseTypeBounds(t, c.bits, baseLo, baseHi):
+    needLo = lo > baseLo
+    needHi = hi < baseHi
+  # the base type's own bounds are the wrap rules' business, not the range's
+  if not needLo and not needHi: return
+  checkInRange c, normalizedArith(c, n), lo, hi, needLo, needHi
 
 proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
   ## Record that a `range[lo..hi]`-typed parameter holds a value within its
@@ -4069,6 +4140,11 @@ proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
     of AddX, SubX, MulX, NegX:
       pc.loopInto:
         traverseExpr c, pc, call
+    of SuccX, PredX:
+      let op = pc
+      pc.loopInto:
+        traverseExpr c, pc, call
+      checkSuccPred c, op
     of NilX:
       # `(nil)` / `(nil <Type>)` / `(nil <Type> <arg>)` — nil literal,
       # possibly carrying its formal type subtree (which for itertype /
@@ -4594,22 +4670,17 @@ proc checkDestAliasesValue(c: var FirContext; dest: Cursor; value: Cursor) =
           "assign the right-hand side to a temporary first"
         break
 
-proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
-  ## Handle `(asgn dest value)`. The value is the second operand but the first
-  ## thing that runs, so it is analysed first; `n` stays on the destination.
-  let asgnStart = n
-  n = sub(n)
-
-  # First analyze the value (source)
-  var value = n
-  skip value
-  let valueStart = value
-  traverseExpr c, value, call
+proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor;
+                call: var CallContext) =
+  ## The store half of an assignment, after its value has been analysed: `n`
+  ## is the destination and is left past it. `valueFacts` is the value as the
+  ## fact rules read it (`normalizedArith`), `valueStart` as everything else
+  ## does. Shared by `(asgn …)` and by `inc`/`dec`, which store `succ`/`pred`.
   if c.assumedSteps.len > 0:
     # `i = i ± k`, a step the loop's pre-scan may have assumed not to wrap
     let destLoc = plainLocationVarId(c, n)
     if destLoc in c.assumedSteps:
-      let v = peelExpr(valueStart)
+      let v = peelExpr(valueFacts)
       if v.exprKind in {AddX, SubX} and not noWrap(c, v): c.brokenSteps.incl destLoc
 
   # Check borrow conflicts for the destination
@@ -4667,16 +4738,16 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
     checkRangeAssign c, expected, valueStart
 
     # Try to extract facts from the value
-    var valueForFact = valueStart
+    var valueForFact = valueFacts
     if rightHandSide(c, valueForFact, fact, call):
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
       else:
         projectOut(c.facts, fact.a)
         addAsgnFact c, fact
-    elif not sumWithBoundedTerm(c, valueStart, fact.a):
+    elif not sumWithBoundedTerm(c, valueFacts, fact.a):
       projectOut(c.facts, fact.a)
-      addBoundFacts c, fact.a, valueStart
+      addBoundFacts c, fact.a, valueFacts
 
     # Check if the rhs is known to be not nil
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
@@ -4718,12 +4789,54 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
       # ... and then record what the write established, so that
       # `d.count = n` proves `d.count == n` for the guard that follows.
       var fact = query(destLoc, InvalidVarId, createXint(0'i32))
-      var valueForFact = valueStart
+      var valueForFact = valueFacts
       if rightHandSide(c, valueForFact, fact, call) and fact.a != fact.b:
         addAsgnFact c, fact
     traverseExpr c, n, call
 
+proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
+  ## Handle `(asgn dest value)`. The value is the second operand but the first
+  ## thing that runs, so it is analysed first; `n` stays on the destination.
+  let asgnStart = n
+  n = sub(n)
+  var value = n
+  skip value
+  let valueStart = value
+  traverseExpr c, value, call
+  storeValue c, n, valueStart, normalizedArith(c, valueStart), call
   n = asgnStart; skip n
+
+proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
+  ## `(inc T x y?)` is `x = succ(x, y)`, `dec` is `pred`: the `succ` owes `T`'s
+  ## range where the `inc` is written, and the store shifts what is known about
+  ## `x` by the step. `x` is analysed once, as the destination.
+  let start = n
+  var r = n
+  r = sub(r)
+  let typ = r
+  skip r
+  let dest = r
+  skip r
+  let hasStep = r.hasMore
+  let step = r
+  if dest.kind == Symbol:
+    # `inc x` reads `x`; a non-symbol destination is read by `storeValue`
+    var d = dest
+    traverseExpr c, d, call
+  if hasStep:
+    var st = step
+    traverseExpr c, st, call
+  var buf = createTokenBuf(16)
+  buf.addParLe((if start.stmtKind == IncS: SuccX else: PredX), start.info)
+  buf.addSubtree typ
+  buf.addSubtree dest
+  if hasStep: buf.addSubtree step
+  buf.addParRi()
+  let value = c.typeCache.keepAlive(buf)
+  checkSuccPred c, value
+  var d = dest
+  storeValue c, d, value, normalizedArith(c, value), call
+  n = start; skip n
 
 # --- Exit-summary plumbing (drives the journaled FlowTracker over c.flow) ---
 #
@@ -5011,6 +5124,27 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
 proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if not n.isTagLit:
     skip n
+    return
+  if n.stmtKind in {IncS, DecS}:
+    # `inc x, y` writes `x = x + y`: a step whose direction the value tells
+    let start = n
+    var r = n
+    r = sub(r)
+    let typ = r
+    skip r
+    let dest = r
+    skip r
+    var buf = createTokenBuf(16)
+    buf.addParLe((if start.stmtKind == IncS: AddX else: SubX), start.info)
+    buf.addSubtree typ
+    buf.addSubtree dest
+    if r.hasMore: buf.addSubtree r
+    else: buf.addIntLit(1, start.info)
+    buf.addParRi()
+    w.preserved.setLen 0
+    noteWriteTo(c, w, dest, c.typeCache.keepAlive(buf))
+    w.pendingStep = InvalidVarId
+    n = start; skip n
     return
   if n.stmtKind == AsgnS:
     var r = n
@@ -5763,6 +5897,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   var isGeneric = false
   var isExternProc = false
   var isAsm = false
+  var isNoReturn = false
   var ownContract = default(Cursor)
   var ownEnsures = default(Cursor)
   let oldOwnEnsures = c.ownEnsures
@@ -5774,6 +5909,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
       isExternProc = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP) or
                      hasPragma(n, ImportjsP)
       isAsm = hasPragma(n, AssemblerP)
+      isNoReturn = hasPragma(n, NoreturnP)
       ownContract = extractPragma(n, RequiresP)
       # An iterator's `.ensures` is about what it yields, not about an exit.
       if decl.symKind != IteratorY:
@@ -5833,7 +5969,12 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
     # `return`) must `result`/out-params be initialized. A proc whose every path
     # raises or otherwise never returns (`c.tr.live == false` here) has no normal
     # exit, so the init obligation is vacuous — e.g. `proc f: string = raise X`.
-    if c.tr.live:
+    if c.tr.live and isNoReturn:
+      # Every call site trusts the pragma: `analyseCall` ends the path after
+      # the call, so a guard `if i >= a.len: fail()` proves `a[i]`. A body
+      # that can return breaks that proof (nim-lang/nimony#2858).
+      buildErr c, info, asNimCode(symId) & " is marked .noreturn but can return"
+    elif c.tr.live:
       if c.resultSym != NoSymId and not isInitialized(c, c.resultSym):
         buildErr c, info, "cannot prove that " & asNimCode(c.resultSym) & " has been initialized"
       for sym in outParams:
@@ -5993,6 +6134,8 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
         traverseExpr c, n, call
     of EmitS, InclS, ExclS:
       skip n
+    of IncS, DecS:
+      traverseIncDec c, n, call
     of PragmaxS:
       traversePragmaBlock c, n, call
     of NoStmt:

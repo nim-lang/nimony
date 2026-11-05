@@ -1647,6 +1647,20 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX:
       gcallsystem(g, n, "default")
 
+    of SuccX, PredX:
+      # `succ(x, y)`: the type operand is not written
+      let name = if n.exprKind == SuccX: "succ" else: "pred"
+      n.into:
+        put(g, tkSymbol, name)
+        put(g, tkParLe, "(")
+        skip n
+        var afterFirst = false
+        while n.hasMore:
+          if afterFirst: gcomma(g)
+          else: afterFirst = true
+          gsub(g, n)
+        put(g, tkParRi, ")")
+
     of InsetX:
       n.into:
         put(g, tkSymbol, "contains")

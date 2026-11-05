@@ -604,7 +604,7 @@ proc needsTemp*(n: Cursor): bool =
         skip n
     of ErrX, DerefX, AndX, OrX, XorX, NotX, NegX, AlignofX,
         OffsetofX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX,
-        OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
+        OvfX, AddX, SubX, SuccX, PredX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
         BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
         ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
         HderefX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,

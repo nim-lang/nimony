@@ -1654,7 +1654,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             ConverterS, MethodS, MacroS, TemplateS, TypeS,
             BlockS, EmitS, IfS, WhenS,
             BreakS, ContinueS, ForS, WhileS,
-            RetS, YldS, PragmasS, InclS, ExclS,
+            RetS, YldS, PragmasS, InclS, ExclS, IncS, DecS,
             IncludeS, ImportS, ImportasS, FromimportS,
             ImportexceptS, ExportS, ExportexceptS, CommentS,
             DiscardS, UnpackdeclS, AssumeS,
@@ -2661,7 +2661,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of CoroforS:
       trCoroFor c, dest, n
     of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS,
-        StmtsS, AlwaysS, PragmaxS, InclS, ExclS, ImportasS,
+        StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
         ExportexceptS, DiscardS, TryS, UnpackdeclS,
         AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
         HcallS, StaticstmtS, BindS, MixinS, UsingS,
@@ -2691,7 +2691,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           AddrX, NilX, InfX, NeginfX, NanX, FalseX,
           TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX,
           AlignofX, OffsetofX, OconstrX, AconstrX,
-          BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+          BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, SuccX, PredX,
           MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
           BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
           CchoiceX, OchoiceX, PragmaxX, QuotedX,

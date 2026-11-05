@@ -1296,7 +1296,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trFor c, dest, n
   of CoroforS:
     trCoroFor c, dest, n
-  of CallKindsS, InclS, ExclS:
+  of CallKindsS, InclS, ExclS, IncS, DecS:
     trStmtCall c, dest, n
   of AsgnS:
     # IMPORTANT: Stores into `tar` helper!
@@ -1489,7 +1489,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trAggregate c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
        InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
+       SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, SuccX, PredX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
        BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
@@ -1528,7 +1528,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          IteratorS, ConverterS, MethodS, MacroS, TemplateS,
          TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
          ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
-         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+         PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
          AssertS, CallstrlitS, InfixS, PrefixS, HcallS,

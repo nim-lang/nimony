@@ -17,9 +17,12 @@ import std/[strutils, unicode, assertions]
 func olen(s: string; start: Natural; lastExclusive: int): int =
   var i = start
   result = 0
-  while i < lastExclusive:
+  # `i < s.len`: every caller passes `lastExclusive <= s.len`; said here, it
+  # bounds the step below
+  while i < lastExclusive and i < s.len:
     inc result
     let L = graphemeLen(s, i)
+    {.assume: L <= s.len.} # a grapheme lies inside `s`
     inc i, L
 
 func runEnd(s: string; start: Natural; seps: set[char]; isSep: bool): Natural {.
@@ -63,7 +66,7 @@ func wrapWords*(s: string, maxLineWidth = 80,
       let wlen = olen(s, i, j)
       if wlen > spaceLeft:
         if splitLongWords and wlen > maxLineWidth:
-          var k: Natural = 0
+          var k = 0 # an `int`: `p` below is what has to be in range
           while k < j - i:
             if spaceLeft <= 0:
               spaceLeft = maxLineWidth
