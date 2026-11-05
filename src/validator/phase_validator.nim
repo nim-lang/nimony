@@ -281,7 +281,7 @@ proc typeChildIndices(parentTag: string): seq[int] =
      "eq", "neq", "le", "lt",
      "card", "sizeof", "alignof", "offsetof",
      "oconstr", "aconstr", "setconstr", "newobj", "tupconstr",
-     "defaultobj", "defaulttup", "defaultdistinct",
+     "defaultobj", "defaulttup", "defaultdistinct", "defaultarr",
      "plusset", "minusset", "mulset", "xorset",
      "eqset", "leset", "ltset", "inset",
      "nil", "inf", "neginf", "nan",

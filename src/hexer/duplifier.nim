@@ -165,7 +165,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX, Delay0X,
         SuspendX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX,
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
@@ -193,7 +193,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
-        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX,
         DelayX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
         MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
         EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
@@ -437,7 +437,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
-        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX,
         DelayX, Delay0X, SuspendX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX,
         CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX,
@@ -995,7 +995,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         InfixX, PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
         UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX,
         Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
         InsetX, CardX, EmoveX, InternalTypeNameX,
@@ -1795,7 +1795,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       bug "nodekind should have been eliminated in desugar.nim"
     of EnvpX:
       bug "envp should have been eliminated in lambdalifting.nim"
-    of DefaultobjX, DefaulttupX, DefaultdistinctX, BracketX, CurlyX, TupX:
+    of DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, BracketX, CurlyX, TupX:
       bug "nodekind should have been eliminated in sem.nim"
     of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX, Delay0X, SuspendX:
       trSons c, n, e

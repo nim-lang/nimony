@@ -33,11 +33,14 @@ func default*[T: distinct](x: typedesc[T]): T {.magic: DefaultDistinct.}
 func default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 func default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
-func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy, semantics: "defaultArray".} =
-  # `hexer/xelim` writes a call as `(aconstr array[I, T])`, the all-zero
-  # array, when `default(T)` is all zero bits (`zeroArrayCall`).
+func nimDefaultArray*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
+  ## `default(array[I, T])` for a `T` whose default is not all zero bits.
   for i in low(array[I, T]) .. high(array[I, T]):
     result[i] = default(T)
+
+func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.magic: DefaultArr.}
+  ## Sem expands it to the all-zero `(aconstr array[I, T])` when `default(T)`
+  ## is all zero bits, otherwise to a `nimDefaultArray` call (`semArrayDefault`).
 
 template default*[T](x: typedesc[set[T]]): set[T] =
   ## Returns the default value for `set[T]` (the empty set).

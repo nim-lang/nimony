@@ -1499,7 +1499,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         CompilesX, StaticX, DeclaredX, DefinedX, ProccallX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX,
         Delay0X, SuspendX, DoX, TupatX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,

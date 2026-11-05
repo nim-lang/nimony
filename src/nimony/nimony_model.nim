@@ -612,7 +612,7 @@ proc needsTemp*(n: Cursor): bool =
         PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX,
         Delay0X, SuspendX, DoX, PlussetX, MinussetX, MulsetX,
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,

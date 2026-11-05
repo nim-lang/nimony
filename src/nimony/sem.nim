@@ -21,7 +21,7 @@ import nimony_model, staticmatches, symtabs, builtintypes, decls, asthelpers,
   intervals, xints, typeprops, conceptcache,
   semdata, sembasics, semchecks, semconst, semmagics, semimport, templates, sempragmas, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
-  features, identstyle, macro_plugin
+  features, identstyle, macro_plugin, zerodefaults
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -1992,7 +1992,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
-     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+     DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
      FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
@@ -2303,7 +2303,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
-     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+     DefaulttupX, DefaultdistinctX, DefaultarrX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
      FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
@@ -5188,6 +5188,39 @@ proc semDefaultDistinct(c: var SemContext; dest: var TokenBuf; it: var Item) =
   dest.addParRi()
   commonType c, dest, it, exprStart, expected
 
+proc semArrayDefault(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `default(array[I, T])`: the all-zero `(aconstr array[I, T])` when
+  ## `default(T)` is all zero bits, so no pass binds a call result to a temp
+  ## and copies it out (a `Node()` with an `array[2_000_000, int]` field built
+  ## a 16 MB stack temporary); otherwise `nimDefaultArray`, the element loop.
+  let exprStart = dest.len
+  let expected = it.typ
+  let info = it.n.info
+  it.n.into:
+    it.typ = semLocalType(c, dest, it.n)
+    dest.shrink exprStart
+  if it.typ.typeKind == TypedescT:
+    inc it.typ
+  if containsGenericParams(it.typ):
+    # expanded where the instantiation makes the type concrete
+    dest.addParLe(DefaultarrX, info)
+    dest.addSubtree it.typ
+    dest.addParRi()
+  elif isZeroDefault(toTypeImpl(it.typ).childCursor):
+    dest.addParLe(AconstrX, info)
+    dest.addSubtree it.typ
+    dest.addParRi()
+  else:
+    var callBuf = createTokenBuf(16)
+    callBuf.addParLe(CallX, info)
+    discard buildSymChoice(c, callBuf, pool.strings.getOrIncl("nimDefaultArray"), info, FindAll)
+    callBuf.addSubtree it.typ
+    callBuf.addParRi()
+    var call = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
+    semCall c, dest, call, {}
+    it.typ = call.typ
+  commonType c, dest, it, exprStart, expected
+
 proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # has already been semchecked but we do it again:
   let exprStart = dest.len
@@ -6103,6 +6136,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semTupleDefault c, dest, it
     of DefaultdistinctX:
       semDefaultDistinct c, dest, it
+    of DefaultarrX:
+      semArrayDefault c, dest, it
     of LowX:
       semLow c, dest, it
     of HighX:
