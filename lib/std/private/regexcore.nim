@@ -528,7 +528,7 @@ proc factor(c: var ReCtx): RegexNode =
 
 proc term(c: var ReCtx): RegexNode =
   proc isTermDelim(ch: char): bool {.inline.} =
-    ch == '\0' or ch == ':' or ch == '|' or ch == ')'
+    ch == '\0' or ch == '|' or ch == ')'
 
   if not isTermDelim(getNext(c)):
     result = factor(c)
