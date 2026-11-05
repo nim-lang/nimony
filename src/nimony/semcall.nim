@@ -1091,6 +1091,20 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   else:
     buildErr c, dest, cs.callNodeInfo, "macro '" & pool.symString(finalFn) & "' not compiled"
 
+proc isZeroDefaultArray(c: var SemContext; fn: SymId; m: Match; arrType: var Cursor): bool =
+  ## Is the call `default(array[I, T])` (`system/defaults.nim`, marked
+  ## `.semantics: "defaultArray"`) for a `T` whose default is all zero bits?
+  ## `arrType` is then the instantiated `array[I, T]`.
+  result = false
+  if fn == SymId(0) or
+      not hasPragmaOfValue(getProcDecl(fn).pragmas, SemanticsP, "defaultArray"):
+    return false
+  if m.returnType.isDotToken: return false
+  arrType = instantiateType(c, m.returnType, m.inferred)
+  let impl = toTypeImpl(arrType)
+  result = impl.typeKind == ArrayT and not containsGenericParams(arrType) and
+    isZeroDefault(impl.childCursor)
+
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   # Everything the candidate collection below writes to `dest` is a
   # DIAGNOSTIC ("attempt to call routine", a symchoice element that cannot be
@@ -1332,8 +1346,19 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # Move out of the seq — see convMatch note above. The seq goes out
       # of scope right after resolveOverloads returns.
       var matched = ensureMove(m[idx])
-      let returnType: Cursor
+      var returnType: Cursor
       if isMagic == NonMagicCall and c.inGenericDefinition == 0 and
+          isZeroDefaultArray(c, finalFn.sym, matched, returnType):
+        # `default(array[I, T])` for a `T` whose default is all zero bits is
+        # the all-zero `(aconstr array[I, T])` (`doc/tags.md`), not a call:
+        # nothing to instantiate, and nothing for a later pass to bind to a
+        # temp and copy out of, which for `array[2_000_000, int]` was a 16 MB
+        # stack temporary.
+        dest.shrink cs.beforeCall
+        dest.addParLe(AconstrX, cs.callNodeInfo)
+        dest.addSubtree returnType
+        dest.addParRi()
+      elif isMagic == NonMagicCall and c.inGenericDefinition == 0 and
           isGeneric(getProcDecl(finalFn.sym)):
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNodeInfo)
         # `addFn` emits the callee in different shapes — usually a

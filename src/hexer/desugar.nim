@@ -6,11 +6,11 @@ when defined(nimony):
 else:
   {.pragma: untyped.}
 
-import std / [assertions, tables, hashes, sets, syncio, strutils]
+import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
-import hexer_context, passes, closuretypes, lifter, defaultvalues
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
+import hexer_context, passes, closuretypes, lifter
 import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
 
@@ -36,12 +36,6 @@ type
       ## only asked whether a type has a `=destroy` (`delayWrapper`)
     delayWrappers: Table[SymId, SymId]
       ## callee -> its `delay` wrapper, one per callee and module
-    zeroArrayTemps: Table[SymId, Cursor]
-      ## xelim temps bound to such a call -> `array[I, T]`
-      ## (`tryDropZeroArrayTemp`)
-    zeroArrayDefaults: Table[SymId, Cursor]
-      ## this module's `default(array[I, T])` instances whose result is
-      ## all zero bits -> `array[I, T]` (`zeroDefaultArrayOf`)
 
 proc freshLabel(c: var Context): SymId =
   result = pool.symId("`desugarL." & $c.counter)
@@ -141,59 +135,6 @@ proc trStmtList(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = 
   copyInto dest, n:
     while n.hasMore:
       trStmt(c, dest, n, isTopScope)
-
-proc isZeroArray(t: Cursor): bool =
-  let impl = toTypeImpl(t)
-  var err = false
-  result = impl.typeKind == ArrayT and asSigned(getArrayLen(impl), err) > 0 and
-    not err and isZeroDefault(impl.childCursor)
-
-proc zeroDefaultArrayOf(decl: Cursor; arrType: var Cursor): bool =
-  ## Is `decl` `default(array[I, T])` (`system/defaults.nim`, marked
-  ## `.semantics: "defaultArray"`) for a `T` whose default is all zero bits?
-  ## Then a call of it is `(aconstr array[I, T])`, the all-zero array, and the
-  ## caller need not materialize the result to copy it: a `Node()` with an
-  ## `array[2_000_000, int]` field built a 16 MB temporary on the stack.
-  let r = asRoutine(decl)
-  result = hasPragmaOfValue(r.pragmas, SemanticsP, "defaultArray") and
-    isZeroArray(r.retType)
-  if result: arrType = r.retType
-
-proc isZeroDefaultArrayCall(c: var Context; n: Cursor; arrType: var Cursor): bool =
-  var n = n
-  inc n # the call tag
-  if n.kind != Symbol: return false
-  let local = c.zeroArrayDefaults.getOrDefault(n.symId)
-  if local != default(Cursor):
-    arrType = local
-    return true
-  # Only an instance of `default` can carry the pragma. Loading any other
-  # callee would read its module's `.s.nif` for nothing — and a module this
-  # one does not need may not exist yet: the program of a compile-time
-  # evaluation is built while a parallel build is still writing them.
-  if not pool.symString(n.symId).startsWith("default."): return false
-  let res = tryLoadSym(n.symId) # fails for this module's own: those are `local`
-  result = res.status == LacksNothing and isRoutine(res.decl.symKind) and
-    zeroDefaultArrayOf(res.decl, arrType)
-
-proc tryDropZeroArrayTemp(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
-  ## `(let :\`x.N . . T <zero default(array) call>)`: a temp that xelim binds
-  ## a call to (`trExprCall`, `trAggregateValue`; `tempSymName` is where the
-  ## name comes from), read exactly once. It goes, and
-  ## its one read becomes the `(aconstr T)` itself (`tr`'s `Symbol` case), so
-  ## that `Node()` writes its zero `array[2_000_000, int]` field in place
-  ## rather than copying it out of a 16 MB stack temp.
-  result = false
-  if n.stmtKind != LetS: return
-  let decl = asLocal(n)
-  var arrType = default(Cursor)
-  if decl.name.kind == SymbolDef and pool.symString(decl.name.symId).startsWith("`x.") and
-      decl.val.exprKind == CallX and isZeroDefaultArrayCall(c, decl.val, arrType):
-    c.zeroArrayTemps[decl.name.symId] = arrType
-    skip n
-    dest.addParLe(StmtsS, decl.name.info)
-    dest.addParRi()
-    result = true
 
 proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n.into:
@@ -1405,15 +1346,7 @@ proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
-  of Symbol:
-    let zeroArray = c.zeroArrayTemps.getOrDefault(n.symId)
-    if zeroArray != default(Cursor):
-      copyIntoKind dest, AconstrX, n.info:
-        dest.addSubtree zeroArray
-      inc n, SkipFull # the temp, replaced by its value
-    else:
-      takeTree dest, n
-  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of TagLit:
     case n.exprKind
@@ -1451,8 +1384,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
                 FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
               tr(c, dest, n)
       of LocalDecls:
-        if not tryDropZeroArrayTemp(c, dest, n):
-          trLocal c, dest, n
+        trLocal c, dest, n
       of ProcS, FuncS, MethodS, ConverterS:
         trProc c, dest, n
       of IteratorS:
@@ -1534,13 +1466,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
     of ExprX:
       trExpr c, dest, n
     of CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX:
-      var arrType = default(Cursor)
-      if n.exprKind == CallX and isZeroDefaultArrayCall(c, n, arrType):
-        copyIntoKind dest, AconstrX, n.info:
-          dest.addSubtree arrType
-        skip n, SkipFull # the call, replaced by its value
-      else:
-        trSons(c, dest, n)
+      trSons(c, dest, n)
     of EqX, NeqX:
       # A `.closure` value is an (fn, env) pair, so C's `==` cannot compare it:
       # the operands are structs. Project the halves and compare those instead.
@@ -1599,13 +1525,6 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]; lifter: ref LiftingC
   # ahead of it: a `const` the C backend meets only after the function reading
   # it is a use before declaration.
   var body = createTokenBuf()
-  var decls = sub(n)
-  while decls.hasMore:
-    if decls.stmtKind in {ProcS, FuncS}:
-      var arrType = default(Cursor)
-      if zeroDefaultArrayOf(decls, arrType):
-        c.zeroArrayDefaults[asRoutine(decls).name.symId] = arrType
-    skip decls
   n.into:
     while n.hasMore:
       trStmt c, body, n, isTopScope = true

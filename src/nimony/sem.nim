@@ -21,7 +21,7 @@ import nimony_model, staticmatches, symtabs, builtintypes, decls, asthelpers,
   intervals, xints, typeprops, conceptcache,
   semdata, sembasics, semchecks, semconst, semmagics, semimport, templates, sempragmas, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
-  features, identstyle, macro_plugin
+  features, identstyle, macro_plugin, zerodefaults
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
