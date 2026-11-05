@@ -670,8 +670,9 @@ var r2 = httpGet(url, headers"Accept: application/json\r\n", resp)
 
 `sha2` (SHA-256/384/512), `hmac` (HMAC and HKDF), `chacha20poly1305`
 (RFC 8439), `x25519` (RFC 7748), `ecdsa` and `rsa` (signature
-*verification*), `x509` (certificates, chains, host names, PEM trust stores),
-`sysrand` (OS randomness). Every module is compiled under
+*verification*), `rsasign` (RSA PKCS #1 v1.5 *signing*, e.g. JWT `RS256`),
+`x509` (certificates, chains, host names, PEM trust stores), `sysrand` (OS
+randomness). Every module is compiled under
 `{.feature: "staticContracts".}`: each index and contract in them is proven,
 not checked.
 
@@ -682,5 +683,12 @@ not checked.
   `crypto/private/`, so the instructions that run cannot depend on a key; the
   portable versions avoid secret-dependent branches and indices by
   construction. See [assembler.md](assembler.md).
+- `rsasign` reads PKCS #8 or PKCS #1 private keys (PEM or DER, 2048..4096
+  bits, unencrypted) and signs with constant-time CRT arithmetic
+  (`crypto/private/ctbignum`, `{.assembler.}` on native x86-64), blinded with
+  `sysrand` randomness. Every signature is checked against the public key
+  before it is returned, so a corrupt key or a fault yields `rseFault`, never
+  a signature. Errors are enums (`RsaKeyError`, `RsaSignError`), not
+  exceptions. The key is wiped when destroyed; stack temporaries are not.
 - Compare MACs with `hmac.constantTimeEquals`, never `==`.
 - Key material comes from `sysrand.urandom`, never `std/random`.

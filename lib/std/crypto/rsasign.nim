@@ -18,14 +18,16 @@
 ## Unlike `std/crypto/rsa`, which only does the public operation, this module
 ## holds secrets: the parser never branches on, or indexes a table with, a
 ## byte of the private key. Only the layout — lengths, tags, the modulus and
-## the public exponent — steers it. The key is held in the CRT form of
-## `std/crypto/private/ctbignum`. A key is wiped when it is destroyed;
-## temporaries the C compiler leaves on the stack are not.
+## the public exponent — steers it. Signing (`rsaSignPkcs1v15`) runs on
+## `std/crypto/private/ctbignum`'s constant-time arithmetic (`{.assembler.}`
+## code on the native x86-64 backend), blinded, and checks every signature
+## against the public key before releasing it. A key is wiped when it is
+## destroyed; temporaries the C compiler leaves on the stack are not.
 
 {.feature: "staticContracts".}
 
 import std/[strutils, volatile]
-import std/crypto/[bignum, rsa]
+import std/crypto/[bignum, rsa, sysrand]
 import std/crypto/private/[der, pem, ctbignum]
 
 type
@@ -43,6 +45,13 @@ type
     rkePrimes = "p or q is even or not half the width of the modulus"
     rkeCrtParams = "dP, dQ or qInv is wider than half the modulus"
     rkeMismatch = "p * q is not the modulus"
+
+  RsaSignError* = enum
+    ## Why `rsaSignPkcs1v15` produced no signature.
+    rseNone = "ok"
+    rseKey = "the key is empty (never parsed, or its parse failed)"
+    rseRandom = "the operating system's random number generator failed"
+    rseFault = "the signature failed its check: a corrupt key or a hardware fault"
 
   RsaPrivateKey* = object
     ## An RSA private key in CRT form, ready to sign. Its fields are private;
@@ -311,3 +320,83 @@ proc parseRsaPrivateKeyPem*(pem: string; key: var RsaPrivateKey): RsaKeyError =
     return rkeBase64
   result = parseDer(der, (if label == 0: kfPkcs8 else: kfPkcs1), key)
   wipe(der)
+
+# ---------------------------------------------------------------- signing ---
+
+proc rsaSignPkcs1v15*(key: RsaPrivateKey; h: RsaHash; message: openArray[byte];
+                      signature: var seq[byte]): RsaSignError =
+  ## RSASSA-PKCS1-v1_5 (RFC 8017 §8.2.1): signs `message` with the hash `h`
+  ## (`rhSha256` for JWT's `RS256`). The signature is `k` bytes, `k` the
+  ## modulus length, and is the same for the same key and message every time:
+  ## it equals `openssl dgst -sha256 -sign`'s. It verifies with
+  ## `rsaVerifyPkcs1v15(publicKey(key), h, message, signature)`.
+  ##
+  ## Returns `rseNone` with the signature in `signature`, or the reason with
+  ## `signature` empty: `rseKey` for a key that was never parsed, `rseRandom`
+  ## when the OS random number generator cannot be read (there is no
+  ## unblinded fallback), `rseFault` when the result fails its check.
+  ##
+  ## The private operation is ctbignum's constant-time CRT exponentiation
+  ## with fresh base blinding per prime (from `std/crypto/sysrand`). Before
+  ## a signature is released it is checked against the public key, `s^e mod
+  ## n == EM`, also in constant time (the candidate is still secret until it
+  ## passes), so a wrong `dP`, `dQ` or `qInv` in the key or a fault during
+  ## the computation never leaks a signature that would give away a factor
+  ## of `n` (Boneh, DeMillo and Lipton).
+  ##
+  ## A JWT signed with `RS256` (RFC 7515, 7518), for example with the
+  ## `private_key` of a Google service-account file. `tests/nimony/crypto/
+  ## trsasign.nim` runs this code verbatim and checks it against OpenSSL.
+  ## (It is not a `runnableExamples` block: an `import` inside one breaks
+  ## the build of modules that import this one, a Nimony bug.)
+  ##
+  ## ```nim
+  ## import std/base64
+  ## import std/crypto/[rsa, rsasign]
+  ##
+  ## proc base64Url(data: openArray[byte]): string =
+  ##   ## base64url without padding, as JWS wants it.
+  ##   result = encode(data, safe = true)
+  ##   while result.len > 0 and result[result.len - 1] == '=':
+  ##     result.setLen(result.len - 1)
+  ##
+  ## proc base64Url(s: string): string =
+  ##   var b: seq[byte] = @[]
+  ##   for c in s: b.add byte(c)
+  ##   result = base64Url(b)
+  ##
+  ## proc signJwt(pem, claims: string; jwt: var string): bool =
+  ##   ## `header.claims.signature`; `false` if the key is refused.
+  ##   jwt = ""
+  ##   var key = default(RsaPrivateKey)
+  ##   if parseRsaPrivateKeyPem(pem, key) != rkeNone: return false
+  ##   let input = base64Url("""{"alg":"RS256","typ":"JWT"}""") & "." &
+  ##               base64Url(claims)
+  ##   var bytes: seq[byte] = @[]
+  ##   for c in input: bytes.add byte(c)
+  ##   var sig: seq[byte] = @[]
+  ##   if rsaSignPkcs1v15(key, rhSha256, bytes, sig) != rseNone: return false
+  ##   jwt = input & "." & base64Url(sig)
+  ##   result = true
+  ## ```
+  signature = @[]
+  let k = (key.modBits + 7) div 8
+  if k <= 0: return rseKey               # never parsed: `modBits` is 0
+  var em: seq[byte] = @[]
+  var c = default(BigNum)
+  # neither can fail for a parsed key: `k` is 256..512 bytes
+  if not emsaPkcs1v15Encode(h, message, k, em): return rseKey
+  if not fromBytesBE(em, c): return rseKey
+  let blindLen = rsaCrtBlindLen(key.crt)
+  if blindLen <= 0: return rseKey
+  var blindP = newSeq[byte](blindLen)
+  var blindQ = newSeq[byte](blindLen)
+  var s = default(BigNum)
+  result = rseRandom
+  if urandom(blindP) and urandom(blindQ):
+    result = rseFault
+    if rsaCrtPrivate(key.crt, c, blindP, blindQ, s):
+      signature = toBytesBE(s, k)
+      result = rseNone
+  wipe(blindP)
+  wipe(blindQ)

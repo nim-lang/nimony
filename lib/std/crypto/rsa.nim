@@ -76,13 +76,15 @@ const
   Sha512Prefix = [0x30'u8, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
                   0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40]
 
-func rsaVerifyPkcs1v15*(key: RsaPublicKey; h: RsaHash; message, signature: openArray[byte]): bool =
-  ## RSASSA-PKCS1-v1_5. The expected encoding is BUILT and compared whole —
-  ## parsing the decrypted block instead is how Bleichenbacher's 2006 forgery
-  ## got through so many verifiers.
-  result = false
-  var em: seq[byte] = @[]
-  if not publicOp(key, signature, em): return
+func emsaPkcs1v15Encode*(h: RsaHash; message: openArray[byte]; emLen: int;
+                         em: var seq[byte]): bool =
+  ## EMSA-PKCS1-v1_5-ENCODE (RFC 8017 §9.2): `0x00 0x01 0xFF.. 0x00 T`, where
+  ## `T` is the DER `DigestInfo` of the hash of `message`, padded to `emLen`
+  ## bytes (the modulus length `k`). This is the block a PKCS #1 v1.5
+  ## signature over `message` decrypts to; `std/crypto/rsasign` signs it.
+  ## `false`, with `em` empty, when `emLen` is too short for `T` plus 11
+  ## bytes.
+  em = @[]
   var t: seq[byte] = @[]
   case h
   of rhSha256:
@@ -92,11 +94,23 @@ func rsaVerifyPkcs1v15*(key: RsaPublicKey; h: RsaHash; message, signature: openA
   of rhSha512:
     for b in Sha512Prefix: t.add b
   for b in hashOf(h, message): t.add b
-  if em.len < t.len + 11: return
-  var expected: seq[byte] = @[0'u8, 1'u8]
-  for i in 0 ..< em.len - t.len - 3: expected.add 0xFF'u8
-  expected.add 0'u8
-  for b in t: expected.add b
+  if emLen < t.len + 11: return false
+  em.add 0'u8
+  em.add 1'u8
+  for i in 0 ..< emLen - t.len - 3: em.add 0xFF'u8
+  em.add 0'u8
+  for b in t: em.add b
+  result = true
+
+func rsaVerifyPkcs1v15*(key: RsaPublicKey; h: RsaHash; message, signature: openArray[byte]): bool =
+  ## RSASSA-PKCS1-v1_5. The expected encoding is BUILT and compared whole —
+  ## parsing the decrypted block instead is how Bleichenbacher's 2006 forgery
+  ## got through so many verifiers.
+  result = false
+  var em: seq[byte] = @[]
+  if not publicOp(key, signature, em): return
+  var expected: seq[byte] = @[]
+  if not emsaPkcs1v15Encode(h, message, em.len, expected): return
   result = constantTimeEquals(em, expected)
 
 func mgf1(h: RsaHash; seed: openArray[byte]; maskLen: int): seq[byte] =
