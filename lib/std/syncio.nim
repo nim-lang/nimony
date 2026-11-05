@@ -206,18 +206,6 @@ when defined(nimNativeIo):
 
   proc fillBuf(f: File): bool {.inline.} = fillBuf(f[])
 
-  proc readByte(fo: var FileObj): int =
-    ## Returns the next byte as 0..255, or -1 at EOF/error.
-    result = -1
-    while true:
-      if fo.rpos < fo.rbuf.len:
-        result = int(fo.rbuf[fo.rpos])
-        inc fo.rpos
-        break
-      if not fillBuf(fo): break
-
-  proc readByte(f: File): int {.inline.} = readByte(f[])
-
   proc readInto(fo: var FileObj; dest: ptr UncheckedArray[char]; size: int): int =
     var off: Natural = 0
     while off < size:
@@ -474,65 +462,95 @@ proc writeLine*(f: File; s: string) =
   write f, '\n'
 
 when defined(nimNativeIo):
-  proc addReadLine*(f: File; s: var string): bool =
-    ## Appends a line from a file to a string.
+  proc addUntilNewline(fo: var FileObj; s: var string): bool =
+    ## Appends the bytes up to and including the next '\n' to `s`. Returns
+    ## false if nothing was left to read.
     result = false
     while true:
-      let c = readByte(f)
-      if c < 0: break
+      if fo.rpos >= fo.rbuf.len:
+        if not fillBuf(fo): break
+        continue
       result = true
-      if char(c) == '\n': break
-      s.add char(c)
-else:
-  const bufsize = 80
+      var e = fo.rpos
+      while e < fo.rbuf.len and fo.rbuf[e] != '\n': inc e
+      var found = false
+      if e < fo.rbuf.len:
+        found = true
+        inc e
+      let n = e - fo.rpos
+      let old = s.len
+      copyMem(beginStore(s, old + n, old), addr fo.rbuf[fo.rpos], n)
+      endStore s
+      fo.rpos = e
+      if found: break
 
-  proc fgets(str: var array[bufsize, char]; n: int32; f: File): cstring {.
+  proc addUntilNewline(f: File; s: var string): bool {.inline.} =
+    addUntilNewline(f[], s)
+else:
+  const LineChunk = 128
+
+  proc fgets(buf: ptr UncheckedArray[char]; n: int32; f: File): cstring {.
     importc: "fgets", header: "<stdio.h>".}
 
-  proc addReadLine*(f: File; s: var string): bool =
-    ## Appends a line from a file to a string.
-    # The buffer is filled with '\n' before each `fgets`, so the end of the
-    # data can be found even if the input contains NUL bytes: a newline that
-    # `fgets` read is followed by its '\0', a filler '\n' comes after it.
+  proc addUntilNewline(f: File; s: var string): bool =
+    ## Appends the bytes up to and including the next '\n' to `s`. Returns
+    ## false if nothing was left to read.
+    # `fgets` reads into the string's new space, filled with '\n' first so
+    # that the end of the data shows even if it holds NULs: a '\n' that was
+    # read is followed by the '\0' of `fgets`, filler comes after that '\0'.
     result = false
-    var buf = default(array[bufsize, char])
     while true:
-      for i in 0 ..< bufsize: buf[i] = '\n'
-      if fgets(buf, bufsize.int32, f) == nil: break
-      result = true
-      var p = 0
-      while p < bufsize and buf[p] != '\n': inc p
-      # a full chunk without a newline: take its bufsize-1 bytes, read on
-      var n = bufsize - 1
-      var done = false
-      if p < bufsize - 1 and buf[p + 1] == '\0':
-        # the line ends with a newline that `fgets` read
-        n = p
-        done = true
-      elif p < bufsize:
-        # the last line, without a newline: the '\n' is filler after the '\0'
-        n = p - 1
-        done = true
-      for i in 0 ..< bufsize:
-        if i >= n: break
-        s.add buf[i]
+      let old = s.len
+      let p = beginStore(s, old + LineChunk, old)
+      for i in 0 ..< LineChunk: p[i] = '\n'
+      var n = 0
+      var done = true
+      if fgets(p, LineChunk.int32, f) != nil:
+        result = true
+        var i = 0
+        while i < LineChunk and p[i] != '\n': inc i
+        if i == LineChunk:
+          n = LineChunk - 1     # a full chunk without a '\n'
+          done = false
+        elif i + 1 < LineChunk and p[i + 1] == '\0':
+          n = i + 1             # the '\n' was read
+        else:
+          n = i - 1             # filler: the last line has no '\n'
+      endStore s
+      s.shrink old + n
       if done: break
 
+proc dropNewline(s: var string) =
+  ## Removes a final '\n', and a '\r' right before it.
+  if s.len > 0 and s[s.len - 1] == '\n':
+    var n = s.len - 1
+    if n > 0 and s[n - 1] == '\r': dec n
+    s.shrink n
+
+proc addReadLine*(f: File; s: var string): bool =
+  ## Appends the next line of `f` to `s`, without its '\n' (a '\r' before it
+  ## is kept). Returns false if nothing was left to read.
+  let old = s.len
+  result = addUntilNewline(f, s)
+  if s.len > old and s[s.len - 1] == '\n':
+    s.shrink s.len - 1
+
 proc readLine*(f: File; s: var string): bool =
-  ## Reads a line from a file into a string.
+  ## Reads a line from a file into a string, without the line ending (`\n`
+  ## or `\r\n`). Returns false at the end of the file or if the read fails.
   s.shrink 0
-  addReadLine f, s
+  result = addUntilNewline(f, s)
+  dropNewline s
 
 proc readLine*(f: File): string {.raises.} =
   ## Reads a line from a file, without the line ending (`\n` or `\r\n`).
   ## Raises `EndOfStreamError` at the end of the file and `IOError` if the
   ## read fails.
   result = ""
-  if not addReadLine(f, result):
+  if not addUntilNewline(f, result):
     if failed(f): raise IOError
     raise EndOfStreamError
-  if result.len > 0 and result[result.len - 1] == '\r':
-    result.shrink result.len - 1
+  dropNewline result
 
 iterator lines*(filename: string): string {.sideEffect.} =
   ## Iterates over every line in `filename`. Silently returns no lines if the
