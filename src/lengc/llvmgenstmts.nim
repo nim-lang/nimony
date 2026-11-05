@@ -410,7 +410,14 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
     of SubC: intrinsic.add "ssub"
     of MulC: intrinsic.add "smul"
     else:
+      # A rewrite left a value that cannot overflow (see the C backend's
+      # `genKeepOverflow`): store it and clear the flag.
+      var value = LLValue()
+      genExprLLVM(c, n, value)
+      genLvalueLLVM(c, n, target)
       while n.hasMore: skip n
+      c.emitStore(value, target)
+      c.emitStore(llIntTextC("0", c.prim.i8), llGlobalRef("LENGC_OVF_", c.prim.ptrT))
       return
 
     n.into:
@@ -454,20 +461,11 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
   let ovfRes = llReg(ovfFlag, c.prim.i1)
   c.emit LLInstr(kind: llExtractValue, result: ovfRes, evAggregate: rsRes,
                  evAggType: aggTyp, evIndex: 1)
-  let i8 = c.prim.i8
-  let currentOvf = c.emitLoad(llGlobalRef("LENGC_OVF_", c.prim.ptrT), i8)
-  let currentOvfBool = c.nextTemp()
-  let cobRes = llReg(currentOvfBool, c.prim.i1)
-  c.setLoc(ovfInfo)
-  c.emit LLInstr(kind: llIcmp, result: cobRes, icmpPred: "ne",
-                 icmpLhs: currentOvf, icmpRhs: llIntTextC("0", c.prim.i8))
-  let combinedOvf = c.nextTemp()
-  let coRes = llReg(combinedOvf, c.prim.i1)
-  c.emit LLInstr(kind: llBinOp, result: coRes, binOp: "or", binLhs: cobRes,
-      binRhs: ovfRes)
+  # Not sticky: the flag is this operation's verdict alone.
   let newOvfByte = c.nextTemp()
   let nobRes = llReg(newOvfByte, c.prim.i8)
-  c.emit LLInstr(kind: llZext, result: nobRes, castOp: "zext", castSrc: coRes,
+  c.setLoc(ovfInfo)
+  c.emit LLInstr(kind: llZext, result: nobRes, castOp: "zext", castSrc: ovfRes,
                  castDstType: c.prim.i8)
   c.emitStore(nobRes, llGlobalRef("LENGC_OVF_", c.prim.ptrT))
 

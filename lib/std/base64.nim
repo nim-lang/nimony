@@ -33,7 +33,7 @@ func encode[T: byte|char](s: openArray[T]; alphabet: array[64, char]): string =
   result = ""
   let n = s.len
   var i = 0
-  while i + 3 <= n:
+  while i <= n - 3:
     let a = ord(s[i])
     let b = ord(s[i + 1])
     let c = ord(s[i + 2])
@@ -42,13 +42,13 @@ func encode[T: byte|char](s: openArray[T]; alphabet: array[64, char]): string =
     result.add alphabet[((b shl 2) or (c shr 6)) and 63]
     result.add alphabet[c and 63]
     i += 3
-  if i + 1 == n:
+  if i == n - 1:
     let a = ord(s[i])
     result.add alphabet[(a shr 2) and 63]
     result.add alphabet[(a shl 4) and 63]
     result.add '='
     result.add '='
-  elif i + 2 == n:
+  elif i == n - 2:
     let a = ord(s[i])
     let b = ord(s[i + 1])
     result.add alphabet[(a shr 2) and 63]

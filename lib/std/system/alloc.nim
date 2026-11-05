@@ -312,7 +312,7 @@ proc mappingSearch(r: var int; fl: var FlIndex; sl: var SlIndex) {.inline.} =
   # `r` is a page-aligned big-chunk size no larger than `MaxBigChunkSize`, so
   # its top bit picks a first-level class and the `MaxLog2Sli` bits below it a
   # second-level one. Nothing the prover can follow: `msbit` is a table lookup.
-  {.assume: 0 <= f - FliOffset and f - FliOffset < RealFli and 0 <= s and s < MaxSli.}
+  {.assume: FliOffset <= f and f < FliOffset + RealFli and 0 <= s and s < MaxSli.}
   fl = f - FliOffset
   sl = s
   sysAssert((r and PageMask) == 0, "mappingSearch: still not aligned")
@@ -325,7 +325,7 @@ proc mappingInsert(r: int): tuple[fl: FlIndex, sl: SlIndex] {.inline.} =
   let f = msbit(uint32 r)
   let s = (r shr (f - MaxLog2Sli)) - MaxSli
   # `r` is the size of a big chunk in the matrix: see `mappingSearch`.
-  {.assume: 0 <= f - FliOffset and f - FliOffset < RealFli and 0 <= s and s < MaxSli.}
+  {.assume: FliOffset <= f and f < FliOffset + RealFli and 0 <= s and s < MaxSli.}
   result = (FlIndex(f - FliOffset), SlIndex(s))
 
 template mat(): untyped {.untyped.} = a.matrix[fl][sl]
@@ -494,7 +494,7 @@ proc addHeapLink(a: var MemRegion; p: PBigChunk, size: int): ptr HeapLinks =
     # The search above stops at the first node that is not full.
     {.assume: L < HeapLinksCap.}
     it.chunks[L] = (p, size)
-    inc it.count
+    it.count = L + 1 # not `inc it.count`: the write above forgets `it.count`
     result = it
 
 when not UseDestructors:

@@ -271,7 +271,7 @@ proc parseString(my: var JsonParser): TokKind =
             break
         if my.rawStringLiterals:
           let length = pos - pos2
-          for i in 1 .. length:
+          for i in 0 ..< length:
             if charAt(my.buf, pos2) in {'0'..'9', 'A'..'F', 'a'..'f'}:
               add(my.a, charAt(my.buf, pos2))
               inc pos2

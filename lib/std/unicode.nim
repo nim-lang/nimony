@@ -110,7 +110,7 @@ func runeLen*(s: openArray[char]): int =
     else: inc i
     inc(result)
 
-func runeLenAt*(s: openArray[char], i: Natural): Positive =
+func runeLenAt*(s: openArray[char], i: Natural): Positive {.ensures: result <= 6.} =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
   ##
   ## The result type says 1..6: a rune is never zero bytes wide, and a caller
@@ -142,7 +142,11 @@ template fastRuneAt*(s: openArray[char], i: int, result: untyped, doInc = true):
   if i < 0 or i >= s.len:
     # no rune starts outside `s`
     result = replRune
-    when doInc: inc(i)
+    # Past the end `i` only has to stay past it: an unguarded `inc(i)` would
+    # owe `i + 1 <= high(int)` for an `i` that nothing bounds (a `Natural`).
+    # Still a step, not an assignment, so `i` only ever grows.
+    when doInc:
+      if i <= s.len: inc(i)
   elif uint(s[i]) <= 127:
     result = Rune(uint(s[i]))
     when doInc: inc(i)
@@ -414,6 +418,9 @@ func runeOffset*(s: openArray[char], pos: Natural, start: Natural = 0): int =
     i = 0
     o = start
   while i < pos:
+    # `start` may lie past the end: then so does every later offset
+    if o >= s.len:
+      return -1
     o = o + runeLenAt(s, o)
     if o >= s.len:
       return -1
@@ -437,7 +444,7 @@ func runeReverseOffset*(s: openArray[char], rev: Positive): (int, int) =
   ## * `runeOffset func <#runeOffset,string,Natural,Natural>`_
   var
     a = rev.int
-    o = 0
+    o: Natural = 0
     x = 0
   let times = 2*rev.int-s.runeLen # transformed from rev.int - a < s.runeLen - rev.int
   while o < s.len:
@@ -493,7 +500,12 @@ func runeSubStr*(s: openArray[char], pos: int, len: int = int.high): string =
     assert(runeSubStr(s, -6, 3) == "10,")
 
   if pos < 0:
-    let (start, rl) = runeReverseOffset(s, -pos)
+    # `-low(int)` wraps; no string has that many runes, so `high(int)` counts
+    # back just as far
+    var back = high(int)
+    if pos > low(int): back = -pos
+    {.assume: back >= 1.} # `pos < 0`
+    let (start, rl) = runeReverseOffset(s, back)
     # too few runes: the substring starts at the beginning
     var o: Natural = 0
     if start > 0: o = start
@@ -515,7 +527,10 @@ func runeSubStr*(s: openArray[char], pos: int, len: int = int.high): string =
     elif len == int.high:
       result = s.substr(o, s.len-1)
     elif len < 0:
-      let (e, rl) = runeReverseOffset(s, -len)
+      var back = high(int) # see `pos` above
+      if len > low(int): back = -len
+      {.assume: back >= 1.} # `len < 0`
+      let (e, rl) = runeReverseOffset(s, back)
       discard rl
       if e <= 0:
         result = ""
@@ -915,7 +930,7 @@ iterator utf8*(s: openArray[char]): string =
   ## * `toUTF8 func <#toUTF8,Rune>`_
   ## * `$ func <#$,Rune>`_ alias for `toUTF8`
   ## * `fastToUTF8Copy template <#fastToUTF8Copy.t,Rune,string,int>`_
-  var o = 0
+  var o: Natural = 0
   while o < s.len:
     let n = runeLenAt(s, o)
     yield substr(s.toOpenArray(o, (o+n-1)))
@@ -1023,7 +1038,7 @@ func lastRune*(s: openArray[char]; last: int): (Rune, int) =
     fastRuneAt(s, last-L, r, false)
     result = (r, L+1)
 
-func size*(r: Rune): int {.noSideEffect.} =
+func size*(r: Rune): int {.noSideEffect, ensures: 1 <= result and result <= 6.} =
   ## Returns the number of bytes the rune ``r`` takes.
   runnableExamples:
     let a = toRunes "aá"
@@ -1066,8 +1081,11 @@ template splitCommon(s: untyped #[openArray[char]]#, sep: untyped#[openArray[Run
       if splits == 0: last = sLen
       yield substr(s.toOpenArray(first, (last - 1)))
       if splits == 0: break
+      # `last >= sLen`: the step would end the loop anyway. Leaving here tells
+      # the prover `last < sLen`, which the inner `while` made it forget.
+      if last >= sLen: break
       dec(splits)
-      inc(last, if last < sLen: runeLenAt(s, last) else: 1)
+      inc(last, runeLenAt(s, last))
 
 iterator split*(s: openArray[char], seps: openArray[Rune] = unicodeSpaces,
   maxsplit: int = -1): string =
@@ -1261,7 +1279,7 @@ func runeLen*(s: string): int {.inline.} =
     ## note: a.len == 8
   runeLen(toOa(s))
 
-func runeLenAt*(s: string, i: Natural): Positive {.inline.} =
+func runeLenAt*(s: string, i: Natural): Positive {.inline, ensures: result <= 6.} =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
   ##
   ## See also:

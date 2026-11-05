@@ -1296,7 +1296,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trFor c, dest, n
   of CoroforS:
     trCoroFor c, dest, n
-  of CallKindsS, InclS, ExclS:
+  of CallKindsS, InclS, ExclS, IncS, DecS:
     trStmtCall c, dest, n
   of AsgnS:
     # IMPORTANT: Stores into `tar` helper!
@@ -1309,15 +1309,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `lhsIsResult` is the shortcut that keeps the call in place when the lhs
     # is already a sym; both nj.nim and finalir.nim handle it via
     # `trBoundExpr` (a call binds directly to its destination — doc/final_ir.md).
-    # `LowerCasts` always binds — the dce2 inliner wants every call to appear
-    # as the value of a let/var binding.
-    var lhsIsResult = false
-    if c.goal == TowardsFinalIr:
-      let peek = n.childCursor
-      lhsIsResult = peek.kind == Symbol
+    # `LowerCasts` keeps it too: the inliner splices `lhs = f(args)` straight
+    # into `lhs` (`trySpliceAsgn`), so a temp would only add a copy.
+    let lhsIsResult = n.childCursor.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      if c.goal == TowardsFinalIr and lhsIsResult:
+      if lhsIsResult:
         tar.m = IsBound
       # else: tar.m stays IsAppend so trExprCall can bind
       trExpr c, dest, n, tar
@@ -1492,7 +1489,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trAggregate c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
        InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
+       SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, SuccX, PredX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
        BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
@@ -1531,7 +1528,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          IteratorS, ConverterS, MethodS, MacroS, TemplateS,
          TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
          ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
-         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+         PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
          AssertS, CallstrlitS, InfixS, PrefixS, HcallS,

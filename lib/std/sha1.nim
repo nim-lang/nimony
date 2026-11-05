@@ -112,7 +112,7 @@ proc update*(ctx: var Sha1State; data: openArray[char]) =
       i = 0
   if i == 0:
     # whole blocks, then the tail; `p - start` is the offset into the block
-    while j + 64 <= data.len:
+    while j <= data.len - 64:
       let start = j
       for p in start ..< start + 64:
         ctx.buf[p - start] = byte(data[p])

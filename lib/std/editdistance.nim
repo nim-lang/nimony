@@ -140,13 +140,13 @@ func editDistance*(a, b: string): int =
         char2p = iStart
         for j in 0 ..< offset:
           runeB = b.runeAt(char2p)
-          inc(char2p, runeB.size)
+          if char2p < b.len: inc(char2p, runeB.size) # past the end every index reads `replRune`
         char2pI = i + 1
         char2pPrev = char2p
       p = offset
       runeB = b.runeAt(char2p)
       var c3 = row[p] + (if runeA != runeB: 1 else: 0)
-      inc(char2p, runeB.size)
+      if char2p < b.len: inc(char2p, runeB.size) # past the end every index reads `replRune`
       inc(p)
       x = row[p] + 1
       diff = x
@@ -166,7 +166,7 @@ func editDistance*(a, b: string): int =
       dec(diff)
       runeB = b.runeAt(char2p)
       var c3 = diff + (if runeA != runeB: 1 else: 0)
-      inc(char2p, runeB.size)
+      if char2p < b.len: inc(char2p, runeB.size) # past the end every index reads `replRune`
       inc(x)
       if x > c3: x = c3
       diff = row[p] + 1

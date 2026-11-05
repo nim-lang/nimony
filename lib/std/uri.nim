@@ -113,7 +113,7 @@ func decodeUrl*(src: openArray[char]; dest: var string;
   while i < src.len:
     let c = src[i]
     if c == '%':
-      if i + 2 >= src.len:
+      if i >= src.len - 2:
         dest = ""
         return false
       let hi = hexVal(src[i + 1])
@@ -180,7 +180,7 @@ func parseAuthority(u: var Uri; a: openArray[char]) =
     if close >= 0:
       u.isIpv6 = true
       for i in hostStart + 1..<close: u.hostname.add a[i]
-      if close + 1 < a.len and a[close + 1] == ':':
+      if close < a.len - 1 and a[close + 1] == ':':
         for i in close + 2..<a.len: u.port.add a[i]
       return
   let colon = a.rfind(':', hostStart)
@@ -198,19 +198,21 @@ func parseUri*(s: openArray[char]): Uri =
   ## Accepts every form a request target can take — `/a/b?q` (origin),
   ## `http://h/a` (absolute), `h:443` (authority, for CONNECT) and `*`.
   result = initUri()
-  var i = 0
+  # `Natural`: the joins below keep no lower bound of their own, and
+  # `pathEnd - 1` needs one not to wrap
+  var i: Natural = 0
   let n = s.len
 
   # The fragment first: `#` binds looser than everything, so a `?` after one
   # is part of the fragment and not a query.
-  var stop = n
+  var stop: Natural = n
   let hash = s.find('#')
   if hash >= 0:
     for k in hash + 1..<n: result.anchor.add s[k]
     stop = hash
 
   let q = s.find('?')
-  var pathEnd = stop
+  var pathEnd: Natural = stop
   if q >= 0 and q < stop:
     for k in q + 1..<stop: result.query.add s[k]
     pathEnd = q
@@ -233,8 +235,8 @@ func parseUri*(s: openArray[char]): Uri =
     for j in 0..<colon: result.scheme.add s[j]
     i = colon + 1
 
-  if i + 1 < pathEnd and s[i] == '/' and s[i + 1] == '/':
-    i += 2
+  if i < pathEnd - 1 and s[i] == '/' and s[i + 1] == '/':
+    inc i, 2
     var authEnd = i
     while authEnd < pathEnd and s[authEnd] != '/': inc authEnd
     parseAuthority(result, toOpenArray(s, i, authEnd - 1))
@@ -304,6 +306,8 @@ iterator decodeQuery*(q: openArray[char]; decodePlus = true): (string, string) =
   while i <= q.len:
     var e: Natural = i
     while e < q.len and q[e] != '&' and q[e] != ';': inc e
+    # `e` started at `i <= q.len` and stops at `q.len` at the latest
+    {.assume: e <= q.len.}
     if e > i:
       var eq = e
       var j = i
@@ -362,7 +366,7 @@ func normalizedPath*(path: openArray[char]; dest: var string): bool =
     var isDotDot = false
     if path[s] == '.':
       if i == s + 1: isDot = true
-      elif i == s + 2 and s + 1 < path.len and path[s + 1] == '.': isDotDot = true
+      elif i == s + 2 and s < path.len - 1 and path[s + 1] == '.': isDotDot = true
     if isDot:
       discard
     elif isDotDot:

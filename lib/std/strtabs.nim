@@ -390,7 +390,7 @@ proc `%`*(f: string, t: StringTableRef, flags: set[FormatFlag] = {}): string {.r
   # obligation comes from the type rather than from a guard.
   var i: Natural = 0
   while i < len(f):
-    if f[i] == '$' and i + 1 < f.len:
+    if f[i] == '$' and i < f.len - 1:
       # a `$` as the last character is an ordinary one
       case f[i+1]
       of '$':
@@ -399,6 +399,8 @@ proc `%`*(f: string, t: StringTableRef, flags: set[FormatFlag] = {}): string {.r
       of '{':
         var j: Natural = i + 1
         while j < f.len and f[j] != '}': inc(j)
+        # `j` started at `i < f.len - 1` and stops at `f.len` at the latest
+        {.assume: j <= f.len.}
         add(result, getValue(t, flags, substr(f, i+2, j-1)))
         i = j + 1
       of 'a'..'z', 'A'..'Z', '\x80'..'\xFF', '_':

@@ -130,6 +130,8 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let symId = r.name.symId
       if isLocalDecl(symId):
         c2.typeCache.registerLocal(symId, r.kind, decl)
+    if isConcrete and n.kind != DotToken:
+      # No body (`.`): an importc or forward declaration stays bodyless.
       c2.typeCache.openScope()
       rememberConstRefParams c2, r.params
       let info = n.info
@@ -318,7 +320,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS,
          ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, RaiseS, TryS,
          YldS, StmtsS, AlwaysS,
-         PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS,
+         PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS,
          ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,

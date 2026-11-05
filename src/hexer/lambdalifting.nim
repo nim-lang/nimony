@@ -523,7 +523,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trSons(c, dest, n)
       c.typeCache.closeScope()
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CoroforS,
-      CaseS, RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, ImportasS,
+      CaseS, RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
@@ -551,7 +551,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX,
-        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SuccX, PredX,
         SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
         BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
@@ -1958,7 +1958,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         trPassiveCoroFor c, dest, n
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS,
-      CaseS, RetS, YldS, PragmaxS, InclS, ExclS, ImportasS,
+      CaseS, RetS, YldS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
@@ -1995,7 +1995,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX,
-        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SuccX, PredX,
         SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
         BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CchoiceX,
         OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX,

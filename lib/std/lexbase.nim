@@ -82,7 +82,7 @@ proc fillBuffer(L: var BaseLexer) =
     oldBufLen: int
   # we know here that pos == L.sentinel, but not if this proc
   # is called the first time by initBaseLexer()
-  assert(L.sentinel + 1 <= L.buf.len)
+  assert(L.sentinel <= L.buf.len - 1)
   toCopy = L.buf.len - (L.sentinel + 1)
   assert(toCopy >= 0)
   if toCopy > 0:

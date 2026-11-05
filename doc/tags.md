@@ -147,6 +147,8 @@
 | `(nodecl)` | LengPragma, NimonyPragma | `nodecl` annotation |
 | `(incl T X X)` | NimonyStmt | `incl` set operation; first child is the set's element type |
 | `(excl T X X)` | NimonyStmt | `excl` set operation; first child is the set's element type |
+| `(inc T X X?)` | NimonyStmt | `inc` of an ordinal location; `T` is the location's type, the optional step defaults to 1. A `range` location owes its range, like `x = succ(x, y)`. Lowered to `asgn`/`add` by the hexer |
+| `(dec T X X?)` | NimonyStmt | `dec` of an ordinal location; like `inc` |
 | `(include X+)` | NimonyStmt, NiflerKind | `include` statement |
 | `(import X+)` | NimonyStmt, NiflerKind | `import` statement |
 | `(importas X X)` | NimonyStmt, NiflerKind | `import as` statement |
@@ -291,6 +293,8 @@
 | `(ltset T X X)` | NimonyExpr | |
 | `(inset T X X)` | NimonyExpr | |
 | `(card T X)` | NimonyExpr | |
+| `(succ T X X?)` | NimonyExpr | successor of an ordinal of type `T`, the optional step defaults to 1; for a `range` `T` the result owes `T`'s range. Lowered to `add` by the hexer |
+| `(pred T X X?)` | NimonyExpr | predecessor; like `succ` |
 | `(emove X)` | NimonyExpr | |
 | `(destroy X)` | NimonyExpr, HookKind | |
 | `(dup X)` | NimonyExpr, HookKind| |

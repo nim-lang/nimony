@@ -57,7 +57,7 @@ proc readVu64*(z: openArray[byte]; pResult: var uint64): int =
   return 9
 
 proc varintWrite32(z: var openArray[byte]; at: int; y: uint32) {.
-    requires: 0 <= at and at + 3 < z.len.} =
+    requires: 0 <= at and at < z.len - 3.} =
   z[at] = cast[uint8](y shr 24)
   z[at + 1] = cast[uint8](y shr 16)
   z[at + 2] = cast[uint8](y shr 8)

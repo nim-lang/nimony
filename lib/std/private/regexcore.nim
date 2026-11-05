@@ -176,7 +176,7 @@ proc incl(s: var RuneSet; lo, hi: int) =
   else:
     s[i].a = min(s[i].a, lo)
     s[i].b = max(s[i].b, hi)
-    while i + 1 < s.len and s[i + 1].a <= s[i].b + 1:
+    while i < s.len - 1 and s[i + 1].a <= s[i].b + 1:
       s[i].b = max(s[i].b, s[i + 1].b)
       s.delete i + 1
 
@@ -226,10 +226,19 @@ proc error(c: var ReCtx; msg: string) =
 
 proc atEnd(c: ReCtx): bool {.inline.} = c.pos >= c.buf.len
 
+proc step(c: var ReCtx; k = 1) {.inline.} =
+  ## `inc c.pos, k` for a step over at most one UTF-8 sequence. `pos` is a
+  ## `Natural`, so the step owes `pos + k <= high(int)`; the guard is how the
+  ## prover sees it, since calls such as `error c` forget what `pos` was. The
+  ## scanner tests `pos < buf.len` before it reads, so a `pos` already past the
+  ## end has nothing left to step over and may stay where it is.
+  if c.pos <= c.buf.len and k >= 0 and k <= 4:
+    c.pos = c.pos + k
+
 proc skipSpaces(c: var ReCtx) {.inline.} =
   if reExtended in c.flags:
     while c.pos < c.buf.len and (c.buf[c.pos] == ' ' or c.buf[c.pos] == '\t'):
-      inc c.pos
+      step c
 
 proc getNext(c: var ReCtx): char =
   ## The next significant character, or `'\0'` at the end of the pattern.
@@ -258,7 +267,7 @@ proc readRune(c: var ReCtx): RegexNode {.inline.} =
       r = runeAt(c.buf, c.pos)
       width = n
   result = charExpr(r)
-  inc c.pos, width
+  step c, width
 
 proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   ## One character or escape sequence. `inClass` selects the `[...]` reading of
@@ -269,7 +278,7 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
   if c.pos < c.buf.len and c.buf[c.pos] != '\\':
     result = readRune(c)
   else:
-    let ch = if c.pos + 1 < c.buf.len: c.buf[c.pos + 1] else: '\0'
+    let ch = if c.pos < c.buf.len - 1: c.buf[c.pos + 1] else: '\0'
     case ch
     of 'n':
       # Outside a class, `\n` is a newline in any of its three spellings,
@@ -278,56 +287,56 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
       result =
         if inClass: charExpr('\L')
         else: altExpr(altExpr(strExpr("\r\n"), charExpr('\L')), charExpr('\r'))
-      inc c.pos, 2
+      step c, 2
     of 'r', 'C':
       result = charExpr('\r')
-      inc c.pos, 2
+      step c, 2
     of 'l', 'L':
       result = charExpr('\L')
-      inc c.pos, 2
+      step c, 2
     of 't':
       result = charExpr('\t')
-      inc c.pos, 2
+      step c, 2
     of 'b':
       result = if inClass: charExpr('\b') else: newNode(reWordBoundary)
-      inc c.pos, 2
+      step c, 2
     of 'B':
       result = if inClass: charExpr('\b') else: newNode(reWordBoundaryNot)
-      inc c.pos, 2
+      step c, 2
     of 'e':
       result = charExpr('\e')
-      inc c.pos, 2
+      step c, 2
     of 'a', 'A':
       result = if inClass: charExpr('\a') else: newNode(reBegin)
-      inc c.pos, 2
+      step c, 2
     of 'v':
       result = charExpr('\v')
-      inc c.pos, 2
+      step c, 2
     of 'f':
       result = charExpr('\f')
-      inc c.pos, 2
+      step c, 2
     of 'z', 'Z':
       if inClass:
         error c, "'\\Z' is not supported in a character class"
         result = epsExpr()
       else:
         result = newNode(reEnd)
-      inc c.pos, 2
+      step c, 2
     of 's', 'd', 'w':
       result = cclassExpr(namedClass(ch))
-      inc c.pos, 2
+      step c, 2
     of 'S', 'D', 'W':
       result = cclassExpr(complement(namedClass(char(ord(ch) + 32))))
-      inc c.pos, 2
+      step c, 2
     of '0'..'9':
       let startsWithZero = ch == '0'
       var val = ord(ch) - ord('0')
-      inc c.pos, 2
+      step c, 2
       var i = 1
       while i <= 4 and c.pos < c.buf.len and
             c.buf[c.pos] >= '0' and c.buf[c.pos] <= '9':
         val = val * 10 + ord(c.buf[c.pos]) - ord('0')
-        inc c.pos
+        step c
         inc i
       if startsWithZero or reNoBackrefs in c.flags:
         if val > 255:
@@ -345,13 +354,13 @@ proc getChar(c: var ReCtx; inClass: bool): RegexNode =
         error c, "invalid character after '\\': #" & $ord(ch)
         result = epsExpr()
       else:
-        inc c.pos
+        step c
         result = readRune(c)
 
 proc parseStr(c: var ReCtx): RegexNode =
   ## `"..."` — a literal run in which the regex operators lose their meaning.
   result = epsExpr()
-  inc c.pos # skip the opening quote
+  step c # skip the opening quote
   while c.pos < c.buf.len and c.buf[c.pos] != '\"':
     if c.buf[c.pos] == '\r' or c.buf[c.pos] == '\L':
       error c, "'\"' expected"
@@ -366,17 +375,17 @@ proc parseStr(c: var ReCtx): RegexNode =
       error c, "only single characters are allowed in a quoted string"
       return epsExpr()
   if c.pos < c.buf.len:
-    inc c.pos # skip the closing quote
+    step c # skip the closing quote
   else:
     error c, "'\"' expected"
 
 proc parseCClass(c: var ReCtx): RegexNode =
   var cc: RuneSet = @[]
-  inc c.pos # skip '['
+  step c # skip '['
   var caret = false
   if c.pos < c.buf.len and c.buf[c.pos] == '^':
     caret = true
-    inc c.pos
+    step c
   while c.pos < c.buf.len and c.buf[c.pos] != ']':
     if c.buf[c.pos] == '\r' or c.buf[c.pos] == '\L':
       error c, "']' expected"
@@ -386,7 +395,7 @@ proc parseCClass(c: var ReCtx): RegexNode =
     if a.kind == reChar:
       cc.incl int(a.r), int(a.r)
       if c.pos < c.buf.len and c.buf[c.pos] == '-':
-        inc c.pos
+        step c
         if c.pos < c.buf.len and c.buf[c.pos] == ']':
           cc.incl ord('-'), ord('-')
           break
@@ -410,7 +419,7 @@ proc parseCClass(c: var ReCtx): RegexNode =
       error c, "'" & c.buf[c.pos] & "' cannot be part of a character class"
       return epsExpr()
   if c.pos < c.buf.len and c.buf[c.pos] == ']':
-    inc c.pos
+    step c
   else:
     error c, "']' expected"
     return epsExpr()
@@ -421,7 +430,7 @@ proc parseNum(c: var ReCtx): int =
   if c.pos < c.buf.len and c.buf[c.pos] >= '0' and c.buf[c.pos] <= '9':
     while c.pos < c.buf.len and c.buf[c.pos] >= '0' and c.buf[c.pos] <= '9':
       result = result * 10 + ord(c.buf[c.pos]) - ord('0')
-      inc c.pos
+      step c
   else:
     error c, "number expected"
 
@@ -446,17 +455,17 @@ proc factor(c: var ReCtx): RegexNode =
   of '[':
     result = parseCClass(c)
   of '.':
-    inc c.pos
+    step c
     result = cclassExpr(complement(@[]))
   of '(':
-    inc c.pos
+    step c
     var isCapture = reNoCaptures notin c.flags
-    if c.pos + 1 < c.buf.len and c.buf[c.pos] == '?' and c.buf[c.pos+1] == ':':
-      inc c.pos, 2
+    if c.pos < c.buf.len - 1 and c.buf[c.pos] == '?' and c.buf[c.pos+1] == ':':
+      step c, 2
       isCapture = false
     result = parseRegExprImpl(c)
     if getNext(c) == ')':
-      inc c.pos
+      step c
     else:
       error c, "')' expected"
       return epsExpr()
@@ -476,10 +485,10 @@ proc factor(c: var ReCtx): RegexNode =
     error c, "escape '" & c.buf[c.pos] & "' with '\\'"
     result = epsExpr()
   of '$':
-    inc c.pos
+    step c
     result = newNode(reEnd)
   of '^':
-    inc c.pos
+    step c
     result = newNode(reBegin)
   else:
     result = readRune(c)
@@ -490,27 +499,27 @@ proc factor(c: var ReCtx): RegexNode =
   while running:
     case getNext(c)
     of '*':
-      inc c.pos
+      step c
       result = starExpr(result)
     of '+':
-      inc c.pos
+      step c
       result = plusExpr(result)
     of '?':
-      inc c.pos
+      step c
       result = optExpr(result)
     of '{':
-      inc c.pos
+      step c
       var m = parseNum(c)
       if c.err.len > 0: return result
       var n = m
       if getNext(c) == ',':
-        inc c.pos
+        step c
         skipSpaces c
         n = parseNum(c)
         if c.err.len > 0: return result
       result = mnExpr(result, m, n)
       if getNext(c) == '}':
-        inc c.pos
+        step c
       else:
         error c, "'}' expected"
         return result
@@ -531,7 +540,7 @@ proc term(c: var ReCtx): RegexNode =
 proc parseRegExprImpl(c: var ReCtx): RegexNode =
   result = term(c)
   while c.err.len == 0 and getNext(c) == '|':
-    inc c.pos
+    step c
     result = altExpr(result, term(c))
 
 proc parseRegExpr*(pattern: string; flags: set[RegexFlag];
@@ -1813,15 +1822,17 @@ proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
 # Execution
 # ---------------------------------------------------------------------------
 
-func backrefMatches(s: string; sp: Natural; c: Capture): bool
+func backrefEnd(s: string; sp: Natural; c: Capture): int
     {.requires: c.last < s.len.} =
-  ## Does the text at `sp` repeat what `c` captured?
+  ## Where the text at `sp` ends that repeats what `c` captured, `-1` when it
+  ## does not repeat it. An end, not a length: `sp = e` owes nothing beyond
+  ## `0 <= e`, where `sp + len` would owe `sp + len <= high(int)`.
   var i = c.first
   var k = sp
   while true:
-    if i > c.last: return true
+    if i > c.last: return k
     {.assert: i < s.len.}
-    if k >= s.len or s[k] != s[i]: return false
+    if k >= s.len or s[k] != s[i]: return -1
     inc k
     inc i
 
@@ -1915,9 +1926,10 @@ func run[trackCaptures: static[bool]](code: seq[RegexInstr]; data: seq[set[char]
     of opcBackref:
       if arg < caps.len:
         let cap = caps[arg]
-        if cap.last < s.len and backrefMatches(s, sp, cap):
+        let e = if cap.last < s.len: backrefEnd(s, sp, cap) else: -1
+        if e >= 0:
           pc = int(code[pc+1].arg)
-          inc sp, cap.last - cap.first + 1
+          sp = e
         else:
           inc pc, 2
       else:
@@ -2162,9 +2174,15 @@ func runThreads*(t: var Threads; r: Regex; s: string; sp: var Natural;
   ## to `until` and then until no thread is alive. `sp` is left where the
   ## threads gave out, past `s.len` when they reached the end.
   initThreads t, r
-  while true:
-    if best < 0 and canStart(r, s, sp): spawn t, r, sp
-    advance t, r, s, sp, best, bestEnd
-    inc sp
-    if sp > s.len: return
-    if not alive(t) and (best >= 0 or sp > until): return
+  # `while p <= n` rather than a test after `inc p`: the loop condition is
+  # what tells the prover, on every round, that `inc p` cannot wrap. A local
+  # `p` and `n`, because `advance` takes `var` arguments, which makes the
+  # prover forget what it knew about `sp` and `s.len`.
+  let n = s.len
+  var p: Natural = sp
+  while p <= n:
+    if best < 0 and canStart(r, s, p): spawn t, r, p
+    advance t, r, s, p, best, bestEnd
+    inc p
+    if not alive(t) and (best >= 0 or p > until): break
+  sp = p

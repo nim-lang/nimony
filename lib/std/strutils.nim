@@ -276,6 +276,10 @@ template splitCommon(s, sep, maxsplit, sepLen) {.untyped.} =
     if splits == 0: last = len(s)
     yield substr(s, first, last-1)
     if splits == 0: break
+    # `last == len(s)`: no separator left, and the step below would end the
+    # loop anyway (`sepLen >= 1`). Leaving here tells the prover `last <
+    # len(s)`, which the inner `while` made it forget.
+    if last >= len(s): break
     dec(splits)
     inc(last, sepLen)
 
@@ -343,7 +347,10 @@ iterator split*(s: string; sep: char; maxsplit: int = -1): string =
 
 iterator split*(s: string; sep: string; maxsplit: int = -1): string =
   ## Splits the string `s` into substrings using the separator `sep`.
-  let sepLen = if sep.len == 0: 1 else: sep.len
+  # Typed as a range, not `let sepLen = if ...`: a declared bound survives the
+  # `yield` in `splitCommon`, which wipes what the flow facts know.
+  var sepLen: range[1..MaxContainerLen] = 1
+  if sep.len > 0: sepLen = sep.len
   splitCommon(s, sep, maxsplit, sepLen)
 
 iterator splitLines*(s: string; keepEol = false): string =
@@ -513,8 +520,9 @@ func delete*(s: var string, slice: Slice[int]) =
     var i = slice.a
     # if j < s.len: moveMem(addr s[i], addr s[j], s.len - j) # pending benchmark
     for j in slice.b + 1 ..< s.len:
-      # `i < j` always holds; the prover cannot see that, so it is checked
-      if i < s.len: s[i] = s[j]
+      # `i` starts at `slice.a <= slice.b < j` and both advance together
+      {.assume: i < j.}
+      s[i] = s[j]
       inc i
     shrink(s, i)
 
@@ -661,7 +669,7 @@ func normalize*(s: string): string =
     assert normalize("Foo Bar") == "foo bar"
   result = newStringOfCap(s.len)
   for c in items(s):
-    if c in {'A'..'Z'}:
+    if c >= 'A' and c <= 'Z':
       result.add chr(ord(c) + (ord('a') - ord('A')))
     elif c != '_':
       result.add c
@@ -784,7 +792,8 @@ func initSkipTable*(sub: string): SkipTable {.noinit.} =
   ## * `find func<#find,SkipTable,string,string,Natural,int>`_
   initSkipTable(result, sub)
 
-func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
+func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int {.
+    ensures: result <= s.len.} =
   ## Searches for `sub` in `s` inside range `start..last` using preprocessed
   ## table `a`. If `last` is unspecified, it defaults to `s.high` (the last
   ## element).
@@ -801,6 +810,7 @@ func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
   if subLast == -1:
     # this was an empty needle string,
     # we count this as match in the first possible position:
+    if start > s.len: return -1 # there is none past the end
     return start
 
   # This is an implementation of the Boyer-Moore Horspool algorithms
@@ -808,14 +818,17 @@ func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
   result = -1
   var skip = int(start)
 
-  while last - skip >= subLast:
+  # `skip <= last` follows from the second test (`subLast >= 0`); stated
+  # alone it is a fact the prover can keep, and `result < s.len` with it
+  while skip <= last and last - skip >= subLast:
     if s.continuesWith(sub, skip):
       return skip
     let e = skip + subLast
     if e >= 0 and e < s.len: inc skip, a[s[e]]
     else: break
 
-func find*(s, sub: string; start: Natural = 0; last = -1): int =
+func find*(s, sub: string; start: Natural = 0; last = -1): int {.
+    ensures: result <= s.len.} =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included).
   ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
   ##
@@ -994,11 +1007,17 @@ func multiReplace*(s: string; replacements: openArray[(string, string)]): string
       # Assume most chars in s are not candidates for any replacement operation
       let c = s[i]
       if c in fastChk:
+        # `i` advances outside the `for`: stepping it inside would make the
+        # loop forget `i < s.len`, and the `inc(i)` below with it
+        var matched = 0
         for repl in replacements.items:
           if repl[0].len > 0 and s.continuesWith(repl[0], i):
             add result, repl[1]
-            inc(i, repl[0].len)
-            break sIteration
+            matched = repl[0].len
+            break
+        if matched > 0:
+          inc(i, matched)
+          break sIteration
       # No matching replacement found
       # copy current character from s
       add result, c
@@ -1115,7 +1134,9 @@ func unescape*(s: string, prefix = "\"", suffix = "\""): string {.raises.} =
       case s[i+1]:
       of 'x':
         var c = 0
-        inc i, parseutils.parseHex(s, c, i+2, maxLen = 2)
+        let n = parseutils.parseHex(s, c, i+2, maxLen = 2)
+        # `maxLen = 2`: `n` is `0..2`, which the prover cannot know
+        if n > 0 and n <= 2: inc i, n
         result.add(chr(c and 0xFF)) # two hex digits: `and` says so to the prover
       of '\\':
         result.add('\\')
@@ -1332,10 +1353,9 @@ func fmtScientific(neg: bool; digits: string; exp, precision: int;
   result.add (if d.len > 0: d[0] else: '0')
   if precision > 0 or forcePoint:
     result.add decimalSep
-    var i = 1
-    while i <= precision:
+    for k in 0 ..< precision:
+      let i = k + 1 # `1 .. precision` could not be shown to end
       result.add (if i < d.len: d[i] else: '0')
-      inc i
   let e10 = e - 1
   result.add 'e'
   if e10 < 0: result.add '-' else: result.add '+'
@@ -1440,7 +1460,7 @@ func findNormalized(x: string, inArray: openArray[string]): int {.
   ## The index of the value that follows the key `x` in `inArray`, -1 if
   ## there is none.
   var i = 0
-  while i+1 < inArray.len:
+  while i < inArray.len - 1:
     if cmpIgnoreStyle(x, inArray[i]) == 0: return i+1
     inc(i, 2) # incrementing by 1 would probably lead to a
               # security hole...
@@ -1508,9 +1528,10 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
       case formatstr[i+1]
       of '#':
         if num >= a.len: invalidFormatString(formatstr)
-        else: add result, a[num]
+        else:
+          add result, a[num]
+          inc num
         inc i, 2
-        inc num
       of '$':
         add result, '$'
         inc(i, 2)
@@ -1540,6 +1561,8 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
           else:
             isNumber = -1
           inc(j)
+        # `j` started at most at `formatstr.len`: `i+1 < len(formatstr)`
+        {.assume: j <= formatstr.len.}
         if isNumber == 1:
           let idx = if not negative: k-1 else: a.len-k
           if idx >= 0 and idx < a.len: add result, a[idx]

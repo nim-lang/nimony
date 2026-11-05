@@ -577,7 +577,11 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Nif
       dest.addParLe(FalseX, info)
       dest.addParRi()
     of FloatT:
+      # `(inf)` is typed as `float`; convert so `high(float32)` is a `float32`
+      dest.addParLe(ConvX, info)
+      dest.addSubtree typ
       dest.addParLe(NeginfX, info)
+      dest.addParRi()
       dest.addParRi()
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
@@ -670,7 +674,11 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Ni
       dest.addParLe(TrueX, info)
       dest.addParRi()
     of FloatT:
+      # `(inf)` is typed as `float`; convert so `high(float32)` is a `float32`
+      dest.addParLe(ConvX, info)
+      dest.addSubtree typ
       dest.addParLe(InfX, info)
+      dest.addParRi()
       dest.addParRi()
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
@@ -921,6 +929,43 @@ proc semInclExcl*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semExpr c, dest, op
     it.n = op.n
   producesVoid c, dest, info, it.typ
+
+proc semIncDec*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(inc T x y?)` / `(dec T x y?)`: `x` is the location, of type `T`; the
+  ## optional step is any ordinal.
+  let info = it.n.info
+  copyInto dest, it.n:
+    let typeStart = dest.len
+    semLocalTypeImpl c, dest, it.n, InLocalDecl
+    let typ = typeToCursor(c, dest, typeStart)
+    var x = Item(n: it.n, typ: typ)
+    semExpr c, dest, x
+    if x.n.hasMore:
+      var y = Item(n: x.n, typ: c.types.autoType)
+      semExpr c, dest, y
+      x.n = y.n
+    it.n = x.n
+  producesVoid c, dest, info, it.typ
+
+proc semSuccPred*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(succ T x y?)` / `(pred T x y?)`: a value of type `T`, the optional step
+  ## is any ordinal.
+  let beforeExpr = dest.len
+  var typ = default(TypeCursor)
+  copyInto dest, it.n:
+    let typeStart = dest.len
+    semLocalTypeImpl c, dest, it.n, InLocalDecl
+    typ = typeToCursor(c, dest, typeStart)
+    var x = Item(n: it.n, typ: typ)
+    semExpr c, dest, x
+    if x.n.hasMore:
+      var y = Item(n: x.n, typ: c.types.autoType)
+      semExpr c, dest, y
+      x.n = y.n
+    it.n = x.n
+  let expected = it.typ
+  it.typ = typ
+  commonType c, dest, it, beforeExpr, expected
 
 proc semInSet*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info

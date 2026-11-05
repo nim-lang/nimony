@@ -12,12 +12,36 @@ iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
     inc i
 
 iterator `..`*[T: Ordinal](a, b: T): T {.inline,
+    requires: b < high(T) or
+      (sizeof(T) == 1 and ord(high(T)) < 127) or
+      (sizeof(T) == 2 and ord(high(T)) < 32767) or
+      (sizeof(T) == 4 and ord(high(T)) < 2147483647) or
+      (sizeof(T) == 8 and ord(high(T)) < 9223372036854775807),
     ensures: (a <= result and result <= b).} =
   ## Count up in the range `[a, b]`
+  ##
+  ## The loop ends when `inc` takes `i` past `b`. At `b == high(T)` there is
+  ## no such value: `inc` wraps and the loop never ends, so `b` must lie
+  ## below `high(T)`. Unless `T` has bits to spare — an enum whose `high` is
+  ## below what its storage holds: `inc` is not checked for it, so `i` steps
+  ## past `high(T)` and the loop ends after all. `for e in ea..ec` and
+  ## `for i in 0..10` are fine, `for i in 0..high(int)` is a compile-time
+  ## error. (`ord(high(uint64))` does not fold, so a `uint64` loop up to
+  ## `high` is not caught.)
   var i = a
-  while i <= b:
-    yield i
-    inc i
+  when T is range:
+    # A `range` value past `b` is not one: `inc` on it owes the range
+    # (nim-lang/nimony#2855), so the step is only taken below `b`, and the
+    # test that says so is fresh on every round.
+    var more = i <= b
+    while more:
+      yield i
+      if i < b: inc i
+      else: more = false
+  else:
+    while i <= b:
+      yield i
+      inc i
 
 iterator `>..`*[T: Ordinal](a, b: T): T {.inline,
     ensures: (b <= result and result <= a).} =
@@ -27,6 +51,10 @@ iterator `>..`*[T: Ordinal](a, b: T): T {.inline,
     yield i
     if i == b: break
     dec i
+
+iterator items*[T: OrdinalEnum](E: typedesc[T]): T =
+  for v in low(E) .. high(E):
+    yield v
 
 iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
     ensures: (b <= result and result <= a).} =
@@ -46,11 +74,19 @@ iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
       dec(res, step)
 
 iterator countup*[T: Ordinal](a, b: T; step: Positive = 1): T {.inline,
+    requires: b < high(T) or
+      (sizeof(T) == 1 and ord(high(T)) < 127) or
+      (sizeof(T) == 2 and ord(high(T)) < 32767) or
+      (sizeof(T) == 4 and ord(high(T)) < 2147483647) or
+      (sizeof(T) == 8 and ord(high(T)) < 9223372036854775807),
     ensures: (a <= result and result <= b).} =
   ## Counts from ordinal value `a` to `b` (inclusive) with the given
   ## step count.
   ##
-  ## `step` may only be positive.
+  ## `step` may only be positive. Like `..`, `b` must lie below `high(T)`
+  ## unless `T` has bits to spare. **Note**: with a `step > 1` that is not
+  ## enough: this fails if `b + step > high(T)` for efficiency reasons and
+  ## it is a rare case.
   var res = a
   while res <= b:
     yield res

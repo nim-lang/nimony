@@ -77,7 +77,8 @@ func fromBytesBE*(data: openArray[byte]; res: var BigNum): bool =
     shift = shift + 8
     if shift == 32:
       shift = 0
-      inc limb
+      # past the last limb every further byte is dropped anyway
+      if limb < MaxLimbs: inc limb
     dec i
   var used = (significant + 3) div 4
   if used < 1: used = 1
@@ -196,7 +197,7 @@ func reduce*(ctx: Mont; a: BigNum): Limbs =
   ## generally for any `a` that fits `m.n` limbs: subtract until below.
   result = a.limbs
   let n = ctx.m.n
-  var i = n
+  var i: int = n # not a `LimbCount`: it runs up to `MaxLimbs`, past `high(LimbCount)`
   while i < MaxLimbs:
     result[i] = 0'u32
     inc i

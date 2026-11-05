@@ -213,6 +213,9 @@ type
     types*: BuiltinTypes
     typeMem*: Table[string, TokenBuf]
     instantiatedTypes*: Table[string, SymId]
+    typesInProgress*: seq[SymId]
+      ## Type declarations and inlined aliases whose bodies are being semchecked;
+      ## reaching one of them again through aliases is an illegal recursion.
     instantiatedProcs*: Table[(SymId, string), SymId]
     thisModuleSuffix*: string
     visOwner*: seq[VisOwner]
