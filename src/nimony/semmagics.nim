@@ -922,6 +922,43 @@ proc semInclExcl*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     it.n = op.n
   producesVoid c, dest, info, it.typ
 
+proc semIncDec*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(inc T x y?)` / `(dec T x y?)`: `x` is the location, of type `T`; the
+  ## optional step is any ordinal.
+  let info = it.n.info
+  copyInto dest, it.n:
+    let typeStart = dest.len
+    semLocalTypeImpl c, dest, it.n, InLocalDecl
+    let typ = typeToCursor(c, dest, typeStart)
+    var x = Item(n: it.n, typ: typ)
+    semExpr c, dest, x
+    if x.n.hasMore:
+      var y = Item(n: x.n, typ: c.types.autoType)
+      semExpr c, dest, y
+      x.n = y.n
+    it.n = x.n
+  producesVoid c, dest, info, it.typ
+
+proc semSuccPred*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(succ T x y?)` / `(pred T x y?)`: a value of type `T`, the optional step
+  ## is any ordinal.
+  let beforeExpr = dest.len
+  var typ = default(TypeCursor)
+  copyInto dest, it.n:
+    let typeStart = dest.len
+    semLocalTypeImpl c, dest, it.n, InLocalDecl
+    typ = typeToCursor(c, dest, typeStart)
+    var x = Item(n: it.n, typ: typ)
+    semExpr c, dest, x
+    if x.n.hasMore:
+      var y = Item(n: x.n, typ: c.types.autoType)
+      semExpr c, dest, y
+      x.n = y.n
+    it.n = x.n
+  let expected = it.typ
+  it.typ = typ
+  commonType c, dest, it, beforeExpr, expected
+
 proc semInSet*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   let beforeExpr = dest.len

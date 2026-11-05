@@ -1,23 +1,27 @@
-func succ*[T, V: Ordinal](x: T; y: V = T(1)): T {.magic: "Succ", noSideEffect.}
-  ## Successor of `x`, stepped by `y` (default one step).
-func pred*[T, V: Ordinal](x: T; y: V = T(1)): T {.magic: "Pred", noSideEffect.}
-  ## Predecessor of `x`, stepped by `y` (default one step).
+# `succ`, `pred`, `inc` and `dec` are magics of their own, not `add`/`sub`:
+# on a `range` type the result has to lie in the range, and the contract
+# analysis checks that where the operation is written, with the caller's
+# guards in view. The hexer lowers them to plain arithmetic. A step that is
+# left out is 1 in the ordinal's base type, never `T(1)`: for `range[5..10]`
+# that conversion would itself be out of range.
 
-func inc*[T, V: Ordinal](x: var T, y: V) {.inline.} =
+func succ*[T: Ordinal](x: T): T {.magic: "Succ", noSideEffect.}
+  ## Successor of `x`.
+func succ*[T, V: Ordinal](x: T; y: V): T {.magic: "Succ", noSideEffect.}
+  ## Successor of `x`, stepped by `y`.
+func pred*[T: Ordinal](x: T): T {.magic: "Pred", noSideEffect.}
+  ## Predecessor of `x`.
+func pred*[T, V: Ordinal](x: T; y: V): T {.magic: "Pred", noSideEffect.}
+  ## Predecessor of `x`, stepped by `y`.
+
+func inc*[T, V: Ordinal](x: var T, y: V) {.magic: "Inc", noSideEffect.}
   ## Increments the ordinal `x` by `y`.
-  x = succ(x, y)
-
-func dec*[T, V: Ordinal](x: var T, y: V) {.inline.} =
+func dec*[T, V: Ordinal](x: var T, y: V) {.magic: "Dec", noSideEffect.}
   ## Decrements the ordinal `x` by `y`.
-  x = pred(x, y)
-
-func inc*[T: Ordinal](x: var T) {.inline.} =
+func inc*[T: Ordinal](x: var T) {.magic: "Inc", noSideEffect.}
   ## Increments the ordinal `x` by 1.
-  x = succ(x)
-
-func dec*[T: Ordinal](x: var T) {.inline.} =
+func dec*[T: Ordinal](x: var T) {.magic: "Dec", noSideEffect.}
   ## Decrements the ordinal `x` by 1.
-  x = pred(x)
 
 # --------------------------------------------------------------------------
 # built-in operators

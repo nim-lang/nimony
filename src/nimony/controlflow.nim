@@ -659,7 +659,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
          LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
          MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
          BreakS, ContinueS, JmpS, LabS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS,
-         PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+         PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
          DiscardS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
@@ -1106,7 +1106,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
      ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     c.dest.addDotToken()
     skip n
-  of CallKindsS, InclS, ExclS, AssumeS, AssertS:
+  of CallKindsS, InclS, ExclS, IncS, DecS, AssumeS, AssertS:
     trVoidCall c, n
   of YldS, DiscardS, AsmS, DeferS:
     var tar = initTarget(IsAppend)

@@ -538,7 +538,7 @@ proc tr(c: var Context; n: var Cursor) =
       takeTree c.dest, n
     of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
         WhenS, ForS, YldS, StmtsS, AlwaysS, PragmasS,
-        PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+        PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,
         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,

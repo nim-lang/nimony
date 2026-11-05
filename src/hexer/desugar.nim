@@ -9,7 +9,7 @@ else:
 import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
+import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes, closuretypes, lifter
 import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
@@ -939,6 +939,75 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
 
+proc addStepOne(dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
+  ## The step `succ`/`inc` take when none is written: 1 of `typ`'s base type,
+  ## as a plain literal where that is an integer, like a hand-written `i - 1`.
+  var base = toTypeImpl(typ)
+  if base.typeKind == RangetypeT:
+    inc base
+    base = toTypeImpl(base)
+  case base.typeKind
+  of IntT: dest.addIntLit(1, info)
+  of UIntT: dest.addUIntLit(1'u64, info)
+  else:
+    dest.addParLe(ConvX, info)
+    dest.addSubtree typ
+    dest.addIntLit(1, info)
+    dest.addParRi()
+
+proc genSuccPred(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `(succ T x y?)` is `(add T x y)` and `pred` is `sub`: that the result is
+  ## in `T`'s range was proven by the contract analysis.
+  let info = n.info
+  let start = n
+  dest.addParLe((if n.exprKind == SuccX: AddX else: SubX), info)
+  n = sub(n)
+  let typ = n
+  tr(c, dest, n) # the type
+  tr(c, dest, n) # the operand
+  if n.hasMore: tr(c, dest, n)
+  else: addStepOne(dest, typ, info)
+  dest.addParRi()
+  n = start; skip n
+
+proc genIncDec(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `(inc T x y?)` is `x = x + y`, evaluating the location `x` once.
+  let info = n.info
+  let isInc = n.stmtKind == IncS
+  let start = n
+  n = sub(n)
+  let typ = n
+  var argsBuf = createTokenBuf(16)
+  swap dest, argsBuf
+  let typeStart = dest.len
+  tr(c, dest, n)
+  let aStart = dest.len
+  tr(c, dest, n)
+  let hasStep = n.hasMore
+  let bStart = dest.len
+  if hasStep: tr(c, dest, n)
+  swap dest, argsBuf
+  n = start; skip n
+  let tType = cursorAt(argsBuf, typeStart)
+  let aOrig = cursorAt(argsBuf, aStart)
+  let useTemp = needsTemp(aOrig)
+  let oldBufStackLen = c.tempUseBufStack.len
+  var a = aOrig
+  if useTemp:
+    dest.addParLe(StmtsS, info)
+    a = liftTempAddr(c, dest, aOrig, tType, info)
+  copyIntoKind dest, AsgnS, info:
+    dest.addSubtree a
+    dest.addParLe((if isInc: AddX else: SubX), info)
+    dest.addSubtree tType
+    dest.addSubtree a
+    if hasStep: dest.addSubtree cursorAt(argsBuf, bStart)
+    else: addStepOne(dest, typ, info)
+    dest.addParRi()
+  if useTemp:
+    dest.addParRi()
+    c.tempUseBufStack.shrink(oldBufStackLen)
+
 const FoldableFloatExprs = {AddX, SubX, MulX, DivX, NegX, EqX, LeX, LtX}
 
 proc floatOpBits(n: Cursor): int =
@@ -1369,6 +1438,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
           trSons(c, dest, n)
       of InclS, ExclS:
         genInclExcl(c, dest, n)
+      of IncS, DecS:
+        genIncDec(c, dest, n)
       of CaseS:
         copyInto dest, n:
           while n.hasMore:
@@ -1483,6 +1554,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         trFloatArith(c, dest, n)
     of AddX, SubX, MulX, DivX, NegX, LeX, LtX:
       trFloatArith(c, dest, n)
+    of SuccX, PredX:
+      genSuccPred(c, dest, n)
     of AndX, OrX:
       trShortCircuit(c, dest, n)
     of DelayX:

@@ -789,7 +789,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
             analyseExpr c, pc
         of CallKindsS:
           analyseCall(c, pc)
-        of EmitS, InclS, ExclS:
+        of EmitS, InclS, ExclS, IncS, DecS:
           # not of interest for contract analysis:
           skip pc
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, RaiseS, ExportS,
@@ -938,7 +938,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      UnpackdeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
-     BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS,
+     BreakS, ContinueS, RetS, InclS, ExclS, IncS, DecS, DiscardS, AssumeS, AssertS,
      LabS, JmpS, NoStmt:
     c.toplevelStmts.takeTree n
 

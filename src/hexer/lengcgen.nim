@@ -1480,7 +1480,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
         XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX,
         OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
-        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
+        AddX, SubX, SuccX, PredX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
         BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CallX,
         CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
@@ -1843,7 +1843,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           trExpr c, dest, n
         dest.addParRi(n.endInfo)
     of ErrX, NewobjX, NewrefX, SetconstrX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
-       InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
+       InsetX, CardX, SuccX, PredX, BracketX, CurlyX, TupX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX,
@@ -2205,7 +2205,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
             trStmt c, dest, n             # the body
       else:
         error c, "BUG: not eliminated: ", n
-    of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS,
+    of YldS, ForS, CoroforS, InclS, ExclS, IncS, DecS, DeferS, UnpackdeclS,
        BlockS, IfS:
       error c, "BUG: not eliminated: ", n
     of TryS:
