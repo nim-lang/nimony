@@ -577,7 +577,11 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Nif
       dest.addParLe(FalseX, info)
       dest.addParRi()
     of FloatT:
+      # `(inf)` is typed as `float`; convert so `high(float32)` is a `float32`
+      dest.addParLe(ConvX, info)
+      dest.addSubtree typ
       dest.addParLe(NeginfX, info)
+      dest.addParRi()
       dest.addParRi()
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
@@ -670,7 +674,11 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Ni
       dest.addParLe(TrueX, info)
       dest.addParRi()
     of FloatT:
+      # `(inf)` is typed as `float`; convert so `high(float32)` is a `float32`
+      dest.addParLe(ConvX, info)
+      dest.addSubtree typ
       dest.addParLe(InfX, info)
+      dest.addParRi()
       dest.addParRi()
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
