@@ -1,12 +1,27 @@
-ok
 EOF
 0:"" EOF
+0:"" 0:"" EOF
+3:"abc" EOF
 78:"a*78" EOF
 78:"a*78" EOF
 79:"a*79" EOF
-158:"a*158" EOF
+126:"a*126" EOF
+127:"a*127" EOF
+128:"a*128" EOF
+127:"a*127" EOF
+300:"a*300" 1:"b" EOF
+88:"a*79BCDEFGHIJ" 79:"b*79" 80:"c*80" 3:"abc" EOF
 3:"a\0b" EOF
 2:"q\0" EOF
 2:"a\0" 1:"x" EOF
 78:"a*77\0" EOF
 79:"a*78\0" EOF
+1:"\0" EOF | raw 2:"\0\r" EOF
+1:"a" 1:"b" EOF | raw 2:"a\r" 2:"b\r" EOF
+2:"a\r" EOF
+1:"\r" EOF
+0:"" EOF | raw 1:"\r" EOF
+3:"a\rb" EOF
+2:"a\r" EOF | raw 3:"a\r*2" EOF
+1:"a" 1:"\r" EOF
+126:"a*126" 1:"b" EOF | raw 127:"a*126\r" 1:"b" EOF
