@@ -794,6 +794,9 @@ block: # binom
   assert binom(101, 100) == 101
   assert binom(9999, 2) == 49985001
 
+func genericGcd[T: SomeInteger and IntegerArithmetic](x, y: T): T = gcd(x, y)
+func genericLcm[T: SomeInteger and IntegerArithmetic](x, y: T): T = lcm(x, y)
+
 block:  # gcd
   assert gcd(0, 0) == 0
   assert gcd(0, 1) == 1
@@ -833,6 +836,19 @@ block:  # gcd
 
   assert gcd(@[2, 6, 12]) == 2
 
+  assert gcd(0u, 0u) == 0u
+  assert gcd(0u, 12u) == 12u
+  assert gcd(12u, 0u) == 12u
+  assert gcd(12u, 8u) == 4u
+  assert gcd(12'u8, 8'u8) == 4'u8
+  assert gcd(12'u16, 8'u16) == 4'u16
+  assert gcd(12'u32, 8'u32) == 4'u32
+  assert gcd(12'u64, 8'u64) == 4'u64
+  assert gcd(@[12u, 8u, 4u]) == 4u
+
+  assert genericGcd(12u, 8u) == 4u
+  assert genericGcd(12, 8) == 4
+
 block:  # lcm
   assert lcm(1, 1) == 1
   assert lcm(1, 2) == 2
@@ -849,3 +865,15 @@ block:  # lcm
 
   assert lcm([3, 5, 7]) == 105
   assert lcm([4, 6, 9, 12]) == 36
+
+  assert lcm(0u, 1u) == 0u
+  assert lcm(1u, 0u) == 0u
+  assert lcm(4u, 6u) == 12u
+  assert lcm(4'u8, 6'u8) == 12'u8
+  assert lcm(4'u16, 6'u16) == 12'u16
+  assert lcm(4'u32, 6'u32) == 12'u32
+  assert lcm(4'u64, 6'u64) == 12'u64
+  assert lcm(@[4u, 6u, 9u, 12u]) == 36u
+
+  assert genericLcm(4u, 6u) == 12u
+  assert genericLcm(4, 6) == 12
