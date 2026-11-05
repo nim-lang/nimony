@@ -1,32 +1,8 @@
 ## Type-to-string rendering for the `typetraits` plugin (`$`).
 ## Mirrors the type-position subset of `src/nimony/renderer.nim` (`gtype`).
 
+import std/strutils
 import plugins
-
-const
-  NameSlot = 0
-  TypevarsSlot = 2
-
-proc slot(decl: NifCursor; idx: int): NifCursor =
-  result = firstChild(decl)
-  for _ in 0 ..< idx:
-    skip result
-
-proc findTypeDecl(defs: NifCursor; s: SymId; found: var bool): NifCursor =
-  result = defs
-  found = false
-  var n = defs
-  if n.stmtKind == StmtsS:
-    n.into:
-      while n.hasMore:
-        if not found:
-          var name = slot(n, NameSlot)
-          if name.symId == s:
-            result = n
-            found = true
-        skip n
-  if found and result.stmtKind != TypeS:
-    found = false
 
 proc takeNumberType(n: var NifCursor; base: string): string =
   result = base
@@ -42,33 +18,29 @@ proc takeNumberType(n: var NifCursor; base: string): string =
     while n.hasMore:
       skip n
 
-proc joinComma(parts: openArray[string]): string =
-  result = ""
-  for i, p in parts:
-    if i > 0:
-      result.add ", "
-    result.add p
-
 proc renderTypeName*(defs: NifCursor; n: var NifCursor): string
 
+proc renderInvocation(defs: NifCursor; n: var NifCursor): string =
+  var head = n
+  skip n
+  var parts: seq[string] = @[]
+  while n.hasMore:
+    parts.add renderTypeName(defs, n)
+    skip n
+  result = renderTypeName(defs, head) & "[" & parts.join(", ") & "]"
+
 proc nominalName(defs: NifCursor; sym: SymId): string =
-  var found = false
-  let decl = findTypeDecl(defs, sym, found)
-  if not found:
+  let decl = findTypeDecl(defs, sym)
+  if not decl.hasMore:
     return symBasename(sym)
-  let typevars = slot(decl, TypevarsSlot)
+  let typevars = asTypeDecl(decl).typevars
   if typevars.typeKind == AtT:
     var tv = typevars
     tv.into:
       if not tv.hasMore:
-        return symBasename(sym)
-      var head = tv
-      var parts: seq[string] = @[]
-      skip tv
-      while tv.hasMore:
-        parts.add renderTypeName(defs, tv)
-        skip tv
-      result = renderTypeName(defs, head) & "[" & joinComma(parts) & "]"
+        result = symBasename(sym)
+      else:
+        result = renderInvocation(defs, tv)
   else:
     result = symBasename(sym)
 
@@ -112,13 +84,7 @@ proc renderTypeName*(defs: NifCursor; n: var NifCursor): string =
       if not n.hasMore:
         result = "?"
         return
-      var head = n
-      var parts: seq[string] = @[]
-      skip n
-      while n.hasMore:
-        parts.add renderTypeName(defs, n)
-        skip n
-      result = renderTypeName(defs, head) & "[" & joinComma(parts) & "]"
+      result = renderInvocation(defs, n)
   of RangetypeT:
     n.into:
       if n.hasMore:
@@ -158,7 +124,7 @@ proc renderTypeName*(defs: NifCursor; n: var NifCursor): string =
       if n.hasMore and n.otherKind notin {NotnilU, NilU, UncheckedU}:
         result.add renderTypeName(defs, n)
         skip n
-      elif n.hasMore:
+      while n.hasMore:
         skip n
   of PtrT:
     result = "ptr "
@@ -166,7 +132,7 @@ proc renderTypeName*(defs: NifCursor; n: var NifCursor): string =
       if n.hasMore and n.otherKind notin {NotnilU, NilU, UncheckedU}:
         result.add renderTypeName(defs, n)
         skip n
-      elif n.hasMore:
+      while n.hasMore:
         skip n
   of SetT:
     result = "set["
@@ -178,12 +144,12 @@ proc renderTypeName*(defs: NifCursor; n: var NifCursor): string =
   of TupleT, ClosureTupleT:
     result = "tuple["
     n.into:
-      var first = true
+      var addSep = false
       while n.hasMore:
-        if not first:
+        if addSep:
           result.add ", "
         else:
-          first = false
+          addSep = true
         case n.otherKind
         of KvU:
           n.into:
