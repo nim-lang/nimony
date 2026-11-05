@@ -2061,6 +2061,8 @@ const
   ArithmeticExprs = {AddX, SubX, MulX, DivX, ModX, NegX, ShlX, ShrX, AshrX,
                      BitandX, BitorX, BitxorX, BitnotX}
 
+proc normalizedArith(c: var FirContext; n: Cursor): Cursor
+
 proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
                   needLo, needHi: bool; reportUnprovable = true) =
   ## Discharge `lo <= value <= hi` from what is known here. The obligation's
@@ -2070,6 +2072,17 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   ## the `(arrat …)` node carries (`analyseArrAt`). Everything below — the
   ## structural answers for `a + k`, `a - b`, `a shr k`, `a and k`, a call's
   ## `.ensures`, a literal — is the same question either way.
+  if value.exprKind in {SuccX, PredX}:
+    # A `succ` that owed its type's range has met it already (`checkSuccPred`);
+    # where that type is not the target's (a template's `inc(i)` resolved
+    # against an `int` parameter, stepping a `Natural`), the step is judged
+    # in its arithmetic form.
+    var sLo = zero()
+    var sHi = zero()
+    if staticRangeBounds(getType(c.typeCache, value), sLo, sHi) and lo <= sLo and sHi <= hi:
+      return
+    checkInRange c, normalizedArith(c, value), lo, hi, needLo, needHi, reportUnprovable
+    return
   # 1. The value's own *declared type* may already be a `range` that fits: a
   #    subset `range[aLo..aHi]` with `lo <= aLo` and `aHi <= hi` is provably in
   #    range. This is the type acting as its own proof (proper subtyping such as
@@ -2448,8 +2461,18 @@ proc normalizedArith(c: var FirContext; n: Cursor): Cursor =
   buf.addParLe((if n.exprKind == SuccX: AddX else: SubX), info)
   var r = n
   r = sub(r)
-  buf.addSubtree r # the type
-  skip r
+  # In the base type, like a hand-written `i + 1`: the wrap and interval rules
+  # read integer types, and the range is `checkSuccPred`'s business.
+  var t = r
+  var guard = 0
+  while t.isSymbol and guard < 8:
+    let s = tryLoadSym(t.symId)
+    if s.status != LacksNothing or s.decl.symKind != TypeY: break
+    t = asTypeDecl(s.decl).body
+    inc guard
+  if t.typeKind == RangetypeT: buf.addSubtree t.childCursor
+  else: buf.addSubtree r
+  skip r # the type
   buf.addSubtree r # the operand
   skip r
   if r.hasMore: buf.addSubtree r

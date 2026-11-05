@@ -341,7 +341,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
       trIte c, n, tjmp, fjmp
   of ErrX, SufX, AtX, DerefX, DotX, PatX, AddrX, NilX, InfX, NeginfX,
      NanX, FalseX, TrueX, XorX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX,
-     KvX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+     KvX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, SuccX, PredX,
      MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX,
      EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
      PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
@@ -625,7 +625,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       trExprLoop c, n, tar
     of QuotedX, ParX, CurlyatX, TabconstrX, DoX,
        NilX, FalseX, TrueX, NotX, NegX, KvX, OconstrX, NewobjX, NewrefX, TupconstrX,
-       AconstrX, SetconstrX, OchoiceX, CchoiceX, AddX, SubX, MulX, DivX, ModX,
+       AconstrX, SetconstrX, OchoiceX, CchoiceX, AddX, SubX, SuccX, PredX, MulX, DivX, ModX,
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
        CastX, ConvX, BaseobjX, HconvX, DconvX, InfX, NeginfX, NanX, SufX,
        UnpackX, FieldsX, FieldpairsX, EnumtostrX, XorX,

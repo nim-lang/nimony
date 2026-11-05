@@ -946,9 +946,10 @@ proc addStepOne(dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
   if base.typeKind == RangetypeT:
     inc base
     base = toTypeImpl(base)
-  case base.typeKind
-  of IntT: dest.addIntLit(1, info)
-  of UIntT: dest.addUIntLit(1'u64, info)
+  if base.typeKind == IntT:
+    dest.addIntLit(1, info)
+  elif base.typeKind == UIntT:
+    dest.addUIntLit(1'u64, info)
   else:
     dest.addParLe(ConvX, info)
     dest.addSubtree typ
