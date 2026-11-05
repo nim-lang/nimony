@@ -26,9 +26,16 @@ proc isZeroDefault*(typ: Cursor): bool =
   ## and a case object's branches are all checked, not just the first one.
   let impl = toTypeImpl(typ)
   case impl.typeKind
-  of IntT, UIntT, FloatT, CharT, BoolT, SetT,
-     PtrT, RefT, RoutineTypes, CstringT, PointerT, NiltT, OutT:
+  of IntT, UIntT, FloatT, CharT, BoolT, SetT, CstringT, PointerT, NiltT, OutT:
     result = true
+  of PtrT, RefT, RoutineTypes:
+    # `nil`, unless the type is `not nil`: then there is no default at all, and
+    # writing the zero array for it would hide that (`notnil/tdefaultcall`)
+    result = true
+    var ch = sub(impl)
+    while ch.hasMore:
+      if ch.substructureKind == NotnilU: return false
+      skip ch
   of EnumT, HoleyEnumT, AnumT:
     var err = false
     result = asSigned(enumBounds(impl).lo, err) == 0 and not err

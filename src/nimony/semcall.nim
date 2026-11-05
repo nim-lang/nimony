@@ -1346,7 +1346,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # Move out of the seq — see convMatch note above. The seq goes out
       # of scope right after resolveOverloads returns.
       var matched = ensureMove(m[idx])
-      var returnType: Cursor
+      var returnType = default(Cursor)
       if isMagic == NonMagicCall and c.inGenericDefinition == 0 and
           isZeroDefaultArray(c, finalFn.sym, matched, returnType):
         # `default(array[I, T])` for a `T` whose default is all zero bits is
