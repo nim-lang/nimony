@@ -112,16 +112,6 @@ template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
 
-type
-  Ordered* = concept
-    ## A type with the three comparison operators. Generic code over
-    ## `Ordinal` values that compares them asks for `T: Ordinal and Ordered`:
-    ## a `distinct` ordinal is an `Ordinal`, but like in Nim it only has
-    ## `==`, `<=` and `<` once it borrows them.
-    proc `==`(x, y: Self): bool
-    proc `<=`(x, y: Self): bool
-    proc `<`(x, y: Self): bool
-
 type Orderable* = concept
   proc `<=`(x, y: Self): bool
 
