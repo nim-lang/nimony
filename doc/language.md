@@ -4901,6 +4901,13 @@ The following features are available:
 ### noreturn pragma
 The `noreturn` pragma is used to mark a proc that never returns.
 
+The claim is checked: it is a compile-time error if the proc's body can reach
+its end or a `return` statement. Every path has to end in a `raise`, an
+endless loop, or a call of another `noreturn` proc such as `quit`. Callers rely
+on this: code after a call to a `noreturn` proc counts as unreachable, so
+a guard like `if i >= a.len: fail()` proves that the index `a[i]` that
+follows is in bounds.
+
 
 
 ### intdefine, booldefine and strdefine pragmas

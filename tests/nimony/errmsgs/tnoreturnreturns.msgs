@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tnoreturnreturns.nim(6, 1) Error: fallsOff is marked .noreturn but can return [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tnoreturnreturns.nim(9, 1) Error: returnsEarly is marked .noreturn but can return [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tnoreturnreturns.nim(13, 1) Error: oneBranchFallsThrough is marked .noreturn but can return [pass --verbose for the Final IR]
