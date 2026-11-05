@@ -1,1 +1,12 @@
 ok
+EOF
+0:"" EOF
+78:"a*78" EOF
+78:"a*78" EOF
+79:"a*79" EOF
+158:"a*158" EOF
+3:"a\0b" EOF
+2:"q\0" EOF
+2:"a\0" 1:"x" EOF
+78:"a*77\0" EOF
+79:"a*78\0" EOF

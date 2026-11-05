@@ -31,7 +31,57 @@ proc main() {.raises.} =
   discard tryRemoveFile(path(name))
   echo "ok"
 
+proc show(s: string): string =
+  ## `s` with NUL escaped and runs of a byte written as `a*78`.
+  result = ""
+  var i = 0
+  while i < s.len:
+    let c = s[i]
+    var run = 1
+    while i + run < s.len and s[i + run] == c: inc run
+    if c == '\0': result.add "\\0"
+    else: result.add c
+    if run > 1:
+      result.add "*"
+      result.add $run
+    i = i + run
+
+proc lines(content: string): string {.raises.} =
+  ## Writes `content` to a file and reads it back with `readLine(f, var s)`:
+  ## each line as `len:"text"`, then `EOF` once readLine returns false.
+  let name = getTempDir() / "nimony_treadlinelibc_case.txt"
+  writeFile(name, content)
+  var f: File
+  let opened = open(f, name)
+  assert opened
+  result = ""
+  var line = ""
+  var n = 0
+  while n < 10 and readLine(f, line):
+    result.add $line.len
+    result.add ":\""
+    result.add show(line)
+    result.add "\" "
+    inc n
+  result.add "EOF"
+  close(f)
+  discard tryRemoveFile(path(name))
+
+proc cases() {.raises.} =
+  echo lines("")
+  echo lines("\n")
+  echo lines(repeat('a', 78) & "\n")
+  echo lines(repeat('a', 78))  # the only case that ends inside a chunk
+  echo lines(repeat('a', 79))
+  echo lines(repeat('a', 158))
+  echo lines("a\0b\n")
+  echo lines("q\0")
+  echo lines("a\0\nx")
+  echo lines(repeat('a', 77) & "\0")
+  echo lines(repeat('a', 78) & "\0")  # Nim 2 drops this trailing NUL
+
 try:
   main()
+  cases()
 except:
   quit "treadlinelibc: unexpected error"
