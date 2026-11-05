@@ -61,6 +61,7 @@ Options:
   --outdir:DIR              (d, dl, de) write the outputs to DIR
   --isMain                  mark the file as the main module
   --native                  target the native backend (arkham+nifasm, no C)
+  --wasm                    target wasm: closure calls always pass the environment
   --app:TYPE                application type: console, gui, lib, staticlib (default: console)
   --flags:FLAGS             undocumented flags
   --version                 show the version
@@ -84,6 +85,7 @@ proc hexerMain() =
   var cycles = false
   var appType = appConsole
   var isWindows = defined(windows)
+  var wasm = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -114,6 +116,8 @@ proc hexerMain() =
         isMain = true
       of "native":
         native = true
+      of "wasm":
+        wasm = true
       of "crt":
         crt = true
       of "cycles":
@@ -139,7 +143,7 @@ proc hexerMain() =
     case action
     of "c":
       expand files[0], bits, bigEndian, flags, isMain, outdir, appType, native, isWindows, crt,
-             cycles
+             cycles, wasm
     of "d":
       deadCodeElimination(files, outdir)
     of "dl":

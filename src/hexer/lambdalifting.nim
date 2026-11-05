@@ -93,6 +93,7 @@ type
 
   Context = object
     counter: int
+    envAlwaysPassed: bool ## wasm: see `elimLambdas`
     typeCache: TypeCache
     thisModuleSuffix: string
     procStack: seq[SymId]
@@ -1576,7 +1577,7 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
   #    node. Both defects only surface on real closure code, never the tiny
   #    upstream tests.
   let needNilCheck = typ.typeKind == ProctypeT and isClosure(typ) and
-                     not calleeHasClosureParam(typ)
+                     not calleeHasClosureParam(typ) and not c.envAlwaysPassed
   var tmp = SymId(0)
   if n.kind == Symbol:
     tmp = n.symId
@@ -1786,6 +1787,12 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tre(c, dest, n)
 
 proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: NifLineInfo) =
+  if c.envAlwaysPassed and not (n.kind == Symbol and
+      c.typeCache.fetchSymKind(n.symId) in RoutineKinds):
+    # Only a routine SYMBOL can be bridged to the env-taking signature (by
+    # the back end); a proc VALUE has no bridge and would trap when called.
+    quit "[Error] " & infoToStr(info) & " wasm: a non-closure proc value cannot be " &
+        "converted to a closure; wrap it in a lambda: `proc (x: T): R = p(x)`"
   dest.copyIntoKind TupconstrX, info:
     dest.copyIntoKind ClosureTupleT, info:
       c.toProcType(dest, origTyp)
@@ -2063,9 +2070,13 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
           programs.publish(field.field, dest, beforeField)
     programs.publish(objType, dest, beforeType)
 
-proc elimLambdas*(pass: var Pass) =
+proc elimLambdas*(pass: var Pass; envAlwaysPassed = false) =
+  ## `envAlwaysPassed` (wasm): a closure is always called as `fn(args, env)`,
+  ## never split on `env == nil` into an env-less call. The back end gives a
+  ## non-closure proc stored in a closure the env-taking signature, which the
+  ## env-less arm would fail wasm's signature check against.
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, dest: initTokenBuf(),
+  var c = Context(counter: 0, dest: initTokenBuf(), envAlwaysPassed: envAlwaysPassed,
                   typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix,
                   iterStepType: createTokenBuf(1))
   c.iterStepType.addSymUse pool.symId("Join.0." & SystemModuleSuffix), NoLineInfo

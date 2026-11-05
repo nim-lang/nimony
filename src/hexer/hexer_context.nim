@@ -44,6 +44,8 @@ type
     isWindows*: bool      ## target OS is Windows: the entry point receives no
                           ## argc/argv/envp, and `dynlib` names an import
                           ## library rather than something to load at runtime.
+    wasm*: bool           ## target is wasm, whose `call_indirect` traps on a
+                          ## signature mismatch: see `elimLambdas`.
 
     instId*: int # per forStmt
     tmpId*: int # per proc
