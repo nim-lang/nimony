@@ -679,7 +679,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trInstanceof c, dest, n
     of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
        FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, AconstrX,
-       BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+       BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, SuccX, PredX, MulX, DivX, ModX, ShrX, ShlX,
        BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
        TupconstrX, SetconstrX, TabconstrX, AshrX, HconvX, DconvX, CompilesX, StaticX, DeclaredX,
@@ -702,7 +702,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       of NoStmt, CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS,
          ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, AlwaysS, PragmasS, PragmaxS,
-         InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
+         InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
          ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
          DeferS:
@@ -862,7 +862,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
      LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
      MacroS, TemplateS, BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
      BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS,
-     PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+     PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
      FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
      DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
      InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,

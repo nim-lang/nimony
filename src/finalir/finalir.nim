@@ -844,7 +844,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
      ExportexceptS, CommentS, PragmasS:
     # module bookkeeping, not code
     takeTree dest, n
-  of YldS, DiscardS, InclS, ExclS, EmitS:
+  of YldS, DiscardS, InclS, ExclS, IncS, DecS, EmitS:
     # children are plain expressions; `trExpr` handles a call operand (`s[i]`)
     trExpr c, dest, n
   else:

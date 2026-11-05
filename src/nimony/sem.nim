@@ -160,7 +160,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
   of NoStmt, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS, CursorS, PatternvarS,
      ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
      AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, AlwaysS, PragmasS,
-     PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
+     PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
      ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, StaticstmtS,
      BindS, MixinS, UsingS, AsmS, DeferS:
     result = false
@@ -1990,7 +1990,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
           dest.takeTree value
   of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
      FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, KvX, OconstrX,
-     AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+     AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, SuccX, PredX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
@@ -2301,7 +2301,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semDotAsgn c, dest, it, info, asgnStart
   of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
      FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, KvX, OconstrX,
-     AconstrX, BracketX, CurlyX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+     AconstrX, BracketX, CurlyX, OvfX, AddX, SubX, SuccX, PredX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
@@ -5971,6 +5971,9 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of InclS, ExclS:
         toplevelGuard c:
           semInclExcl c, dest, it
+      of IncS, DecS:
+        toplevelGuard c:
+          semIncDec c, dest, it
       of AssumeS, AssertS:
         pragmaGuard c:
           semAssumeAssert c, dest, it, it.n.stmtKind
@@ -6024,6 +6027,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semCmp c, dest, it
     of AddX, SubX, MulX, DivX, ModX, BitandX, BitorX, BitxorX, PlussetX, MinussetX, MulsetX, XorsetX:
       semTypedBinaryArithmetic c, dest, it
+    of SuccX, PredX:
+      semSuccPred c, dest, it
     of AshrX, ShrX, ShlX:
       semShift c, dest, it
     of BitnotX, NegX:

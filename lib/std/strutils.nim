@@ -276,6 +276,10 @@ template splitCommon(s, sep, maxsplit, sepLen) {.untyped.} =
     if splits == 0: last = len(s)
     yield substr(s, first, last-1)
     if splits == 0: break
+    # `last == len(s)`: no separator left, and the step below would end the
+    # loop anyway (`sepLen >= 1`). Leaving here tells the prover `last <
+    # len(s)`, which the inner `while` made it forget.
+    if last >= len(s): break
     dec(splits)
     inc(last, sepLen)
 
@@ -343,7 +347,10 @@ iterator split*(s: string; sep: char; maxsplit: int = -1): string =
 
 iterator split*(s: string; sep: string; maxsplit: int = -1): string =
   ## Splits the string `s` into substrings using the separator `sep`.
-  let sepLen = if sep.len == 0: 1 else: sep.len
+  # Typed as a range, not `let sepLen = if ...`: a declared bound survives the
+  # `yield` in `splitCommon`, which wipes what the flow facts know.
+  var sepLen: range[1..MaxContainerLen] = 1
+  if sep.len > 0: sepLen = sep.len
   splitCommon(s, sep, maxsplit, sepLen)
 
 iterator splitLines*(s: string; keepEol = false): string =
@@ -1000,11 +1007,17 @@ func multiReplace*(s: string; replacements: openArray[(string, string)]): string
       # Assume most chars in s are not candidates for any replacement operation
       let c = s[i]
       if c in fastChk:
+        # `i` advances outside the `for`: stepping it inside would make the
+        # loop forget `i < s.len`, and the `inc(i)` below with it
+        var matched = 0
         for repl in replacements.items:
           if repl[0].len > 0 and s.continuesWith(repl[0], i):
             add result, repl[1]
-            inc(i, repl[0].len)
-            break sIteration
+            matched = repl[0].len
+            break
+        if matched > 0:
+          inc(i, matched)
+          break sIteration
       # No matching replacement found
       # copy current character from s
       add result, c
@@ -1121,7 +1134,9 @@ func unescape*(s: string, prefix = "\"", suffix = "\""): string {.raises.} =
       case s[i+1]:
       of 'x':
         var c = 0
-        inc i, parseutils.parseHex(s, c, i+2, maxLen = 2)
+        let n = parseutils.parseHex(s, c, i+2, maxLen = 2)
+        # `maxLen = 2`: `n` is `0..2`, which the prover cannot know
+        if n > 0 and n <= 2: inc i, n
         result.add(chr(c and 0xFF)) # two hex digits: `and` says so to the prover
       of '\\':
         result.add('\\')

@@ -94,7 +94,7 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
         break
     of NoExpr, ErrX, SufX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX,
        AndX, OrX, XorX, NotX, NegX, SizeofX, CanFormCyclesX, SupportsCopyMemX, AlignofX, OffsetofX, OconstrX,
-       AconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX,
+       AconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, SuccX, PredX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
        LeX, LtX, CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX, NewrefX,
        NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX, CompilesX, StaticX,
@@ -289,7 +289,7 @@ proc classify(n: Cursor): NodeClass =
       else: result = ncOther
   of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS,
      CursorS, PatternvarS, TypeS, EmitS, AsgnS, ContinueS, LabS, JmpS, YldS,
-     PragmasS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+     PragmasS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS,
      ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, AssumeS,
      AssertS, CallstrlitS, InfixS, PrefixS, HcallS, BindS, MixinS, UsingS:
     # Nothing here forks or joins: whatever follows the node follows the
@@ -598,7 +598,7 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
       else:
         result = afterNode(m, base, pc, x, pcs, otherUsage)
   of CallS, CmdS, CallstrlitS, InfixS, PrefixS, HcallS, DiscardS, EmitS,
-     InclS, ExclS, YldS:
+     InclS, ExclS, IncS, DecS, YldS:
     # `(yld .)` from the closure-iter rewrite carries no operand; scanning it
     # is harmless and keeps the shape uniform.
     if scanAt(base, pc, x, otherUsage):

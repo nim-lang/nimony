@@ -32,8 +32,12 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "Pat": res PatX
   of "TupAt": res TupatX
   of "Asgn": res AsgnS
-  of "AddI", "AddU", "AddF64", "Succ": res AddX, TypedMagic
-  of "SubI", "SubU", "SubF64", "Pred": res SubX, TypedMagic
+  of "AddI", "AddU", "AddF64": res AddX, TypedMagic
+  of "SubI", "SubU", "SubF64": res SubX, TypedMagic
+  of "Succ": res SuccX, TypedMagic
+  of "Pred": res PredX, TypedMagic
+  of "Inc": res IncS, TypedMagic
+  of "Dec": res DecS, TypedMagic
   of "MulI", "MulU", "MulF64": res MulX, TypedMagic
   of "DivI", "DivU", "DivF64": res DivX, TypedMagic
   of "ModI", "ModU": res ModX, TypedMagic
