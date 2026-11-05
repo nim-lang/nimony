@@ -529,9 +529,17 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Nif
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, ClosureTupleT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
-       DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+       ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
+    of DistinctT:
+      # the base type's bound, converted: `high(Day)` is `Day(high(int))`
+      var base = decl.body
+      inc base # skip distinct tag
+      dest.addParLe(ConvX, info)
+      dest.addSymUse(typ.symId, info)
+      buildLowValue(c, dest, base, info)
+      dest.addParRi()
   of TagLit:
     case typ.typeKind
     of IntT:
@@ -620,9 +628,17 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Ni
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, ClosureTupleT, RefT, MutT, OutT, LentT, SinkT, OwnedT, NiltT, ConceptT,
-       DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+       ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
+    of DistinctT:
+      # the base type's bound, converted: `high(Day)` is `Day(high(int))`
+      var base = decl.body
+      inc base # skip distinct tag
+      dest.addParLe(ConvX, info)
+      dest.addSymUse(typ.symId, info)
+      buildHighValue(c, dest, base, info)
+      dest.addParRi()
   of TagLit:
     case typ.typeKind
     of IntT:

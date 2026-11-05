@@ -34,8 +34,10 @@ func default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 func default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
 func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
-  for i in low(array[I, T]) .. high(array[I, T]):
-    result[i] = default(T)
+  # Not `for i in low(I)..high(I)`: `I` may be a `distinct` ordinal, which has
+  # no `<=` for `..` unless it borrows one.
+  for x in mitems(result):
+    x = default(T)
 
 template default*[T](x: typedesc[set[T]]): set[T] =
   ## Returns the default value for `set[T]` (the empty set).
