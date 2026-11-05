@@ -510,6 +510,56 @@ proc incrementalTests*() =
                "main-user-settle: frontend re-ran " & $reportField(r[0], "total") &
                " commands; a role switch must force ONE re-sem, not a loop"
 
+  # Phase 14: a declaration reached through a re-export. `reexportuser`
+  # imports only `reexportfacade`, which re-exports `reexportdep`, so the
+  # user's nimsem node depends on the facade's `.s.idx.nif` alone. The
+  # facade's interface therefore has to cover what it re-exports: swapping
+  # two defaulted parameters of `connect` used to leave the user's call with
+  # the defaults in the old order, and the C compiler rejected it. A body-only
+  # edit of `connect` must still re-sem nothing but `reexportdep`.
+  let reDep = "tests/incremental/reexportdep.nim"
+  let reUser = "tests/incremental/reexportuser.nim"
+  let reCache = "nimcache" / "incremental-reexport"
+  if fileExists(reDep) and fileExists(reUser):
+    inc phases
+    let originalReDep = readFile(reDep)
+    removeDir reCache
+    var reOutput = ""
+    proc runRe(label: string): seq[seq[ReportEntry]] =
+      let (output, ec) = execCmdEx(nimony.quoteShell &
+        " c -r --silentMake --report --nimcache:" & reCache.quoteShell & " " &
+        reUser.quoteShell)
+      reOutput = output
+      result = @[]
+      if ec != 0:
+        failures.add label & ": compile failed: " & output.strip.splitLines[^1]
+      else:
+        result = parseNifmakeReports(output)
+    block:
+      discard runRe("reexport-cold")
+      expect reOutput.contains("reexport 8"), "reexport-cold: expected 'reexport 8'"
+      let swapped = originalReDep.replace("options = initOptions(); dl = 0",
+                                          "dl = 0; options = initOptions()")
+      expect swapped != originalReDep, "reexport-swap: the edit no longer applies to " & reDep
+      writeFile(reDep, swapped)
+      var r = runRe("reexport-swap")
+      expect reOutput.contains("reexport 8"),
+             "reexport-swap: expected 'reexport 8' after reordering the defaulted parameters"
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") == 3,
+               "reexport-swap: nimsem ran " & $reportField(r[0], "nimsem") &
+               " times (expected the dep's, the facade's and the user's)"
+      let body = swapped.replace("url.len + options.n + dl", "url.len + options.n + dl + 1")
+      expect body != swapped, "reexport-body: the edit no longer applies to " & reDep
+      writeFile(reDep, body)
+      r = runRe("reexport-body")
+      expect reOutput.contains("reexport 9"), "reexport-body: expected 'reexport 9'"
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") == 1,
+               "reexport-body: nimsem ran " & $reportField(r[0], "nimsem") &
+               " times (expected 1: a body-only edit is no interface change)"
+    writeFile(reDep, originalReDep)
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f

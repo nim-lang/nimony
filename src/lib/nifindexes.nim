@@ -106,6 +106,9 @@ type
   IndexSections* = object
     converters*: seq[(SymId, SymId)] # string is for compat with `methods`
     exportBuf*: TokenBuf
+    reexportedChecksums*: seq[string] ## the checksums of the modules
+      ## `exportBuf` re-exports: an importer reads their declarations through
+      ## this module, so they are part of its interface
 
 proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   result = createTokenBuf(30)
@@ -151,6 +154,8 @@ proc createIndex*(infile: string; root: NifLineInfo; buildChecksum: bool; sectio
     nifreader.close(r)
     var checksum = newSha1State()
     processForChecksum(checksum, buf)
+    for cs in sections.reexportedChecksums:
+      checksum.update cs
     let final = SecureHash checksum.finalize()
     content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
@@ -187,6 +192,7 @@ type
   NifIndex* = object
     converters*: seq[(string, string)] # map of dest types to converter symbols
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
+    checksum*: string ## the interface checksum, "" when the index has none
 
 proc symOrIdentOrDot(n: var Cursor): string =
   if n.isSymbol: result = pool.symString(n.symId)
@@ -235,6 +241,10 @@ proc readIndex*(indexName: string): NifIndex =
               if n.isIdent: names.add n.strId
               skip n
             result.exports.add (path, kind, names)
+        elif globalTags.tags[t] == "checksum":
+          n.into:
+            if n.isStringLit: result.checksum = pool.strings[n.strId]
+            while n.hasMore: skip n
         else:
           skip n
       else:
