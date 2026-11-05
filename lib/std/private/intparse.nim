@@ -10,6 +10,11 @@
 ## wrapping arithmetic; a longer one checks every multiply and add. A negative
 ## number is summed downwards from zero, so `low(T)`, whose magnitude does
 ## not fit in `T`, needs no special case.
+##
+## `fromStrRadix` is the port itself, with Rust's whole-string contract and
+## error kinds. `parseDecimal` is the same algorithm as a `parseutils`-style
+## prefix reader (decimal only, `_` separators, `-n` on overflow); it is what
+## `parseBiggestInt` and `parseBiggestUInt` call.
 
 {.feature: "staticContracts".}
 
@@ -121,3 +126,82 @@ func fromStrRadix*[T: SomeInteger](src: openArray[char]; radix: int;
       inc i
   value = res
   result = ikNone
+
+# ── parseutils' decimal prefix reader ──────────────────────────────────────
+
+func parseDecimal*[T: SomeInteger](s: openArray[char]; value: var T): int {.
+    untyped.} =
+  ## Reads a decimal integer from the start of `s`: an optional sign (`+`, or
+  ## `-` for a signed `T`) and one or more digits, where any run of `_` after
+  ## a digit is skipped. Returns the number of characters read and stores the
+  ## number in `value`; returns 0 if `s` does not start with an integer. If
+  ## the number does not fit in `T` it returns `-n`, `n` being the length of
+  ## the whole number, and leaves `value` unchanged. For an unsigned `T` a `-`
+  ## followed by a digit starts a number that is always out of range.
+  ##
+  ## `fromStrRadix` adapted to the `parseutils` contract: it reads a prefix,
+  ## so the length of the digit run is not known in advance. Instead of
+  ## choosing between the wrapping and the checked loop by length, the first
+  ## `safeDigits` characters are summed without checks and only the
+  ## digits after them are checked.
+  const isSignedTy = T is SomeSignedInt
+  # The most decimal digits that cannot overflow `T`: the largest `n` with
+  # `10^n - 1 <= high(T)`. `canNotOverflow` bounds every radix up to 16 at
+  # once, `2 * sizeof(T) - isSigned` (15 for `int64`); for radix 10 alone the
+  # exact bound is larger (18), so fewer numbers need checks.
+  const safeDigits =
+    when sizeof(T) == 1: 2       # 99 <= 127
+    elif sizeof(T) == 2: 4       # 9999 <= 32767
+    elif sizeof(T) == 4: 9       # 999999999 <= 2147483647
+    elif isSignedTy: 18          # 10^18 - 1 <= 2^63 - 1
+    else: 19                     # 10^19 - 1 <= 2^64 - 1
+  var i = 0
+  var isPositive = true
+  var outOfRange = false
+  if i < s.len:
+    if s[i] == '+':
+      inc i
+    elif s[i] == '-':
+      if isSignedTy:
+        isPositive = false
+        inc i
+      elif i + 1 < s.len and s[i + 1] >= '0' and s[i + 1] <= '9':
+        # a negative number is out of range for an unsigned type
+        outOfRange = true
+        inc i
+  if i >= s.len or s[i] < '0' or s[i] > '9':
+    return 0
+  var res = T(0)
+  # The wrapping loop. Its characters, digits and `_`s together, stop at
+  # `safeDigits`, so it sums at most that many digits.
+  let fastEnd = min(s.len, i + safeDigits)
+  while i < fastEnd and s[i] >= '0' and s[i] <= '9':
+    let x = T(ord(s[i]) - ord('0'))
+    if isPositive:
+      res = res * T(10) + x
+    else:
+      res = res * T(10) - x
+    inc i
+    while i < s.len and s[i] == '_': inc i
+  # The checked loop, for any digits left; past an overflow it only skips.
+  while i < s.len and s[i] >= '0' and s[i] <= '9':
+    if not outOfRange:
+      let x = T(ord(s[i]) - ord('0'))
+      var mulOverflow = false
+      var addOverflow = false
+      {.keepOverflowFlag.}:
+        res = res * T(10)
+        mulOverflow = overflowFlag()
+        if isPositive:
+          res = res + x
+        else:
+          res = res - x
+        addOverflow = overflowFlag()
+      outOfRange = mulOverflow or addOverflow
+    inc i
+    while i < s.len and s[i] == '_': inc i
+  if outOfRange:
+    result = -i
+  else:
+    value = res
+    result = i

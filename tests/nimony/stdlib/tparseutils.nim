@@ -202,3 +202,60 @@ block: # correctly rounded decimal -> float64, no `strtod`
   assert cast[int64](ret) == 0x7FEFFFFFFFFFFFFF'i64
   assert parseBiggestFloat("1e309", ret) == 5
   assert ret.classify == fcInf
+
+block: # integer syntax: sign, `_` separators, where the number ends
+  var ret: int64 = 7'i64
+  assert parseBiggestInt("+42", ret) == 3
+  assert ret == 42
+  assert parseBiggestInt("-0", ret) == 2
+  assert ret == 0
+  ret = 7'i64
+  for s in ["", "+", "-", "+-1", "-+1", "--1", "_1", "-_1", "+_1", " 1", "x1"]:
+    assert parseBiggestInt(s, ret) == 0, s
+    assert ret == 7'i64, s
+  assert parseBiggestInt("1_000_000", ret) == 9
+  assert ret == 1_000_000
+  assert parseBiggestInt("1__0", ret) == 4      # any run of `_` after a digit
+  assert ret == 10
+  assert parseBiggestInt("12_ apples", ret) == 3 # trailing `_`s belong to the number
+  assert ret == 12
+  assert parseBiggestInt("12a", ret) == 2
+  assert ret == 12
+  assert parseBiggestInt("-9_223_372_036_854_775_808", ret) == 26
+  assert ret == low(int64)
+  assert parseBiggestInt("9_223_372_036_854_775_807", ret) == 25
+  assert ret == high(int64)
+  ret = 7'i64
+  assert parseBiggestInt("9_223_372_036_854_775_808_x", ret) == -26
+  assert ret == 7'i64
+  assert parseBiggestInt("-99999999999999999999999 tail", ret) == -24
+  assert ret == 7'i64
+  # 18 digits never need a check, 19 always do
+  assert parseBiggestInt("999999999999999999", ret) == 18
+  assert ret == 999_999_999_999_999_999'i64
+  assert parseBiggestInt("-999999999999999999", ret) == 19
+  assert ret == -999_999_999_999_999_999'i64
+  assert parseBiggestInt("0000000000000000000000000000042", ret) == 31
+  assert ret == 42
+  assert parseBiggestInt("-0000000000000000000009223372036854775808", ret) == 41
+  assert ret == low(int64)
+
+block: # unsigned integer syntax
+  var ret: uint64 = 7'u64
+  assert parseBiggestUInt("+42", ret) == 3
+  assert ret == 42'u64
+  ret = 7'u64
+  for s in ["", "+", "-", "+-1", "-+1", "_1", "+_1", "-x"]:
+    assert parseBiggestUInt(s, ret) == 0, s
+    assert ret == 7'u64, s
+  assert parseBiggestUInt("-0", ret) == -2      # a `-` is out of range, even for 0
+  assert parseBiggestUInt("-1_000 x", ret) == -6
+  assert ret == 7'u64
+  assert parseBiggestUInt("18_446_744_073_709_551_615", ret) == 26
+  assert ret == high(uint64)
+  ret = 7'u64
+  assert parseBiggestUInt("18446744073709551620", ret) == -20  # overflow in the add
+  assert parseBiggestUInt("100000000000000000000", ret) == -21 # overflow in the multiply
+  assert ret == 7'u64
+  assert parseBiggestUInt("9999999999999999999", ret) == 19     # 19 digits never need a check
+  assert ret == 9_999_999_999_999_999_999'u64

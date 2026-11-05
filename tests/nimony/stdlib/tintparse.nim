@@ -188,3 +188,65 @@ block: # mod.rs:256, _TEST_CONST_PARSE (run time here)
   expectOk[int16]("-8000", 16, -0x8000)
   expectOk[uint64]("12345", 10, 12345)
   expectErr[int8]("+", 10, ikInvalidDigit)
+
+# `parseDecimal`, the `parseutils` prefix reader, must agree with
+# `fromStrRadix` on every string both accept: the whole string, no `_`.
+
+proc agrees[T: SomeInteger](s: string) {.untyped.} =
+  var a = T(7)
+  var b = T(7)
+  let kind = fromStrRadix(s, 10, a)
+  let n = parseDecimal(s, b)
+  if T is SomeUnsignedInt and kind == ikInvalidDigit and s.len > 1 and
+      s[0] == '-' and fromStrRadix(s.toOpenArray(1, s.len - 1), 10, a) != ikInvalidDigit:
+    # the one intended difference: `-digits` is out of range (`-n`) for
+    # `parseutils`, an invalid digit for Rust
+    assert n == -s.len, s
+    assert b == T(7), s
+  elif kind == ikNone:
+    assert n == s.len, s
+    assert a == b, s
+  elif kind == ikPosOverflow or kind == ikNegOverflow:
+    assert n == -s.len, s
+    assert b == T(7), s
+  else:
+    assert n != s.len and n != -s.len, s
+
+proc exhaustive[T: SomeInteger]() {.untyped.} =
+  # every value of `T`, one past each end, and leading zeros
+  var v = int64(low(T)) - 1
+  while v <= int64(high(T)) + 1:
+    agrees[T]($v)
+    agrees[T]("+" & $v)
+    agrees[T]("000" & $v)
+    inc v
+
+exhaustive[int8]()
+exhaustive[uint8]()
+exhaustive[int16]()
+exhaustive[uint16]()
+
+block: # 64 bits: random values of every length, and the ends
+  var x = 0x9E3779B97F4A7C15'u64
+  for k in 0 ..< 20000:
+    x = x xor (x shl 13)
+    x = x xor (x shr 7)
+    x = x xor (x shl 17)
+    let shifted = x shr (k mod 64)
+    agrees[uint64]($shifted)
+    agrees[int64]($cast[int64](shifted))
+    agrees[int32]($cast[int64](shifted))
+    agrees[uint32]($shifted)
+    var back = 0'u64
+    assert parseDecimal($shifted, back) == len($shifted)
+    assert back == shifted
+  for s in ["9223372036854775807", "9223372036854775808", "-9223372036854775808",
+            "-9223372036854775809", "18446744073709551615", "18446744073709551616",
+            "99999999999999999999", "-99999999999999999999", "4294967295",
+            "4294967296", "2147483647", "2147483648", "-2147483648", "-2147483649"]:
+    agrees[int64](s)
+    agrees[uint64](s)
+    agrees[int32](s)
+    agrees[uint32](s)
+    agrees[int](s)
+    agrees[uint](s)

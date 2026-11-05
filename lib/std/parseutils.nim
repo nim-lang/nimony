@@ -7,7 +7,7 @@
 # TODO: Replace `quit` with exceptions when it is implemented
 from std/syncio import quit
 import std/[assertions]
-import private/dec2flt
+import private/[dec2flt, intparse]
 
 const
   Whitespace = {' ', '\t', '\v', '\r', '\l', '\f'}
@@ -106,45 +106,15 @@ func parseHex*[T: SomeInteger](s: string, number: var T, start = 0,
     assert num64 == 86216859871725
   parseHex(s.toOpenArray(start, s.high), number, maxLen)
 
-func rawParseInt(s: openArray[char], b: var BiggestInt): int =
-  ## On success returns the number of processed characters and stores the value
-  ## in `b`. Returns 0 if `s` does not start with an integer. Returns a negative
-  ## number `-n` if the first `n` characters form an integer literal whose value
-  ## does not fit in `BiggestInt`; in that case `b` is left unchanged. The whole
-  ## digit run is still consumed on overflow so the caller can skip past it.
-  var
-    sign: BiggestInt = -1
-    i = 0
-    res = BiggestInt(0)
-    overflow = false
-  if i < s.len:
-    if s[i] == '+': inc(i)
-    elif s[i] == '-':
-      inc(i)
-      sign = 1
-  if i < s.len and s[i] in {'0'..'9'}:
-    while i < s.len and s[i] in {'0'..'9'}:
-      let c = ord(s[i]) - ord('0')
-      if not overflow:
-        if res >= (low(BiggestInt) + c) div 10:
-          res = res * 10 - c
-        else:
-          overflow = true
-      inc(i)
-      while i < s.len and s[i] == '_': inc(i) # underscores are allowed and ignored
-    if sign == -1 and res == low(BiggestInt):
-      overflow = true
-    if overflow:
-      result = -i
-    else:
-      b = res * sign
-      result = i
-  else:
-    result = 0
+# Integer parsing is `private/intparse`, a port of Rust's `from_str_radix`
+# (`core::num`): digits that cannot overflow are summed with plain wrapping
+# arithmetic, the rest with overflow checks.
 
 func parseBiggestInt*(s: openArray[char], number: var BiggestInt): int {.
   noSideEffect.} =
   ## Parses an integer and stores the value into `number`.
+  ## Accepts an optional `+` or `-` and one or more decimal digits; any run of
+  ## `_` after a digit is skipped, as in `1_000`, but a `_` cannot come first.
   ## Result is the number of processed chars, or 0 if there is no integer.
   ## If the parsed integer is out of the valid `BiggestInt` range the result is
   ## a **negative** number `-n` (where `n` chars form the out-of-range literal)
@@ -159,51 +129,13 @@ func parseBiggestInt*(s: openArray[char], number: var BiggestInt): int {.
     # out of range: negative result, `ret` untouched
     assert parseBiggestInt("9223372036854775808", ret) == -19
     assert ret == -20240509
-  var res = BiggestInt(0)
-  # use 'res' so 'number' is only written on a successful, in-range parse:
-  result = rawParseInt(s, res)
-  if result > 0:
-    number = res
-
-func rawParseUInt(s: openArray[char], b: var BiggestUInt): int =
-  ## On success returns the number of processed characters and stores the value
-  ## in `b`. Returns 0 if `s` does not start with an unsigned integer. Returns a
-  ## negative number `-n` if the first `n` characters are out of the valid
-  ## `BiggestUInt` range (including a leading `-` before digits); in that case
-  ## `b` is left unchanged.
-  var
-    res = 0.BiggestUInt
-    i = 0
-    overflow = false
-  if i < s.len - 1 and s[i] == '-' and s[i + 1] in {'0'..'9'}:
-    # a negative value is out of range for an unsigned integer
-    overflow = true
-    inc(i)
-  if i < s.len and s[i] == '+': inc(i) # Allow
-  if i < s.len and s[i] in {'0'..'9'}:
-    while i < s.len and s[i] in {'0'..'9'}:
-      if not overflow:
-        if res > BiggestUInt.high div 10: # Highest value that you can multiply 10 without overflow
-          overflow = true
-        else:
-          res = res * 10
-          let prev = res
-          inc res, (ord(s[i]) - ord('0')).BiggestUInt
-          if prev > res:
-            overflow = true
-      inc(i)
-      while i < s.len and s[i] == '_': inc(i) # underscores are allowed and ignored
-    if overflow:
-      result = -i
-    else:
-      b = res
-      result = i
-  else:
-    result = 0
+  result = parseDecimal(s, number)
 
 func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
   noSideEffect.} =
   ## Parses an unsigned integer and stores the value into `number`.
+  ## Accepts an optional `+` and one or more decimal digits, with `_` as in
+  ## `parseBiggestInt`.
   ## Result is the number of processed chars, or 0 if there is no integer.
   ## If the parsed integer is out of the valid `BiggestUInt` range (including a
   ## leading `-`) the result is a **negative** number `-n` and `number` is left
@@ -214,11 +146,7 @@ func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
     assert ret == 12
     assert parseBiggestUInt("1111111111111111111", ret) == 19
     assert ret == 1111111111111111111'u64
-  var res = BiggestUInt(0)
-  # use 'res' so 'number' is only written on a successful, in-range parse:
-  result = rawParseUInt(s, res)
-  if result > 0:
-    number = res
+  result = parseDecimal(s, number)
 
 # Float parsing is `private/dec2flt`, a port of Rust's `core::num::dec2flt`:
 # Clinger's fast path, then Eisel–Lemire, then an exact big-decimal fallback.
