@@ -34,8 +34,8 @@ func default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 func default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
 func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy, semantics: "defaultArray".} =
-  # Sem writes a call as `(aconstr array[I, T])`, the all-zero array, when
-  # `default(T)` is all zero bits (`semcall.isZeroDefaultArray`).
+  # `hexer/xelim` writes a call as `(aconstr array[I, T])`, the all-zero
+  # array, when `default(T)` is all zero bits (`zeroArrayCall`).
   for i in low(array[I, T]) .. high(array[I, T]):
     result[i] = default(T)
 

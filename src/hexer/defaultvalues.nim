@@ -47,8 +47,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typeprops, expreval,
-  xints, reporters, zerodefaults]
-export isZeroDefault
+  xints, reporters]
 
 proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSize: int)
 
@@ -172,6 +171,66 @@ proc addDefaultObjConstr(dest: var TokenBuf; typ, impl: Cursor;
       isUnion = decl.kind == TypeY and hasPragma(decl.pragmas, UnionP)
     addDefaultFields(dest, currentField, info, ptrSize, isUnion = isUnion)
   dest.addParRi()
+
+proc isZeroDefault*(typ: Cursor): bool =
+  ## Is `default(typ)` — what `addDefaultValue` builds — all zero bits?
+  ## Conservative: `false` means "not known to be", never "known not to be".
+  ## A field with a declared default counts as non-zero whatever its value,
+  ## and a case object's branches are all checked, not just the first one.
+  let impl = toTypeImpl(typ)
+  case impl.typeKind
+  of IntT, UIntT, FloatT, CharT, BoolT, SetT, CstringT, PointerT, NiltT, OutT:
+    result = true
+  of PtrT, RefT, RoutineTypes:
+    # `nil`, unless the type is `not nil`: then there is no default at all, and
+    # writing the zero array for it would hide that (`notnil/tdefaultcall`)
+    result = true
+    var ch = sub(impl)
+    while ch.hasMore:
+      if ch.substructureKind == NotnilU: return false
+      skip ch
+  of EnumT, HoleyEnumT, AnumT:
+    var err = false
+    result = asSigned(enumBounds(impl).lo, err) == 0 and not err
+  of MutT, LentT:
+    let base = impl.childCursor
+    result = not isViewType(base) or isZeroDefault(base)
+  of ObjectT:
+    if typ.isSymbol:
+      let decl = getTypeSection(typ.symId)
+      # A union constructor is partial; an RTTI object's vtable slot is
+      # not zero (`vtables_backend` fills it in).
+      if decl.kind == TypeY and hasPragma(decl.pragmas, UnionP) or
+          hasRtti(typ.symId):
+        return false
+    elif not impl.childCursor.isDotToken:
+      return false # an anonymous `object of Base`: its RTTI is not ours to judge
+    result = true
+    var obj = asObjectDecl(impl)
+    while true:
+      var fields = sub(obj.body) # past `(object`; bounds the walk
+      skip fields                # the inheritance slot
+      if fields.hasMore and not fields.isDotToken:
+        var iter = initObjFieldIter()
+        while nextField(iter, fields):
+          let field = takeLocal(fields, SkipFinalParRi)
+          if not field.val.isDotToken or not isZeroDefault(field.typ):
+            return false
+      if obj.parentType.isDotToken: break
+      var parentImpl = obj.parentType
+      if parentImpl.typeKind in {RefT, PtrT}:
+        inc parentImpl
+      obj = asObjectDecl(toTypeImpl(parentImpl))
+  of TupleT, ClosureTupleT:
+    result = true
+    var field = sub(impl)
+    while field.hasMore:
+      if not isZeroDefault(getTupleFieldType(field)): return false
+      skip field
+  of ArrayT, DistinctT, SinkT, StaticT:
+    result = isZeroDefault(impl.childCursor)
+  else:
+    result = false
 
 proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSize: int) =
   ## Emit the default value of `typ` as a single expression.

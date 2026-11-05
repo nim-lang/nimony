@@ -11,11 +11,11 @@
 ## `let x = if cond: 3 else: 4` into
 ## `let tmp; if cond: tmp = 3 else: temp = 4; let x = tmp`
 
-import std / [assertions, syncio]
+import std / [assertions, syncio, tables]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
-import passes
+import passes, defaultvalues
 import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
 
@@ -96,6 +96,9 @@ type
     goal: Goal
     bitCastsInBackend: bool  ## the backend reinterprets a cross-family `cast`
                              ## itself (arkham: `movq`), so it stays a `cast`
+    zeroArrays: Table[SymId, Cursor]
+      ## this module's `default(array[I, T])` instances whose result is all
+      ## zero bits -> `array[I, T]` (`zeroArrayCall`)
 
 proc initTarget(m: Mode): Target {.inline.} =
   ## Every `Target` buffer is bound to the global pools up front: a `Target`
@@ -329,6 +332,21 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       trExpr c, dest, n, tar
       trExpr c, dest, n, tar
 
+proc zeroArrayCall(c: Context; n: Cursor): Cursor =
+  ## The array type when `n` calls a `default(array[I, T])` instance whose
+  ## result is all zero bits, otherwise nil. Such a call is the all-zero
+  ## `(aconstr array[I, T])` (`doc/tags.md`) and is written as that rather
+  ## than bound to a temp: `Node()` then writes its zero
+  ## `array[2_000_000, int]` field in place instead of copying it out of a
+  ## 16 MB stack temporary. The instance is always this module's own: every
+  ## module instantiates `default` for itself.
+  result = default(Cursor)
+  if n.exprKind != CallX: return
+  var f = n
+  inc f # the call tag
+  if f.kind == Symbol:
+    result = c.zeroArrays.getOrDefault(f.symId)
+
 proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if tar.m in {IsEmpty, IsBound}:
     tar.m = IsAppend
@@ -351,7 +369,8 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   ## duplifier runs later and only moves out of an owning location, so the
   ## aggregate's read (the last one) becomes a move; a cursor would get a
   ## `=dup` and leak the call's result.
-  if n.kind != TagLit or n.exprKind notin CallKinds:
+  if n.kind != TagLit or n.exprKind notin CallKinds or
+      not cursorIsNil(zeroArrayCall(c, n)):
     trExpr c, dest, n, tar
     return
 
@@ -437,6 +456,12 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
     tar.t.addParRi()
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  let zeroArray = zeroArrayCall(c, n)
+  if not cursorIsNil(zeroArray):
+    tar.t.copyIntoKind AconstrX, n.info:
+      tar.t.addSubtree zeroArray
+    skip n
+    return
   if tar.m in {IsAppend, IsEmpty}:
     # bind to a temporary variable:
     let info = n.info
@@ -1556,6 +1581,14 @@ proc preRegisterRoutines(c: var Context; n: Cursor) =
       let decl = it
       var h = it.sub()
       let name = h
+      if name.kind == SymbolDef and it.stmtKind in {ProcS, FuncS}:
+        # `default(array[I, T])`, marked `.semantics: "defaultArray"` in
+        # `system/defaults.nim`, for a `T` whose default is all zero bits
+        let r = asRoutine(decl)
+        if hasPragmaOfValue(r.pragmas, SemanticsP, "defaultArray"):
+          let impl = toTypeImpl(r.retType)
+          if impl.typeKind == ArrayT and isZeroDefault(impl.childCursor):
+            c.zeroArrays[name.symId] = r.retType
       if name.kind == SymbolDef:
         for i in 0 ..< BodyPos:
           if i == ParamsPos:
