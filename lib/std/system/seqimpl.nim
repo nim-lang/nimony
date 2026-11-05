@@ -137,8 +137,10 @@ template default*[T](x: typedesc[seq[T]]): seq[T] = newSeqUninit[T](0)
 
 func `=dup`*[T](a: seq[T]): seq[T] {.nodestroy.} =
   result = newSeqUninit[T](a.len)
+  # Bounded by the RESULT's length: a refused allocation leaves `result` empty
+  # with no buffer (and `oomHandler` called), and then nothing is copied.
   var i = 0
-  while i < a.len:
+  while i < result.len:
     {.cast(noSideEffect).}:
       (result.data[i]) = `=dup`(a.data[i])
     inc i

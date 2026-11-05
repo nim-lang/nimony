@@ -98,6 +98,7 @@ proc readDataStr*(s: Stream; buffer: var string;
       result = 0
     else:
       let p = beginStore(buffer, slice.b + 1, slice.a)
+      if p == nil: raise OutOfMemError
       result = s.readDataImpl(s, p, length)
       endStore(buffer)
 
@@ -112,6 +113,7 @@ proc readAll*(s: Stream): string {.raises.} =
       break
     let prevLen = result.len
     let dest = beginStore(result, prevLen + readBytes, prevLen)
+    if dest == nil: raise OutOfMemError
     copyMem(dest, addr buffer[0], readBytes)
     endStore(result)
     if readBytes < bufferSize:
@@ -413,6 +415,7 @@ proc ssReadDataStr(s: Stream; buffer: var string;
     # caller's buffer (lexbase relies on a fixed-size buffer). This matches
     # `fsReadDataStr` and the `readDataStr` fallback.
     let dest = beginStore(buffer, slice.b + 1, slice.a)
+    if dest == nil: raise OutOfMemError
     copyMem(dest, readRawData(ss.data, ss.pos), result)
     endStore(buffer)
     inc ss.pos, result
@@ -449,6 +452,7 @@ proc ssWriteData(s: Stream; buffer: pointer;
   if bufLen <= 0:
     return
   let dest = beginStore(ss.data, ss.pos + bufLen, ss.pos)
+  if dest == nil: raise OutOfMemError
   copyMem(dest, buffer, bufLen)
   endStore(ss.data)
   inc ss.pos, bufLen
@@ -515,6 +519,7 @@ proc fsReadDataStr(s: Stream; buffer: var string;
     result = 0
   else:
     let p = beginStore(buffer, slice.b + 1, slice.a)
+    if p == nil: raise OutOfMemError
     result = readBuffer(FileStream(s).f, p, length)
     endStore(buffer)
 

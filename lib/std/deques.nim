@@ -43,7 +43,8 @@ func newRingBuf[T](cap: int): seq[T] =
   ## A slot only holds a real value while it is live, i.e. in `[head, head+count)`.
   ## Because the elements are never default-initialized, `T` needs no default.
   result = newSeqUninit[T](cap)
-  for i in 0 ..< cap:
+  # `result.len`: 0 when the allocation was refused.
+  for i in 0 ..< result.len:
     `=wasMoved`(result[i])
 
 func initDeque*[T](initialSize: int = defaultInitialSize): Deque[T] =
@@ -61,14 +62,17 @@ func len*[T](d: Deque[T]): int {.inline.} =
   ## Returns the number of elements of `d`.
   d.count
 
-func growIfNeeded[T](d: var Deque[T]) =
+func growIfNeeded[T](d: var Deque[T]): bool =
   ## Doubles the capacity if the ring buffer is full, re-laying the elements
-  ## out contiguously starting at index 0.
+  ## out contiguously starting at index 0. `false` when the buffer is full and
+  ## could not grow: `d` is left exactly as it was.
   if d.count < d.data.len:
-    return
+    return true
   let oldCap = d.data.len
   let newCap = if oldCap == 0: defaultInitialSize else: oldCap * 2
   var newData = newRingBuf[T](newCap)
+  if newData.len < newCap:
+    return false
   var i = 0
   var j = d.head
   while i < d.count:
@@ -79,6 +83,7 @@ func growIfNeeded[T](d: var Deque[T]) =
   d.head = 0
   d.tail = d.count
   d.mask = newCap - 1
+  result = true
 
 func addLast*[T](d: var Deque[T]; item: sink T) =
   ## Adds an `item` to the end of `d`.
@@ -86,7 +91,8 @@ func addLast*[T](d: var Deque[T]; item: sink T) =
     var a = initDeque[int]()
     for i in 1 .. 3: a.addLast(i)
     assert $a == "[1, 2, 3]"
-  growIfNeeded(d)
+  # out of memory: `item` is not added (and is destroyed as an unused sink)
+  if not growIfNeeded(d): return
   d.data[d.tail] = item
   d.tail = (d.tail + 1) and d.mask
   inc d.count
@@ -97,7 +103,7 @@ func addFirst*[T](d: var Deque[T]; item: sink T) =
     var a = initDeque[int]()
     for i in 1 .. 3: a.addFirst(i)
     assert $a == "[3, 2, 1]"
-  growIfNeeded(d)
+  if not growIfNeeded(d): return
   d.head = (d.head - 1) and d.mask
   d.data[d.head] = item
   inc d.count

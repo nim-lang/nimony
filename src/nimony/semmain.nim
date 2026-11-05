@@ -67,6 +67,25 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
         result.addIdent(s, NoLineInfo)
       result.addParRi()
 
+proc reexportedChecksums(c: var SemContext): seq[string] =
+  ## The interface checksums of the modules this one re-exports, in the
+  ## order `buildIndexExports` lists them. An importer of this module loads
+  ## their declarations without importing them itself, so its nimsem node
+  ## depends only on this module's `.s.idx.nif`: their interface has to be
+  ## part of ours, or a changed signature there leaves the importer's `.s.nif`
+  ## with the old one (doc/internals/ic.md). Transitive re-exports are covered
+  ## because each of these checksums covers its own module's re-exports.
+  result = @[]
+  if c.exports.len == 0: return
+  var suffixes = initTable[SymId, string]()
+  for suffix, sym in c.processedModules:
+    suffixes[sym] = suffix
+  for m, ex in c.exports:
+    if ex.kind == FromImport and ex.list.len == 0: continue
+    let suffix = suffixes.getOrDefault(m)
+    if suffix.len > 0:
+      result.add load(suffix).index.checksum
+
 proc writeNewDepsFile(c: var SemContext; outfile: string) =
   # Update .s.deps.nif file that doesn't contain modules imported under `when false:`
   # so that Hexer and following phases doesn't read such modules.
@@ -192,7 +211,8 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
   onRaiseQuit createIndex(outfile, root, true,
     IndexSections(
       converters: move c.converterIndexMap,
-      exportBuf: buildIndexExports(c)))
+      exportBuf: buildIndexExports(c),
+      reexportedChecksums: reexportedChecksums(c)))
   writeNewDepsFile c, outfile
 
 proc dbgCheckSeals*(dest: TokenBuf; label: string) =

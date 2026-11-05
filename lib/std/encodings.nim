@@ -507,9 +507,10 @@ else:
           dec(outLen)
         elif lerr == E2BIG:
           var offset = cast[int](dst) - cast[int](cast[cstring](readRawData(result)))
-          setLen(result, len(result) + inLen.int * 2 + 5)
           # 5 is minimally one utf-8 char
-          dst = cast[cstring](cast[int](cast[cstring](beginStore(result, len(result)))) + offset)
+          let p = beginStore(result, len(result) + inLen.int * 2 + 5)
+          if p == nil: raise OutOfMemError
+          dst = cast[cstring](cast[int](cast[cstring](p)) + offset)
           outLen = csize_t(len(result) - offset)
         else:
           raiseOSError(lerr.OSErrorCode)
@@ -518,9 +519,10 @@ else:
     discard iconv(c, nil, nil, addr dst, addr outLen)
     if iconvres == high(csize_t) and errno == E2BIG:
       var offset = cast[int](dst) - cast[int](cast[cstring](readRawData(result)))
-      setLen(result, len(result) + inLen.int * 2 + 5)
       # 5 is minimally one utf-8 char
-      dst = cast[cstring](cast[int](cast[cstring](beginStore(result, len(result)))) + offset)
+      let p = beginStore(result, len(result) + inLen.int * 2 + 5)
+      if p == nil: raise OutOfMemError
+      dst = cast[cstring](cast[int](cast[cstring](p)) + offset)
       outLen = csize_t(len(result) - offset)
       discard iconv(c, nil, nil, addr dst, addr outLen)
     endStore(result)

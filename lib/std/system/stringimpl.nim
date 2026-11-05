@@ -455,8 +455,10 @@ func readRawDataStable*(s: var string; start = 0): ptr UncheckedArray[char] =
 
 # ---- mutation helpers ----
 
-func prepareMutation*(s: var string) =
-  ## Ensures s's data is uniquely owned (not shared with another string or static).
+func makeUnique(s: var string): bool =
+  ## `prepareMutation`, telling whether `s` may now be written in place:
+  ## `false` when the private copy was refused and `s` is the OOM marker.
+  result = true
   let sl = ssLen(s)
   if sl == StaticSlen or (sl == HeapSlen and not arcIsUnique(s.more.rc)):
     if sl == HeapSlen:
@@ -475,6 +477,12 @@ func prepareMutation*(s: var string) =
       setSSLen(s, HeapSlen)
     else:
       strOom s, LongStringDataOffset + oldLen
+      result = false
+
+func prepareMutation*(s: var string) =
+  ## Ensures s's data is uniquely owned (not shared with another string or static).
+  ## On allocation failure `s` becomes the OOM marker (see `isOom`).
+  discard makeUnique(s)
 
 # ---- beginStore / endStore for bulk writes ----
 
@@ -484,6 +492,9 @@ func beginStore*(s: var string; newLen: int; start = 0): ptr UncheckedArray[char
   ## ownership, and returns a pointer to s[start] for bulk writing.
   ## Call endStore(s) after writing to sync the inline cache.
   ## To keep the current length, pass `s.len`.
+  ##
+  ## Returns `nil` when the storage could not be allocated: `s` is then the
+  ## OOM marker (see `isOom`) and nothing may be written.
   let sl = ssLen(s)
   let curLen = if sl > PayloadSize: s.more.fullLen else: sl
   if newLen <= PayloadSize and sl <= PayloadSize:
@@ -491,14 +502,21 @@ func beginStore*(s: var string; newLen: int; start = 0): ptr UncheckedArray[char
     if newLen != curLen:
       setSSLen(s, newLen)
     result = cast[ptr UncheckedArray[char]](cast[uint](inlinePtrV(s)) + uint(start))
-  elif sl <= PayloadSize:
-    # Inline/medium → long.
-    transitionToLong(s, curLen, newLen)
-    result = cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(start))
   else:
-    # Already long: resize within heap (no transition back to inline).
-    ensureUniqueLong(s, curLen, newLen)
-    result = cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(start))
+    if sl <= PayloadSize:
+      # Inline/medium → long.
+      transitionToLong(s, curLen, newLen)
+    else:
+      # Already long: resize within heap (no transition back to inline).
+      ensureUniqueLong(s, curLen, newLen)
+    # Both leave `s` long with a block, or -- refused -- the inline OOM marker
+    # with `more` set to nil, and an address computed from that would point at
+    # nothing.
+    let m = s.more
+    if m != nil:
+      result = cast[ptr UncheckedArray[char]](addr m.data[start])
+    else:
+      result = nil
 
 func endStore*(s: var string) {.inline, noSideEffect, raises: [], tags: [].} =
   ## Syncs the hot prefix cache after a bulk write via beginStore.
@@ -596,11 +614,12 @@ func shrink*(s: var string; newLen: int) =
     else:
       # Heap or static: keep the buffer allocated, just update fullLen.
       # Avoids alloc/dealloc flip-flops when callers shrink and then grow.
-      # `prepareMutation` promotes a static literal into a heap copy if we
-      # are about to mutate, so `s.more.fullLen = newLen` is safe afterwards.
-      prepareMutation(s)
-      s.more.fullLen = newLen
-      copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
+      # `makeUnique` promotes a static literal into a heap copy if we are
+      # about to mutate, so `s.more.fullLen = newLen` is safe afterwards. On
+      # refusal `s` is already the (shorter) OOM marker, with no `more`.
+      if makeUnique(s):
+        s.more.fullLen = newLen
+        copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
 
 func setLen*(s: var string; newLen: int) =
   if newLen <= s.len:
@@ -642,14 +661,15 @@ func `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), alwaysI
 
 func `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0),
     ensures: len(s) == old(len(s)), inline.} =
-  prepareMutation(s)
-  if ssLen(s) > PayloadSize:
-    s.more.data[i] = c
-    if i < AlwaysAvail: setInline(s, i, c)
-  else:
-    setInline(s, i, c)
+  # A refused copy leaves the 7-char OOM marker, which `i` may lie past.
+  if makeUnique(s):
+    if ssLen(s) > PayloadSize:
+      s.more.data[i] = c
+      if i < AlwaysAvail: setInline(s, i, c)
+    else:
+      setInline(s, i, c)
   # A character is written into the payload; the length lives in the header
-  # byte and in `fullLen`, which neither write reaches, and `prepareMutation`
+  # byte and in `fullLen`, which neither write reaches, and `makeUnique`
   # copies a shared payload without changing its length.
   {.assume: len(s) == old(len(s)).}
 

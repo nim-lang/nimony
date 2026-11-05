@@ -88,8 +88,11 @@ proc fillBuffer(L: var BaseLexer) =
   if toCopy > 0:
     # "moveMem" handles overlapping regions
     let p = beginStore(L.buf, L.buf.len)
-    moveMem(p, addr p[L.sentinel + 1], toCopy)
-    endStore(L.buf)
+    # nil: out of memory, `L.buf` is the short OOM marker; the length checks
+    # below cope with a buffer of any size
+    if p != nil:
+      moveMem(p, addr p[L.sentinel + 1], toCopy)
+      endStore(L.buf)
   charsRead = readChunk(L, toCopy, toCopy + L.sentinel)
   s = toCopy + charsRead
   if charsRead < L.sentinel + 1:

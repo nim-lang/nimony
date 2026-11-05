@@ -1234,10 +1234,16 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
     if n.exprKind == ExprX:
+      # One statement out, like every other case here: the callers put it in
+      # a slot that holds exactly one (an `elif`/`of`/`else` body). A branch
+      # ending in a discardable call is an `(expr)`, and lowering it emits the
+      # temps its operands are bound to before the call's own binding.
+      dest.addParLe(StmtsS, n.info)
       var tar = initTarget(IsEmpty)
       trExpr c, dest, n, tar
       if tar.m == IsAppend:
         dest.addTarget tar
+      dest.addParRi()
     elif n.finalIrKind == IteV:
       trIte c, dest, n
     elif n.finalIrKind == LoopV:

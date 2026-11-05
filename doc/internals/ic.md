@@ -54,7 +54,9 @@ The other modules depend on the interface, never on the main output.
   and of the bodies an importer reads: those of `.inline` and generic procs,
   templates, macros and iterators (`nifindexes.createIndex`). Private
   declarations count too, because an exported generic or template can expand
-  into any of them in the importer. A changed body of a non-inline,
+  into any of them in the importer. It also covers the checksums of the
+  modules `M` re-exports: an importer of `M` reads their declarations while
+  its nimsem node depends only on `M`'s interface. A changed body of a non-inline,
   non-generic proc leaves it alone, so no importer is re-semmed.
 * `M.live.nif` is the module's share of the whole-program DCE result.
   `dceLive` reads every module's `.x.nif` and runs whenever one of them

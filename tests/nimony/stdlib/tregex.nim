@@ -235,6 +235,20 @@ proc determinism() =
   assert matchLen("x foo", re"\bfoo", 2) == 3
   echo "determinism ok"
 
+proc literalColon() =
+  # `:` is an ordinary character; only `(?:` is syntax.
+  assert find("data:x", re"a:x") == 3
+  var r = default(Regex)
+  var err = ""
+  assert tryRe("a:b|c:d", r, err)
+  assert err == ""
+  assert fullMatch("a:b", r)
+  assert fullMatch("c:d", r)
+  assert not fullMatch("a:d", r)
+  assert fullMatch("k:k:v", re"(?:k:)+v")
+  assert matchLen("x:y", re"(?:x|y):(?:x|y)") == 3
+  echo "literal colon ok"
+
 basics()
 anchoring()
 searching()
@@ -245,3 +259,4 @@ characterClasses()
 runtimePatterns()
 literalSearch()
 determinism()
+literalColon()

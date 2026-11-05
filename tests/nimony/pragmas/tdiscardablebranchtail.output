@@ -1,0 +1,24 @@
+f 1
+h if 2
+void branch
+h of 0 3
+first
+f 4
+s if 5
+after
+f 106
+h elif 7
+h else 8
+h of 1 9
+s elif 10
+after
+f 211
+h else 12
+h case else 13
+after
+f 14
+h block 15
+fail 5
+raised
+f 17
+counter 17

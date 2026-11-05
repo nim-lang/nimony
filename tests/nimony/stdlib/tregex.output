@@ -8,3 +8,4 @@ character classes ok
 runtime patterns ok
 literal search ok
 determinism ok
+literal colon ok

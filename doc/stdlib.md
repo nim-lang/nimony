@@ -35,6 +35,10 @@ are copy-on-write internally.
   `beginStore` also handles copy-on-write (ensures the heap buffer is
   unique before returning a mutable pointer).
 
+  When the storage cannot be allocated, `beginStore` returns `nil` and
+  `s` becomes the OOM marker (see `isOom`). Test the pointer before
+  writing through it.
+
   ```nim
   var s = newString(100)
   let p = beginStore(s, 5)  # get pointer, ensure unique
