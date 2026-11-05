@@ -660,8 +660,9 @@ func `[]`*[T](s: seq[T]; x: HSlice[int, int]): seq[T] {.nodestroy.} =
   let b = min(x.b, s.len - 1)
   let n = if b >= a: (b - a) + 1 else: 0
   result = newSeqUninit[T](n)
+  # `result.len`, not `n`: it is 0 when the allocation was refused.
   var i = 0
-  while i < n:
+  while i < result.len:
     {.cast(noSideEffect).}:
       (result.rawData[i]) = `=dup`(s.rawData[a+i])
     inc i

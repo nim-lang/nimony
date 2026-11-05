@@ -220,8 +220,10 @@ func insert*[T](dest: var seq[T]; src: openArray[T]; pos: Natural = 0) {.nodestr
   let oldLen = dest.len
   let at = min(pos.int, oldLen)
   growUnsafe(dest, oldLen + n)
+  # A refused growth keeps the old buffer and length (see `grow`), so the
+  # refusal shows in the length, not in a nil buffer.
+  if dest.len != oldLen + n: return
   let p = rawData(dest)
-  if p == nil: return
   # Shift the tail `[at ..< oldLen]` up by `n`, back to front to avoid clobber.
   # `p` points into `dest`'s own buffer:
   {.cast(noSideEffect).}:

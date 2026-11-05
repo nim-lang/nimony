@@ -496,10 +496,11 @@ proc closePayload(code: int; reason: string): string =
   if code != 0:
     # one allocation of the final size, filled in place
     let p = beginStore(result, 2 + reason.len)
-    p[0] = char((code shr 8) and 0xFF)
-    p[1] = char(code and 0xFF)
-    if reason.len > 0: copyMem(addr p[2], readRawData(reason), reason.len)
-    result.endStore()
+    if p != nil:                         # else out of memory: the OOM marker
+      p[0] = char((code shr 8) and 0xFF)
+      p[1] = char(code and 0xFF)
+      if reason.len > 0: copyMem(addr p[2], readRawData(reason), reason.len)
+      result.endStore()
 
 proc avail(rd: WebSocketReader): int {.inline.} =
   ## Protocol bytes buffered and not yet consumed.
@@ -1009,6 +1010,7 @@ proc readPayload(rd: var WebSocketReader; f: WsFrame; dest: var string): int {.
   if n == 0: return 0
   let old = dest.len
   let dp = beginStore(dest, old + n, old)
+  if dp == nil: raise OutOfMemError
   var got = 0
   while got < n:
     if rd.avail == 0:
