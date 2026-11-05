@@ -110,9 +110,9 @@ type owned*[T]{.magic: "Owned".}
   ## The unique owning edge of a `ref` or closure, see
   ## `.feature: "ownedRefs"`. Erased in modules without that feature.
 
-proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect.}
+proc low*[T: Ordinal|enum|range|SomeFloat](x: typedesc[T]): T {.magic: "Low", noSideEffect.}
 proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
-proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
+proc high*[T: Ordinal|enum|range|SomeFloat](x: typedesc[T]): T {.magic: "High", noSideEffect.}
 proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 
 template low*[I, T](x: array[I, T]): I =
