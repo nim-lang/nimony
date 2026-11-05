@@ -302,21 +302,22 @@ a rune index to a byte index.
   unlike `strutils.toLowerAscii`.
 - `validateUtf8` returns -1 if valid, otherwise the byte
   position of the first invalid byte.
-- `toNFD` / `toNFKD` decompose (canonical / compatibility), with
-  results identical to Python's `unicodedata.normalize`. To ignore
+- `toNFD` / `toNFKD` return Normalization Form D / KD (canonical /
+  compatibility decomposition) as defined by Unicode Standard Annex 15,
+  checked against its conformance test NormalizationTest.txt. To ignore
   accents, decompose and drop runes where `isNonspacingMark` is true
   (general category Mn); `isCombining` is the wider category M.
 - `toLower` / `toUpper` / `toTitle` use the simple case mappings of
   UnicodeData.txt for every code point, symbols included (Ⓞ → ⓞ,
-  Ⅹ → ⅹ). There is no SpecialCasing: unlike Python's `str.lower`,
-  final `Σ` lowercases to `σ`, and `ß` does not uppercase to `SS`.
-  `isAlpha` is general category L, like Python's `str.isalpha`;
-  `isLower` / `isUpper` mean "has an uppercase / lowercase mapping",
-  which is not Python's `islower` / `isupper` (ß and ª are not lower
-  case here).
+  Ⅹ → ⅹ). SpecialCasing.txt is not used, so there are no
+  context-dependent or multi-character mappings: final `Σ` lowercases
+  to `σ`, and `ß` does not uppercase to `SS`.
+  `isAlpha` is general category L;
+  `isLower` / `isUpper` mean "has an uppercase / lowercase mapping"
+  (ß and ª have none, so they are not lower case here).
 - All Unicode tables (case, letters, white space, normalization,
-  marks) are generated from one Unicode version, 16.0.0 (as in
-  Python 3.14), by `tools/gen_unicode.nim`.
+  marks) are generated from the Unicode Character Database 16.0.0 by
+  `tools/gen_unicode.nim`.
 
 
 ## hashes

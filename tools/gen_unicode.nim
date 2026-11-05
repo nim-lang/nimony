@@ -20,7 +20,7 @@
 #   NormalizationTest.txt (Part0 and Part3 whole, Part1 for Latin, Greek,
 #   Cyrillic and Arabic plus a sample of the rest, a sample of Part2).
 #
-# Last run with Unicode 16.0.0, the version Python 3.14's `unicodedata` uses.
+# Last run with Unicode 16.0.0.
 
 import std / [strutils, os, algorithm]
 

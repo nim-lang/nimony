@@ -1,6 +1,7 @@
 # toNFD, toNFKD, isNonspacingMark and isCombining on Greek, Cyrillic, Arabic,
-# Latin and Japanese text. Every expected value was produced by Python 3.14's
-# unicodedata (Unicode 16.0.0): normalize("NFD"/"NFKD", s) and category(c).
+# Latin and Japanese text. Expected values follow Unicode Standard Annex 15
+# and UnicodeData.txt 16.0.0 (decomposition mappings, canonical combining
+# classes, general category).
 import std/[assertions, syncio, unicode]
 
 proc stripMarks(s: string): string =

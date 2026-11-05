@@ -753,7 +753,6 @@ func isNonspacingMark*(c: Rune): bool =
   ## Returns true if ``c`` is a nonspacing mark: a code point of the Unicode
   ## general category Mn, the accents, Greek tonos and dialytika, Arabic
   ## harakat and similar marks that `toNFD` splits from their letters.
-  ## This is the test of Python's `unicodedata.category(c) == "Mn"`.
   ##
   ## See also:
   ## * `isCombining func <#isCombining,Rune>`_
@@ -830,8 +829,8 @@ func decompose(s: openArray[char]; compat: bool): string =
 func toNFD*(s: openArray[char]): string =
   ## Returns ``s`` in Unicode Normalization Form D (canonical
   ## decomposition): every precomposed character is split into its base
-  ## and its combining marks, and marks are put in canonical order. The
-  ## result equals Python's `unicodedata.normalize("NFD", s)`.
+  ## and its combining marks, and marks are put in canonical order. See
+  ## Unicode Standard Annex 15, Unicode Normalization Forms.
   ##
   ## Bytes that are not valid UTF-8 are decoded as `runes` decodes them.
   ## For example, `toNFD("é")` is `"e\u0301"`; the ligature `"ﬁ"` stays.
@@ -854,8 +853,8 @@ func toNFKD*(s: openArray[char]): string =
   ## Returns ``s`` in Unicode Normalization Form KD (compatibility
   ## decomposition): like `toNFD`, and compatibility characters
   ## (ligatures, presentation forms, width and font variants, the
-  ## non-breaking hyphen) are replaced by their plain equivalents. The
-  ## result equals Python's `unicodedata.normalize("NFKD", s)`.
+  ## non-breaking hyphen) are replaced by their plain equivalents. See
+  ## Unicode Standard Annex 15, Unicode Normalization Forms.
   ##
   ## For example, `toNFKD("ﬁ")` is `"fi"` and `toNFKD("x²")` is `"x2"`.
   ##

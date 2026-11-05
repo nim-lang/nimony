@@ -1,7 +1,6 @@
 # Simple case mappings and letter tests at Unicode 16.0.0. Expected values
-# come from UnicodeData.txt 16.0.0 (fields 12-14) and Python 3.14's
-# unicodedata (Unicode 16.0.0): str.lower/str.upper where no SpecialCasing
-# rule applies, str.isalpha.
+# come from UnicodeData.txt 16.0.0: the simple case mappings (fields 12-14)
+# and the general category (field 2, L for letters).
 import std/[assertions, syncio, unicode]
 
 block symbolsWithCaseMappings:
