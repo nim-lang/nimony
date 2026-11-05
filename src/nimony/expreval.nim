@@ -388,6 +388,11 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       # a small file (e.g. `doc/version.md`) does not trigger a full nested
       # sub-compile. Paths are resolved relative to the source file, matching
       # `exprexec`'s sub-compile behaviour; failures fold to "" like the proc.
+      if c.c == nil or c.noExecute:
+        # No `SemContext` to record the file dependency in (hexer/FIR
+        # callers): leave the call to `slurp`'s body, a runtime `readFile`.
+        cannotEval(n)
+        return
       let a = eval(c, args)
       if a.kind != StrLit or args.hasMore:
         cannotEval(n)
