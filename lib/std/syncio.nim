@@ -486,20 +486,35 @@ when defined(nimNativeIo):
 else:
   const bufsize = 80
 
-  proc fgets(str: out array[bufsize, char]; n: int32; f: File): cstring {.
+  proc fgets(str: var array[bufsize, char]; n: int32; f: File): cstring {.
     importc: "fgets", header: "<stdio.h>".}
 
   proc addReadLine*(f: File; s: var string): bool =
     ## Appends a line from a file to a string.
+    # The buffer is filled with '\n' before each `fgets`, so the end of the
+    # data can be found even if the input contains NUL bytes: a newline that
+    # `fgets` read is followed by its '\0', a filler '\n' comes after it.
     result = false
-    var buf: array[bufsize, char]
-    while fgets(buf, bufsize.int32, f) != nil:
+    var buf = default(array[bufsize, char])
+    while true:
+      for i in 0 ..< bufsize: buf[i] = '\n'
+      if fgets(buf, bufsize.int32, f) == nil: break
       result = true
+      var p = 0
+      while p < bufsize and buf[p] != '\n': inc p
+      # a full chunk without a newline: take its bufsize-1 bytes, read on
+      var n = bufsize - 1
       var done = false
+      if p < bufsize - 1 and buf[p + 1] == '\0':
+        # the line ends with a newline that `fgets` read
+        n = p
+        done = true
+      elif p < bufsize:
+        # the last line, without a newline: the '\n' is filler after the '\0'
+        n = p - 1
+        done = true
       for i in 0 ..< bufsize:
-        if buf[i] == '\n':
-          done = true
-          break
+        if i >= n: break
         s.add buf[i]
       if done: break
 
