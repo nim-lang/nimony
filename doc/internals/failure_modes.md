@@ -231,7 +231,11 @@ existing heap string releases the old block through `arcDec` before installing
 the cookie: dropping the pointer would leak a block at the one moment memory is
 known to be scarce. The cookie is a normal value, so appending to it simply
 grows a new string out of it; code that wants to *notice* the failure has to
-ask `isOom` (or `threadOutOfMem()`) at the point of the operation.
+ask `isOom` (or `threadOutOfMem()`) at the point of the operation. Whatever
+writes after asking for storage must test for the refusal first: `beginStore`
+returns `nil` (its callers, `addInt` among them, skip the write or raise
+`OutOfMemError`), and `[]=` and `shrink` write nothing once the private copy
+they need was refused.
 
 **A seq keeps what it had.** A failed `realloc` leaves the original block
 allocated and untouched, so `resize` and `=copy` keep it: the growth did not
@@ -241,6 +245,9 @@ truncated the caller's elements -- an out-of-memory during `s.add` destroyed the
 whole sequence. Because failure is now invisible in `data`, callers read the
 refusal off the **length**: `grow` and `setLen` test `s.len < newLen`, not
 `s.data == nil`, or they would fill `newLen` slots into storage that never grew.
+A seq made fresh and then filled (`=dup`, slicing, `@`) is empty when its
+allocation is refused, so the fill loops are bounded by the new seq's length,
+not by the length that was asked for.
 
 The asymmetry with `new` is condition 1 again: `seq` and `string` have a valid
 empty-ish representation, a not-nil `ref` does not.

@@ -562,7 +562,9 @@ proc readAll*(f: File): string {.raises.} =
   result = ""
   var buffer = newString(ReadBufSize)
   while true:
-    let bytesRead = readBuffer(f, beginStore(buffer, ReadBufSize), ReadBufSize)
+    let p = beginStore(buffer, ReadBufSize)
+    if p == nil: raise OutOfMemError
+    let bytesRead = readBuffer(f, p, ReadBufSize)
     endStore(buffer)
     if bytesRead == ReadBufSize:
       result.add buffer

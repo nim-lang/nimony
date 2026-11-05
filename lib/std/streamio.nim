@@ -88,8 +88,10 @@ proc addBytes(dest: var string; src: openArray[char]) {.inline.} =
   ## `dest.add` for a slice: one capacity check and one `copyMem`.
   if src.len > 0:
     let old = dest.len
-    copyMem(beginStore(dest, old + src.len, old), addr src[0], src.len)
-    endStore(dest)
+    let p = beginStore(dest, old + src.len, old)
+    if p != nil:                         # else out of memory: `dest` is the OOM marker
+      copyMem(p, addr src[0], src.len)
+      endStore(dest)
 
 proc copyBytes(dest: var openArray[char]; src: openArray[char]) {.inline.} =
   ## The first `src.len` bytes of `dest` := `src`.
@@ -452,7 +454,9 @@ proc readFd(c: Core; dest: var string; step = ChunkSize): int {.passive, raises.
   ## business (see `MinRead`), not this proc's: the reservation is what stays
   ## allocated for the life of the buffer.
   let old = dest.len
-  let n = readAsync(c.fd, beginStore(dest, old + step, old), step, c.dl)
+  let p = beginStore(dest, old + step, old)
+  if p == nil: raise OutOfMemError
+  let n = readAsync(c.fd, p, step, c.dl)
   dest.setLen old + max(n, 0)            # a shrink: keeps the capacity, syncs the prefix
   if n < 0: raise toErr(n)
   result = n
@@ -475,7 +479,9 @@ proc coreRecv(c: Core; dest: var string; step = ChunkSize): int {.passive, raise
     let g = c.ring
     if g == nil: raise BadOperation
     let old = dest.len
-    result = ringRead(g, beginStore(dest, old + ChunkSize, old), ChunkSize, false)
+    let p = beginStore(dest, old + ChunkSize, old)
+    if p == nil: raise OutOfMemError
+    result = ringRead(g, p, ChunkSize, false)
     dest.setLen old + result
     if result == 0: c.peerDone = true
   of ckFd:

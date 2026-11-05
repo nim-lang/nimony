@@ -128,6 +128,9 @@ proc sort*[T](a: var openArray[T];
   # backends, a silent heap-header scribble on others).
   if n < 2: return
   var b = newSeqUninit[T](n div 2)
+  # Out of memory (`oomHandler` has run): without the buffer `a` stays as it
+  # was, unsorted.
+  if b.rawData == nil: return
   var s = 1
   while s < n:
     var m = n-1-s

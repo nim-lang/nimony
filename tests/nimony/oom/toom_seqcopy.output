@@ -1,0 +1,6 @@
+dup: 0 src 110000 7
+slice: 0 src 110000
+insert: 110000 1 2
+sort: 110000 110000 1
+deque: 65536 0 65535
+still running

@@ -78,11 +78,14 @@ func formatInto*(buf: var NumBuffer; x: int64): openArray[char] {.establishesBor
 func addChars(s: var string; chars: openArray[char]) {.inline.} =
   if chars.len > 0:
     let start = s.len
-    copyMem(beginStore(s, start + chars.len, start), addr chars[0], chars.len)
-    # `endStore` refreshes the cached first `AlwaysAvail` chars; past them
-    # there is nothing to refresh.
-    if start < AlwaysAvail:
-      endStore(s)
+    let p = beginStore(s, start + chars.len, start)
+    # nil: out of memory, and `s` is the OOM marker
+    if p != nil:
+      copyMem(p, addr chars[0], chars.len)
+      # `endStore` refreshes the cached first `AlwaysAvail` chars; past them
+      # there is nothing to refresh.
+      if start < AlwaysAvail:
+        endStore(s)
 
 func addInt*(s: var string; x: int64) =
   ## Appends `x` in decimal to `s`.
