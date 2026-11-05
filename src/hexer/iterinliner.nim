@@ -561,6 +561,13 @@ proc expandInlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
     let param = asLocal(params)
     var typ = param.typ
     let name = param.name
+    if typ.typeKind in {TypedescT, StaticT}:
+      # Compile-time parameter: no local, the backend has no type for it.
+      if iter.kind == Symbol:
+        relationsMap[name.symId] = iter.symId
+      skip iter
+      skip params
+      continue
     let newName = pool.symId("`lf." & $e.instId)
     inc e.instId
     createDecl(e, w, newName, typ, iter, name.info,
