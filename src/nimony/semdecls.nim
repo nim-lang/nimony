@@ -330,6 +330,16 @@ proc semDefineOverride(c: var SemContext; dest: var TokenBuf; it: var Item;
   it.n = resume
   return true
 
+proc isInferredRoutineType(n: Cursor): bool =
+  ## The type slot of a local that was checked before holds the routine
+  ## declaration its value is, `let f = proc () = ...`: no one writes that,
+  ## the type was inferred. Checking it again as a type would turn it into a
+  ## nameless `(proc . . . .)` (a routine declared in a template is checked at
+  ## the definition and again at the expansion, nimony#2906); infer it again
+  ## from the value instead, which names the routine of this expansion.
+  n.typeKind in {ProcT, FuncT, IteratorT, ConverterT, MethodT} and
+    n.childCursor.isSymbolDef
+
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var kind = kind
   if kind == TypevarY:
@@ -397,9 +407,9 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
           c.buildErr dest, delayed.info, "default value of a `static` parameter must be a constant expression"
     of ParamY, LetY, VarY, ConstY, CursorY, PatternvarY, ResultY, FldY, GfldY, GletY, TletY, GvarY, TvarY:
       beforeType = dest.len
-      if n.isDotToken:
+      if n.isDotToken or isInferredRoutineType(n):
         # no explicit type given:
-        inc n # 3
+        skip n # 3
         let orig = n
         var it = Item(n: n, typ: c.types.autoType)
         if kind == ConstY:
@@ -1560,22 +1570,7 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
     dest.addSymUse(name, info)
     dest.addParRi()
     let expected = it.typ
-    # The value's type is a `(proctype ...)`, as for a reference to a named
-    # routine (`semSymbol`), not the routine declaration itself: a local
-    # typed with the declaration loses the routine's name when it is checked
-    # again at a template's expansion, which crashed the backend (nimony#2906).
-    var declN = cursorAt(dest, anonTypePos)
-    let decl = asRoutine(declN)
-    let isClosureIter = kind == IteratorY and hasPragma(decl.pragmas, ClosureP)
-    var procTypeBuf = createTokenBuf()
-    procTypeBuf.addParLe (if isClosureIter: ItertypeT else: ProctypeT), info
-    procTypeBuf.addDotToken() # nilability tag
-    procTypeBuf.addSubtree decl.params
-    procTypeBuf.addSubtree decl.retType
-    procTypeBuf.addSubtree decl.pragmas
-    procTypeBuf.addParRi()
-    endRead declN
-    it.typ = beginRead(procTypeBuf)
+    it.typ = typeToCursor(c, dest, anonTypePos)
     commonType c, dest, it, exprStart, expected
 
   else:
