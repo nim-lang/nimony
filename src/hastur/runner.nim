@@ -154,13 +154,6 @@ proc joinedTest*(c: var TestCounters; dir: string; files: seq[string];
   if not fileExists(driver) or readFile(driver) != driverSrc:
     writeFile(driver, driverSrc)
 
-  template bail(reason: string; detail: string) =
-    echo dir, ": joined group ", reason, "; re-running its ", files.len,
-         " tests individually"
-    if detail.len > 0: echo detail
-    for f in files: testFile c, f, overwrite, Normal, forward
-    return
-
   # A group is compiled by ONE backend: whether that is the native one is a
   # property of the members, not of the generated driver (which has no test
   # sidecars of its own to look at). All-or-nothing on purpose — splitting a
@@ -171,6 +164,21 @@ proc joinedTest*(c: var TestCounters; dir: string; files: seq[string];
   if native:
     for f in files:
       if not walkUsesNative(f, Normal): native = false; break
+
+  template bail(reason: string; detail: string) =
+    echo dir, ": joined group ", reason, "; re-running its ", files.len,
+         " tests individually"
+    if detail.len > 0: echo detail
+    # With the backend the group was compiled with: the re-run is there to
+    # name the member that broke the group, and a member of a C group that is
+    # individually native-eligible would otherwise switch backends only
+    # because some other member diverged.
+    let walkNativeBefore = walkNative
+    if not native: walkNative = false
+    for f in files: testFile c, f, overwrite, Normal, forward
+    walkNative = walkNativeBefore
+    return
+
   let (compilerOutput, compilerExitCode) =
     if native:
       execNimonyNative(nimonyNativeCmdFor(forward) & quoteShell(driver))
