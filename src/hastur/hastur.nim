@@ -16,7 +16,7 @@ when defined(windows):
 import std / [assertions, parseopt, strutils, os, osproc]
 
 import context, category, joined, nativelist, runner, walk, builders, deps,
-       tiers, boot, native, record, bugcmd, gitcmds, wasmdiff, parallel
+       tiers, boot, native, record, bugcmd, gitcmds, wasmdiff
 import install
 import ".." / lib / nimversion
 
@@ -166,7 +166,6 @@ Options:
                         (implies --no-build). Binaries not found there are
                         looked up on `$PATH`.
   --no-build            skip the setup.hastur prep step during the tree walk
-  --prefill:DIR         (pool worker) seed --cachedir from the warmup cache DIR
   --scratch             (pool worker) --cachedir is private: start it empty and
                         delete it again when the work item passed
   --skip:DIR            leave DIR out of the tree walk (repeatable). For
@@ -222,7 +221,6 @@ proc handleCmdLine =
   var overwrite = false
   var forward = ""
   var withValgrind = false
-  var prefillDir = ""
   var scratchCache = false
   for kind, key, val in getopt():
     case kind
@@ -265,10 +263,6 @@ proc handleCmdLine =
         if parallelBuild < 0: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
-      of "prefill":
-        # Set by the parallel pool on its workers: seed `--cachedir` from this
-        # warmup cache before doing anything else (`prefillFromWarmup`).
-        prefillDir = val
       of "scratch":
         # Set by the parallel pool on its workers: `--cachedir` is private to
         # this one run, so it starts empty and is deleted again once the work
@@ -285,7 +279,8 @@ proc handleCmdLine =
       of "native":
         # `--native:off` puts the Windows tree walk back on the C backend for
         # the whitelisted tests it would otherwise compile with `nimony n`
-        # (see `nativelist.walkUsesNative`). Nothing anywhere else reads it.
+        # (see `nativelist.walkUsesNative`); the pool passes it on to its
+        # workers.
         walkNative = val.normalize notin ["off", "no", "false", "0"]
       of "native-debug", "nativedebug":
         # Build arkham + nifasm UNOPTIMIZED (they default to -d:release; see
@@ -351,8 +346,6 @@ proc handleCmdLine =
     # A leftover from an earlier run in the same `nimcache/` (one without a
     # `build` in between) must not count as a warm cache.
     removeDir nimcacheDir
-  if prefillDir.len > 0:
-    prefillFromWarmup(prefillDir, nimcacheDir)
 
   case primaryCmd
   of "all":

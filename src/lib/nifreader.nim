@@ -981,7 +981,12 @@ proc open*(filename: string; lineBased = false): Reader =
       vfsOpenMmap(filename)
     except:
       when defined(debug) and not defined(nimony): writeStackTrace()
-      quit "[Error] cannot open: " & filename
+      when defined(nimony):
+        quit "[Error] cannot open: " & filename
+      else:
+        # the OS's reason: a Windows sharing violation reads very differently
+        # from a missing file
+        quit "[Error] cannot open: " & filename & " (" & getCurrentExceptionMsg() & ")"
   result = Reader(f: f, p: nil, thisModule: extractModuleSuffix(filename),
                   lineBased: lineBased)
   result.p = cast[pchar](result.f.data)

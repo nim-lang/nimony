@@ -1023,7 +1023,9 @@ proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
   if not semos.fileExists(name):
     buildErr c, dest, info, "cannot find: " & name
-  name = name.toRelativePath(curWorkDir)
+  # absolute in a stdlib module, whose `.s.nif` builds started from any
+  # directory share (`semos.inStdcache`); so are `.build` and `.bundle` tools
+  if not inStdcache(c.g.config, info.getFile): name = name.toRelativePath(curWorkDir)
   c.toBuild.buildTree TupX, info:
     c.toBuild.addStrLit lang, info
     c.toBuild.addStrLit name, info
@@ -1056,7 +1058,7 @@ proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
   if not semos.fileExists(tool):
     buildErr c, dest, info, "build: cannot find tool source: " & tool
-  tool = tool.toRelativePath(curWorkDir)
+  if not inStdcache(c.g.config, info.getFile): tool = tool.toRelativePath(curWorkDir)
   # Link flags are passed through verbatim (with `${path}` substitution), NOT a
   # file path — they end up on the linker command line next to this module's `.o`.
   let linkFlags = replaceSubs(rawLinkFlags, currentDir, c.g.config)
@@ -1081,7 +1083,7 @@ proc addBundle(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
   if not semos.fileExists(tool):
     buildErr c, dest, info, "bundle: cannot find linker tool source: " & tool
-  tool = tool.toRelativePath(curWorkDir)
+  if not inStdcache(c.g.config, info.getFile): tool = tool.toRelativePath(curWorkDir)
   c.toBundle.buildTree TupX, info:
     c.toBundle.addStrLit builder, info
     c.toBundle.addStrLit tool, info

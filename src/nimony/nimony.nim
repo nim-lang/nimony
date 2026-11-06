@@ -128,7 +128,7 @@ proc writeVersion() = quit(Version & " " & HostPlatform & "\n", QuitSuccess)
 proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                          commandLineArgs, hostCommandLineArgs: string; forceRebuild: bool) =
   let nifler = parserTool()
-  let name = moduleSuffix(nimFile, config.paths)
+  let name = moduleSuffix(nimFile, config)
   let src = config.nifcachePath / name & ".p.nif"
   let dest = config.nifcachePath / name & ".s.nif"
   let toforceRebuild = if forceRebuild: " -f " else: ""
