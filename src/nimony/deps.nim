@@ -238,6 +238,8 @@ type
     semmedRole: SemmedRole ## the `(ismainmodule …)` entry of the same file
     semmedKey: string ## its `(optionkey …)` entry: the options the module's
                       ## `.s.nif` was made with, see `optionKey`
+    semmedRecorded: bool ## the `.s.deps.nif` exists: some nimsem finished
+                         ## this module and recorded the role and options above
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -869,6 +871,7 @@ proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
   ## build's, and the caller has just read the current ones from nifler.
   let depsFile = c.config.deps2File(p)
   if semos.fileExists(depsFile):
+    current.semmedRecorded = true
     readDependencies depsFile, current.fileDeps, current.semmedRole, current.semmedKey
 
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
@@ -2037,26 +2040,42 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       elif not seenDeps.containsOrIncl(f):
         b.withTree "input":
           b.addStrLit f
-    # Outputs: semmed file and index file for primary module
     let docMode = c.cmd == DoDoc
     # A module whose sem consulted `isMainModule` and was last semchecked in
     # the other role is stale although no input changed (nim-lang/nimony#2830).
     let wrongRole = v.semmedRole == (if isMain: SemmedAsLib else: SemmedAsMain)
     # A module last semchecked with other options is stale too, whichever
-    # build in this nimcache that was (doc/internals/ic.md, rule 4).
-    let wrongOptions = v.semmedKey != c.config.optionKey
+    # build in this nimcache that was (doc/internals/ic.md, rule 4). A module
+    # with no `.s.deps.nif` recorded nothing; it is stale because that file
+    # is one of its outputs, which nifmake sees.
+    let wrongOptions = v.semmedRecorded and v.semmedKey != c.config.optionKey
     if lostFileDep or wrongRole or wrongOptions:
       # A deleted file cannot be an input (nifmake wants a file or a rule for
       # each), and neither the role nor the options are a file at all, so the
-      # re-sem is forced by removing the output instead. That settles after one
-      # build: the re-sem no longer finds the file and so no longer records it,
-      # and it records the role and the options it ran with. The interface
-      # file stays, so if it comes out the same it still spares the importers.
-      vfsRemove(c.config.semmedFile(v.files[0], v.plugin, docMode))
+      # re-sem is forced by an input written now, newer than the outputs. That
+      # settles after one build: the re-sem no longer finds the lost file and
+      # so no longer records it, and it records the role and the options it
+      # ran with. The interface file stays, so if it comes out the same it
+      # still spares the importers.
+      let stamp = c.config.semmedFile(v.files[0], v.plugin, docMode) & ".resem"
+      let tmp = atomicTempPath(stamp)
+      vfsWrite(tmp, "")
+      publishShared tmp, stamp
+      b.withTree "input":
+        b.addStrLit stamp
+    # Outputs: semmed file, index file and the record for primary module.
+    # The outputs are nifmake's to judge: the driver runs outside the stdlib
+    # cache's lock, while other builds' nimsems write and read there, and a
+    # `.s.nif` it removed there failed their importers with "cannot open"
+    # (nimsem writes the `.s.nif`, then the index, then the `.s.deps.nif`; a
+    # driver in between saw no record). nifmake judges under the lock, once
+    # the build it waited for is done.
     b.withTree "output":
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin, docMode)
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin, docMode)
+    b.withTree "output":
+      b.addStrLit c.config.deps2File(v.files[0])
     # Outputs for cyclic group members:
     for i in 0 ..< v.cyclicFiles.len:
       let idx = v.cyclicFiles[i]
@@ -2064,6 +2083,8 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
         b.addStrLit c.config.semmedFile(v.files[idx], v.plugin, docMode)
       b.withTree "output":
         b.addStrLit c.config.indexFile(v.files[idx], v.plugin, docMode)
+      b.withTree "output":
+        b.addStrLit c.config.deps2File(v.files[idx])
 
 proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
   #[ An import plugin fills `nimcache/<plugin>` for us. It is our job to

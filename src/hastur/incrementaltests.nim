@@ -600,6 +600,36 @@ proc incrementalTests*() =
                "options-without-settle: re-ran " &
                $(reportField(r[0], "total") + reportField(r[1], "total")) & " commands"
 
+    # Phase 16: the driver forces a re-sem without touching the outputs. It
+    # runs outside the stdlib cache's lock, while other builds' nimsems write
+    # and read there: a `.s.nif` it removed failed their importers with
+    # "cannot open" (boot stage 1, five builds sharing one stdlib cache).
+    # (a) A module recorded with other options is re-semmed through an input
+    # written now, its stamp. (b) A module with a `.s.nif` and no
+    # `.s.deps.nif` (a nimsem killed between the two) is re-semmed by nifmake,
+    # which finds an output missing: the backend reads every module's record.
+    inc phases
+    var depSemmed = ""
+    for f in walkFiles(optCache / "*.s.nif"):
+      if readFile(f).contains("probe-off"): depSemmed = f
+    expect depSemmed.len > 0, "resem: no `.s.nif` of optiondep in " & optCache
+    if depSemmed.len > 0:
+      var r = runOpt("resem-stamp", "-d:incrementalStale", optUser)
+      expect optOutput.contains("optionuser probe-on"),
+             "resem-stamp: expected 'optionuser probe-on'"
+      expect fileExists(depSemmed & ".resem"),
+             "resem-stamp: no re-sem stamp " & depSemmed & ".resem"
+      let depRecord = depSemmed.changeFileExt("").changeFileExt(".s.deps.nif")
+      expect fileExists(depRecord), "unrecorded: no " & depRecord
+      if fileExists(depRecord): removeFile depRecord
+      r = runOpt("unrecorded", "-d:incrementalStale", optUser)
+      expect optOutput.contains("optionuser probe-on"),
+             "unrecorded: expected 'optionuser probe-on'"
+      expect fileExists(depRecord), "unrecorded: " & depRecord & " was not written again"
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") == 1,
+               "unrecorded: nimsem ran " & $reportField(r[0], "nimsem") & " times (expected 1)"
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f

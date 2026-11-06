@@ -115,14 +115,16 @@ another build made them.
   bits, cpu, os, `--app`, the C compiler's name, the check flags,
   `--inlineframes`). The driver passes the digest to nimsem, which records
   it with the module's other outputs. When a module's entry differs from the
-  build's digest, the driver removes the module's `.s.nif` before the
-  frontend runs, as it does when the module last ran in the other
-  `isMainModule` role, so the module is semchecked again. Its `.s.idx.nif`
-  stays: an interface that comes out the same still spares the importers. A
-  sem that fails leaves no `.s.nif`, so the next build tries again. The
-  sub-compiles sem starts (compile-time evaluation, the `writenif` helper)
-  share the nimcache and are passed the outer build's options, so they
-  compute the same digest.
+  build's digest, the driver gives the module's node an input written now,
+  `M.s.nif.resem`, as it does when the module last ran in the other
+  `isMainModule` role, so the module is semchecked again. It touches no
+  output: other builds' nimsems may be writing or reading them (the stdlib
+  cache's, below). Its `.s.idx.nif` stays: an interface that comes out the
+  same still spares the importers. `M.s.deps.nif` is an output of the node,
+  so a module without one, from a sem that failed or was killed before it
+  recorded, is semchecked again by nifmake. Compile-time evaluation's
+  program builds are passed the outer build's options, so they compute the
+  same digest.
 * `<nimcache>/<backend>/<main>/config.nif` is the backend's memo: the
   frontend's key plus `--opt`, the C compiler and linker, `--passC`/`--passL`
   and `.passc` pragmas, `--layout`, `--browser`. One file is enough here,
