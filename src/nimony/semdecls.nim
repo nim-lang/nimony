@@ -1582,13 +1582,25 @@ proc semTypePragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; sym: S
   if result.magic.len > 0:
     exportMarkerBecomesNifTag c, dest, beforeExportMarker, result
 
+proc isRefPtrObjectBody(c: SemContext; typ: Cursor): bool =
+  ## True for the `ref`/`ptr` that `semTypeSection` produced from an inline
+  ## `ref object`/`ptr object`: its pointee is the inner object symbol (or an
+  ## invocation of it) that `buildInnerObjDecl` created.
+  result = false
+  if typ.typeKind in {RefT, PtrT}:
+    var pointee = typ
+    inc pointee
+    if pointee.typeKind == InvokeT:
+      inc pointee
+    result = pointee.isSymbol and c.refObjOwners.hasKey(pointee.symId)
+
 proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPragma; typeStart: int) =
   if {ImportcP, ImportcppP} * pragmas.flags != {}:
     let typ = cursorAt(dest, typeStart)
-    if isNominal(typ.typeKind):
-      # ok
+    if isNominal(typ.typeKind) or isRefPtrObjectBody(c, typ):
+      # ok: for `ref/ptr object` the importc pragma sits on the inner object
       discard
-    elif typ.typeKind in {IntT, UIntT, FloatT, CharT, PointerT}:
+    elif typ.typeKind in {IntT, UIntT, FloatT, CharT, PointerT, CstringT}:
       let info = typ.info
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
       var attrs = createTokenBuf(8)
@@ -1626,8 +1638,34 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
       dest.replace cursorAt(rebuilt, 0), typeStart
     else:
       let err = "cannot import type " & typeToString(typ)
-      let info = typ.info
-      c.buildErr dest, info, err
+      c.buildErrAt dest, typeStart, err
+
+proc takeInnerObjPragmas(dest: var TokenBuf; n: var Cursor; basename: string) =
+  ## Copy the pragmas of a `ptr/ref object` to its inner object; an `importc`
+  ## name loses a trailing `*` and a bare `importc` gets the outer name.
+  if n.substructureKind == PragmasU:
+    dest.takeInto n:
+      while n.hasMore:
+        var p = n
+        let isKv = p.substructureKind == KvU
+        if isKv: inc p
+        let kind = p.pragmaKind
+        if kind in {ImportcP, ImportcppP}:
+          let pragmaInfo = p.info
+          var cname = basename
+          if isKv:
+            inc p
+            if p.isStringLit: cname = pool.strings[p.strId]
+          if cname.endsWith('*'):
+            cname = cname.substr(0, cname.len - 2).strip(leading = false)
+          dest.buildTree KvU, pragmaInfo:
+            dest.addIdent(if kind == ImportcP: "importc" else: "importcpp", pragmaInfo)
+            dest.addStrLit(cname, pragmaInfo)
+          skip n
+        else:
+          takeTree dest, n
+  else:
+    takeTree dest, n
 
 proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBuf =
   ## build inner object type declaration from full ref/ptr object decl
@@ -1649,7 +1687,7 @@ proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBu
     takeTree result, n # copy exported (?)
     takeTree result, n # copy typevars
     # ^ may need to build fresh identifiers
-    takeTree result, n # copy pragmas
+    takeInnerObjPragmas result, n, basename
     assert n.typeKind in {RefT, PtrT}
     n.into: # (ref/ptr
       takeTree result, n # copy (object)

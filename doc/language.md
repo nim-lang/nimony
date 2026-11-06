@@ -4989,6 +4989,12 @@ and instead, the generated code should contain an `#include`:c:\:
       # import C's FILE* type; Nim will treat it as a new pointer type
   ```
 
+On a `ptr object` or `ref object` the pragma names the C type the pointer
+points to; a trailing `*` is optional and is dropped. Only an inline `object`
+is accepted there: `ptr cint` or `ptr SomeNamedObject` cannot be imported this
+way. A C typedef that is itself a pointer (`typedef struct S* H;`) is imported
+as `H {.importc.} = pointer`.
+
 The `header` pragma always expects a string constant. The string constant
 contains the header file: As usual for C, a system header file is enclosed
 in angle brackets: `<>`:c:. If no angle brackets are given, Nim

@@ -1097,3 +1097,15 @@ func fromCString*(s: cstring): string =
       strOom result, LongStringDataOffset + l
 
 template `$`*(x: string): string = x
+
+when defined(wasm32) and defined(standalone):
+  # Used by the JS backend's `importjs` string bridge (nativenif's `jsToNimStr`).
+  proc nimStrBeginStore(s: var string; newLen: int): ptr UncheckedArray[char]
+      {.exportc: "nimStrBeginStore", noSideEffect, raises: [], tags: [].} =
+    ## `nil` if the allocation failed.
+    result = beginStore(s, newLen)
+    if isOom(s): result = nil
+
+  proc nimStrEndStore(s: var string)
+      {.exportc: "nimStrEndStore", noSideEffect, raises: [], tags: [].} =
+    endStore(s)

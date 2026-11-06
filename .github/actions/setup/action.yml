@@ -66,16 +66,12 @@ runs:
       if: runner.os == 'Linux' && inputs.cpu == 'amd64'
       shell: bash
       run: |
-        # gcc-14/g++-14 ship preinstalled on the ubuntu-24.04 image, so only
-        # valgrind actually needs fetching. Installing the compilers anyway
-        # made this step ~5 minutes (apt pulled and reinstalled the full
-        # toolchain); with just valgrind it is a few seconds.
-        # `--no-install-recommends` keeps valgrind from dragging in its
-        # (unused here) debuginfo/doc recommends.
+        # The ubuntu-26.04 image's default gcc (16) is the one we want, so only
+        # valgrind needs fetching. `--no-install-recommends` keeps valgrind
+        # from dragging in its (unused here) debuginfo/doc recommends.
         sudo apt-get update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt-get install \
           --no-install-recommends -yq valgrind
-        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 60 --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
     - name: Install dependencies (Linux i386)
       if: runner.os == 'Linux' && inputs.cpu == 'i386'

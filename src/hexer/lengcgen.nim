@@ -1997,6 +1997,20 @@ proc trJmp(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse(lab, info)
     dest.addParRi()
 
+proc trStmtList(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## Body of a branch, case arm or loop: Leng wants `(stmts …)`, but a lifted
+  ## hook bypasses the destroyer and still has a bare `(scope …)` here.
+  if n.stmtKind == ScopeS:
+    let info = n.info
+    c.typeCache.openScope()
+    dest.copyIntoKind StmtsS, info:
+      n.into:
+        while n.hasMore:
+          trStmt c, dest, n
+    c.typeCache.closeScope()
+  else:
+    trStmt c, dest, n
+
 proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ## `(ite cond then else|.)` becomes an `if`: Leng's back ends and optimizer
   ## passes read `if`.
@@ -2005,12 +2019,12 @@ proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind IfS, info:
       dest.copyIntoKind ElifU, info:
         trExpr c, dest, n
-        trStmt c, dest, n
+        trStmtList c, dest, n
       if n.isDotToken:
         inc n
       else:
         dest.copyIntoKind ElseU, info:
-          trStmt c, dest, n
+          trStmtList c, dest, n
 
 proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ## `(loop (scope BODY (continue .)))` becomes `while true: BODY`. Falling
@@ -2021,7 +2035,7 @@ proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       dest.addParPair TrueX, info
       assert n.stmtKind in {StmtsS, ScopeS}, "loop body expected"
       c.typeCache.openScope()
-      dest.addParLe(n.cursorTagId, n.info)
+      dest.addParLe(StmtsS, n.info)
       n.into:
         while n.hasMore:
           if n.stmtKind == ContinueS:
@@ -2054,10 +2068,10 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       of OfU:
         takeInto dest, n:
           trBranchRanges c, dest, n
-          trStmt c, dest, n
+          trStmtList c, dest, n
       of ElseU:
         takeInto dest, n:
-          trStmt c, dest, n
+          trStmtList c, dest, n
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
           TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU,
@@ -2088,12 +2102,12 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ## so "run the body, then the finally" is the whole translation.
   let tryStart = n
   n = sub(n)
-  trStmt c, dest, n
+  trStmtList c, dest, n
   if n.substructureKind == ExceptU:
     error c, "BUG: `except` should have been lowered by the eraiser: ", n
   if n.substructureKind == FinU:
     n.into:
-      trStmt c, dest, n
+      trStmtList c, dest, n
   n = tryStart; skip n
 
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner) =

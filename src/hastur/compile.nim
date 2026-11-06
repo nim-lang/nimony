@@ -7,7 +7,7 @@ import ".." / gear2 / modnames
 import context, category, markers
 
 export modnames.BackendDirC, modnames.BackendDirLLVM,
-       modnames.BackendDirNative, modnames.BackendDirWasm
+       modnames.BackendDirNative, modnames.BackendDirWasm, modnames.BackendDirJs
 
 proc execNimony*(cmd: string; cat: Category): (string, int) =
   let cacheArg =

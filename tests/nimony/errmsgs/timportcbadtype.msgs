@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/timportcbadtype.nim(2, 22) Error: cannot import type seq[int64]
+tests/nimony/errmsgs/timportcbadtype.nim(3, 24) Error: cannot import type tuple[int64, int64]
+tests/nimony/errmsgs/timportcbadtype.nim(6, 27) Error: cannot import type ptr int32 not nil
+tests/nimony/errmsgs/timportcbadtype.nim(7, 27) Error: cannot import type ptr Obj not nil
+tests/nimony/errmsgs/timportcbadtype.nim(8, 25) Error: cannot import type ref Obj not nil
