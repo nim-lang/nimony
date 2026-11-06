@@ -137,6 +137,10 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       deps.buildTree IsmainmoduleX, NoLineInfo:
         deps.buildTree (if IsMain in c.moduleFlags: TrueX else: FalseX), NoLineInfo:
           discard
+    if c.g.config.optionKey.len > 0:
+      # the options this sem output was made with, see `deps.optionKey`
+      deps.buildTree TagId(OptionkeyIdx), NoLineInfo:
+        deps.addStrLit c.g.config.optionKey
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   onRaiseQuit writeFile(deps, depsFile)
 

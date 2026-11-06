@@ -21,7 +21,7 @@ import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, forma
 import semos, nifconfig, nimony_model, semdata, langmodes
 from reporters import shortenDir
 import ".." / gear2 / modnames
-import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs, lengiface]
+import ".." / lib / [tooldirs, platform, nifindexes, nifchecksums, symparser, docpaths, argsfinder, vfs, lengiface]
 import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
@@ -218,6 +218,8 @@ type
                           ## left in `.s.deps.nif`: files a plugin or a `slurp`
                           ## read while semchecking this module
     semmedRole: SemmedRole ## the `(ismainmodule …)` entry of the same file
+    semmedKey: string ## its `(optionkey …)` entry: the options the module's
+                      ## `.s.nif` was made with, see `optionKey`
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -790,9 +792,11 @@ proc importPluginImports(c: var DepContext; src: string; current: Node) =
     importSingleFile c, path, NoLineInfo, current, false
   c.inPluginImports = oldInPluginImports
 
-proc readDependencies(depsFile: string; files: var seq[string]; role: var SemmedRole) =
-  ## Adds the files of the `(dependency …)` tree in `depsFile` to `files` and
-  ## sets `role` from its `(ismainmodule …)` entry.
+proc readDependencies(depsFile: string; files: var seq[string]; role: var SemmedRole;
+                      key: var string) =
+  ## Adds the files of the `(dependency …)` tree in `depsFile` to `files`, sets
+  ## `role` from its `(ismainmodule …)` entry and `key` from its
+  ## `(optionkey …)` entry.
   var buf = loadDepsFile(depsFile)
   var n = beginRead(buf)
   if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
@@ -808,12 +812,17 @@ proc readDependencies(depsFile: string; files: var seq[string]; role: var Semmed
           n.into:
             role = if n.cursorTagId == TagId(TrueX): SemmedAsMain else: SemmedAsLib
             skip n
+        elif n.cursorTagId == TagId(OptionkeyIdx):
+          n.into:
+            if n.isStringLit: key = pool.strings[n.strId]
+            skip n
         else:
           skip n
 
 proc readDependencies(depsFile: string; files: var seq[string]) =
   var role = RoleIrrelevant
-  readDependencies depsFile, files, role
+  var key = ""
+  readDependencies depsFile, files, role, key
 
 proc writeDepFile(c: DepContext; depFile: string) =
   ## `--depfile`: the source files of the program, includes among them.
@@ -837,7 +846,7 @@ proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
   ## build's, and the caller has just read the current ones from nifler.
   let depsFile = c.config.deps2File(p)
   if semos.fileExists(depsFile):
-    readDependencies depsFile, current.fileDeps, current.semmedRole
+    readDependencies depsFile, current.fileDeps, current.semmedRole, current.semmedKey
 
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
@@ -1950,12 +1959,16 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     # A module whose sem consulted `isMainModule` and was last semchecked in
     # the other role is stale although no input changed (nim-lang/nimony#2830).
     let wrongRole = v.semmedRole == (if isMain: SemmedAsLib else: SemmedAsMain)
-    if lostFileDep or wrongRole:
+    # A module last semchecked with other options is stale too, whichever
+    # build in this nimcache that was (doc/internals/ic.md, rule 4).
+    let wrongOptions = v.semmedKey != c.config.optionKey
+    if lostFileDep or wrongRole or wrongOptions:
       # A deleted file cannot be an input (nifmake wants a file or a rule for
-      # each), and the role is no file at all, so the re-sem is forced by
-      # removing the output instead. That settles after one build: the re-sem
-      # no longer finds the file and so no longer records it, and it records
-      # the role it ran with.
+      # each), and neither the role nor the options are a file at all, so the
+      # re-sem is forced by removing the output instead. That settles after one
+      # build: the re-sem no longer finds the file and so no longer records it,
+      # and it records the role and the options it ran with. The interface
+      # file stays, so if it comes out the same it still spares the importers.
       vfsRemove(c.config.semmedFile(v.files[0], v.plugin, docMode))
     b.withTree "output":
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin, docMode)
@@ -2001,6 +2014,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
       b.addStrLit c.nimsem
       emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
       if c.config.cycles: b.addStrLit "--cycles"
+      b.addStrLit "--optionkey:" & c.config.optionKey
       b.addStrLit "m"
       b.addKeyw "args"
       # Module files are passed via (args) in each (do nimsem) block
@@ -2153,18 +2167,20 @@ proc addBackendKey(b: var Builder; c: DepContext; passC, passL: string) =
         b.addStrLit c.config.layoutFile
     if c.config.jsBrowser: b.addKeyw "browser"
 
-proc frontendMemoFile(config: NifConfig): string =
-  config.nifcachePath / "config.nif"
-
 proc backendMemoFile(c: DepContext): string =
   c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0]) / "config.nif"
 
-proc frontendMemo(config: NifConfig): string =
+proc optionKey(config: NifConfig): string =
+  ## The digest of the frontend key, which nimsem records in every
+  ## `.s.deps.nif` it writes (`(optionkey …)`). The options are kept per
+  ## module, not per nimcache: a build reruns only its own modules, so a
+  ## nimcache-wide record of the last build's options says nothing about the
+  ## modules other builds made and this one did not import.
   var b = nifbuilder.open(200)
   b.addHeader()
   b.withTree "config":
     addFrontendKey b, config
-  result = b.extract()
+  result = computeChecksum(b.extract())
 
 proc backendMemo(c: DepContext; passC, passL: string): string =
   ## The frontend key is part of it: the sem results this main's backend
@@ -2191,18 +2207,6 @@ proc memoDiffers(c: DepContext; path, memo: string): bool =
   ## caller says to nifmake outright.
   result = c.forceRebuild or not semos.fileExists(path) or
            onRaiseQuit(readFile(path)) != memo
-
-proc execFrontend(cmd, memoPath, memo: string; changed: bool) =
-  ## Runs the frontend stage. Its memo is written BEFORE the run: the
-  ## sub-compiles sem spawns (`prepareEval`, `executeExpr`) share this nimcache
-  ## and must find the configuration the outer build is producing, or they
-  ## would rerun every sem node concurrently with it. A rerun that fails half
-  ## way empties the memo again, so that the next build still remakes what
-  ## this one did not get to.
-  if changed: onRaiseQuit writeFile(memoPath, memo)
-  if execShellCmd(cmd) != 0:
-    if changed: onRaiseQuit writeFile(memoPath, "")
-    quit("FAILURE: " & cmd)
 
 proc execBackend(cmd, memoPath, memo: string; changed: bool) =
   ## Runs the backend stage. Nothing else builds into this main's directory,
@@ -2460,9 +2464,10 @@ proc buildGraph*(config: sink NifConfig; project: string;
     writeDepFile c, c.config.depFile
   # found in the runtime's nifler deps, which the later phases do not read
   config.cycles = c.config.cycles
-  let feMemoFile = frontendMemoFile(c.config)
-  let feMemo = frontendMemo(c.config)
-  let frontendChanged = memoDiffers(c, feMemoFile, feMemo)
+  # Before the build file: `generateSemInstructions` compares it with each
+  # module's, and the `nimsem` command passes it on.
+  config.optionKey = optionKey(c.config)
+  c.config.optionKey = config.optionKey
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
   when defined(windows) and not defined(nimony):
@@ -2474,13 +2479,6 @@ proc buildGraph*(config: sink NifConfig; project: string;
     (if Report in flags: " --report" else: "") &
     (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "")
   let nifmakeCommand = nifmakeBase & jobsArg(config) & " run "
-  # A changed configuration invalidates every result of the stage it applies
-  # to, and says so directly instead of through a file the nodes pretended to
-  # read. `--rerun`, not `--force`: the outputs' mtimes stay the tools'
-  # business, so an interface file that comes out unchanged still spares
-  # whatever depends on it.
-  let frontendCommand = nifmakeBase &
-    (if frontendChanged: " --rerun" else: "") & jobsArg(config) & " run "
 
   # `nimony c` drives nifmake once for the frontend and once more for the
   # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
@@ -2488,8 +2486,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
   # indicator across the separate processes instead of restarting per phase.
   let twoPhase = cmd != DoCheck
 
-  execFrontend frontendCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename),
-    feMemoFile, feMemo, frontendChanged
+  exec nifmakeCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
 
   if cmd == DoDoc:
     c = initDepContext(config, project, true, forceRebuild, moduleFlags, cmd)

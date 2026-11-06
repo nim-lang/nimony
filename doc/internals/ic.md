@@ -104,25 +104,37 @@ would look older than it and be parsed on every build.
 
 Defines, `--opt`, `--cc`, the target and so on change what the tools
 produce, and nifmake cannot see them. The driver keeps a **memo** of the
-options a stage's artifacts were made with and passes `--rerun` to that
-stage's nifmake when they differ. `--rerun` runs every node of the build but
-leaves mtimes to the tools, so unchanged interface files still spare their
-dependents.
+options artifacts were made with, and remakes them when the build's options
+differ. A memo must describe exactly the artifacts the build that reads it
+can remake: a build remakes only its own modules, so a memo of everything
+in the nimcache would be rewritten by a build that left other modules as
+another build made them.
 
-* `<nimcache>/config.nif` is the frontend's memo: everything sem reads
-  (defines, `--mm`, cycles, bits, cpu, os, `--app`, the C compiler's name,
-  the check flags, `--inlineframes`). It is written before the frontend
-  runs, because the sub-compiles sem starts (compile-time evaluation, the
-  `writenif` helper) share the nimcache and must see the configuration the
-  outer build is producing. If a build that reruns everything fails, the memo
-  is emptied, so the next build reruns everything again instead of trusting
-  half-remade artifacts.
+* The frontend's memo is per module: the `(optionkey …)` entry of
+  `M.s.deps.nif`, a digest of everything sem reads (defines, `--mm`, cycles,
+  bits, cpu, os, `--app`, the C compiler's name, the check flags,
+  `--inlineframes`). The driver passes the digest to nimsem, which records
+  it with the module's other outputs. When a module's entry differs from the
+  build's digest, the driver removes the module's `.s.nif` before the
+  frontend runs, as it does when the module last ran in the other
+  `isMainModule` role, so the module is semchecked again. Its `.s.idx.nif`
+  stays: an interface that comes out the same still spares the importers. A
+  sem that fails leaves no `.s.nif`, so the next build tries again. The
+  sub-compiles sem starts (compile-time evaluation, the `writenif` helper)
+  share the nimcache and are passed the outer build's options, so they
+  compute the same digest.
 * `<nimcache>/<backend>/<main>/config.nif` is the backend's memo: the
   frontend's key plus `--opt`, the C compiler and linker, `--passC`/`--passL`
-  and `.passc` pragmas, `--layout`, `--browser`. Since it contains the
-  frontend's key, a changed define reruns the backend too — even when the sem
-  results came out the same, and even when another main module's build was
-  the one that changed them. It is written after the backend succeeded.
+  and `.passc` pragmas, `--layout`, `--browser`. One file is enough here,
+  because only this main module's builds write this directory. The shared
+  `<backend>/M.x.nif` follows its `.s.nif` by mtime: every option hexer
+  takes is part of the frontend's key. When the memo differs, the driver
+  passes `--rerun` to the backend's nifmake, which runs every node of the
+  build but leaves mtimes to the tools, so unchanged interface files still
+  spare their dependents. Since the memo contains the frontend's key, a
+  changed define reruns the backend too, even when the sem results came out
+  the same, and even when another main module's build was the one that
+  changed them. It is written after the backend succeeded.
 
 Neither memo is an input of any node: an mtime cannot express "already built
 against this", and a file that every node depended on kept nodes stale
@@ -132,10 +144,9 @@ whenever their outputs legitimately came out the same.
 
 ```
 <nimcache>/
-  config.nif               frontend memo
   M.p.nif, M.p.deps.nif    nifler (shared by every main and backend)
-  M.s.nif, M.s.idx.nif,    nimsem (shared by every main and backend)
-  M.s.deps.nif
+  M.s.nif, M.s.idx.nif,    nimsem (shared by every main and backend);
+  M.s.deps.nif             .s.deps.nif holds the frontend memo
   <main>.build.nif         the frontend build
   c/  l/  n/  w/  j/       one directory per backend, named by its command
     M.x.nif                hexer, for every module but the main one
