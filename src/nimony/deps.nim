@@ -2443,6 +2443,30 @@ proc progArg(flags: set[BuildFlag]; lo, hi: int): string =
   if SilentMake in flags or Report in flags: ""
   else: "--progress:" & $lo & ":" & $hi & " "
 
+proc dropSemArtifactsOutsideGraph(c: DepContext) =
+  ## The frontend memo is one per nimcache, but `--rerun` only remakes the
+  ## modules of THIS graph. A module semmed under the old configuration that
+  ## this graph does not import would outlive the memo rewrite and be taken as
+  ## current by the next build that imports it: a `-d:danger` test left
+  ## `assertionsEnabled = false` in `std/assertions`' `.s.nif` behind, and every
+  ## later test importing it lost the side effects of its `assert`s. So on a
+  ## configuration change, remove the sem artifacts of every module the rerun
+  ## will not remake.
+  const exts = [".s.nif", ".s.idx.nif", ".s.deps.nif", ".sc.nif", ".sc.idx.nif"]
+  var stale: seq[string] = @[]
+  try:
+    for it in walkDir(path(c.config.nifcachePath), relative = true):
+      if it.kind != pcFile: continue
+      let name = $it.path
+      for ext in exts:
+        if name.endsWith(ext):
+          if name.substr(0, name.len - ext.len - 1) notin c.processedModules:
+            stale.add c.config.nifcachePath / name
+          break
+  except:
+    discard "an unreadable nimcache has nothing to invalidate"
+  for f in stale: vfsRemove f
+
 proc buildGraph*(config: sink NifConfig; project: string;
     flags: set[BuildFlag];
     commandLineArgs, commandLineArgsLengc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
@@ -2468,6 +2492,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
   let feMemo = frontendMemo(c.config)
   let frontendChanged = memoDiffers(c, feMemoFile, feMemo)
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
+  if frontendChanged: dropSemArtifactsOutsideGraph(c)
   #echo "run with: nifmake run ", buildFilename
   when defined(windows) and not defined(nimony):
     putEnv("CC", "gcc")
