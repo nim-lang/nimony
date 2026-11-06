@@ -42,16 +42,57 @@ proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor)
         result = fwdSym
         return
 
+proc nextSibling(n: Cursor): Cursor {.inline.} =
+  result = n
+  skip result
+
+proc isTrailingRetOf(n: Cursor; res: SymId): bool =
+  ## `n` is the `(ret result)` that `addReturnResult` appended: the body's last
+  ## statement, returning the symbol `res`.
+  result = false
+  if n.stmtKind == RetS and isLastSon(n):
+    var x = n
+    inc x
+    result = x.kind == Symbol and x.symId == res
+
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
                            lastSonInfo: var NifLineInfo; beforeLastSon: var int) =
-  ## Process all statements in the proc body, treating the last one as an expression.
+  ## Process all statements in the proc body, treating the last one as an
+  ## expression. Stops in front of the trailing `(ret result)` of a body that
+  ## was sem-checked once already; the caller processes it.
+  ##
+  ## Such a body (a routine declared in a template, which is checked when the
+  ## template is defined and again where it is expanded) starts with its
+  ## `(result ...)` declaration and ends with `(ret result)`. Its value is the
+  ## statement before that `ret`: `proc g(): string = $v` with an untyped `v`
+  ## could not be turned into `result = $v` the first time (nimony#2906).
+  var oldRes = SymId(0)
   while it.n.hasMore:
-    if not isLastSon(it.n):
+    if it.n.stmtKind == ResultS and c.routine.resId == SymId(0) and oldRes == SymId(0):
+      var d = it.n
+      inc d
+      if d.kind == SymbolDef: oldRes = d.symId
+      let declPos = dest.len
       semStmt c, dest, it.n, false
-    else:
+      var decl = cursorAt(dest, declPos)
+      if decl.stmtKind == ResultS:
+        inc decl
+        if decl.kind == SymbolDef: c.routine.resId = decl.symId
+      endRead decl
+    elif isLastSon(it.n):
       beforeLastSon = dest.len
       lastSonInfo = it.n.info
       semExpr c, dest, it, {AllowEmpty}
+    elif oldRes != SymId(0) and it.n.exprKind != NoExpr and
+        isTrailingRetOf(nextSibling(it.n), oldRes):
+      # Only a bare expression: a body checked before turned every typed tail
+      # into `result = x`, and a statement there (`{.assume: ...}`) stays one.
+      beforeLastSon = dest.len
+      lastSonInfo = it.n.info
+      semExpr c, dest, it, {AllowEmpty}
+      break
+    else:
+      semStmt c, dest, it.n, false
 
 proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
                               lastSonInfo: NifLineInfo; beforeLastSon: int) =
@@ -134,6 +175,8 @@ proc semProcBody(c: var SemContext; dest: var TokenBuf; itB: var Item) =
     handleTemplateReturnType(c, dest, it, lastSonInfo, beforeLastSon)
   else:
     handleProcReturnType(c, dest, it, lastSonInfo, beforeLastSon)
+  while it.n.hasMore:
+    semStmt c, dest, it.n, false # the trailing `(ret result)`, if any
   itB.n = it.n
 
 
