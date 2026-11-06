@@ -998,7 +998,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   var noAdditional = nifcore.createTokenBuf(1)
   runPlugin(c, dest, info, pluginName, input, noAdditional)
 
-proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
+proc runProgram(file: string; nimcachePath, stdcachePath: string; usedModules: HashSet[string];
                 commandLineArgs: string;
                 sourceDir = ""): tuple[output: string, exitCode: int] =
   # Compile the .p.nif through the full pipeline, then run the resulting
@@ -1006,9 +1006,11 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
   # to the invoking compile). Only the execution step uses `workingDir` so
   # relative paths like `doc/version.md` resolve next to the caller module.
   let nimonyExe = findTool("nimony")
-  let compileCmd = quoteShell(nimonyExe) & shellArgs(commandLineArgs) &
-    " --nimcache:" & quoteShell(nimcachePath) &
-    " s " & quoteShell(file)
+  var compileCmd = quoteShell(nimonyExe) & shellArgs(commandLineArgs) &
+    " --nimcache:" & quoteShell(nimcachePath)
+  if stdcachePath.len > 0:
+    compileCmd.add " --stdcache:" & quoteShell(stdcachePath)
+  compileCmd.add " s " & quoteShell(file)
   try:
     result = execCmdEx(compileCmd)
   except:
@@ -1034,11 +1036,30 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
 const
   writeNifModuleSuffix* = "wriwhv7qv"
 
+proc evalCacheDir*(c: SemContext): string =
+  ## The nimcache of the builds that compile-time evaluation in this module
+  ## runs, one per module, beside its other artifacts (as a macro plugin's
+  ## `<stem>.host`). Such a build runs while the build of this module goes on
+  ## around it, and in the build's own nimcache it built what that build was
+  ## building too: two modules evaluating at once both hexed a module they
+  ## import, into the same `.x.nif`. Here only this module's nimsem writes,
+  ## and it evaluates one expression at a time.
+  c.g.config.nifcachePath / c.thisModuleSuffix & ".eval"
+
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
                usedModules: HashSet[string]; sourceDir = ""): string =
   ## Returns an error message if the evaluation failed, "" on success.
-  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
+  let evalCache = evalCacheDir(c)
+  # A stdlib module is semchecked in the stdlib cache, by a build holding its
+  # lock, so the program's build runs under that lock (`NIFMAKE_HELD_LOCKS`)
+  # while the outer one goes on semchecking other stdlib modules: in the
+  # shared cache the two would build `std/writenif`'s imports at once. The
+  # program's stdlib is this module's own then, like the rest of it.
+  let isStd = c.g.config.stdcachePath.len > 0 and
+              c.g.config.nifcachePath == c.g.config.stdcachePath
+  let progfile = evalCache / srcName.addFileExt(".p.nif")
   try:
+    createDir(path(evalCache))
     writeFileAndIndex(progfile, src)
 
     # Write the .p.deps.nif file so that `nimony s` can find the imports:
@@ -1055,14 +1076,15 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
     if c.importSnippets.len > 0:
       deps.add c.importSnippets
     deps.addParRi()
-    let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
+    let depsFile = evalCache / srcName & ".p.deps.nif"
     writeFile(depsFile, toString(deps, true))
-    let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules,
+    let (output, exitCode) = runProgram(progfile, evalCache,
+                                        (if isStd: evalCache else: ""), usedModules,
                                         c.commandLineArgs, sourceDir)
     if exitCode != 0:
       result = ensureMove(output)
     else:
-      let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
+      let outfile = evalCache / srcName.addFileExt(".out.nif")
       var r = rd.open(outfile)
       parse(r, dest)
       rd.close(r)

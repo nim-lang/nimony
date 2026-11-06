@@ -784,7 +784,7 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.symId("setup.0." & writeNifModuleSuffix), info
-    c.dest.addStrLit toAbsolutePath(s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif"), info
+    c.dest.addStrLit toAbsolutePath(evalCacheDir(s) / c.newModuleSuffix & ".out.nif"), info
 
   var retTypeBuf = createTokenBuf(4)
   if cursorIsNil(expectedType):

@@ -630,6 +630,37 @@ proc incrementalTests*() =
         expect reportField(r[0], "nimsem") == 1,
                "unrecorded: nimsem ran " & $reportField(r[0], "nimsem") & " times (expected 1)"
 
+  # Phase 17: compile-time evaluation in two modules of one build at once.
+  # Each evaluation builds a program, while the build goes on around it; both
+  # programs import `evalpairdep`. In the build's own nimcache the two
+  # program builds hexed it into the same `.x.nif` at the same time (on
+  # Windows the second cannot replace the file the first has open), so each
+  # evaluating module's programs are built in a nimcache of its own,
+  # `<module>.eval`, and the build's backend directory holds no program.
+  let pairSrc = "tests/incremental/evalpair.nim"
+  let pairCache = "nimcache" / "incremental-evalpair"
+  if fileExists(pairSrc):
+    inc phases
+    removeDir pairCache
+    let (output, ec) = execCmdEx(nimony.quoteShell & " c -r --silentMake --nimcache:" &
+      pairCache.quoteShell & " " & pairSrc.quoteShell)
+    if ec != 0:
+      failures.add "eval-pair: compile failed: " & output.strip.splitLines[^1]
+    else:
+      expect output.contains("evalpair 42 42"), "eval-pair: expected 'evalpair 42 42'"
+      var evalDirs = 0
+      for kind, d in walkDir(pairCache):
+        if kind == pcDir and d.endsWith(".eval"):
+          inc evalDirs
+          expect filesBySuffix(d, ".x.nif").anyIt(readFile(it).contains("twice")),
+                 "eval-pair: " & d & " has no `.x.nif` of evalpairdep"
+      expect evalDirs == 2, "eval-pair: " & $evalDirs & " `.eval` nimcaches (expected 2)"
+      var mainDirs: seq[string] = @[]
+      for kind, d in walkDir(pairCache / "c"):
+        if kind == pcDir: mainDirs.add d.lastPathPart
+      expect mainDirs.len == 1,
+             "eval-pair: backend directories " & $mainDirs & " (expected the main module's alone)"
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f

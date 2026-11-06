@@ -209,6 +209,17 @@ error. Its shared `.s.nif` would depend on one build's sources. A
 compile-time evaluation's program imports `std/writenif`, so that module is
 part of the program's graph and rebuilt when stale like every other.
 
+A compile-time evaluation's programs are built in a nimcache of the
+evaluating module's own, `<nimcache>/M.eval/` (`semos.evalCacheDir`), as a
+macro plugin's are in `<stem>.host`: the program's build runs while the
+build around it goes on, and in that build's nimcache two modules evaluating
+at once hexed the module they both import into the same `.x.nif`. The
+program's stdlib is in the stdlib cache, under its lock, except for a stdlib
+module's evaluation: that runs under the lock its ancestor holds, while the
+ancestor goes on semchecking other stdlib modules, among them
+`std/writenif`'s imports. Such a program's stdlib is in `M.eval/` too
+(`--stdcache`), which only the evaluating module's nimsem writes.
+
 A stdlib module's name should not depend on where a build was started
 from: `modnames.moduleSuffix` names a file under a search path (`lib/`,
 `src/lib/`) relative to it, ignoring the CWD. The rest of `src/` is named
