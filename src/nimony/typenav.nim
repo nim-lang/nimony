@@ -55,7 +55,6 @@ type
 
   TypeCache* = object
     builtins*: BuiltinTypes
-    mem: seq[TokenBuf]
     current: TypeScope
     keepOwned: bool ## `getType` answers `owned T` as `T` unless set: only the
                     ## passes that implement the ownership rules (RFC #575)
@@ -63,14 +62,6 @@ type
 
 proc createTypeCache*(bits: int; keepOwned = false): TypeCache =
   TypeCache(builtins: createBuiltinTypes(bits), keepOwned: keepOwned)
-
-proc keepAlive*(c: var TypeCache; buf: sink TokenBuf): Cursor =
-  ## Hand out a cursor into a type that had to be synthesized, transferring the
-  ## buffer to the cache so the cursor stays valid for as long as the cache
-  ## does. Every invented type goes through here -- including hexer's
-  ## `closuretypes.closureValueType`, which is why this is exported.
-  c.mem.add ensureMove(buf)
-  result = cursorAt(c.mem[c.mem.len-1], 0)
 
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;
                     val: Cursor = default(Cursor)) =
@@ -379,7 +370,7 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         buf.addParLe(RefT, n.info)
         buf.addSymUse pool.symId(BareRootObjName), n.info
         buf.addParRi()
-        result = c.keepAlive(buf)
+        result = cursorAt(buf, 0)
   elif BeStrict in flags:
     assert false, "wanted tuple type but got: " & toString(tupType, false)
 
@@ -641,7 +632,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.addParLe(PtrT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
-    result = c.keepAlive(buf)
+    result = cursorAt(buf, 0)
   of CurlyX:
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.childCursor, flags)
@@ -649,7 +640,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.addParLe(SetT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
-    result = c.keepAlive(buf)
+    result = cursorAt(buf, 0)
   of TupX:
     # should not be encountered but keep this code for now
     var buf = createTokenBuf(4)
@@ -664,7 +655,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         buf.addSubtree getTypeImpl(c, val, flags)
         skip n
     buf.addParRi()
-    result = c.keepAlive(buf)
+    result = cursorAt(buf, 0)
   of TupatX:
     result = tupatType(c, n, flags)
   of BracketX:
@@ -682,7 +673,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc arrayLen
     buf.addIntLit(arrayLen, info)
     buf.addParRi()
-    result = c.keepAlive(buf)
+    result = cursorAt(buf, 0)
   of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:
     result = c.builtins.voidType
   of DupX:
@@ -744,7 +735,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
           loopInto t:
             buf.takeTree t
         buf.addParPair(ClosureP)
-    result = c.keepAlive(buf)
+    result = cursorAt(buf, 0)
 
   assert result.hasMore, "ParRi for expression: " & toString(n, false)
 
@@ -793,4 +784,4 @@ proc registerLocalPtrOf*(c: var TypeCache; name: SymId; kind: SymKind; elemType:
   buf.addParLe(PtrT, elemType.info)
   buf.addSubtree elemType
   buf.addParRi()
-  c.registerLocal(name, kind, c.keepAlive(buf))
+  c.registerLocal(name, kind, cursorAt(buf, 0))
