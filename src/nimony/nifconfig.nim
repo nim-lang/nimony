@@ -126,6 +126,10 @@ type
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
+    stdcachePath*: string ## where the stdlib's frontend artifacts and shared
+                          ## `.x.nif` live, shared by every build with the same
+                          ## frontend key (`deps.stdCacheDir`); empty = in
+                          ## `nifcachePath` like any other module
     bits*: int
     bitsExplicit*: bool  ## `--bits:N` (or an `intbits` config row) was given, so
                          ## `--cpu` must NOT overwrite it. Without this the two

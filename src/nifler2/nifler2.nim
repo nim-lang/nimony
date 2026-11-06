@@ -24,8 +24,9 @@ Usage:
   nifler2 t|tree file.nim                        parse one file, print the tree
 
 Options:
-  --portablePaths   accepted; paths are always written relative to the
-                    current directory, as `nifler --portablePaths` does
+  --portablePaths   write the file's path relative to the current directory,
+                    as `nifler --portablePaths` does; without it the path is
+                    absolute
   --deps            also write <out>.deps.nif, the module's dependencies
   --force, -f       accepted; the output is always rewritten
 """
@@ -51,6 +52,7 @@ proc main {.raises.} =
   var action = ""
   var args: seq[string] = @[]
   var deps = false
+  var portablePaths = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -58,7 +60,8 @@ proc main {.raises.} =
       else: args.add key
     of cmdLongOption, cmdShortOption:
       case key
-      of "portablePaths", "portablepaths", "force", "f": discard
+      of "portablePaths", "portablepaths": portablePaths = true
+      of "force", "f": discard
       of "deps": deps = true
       of "help", "h": quit Usage
       else: quit "nifler2: unsupported option: " & key
@@ -75,9 +78,18 @@ proc main {.raises.} =
     # the input with `.nif`; the deps file replaces that extension
     let outp = if args.len >= 2: addFileExt(args[1], "nif") else: changeFileExt(inp, ".nif")
     if action != "deps":
-      # nimony runs nifler with `--portablePaths`: the file is written relative
-      # to the current directory
-      writeNifler(p.first, p.pool, p.tags, cellCount(p.arena) * 8, outp, relativePath(absolutePath(inp), getCurrentDir(), '/'))
+      # as nifler writes it: relative to the current directory with
+      # `--portablePaths`, else absolute (`expandFilename`, which is Nim's
+      # `canonicalizePath`), with `/` on every OS
+      var file = ""
+      if portablePaths:
+        file = relativePath(absolutePath(inp), getCurrentDir(), '/')
+      else:
+        file = expandFilename(inp)
+        when defined(windows):
+          for i in 0 ..< file.len:
+            if file[i] == '\\': file[i] = '/'
+      writeNifler(p.first, p.pool, p.tags, cellCount(p.arena) * 8, outp, file)
     if deps or action == "deps":
       writeDeps(p.first, p.pool, p.tags, changeFileExt(outp, ".deps.nif"))
   of "t", "tree":

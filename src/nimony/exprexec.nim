@@ -123,6 +123,14 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
   ## generated serializer reference private types from other modules
   ## (e.g. `HashEntry` in `std/tables`) without those libraries needing
   ## to re-export them just for the const-eval machinery.
+  ##
+  ## `std/writenif`'s symbols are the program's own calls into its reporting
+  ## routines, plain non-generic procs: they become idents without a look at
+  ## their declarations, as the program's build is what builds that module
+  ## (it is an import, see `semos.runEval`) and it may not exist yet.
+  if pool.symModule(sym) == writeNifModuleSuffix:
+    buf.addIdent(pool.strings.getOrIncl(pool.symBasename(sym)), info)
+    return
   let typevars = instantiationTypevars(sym)
   if not cursorIsNil(typevars):
     buf.addParLe(AtX, info)
@@ -754,9 +762,6 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
   ## body is too complex for `expreval.eval` — local `var`s, nested procs,
   ## `for` loops, etc.). The result is serialised to NIF in `dest` using the
   ## same `entryPoint` machinery that `executeCall` uses.
-  let prepResult = semos.prepareEval(s)
-  if prepResult.len > 0: return prepResult
-
   var c = SynthesizeSerializerCtx(dest: createTokenBuf(150), info: info,
     routineKind: ProcY, bits: s.g.config.bits, errorMsg: "",
     thisModuleSuffix: s.thisModuleSuffix,
@@ -779,7 +784,7 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.symId("setup.0." & writeNifModuleSuffix), info
-    c.dest.addStrLit toAbsolutePath(s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif"), info
+    c.dest.addStrLit toAbsolutePath(evalCacheDir(s) / c.newModuleSuffix & ".out.nif"), info
 
   var retTypeBuf = createTokenBuf(4)
   if cursorIsNil(expectedType):

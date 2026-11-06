@@ -281,7 +281,9 @@ proc incrementalTests*() =
              "dce-local-settle: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected 0)"
 
     let liveFiles = filesBySuffix(dceCache, ".live.nif")
-    let modules = filesBySuffix(dceCache, ".x.nif").len
+    # every module's `dceEmit` output: the stdlib's `.x.nif` are in the
+    # stdlib cache, but each module of the program gets its `.c.nif` here
+    let modules = filesBySuffix(dceCache, ".c.nif").len
     expect liveFiles.len == modules,
            "live-edit: " & $liveFiles.len & " live files for " & $modules & " modules"
     let before = liveFiles.mapIt(readFile(it))
@@ -431,14 +433,13 @@ proc incrementalTests*() =
     writeFile(pluginData, originalPluginData)
     writeFile(slurpData, originalSlurpData)
 
-  # Phase 12: a `std/writenif` in the nimcache that is out of date. The
-  # compile-time evaluator's program links against it, and its build graph
-  # has no rule for it: `semos.prepareEval` has to bring it up to date, not
-  # only build it when it is missing. One left behind by an older stdlib
-  # failed every evaluation ("cannot evaluate expression at compile time")
-  # until the nimcache was wiped. Simulated by making its `.p.nif` and `.s.nif`
-  # older than `writenif.nim` and the `.s.nif` an empty module; the slice
-  # bound is edited so the evaluation is not answered from its memo.
+  # Phase 12: compile-time evaluation from a cold nimcache. Its program links
+  # against `std/writenif`, which once was no node of the program's graph and
+  # had to be brought up to date beside it: one left behind by an older
+  # stdlib failed every evaluation ("cannot evaluate expression at compile
+  # time") until the nimcache was wiped. The program now imports it, so it is
+  # rebuilt when stale like every other module; a second evaluation with an
+  # edited bound must not be answered from the first one's memo.
   let evalSrc = "tests/incremental/evaldep.nim"
   let evalCache = "nimcache" / "incremental-eval"
   if fileExists(evalSrc):
@@ -457,16 +458,10 @@ proc incrementalTests*() =
     block:
       if runEval("eval-cold"):
         expect evalOutput.contains("head-0123"), "eval-cold: expected 'head-0123'"
-        let wn = evalCache / "wriwhv7qv"
-        expect fileExists(wn & ".s.nif"), "eval-cold: no std/writenif in the nimcache"
-        writeFile(wn & ".s.nif", "(.nif27)\n(stmts)\n")
-        let old = fromUnix(1_000_000_000)
-        setLastModificationTime(wn & ".p.nif", old)
-        setLastModificationTime(wn & ".s.nif", old)
         writeFile(evalSrc, originalEval.replace("0 ..< 4", "0 ..< 5"))
-        if runEval("eval-stale-writenif"):
+        if runEval("eval-edited"):
           expect evalOutput.contains("head-01234"),
-                 "eval-stale-writenif: expected 'head-01234'"
+                 "eval-edited: expected 'head-01234'"
     writeFile(evalSrc, originalEval)
 
   # Phase 13: `isMainModule` is folded by sem, so a module's `.s.nif` depends
@@ -604,6 +599,127 @@ proc incrementalTests*() =
         expect reportField(r[0], "total") == 0 and reportField(r[1], "total") == 0,
                "options-without-settle: re-ran " &
                $(reportField(r[0], "total") + reportField(r[1], "total")) & " commands"
+
+    # Phase 16: the driver forces a re-sem without touching the outputs. It
+    # runs outside the stdlib cache's lock, while other builds' nimsems write
+    # and read there: a `.s.nif` it removed failed their importers with
+    # "cannot open" (boot stage 1, five builds sharing one stdlib cache).
+    # (a) A module recorded with other options is re-semmed through an input
+    # written now, its stamp. (b) A module with a `.s.nif` and no
+    # `.s.deps.nif` (a nimsem killed between the two) is re-semmed by nifmake,
+    # which finds an output missing: the backend reads every module's record.
+    inc phases
+    var depSemmed = ""
+    for f in walkFiles(optCache / "*.s.nif"):
+      if readFile(f).contains("probe-off"): depSemmed = f
+    expect depSemmed.len > 0, "resem: no `.s.nif` of optiondep in " & optCache
+    if depSemmed.len > 0:
+      var r = runOpt("resem-stamp", "-d:incrementalStale", optUser)
+      expect optOutput.contains("optionuser probe-on"),
+             "resem-stamp: expected 'optionuser probe-on'"
+      expect fileExists(depSemmed & ".resem"),
+             "resem-stamp: no re-sem stamp " & depSemmed & ".resem"
+      let depRecord = depSemmed.changeFileExt("").changeFileExt(".s.deps.nif")
+      expect fileExists(depRecord), "unrecorded: no " & depRecord
+      if fileExists(depRecord): removeFile depRecord
+      r = runOpt("unrecorded", "-d:incrementalStale", optUser)
+      expect optOutput.contains("optionuser probe-on"),
+             "unrecorded: expected 'optionuser probe-on'"
+      expect fileExists(depRecord), "unrecorded: " & depRecord & " was not written again"
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") == 1,
+               "unrecorded: nimsem ran " & $reportField(r[0], "nimsem") & " times (expected 1)"
+
+  # Phase 17: compile-time evaluation in two modules of one build at once.
+  # Each evaluation builds a program, while the build goes on around it; both
+  # programs import `evalpairdep`. In the build's own nimcache the two
+  # program builds hexed it into the same `.x.nif` at the same time (on
+  # Windows the second cannot replace the file the first has open), so each
+  # evaluating module's programs are built in a nimcache of its own,
+  # `<module>.eval`, and the build's backend directory holds no program.
+  let pairSrc = "tests/incremental/evalpair.nim"
+  let pairCache = "nimcache" / "incremental-evalpair"
+  if fileExists(pairSrc):
+    inc phases
+    removeDir pairCache
+    let (output, ec) = execCmdEx(nimony.quoteShell & " c -r --silentMake --nimcache:" &
+      pairCache.quoteShell & " " & pairSrc.quoteShell)
+    if ec != 0:
+      failures.add "eval-pair: compile failed: " & output.strip.splitLines[^1]
+    else:
+      expect output.contains("evalpair 42 42"), "eval-pair: expected 'evalpair 42 42'"
+      var evalDirs = 0
+      for kind, d in walkDir(pairCache):
+        if kind == pcDir and d.endsWith(".eval"):
+          inc evalDirs
+          expect filesBySuffix(d, ".x.nif").anyIt(readFile(it).contains("twice")),
+                 "eval-pair: " & d & " has no `.x.nif` of evalpairdep"
+      expect evalDirs == 2, "eval-pair: " & $evalDirs & " `.eval` nimcaches (expected 2)"
+      var mainDirs: seq[string] = @[]
+      for kind, d in walkDir(pairCache / "c"):
+        if kind == pcDir: mainDirs.add d.lastPathPart
+      expect mainDirs.len == 1,
+             "eval-pair: backend directories " & $mainDirs & " (expected the main module's alone)"
+
+  # Phase 18: builds started from different directories share a stdlib
+  # cache, so nothing stored in it may depend on the directory of the build
+  # that wrote it. `--stdcache` gives each step a stdlib cache of its own.
+  # * A rebuilt nimsem reruns the stdlib's sem nodes but not its parse nodes,
+  #   so the second build sems `system.nim` from the `.p.nif` the first one
+  #   wrote: a path in it relative to the first build's directory sent
+  #   `include "system/basic_types"` to a file that does not exist. Making the
+  #   sem outputs older than everything else is what a rebuilt nimsem does
+  #   to them.
+  # * The C file of a stdlib `.compile` (mimalloc's, with `-d:useMimalloc`) is
+  #   compiled by a build that did not sem the module.
+  # * A module of `src/` outside `src/lib/` (the parser `std/macros` imports)
+  #   has the same name in a build started inside `src/`: under another one,
+  #   `std/macros` was re-semmed to import it, and a later build from
+  #   elsewhere could not compile a macro.
+  let cwdRoot = absolutePath("nimcache" / "incremental-cwd")
+  let cwdStd = cwdRoot / "stdcache"
+  let cwdDirs = [cwdRoot / "a", cwdRoot / "b" / "sub" / "dir"]
+  block:
+    inc phases
+    removeDir cwdRoot
+    for d in cwdDirs:
+      createDir d
+      writeFile d / "cwdmain.nim",
+        "import std/[syncio, assertions]\nassert 1 + 1 == 2\necho \"cwd ok\"\n"
+    writeFile cwdRoot / "cwdmacros.nim", "import std/[syncio, macros]\necho \"cwd ok\"\n"
+    proc runCwd(label, dir: string; opts = ""; suffix = "";
+                main = "cwdmain.nim"): bool =
+      let (output, ec) = execCmdEx(absolutePath(nimony).quoteShell & " c -r " & opts &
+        " --silentMake --stdcache:" & quoteShell(cwdStd & suffix) & " --nimcache:" &
+        quoteShell(cwdRoot / "cache" & suffix & "-" & dir.lastPathPart) & " " &
+        main.quoteShell, workingDir = dir)
+      result = ec == 0 and output.contains("cwd ok")
+      if not result:
+        # the first line is the tool that failed, the last one only nifmake
+        failures.add label & ": " & (if ec != 0: "compile failed: " else: "expected 'cwd ok': ") &
+                     output.strip.splitLines[0]
+    proc semmed(suffix: string): seq[string] =
+      result = @[]
+      for f in walkFiles(cwdStd & suffix / "*.s.nif"): result.add f.lastPathPart
+      sort result
+    if runCwd("cwd-first", cwdDirs[0]):
+      let old = fromUnix(1_000_000_000)
+      var n = 0
+      for pattern in ["*.s.nif", "*.s.idx.nif"]:  # a sem node's outputs
+        for f in walkFiles(cwdStd / pattern):
+          setLastModificationTime(f, old)
+          inc n
+      expect n > 0, "cwd-first: no `.s.nif` in " & cwdStd
+      discard runCwd("cwd-second", cwdDirs[1])
+    if runCwd("cwd-compile-sem", cwdDirs[1], "-d:useMimalloc", "-mi"):
+      discard runCwd("cwd-compile-other", cwdDirs[0], "-d:useMimalloc", "-mi")
+    let macrosMain = cwdRoot / "cwdmacros.nim"
+    if runCwd("cwd-src-outside", cwdDirs[0], "", "-src", macrosMain):
+      let before = semmed("-src")
+      if runCwd("cwd-src-inside", absolutePath("src" / "nifler2"), "", "-src", macrosMain):
+        let added = semmed("-src").filterIt(it notin before)
+        expect added.len == 0,
+               "cwd-src-inside: the stdlib's modules got other names: " & added.join(" ")
 
   let dt = epochTime() - t0
   if failures.len > 0:
