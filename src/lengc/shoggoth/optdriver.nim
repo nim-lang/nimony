@@ -27,7 +27,7 @@ import scalarizer                              # runScalarize (object → field 
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import unswitch                                # runUnswitch (loop unswitching)
 import unroll                                  # runUnroll (full loop unrolling)
-import constfold                               # runConstFold (const loads, literal ifs, dead code)
+import coalesce                                # runCoalesce (single-use copy temps)
 import imi_bridge                             # runImi/parseModule (inter-module inliner)
 import vectorizer                             # runVectorizer (map loops -> (instr ...))
 export VecMode                                # the driver flag's type, for shoggoth.nim
@@ -55,7 +55,7 @@ let disabledPasses = block:
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## unroll, constfold, memidioms, vectorize, sinkret, tailcall.
+  ## unroll, coalesce, memidioms, vectorize, sinkret, tailcall.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -71,7 +71,7 @@ type
     procs*, bodies*, intermodChanged*: int
     checksRemoved*: int
     unrolled*: int                        ## loops fully unrolled
-    constFolded*: int                     ## bodies constfold changed
+    constLoads*: int                      ## const aggregate reads folded by copyprop
     vectorized*: int
     memOps*: set[IntrinsicOp]                 ## the mem rows memidioms emitted
 
@@ -93,8 +93,7 @@ proc extractModuleSuffix(filename: string): string =
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                   params: Cursor = default(Cursor); eng: Engine = nil;
-                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true); unroll = false;
-                  consts: ptr ConstTable = nil) =
+                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true); unroll = false) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported.
   ##
@@ -118,7 +117,13 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # later passes see simpler, scalar code.
   if passOn("ctorproj"): runConstructorProjection(buf)
   if passOn("scalarize"): runScalarize(buf, m)
-  if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
+  var constLoads = 0
+  if passOn("copyprop"): constLoads += runCopyProp(buf, params, summaries, m)
+  # Copyprop's backward twin: a temp defined once and copied once into another
+  # local becomes that local. The inliner's by-value results (`var r; … r = T(…)
+  # … v = r`, split field-wise by SROA) are chains of such copies whose temps
+  # die before the destination is read, so forward propagation cannot see them.
+  if passOn("coalesce"): runCoalesce(buf)
   # Fully unroll small constant-trip loops: every copy reads its iteration's
   # index as a literal, so `(at a i)` becomes a constant index for CSE and the
   # rewriter below, and the per-iteration compare-and-branch is gone. AFTER
@@ -133,21 +138,21 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   if unroll and passOn("unroll"):
     let n = runUnroll(buf)
     st.unrolled += n
-    if n > 0 and passOn("copyprop"): runCopyProp(buf, params, summaries, m)
-  # Fold loads from the module's constant arrays/objects, literal comparisons
-  # and the `if`s they decide, and delete the code behind the jumps that
-  # leaves unconditional. An unrolled or inlined `things[i]` with a literal `i`
-  # still carries its bounds check, whose failure path keeps the index a
-  # variable; folding the check lets copyprop make the index a literal, which
-  # lets the next round fold the load (and the `kind` test on it). Each round
-  # that changes something hands SROA and copyprop the new literals.
-  if consts != nil and passOn("constfold"):
+    if n > 0 and passOn("copyprop"):
+      constLoads += runCopyProp(buf, params, summaries, m)
+  # Copyprop folds a read of a const array/object at a literal index (an
+  # unrolled or inlined `things[i]`) to the element. A folded constructor is
+  # SROA's to take apart, and the literals it yields can decide further reads
+  # (`things[i].kind`), so each round that folded something gets another.
+  st.constLoads += constLoads
+  if passOn("copyprop"):
     for _ in 0 ..< 3:
-      if not runConstFold(buf, consts): break
-      inc st.constFolded
+      if constLoads == 0: break
       if passOn("ctorproj"): runConstructorProjection(buf)
       if passOn("scalarize"): runScalarize(buf, m)
-      if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
+      constLoads = runCopyProp(buf, params, summaries, m)
+      st.constLoads += constLoads
+      if passOn("coalesce"): runCoalesce(buf)
   # Hoist loop-invariant `if` conditions out of small loops by duplicating them
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
   # of per character. AFTER copyprop so propagated copies make structurally
@@ -218,8 +223,7 @@ proc isAssemblerProc(pragmas: Cursor): bool =
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                 eng: Engine = nil; vecMode = vecOff; memOpts = MemOpts(intrinsics: true); unroll = false;
-                 consts: ptr ConstTable = nil) =
+                 eng: Engine = nil; vecMode = vecOff; memOpts = MemOpts(intrinsics: true); unroll = false) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
@@ -245,7 +249,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m, d.params, eng, vecMode, memOpts, unroll, consts)
+        optimizeBody(body, suffix, st, summaries, m, d.params, eng, vecMode, memOpts, unroll)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb
@@ -259,7 +263,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st, summaries, m, eng, vecMode, memOpts, unroll, consts)
+          rebuildTree(dest, n, suffix, st, summaries, m, eng, vecMode, memOpts, unroll)
       dest.closeTag()
   else:
     dest.addSubtree n
@@ -276,7 +280,6 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
   ## today; the mode names the back end that lowers them.
   var summaries = collectFunctionSummaries(src)   # once per module; cse runs per body
   # `src` is not touched while the bodies are rebuilt, so cursors into it stay valid
-  var consts = collectConsts(src.beginRead())
   result = createTokenBuf(src.len + src.len div 8, src.pool, src.tags)
   var n = src.beginRead()
   if n.kind == TagLit and n.stmtKind == StmtsS:
@@ -288,14 +291,14 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
     if li.isValid: result.appendLineInfo li
     n.into:
       while n.hasMore:
-        rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts, unroll, addr consts)
+        rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts, unroll)
     if st.vectorized > 0:
       addVecIntrinsicDecls(result, "vec." & suffix)
     if MemsetOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemsetOp)
     if MemcpyOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemcpyOp)
     result.closeTag()
   else:
-    rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts, unroll, addr consts)
+    rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts, unroll)
 
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
