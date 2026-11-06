@@ -24,6 +24,7 @@ import std/atomics
 import std/asyncio
 import std/base64
 import std/bitops
+import std/broadcast
 import std/channels
 import std/cmdline
 import std/colors
@@ -122,6 +123,7 @@ import std/typetraits
 import std/unicode
 import std/uri
 import std/varints
+import std/vectors
 import std/volatile
 import std/websocket
 import std/widestrs
