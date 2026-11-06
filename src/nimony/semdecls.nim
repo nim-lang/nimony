@@ -94,7 +94,7 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
     endRead reemit
     dest.addParRi()
   elif classifyType(c, returnType) == VoidT and
-       classifyType(c, it.typ) notin {AutoT, NoType}:
+       (it.typ.kind == Symbol or classifyType(c, it.typ) notin {AutoT, NoType}):
     # A VOID routine whose body's TAIL is an expression of a CONCRETE non-void
     # type. This used to fall through to `commonType` against `void`, reporting
     #   type mismatch: got: bool but wanted: void
@@ -109,13 +109,17 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
     # `AutoT`/`NoType` are EXCLUDED deliberately: a `defer` as the tail of a
     # void proc classifies as `auto`, and treating it as a discardable-eligible
     # expression breaks tests/nimony/exceptions/tdefer.nim. Those keep the old
-    # `commonType` path.
+    # `commonType` path. A named type (`string`, an object) is a `Symbol`, which
+    # `classifyType` also reports as `NoType`, so it is let through explicitly,
+    # as `semStmt` does.
     var ex = cursorAt(dest, beforeLastSon)
     let isDiscardable = implicitlyDiscardable(ex, dest)
     endRead ex
     if not isDiscardable:
       buildErr c, dest, lastSonInfo,
         "expression of type `" & typeToString(it.typ) & "` must be discarded"
+    else:
+      discardCallExplicitly dest, beforeLastSon, lastSonInfo
   else:
     commonType c, dest, it, beforeLastSon, returnType
 

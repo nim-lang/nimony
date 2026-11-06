@@ -34,8 +34,45 @@ proc tailInWhile() =
 proc usesResult(): int =
   f(5)                  # a NON-void proc's tail must still become `result`
 
+# A named result type (`string`, an object) is a symbol, which `classifyType`
+# reports as `NoType`. Such a tail used to fall through to `commonType` and
+# fail with "type mismatch: got: string but wanted: void".
+
+type
+  Obj = object
+    a: int
+    s: string
+
+proc g(x: int): string {.discardable.} =
+  echo "g ", x
+  result = "g" & $x
+
+proc h(x: int): Obj {.discardable.} =
+  echo "h ", x
+  result = Obj(a: x, s: "h")
+
+proc strTail() =
+  g(6)
+
+proc strTailInIf(cond: bool) =
+  if cond:
+    g(7)
+
+proc objTail() =
+  h(8)
+
+proc objTailInIf(cond: bool) =
+  if cond:
+    h(9)
+
 tailOnly()
 tailAfterOther()
 tailInIf(true)
 tailInWhile()
 echo usesResult()
+strTail()
+strTailInIf(true)
+strTailInIf(false)
+objTail()
+objTailInIf(true)
+objTailInIf(false)

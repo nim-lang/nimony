@@ -599,6 +599,30 @@ proc semStmtsExpr(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScop
     else: ExprTagId
   setTagAt(dest, before, TagId(kind))
 
+proc discardCallExplicitly(dest: var TokenBuf; exPos: int; info: NifLineInfo) =
+  ## Make the implicit discard of a discardable call at `dest[exPos..]`
+  ## explicit: `(discard …)` is what later passes bind to a temp and destroy.
+  ## A bare `(call …)` statement of a type with a destructor
+  ## (`{.discardable.}` proc returning a `string`) was bound to a temp whose
+  ## symbol was then left behind as a statement.
+  var one = cursorAt(dest, exPos)
+  # Only a CALL: an `if`/`case` whose branches are discardable calls is
+  # typed by them too, but wrapping it would turn a statement without an
+  # `else` into an expression that does not always produce a value.
+  let isCall = one.exprKind in CallKinds
+  skip one
+  let single = cursorToPosition(dest, one) == dest.len
+  endRead one
+  if single and isCall:
+    var val = createTokenBuf(dest.len - exPos + 2)
+    for i in exPos ..< dest.len: val.add dest[i]
+    dest.shrink exPos
+    dest.addParLe(DiscardS, info)
+    var vc = beginRead(val)
+    dest.addSubtree vc
+    endRead vc
+    dest.addParRi()
+
 proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) =
   let info = n.info
   var it = Item(n: n, typ: c.types.autoType)
@@ -624,27 +648,7 @@ proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: 
     if not discardable:
       buildErr c, dest, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
     else:
-      # Make the implicit discard explicit: `(discard …)` is what later passes
-      # bind to a temp and destroy. A bare `(call …)` statement of a type with a
-      # destructor (`{.discardable.}` proc returning a `string`) was bound to a
-      # temp whose symbol was then left behind as a statement.
-      var one = cursorAt(dest, exPos)
-      # Only a CALL: an `if`/`case` whose branches are discardable calls is
-      # typed by them too, but wrapping it would turn a statement without an
-      # `else` into an expression that does not always produce a value.
-      let isCall = one.exprKind in CallKinds
-      skip one
-      let single = cursorToPosition(dest, one) == dest.len
-      endRead one
-      if single and isCall:
-        var val = createTokenBuf(dest.len - exPos + 2)
-        for i in exPos ..< dest.len: val.add dest[i]
-        dest.shrink exPos
-        dest.addParLe(DiscardS, info)
-        var vc = beginRead(val)
-        dest.addSubtree vc
-        endRead vc
-        dest.addParRi()
+      discardCallExplicitly dest, exPos, info
   n = it.n
 
 proc semStmtCallback*(c: var SemContext; dest: var TokenBuf; n: Cursor) =
