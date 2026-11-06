@@ -367,11 +367,15 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
 # shape in lock-step with `generateCoroutineHelpers`.
 # ---------------------------------------------------------------------
 
-proc emitIterTupleType(dest: var TokenBuf; params, retType: Cursor; info: NifLineInfo) =
+proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
+                       info: NifLineInfo) =
   ## Emit
   ##   `(closureTuple (proctype . (params <orig>... (param result ptr T) (param caller Continuation)) Continuation <pragmas>) (ref RootObj))`
   ## for an iterator with these params and this return type. `params` is the
-  ## `(params ...)` tree or a dot token; both cursors are read-only peeks.
+  ## `(params ...)` tree or a dot token; all cursors are read-only peeks.
+  ## `pragmas` are the iterator's own (nil when there are none): a `.raises`
+  ## iterator's slot is its success tuple, the very mapping its init wrapper's
+  ## signature gets from `patchParamList`.
   ##
   ## NOTE: parameter types are copied verbatim (`takeTree`) on the
   ## assumption that iter param types are scalar. If we ever support
@@ -399,8 +403,10 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType: Cursor; info: NifLin
             dest.addDotToken() # export
             dest.addDotToken() # pragmas
             dest.copyIntoKind PtrT, info:
-              var r = retType
-              dest.takeTree r
+              if cursorIsNil(pragmas):
+                dest.addSubtree retType
+              else:
+                addLengReturnType(dest, retType, pragmas, info)
             dest.addDotToken() # default value
         # caller parameter is always last:
         dest.copyIntoKind ParamU, info:
@@ -430,6 +436,7 @@ proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLi
   assert n.typeKind == ItertypeT
   var params = default(Cursor)
   var retType = default(Cursor)
+  var pragmas = default(Cursor)
   n.into: # past itertype tag
     if n.hasMore:
       skip n               # past nilability tag
@@ -439,9 +446,12 @@ proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLi
     assert n.hasMore, "itertype without a return type"
     retType = n
     skip n
-    # drop the source pragmas and anything else (effects/body slots)
+    if n.hasMore:
+      pragmas = n
+    # the pragmas only decide the slot's type; drop them and anything else
+    # (effects/body slots)
     while n.hasMore: skip n
-  emitIterTupleType(dest, params, retType, info)
+  emitIterTupleType(dest, params, retType, pragmas, info)
 
 proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: NifLineInfo) =
   ## `emitIterTupleType` for an iterator sym's decl. Used at
@@ -450,7 +460,7 @@ proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: NifLine
   let res = tryLoadSym(iterSym)
   assert res.status == LacksNothing, "iter sym not loaded: " & pool.symString(iterSym)
   let fn = asRoutine(res.decl)
-  emitIterTupleType(dest, fn.params, fn.retType, info)
+  emitIterTupleType(dest, fn.params, fn.retType, fn.pragmas, info)
 
 proc isClosureIterSym*(s: SymId): bool =
   ## True for `.closure` iter decls only — those are the ones that lower
