@@ -2439,9 +2439,18 @@ proc semExceptionType(c: var SemContext; dest: var TokenBuf; it: var Item) =
       dest.shrink start
       buildErr c, dest, info, "`" & code & "` is an `ErrorCode` value, not a type; write `except ErrorCode as e:` and test `e == " &
         code & "`"
-  elif raisesFamily(typ) == NotRaisable:
-    combineErr c, dest, start, info, "`except` takes `ErrorCode` or a `ref` object type, not `" &
-      typeToString(typ) & "`"
+  else:
+    case raisesFamily(typ)
+    of NotRaisable:
+      combineErr c, dest, start, info, "`except` takes `ErrorCode` or a `ref` object type, not `" &
+        typeToString(typ) & "`"
+    of RefLacksRtti:
+      # Reported at the arm, not at the expanded type's declaration.
+      let msg = "`except` takes a `ref` object type with RTTI, not `" &
+        typeToString(typ) & "`; inherit its object from `Exception`"
+      dest.shrink start
+      buildErr c, dest, info, msg
+    of CodeRaises, RefRaises, UnknownRaises: discard
 
 proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
@@ -3718,6 +3727,10 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
         if not compatible:
           let raisesType = c.routine.raisesType
           c.typeMismatch dest, info, a.typ, raisesType
+      elif not inTemplate and raisesFamily(a.typ) == RefLacksRtti:
+        # A `canraise` routine: no `.raises` type was checked for it.
+        buildErr c, dest, info, "`raise` takes a `ref` object type with RTTI, not `" &
+          typeToString(a.typ) & "`; inherit its object from `Exception`"
       it.n = a.n
   producesNoReturn c, dest, info, it.typ
 

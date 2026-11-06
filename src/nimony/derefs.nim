@@ -1282,7 +1282,7 @@ proc trTry(c: var Context; n: var Cursor) =
       case raisesFamily(arm.declType)
       of RefRaises: frame.refArms.add arm.declType
       of CodeRaises: frame.catchesCode = true
-      of NotRaisable, UnknownRaises: discard # sem reported it
+      of NotRaisable, RefLacksRtti, UnknownRaises: discard # sem reported it
     arms.add arm
     skip probe
 

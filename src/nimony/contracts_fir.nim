@@ -1595,14 +1595,12 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
           addSubstituted(buf, body, inner)
           if not noWrap(c, cursorAt(buf, 0)): return false
         skip b # the type operand
-        # Not `locationVarId`: that asks the type cache about the path, which
-        # names the accessor's own parameter.
-        var root = NoSymId
-        var key = ""
-        var steps = 0
-        if locationKey(c, b, inner, root, key, steps, 0) and root != NoSymId:
+        # `locationVarId`, so that a call path gets the range its `.ensures`
+        # states, as it does when written out: `len(s)` in `high(s)` is at
+        # most `MaxContainerLen`
+        let loc = locationVarId(c, b, inner)
+        if loc != InvalidVarId:
           # `path` is a location of the argument
-          let loc = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
           skip b
           let off = foldOrdinal(c.bits, b)
           if not off.isNaN:
