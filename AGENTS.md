@@ -116,7 +116,9 @@ Consequences when writing a test:
   writing to the shared stdout, a race with a neighbour over a build artifact —
   opts out with an empty `<test>.nojoin` sidecar next to it.
 - Nothing is lost on failure: a group that diverges is automatically re-run
-  test by test, so the report still names the single test that broke. Use
+  test by test, so the report still names the single test that broke. A group
+  is held to what each member's own run checks, so a group that diverges while
+  every member passes alone fails as a group: its members interfere. Use
   `--joined:off` to rule the grouping out entirely, or `hastur joined <dir>` to
   run one group by hand.
 

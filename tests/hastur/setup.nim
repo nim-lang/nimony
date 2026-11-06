@@ -1,6 +1,6 @@
 ## hastur's joined groups: joining must not change a member's verdict. A group
 ## whose members pass alone passes joined, without a rerun; a member that fails
-## alone fails joined too.
+## alone fails joined too, and the report names it.
 ##
 ## `matchJoinedOutput` is checked directly, then a freshly built hastur runs
 ## small groups end to end (`hastur joined <dir>`), so the test exercises these
@@ -27,21 +27,35 @@ proc check(cond: bool; msg: string; detail = "") =
 # ---- the matcher ----------------------------------------------------------
 
 check matchJoinedOutput(["first\n", "  indented\nsecond\n"],
-                        "first\n  indented\nsecond\n"),
+                        "first\n  indented\nsecond\n").ok,
   "a member's leading indentation"
-check matchJoinedOutput(["a\nb\n\n", "c\n"], "a\nb\n\nc\n"),
+check matchJoinedOutput(["a\nb\n\n", "c\n"], "a\nb\n\nc\n").ok,
   "a member printing a trailing blank line"
-check matchJoinedOutput(["a\nb\n\n", "c\n"], "a\nb\nc\n"),
+check matchJoinedOutput(["a\nb\n\n", "c\n"], "a\nb\nc\n").ok,
   "a trailing blank line in a member's .output it does not print"
-check matchJoinedOutput(["", "a\n", ""], "a\n"),
+check matchJoinedOutput(["", "a\n", ""], "a\n").ok,
   "members without .output that print nothing"
-check matchJoinedOutput(["a", "b"], "ab"),
+check matchJoinedOutput(["a", "b"], "ab").ok,
   "a member that ends without a newline"
-check matchJoinedOutput([], "\n"), "an empty group printing a blank line"
-check(not matchJoinedOutput(["first\n", "x\ny\n"], "first\nx\nY\n"), "a wrong line")
-check(not matchJoinedOutput(["first\n", ""], "first\nx\n"),
-      "output from a member without .output")
-check(not matchJoinedOutput(["a\n", "b\n"], "a\n"), "missing output")
+check matchJoinedOutput([], "\n").ok, "an empty group printing a blank line"
+
+block:
+  let d = matchJoinedOutput(["first\n", "x\ny\n", "z\n"], "first\nx\nY\nz\n")
+  check(not d.ok and d.member == 1 and d.expectedLineNo == 2 and
+        d.expectedLine == "y" and d.gotLine == "Y" and d.gotLineNo == 3,
+        "a wrong line is placed in its member's segment")
+block:
+  let d = matchJoinedOutput(["first\n", ""], "first\nx\n")
+  check(not d.ok and d.member == -1 and d.lastSegment == 0 and
+        d.silent == @[1] and d.gotLine == "x",
+        "output past the last segment names the members without .output")
+block:
+  let d = matchJoinedOutput(["", "a\n"], "x\na\n")
+  check(not d.ok and d.member == 1 and d.silent == @[0],
+        "output before a segment names the member without .output before it")
+block:
+  let d = matchJoinedOutput(["a\n", "b\n"], "a\n")
+  check(not d.ok and d.member == 1 and d.atEnd, "missing output")
 
 # ---- `hastur joined <dir>` ------------------------------------------------
 
@@ -101,8 +115,10 @@ block:
   let tb = group("missing", [ta, taOut,
     ("tb.nim", "import std/syncio\necho \"x\"\n")]) / "tb.nim"
   let (o, code) = runJoined(tb.parentDir)
-  check(code == 1 and tb & " ---" in o and "has no tb.output" in o,
-        "a member printing without .output fails", o)
+  check(code == 1 and "re-running" in o and
+        "or printed by a member with no .output: " & tb in o and
+        tb & " ---" in o and "has no tb.output" in o,
+        "a member printing without .output fails and is named", o)
 
 block:
   let g = group("wrong", [ta, taOut,
@@ -111,9 +127,23 @@ block:
     ("tc.nim", "import std/syncio\necho \"last\"\n"),
     ("tc.output", "last\n")])
   let (o, code) = runJoined(g)
-  check(code == 1 and (g / "tb.nim") & " ---" in o and
-        "SUCCESS " & (g / "tc.nim") in o,
-        "a wrong .output fails its member", o)
+  check(code == 1 and
+        "first difference: line 2 of " & (g / "tb.output") in o and
+        "expected: z" in o and "got:      y" in o and
+        (g / "tb.nim") & " ---" in o and "SUCCESS " & (g / "tc.nim") in o,
+        "a wrong .output fails its member, and the member is named", o)
+
+block:
+  # Members that interfere: each passes alone, the group cannot. The group,
+  # not a member, is reported, and the run fails rather than rerunning green.
+  let g = group("interfere", [
+    ("ta.nim", "import std/syncio\necho \"first\"\nquit 0\n"), taOut,
+    ("tb.nim", "import std/syncio\necho \"second\"\n"),
+    ("tb.output", "second\n")])
+  let (o, code) = runJoined(g)
+  check(code == 1 and "SUCCESS " & (g / "ta.nim") in o and
+        "SUCCESS " & (g / "tb.nim") in o and "the group broke, not a member" in o,
+        "a group that breaks while its members pass is reported", o)
 
 if failures > 0:
   quit "FAILURE: " & $failures & " hastur check(s) failed"

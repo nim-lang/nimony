@@ -166,7 +166,15 @@ proc joinedTest*(c: var TestCounters; dir: string; files: seq[string];
     echo dir, ": joined group ", reason, "; re-running its ", files.len,
          " tests individually"
     if detail.len > 0: echo detail
+    let failuresBefore = c.failures
     for f in files: testFile c, f, overwrite, Normal, forward
+    if c.failures == failuresBefore:
+      # Joining must not change a member's verdict, so this is the group's
+      # fault: members that interfere (add a `.nojoin` to one), or a joined
+      # check that disagrees with `testFile`. Passing here would rerun every
+      # member on every run without anyone noticing.
+      failure c, dir, "joined group " & reason & ", but each of its " &
+        $files.len & " tests passes alone: the group broke, not a member"
     return
 
   # A group is compiled by ONE backend: whether that is the native one is a
@@ -194,8 +202,9 @@ proc joinedTest*(c: var TestCounters; dir: string; files: seq[string];
     bail "exited with " & $progExitCode, progOutput
   var specs: seq[string] = @[]
   for f in files: specs.add memberOutputSpec(f)
-  if not matchJoinedOutput(specs, progOutput):
-    bail "printed unexpected output", ""
+  let diff = matchJoinedOutput(specs, progOutput)
+  if not diff.ok:
+    bail "printed unexpected output", describe(diff, files)
 
   for f in files:
     inc c.total
