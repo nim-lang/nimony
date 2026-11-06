@@ -220,12 +220,24 @@ ancestor goes on semchecking other stdlib modules, among them
 `std/writenif`'s imports. Such a program's stdlib is in `M.eval/` too
 (`--stdcache`), which only the evaluating module's nimsem writes.
 
-A stdlib module's name should not depend on where a build was started
-from: `modnames.moduleSuffix` names a file under a search path (`lib/`,
-`src/lib/`) relative to it, ignoring the CWD. The rest of `src/` is named
-relative to `src/lib/` too, except by a build started from inside `src/`,
-for which a CWD-relative name is shorter: such a build re-sems those modules
-under their other names. nimsem and hexer find a module in the
+Builds started from any directory share the stdlib cache, so nothing in it
+depends on the directory a build was started from:
+
+- A stdlib module's name is the same in every build (`semos.moduleSuffix`):
+  a file of `lib/` or `src/lib/` is named relative to it, the rest of
+  `src/` relative to `src/`, whatever the CWD and the build's search paths.
+  The `.s.nif` of a stdlib module names the modules it imports.
+- Every path stored in a stdlib module's artifacts is absolute
+  (`semos.inStdcache`): the line information of its `.p.nif` (nimony runs
+  the parser without `--portablePaths`), and with it that of its `.s.nif`
+  and `.x.nif`, the paths of its imports in its `.s.nif` and the files of
+  its `.compile`, `.build` and `.bundle` pragmas. `include` resolves
+  against the path in the line information, and a stdlib module's sem
+  node can run in a build started elsewhere than the one that parsed it.
+  A diagnostic still prints such a path relative to the CWD when it is
+  under it (`reporters.shortenDir`).
+
+nimsem and hexer find a module in the
 stdlib cache first (`programs.suffixToNif`, `--stdcache`), then next to the
 main module.
 

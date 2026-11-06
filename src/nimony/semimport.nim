@@ -106,7 +106,7 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
   if not fileExists(f2):
     c.buildErr dest, info, "file not found: " & f2
     return
-  let suffix = moduleSuffix(f2, c.g.config.paths)
+  let suffix = moduleSuffix(f2, c.g.config)
   let effectiveName =
     if f1.name != "": f1.name
     else: moduleNameFromPath(f2)
@@ -163,7 +163,7 @@ proc importPluginImports*(c: var SemContext) =
   var sources = move c.pluginSources # `importSingleFile` mutates `c`
   for src in sources:
     for path in pluginProgramImports(src, c.g.config):
-      if moduleSuffix(path, c.g.config.paths) != c.thisModuleSuffix:
+      if moduleSuffix(path, c.g.config) != c.thisModuleSuffix:
         importSingleFile c, dest, ImportedFilename(path: path), src,
           ImportFilter(kind: FromImport, list: initHashSet[StrId]()), NoLineInfo
   c.pluginSources = move sources
@@ -202,7 +202,7 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
           if not semos.fileExists(f2):
             c.buildErr dest, info, "file not found: " & f2
             continue
-          let suffix = moduleSuffix(f2, c.g.config.paths)
+          let suffix = moduleSuffix(f2, c.g.config)
           if suffix in c.cycleGroup:
             # Defer the actual interface loading until after phase1/phase2.
             deferCyclicModule(c, suffix, f2, f1.name, info)

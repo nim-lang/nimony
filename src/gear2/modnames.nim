@@ -46,8 +46,9 @@ proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
   ## A file under a search path is named relative to the closest one and the
   ## CWD plays no part: the stdlib's artifacts live in a cache that builds
   ## started from anywhere share (`deps.stdCacheDir`), so the same file must
-  ## get the same name in all of them. Any other file is named relative to the
-  ## CWD or to a search path, whichever is shorter.
+  ## get the same name in all of them (`semos.moduleSuffix` names the
+  ## toolchain's own files with search paths of their own). Any other file is
+  ## named relative to the CWD or to a search path, whichever is shorter.
   # `getCurrentDir`/`relativePath` are `.raises`, but the only reason they can
   # fail in practice is a transient filesystem error that would break every
   # diagnostic equally. Swallow it here so this helper (widely used inside

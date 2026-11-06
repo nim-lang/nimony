@@ -75,11 +75,40 @@ proc isToolchainFile*(f: string): bool =
   let src = nimonyDir() / "src"
   result = under(lib) or under(src)
 
+proc moduleSuffix*(f: string; config: NifConfig): string =
+  ## The module name of the source file `f`. A toolchain file's is the same in
+  ## every build, whatever its current directory and search paths: every
+  ## build with the same options shares its artifacts (`inStdcache`), and the
+  ## `.s.nif` of a stdlib module refers to the modules it imports by name.
+  ## It is named relative to `lib/`, `src/lib/` or else `src/`, never
+  ## relative to the current directory: a build started inside `src/` named
+  ## the parser modules `std/macros` imports otherwise, and the next build
+  ## started elsewhere could not compile a macro.
+  if isToolchainFile(f):
+    let src = nimonyDir() / "src"
+    result = modnames.moduleSuffix(f, [stdlibDir(), src / "lib", src])
+  else:
+    result = modnames.moduleSuffix(f, config.paths)
+
+proc inStdcache*(config: NifConfig; f: string): bool =
+  ## `f`'s artifacts are in the stdlib cache (`deps.FilePair.std` but for the
+  ## root module, which is never there). Builds started from any directory
+  ## share them, so every path they store is absolute: one relative to the
+  ## current directory names another file, or none, in a build started
+  ## elsewhere.
+  result = config.stdcachePath.len > 0 and isToolchainFile(f)
+
+proc parserFlags*(std: bool): seq[string] =
+  ## How nimony runs the parser: a file whose `.p.nif` goes to the stdlib cache
+  ## gets its absolute path (`inStdcache`), any other one its path relative
+  ## to the current directory, as the build's own nimcache always had.
+  result = if std: @["--deps"] else: @["--portablePaths", "--deps"]
+
 proc pluginExePath*(config: NifConfig; src, name: string): string =
   ## Where the `{.plugin.}` built from `src` lives: a stdlib plugin in the
   ## stdlib cache, which every build with the same frontend key shares, any
   ## other one in this build's nimcache. `deps.pluginExe` decides the same.
-  let dir = if config.stdcachePath.len > 0 and isToolchainFile(src): config.stdcachePath
+  let dir = if inStdcache(config, src): config.stdcachePath
             else: config.nifcachePath
   result = dir / name.addFileExt(ExeExt)
 
@@ -501,9 +530,9 @@ proc ensureParsed(nimFile: string; config: NifConfig): string =
   ## `.p.deps.nif` are fresh. A toolchain file's are in the stdlib cache, as
   ## `deps.FilePair.std` puts them.
   let nifler = parserTool()
-  let name = moduleSuffix(nimFile, config.paths)
-  let dir = if config.stdcachePath.len > 0 and isToolchainFile(nimFile): config.stdcachePath
-            else: config.nifcachePath
+  let name = moduleSuffix(nimFile, config)
+  let std = inStdcache(config, nimFile)
+  let dir = if std: config.stdcachePath else: config.nifcachePath
   let src = dir / name & ".p.nif"
   let depsFile = dir / name & ".p.deps.nif"
   # `include`d files are part of the dependency graph, so the driver's own
@@ -519,7 +548,7 @@ proc ensureParsed(nimFile: string; config: NifConfig): string =
       fileExists(depsFile) and lastModTimeOrStale(depsFile) > srcTime:
     discard "already parsed by the dep scan"
   else:
-    runParser nifler, ["--portablePaths", "--deps"], nimFile, src
+    runParser nifler, parserFlags(std), nimFile, src
   result = src
 
 proc loadDepsFile*(depsFile: string): TokenBuf =

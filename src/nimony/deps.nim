@@ -34,7 +34,7 @@ type
     nimFile: string # can now also be a .nif file. This is used for the eval feature where Nimony
                     # calls itself for an extracted code snippet that must run at compile time.
     modname: string
-    std: bool ## a stdlib module (`semos.isToolchainFile`, never the root): its
+    std: bool ## a stdlib module (`semos.inStdcache`, never the root): its
               ## frontend artifacts and shared `.x.nif` are in
               ## `config.stdcachePath`, see `stdCacheDir`
 
@@ -310,8 +310,8 @@ proc toPair(c: DepContext; f: string): FilePair =
     # module suffix directly from the filename rather than recomputing it:
     FilePair(nimFile: f, modname: extractModuleSuffix(f))
   else:
-    FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths),
-             std: c.config.stdcachePath.len > 0 and isToolchainFile(f))
+    FilePair(nimFile: f, modname: moduleSuffix(f, c.config),
+             std: inStdcache(c.config, f))
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node)
@@ -595,7 +595,7 @@ proc pluginExe(c: DepContext; name: string): string =
   pluginExePath(c.config, c.pluginSources.getOrDefault(name), name)
 
 proc isStdPlugin(c: DepContext; name: string): bool =
-  c.config.stdcachePath.len > 0 and isToolchainFile(c.pluginSources.getOrDefault(name))
+  inStdcache(c.config, c.pluginSources.getOrDefault(name))
 
 proc importPluginImports(c: var DepContext; src: string; current: Node)
 
@@ -791,7 +791,7 @@ proc execNifler(c: var DepContext; f: FilePair) =
       semos.fileExists(depsFile) and getLastModTime(depsFile) > srcTime:
     discard "nothing to do"
   else:
-    var flags: seq[string] = @["--portablePaths", "--deps"]
+    var flags = parserFlags(f.std)
     if preserveDocs: flags.add "--docs"
     runParser c.nifler, flags, f.nimFile, output
 
@@ -957,12 +957,14 @@ proc emitFrontendArgs(b: var Builder; config: NifConfig; commandLineArgs, nimcac
   if config.stdcachePath.len > 0:
     b.addStrLit "--stdcache:" & config.stdcachePath
 
-proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
+proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false; std = false) =
+  ## `std`: the stdlib's build file, whose `.p.nif` keep absolute paths
+  ## (`semos.parserFlags`), the same command `execNifler` runs.
   b.withTree "cmd":
     b.addSymbolDef "nifler"
     b.addStrLit nifler
-    b.addStrLit "--portablePaths"
-    b.addStrLit "--deps"
+    for flag in parserFlags(std):
+      b.addStrLit flag
     if preserveDocs:
       b.addStrLit "--docs"
     b.addStrLit "parse"
@@ -2114,7 +2116,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
   b.addHeader()
   b.withTree "stmts":
     # Command definitions
-    defineNiflerCmd(b, c.nifler, preserveDocs = c.cmd == DoDoc)
+    defineNiflerCmd(b, c.nifler, preserveDocs = c.cmd == DoDoc, std = std)
 
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
@@ -2479,7 +2481,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
 
     for module in requiredStdlibModules:
       let writenifNimFile = stdlibFile(module)
-      let writenifSuffix = moduleSuffix(writenifNimFile, config.paths)
+      let writenifSuffix = moduleSuffix(writenifNimFile, config)
       allNifFiles.add(writenifSuffix)
       let writenifNifFile = config.nifcachePath / writenifSuffix & ".p.nif"
       let writenifSemmedFile = config.nifcachePath / writenifSuffix & ".s.nif"
