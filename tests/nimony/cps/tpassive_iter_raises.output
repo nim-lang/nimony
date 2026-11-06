@@ -1,0 +1,27 @@
+walkish 1
+walkish 2
+int 0
+int 1
+int 2
+loop done
+int 0
+caught true
+word0
+word1
+word2
+words done
+word0
+word1
+caught true
+brk 0
+brk 1
+after break
+sum 3
+caught true
+passive 0
+passive 1
+passive 2
+passive 3
+passive 0
+passive 1
+catchInPassive: caught
