@@ -95,8 +95,10 @@ type
       ## declarations go by: a local is only ever used after it is declared,
       ## so a single forward pass sees every declaration before every use.
     loopVarCalls: Table[SymId, Cursor]
-      ## The loop variable of every `corofor` in the module, mapped to that
-      ## loop's iterator call. A raising `.passive` iterator yields into an
+      ## The loop variable of every `corofor` in the routine being translated
+      ## (the module level statements for the outermost context), mapped to
+      ## that loop's iterator call. Per routine: local ids are only unique
+      ## within one. A raising `.passive` iterator yields into an
       ## `(ErrorCode, T)` slot, so its loop variable is widened like a raising
       ## call's temp — and the declaration comes BEFORE the loop that decides
       ## it. See `trCoroFor`.
@@ -190,8 +192,10 @@ proc loopVarOf(call: Cursor): SymId =
     result = NoSymId
 
 proc collectLoopVars(n: Cursor; dest: var Table[SymId, Cursor]) =
-  ## Fills `Context.loopVarCalls`.
+  ## Fills `Context.loopVarCalls`. A nested routine has a table of its own.
   var n = n
+  if n.stmtKind in {ProcS, FuncS, MethodS, ConverterS, IteratorS}:
+    return
   if n.stmtKind == CoroforS:
     let call = n.childCursor
     if call.exprKind in CallKinds:
@@ -598,7 +602,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
                    canRaise: hasPragma(r.pragmas, RaisesP),
                    retType: r.retType, resultSym: SymId(0),
                    errorCodeType: move(c.errorCodeType),
-                   loopVarCalls: move(c.loopVarCalls))
+                   loopVarCalls: initTable[SymId, Cursor]())
 
   # An `{.assembler.}` body is machine code, passed through verbatim.
   let isAsm = hasPragma(r.pragmas, AssemblerP)
@@ -611,6 +615,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if isConcrete and not isAsm and n.kind != DotToken:
       # No body (`.`): an importc or forward declaration stays bodyless.
       c2.typeCache.openScope()
+      collectLoopVars n, c2.loopVarCalls
       let info = n.info
       copyIntoKind dest, StmtsS, info:
         if n.stmtKind == StmtsS:
@@ -628,7 +633,6 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
   c.typeCache = move(c2.typeCache)
   c.errorCodeType = move(c2.errorCodeType)
-  c.loopVarCalls = move(c2.loopVarCalls)
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Leaving the routine runs every enclosing `finally` first.
@@ -999,7 +1003,7 @@ proc injectRaisingCalls*(pass: var Pass; ptrSize: int) =
                   errorCodeType: createTokenBuf(1))
   c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
   c.retType = c.typeCache.builtins.voidType
-  collectLoopVars n, c.loopVarCalls
+  collectLoopVars n, c.loopVarCalls # skips the routines, they have their own
   c.typeCache.openScope()
   tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
