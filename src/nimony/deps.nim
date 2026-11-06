@@ -1241,7 +1241,9 @@ proc writeStdBuildFile(c: DepContext; content: string): string =
   result = c.config.stdcachePath / uhashBase36(content) & ".build.nif"
   if not semos.fileExists(result):
     onRaiseQuit createDir(path(result.parentDir))
-    vfsWrite(result, content)
+    let tmp = atomicTempPath(result)
+    vfsWrite(tmp, content)
+    publishShared tmp, result
 
 proc emitHexerNode(c: DepContext; b: var Builder; v: Node; isMain: bool; backendDir: string) =
   ## For the root module the output is main-specific so that its --isMain

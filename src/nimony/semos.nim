@@ -471,19 +471,21 @@ proc lastModTimeOrStale(path: string): int64 =
   except:
     result = -1'i64
 
-proc publishParsed(src, dst: string) =
+proc publishShared*(src, dst: string) =
+  ## Move `src` into place as `dst`, a file concurrent builds publish with the
+  ## same content. Windows refuses to replace a file that is open: then
+  ## another build published this very file, which is as good as ours.
   if not vfsMoveInto(src, dst):
-    # Windows refuses to replace a file that is open: then another build
-    # published this very parse, which is as good as ours.
     vfsRemove src
     if not vfsExists(dst): quit "FAILURE: cannot move " & src & " to " & dst
 
 proc runParser*(nifler: string; flags: openArray[string]; nimFile, output: string) =
   ## `nifler <flags> parse nimFile output`, which also writes the `.deps.nif`
-  ## next to `output`. Both appear by rename, whatever the parser does: builds
-  ## that share the stdlib cache parse a stale file in it without a lock, and
-  ## the parser may be an older binary (the bootstrap's) that writes in place,
-  ## where a concurrent reader can catch the file still empty.
+  ## next to `output`. Both appear by rename (`publishShared`), whatever the
+  ## parser does: builds that share the stdlib cache parse a stale file in it
+  ## without a lock, and the parser may be an older binary (the bootstrap's)
+  ## that writes in place, where a concurrent reader can catch the file still
+  ## empty.
   let tmp = atomicTempPath(output) & ".nif"
   var args: seq[string] = @[]
   for f in flags: args.add f
@@ -491,8 +493,8 @@ proc runParser*(nifler: string; flags: openArray[string]; nimFile, output: strin
   args.add nimFile
   args.add tmp
   execArgs nifler, args
-  publishParsed tmp, output
-  publishParsed tmp.changeFileExt(".deps.nif"), output.changeFileExt(".deps.nif")
+  publishShared tmp, output
+  publishShared tmp.changeFileExt(".deps.nif"), output.changeFileExt(".deps.nif")
 
 proc ensureParsed(nimFile: string; config: NifConfig): string =
   ## Runs nifler on `nimFile` unless its `.p.nif` (the result) and
