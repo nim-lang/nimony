@@ -1560,7 +1560,22 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
     dest.addSymUse(name, info)
     dest.addParRi()
     let expected = it.typ
-    it.typ = typeToCursor(c, dest, anonTypePos)
+    # The value's type is a `(proctype ...)`, as for a reference to a named
+    # routine (`semSymbol`), not the routine declaration itself: a local
+    # typed with the declaration loses the routine's name when it is checked
+    # again at a template's expansion, which crashed the backend (nimony#2906).
+    var declN = cursorAt(dest, anonTypePos)
+    let decl = asRoutine(declN)
+    let isClosureIter = kind == IteratorY and hasPragma(decl.pragmas, ClosureP)
+    var procTypeBuf = createTokenBuf()
+    procTypeBuf.addParLe (if isClosureIter: ItertypeT else: ProctypeT), info
+    procTypeBuf.addDotToken() # nilability tag
+    procTypeBuf.addSubtree decl.params
+    procTypeBuf.addSubtree decl.retType
+    procTypeBuf.addSubtree decl.pragmas
+    procTypeBuf.addParRi()
+    endRead declN
+    it.typ = beginRead(procTypeBuf)
     commonType c, dest, it, exprStart, expected
 
   else:

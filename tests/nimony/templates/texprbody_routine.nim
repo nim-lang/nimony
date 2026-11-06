@@ -26,8 +26,18 @@ template typedTail(v: untyped) =
     inc result
   echo k()
 
+template inferredLambda(v: untyped) =
+  # No annotation and no `{.closure.}`: `f`'s type is inferred from the
+  # lambda. It was the lambda's declaration, which lost its name at the
+  # expansion and crashed the backend.
+  let f = proc (): string = "x" & v
+  let g = proc (): string =
+    result = v & "y"
+  echo f(), g()
+
 closureOf("a")
 closureOf(12)
 namedProc("b")
 withStmts(1)
 typedTail(4)
+inferredLambda("-")
