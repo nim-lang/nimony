@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tvar_rvalue.nim(16, 10) Error: cannot pass 1 + 2 to var/out T parameter
+tests/nimony/errmsgs/tvar_rvalue.nim(17, 10) Error: cannot pass a * k to var/out T parameter
+tests/nimony/errmsgs/tvar_rvalue.nim(18, 10) Error: cannot pass a == k to var/out T parameter
+tests/nimony/errmsgs/tvar_rvalue.nim(19, 8) Error: cannot pass not a < k to var/out T parameter
+tests/nimony/errmsgs/tvar_rvalue.nim(20, 8) Error: cannot pass {'b'} to var/out T parameter

@@ -1667,6 +1667,16 @@ proc trStringConcatChain(c: var Context; n: var Cursor) =
   c.dest.addSymUse s, info
   c.dest.addParRi()
 
+const
+  ValueExprs = {InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX,
+    SizeofX, AlignofX, OffsetofX, AconstrX, BracketX, CurlyX, SetconstrX,
+    AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
+    EqX, NeqX, LeX, LtX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
+    LtsetX, InsetX, CardX, SuccX, PredX, IsX, InstanceofX, EnumtostrX,
+    HighX, LowX, DefaultobjX, DefaulttupX, DefaultdistinctX, AddrX}
+    ## Expressions that produce a value, never a location: they cannot be
+    ## passed to a `var`/`out` parameter.
+
 proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cursor)) =
   case n.kind
   of Symbol:
@@ -1692,6 +1702,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
     else:
       takeTree c, n
   of TagLit:
+    if e.wantMutable and n.exprKind in ValueExprs:
+      # `bump(1 + 2)`: an arithmetic, logical or constructor expression is a
+      # value, not a location; a `var`/`out` parameter would write into a
+      # temporary and the write would be lost (nimony#2906).
+      cannotPassToVar c.dest, n.info, n
+      skip n
+      return
     case n.exprKind
     of CallKinds:
       if not e.wantMutable and isChainedStringConcatCall(n):
