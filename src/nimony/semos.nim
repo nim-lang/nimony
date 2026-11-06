@@ -58,25 +58,22 @@ proc pluginLibDir(): string =
 proc stdlibDir*(): string =
   result = nimonyDir() / "lib"
 
-proc toolchainRoots(): seq[string] =
-  ## The directories of the toolchain's own sources: the stdlib and the
-  ## compiler, whose modules the stdlib imports (`std/macros` pulls in
-  ## nifbuilder/nifreader and the parser).
-  result = @[stdlibDir(), nimonyDir() / "src"]
-
 proc isToolchainFile*(f: string): bool =
   ## `f` belongs to the toolchain: in a build graph it is a stdlib module,
   ## whose artifacts live in the stdlib cache that builds with the same
-  ## options share (`deps.stdCacheDir`).
-  result = false
+  ## options share (`deps.stdCacheDir`). The toolchain's own sources are the
+  ## stdlib and the compiler, whose modules the stdlib imports (`std/macros`
+  ## pulls in nifbuilder/nifreader and the parser).
   var a = f
   try:
     a = normalizedPath(absolutePath(f))
   except:
     discard
-  for d in toolchainRoots():
-    if a.len > d.len and a.startsWith(d) and a[d.len] in {DirSep, AltSep}:
-      return true
+  template under(d: string): bool =
+    a.len > d.len and a.startsWith(d) and a[d.len] in {DirSep, AltSep}
+  let lib = stdlibDir()
+  let src = nimonyDir() / "src"
+  result = under(lib) or under(src)
 
 proc pluginExePath*(config: NifConfig; src, name: string): string =
   ## Where the `{.plugin.}` built from `src` lives: a stdlib plugin in the
