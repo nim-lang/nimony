@@ -96,7 +96,8 @@ proc slotRoot(n: Cursor): SymId =
 proc collect(c: var Context; n: Cursor) =
   case n.kind
   of Symbol:
-    inc c.fact(n.symId).reads
+    let reads = c.fact(n.symId).reads + 1   # `fact` may insert: not inside the store
+    c.fact(n.symId).reads = reads
   of TagLit:
     case n.stmtKind
     of JmpS:
