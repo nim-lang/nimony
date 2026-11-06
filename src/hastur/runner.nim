@@ -107,18 +107,25 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
           if overwrite:
             writeFile(output, testProgramOutput)
           failure c, file, outputSpec, testProgramOutput
-      elif overwrite and testProgramExitCode == 0 and
-           testProgramOutput.strip.len > 0 and
-           (joinable(file, cat) or cat == Bench):
+      elif testProgramExitCode == 0 and testProgramOutput.strip.len > 0 and
+           (joinable(file, cat) or (overwrite and cat == Bench)):
         # A joined member's share of the group's output IS its `.output` file,
         # so a member that prints without one would leave text nothing accounts
-        # for. `--overwrite` is where that gap gets closed: record what the
-        # test prints (which also gives it an output check it never had).
+        # for. Such a test fails, alone as in its group, so that joining does
+        # not change its verdict. `--overwrite` is where that gap gets closed:
+        # record what the test prints (which also gives it an output check it
+        # never had).
         #
         # A `bench` test is the same bargain reached from the other side: its
         # smoke run prints checksums and nothing else, so what it prints is
         # exactly the golden — `hastur --overwrite bench` is how one is made.
-        writeFile(output, testProgramOutput)
+        if overwrite:
+          writeFile(output, testProgramOutput)
+        else:
+          failure c, file, "the test prints but has no " & output.extractFilename &
+            "; add one with what it must print (`hastur --overwrite test " &
+            file & "` writes what it prints now). It printed:\n" &
+            testProgramOutput
 
       when defined(linux):
         testValgrind c, file, overwrite, cat, quoteShell exe

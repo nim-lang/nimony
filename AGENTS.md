@@ -110,8 +110,8 @@ not the test itself.
 Consequences when writing a test:
 
 - Give a test that prints an `.output` file. `hastur --overwrite` writes one
-  for you. Without it the test is expected to print nothing, and its group
-  fails.
+  for you. Without it the test is expected to print nothing, and it fails,
+  alone or joined.
 - A test that must be a program of its own — unstable output, a subprocess
   writing to the shared stdout, a race with a neighbour over a build artifact —
   opts out with an empty `<test>.nojoin` sidecar next to it.

@@ -129,8 +129,7 @@ Options:
   --overwrite           overwrite the selected test results. Implies
                         `--joined:off`: a golden is regenerated from the test
                         running on its own. A plain test that prints without
-                        an `.output` file gets one written here — that is what
-                        makes it joinable.
+                        an `.output` file fails; here it gets one written.
   --ast                 track the contents of the AST too
   --codegen             track the contents of the code generator too
   --version             show the version
