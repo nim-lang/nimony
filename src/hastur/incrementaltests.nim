@@ -216,10 +216,11 @@ proc incrementalTests*() =
   discard run("generic-dep-settle")
 
   # Phase 5d: options. nifmake sees files, not flags, so the driver records
-  # the options a stage's artifacts were made with (`<nimcache>/config.nif`
-  # for the frontend, `<nimcache>/<backend>/<main>/config.nif` for the
-  # backend) and reruns the stage when they differ. A define reaches sem, so
-  # both stages rerun; `--opt` only the backend. Repeating a build changes
+  # the options artifacts were made with (the `(optionkey …)` of each
+  # module's `.s.deps.nif` for the frontend,
+  # `<nimcache>/<backend>/<main>/config.nif` for the backend) and remakes
+  # them when they differ. A define reaches sem, so both stages rerun; `--opt`
+  # only the backend. Repeating a build changes
   # nothing, and neither does going back to the options it started with
   # but once.
   block:
@@ -559,6 +560,50 @@ proc incrementalTests*() =
                "reexport-body: nimsem ran " & $reportField(r[0], "nimsem") &
                " times (expected 1: a body-only edit is no interface change)"
     writeFile(reDep, originalReDep)
+
+  # Phase 15: options of a module that the build in between did not import.
+  # `optionuser` is built with a define, then `optionother`, which does not
+  # import `optiondep`, without it, then `optionuser` again without it. The
+  # options are recorded per module, so the third build must re-sem the two
+  # modules last semmed with the define, and only those: the modules
+  # `optionother` shares with it were semmed with the right options already.
+  let optDep = "tests/incremental/optiondep.nim"
+  let optUser = "tests/incremental/optionuser.nim"
+  let optOther = "tests/incremental/optionother.nim"
+  let optCache = "nimcache" / "incremental-options"
+  if fileExists(optDep) and fileExists(optUser) and fileExists(optOther):
+    inc phases
+    removeDir optCache
+    var optOutput = ""
+    proc runOpt(label, opts, file: string): seq[seq[ReportEntry]] =
+      let (output, ec) = execCmdEx(nimony.quoteShell & " c -r " & opts &
+        " --silentMake --report --nimcache:" & optCache.quoteShell & " " &
+        file.quoteShell)
+      optOutput = output
+      result = @[]
+      if ec != 0:
+        failures.add label & ": compile failed: " & output.strip.splitLines[^1]
+      else:
+        result = parseNifmakeReports(output)
+    block:
+      discard runOpt("options-with", "-d:incrementalStale", optUser)
+      expect optOutput.contains("optionuser probe-on"),
+             "options-with: expected 'optionuser probe-on'"
+      discard runOpt("options-other", "", optOther)
+      expect optOutput.contains("optionother"), "options-other: expected 'optionother'"
+      var r = runOpt("options-without", "", optUser)
+      expect optOutput.contains("optionuser probe-off"),
+             "options-without: ran a module semmed with a define the build did not pass; " &
+             "expected 'optionuser probe-off'"
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") == 2,
+               "options-without: nimsem ran " & $reportField(r[0], "nimsem") &
+               " times (expected 2: optiondep's and optionuser's)"
+      r = runOpt("options-without-settle", "", optUser)
+      if r.len == 2:
+        expect reportField(r[0], "total") == 0 and reportField(r[1], "total") == 0,
+               "options-without-settle: re-ran " &
+               $(reportField(r[0], "total") + reportField(r[1], "total")) & " commands"
 
   let dt = epochTime() - t0
   if failures.len > 0:

@@ -377,6 +377,7 @@ type
     CanFormCyclesTagId
     AlwaysTagId
     SupportsCopyMemTagId
+    OptionkeyTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -753,5 +754,6 @@ const
     ("enableTrace", 371),
     ("canFormCycles", 372),
     ("always", 373),
-    ("supportsCopyMem", 374)
+    ("supportsCopyMem", 374),
+    ("optionkey", 375)
   ]
