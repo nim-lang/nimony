@@ -48,3 +48,17 @@ template defineAnswer() =
 defineAnswer()
 
 proc theAnswer*(): int = answer
+
+template defineInWhen(flag: untyped) {.untyped.} =
+  ## A gensym'd `var` in a branch of a `when`: expanded here it is a
+  ## module-level global like `answer` above, the `when` opening no scope. Named
+  ## `v.1` (local layout) it was absent from the index, and a native build of an
+  ## importer could not resolve this module's init reading it.
+  when flag:
+    var v = 1
+  else:
+    var v = 3
+  echo "when: ", v
+
+defineInWhen(true)
+defineInWhen(false)
