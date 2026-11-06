@@ -931,7 +931,7 @@ proc emitFrontendArgs(b: var Builder; config: NifConfig; commandLineArgs, nimcac
   ## `--base:` is always written explicitly from `baseDir`, so any `--base:`
   ## already present in `commandLineArgs` is dropped, and other exact-duplicate
   ## args are collapsed. This matters for the nested sub-compiles that
-  ## compile-time evaluation spawns (`semos.runProgram`/`prepareEval`,
+  ## compile-time evaluation spawns (`semos.runProgram`,
   ## `macro_plugin`): those thread the outer `--base:`/`--nimcache:` back in via
   ## `commandLineArgs`, which would otherwise emit `--base:X --base:X …
   ## --nimcache:X … --nimcache:X` — an argv that no longer matches the outer
@@ -2319,9 +2319,9 @@ proc stdCacheDir(config: NifConfig; moduleFlags: set[ModuleFlag]): string =
   ##
   ## `cycles` is no part of the key: the runtime the `mm` names decides it,
   ## and the driver learns it only by reading that runtime, in this cache.
-  ## `--compat` and `--noSystem` are, although the per-build memo does without
-  ## them: they change what the stdlib's modules sem to, and a stdlib cache
-  ## outlives any one project's choice of them.
+  ## `--compat`, `--noSystem` and `--keepsemtree` are, although the per-build
+  ## memo does without them: they change what the stdlib's sem produces, and
+  ## a stdlib cache outlives any one project's choice of them.
   var c = config
   c.cycles = false
   var b = nifbuilder.open(200)
@@ -2329,6 +2329,7 @@ proc stdCacheDir(config: NifConfig; moduleFlags: set[ModuleFlag]): string =
     addFrontendKey b, c
     if config.compat: b.addKeyw "compat"
     if SkipSystem in moduleFlags: b.addKeyw "nosystem"
+    if config.keepSemTree: b.addKeyw "keepsemtree"
   let (root, bin) = splitPath(normalizedPath(getAppDir()))
   result = root / "stdcache" / bin / uhashBase36(b.extract())
 
@@ -2337,8 +2338,8 @@ proc checkStdImports(c: DepContext) =
   ## build with this key, would depend on this build's sources.
   for v in c.nodes:
     if v.files[0].std:
-      for d in v.deps:
-        let w = c.nodes[d]
+      for i in 0 ..< v.deps.len:
+        let w = c.nodes[v.deps[i]]
         if not w.files[0].std:
           quit "stdlib module " & v.files[0].nimFile & " imports " &
                w.files[0].nimFile & ", which is not part of the toolchain"
@@ -2621,8 +2622,14 @@ proc buildGraph*(config: sink NifConfig; project: string;
   # The stdlib's part of a stage runs first, in the cache that every build
   # with this key shares. nifmake takes the lock only when something is
   # stale, so concurrent builds wait for one another only when there is work.
-  let stdCommand = nifmakeBase & " --lock:" &
-    quoteShell(config.stdcachePath / "lock") & jobsArg(config) & " run "
+  #
+  # No `--report`: what the stdlib's part has to do depends on what other
+  # builds left in the cache, and a report counts this build's own work.
+  let stdCommand = quoteShell(nifmake) &
+    (if forceRebuild: " --force" else: "") &
+    (if Profile in flags: " --profile" else: "") &
+    (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "") &
+    " --lock:" & quoteShell(config.stdcachePath / "lock") & jobsArg(config) & " run "
 
   # `nimony c` drives nifmake once for the frontend and once more for the
   # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation

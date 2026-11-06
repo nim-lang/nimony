@@ -281,7 +281,9 @@ proc incrementalTests*() =
              "dce-local-settle: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected 0)"
 
     let liveFiles = filesBySuffix(dceCache, ".live.nif")
-    let modules = filesBySuffix(dceCache, ".x.nif").len
+    # every module's `dceEmit` output: the stdlib's `.x.nif` are in the
+    # stdlib cache, but each module of the program gets its `.c.nif` here
+    let modules = filesBySuffix(dceCache, ".c.nif").len
     expect liveFiles.len == modules,
            "live-edit: " & $liveFiles.len & " live files for " & $modules & " modules"
     let before = liveFiles.mapIt(readFile(it))
@@ -431,14 +433,13 @@ proc incrementalTests*() =
     writeFile(pluginData, originalPluginData)
     writeFile(slurpData, originalSlurpData)
 
-  # Phase 12: a `std/writenif` in the nimcache that is out of date. The
-  # compile-time evaluator's program links against it, and its build graph
-  # has no rule for it: `semos.prepareEval` has to bring it up to date, not
-  # only build it when it is missing. One left behind by an older stdlib
-  # failed every evaluation ("cannot evaluate expression at compile time")
-  # until the nimcache was wiped. Simulated by making its `.p.nif` and `.s.nif`
-  # older than `writenif.nim` and the `.s.nif` an empty module; the slice
-  # bound is edited so the evaluation is not answered from its memo.
+  # Phase 12: compile-time evaluation from a cold nimcache. Its program links
+  # against `std/writenif`, which once was no node of the program's graph and
+  # had to be brought up to date beside it: one left behind by an older
+  # stdlib failed every evaluation ("cannot evaluate expression at compile
+  # time") until the nimcache was wiped. The program now imports it, so it is
+  # rebuilt when stale like every other module; a second evaluation with an
+  # edited bound must not be answered from the first one's memo.
   let evalSrc = "tests/incremental/evaldep.nim"
   let evalCache = "nimcache" / "incremental-eval"
   if fileExists(evalSrc):
@@ -457,16 +458,10 @@ proc incrementalTests*() =
     block:
       if runEval("eval-cold"):
         expect evalOutput.contains("head-0123"), "eval-cold: expected 'head-0123'"
-        let wn = evalCache / "wriwhv7qv"
-        expect fileExists(wn & ".s.nif"), "eval-cold: no std/writenif in the nimcache"
-        writeFile(wn & ".s.nif", "(.nif27)\n(stmts)\n")
-        let old = fromUnix(1_000_000_000)
-        setLastModificationTime(wn & ".p.nif", old)
-        setLastModificationTime(wn & ".s.nif", old)
         writeFile(evalSrc, originalEval.replace("0 ..< 4", "0 ..< 5"))
-        if runEval("eval-stale-writenif"):
+        if runEval("eval-edited"):
           expect evalOutput.contains("head-01234"),
-                 "eval-stale-writenif: expected 'head-01234'"
+                 "eval-edited: expected 'head-01234'"
     writeFile(evalSrc, originalEval)
 
   # Phase 13: `isMainModule` is folded by sem, so a module's `.s.nif` depends

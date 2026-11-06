@@ -169,8 +169,9 @@ backend) cannot replace the outer build's files.
 
 ## The stdlib cache
 
-A module of the toolchain itself, anything under its `lib/` or `src/`
-(`std/macros` imports compiler modules), is a **stdlib module**: its frontend
+A module of the toolchain itself, anything under its `lib/` or `src/` (the
+stdlib imports compiler modules: `std/macros` the parser, a `{.plugin.}` the
+plugin API), is a **stdlib module**: its frontend
 artifacts and its `.x.nif` are not in the build's nimcache but in a cache
 that every build with the same options shares:
 
@@ -183,8 +184,8 @@ that every build with the same options shares:
     M.x.nif                 hexer
 ```
 
-The frontend key (`deps.addFrontendKey`) names the directory, so that cache
-needs no memo. The bin dir is in the path because tools of different builds
+The frontend key (`deps.addFrontendKey`, plus `--compat`, `--noSystem` and
+`--keepsemtree`) names the directory, so that cache needs no memo. The bin dir is in the path because tools of different builds
 of the compiler (the boot stages) make different artifacts. Within one bin
 dir, the tools themselves are inputs of the stdlib's nodes: a rebuilt
 `nimsem` or `shoggoth` reruns them, as does a rebuilt parser.
@@ -193,18 +194,25 @@ Each stage first runs the stdlib's nodes in a build file of their own, with
 `nifmake --lock`, then the build's own nodes, which only read the stdlib's
 outputs. nifmake takes the lock only when something is stale, so concurrent
 builds (the parallel test suite) that find the stdlib current never wait for
-one another. Tools write every output by rename, so a build that read the
-cache without the lock never sees half a file. The root module is never a
+one another. A nested build that holds the same key, such as a
+compile-time evaluation inside a locked stdlib build, runs under its
+ancestor's lock (`NIFMAKE_HELD_LOCKS`): the OS lock belongs to the ancestor,
+which would otherwise wait for its own child. Tools write every output by
+rename, and so does the parsing the driver does itself while it walks the
+graph (`semos.runParser`), whatever parser binary it runs: a build that read
+the cache without the lock never sees half a file. The root module is never a
 stdlib module: it is compiled as the main module, which a shared artifact
 cannot be. A stdlib module importing a module outside the toolchain is an
-error. Its shared `.s.nif` would depend on one build's sources.
+error. Its shared `.s.nif` would depend on one build's sources. A
+compile-time evaluation's program imports `std/writenif`, so that module is
+part of the program's graph and rebuilt when stale like every other.
 
 A stdlib module's name should not depend on where a build was started
 from: `modnames.moduleSuffix` names a file under a search path (`lib/`,
 `src/lib/`) relative to it, ignoring the CWD. The rest of `src/` is named
 relative to `src/lib/` too, except by a build started from inside `src/`,
-for which a CWD-relative name is shorter: such a build re-sems those
-modules under their other names. nimsem and hexer find a module in the
+for which a CWD-relative name is shorter: such a build re-sems those modules
+under their other names. nimsem and hexer find a module in the
 stdlib cache first (`programs.suffixToNif`, `--stdcache`), then next to the
 main module.
 

@@ -175,10 +175,15 @@ proc main() =
     if cacheDir.len == 0:
       quit "--nimcache:DIR is required to validate " & source &
            " (it names the cache `nimony check` wrote the module into)"
-    semNif = semNifForSource(source, cacheDir)
     prog.stdDir = stdcacheOf(cacheDir)
-    if semNif.len > 0 and not fileExists(semNif):
-      semNif = includerOf(source, cacheDir)
+    # A module of the toolchain was semchecked into the stdlib cache the
+    # build read (`deps.FilePair.std`), any other one into `cacheDir`.
+    for dir in [cacheDir, prog.stdDir]:
+      if dir.len == 0: continue
+      semNif = semNifForSource(source, dir)
+      if semNif.len > 0 and not fileExists(semNif):
+        semNif = includerOf(source, dir)
+      if semNif.len > 0: break
     if semNif.len == 0:
       quit "no semchecked NIF for " & source & " in " & cacheDir &
            " (was it built with `nimony check --nimcache:" & cacheDir & "`?)"

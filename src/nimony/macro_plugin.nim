@@ -376,7 +376,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # m sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is stale,
   # and tries to overwrite it — which on Windows fails because the outer
   # nimsem (currently paused waiting on this exec) still has it mmap'd.
-  # Same rationale as `semos.runProgram` / `semos.prepareEval`.
+  # Same rationale as `semos.runProgram`.
   let cmd = quoteShell(nimonyExe) & shellArgs(hostCommandLineArgs) &
             " --path:" & quoteShell(srcLibPath) &
             " --nimcache:" & quoteShell(pluginCache) &

@@ -59,11 +59,11 @@ proc stdlibDir*(): string =
   result = nimonyDir() / "lib"
 
 proc isToolchainFile*(f: string): bool =
-  ## `f` belongs to the toolchain: in a build graph it is a stdlib module,
-  ## whose artifacts live in the stdlib cache that builds with the same
-  ## options share (`deps.stdCacheDir`). The toolchain's own sources are the
-  ## stdlib and the compiler, whose modules the stdlib imports (`std/macros`
-  ## pulls in nifbuilder/nifreader and the parser).
+  ## `f` belongs to the toolchain, the stdlib or the compiler, whose modules
+  ## the stdlib imports (`std/macros` pulls in the parser, `{.plugin.}`s the
+  ## plugin API): in a build graph it is a stdlib module, whose artifacts live
+  ## in the stdlib cache that builds with the same options share
+  ## (`deps.stdCacheDir`).
   var a = f
   try:
     a = normalizedPath(absolutePath(f))
@@ -1032,53 +1032,6 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
 const
   writeNifModuleSuffix* = "wriwhv7qv"
 
-proc buildWriteNifModule(c: var SemContext): string =
-  # Forward the outer compile's CLI args (notably `--cc`) so the inner nimony
-  # emits a build file whose `nimsem` cmd-line MATCHES what the outer build
-  # file uses. Otherwise nifmake's per-cmd staleness check sees a different
-  # argv for `nimsem ... m sysvq0asl.p.nif`, decides the existing
-  # `sysvq0asl.s.nif` is stale, and tries to overwrite it — which on Windows
-  # fails because the outer nimsem (currently paused waiting on this exec)
-  # still has it mmap'd. The outer's args live on `c.commandLineArgs`.
-  let nimonyExe = findTool("nimony")
-  let cmd = quoteShell(nimonyExe) & shellArgs(c.commandLineArgs) &
-    " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
-    " c " & quoteShell(stdlibFile("std/writenif.nim"))
-  try:
-    let (output, exitCode) = execCmdEx(cmd)
-    result = if exitCode != 0: output else: ""
-  except:
-    result = "failed to run: " & cmd
-
-const StaleLockNs = 120'i64 * 1_000_000_000'i64
-  ## A writenif build takes seconds; a lock this old lost its holder.
-
-proc prepareEval*(c: var SemContext): string =
-  ## Bring `std/writenif` up to date in this nimcache, once per process. The
-  ## eval program's build graph has no rule for it and links against whatever
-  ## `.s.nif` is there, so its mere existence is not enough: one left by an
-  ## older stdlib (a `std/math` since split into modules, say) fails every
-  ## evaluation with "cannot evaluate expression at compile time" until the
-  ## nimcache is wiped. nifmake makes the build a no-op when it is current.
-  ## Every module of a parallel build that evaluates something at compile
-  ## time gets here, all sharing the nimcache, so the build is done under a
-  ## lock: two concurrent builds of it race on the same outputs, and on
-  ## Windows the loser cannot replace a file the winner's C compiler still
-  ## has open.
-  result = ""
-  if not c.checkedForWriteNifModule:
-    c.checkedForWriteNifModule = true
-    let lock = c.g.config.nifcachePath / writeNifModuleSuffix & ".lock"
-    while true:
-      if vfsTryLock(lock):
-        result = buildWriteNifModule(c)
-        vfsUnlock(lock)
-        break
-      if vfsNow() - vfsMtime(lock) > StaleLockNs:
-        vfsUnlock(lock)
-      else:
-        vfsSleepMs(20)
-
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
                usedModules: HashSet[string]; sourceDir = ""): string =
   ## Returns an error message if the evaluation failed, "" on success.
@@ -1086,11 +1039,17 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
   try:
     writeFileAndIndex(progfile, src)
 
-    # Write the .p.deps.nif file so that `nimony s` can find the imports.
-    # Always write — `nimony s` opens this unconditionally, so an empty
-    # `(stmts)` is needed when the original module has no imports.
-    var deps = createTokenBuf(c.importSnippets.len + 4)
+    # Write the .p.deps.nif file so that `nimony s` can find the imports:
+    # the module's own and `std/writenif`, which the program reports its
+    # result through. Being an import is what puts writenif into the
+    # program's build graph, so a stale one is rebuilt like any other module.
+    var deps = createTokenBuf(c.importSnippets.len + 8)
     deps.addParLe StmtsS, NoLineInfo
+    deps.copyIntoKind ImportS, NoLineInfo:
+      deps.copyIntoKind InfixX, NoLineInfo:
+        deps.addIdent "/", NoLineInfo
+        deps.addIdent "std", NoLineInfo
+        deps.addIdent "writenif", NoLineInfo
     if c.importSnippets.len > 0:
       deps.add c.importSnippets
     deps.addParRi()
