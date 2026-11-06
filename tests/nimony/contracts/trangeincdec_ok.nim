@@ -32,7 +32,7 @@ proc field(d: var D) =
 proc viaVar(x: var Natural) =
   if x > 0: dec x
 
-proc gen[T: Ordinal](x: var T) =
+proc gen[T: Ordinal and Comparable and Orderable](x: var T) =
   if x > T(0): dec x
 
 var d = default(D)

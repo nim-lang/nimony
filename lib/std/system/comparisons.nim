@@ -1,7 +1,5 @@
 # comparison operators:
 
-# not in original nim, so that it works for generic `Ordinal` types:
-proc `==`*[T: Ordinal](x, y: T): bool {.magic: "EqI", noSideEffect.}
 
 # `enum` typeclass split here to prevent ambiguity with `Ordinal`:
 proc `==`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
@@ -23,8 +21,6 @@ proc `==`*[T](x, y: ref T): bool {.magic: "EqRef", noSideEffect.}
 proc `==`*[T](x, y: ptr T): bool {.magic: "EqRef", noSideEffect.}
   ## Checks that two `ptr` variables refer to the same item.
 
-# not in original nim, so that it works for generic `Ordinal` types:
-proc `<=`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
 
 # `enum` typeclass split here to prevent ambiguity with `Ordinal`:
 proc `<=`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
@@ -44,8 +40,6 @@ proc `<=`*(x, y: bool): bool {.magic: "LeB", noSideEffect.}
 proc `<=`*[T](x, y: ref T): bool {.magic: "LePtr", noSideEffect.}
 proc `<=`*(x, y: pointer): bool {.magic: "LePtr", noSideEffect.}
 
-# not in original nim, so that it works for generic `Ordinal` types:
-proc `<`*[T: Ordinal](x, y: T): bool {.magic: "LtI", noSideEffect.}
 
 # `enum` typeclass split here to prevent ambiguity with `Ordinal`:
 proc `<`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
@@ -61,6 +55,7 @@ proc `<`*[T](x, y: set[T]): bool {.magic: "LtSet", noSideEffect.}
   ## A strict or proper subset `x` has all of its members in `y` but `y` has
   ## more elements than `y`.
 
+proc `<`*(x, y: bool): bool {.magic: "LtB", noSideEffect.}
 proc `<`*(x, y: pointer): bool {.magic: "LtPtr", noSideEffect.}
 
 proc `==`*(x, y: int8): bool {.magic: "EqI", noSideEffect.}

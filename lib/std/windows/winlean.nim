@@ -99,7 +99,7 @@ when defined(windows):
   func `==`*(x, y: Handle): bool {.borrow.}
   func isNil*(x: Handle): bool = x == Handle 0
 
-  func `==`(x, y: WINBOOL): bool {.borrow.}
+  func `==`*(x, y: WINBOOL): bool {.borrow.}
 
   func isFail*(x: WINBOOL): bool {.inline.} =
     ## Returns true if `x != 0`. Windows uses a different convention than POSIX,

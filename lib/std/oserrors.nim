@@ -5,6 +5,8 @@ import syncio
 type
   OSErrorCode* = distinct int32 ## Specifies an OS Error Code.
 
+func `==`*(err1, err2: OSErrorCode): bool {.borrow.}
+
 when defined(windows):
   import windows/winlean
 elif defined(posix):

@@ -1,4 +1,4 @@
-iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
+iterator `..<`*[T: Ordinal and Comparable and Orderable](a, b: T): T {.inline,
     ensures: (a <= result and result < b).} =
   ## Count up in the range `[a, b)`
   ##
@@ -11,7 +11,7 @@ iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
     yield i
     inc i
 
-iterator `..`*[T: Ordinal](a, b: T): T {.inline,
+iterator `..`*[T: Ordinal and Comparable and Orderable](a, b: T): T {.inline,
     requires: b < high(T) or
       (sizeof(T) == 1 and ord(high(T)) < 127) or
       (sizeof(T) == 2 and ord(high(T)) < 32767) or
@@ -43,7 +43,7 @@ iterator `..`*[T: Ordinal](a, b: T): T {.inline,
       yield i
       inc i
 
-iterator `>..`*[T: Ordinal](a, b: T): T {.inline,
+iterator `>..`*[T: Ordinal and Comparable and Orderable](a, b: T): T {.inline,
     ensures: (b <= result and result <= a).} =
   ## Count down in the range `[b, a]`.
   var i = a
@@ -56,7 +56,7 @@ iterator items*[T: OrdinalEnum](E: typedesc[T]): T =
   for v in low(E) .. high(E):
     yield v
 
-iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
+iterator countdown*[T: Ordinal and Comparable and Orderable; V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
     ensures: (b <= result and result <= a).} =
   ## Counts from ordinal value `a` down to `b` (inclusive) with the given
   ## step count.
@@ -73,7 +73,7 @@ iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
         break
       dec(res, step)
 
-iterator countup*[T: Ordinal](a, b: T; step: Positive = 1): T {.inline,
+iterator countup*[T: Ordinal and Comparable and Orderable](a, b: T; step: Positive = 1): T {.inline,
     requires: b < high(T) or
       (sizeof(T) == 1 and ord(high(T)) < 127) or
       (sizeof(T) == 2 and ord(high(T)) < 32767) or
