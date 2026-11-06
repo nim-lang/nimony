@@ -4039,7 +4039,10 @@ except ErrorCode as e:
 ### Raises types
 
 `{.raises.}` means `{.raises: ErrorCode.}`. The only other type a routine may
-raise is a `ref` object type, usually one inheriting from `Exception`:
+raise is a `ref` object type with runtime type information, usually one
+inheriting from `Exception`. An object type without an ancestor is final and
+has no such information, and neither has a `pure` root, so `.raises`, `except`
+and `raise` reject a `ref` to one:
 
 ```nim
 type ParseError = ref object of Exception
