@@ -661,6 +661,66 @@ proc incrementalTests*() =
       expect mainDirs.len == 1,
              "eval-pair: backend directories " & $mainDirs & " (expected the main module's alone)"
 
+  # Phase 18: builds started from different directories share a stdlib
+  # cache, so nothing stored in it may depend on the directory of the build
+  # that wrote it. `--stdcache` gives each step a stdlib cache of its own.
+  # * A rebuilt nimsem reruns the stdlib's sem nodes but not its parse nodes,
+  #   so the second build sems `system.nim` from the `.p.nif` the first one
+  #   wrote: a path in it relative to the first build's directory sent
+  #   `include "system/basic_types"` to a file that does not exist. Making the
+  #   sem outputs older than everything else is what a rebuilt nimsem does
+  #   to them.
+  # * The C file of a stdlib `.compile` (mimalloc's, with `-d:useMimalloc`) is
+  #   compiled by a build that did not sem the module.
+  # * A module of `src/` outside `src/lib/` (the parser `std/macros` imports)
+  #   has the same name in a build started inside `src/`: under another one,
+  #   `std/macros` was re-semmed to import it, and a later build from
+  #   elsewhere could not compile a macro.
+  let cwdRoot = absolutePath("nimcache" / "incremental-cwd")
+  let cwdStd = cwdRoot / "stdcache"
+  let cwdDirs = [cwdRoot / "a", cwdRoot / "b" / "sub" / "dir"]
+  block:
+    inc phases
+    removeDir cwdRoot
+    for d in cwdDirs:
+      createDir d
+      writeFile d / "cwdmain.nim",
+        "import std/[syncio, assertions]\nassert 1 + 1 == 2\necho \"cwd ok\"\n"
+    writeFile cwdRoot / "cwdmacros.nim", "import std/[syncio, macros]\necho \"cwd ok\"\n"
+    proc runCwd(label, dir: string; opts = ""; suffix = "";
+                main = "cwdmain.nim"): bool =
+      let (output, ec) = execCmdEx(absolutePath(nimony).quoteShell & " c -r " & opts &
+        " --silentMake --stdcache:" & quoteShell(cwdStd & suffix) & " --nimcache:" &
+        quoteShell(cwdRoot / "cache" & suffix & "-" & dir.lastPathPart) & " " &
+        main.quoteShell, workingDir = dir)
+      result = ec == 0 and output.contains("cwd ok")
+      if not result:
+        # the first line is the tool that failed, the last one only nifmake
+        failures.add label & ": " & (if ec != 0: "compile failed: " else: "expected 'cwd ok': ") &
+                     output.strip.splitLines[0]
+    proc semmed(suffix: string): seq[string] =
+      result = @[]
+      for f in walkFiles(cwdStd & suffix / "*.s.nif"): result.add f.lastPathPart
+      sort result
+    if runCwd("cwd-first", cwdDirs[0]):
+      let old = fromUnix(1_000_000_000)
+      var n = 0
+      for pattern in ["*.s.nif", "*.s.idx.nif"]:  # a sem node's outputs
+        for f in walkFiles(cwdStd / pattern):
+          setLastModificationTime(f, old)
+          inc n
+      expect n > 0, "cwd-first: no `.s.nif` in " & cwdStd
+      discard runCwd("cwd-second", cwdDirs[1])
+    if runCwd("cwd-compile-sem", cwdDirs[1], "-d:useMimalloc", "-mi"):
+      discard runCwd("cwd-compile-other", cwdDirs[0], "-d:useMimalloc", "-mi")
+    let macrosMain = cwdRoot / "cwdmacros.nim"
+    if runCwd("cwd-src-outside", cwdDirs[0], "", "-src", macrosMain):
+      let before = semmed("-src")
+      if runCwd("cwd-src-inside", absolutePath("src" / "nifler2"), "", "-src", macrosMain):
+        let added = semmed("-src").filterIt(it notin before)
+        expect added.len == 0,
+               "cwd-src-inside: the stdlib's modules got other names: " & added.join(" ")
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f
