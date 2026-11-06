@@ -71,15 +71,30 @@ proc joinMembers*(dir: string; cat: Category; overwrite: bool): seq[string] =
       result.add x.path
   sort result
 
-proc joinedExpectedOutput*(files: openArray[string]): string =
-  ## What the joined program must print: each member's `.output` in import
-  ## order. A member without one is expected to print nothing — the same
-  ## contract `testFile` enforces is absent there, made explicit here.
-  result = ""
-  for f in items files:
-    let o = f.changeFileExt(".output")
-    if o.fileExists():
-      let spec = readFile(o).strip
-      if spec.len > 0:
-        if result.len > 0: result.add '\n'
-        result.add spec
+proc memberOutputSpec*(file: string): string =
+  ## The raw contents of `file`'s `.output`, or "" without one: a member with
+  ## no `.output` is expected to print nothing, as `testFile` checks.
+  let o = file.changeFileExt(".output")
+  result = if o.fileExists(): readFile(o) else: ""
+
+proc matchJoinedOutput*(specs: openArray[string]; output: string): bool =
+  ## Whether `output`, what the joined program printed, is what its members
+  ## print one after another, judged as `testFile` judges each member alone:
+  ## member `i` passes when what it prints, stripped, equals `specs[i]` (its
+  ## raw `.output`) stripped. So leading and trailing whitespace of each
+  ## member's share is free; each stripped spec must appear verbatim, in
+  ## order, with only whitespace between. A stripped spec starts with
+  ## non-whitespace, so skipping whitespace before it finds exactly where it
+  ## starts: the group passes exactly when `output` splits into consecutive
+  ## shares that each pass their member alone. Concatenating the stripped
+  ## specs instead loses a member's leading indentation, and a trailing blank
+  ## line, on one side only.
+  var p = 0
+  for raw in specs:
+    let spec = raw.strip
+    if spec.len == 0: continue
+    while p < output.len and output[p] in Whitespace: inc p
+    if not output.continuesWith(spec, p): return false
+    inc p, spec.len
+  while p < output.len and output[p] in Whitespace: inc p
+  result = p == output.len
