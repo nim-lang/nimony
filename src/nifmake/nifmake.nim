@@ -719,6 +719,35 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
 
   prog.finish()
 
+proc anyStale(dag: Dag): bool =
+  ## Whether some node needs to run. Staleness spreads only from a node that
+  ## is stale itself, so when none is, none runs.
+  var sc = StatCache(entries: initTable[string, StatEntry]())
+  result = false
+  for node in dag.nodes:
+    if needsRebuild(sc, node): return true
+
+when defined(windows):
+  proc lockFileEx(hFile: Handle; flags, reserved, bytesLow, bytesHigh: DWORD;
+                  overlapped: ptr OVERLAPPED): WINBOOL {.
+    stdcall, dynlib: "kernel32", importc: "LockFileEx".}
+
+proc acquireLock(path: string): File =
+  ## `--lock`: wait until this process holds the OS lock on the file `path`.
+  ## The OS drops it when the process ends, however it ends, so a crashed
+  ## build never leaves it held.
+  if not open(result, path, fmAppend):
+    quit "nifmake: cannot open the lock file " & path
+  when defined(windows):
+    const LockfileExclusiveLock = 2'i32
+    var ov = default(OVERLAPPED)
+    if lockFileEx(Handle(getOsFileHandle(result)), LockfileExclusiveLock, 0,
+                  high(DWORD), high(DWORD), addr ov) == 0:
+      quit "nifmake: cannot lock " & path
+  else:
+    while lockf(getFileHandle(result), F_LOCK, 0) != 0:
+      if errno != EINTR: quit "nifmake: cannot lock " & path
+
 proc mescape(p: string): string =
   when defined(windows):
     result = p.replace("\\", "/")
@@ -928,6 +957,9 @@ Options:
                         reason no input mtime can express — e.g. nimony when
                         the compilation options changed.
   --verbose             Show verbose output
+  --lock:<file>         Hold the OS lock on <file> while building, taken only
+                        when something is stale. For outputs that concurrent
+                        builds share.
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.
   --progress[:LO:HI]    Show a live percentage indicator while building (only
@@ -1043,6 +1075,7 @@ proc main() =
     baseDir = ""
     progressLo = 0
     progressHi = 100
+    lockFile = ""
 
   var p = initOptParser(allowWhitespaceAfterColon = false)
   for kind, key, val in p.getopt():
@@ -1080,6 +1113,7 @@ proc main() =
       of "rerun": opt.incl Rerun
       of "verbose": opt.incl Verbose
       of "base": baseDir = val
+      of "lock": lockFile = val
       of "profile": opt.incl Profile
       of "report": opt.incl Report
       of "progress":
@@ -1109,19 +1143,27 @@ proc main() =
     if inputFile == "":
       quit "Input file required for 'run' command"
 
+    let parseStart = getMonoTime()
+    var dag = parseNifFile(inputFile, baseDir)
+    var lock: File = nil
+    if lockFile.len > 0:
+      # Outputs that other builds share. Taken only when there is work, so
+      # builds that find everything current never wait for one another; and
+      # once it is held, `runDag` asks again what is stale, as the build we
+      # waited for may have done it all.
+      if {Force, Rerun} * opt == {} and not anyStale(dag): return
+      lock = acquireLock(lockFile)
     if Profile in opt or Report in opt:
       var profile = ProfileData()
-      let parseStart = getMonoTime()
-      var dag = parseNifFile(inputFile, baseDir)
       profile.parseTime = toSeconds(getMonoTime() - parseStart)
       let ok = runDag(dag, opt, addr profile, progressLo, progressHi)
       if Profile in opt: printProfile(profile)
       if Report in opt: printReport(profile)
       if not ok: quit 1
     else:
-      var dag = parseNifFile(inputFile, baseDir)
       if not runDag(dag, opt, nil, progressLo, progressHi):
         quit 1
+    if lock != nil: close lock
 
   of cmdMakefile:
     if inputFile == "":

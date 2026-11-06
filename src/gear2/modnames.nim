@@ -43,23 +43,38 @@ const
   BackendDirJs* = "j"      ## `nimony j`
 
 proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
+  ## A file under a search path is named relative to the closest one and the
+  ## CWD plays no part: the stdlib's artifacts live in a cache that builds
+  ## started from anywhere share (`deps.stdCacheDir`), so the same file must
+  ## get the same name in all of them. Any other file is named relative to the
+  ## CWD or to a search path, whichever is shorter.
   # `getCurrentDir`/`relativePath` are `.raises`, but the only reason they can
   # fail in practice is a transient filesystem error that would break every
   # diagnostic equally. Swallow it here so this helper (widely used inside
   # sem/programs) stays non-raising.
-  var f = path
-  try:
-    f = relativePath(path, getCurrentDir(), '/')
-  except:
-    discard
-  # Select the path that is shortest relative to the searchPath:
+  var f = ""
   for s in searchPaths:
     try:
       let candidate = relativePath(path, s, '/')
-      if candidate.len < f.len:
+      if not (candidate.len >= 2 and candidate[0] == '.' and candidate[1] == '.') and
+          not isAbsolute(candidate) and
+          (f.len == 0 or candidate.len < f.len):
         f = candidate
     except:
       discard
+  if f.len == 0:
+    f = path
+    try:
+      f = relativePath(path, getCurrentDir(), '/')
+    except:
+      discard
+    for s in searchPaths:
+      try:
+        let candidate = relativePath(path, s, '/')
+        if candidate.len < f.len:
+          f = candidate
+      except:
+        discard
   let m = extractModulename(f)
   var id = uhash(f)
   result = newStringOfCap(10)

@@ -823,6 +823,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
   ## For multiple modules, they form a cycle group and are processed together.
   assert infiles.len == outfiles.len
   assert infiles.len > 0
+  prog.stdDir = config.stdcachePath
 
   if infiles.len > 1:
     semcheckCycleGroup(infiles, outfiles, ensureMove config, moduleFlags,

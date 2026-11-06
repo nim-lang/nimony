@@ -58,6 +58,34 @@ proc pluginLibDir(): string =
 proc stdlibDir*(): string =
   result = nimonyDir() / "lib"
 
+proc toolchainRoots(): seq[string] =
+  ## The directories of the toolchain's own sources: the stdlib and the
+  ## compiler, whose modules the stdlib imports (`std/macros` pulls in
+  ## nifbuilder/nifreader and the parser).
+  result = @[stdlibDir(), nimonyDir() / "src"]
+
+proc isToolchainFile*(f: string): bool =
+  ## `f` belongs to the toolchain: in a build graph it is a stdlib module,
+  ## whose artifacts live in the stdlib cache that builds with the same
+  ## options share (`deps.stdCacheDir`).
+  result = false
+  var a = f
+  try:
+    a = normalizedPath(absolutePath(f))
+  except:
+    discard
+  for d in toolchainRoots():
+    if a.len > d.len and a.startsWith(d) and a[d.len] in {DirSep, AltSep}:
+      return true
+
+proc pluginExePath*(config: NifConfig; src, name: string): string =
+  ## Where the `{.plugin.}` built from `src` lives: a stdlib plugin in the
+  ## stdlib cache, which every build with the same frontend key shares, any
+  ## other one in this build's nimcache. `deps.pluginExe` decides the same.
+  let dir = if config.stdcachePath.len > 0 and isToolchainFile(src): config.stdcachePath
+            else: config.nifcachePath
+  result = dir / name.addFileExt(ExeExt)
+
 proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
   # Keep the compiler-internal `src/lib` modules (nifbuilder/nifreader, pulled
@@ -446,13 +474,16 @@ proc lastModTimeOrStale(path: string): int64 =
   except:
     result = -1'i64
 
-proc ensureParsed(nimFile: string; paths: openArray[string], nifcachePath: string): string =
+proc ensureParsed(nimFile: string; config: NifConfig): string =
   ## Runs nifler on `nimFile` unless its `.p.nif` (the result) and
-  ## `.p.deps.nif` are fresh.
+  ## `.p.deps.nif` are fresh. A toolchain file's are in the stdlib cache, as
+  ## `deps.FilePair.std` puts them.
   let nifler = parserTool()
-  let name = moduleSuffix(nimFile, paths)
-  let src = nifcachePath / name & ".p.nif"
-  let depsFile = nifcachePath / name & ".p.deps.nif"
+  let name = moduleSuffix(nimFile, config.paths)
+  let dir = if config.stdcachePath.len > 0 and isToolchainFile(nimFile): config.stdcachePath
+            else: config.nifcachePath
+  let src = dir / name & ".p.nif"
+  let depsFile = dir / name & ".p.deps.nif"
   # `include`d files are part of the dependency graph, so the driver's own
   # dep scan (`deps.execNifler`) has already parsed this file into the very
   # same `.p.nif` — with the identical command line — before it ever spawned
@@ -475,13 +506,13 @@ proc loadDepsFile*(depsFile: string): TokenBuf =
   parse(r, result)
   rd.close(r)
 
-proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
-  var r = rd.open(ensureParsed(nimFile, paths, nifcachePath))
+proc parseFile*(nimFile: string; config: NifConfig): TokenBuf =
+  var r = rd.open(ensureParsed(nimFile, config))
   result = createTokenBuf()
   parse(r, result, denseLineInfo = true)
   rd.close(r)
 
-proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: string;
+proc resolvedImports(nimFile: string; config: NifConfig;
                      allResolve: var bool): seq[string] =
   ## The modules `nimFile` imports plainly (no `{.plugin.}`, no `{.cyclic.}`),
   ## read off its nifler deps file like `deps.processImport` does. `when`
@@ -489,7 +520,7 @@ proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: st
   ## resolves on `paths` to a module outside of the plugin API (`src/nimony/lib`).
   result = @[]
   allResolve = true
-  var buf = loadDepsFile(ensureParsed(nimFile, paths, nifcachePath).changeFileExt(".deps.nif"))
+  var buf = loadDepsFile(ensureParsed(nimFile, config).changeFileExt(".deps.nif"))
   var files: seq[ImportedFilename] = @[]
   var n = beginRead(buf)
   n.into:  # (stmts …)
@@ -511,14 +542,13 @@ proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: st
       skip n
   let pluginDir = normalizedPath(pluginLibDir())
   for f in files:
-    let path = toAbsolutePath(resolveImport(paths, nimFile, f.path))
+    let path = toAbsolutePath(resolveImport(config.paths, nimFile, f.path))
     if fileExists(path) and cmpPaths(path.parentDir, pluginDir) != 0:
       result.add path
     else:
       allResolve = false
 
-proc pluginProgramImports*(plugin: string; paths: openArray[string];
-                           nifcachePath: string): seq[string] =
+proc pluginProgramImports*(plugin: string; config: NifConfig): seq[string] =
   ## The modules the plugin source `plugin` imports that join the program of
   ## the plugin's user, like a Nim macro module's imports: the plugin's
   ## `bindSym`s refer to their symbols (#2639). Left out are imports that do
@@ -526,8 +556,8 @@ proc pluginProgramImports*(plugin: string; paths: openArray[string];
   ## module with such an import.
   result = @[]
   var allResolve = true
-  for path in resolvedImports(plugin, paths, nifcachePath, allResolve):
-    discard resolvedImports(path, paths, nifcachePath, allResolve)
+  for path in resolvedImports(plugin, config, allResolve):
+    discard resolvedImports(path, config, allResolve)
     if allResolve: result.add path
 proc getFile*(info: NifLineInfo): string =
   let fid = info.file
@@ -915,9 +945,8 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let inputFile = basename & ".in.nif"
   let outputFile = basename & ".out.nif"
   let inputFileB = basename & ".types.nif"
-  let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
-
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
+  let pluginExe = pluginExePath(c.g.config, nf, p.name)
   ensurePlugin(c.g.config, nf, pluginExe)
   if nf notin c.pluginSources: c.pluginSources.add nf
 

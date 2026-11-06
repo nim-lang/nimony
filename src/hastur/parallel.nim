@@ -1,11 +1,14 @@
 ## The parallel test pool: a flat queue of work items, each run in its own
 ## `hastur test`/`hastur joined` subprocess with a private `nimcache/`, plus the
-## shared-cache warmup and prebuild that keep a cold pool from thrashing.
+## shared-object prebuild that keeps a cold pool from thrashing. The stdlib
+## needs no such help: every item's compile shares one stdlib cache, which
+## nifmake builds once under its lock (`deps.stdCacheDir`).
 
 import std / [syncio, os, osproc, strutils, times, typedthreads, locks, tables,
              algorithm]
 
 import context, counters, category, concurrent
+from nativelist import walkNative
 
 type WorkItem* = object
   ## One unit of work for the parallel pool: a single test file, a whole
@@ -19,16 +22,6 @@ type WorkItem* = object
     ## like any other item, so the suites overlap with the test pool instead of
     ## running one after the other before it starts.
   weight*: int
-  native*: bool
-    ## Compiled by `nimony n` (see `nativelist.walkUsesNative`). The worker
-    ## decides this for itself from the same inputs; the parent needs to know
-    ## it too, because the two backends take their cache prefill from
-    ## different warmups and handing a native item the C one breaks its build.
-  noPrefill*: bool
-    ## Start from an empty cache rather than the warmup's. A `setup.nim` suite
-    ## has no use for it, and `--noSystem`/`--compat` compiles must not see a
-    ## `system` built without those flags: nifmake's staleness check is by
-    ## mtime only, so it would take the prefilled one as up to date.
 
 
 proc canRunParallel*(cat: Category): bool {.inline.} =
@@ -36,10 +29,6 @@ proc canRunParallel*(cat: Category): bool {.inline.} =
   ## so the `nimcache/` reset that `Compat` and `Basics` need between tests is
   ## a given there. Only a serial (`--jobs:1`) run still shares one cache.
   true
-
-proc prefillable*(cat: Category): bool {.inline.} =
-  ## See `WorkItem.noPrefill`.
-  cat notin {Compat, Basics}
 
 # ---- scheduling: longest first, by what the previous runs measured ----------
 
@@ -91,52 +80,6 @@ proc scheduleLongestFirst*(items: var seq[WorkItem]) =
   sort items, proc (a, b: WorkItem): int =
     result = cmp(estimate(b), estimate(a))
     if result == 0: result = cmp(a.path, b.path)
-
-proc warmupSharedCache(native = false): string =
-  ## Compile `tools/warmup.nim` once into `nimcache/warmup/` so each
-  ## parallel test can start with system + common stdlib bundles already
-  ## present. Returns the warmup cache directory, or "" on opt-out
-  ## (warmup source missing or compile failed — tests still work, just
-  ## without the savings).
-  ##
-  ## `native` seeds the OTHER pipeline's cache, in a directory of its own.
-  ## The two must not mix: the intermediates the C and native backends read
-  ## share file names but not content — a native compile handed the C run's
-  ## bundle of `system` gets one whose externs have lost their `dynlib`, and
-  ## arkham stops at the first of them ("`GetStdHandle` names no import
-  ## library"). So a native work item prefills from here and a C one from
-  ## there, and neither ever sees the other's files.
-  const warmupSrc = "tools/warmup.nim"
-  if not fileExists(warmupSrc):
-    # Loud, because the fallback is silent-but-slow: without the prefill every
-    # test recompiles `system` from scratch (~3s each on Windows CI, ~700
-    # tests). A missing warmup file previously just disabled the optimization
-    # with no output at all, so the regression was invisible.
-    stderr.writeLine "warmup: " & warmupSrc &
-      " missing; every test will recompile the stdlib from scratch"
-    return ""
-  result = nimcacheDir / (if native: "warmup_native" else: "warmup")
-  let nimony = toolExe("nimony")
-  if not fileExists(nimony):
-    stderr.writeLine "warmup: skipping, no nimony at " & nimony
-    return ""
-  # The same command the work items are compiled with, so what lands here is
-  # exactly what they would have produced themselves (`execNimonyNative` for
-  # the native side, `execNimony`'s `c` for the other).
-  let cmd = nimony.quoteShell &
-            (if native: " n --silentMake --isMain --nimcache:" else: " c --nimcache:") &
-            result.quoteShell & " " & warmupSrc.quoteShell
-  let t0 = epochTime()
-  let exit = execShellCmd(cmd)
-  let dt = epochTime() - t0
-  if exit != 0:
-    stderr.writeLine "warmup: skipping (compile failed): " & cmd
-    return ""
-  if dt > 0.5:
-    # Only report cold compiles; subsequent calls in the same `hastur all`
-    # run are sub-second no-ops thanks to nimony's incremental build, and
-    # printing them per-category just adds noise.
-    echo "warmup compiled in ", formatFloat(dt, ffDecimal, precision=2), "s."
 
 var sharedObjectsPrebuilt = false
   ## `nimcache_static/` holds object files that don't depend on per-project
@@ -210,45 +153,6 @@ proc prebuildSharedObjects(forward: string) =
     # the cause is visible rather than silently degrading.
     stderr.writeLine "prebuild: shared object compile failed: " & cmd
 
-proc copyPreservingMtime(src, dst: string) =
-  ## Copy `src` to `dst` with its permissions and stamp `dst` with `src`'s
-  ## mtime. The permissions matter for a `{.plugin.}` executable the warmup
-  ## built: a plain `copyFile` leaves it non-executable on POSIX, and its
-  ## preserved mtime keeps every staleness check from rebuilding it, so the
-  ## first plugin call fails with "Permission denied". Mtime
-  ## preservation is load-bearing: `nifmake.needsRebuild` keys off
-  ## output-mtime > input-mtime ordering, so a fresh "now" mtime on every
-  ## prefilled file would scramble the DAG-order mtimes the warmup set
-  ## up and trigger spurious recompiles. Hardlinks would also preserve
-  ## mtimes "for free", but they share an inode — when one parallel test
-  ## triggers an in-place rewrite of a shared bundle (say a config
-  ## difference forces a recompile), every other test holding a hardlink
-  ## sees the truncated/partial content and crashes. Copying gives each
-  ## test an independent inode, paid for once at prefill.
-  try:
-    copyFileWithPermissions(src, dst)
-    try: setLastModificationTime(dst, getLastModificationTime(src))
-    except: discard
-  except OSError, IOError:
-    discard  # best-effort; falling back to a cold per-test compile is fine
-
-proc prefillFromWarmup*(warmupCache, cacheDir: string) =
-  ## Called by the WORKER (`--prefill:`), not by the pool: a prefill is ~130
-  ## file copies, which on Windows costs a third of a second, and done by the
-  ## parent it was ~100s of a run spent on the one thread that launches the
-  ## next item — with the slots waiting for it.
-  if warmupCache.len == 0 or not dirExists(warmupCache):
-    return
-  for path in walkDirRec(warmupCache, yieldFilter = {pcFile}, relative = true):
-    # A plugin's sub-compile caches are only read to rebuild the plugin, which
-    # the prefilled executable makes unnecessary: copying them would multiply
-    # the prefill for nothing.
-    if isPluginScratchDir(warmupCache, path.split({DirSep, AltSep})[0]): continue
-    let dst = cacheDir / path
-    try: createDir(dst.parentDir)
-    except OSError: discard
-    copyPreservingMtime(warmupCache / path, dst)
-
 proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
                      overwrite: bool; cat: Category; forward: string;
                      jobs: int) =
@@ -260,17 +164,6 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
   ## completion order; final pass/fail counts go into the shared `c`.
   let hastur = getAppFilename()
   prebuildSharedObjects(forward)
-  var anyPrefill = false
-  var anyNative = false
-  for it in items:
-    if not it.noPrefill:
-      anyPrefill = true
-      if it.native: anyNative = true
-  let warmupCache = if anyPrefill: warmupSharedCache() else: ""
-  # Seeded only when something in this run actually wants it: on every host but
-  # Windows no item is native, and paying for a second warmup compile there
-  # would be pure loss.
-  let nativeWarmupCache = if anyNative: warmupSharedCache(native = true) else: ""
   let parallelStart = epochTime()
   var times = loadTimes()
   let queue = @items   # `launch` captures it; an openArray cannot be
@@ -295,23 +188,14 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
     let cacheDir = nimcacheDir / ".par" / $idx
     var args = @[(if item.joined: "joined" else: "test"),
                  "--no-build", "--cachedir:" & cacheDir, "--scratch"]
-    if not item.noPrefill:
-      let warmup = if item.native: nativeWarmupCache else: warmupCache
-      if warmup.len > 0: args.add "--prefill:" & warmup
     # Forward the parent's resolved toolchain dir so each worker uses the
     # exact same binaries (the default is now hastur's own sibling dir, an
     # absolute path, not the literal "bin").
     args.add "--bindir:" & toolchainDir
     if parallelBuild > 0: args.add "--parallelBuild:" & $parallelBuild
-    # A work item's backend is settled HERE, by the parent, because the parent
-    # is what prefills the cache — and the two warmups cannot be mixed (see
-    # `warmupSharedCache`). The worker would reach the same verdict on its own
-    # for the item as planned, but not on every path through it: a joined group
-    # that diverges re-runs its members one by one, and in a group that is not
-    # all-native some of those members are individually eligible. That re-run
-    # inherits the C prefill, so it must inherit the C backend with it.
-    when defined(windows):
-      if not item.native: args.add "--native:off"
+    # each worker decides for itself which tests compile with `nimony n`
+    # (`nativelist.walkUsesNative`), unless the run said not to
+    if not walkNative: args.add "--native:off"
     if overwrite: args.add "--overwrite"
     if forward.len > 0: args.add "--forward:" & forward
     args.add item.path

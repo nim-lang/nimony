@@ -29,6 +29,7 @@
 
 import std / [os, strutils, syncio, dirs, paths, parseopt, assertions]
 import ".." / ".." / nimony / [langmodes, nifconfig]
+from ".." / ".." / nimony / programs import prog
 import ".." / ".." / hexer / hexer
 import ".." / ".." / lib / [vfs, nimversion]
 import optdriver    # processFile / Stats — keeps its nifcore world isolated
@@ -59,6 +60,7 @@ Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --os:NAME                 target operating system (default: the host's)
   --outdir:DIR              (d, dl, de) write the outputs to DIR
+  --stdcache:DIR            (c) where the stdlib's semchecked modules are
   --isMain                  mark the file as the main module
   --native                  target the native backend (arkham+nifasm, no C)
   --app:TYPE                application type: console, gui, lib, staticlib (default: console)
@@ -110,6 +112,9 @@ proc hexerMain() =
         isWindows = normalize(val) == "windows"
       of "outdir":
         outdir = val
+      of "stdcache":
+        # the stdlib's `.s.nif` are there, not next to the input (`deps.nim`)
+        prog.stdDir = val
       of "ismain":
         isMain = true
       of "native":

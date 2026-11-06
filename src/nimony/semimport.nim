@@ -64,7 +64,7 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
           break
 
       if not isRecursive:
-        var buf = parseFile(f2, c.g.config.paths, c.g.config.nifcachePath)
+        var buf = parseFile(f2, c.g.config)
         c.includeStack.add f2
         #c.m.includes.add f2
         var n = cursorAt(buf, 0)
@@ -162,7 +162,7 @@ proc importPluginImports*(c: var SemContext) =
   var dest = createTokenBuf(4) # no errors: only existing files are imported
   var sources = move c.pluginSources # `importSingleFile` mutates `c`
   for src in sources:
-    for path in pluginProgramImports(src, c.g.config.paths, c.g.config.nifcachePath):
+    for path in pluginProgramImports(src, c.g.config):
       if moduleSuffix(path, c.g.config.paths) != c.thisModuleSuffix:
         importSingleFile c, dest, ImportedFilename(path: path), src,
           ImportFilter(kind: FromImport, list: initHashSet[StrId]()), NoLineInfo

@@ -32,7 +32,7 @@
 ##   unpacks a tuple.
 
 import std / [syncio, assertions]
-import ".." / lib / [nifbuilder, nifpools]
+import ".." / lib / [nifbuilder, nifpools, vfs]
 import parserrt
 
 type
@@ -207,7 +207,9 @@ proc writeNifler*(first: Node; pool: Pool; tags: TagPool; sizeHint: int;
   while n != nil:
     emit(w, n, NoLineInfo, NiflerKind.None, false, false)
     n = n.next
-  writeFile(outfile, w.b.extract())
+  # by rename: the stdlib's `.p.nif` live in a cache that concurrent builds
+  # share (`deps.stdCacheDir`), and a reader must never see half of one
+  vfsWrite(outfile, w.b.extract())
 
 # --------------------------------------------------------------- deps file
 #
@@ -344,4 +346,4 @@ proc writeDeps*(first: Node; pool: Pool; tags: TagPool;
     walkDeps(d, n, false)
     n = n.next
   d.w.b.endTree()
-  writeFile(outfile, d.w.b.extract())
+  vfsWrite(outfile, d.w.b.extract())

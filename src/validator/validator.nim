@@ -37,6 +37,7 @@ import ".." / lib / nifcoreparse
 import ".." / models / [tags, nimony_tags]
 import tags_grammar
 import semvalidator
+from ".." / nimony / programs import prog
 
 proc includerOf(nimFile, cacheDir: string): string =
   ## An `include`d file is semchecked as part of whoever includes it and has no
@@ -106,6 +107,26 @@ proc semNifForSource(nimFile, cacheDir: string): string =
             result = base.changeFileExt(".s.nif")
           return
 
+proc stdcacheOf(cacheDir: string): string =
+  ## The stdlib cache the build in `cacheDir` read its stdlib modules from:
+  ## what its `.build.nif` passes nimsem as `--stdcache:`. The imports of the
+  ## module are looked up there first (`programs.suffixToNif`).
+  result = ""
+  const prefix = "--stdcache:"
+  for x in walkDir(cacheDir, relative = true):
+    if x.kind != pcFile or not x.path.endsWith(".build.nif"): continue
+    var buf = nifcoreparse.parseFromFile(cacheDir / x.path, sharedPool = pool,
+                                         sharedTags = globalTags)
+    var n = beginRead(buf)
+    if not n.isTagLit: continue
+    n.linearScan:
+      if globalTags.tags[n.cursorTagId] == "cmd":
+        var c = childCursor(n)
+        while c.hasMore:
+          if c.kind == StrLit and c.strVal.startsWith(prefix):
+            return c.strVal.substr(prefix.len)
+          skip c
+
 proc main() =
   if paramCount() < 1:
     quit "Usage: validator [--strict] [--nimcache:DIR] [--dump] [--dumptrees] " &
@@ -155,6 +176,7 @@ proc main() =
       quit "--nimcache:DIR is required to validate " & source &
            " (it names the cache `nimony check` wrote the module into)"
     semNif = semNifForSource(source, cacheDir)
+    prog.stdDir = stdcacheOf(cacheDir)
     if semNif.len > 0 and not fileExists(semNif):
       semNif = includerOf(source, cacheDir)
     if semNif.len == 0:
