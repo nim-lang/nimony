@@ -732,6 +732,9 @@ when defined(windows):
                   overlapped: ptr OVERLAPPED): WINBOOL {.
     stdcall, dynlib: "kernel32", importc: "LockFileEx".}
 
+const HeldLocksEnv = "NIFMAKE_HELD_LOCKS"
+  ## the `--lock` files an ancestor nifmake holds, separated by `PathSep`
+
 proc acquireLock(path: string): File =
   ## `--lock`: wait until this process holds the OS lock on the file `path`.
   ## The OS drops it when the process ends, however it ends, so a crashed
@@ -1151,8 +1154,18 @@ proc main() =
       # builds that find everything current never wait for one another; and
       # once it is held, `runDag` asks again what is stale, as the build we
       # waited for may have done it all.
-      if {Force, Rerun} * opt == {} and not anyStale(dag): return
-      lock = acquireLock(lockFile)
+      #
+      # A build that one of our own commands starts (Nimony's compile-time
+      # evaluation runs a nested build with the same options) needs the same
+      # lock, and the OS lock belongs to this process: waiting for it there
+      # would wait for us forever. So the locks held go down to every command
+      # in `HeldLocksEnv`, and a nested nifmake runs under its ancestor's.
+      let key = absolutePath(lockFile)
+      let held = getEnv(HeldLocksEnv)
+      if key notin held.split(PathSep):
+        if {Force, Rerun} * opt == {} and not anyStale(dag): return
+        lock = acquireLock(key)
+        putEnv(HeldLocksEnv, if held.len > 0: held & PathSep & key else: key)
     if Profile in opt or Report in opt:
       var profile = ProfileData()
       profile.parseTime = toSeconds(getMonoTime() - parseStart)
