@@ -1998,7 +1998,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.copyIntoKind TupatX, info:
           dest.addSymUse n.symId, info
           dest.addIntLit 1, info
-        inc n
+        inc n, SkipExpr
       else:
         takeTree dest, n
   of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
