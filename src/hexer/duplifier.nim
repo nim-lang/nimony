@@ -489,7 +489,7 @@ proc tempType(c: var Context; typ: Cursor): Cursor =
   ## temp with it has lengcgen lay the temp out as a bare function pointer
   ## while the value it receives is the (fn, env) pair: the env is dropped and
   ## the hooks disagree about what they are copying.
-  c.typeCache.closureValueType(typ)
+  closureValueType(typ)
 
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)

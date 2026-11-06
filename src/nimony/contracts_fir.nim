@@ -1553,7 +1553,7 @@ proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): V
         # caller's argument can be typed here (#2643)
         var buf = createTokenBuf(16)
         addSubstituted(buf, m, subst)
-        noteDeclaredRange(c, result, getType(c.typeCache, c.typeCache.keepAlive(buf)))
+        noteDeclaredRange(c, result, getType(c.typeCache, cursorAt(buf, 0)))
     if not c.prescanning and subst.len == 0:
       noteTypeRange(c, result, n)
   else:
@@ -1593,7 +1593,7 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
           # out a wrap of it with the argument in its place
           var buf = createTokenBuf(16)
           addSubstituted(buf, body, inner)
-          if not noWrap(c, c.typeCache.keepAlive(buf)): return false
+          if not noWrap(c, cursorAt(buf, 0)): return false
         skip b # the type operand
         # Not `locationVarId`: that asks the type cache about the path, which
         # names the accessor's own parameter.
@@ -2478,7 +2478,7 @@ proc normalizedArith(c: var FirContext; n: Cursor): Cursor =
   if r.hasMore: buf.addSubtree r
   else: buf.addIntLit(1, info)
   buf.addParRi()
-  result = c.typeCache.keepAlive(buf)
+  result = cursorAt(buf, 0)
 
 proc checkSuccPred(c: var FirContext; n: Cursor) =
   ## `succ`/`pred` of a `range` type owe the range: their result is a `T`
@@ -3397,7 +3397,7 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     if rd.args.len == 0: return noWrap(c, m)
     var buf = createTokenBuf(16)
     addSubstituted(buf, m, rd.args)
-    result = noWrap(c, c.typeCache.keepAlive(buf))
+    result = noWrap(c, cursorAt(buf, 0))
     return result
   var oldOf = default(Cursor)
   if oldArg(m, oldOf):
@@ -3477,7 +3477,7 @@ proc operandInterval(c: var FirContext; n: Cursor; rd: Reading;
     # scope, so it has to see the argument in place of `m` (#2643)
     var buf = createTokenBuf(16)
     addSubstituted(buf, n, rd.args)
-    result = valueBounds(c, c.typeCache.keepAlive(buf), lo, hi)
+    result = valueBounds(c, cursorAt(buf, 0), lo, hi)
 
 
 proc assumableSide(c: var FirContext; e: Cursor; rd: Reading): bool =
@@ -3726,7 +3726,7 @@ proc bindResultPaths(c: var FirContext; rd: var Reading;
   if dest == NoSymId or resultSyms.len == 0: return
   var buf = createTokenBuf(1)
   buf.addSymUse dest, NoLineInfo
-  let cur = c.typeCache.keepAlive(buf)
+  let cur = cursorAt(buf, 0)
   for rs in resultSyms:
     rd.args[rs] = cur
 
@@ -4832,7 +4832,7 @@ proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
   buf.addSubtree dest
   if hasStep: buf.addSubtree step
   buf.addParRi()
-  let value = c.typeCache.keepAlive(buf)
+  let value = cursorAt(buf, 0)
   checkSuccPred c, value
   var d = dest
   storeValue c, d, value, normalizedArith(c, value), call
@@ -5142,7 +5142,7 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     else: buf.addIntLit(1, start.info)
     buf.addParRi()
     w.preserved.setLen 0
-    noteWriteTo(c, w, dest, c.typeCache.keepAlive(buf))
+    noteWriteTo(c, w, dest, cursorAt(buf, 0))
     w.pendingStep = InvalidVarId
     n = start; skip n
     return

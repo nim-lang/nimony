@@ -121,7 +121,7 @@ proc getType(c: var Context; n: Cursor): Cursor =
     # by now: the call's value is the success tuple (#2642).
     var buf = createTokenBuf(6)
     addSuccessTupleType(buf, result, n.info)
-    result = c.typeCache.keepAlive(buf)
+    result = cursorAt(buf, 0)
 
 proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info

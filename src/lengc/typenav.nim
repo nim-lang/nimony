@@ -146,8 +146,7 @@ proc createIntegralType*(c: var MainModule; name: string): Cursor =
   result = c.builtinTypes.getOrDefault(name, default(Cursor))
   if cursorIsNil(result):
     var buf = parseFromBuffer(name, "<builtin>", 8, c.pool, c.tags)
-    c.mem.add ensureMove(buf)
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = cursorAt(buf, 0)
     c.builtinTypes[name] = result
 
 proc ptrTypeOf(c: var MainModule; elem: Cursor): Cursor =
@@ -155,8 +154,7 @@ proc ptrTypeOf(c: var MainModule; elem: Cursor): Cursor =
   buf.openTag TagId(ord(PtrTagId))
   buf.addSubtree elem
   buf.closeTag()
-  c.mem.add ensureMove(buf)
-  result = cursorAt(c.mem[c.mem.len-1], 0)
+  result = cursorAt(buf, 0)
 
 # ---- field lookup ---------------------------------------------------------
 
