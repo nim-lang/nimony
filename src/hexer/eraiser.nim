@@ -23,8 +23,8 @@ one pass that implements them.
   like any other use of `result` (and of a retyped local, whose check has
   passed), is simply `result[1] = x`. Rebuilding the whole tuple there would
   nest `x` one level deep, which hides a `.passive` call from `cps`: it ends
-  a state only where a suspension point is the ROOT of the value.
-- `return x` builds the tuple. `result` itself already IS the tuple, so
+  a state only where a suspension point is the root of the value.
+- `return x` builds the tuple. `result` itself is the tuple already, so
   `return result` needs no rebuild — and must not get one, see `trRet`.
 - `raise e` becomes `raise (e, result)`.
 
@@ -95,7 +95,7 @@ type
       ## declarations go by: a local is only ever used after it is declared,
       ## so a single forward pass sees every declaration before every use.
     canRaise: bool
-      ## Does the ROUTINE being translated raise? Decides whether `result` and
+      ## Does the routine being translated raise? Decides whether `result` and
       ## the returns carry a tuple.
     resultSym: SymId
     retType: Cursor
@@ -109,7 +109,7 @@ type
       ## outlive the `TypeCache` entries that point into it.
 
   ExitKind = enum
-    TryExit     ## the BODY of a `try` (never its handler or its finally:
+    TryExit     ## the body of a `try` (never its handler or its finally:
                 ## those are translated with the frame already popped, so a
                 ## raise in them propagates past this `try`, as it must)
     BlockExit   ## a `block`/`while`/`corofor` that a `break` can target
@@ -201,7 +201,7 @@ proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
 proc addErrorCodeOf(c: var Context; dest: var TokenBuf; target: SymId;
                     isVoidCall: bool; info: NifLineInfo) =
   ## The error code sitting in a raising call's temp. A void call's temp holds
-  ## only the code, so it IS the code.
+  ## only the code, so it is the code itself.
   if isVoidCall:
     dest.addSymUse target, info
   else:
@@ -225,7 +225,7 @@ proc collectLabels(n: Cursor; labels: var HashSet[SymId]) =
 
 proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
                dest: var TokenBuf) =
-  ## Copy a subtree, renaming every local and label it DECLARES: a `finally`
+  ## Copy a subtree, renaming every local and label it declares: a `finally`
   ## body is replicated once per exit and the copies cannot share declarations.
   ## Labels are renamed up front (`emitFinCopy`) since their `jmp`s come first.
   case n.kind
@@ -331,7 +331,7 @@ proc emitUnwind(c: var Context; dest: var TokenBuf; code: TokenBuf;
     copyIntoKind dest, JmpS, info:
       dest.addSymUse c.exits[target].label, info
   elif not isVoidType(c.retType) and c.resultSym != SymId(0):
-    # `result` already IS the tuple: set its code half and hand it back
+    # `result` is the tuple already: set its code half and hand it back
     # whole. Rebuilding it as `(code, result[1])` reads the payload, which
     # the duplifier must answer with a `=dup` — see `trRet`.
     copyIntoKind dest, AsgnS, info:
@@ -407,7 +407,7 @@ proc takeLocalHeader(c: var TypeCache; dest: var TokenBuf; n: var Cursor;
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetIsTuple: bool) =
   ## `targetIsTuple` says the destination this call's value flows into already
-  ## HAS the success-tuple shape — a retyped local, or `result`. Then the
+  ## has the success-tuple shape — a retyped local, or `result`. Then the
   ## call's result travels there whole and needs neither a temp nor a wrapper.
   let head = n.load()
   let info = n.info
@@ -435,7 +435,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetIsTuple: bo
     block:
       let symId = pool.symId("`canRaise." & $c.tmpCounter)
       inc c.tmpCounter
-      # The temp holds the call's RETURN VALUE — an owned, freshly
+      # The temp holds the call's return value — an owned, freshly
       # constructed value — so it must be an owning local. As a CursorS the
       # duplifier could only `=dup` out of it (a cursor is a borrow) and the
       # destroyer never released it: every `dest = raisingCall()` leaked the
@@ -476,7 +476,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
     let target = n.symId
-    # Look ahead at the initialiser BEFORE emitting the type: a raising call
+    # Look ahead at the initialiser before emitting the type: a raising call
     # makes this local hold the success tuple, and the type is the next thing
     # we write down.
     var val = n
@@ -512,7 +512,7 @@ proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # -------------------- statements -------------------------------------------
 
 proc trStmtsInto(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## The statement-insertion loop, into an ALREADY-OPEN statement list:
+  ## The statement-insertion loop, into a statement list that is already open:
   ## whatever `trCall` collected in `c.hoisted` while translating one
   ## statement goes in front of it. An enclosing statement's own hoists are
   ## parked across the descent.
@@ -590,12 +590,12 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
       elif n.kind == Symbol and n.symId == c.resultSym:
         # `(ret result)` — the trailing return every value-returning routine
-        # ends with. `result` ALREADY IS the success tuple, and its code half
+        # ends with. `result` is the success tuple already, and its code half
         # is `Success` on every path that reaches here (a raising path returns
         # its own tuple and never falls through), so hand it back untouched.
         #
         # Rebuilding it as `(Success, result[1])` would be correct but is a
-        # READ of the payload, and the duplifier — which runs after this pass —
+        # read of the payload, and the duplifier — which runs after this pass —
         # rightly answers a read in owned position with a `=dup`, so the
         # rebuild leaked the value it was supposed to be returning.
         dest.addSymUse n.symId, n.info
@@ -611,7 +611,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## A `raise` the SOURCE wrote. The ones this pass produces for a failing
+  ## A `raise` written in the source. The ones this pass produces for a failing
   ## call are built by `addPropagationCheck` and never come back through here.
   let info = n.info
   if n.childCursor.kind == DotToken:
@@ -660,7 +660,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## the very end, now built here, so nothing downstream has to know what a
   ## `try` is:
   ##
-  ##   <except binding>      # declared BEFORE, the raise sites assign to it
+  ##   <except binding>      # declared up front, the raise sites assign to it
   ##   (scope <body>)        # a raise inside became a `jmp` to `exlab`
   ##   <finally>             # the fall-through path's copy
   ##   (jmp `exend.N)
@@ -674,8 +674,8 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## cannot see is a jump whose scope exits run no destructors.
   ##
   ## The handler skips the fall-through path's finally and gets its own copy,
-  ## because the raise that reached it did NOT run this `try`'s finally — an
-  ## exception caught here has its cleanup owed at the END of the handler, the
+  ## because the raise that reached it did not run this `try`'s finally — an
+  ## exception caught here has its cleanup owed at the end of the handler, the
   ## same ordering the destroyer used to produce.
   let info = n.info
   let tryStart = n
@@ -721,10 +721,10 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.exits.add ExitScope(kind: TryExit, label: handlerLab, exceptVar: excVar,
                         fin: fin, labels: ensureMove bodyLabels)
   trScopeOf c, dest, body, info
-  # The frame comes off before the finally: a raise inside it propagates PAST
+  # The frame comes off before the finally: a raise inside it propagates out of
   # this `try`, and must not replicate the body it is already running.
   discard c.exits.pop()
-  # Emitted AFTER the scope, so a body local's destructor runs before the
+  # Emitted after the scope, so a body local's destructor runs before the
   # finally — which is well defined precisely because a `try` body is a real
   # scope and its finally can never name what it declares.
   emitFinCopy c, dest, fin
@@ -745,7 +745,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
       first = false
       var hh = sub(h)
       skip hh                # the `E as e` binding or the matched type
-      # A raise inside the handler propagates PAST this `try` — it is not
+      # A raise inside the handler propagates out of this `try` — it is not
       # caught by the handler it is raised in — but still owes this `try`'s
       # finally, so the frame stays on the stack without a catch label.
       var handlerLabels = initHashSet[SymId]()
