@@ -530,8 +530,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let cr = val.exprKind in CallKinds and callCanRaise(c.typeCache, val)
     # The variable a raising iterator yields into: its slot is the success
     # tuple too. The loop checks it once it ends, see `trCoroFor`.
-    let loopVar = not cr and c.loopVarCalls.hasKey(target) and
-                  callCanRaise(c.typeCache, c.loopVarCalls[target])
+    let loopCall = c.loopVarCalls.getOrDefault(target)
+    let loopVar = not cr and not cursorIsNil(loopCall) and
+                  callCanRaise(c.typeCache, loopCall)
     if cr or loopVar:
       c.tupleVars.incl target
     c.typeCache.takeLocalHeader(dest, n, kind, cr or loopVar)
