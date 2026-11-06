@@ -1,0 +1,8 @@
+tests/nimony/exceptions/traise_ref_lacks_rtti.nim(20, 12) Error: `.raises` takes a `ref` object type with RTTI, not `ref Plain.Obj not nil`; inherit its object from `Exception`
+tests/nimony/exceptions/traise_ref_lacks_rtti.nim(21, 12) Error: `.raises` takes a `ref` object type with RTTI, not `ref Final.Obj not nil`; inherit its object from `Exception`
+tests/nimony/exceptions/traise_ref_lacks_rtti.nim(22, 12) Error: `.raises` takes a `ref` object type with RTTI, not `ref PureRoot.Obj not nil`; inherit its object from `Exception`
+tests/nimony/exceptions/traise_ref_lacks_rtti.nim(23, 12) Error: `.raises` takes a `ref` object type with RTTI, not `ref Gen.Obj[int64] not nil`; inherit its object from `Exception`
+tests/nimony/exceptions/traise_ref_lacks_rtti.nim(24, 12) Error: `.raises` takes a `ref` object type with RTTI, not `ref Obj not nil`; inherit its object from `Exception`
+tests/nimony/exceptions/traise_ref_lacks_rtti.nim(30, 10) Error: `except` takes a `ref` object type with RTTI, not `ref Plain.Obj not nil`; inherit its object from `Exception`
+tests/nimony/exceptions/traise_ref_lacks_rtti.nim(35, 13) Error: `except` takes a `ref` object type with RTTI, not `ref Gen.Obj[int64] not nil`; inherit its object from `Exception`
+tests/nimony/exceptions/traise_ref_lacks_rtti.nim(39, 12) Error: `raise` takes a `ref` object type with RTTI, not `ref Plain.Obj not nil`; inherit its object from `Exception`
