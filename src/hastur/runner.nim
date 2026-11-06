@@ -183,8 +183,16 @@ proc joinedTest*(c: var TestCounters; dir: string; files: seq[string];
     # because some other member diverged.
     let walkNativeBefore = walkNative
     if not native: walkNative = false
+    let failuresBefore = c.failures
     for f in files: testFile c, f, overwrite, Normal, forward
     walkNative = walkNativeBefore
+    if c.failures == failuresBefore:
+      # Joining must not change a member's verdict, so this is the group's
+      # fault: members that interfere (add a `.nojoin` to one), or a joined
+      # check that disagrees with `testFile`. Passing here would rerun every
+      # member on every run without anyone noticing.
+      failure c, dir, "joined group " & reason & ", but each of its " &
+        $files.len & " tests passes alone: the group broke, not a member"
     return
 
   let (compilerOutput, compilerExitCode) =
