@@ -1,12 +1,8 @@
 import std/[lexbase, streams, syncio, assertions, strutils]
 
-func toPos(x: int): Natural {.inline.} =
-  assert(x >= 0)
-  result = Natural(x)
-
 func currentColumn(L: BaseLexer; pos: int): int =
   ## Keep the read-only lexer API callable from no-side-effect code.
-  getColNumber(L, toPos(pos))
+  getColNumber(L, pos)
 
 func currentLine(L: BaseLexer; marker = true): string =
   getCurrentLine(L, marker)
@@ -24,9 +20,9 @@ proc scan(s: string; bufLen: int): tuple[text: string; lines: int] {.raises.} =
     if c == EndOfFile: break
     case c
     of '\c':
-      pos = handleCR(L, toPos(pos)); text.add '\n'
+      pos = handleCR(L, pos); text.add '\n'
     of '\L':
-      pos = handleLF(L, toPos(pos)); text.add '\n'
+      pos = handleLF(L, pos); text.add '\n'
     else:
       text.add c
       inc pos
@@ -54,7 +50,7 @@ proc main() {.raises.} =
     var pos = L.bufpos
     while L.buf[pos] != '\L': inc pos     # advance to just before the newline
     assert currentColumn(L, pos) == 5     # after "hello"
-    pos = handleLF(L, toPos(pos))
+    pos = handleLF(L, pos)
     L.bufpos = pos
     assert L.lineNumber == 2
     assert currentColumn(L, pos) == 0     # start of "world"

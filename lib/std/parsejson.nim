@@ -109,10 +109,6 @@ const
     "{", "}", "[", "]", ":", ","
   ]
 
-func toPos(x: int): Natural {.inline.} =
-  assert(x >= 0)
-  result = Natural(x)
-
 proc handleHexChar(c: char, x: var int): bool {.inline.} =
   ## Converts a hexadecimal character to its ordinal value and folds the result
   ## into `x` (`x = x shl 4 + hex2Int(c)`). Returns `true` if `c` is a hex
@@ -168,7 +164,7 @@ proc kind*(my: JsonParser): JsonEventKind {.inline.} =
 
 proc getColumn*(my: JsonParser): int {.inline.} =
   ## get the current column the parser has arrived at.
-  result = getColNumber(my, toPos(my.bufpos))
+  result = getColNumber(my, my.bufpos)
 
 proc getLine*(my: JsonParser): int {.inline.} =
   ## get the current line the parser has arrived at.
@@ -288,10 +284,10 @@ proc parseString(my: var JsonParser): TokKind =
         add(my.a, charAt(my.buf, pos))
         inc(pos)
     of '\c':
-      pos = lexbase.handleCR(my, toPos(pos))
+      pos = lexbase.handleCR(my, pos)
       add(my.a, '\c')
     of '\L':
-      pos = lexbase.handleLF(my, toPos(pos))
+      pos = lexbase.handleLF(my, pos)
       add(my.a, '\L')
     else:
       add(my.a, charAt(my.buf, pos))
@@ -311,10 +307,10 @@ proc skip(my: var JsonParser) =
           of '\0':
             break
           of '\c':
-            pos = lexbase.handleCR(my, toPos(pos))
+            pos = lexbase.handleCR(my, pos)
             break
           of '\L':
-            pos = lexbase.handleLF(my, toPos(pos))
+            pos = lexbase.handleLF(my, pos)
             break
           else:
             inc(pos)
@@ -327,9 +323,9 @@ proc skip(my: var JsonParser) =
             my.err = errEOC_Expected
             break
           of '\c':
-            pos = lexbase.handleCR(my, toPos(pos))
+            pos = lexbase.handleCR(my, pos)
           of '\L':
-            pos = lexbase.handleLF(my, toPos(pos))
+            pos = lexbase.handleLF(my, pos)
           of '*':
             inc(pos)
             if charAt(my.buf, pos) == '/':
@@ -342,9 +338,9 @@ proc skip(my: var JsonParser) =
     of ' ', '\t':
       inc(pos)
     of '\c':
-      pos = lexbase.handleCR(my, toPos(pos))
+      pos = lexbase.handleCR(my, pos)
     of '\L':
-      pos = lexbase.handleLF(my, toPos(pos))
+      pos = lexbase.handleLF(my, pos)
     else:
       break
   my.bufpos = pos

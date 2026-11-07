@@ -136,32 +136,32 @@ proc fillBaseLexer(L: var BaseLexer, pos: Natural): Natural =
     L.bufpos = 0
     result = 0
 
-proc handleCR*(L: var BaseLexer, pos: Natural): Natural {.
+proc handleCR*(L: var BaseLexer, pos: int): Natural {.
     ensures: L.lineStart == result.} =
   ## Call this if you scanned over `'\c'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
   ## of the `'\c'`. The returned position is recorded as `L.lineStart`.
-  assert(pos < L.buf.len and L.buf[pos] == '\c')
+  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] == '\c')
   inc(L.lineNumber)
   result = fillBaseLexer(L, pos)
   if result < L.buf.len and L.buf[result] == '\L':
     result = fillBaseLexer(L, result)
   L.lineStart = result
 
-proc handleLF*(L: var BaseLexer, pos: Natural): Natural {.
+proc handleLF*(L: var BaseLexer, pos: int): Natural {.
     ensures: L.lineStart == result.} =
   ## Call this if you scanned over `'\L'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
   ## of the `'\L'`. The returned position is recorded as `L.lineStart`.
-  assert(pos < L.buf.len and L.buf[pos] == '\L')
+  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] == '\L')
   inc(L.lineNumber)
   result = fillBaseLexer(L, pos) #L.lastNL := result-1; // BUGFIX: was: result;
   L.lineStart = result
 
-proc handleRefillChar*(L: var BaseLexer, pos: Natural): Natural =
+proc handleRefillChar*(L: var BaseLexer, pos: int): Natural =
   ## Call this if a terminator character other than a new line is scanned
   ## at `pos`; it returns the position to continue the scanning from.
-  assert(pos < L.buf.len and L.buf[pos] in L.refillChars)
+  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] in L.refillChars)
   result = fillBaseLexer(L, pos) #L.lastNL := result-1; // BUGFIX: was: result;
 
 proc skipUtf8Bom(L: var BaseLexer) =
@@ -185,14 +185,9 @@ proc open*(L: var BaseLexer, input: Stream, bufLen: int = 8192;
   fillBuffer(L)
   skipUtf8Bom(L)
 
-func columnDistance(L: BaseLexer, pos: int): int =
-  result = abs(pos - L.lineStart)
-
-func getColNumber*(L: BaseLexer, pos: Natural): Natural =
+func getColNumber*(L: BaseLexer, pos: int): Natural =
   ## retrieves the current column.
-  let diff = columnDistance(L, int(pos))
-  assert(diff >= 0)
-  result = Natural(diff)
+  result = Natural(abs(pos - L.lineStart))
 
 func getCurrentLine*(L: BaseLexer, marker: bool = true): string =
   ## retrieves the current line.
@@ -204,4 +199,4 @@ func getCurrentLine*(L: BaseLexer, marker: bool = true): string =
     inc(i)
   add(result, "\n")
   if marker:
-    add(result, spaces(columnDistance(L, L.bufpos)) & "^\n")
+    add(result, spaces(getColNumber(L, L.bufpos)) & "^\n")
