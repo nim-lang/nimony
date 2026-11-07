@@ -102,6 +102,11 @@ type
       ## `(ErrorCode, T)` slot, so its loop variable is widened like a raising
       ## call's temp — and the declaration comes BEFORE the loop that decides
       ## it. See `trCoroFor`.
+    lowered: HashSet[SymId]
+      ## Routines an EARLIER pass already ran `lowerRaisesOfRoutine` on —
+      ## the procs lambdalifting cut a `.closure` iterator into. Their raising
+      ## calls are temps plus checks already; translating them again would
+      ## widen those temps a second time.
     canRaise: bool
       ## Does the ROUTINE being translated raise? Decides whether `result` and
       ## the returns carry a tuple.
@@ -596,6 +601,9 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
+  if r.name.kind == SymbolDef and c.lowered.contains(r.name.symId):
+    takeTree dest, n
+    return
   var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache),
                    hoisted: createTokenBuf(16),
                    tupleVars: initHashSet[SymId](),
@@ -996,11 +1004,29 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     raiseAssert "BUG: unexpected ParRi in eraiser.tr" # classic ParRi only
 
-proc injectRaisingCalls*(pass: var Pass; ptrSize: int) =
+proc lowerRaisesOfRoutine*(dest: var TokenBuf; n: Cursor; bits: int) =
+  ## This pass for ONE routine declaration `n`, for a pass that runs before
+  ## it and needs a routine's exceptions lowered first: lambdalifting cuts a
+  ## `.closure` iterator into state procs, and in a state proc a raise has no
+  ## error channel left that this pass could see. Lowered first, the iterator
+  ## reaches the coroutine transform the way a `.passive` one reaches `cps`:
+  ## `result` is the success tuple and every raise is a `return`.
+  var n = n
+  var c = Context(ptrSize: bits div 8, typeCache: createTypeCache(bits),
+                  hoisted: createTokenBuf(16), tupleVars: initHashSet[SymId](),
+                  errorCodeType: createTokenBuf(1))
+  c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
+  c.retType = c.typeCache.builtins.voidType
+  c.typeCache.openScope()
+  trProcDecl(c, dest, n)
+  c.typeCache.closeScope()
+
+proc injectRaisingCalls*(pass: var Pass; ptrSize: int; lowered: sink HashSet[SymId]) =
+  ## `lowered`: the routines `lowerRaisesOfRoutine` has already translated.
   var n = pass.n  # Extract cursor locally
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(pass.bits),
                   hoisted: createTokenBuf(16), tupleVars: initHashSet[SymId](),
-                  errorCodeType: createTokenBuf(1))
+                  errorCodeType: createTokenBuf(1), lowered: lowered)
   c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
   c.retType = c.typeCache.builtins.voidType
   collectLoopVars n, c.loopVarCalls # skips the routines, they have their own

@@ -45,6 +45,7 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval
 import hexer_context, passes
 include ".." / nimony / nif_annotations
 import coro_transform
+import eraiser
 import ".." / finalir / finalir_model
 # Bring the iter-value tuple constants/helpers into scope as
 # unqualified names. `ResultParamName` / `CallerParamName` are the
@@ -90,6 +91,13 @@ type
     ## `envTypeForProc` lookups.
     localToEnv: Table[(SymId, SymId), EnvField]
     env: CurrentEnv
+    raisingLoopVars: HashSet[SymId]
+      ## The loop variables of this root's `for` loops over a `.raises`
+      ## `.closure` iterator. Such an iterator yields into an `(ErrorCode, T)`
+      ## slot — `addLengReturnType`'s answer, which `coro_transform` gives its
+      ## frame — so pass 2 declares the variable as that tuple, projects its
+      ## uses onto the value half and checks the code once the loop is over.
+      ## Pass 1 finds them: the declaration comes before the loop.
 
   Context = object
     counter: int
@@ -134,6 +142,14 @@ type
       ## Statements `genCall` and `emitIterValue` put in front of the current
       ## statement (callee temp, env==nil dispatch, iterator frame); the Final
       ## IR has no `(expr …)`. `treStmt` splices them in.
+    raisingIterTypes: HashSet[SymId]
+      ## `itertype` aliases of `.raises` iterators. Pass 1 rewrites an alias to
+      ## its `(closureTuple ...)` shape, and that shape no longer says whether
+      ## the iterator raises — a non-raising iterator yielding an
+      ## `(ErrorCode, T)` has the same ABI — so the alias remembers it here.
+    raisesLowered: HashSet[SymId]
+      ## The procs `transformClosureIter` cut a `.closure` iterator into. Their
+      ## exceptions were lowered before the cut, so the eraiser skips them.
     pendingIterSigs: seq[(SymId, TokenBuf)]
       ## Rewritten `.closure` iter signatures, snapshotted by
       ## `transformClosureIter` while `shouldPublish` offsets still
@@ -145,6 +161,8 @@ type
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
+proc isClosureCoroFor(c: var Context; n: Cursor): bool
+proc capturedBaseType(c: var Context; o: Cursor): Cursor
 
 proc isClosureIterDecl(n: Cursor): bool =
   ## True if `n` is at an `(iterator :sym …)` whose pragmas carry
@@ -394,6 +412,48 @@ const
   ToplevelRootKinds = {BlockS, IfS, WhenS, WhileS, CaseS, TryS, ScopeS, CoroforS}
     ## module level statements with locals of their own
 
+proc closureLoopVar(call: Cursor): SymId =
+  ## The `forLoopVar` of a closure corofor's `(call iter args...
+  ## (haddr forLoopVar))`: always the trailing argument. `NoSymId` when it is
+  ## not a plain local (pass 1 turns a captured one into an env access).
+  result = NoSymId
+  var n = call
+  n = sub(n)   # peek only, never left
+  skip n       # the callee
+  var last = default(Cursor)
+  while n.hasMore:
+    last = n
+    skip n
+  if not cursorIsNil(last) and last.exprKind == HaddrX and
+      last.childCursor.kind == Symbol:
+    result = last.childCursor.symId
+
+proc iterCallRaises(c: var Context; call: Cursor): bool =
+  ## Is the corofor's iterator a `.raises` one? Asked of what nimsem said: an
+  ## iter decl's pragmas, or an iter value's `itertype` — directly or through
+  ## an alias, see `raisingIterTypes`.
+  let callee = call.childCursor
+  if callee.kind == Symbol and isClosureIterSym(callee.symId):
+    let res = tryLoadSym(callee.symId)
+    return res.status == LacksNothing and
+           hasPragma(asRoutine(res.decl).pragmas, RaisesP)
+  var t = c.typeCache.getType(callee)
+  while t.kind == Symbol:
+    if c.raisingIterTypes.contains(t.symId): return true
+    let res = tryLoadSym(t.symId)
+    if res.status != LacksNothing or res.decl.stmtKind != TypeS: break
+    t = asTypeDecl(res.decl).body
+  t = capturedBaseType(c, callee)
+  result = t.typeKind == ItertypeT and procHasPragma(t, RaisesP)
+
+proc noteRaisingLoopVar(c: var Context; n: Cursor) =
+  ## Pass 1, at a `corofor`: see `ProcContext.raisingLoopVars`.
+  if isClosureCoroFor(c, n):
+    let call = n.childCursor
+    if iterCallRaises(c, call):
+      let v = closureLoopVar(call)
+      if v != NoSymId: c.currentProc.raisingLoopVars.incl v
+
 proc toplevelRoot(c: var Context): SymId =
   ## A routine inside a module level statement such as a `block` may capture
   ## the statement's locals (#2555). Such a statement owns the environment
@@ -473,6 +533,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if c.procStack.len == 0 and n.stmtKind in ToplevelRootKinds:
       trToplevelStmt c, dest, n
       return
+    if n.stmtKind == CoroforS:
+      noteRaisingLoopVar c, n
     case n.stmtKind
     of LocalDecls:
       trLocal c, dest, n
@@ -496,6 +558,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n        # typevars
         takeTree dest, n        # pragmas
         if typeSym != SymId(0) and itertypeNeedsTuple(n):
+          if procHasPragma(n, RaisesP): c.raisingIterTypes.incl typeSym
           emitIterTupleTypeFromParams(dest, n, n.info)
           publishIt = true
         while n.hasMore: takeTree dest, n
@@ -642,8 +705,6 @@ proc typedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv)
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
-
-proc capturedBaseType(c: var Context; o: Cursor): Cursor
 
 proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: NifLineInfo)
     {.ensuresNif: addedExpr(dest).} =
@@ -857,11 +918,25 @@ proc transformClosureIter(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # reads back.
     c.coroCtx.pendingCapturedEnvField = coro_transform.coroEnvFieldForIter(iterSym)
   var lowered = preLowerIter(c, n, iterSym, captures)   # consumes `n`
-  var m = beginRead(lowered)
+  # Exceptions are lowered BEFORE the cut into state procs, in the order a
+  # `.passive` iterator gets them (eraiser, then cps): afterwards a raise
+  # would sit in a state proc, whose return value is the `Continuation`.
+  var eraised = createTokenBuf(lowered.len + lowered.len div 4)
+  lowerRaisesOfRoutine(eraised, beginRead(lowered), c.coroCtx.ptrSize * 8)
+  var m = beginRead(eraised)
   swap c.coroCtx.typeCache, c.typeCache
   let publishedBefore = c.coroCtx.shouldPublish.len
+  let emittedBefore = dest.len
   coro_transform.transformCoroutineDecl(c.coroCtx, dest, m)
   swap c.coroCtx.typeCache, c.typeCache
+  block:
+    var r = cursorAt(dest, emittedBefore)
+    while r.hasMore:
+      if r.stmtKind in {ProcS, FuncS, MethodS, ConverterS, IteratorS}:
+        let name = r.childCursor
+        if name.kind == SymbolDef: c.raisesLowered.incl name.symId
+      skip r
+    endRead r
   # Snapshot the rewritten signature NOW, while `shouldPublish.start`
   # still indexes `dest`. For a nested iter `dest` is treProcLift's
   # local lift buffer which is concatenated (at a shifted offset) into
@@ -1033,6 +1108,19 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     assert argCount >= trailingCount, "corofor: iter call missing args"
     let realArgCount = argCount - trailingCount
 
+    # A raising iterator's slot: `treLocal` declared the loop variable as the
+    # success tuple. Its code half says `Success` until the iterator raises —
+    # which also ends it, so the code is checked once the loop is over.
+    var raisingLoopVar = closureLoopVar(callStart)
+    if not c.currentProc.raisingLoopVars.contains(raisingLoopVar):
+      raisingLoopVar = NoSymId
+    if raisingLoopVar != NoSymId:
+      dest.copyIntoKind AsgnS, info:
+        dest.copyIntoKind TupatX, info:
+          dest.addSymUse raisingLoopVar, info
+          dest.addIntLit 0, info
+        dest.addSymUse pool.symId(SuccessName), info
+
     # ---- emit `var it: Continuation = wrapper(args..., addr forLoopVar, callerCont)` ----
     # For iter-VALUE calls the callerCont's env is the iter value's
     # env-slot ref (so `caller.env != nil` → wrapper reuse branch).
@@ -1098,6 +1186,18 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
     coro_transform.emitWhileEnd(dest, info, itSym, exitLab)
+    if raisingLoopVar != NoSymId:
+      # A plain `raise` of the code: unwinding is the eraiser's job.
+      dest.copyIntoKind IteV, info:
+        dest.copyIntoKind TupatX, info:
+          dest.addSymUse raisingLoopVar, info
+          dest.addIntLit 0, info
+        dest.copyIntoKind StmtsS, info:
+          dest.copyIntoKind RaiseS, info:
+            dest.copyIntoKind TupatX, info:
+              dest.addSymUse raisingLoopVar, info
+              dest.addIntLit 0, info
+        dest.addDotToken()
 
 
 proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1271,7 +1371,16 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n # pragmas
       c.typeCache.registerLocal(name, kind, n)
       let beforeType = dest.len
+      # The loop variable of a raising closure iterator is its yield slot,
+      # the success tuple. Registered with its source type all the same: every
+      # use is projected onto the value half.
+      let widen = c.currentProc.raisingLoopVars.contains(name)
+      if widen:
+        dest.addParLe TupleT, n.info
+        dest.addSymUse pool.symId(ErrorCodeName), n.info
       treType c, dest, n # type (might grow an environment parameter)
+      if widen:
+        dest.addParRi()
       tre c, dest, n # value
 
 proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId; ownsEnvLocal: bool) =
@@ -1884,6 +1993,12 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.typedEnv info, c.currentProc.env
           dest.addSymUse repWith.field, info
         inc n, SkipExpr
+      elif c.currentProc.raisingLoopVars.contains(n.symId):
+        # a raising closure iterator's loop variable, see `treLocal`
+        dest.copyIntoKind TupatX, info:
+          dest.addSymUse n.symId, info
+          dest.addIntLit 1, info
+        inc n, SkipExpr
       else:
         takeTree dest, n
   of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
@@ -2063,7 +2178,9 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
           programs.publish(field.field, dest, beforeField)
     programs.publish(objType, dest, beforeType)
 
-proc elimLambdas*(pass: var Pass) =
+proc elimLambdas*(pass: var Pass; raisesLowered: var HashSet[SymId]) =
+  ## `raisesLowered` receives the routines whose exceptions this pass has
+  ## already lowered, see `transformClosureIter`.
   var n = pass.n  # Extract cursor locally
   var c = Context(counter: 0, dest: initTokenBuf(),
                   typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix,
@@ -2120,5 +2237,6 @@ proc elimLambdas*(pass: var Pass) =
       pass.dest.addParRi(n2.endInfo)
     pass.nextTemp = c.coroCtx.nextTemp
     c.typeCache.closeScope()
+  raisesLowered = move c.raisesLowered
 
   #echo "PRODUCED ", toString(pass.dest, false)
