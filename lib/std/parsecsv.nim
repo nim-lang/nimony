@@ -73,6 +73,8 @@
 ## * `parsesql module <parsesql.html>`_ for a SQL parser
 ## * `other parsers <lib.html#pure-libraries-parsers>`_ for other parsers
 
+{.feature: "staticContracts".}
+
 import std/[lexbase, streams, strutils]
 
 type
@@ -162,14 +164,16 @@ proc open*(self: var CsvParser; filename: string;
   open(self, s, filename, separator,
        quote, escape, skipInitialSpace)
 
-proc parseField(self: var CsvParser; col: int) {.raises: CsvError.} =
+proc parseField(self: var CsvParser; col: int) {.
+    raises: CsvError, requires: col >= 0 and col < self.row.len.} =
   ## Parses the field starting at `self.bufpos` into `self.row[col]`.
   ## Takes the column index instead of a `var string` so the parser and its
   ## row are not passed as aliasing mutable arguments.
+  var field = move(self.row[col])
   var pos = self.bufpos
   if self.skipWhite:
     while charAt(self.buf, pos) in {' ', '\t'}: inc(pos)
-  setLen(self.row[col], 0) # reuse memory
+  setLen(field, 0) # reuse memory
   if charAt(self.buf, pos) == self.quote and self.quote != '\0':
     inc(pos)
     while true:
@@ -180,32 +184,37 @@ proc parseField(self: var CsvParser; col: int) {.raises: CsvError.} =
         break
       elif c == self.quote:
         if self.esc == '\0' and charAt(self.buf, pos + 1) == self.quote:
-          add(self.row[col], self.quote)
+          add(field, self.quote)
           inc(pos, 2)
         else:
           inc(pos)
           break
       elif c == self.esc:
-        add(self.row[col], charAt(self.buf, pos + 1))
+        add(field, charAt(self.buf, pos + 1))
         inc(pos, 2)
       else:
         case c
         of '\c':
           pos = handleCR(self, pos)
-          add(self.row[col], "\n")
+          add(field, "\n")
         of '\l':
           pos = handleLF(self, pos)
-          add(self.row[col], "\n")
+          add(field, "\n")
         else:
-          add(self.row[col], c)
+          add(field, c)
           inc(pos)
   else:
     while true:
       let c = charAt(self.buf, pos)
       if c == self.sep: break
       if c in {'\c', '\l', '\0'}: break
-      add(self.row[col], c)
+      add(field, c)
       inc(pos)
+  # Re-establish the bound after handleCR/handleLF: they take the parser by
+  # `var`, so the prover no longer knows what `self.row.len` is.
+  if col < 0 or col >= self.row.len:
+    raise CsvError(msg: "Error: row changed during parsing")
+  self.row[col] = move(field)
   self.bufpos = pos
 
 func processedRows*(self: var CsvParser): int {.inline.} =
@@ -270,11 +279,12 @@ proc readRow*(self: var CsvParser; columns = 0): bool {.raises: CsvError.} =
     of '\l': self.bufpos = handleLF(self, self.bufpos)
     else: break
   while charAt(self.buf, self.bufpos) != '\0':
-    let oldlen = self.row.len
-    if oldlen < col + 1:
+    if self.row.len <= col:
       setLen(self.row, col + 1)
-      self.row[col] = ""
-    parseField(self, col)
+    if col >= 0 and col < self.row.len:
+      parseField(self, col)
+    else:
+      raise CsvError(msg: "Error: cannot grow row")
     inc(col)
     if charAt(self.buf, self.bufpos) == self.sep:
       inc(self.bufpos)
@@ -352,7 +362,7 @@ func rowEntry*(self: var CsvParser; entry: string): var string {.raises.} =
     strm.close()
 
   let index = self.headers.find(entry)
-  if index >= 0:
+  if index >= 0 and index < self.row.len:
     result = self.row[index]
   else:
     raise KeyError
