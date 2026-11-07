@@ -87,7 +87,7 @@ proc processDeclForChecksum(dest: var Sha1State; n: var Cursor) =
         else:
           skip n
         while n.hasMore: skip n
-    of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, BundleIdx, IndexIdx, DependencyIdx, LinkIdx,
+    of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, BundleIdx, IndexIdx, DependencyIdx, LinkIdx, OptionkeyIdx,
        ExportIdx, FromexportIdx, ExportexceptIdx:
       n.loopInto:
         processDeclForChecksum(dest, n)

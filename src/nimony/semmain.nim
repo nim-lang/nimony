@@ -137,6 +137,10 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       deps.buildTree IsmainmoduleX, NoLineInfo:
         deps.buildTree (if IsMain in c.moduleFlags: TrueX else: FalseX), NoLineInfo:
           discard
+    if c.g.config.optionKey.len > 0:
+      # the options this sem output was made with, see `deps.optionKey`
+      deps.buildTree TagId(OptionkeyIdx), NoLineInfo:
+        deps.addStrLit c.g.config.optionKey
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   onRaiseQuit writeFile(deps, depsFile)
 
@@ -175,8 +179,11 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
   #
   # Path is stored relative to CWD so the `.s.nif` is reproducible across
   # checkouts (CI has a different absolute prefix than the dev's machine).
-  # Mirrors nifler's `--portablePaths` line-info convention.
+  # Mirrors nifler's `--portablePaths` line-info convention, and like it is
+  # absolute in a stdlib module's `.s.nif`, which builds started from any
+  # directory share (`semos.inStdcache`).
   if c.importedModules.len != 0:
+    let shared = inStdcache(c.g.config, getFile(readonlyCursorAt(dest, 0).info))
     let curWorkDir = onRaiseQuit os.getCurrentDir()
     var importBuf = createTokenBuf(c.importedModules.len * 5 + 2)
     importBuf.addParLe ImportS, NoLineInfo
@@ -184,11 +191,11 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
       if i.fromPlugin.len == 0:
         let abs = i.path.toAbsolutePath
         importBuf.buildTree KvU, NoLineInfo:
-          importBuf.addIdent(pool.strings.getOrIncl(moduleSuffix(abs, c.g.config.paths)), NoLineInfo)
+          importBuf.addIdent(pool.strings.getOrIncl(moduleSuffix(abs, c.g.config)), NoLineInfo)
           # Slash-normalise: paths in the .nif must use `/` regardless of OS
           # so the file is byte-identical across Windows / Linux / macOS, and
           # downstream consumers (dagon) compare prefixes uniformly.
-          importBuf.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
+          importBuf.addStrLit toUnixPath(if shared: abs else: abs.toRelativePath(curWorkDir))
     importBuf.addParRi()
     # after the (stmts tag — including its line-info suffix tokens
     dest.insert importBuf, tokenWidth(readonlyCursorAt(dest, 0))
@@ -819,6 +826,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
   ## For multiple modules, they form a cycle group and are processed together.
   assert infiles.len == outfiles.len
   assert infiles.len > 0
+  prog.stdDir = config.stdcachePath
 
   if infiles.len > 1:
     semcheckCycleGroup(infiles, outfiles, ensureMove config, moduleFlags,

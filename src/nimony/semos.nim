@@ -58,6 +58,60 @@ proc pluginLibDir(): string =
 proc stdlibDir*(): string =
   result = nimonyDir() / "lib"
 
+proc isToolchainFile*(f: string): bool =
+  ## `f` belongs to the toolchain, the stdlib or the compiler, whose modules
+  ## the stdlib imports (`std/macros` pulls in the parser, `{.plugin.}`s the
+  ## plugin API): in a build graph it is a stdlib module, whose artifacts live
+  ## in the stdlib cache that builds with the same options share
+  ## (`deps.stdCacheDir`).
+  var a = f
+  try:
+    a = normalizedPath(absolutePath(f))
+  except:
+    discard
+  template under(d: string): bool =
+    a.len > d.len and a.startsWith(d) and a[d.len] in {DirSep, AltSep}
+  let lib = stdlibDir()
+  let src = nimonyDir() / "src"
+  result = under(lib) or under(src)
+
+proc moduleSuffix*(f: string; config: NifConfig): string =
+  ## The module name of the source file `f`. A toolchain file's is the same in
+  ## every build, whatever its current directory and search paths: every
+  ## build with the same options shares its artifacts (`inStdcache`), and the
+  ## `.s.nif` of a stdlib module refers to the modules it imports by name.
+  ## It is named relative to `lib/`, `src/lib/` or else `src/`, never
+  ## relative to the current directory: a build started inside `src/` named
+  ## the parser modules `std/macros` imports otherwise, and the next build
+  ## started elsewhere could not compile a macro.
+  if isToolchainFile(f):
+    let src = nimonyDir() / "src"
+    result = modnames.moduleSuffix(f, [stdlibDir(), src / "lib", src])
+  else:
+    result = modnames.moduleSuffix(f, config.paths)
+
+proc inStdcache*(config: NifConfig; f: string): bool =
+  ## `f`'s artifacts are in the stdlib cache (`deps.FilePair.std` but for the
+  ## root module, which is never there). Builds started from any directory
+  ## share them, so every path they store is absolute: one relative to the
+  ## current directory names another file, or none, in a build started
+  ## elsewhere.
+  result = config.stdcachePath.len > 0 and isToolchainFile(f)
+
+proc parserFlags*(std: bool): seq[string] =
+  ## How nimony runs the parser: a file whose `.p.nif` goes to the stdlib cache
+  ## gets its absolute path (`inStdcache`), any other one its path relative
+  ## to the current directory, as the build's own nimcache always had.
+  result = if std: @["--deps"] else: @["--portablePaths", "--deps"]
+
+proc pluginExePath*(config: NifConfig; src, name: string): string =
+  ## Where the `{.plugin.}` built from `src` lives: a stdlib plugin in the
+  ## stdlib cache, which every build with the same frontend key shares, any
+  ## other one in this build's nimcache. `deps.pluginExe` decides the same.
+  let dir = if inStdcache(config, src): config.stdcachePath
+            else: config.nifcachePath
+  result = dir / name.addFileExt(ExeExt)
+
 proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
   # Keep the compiler-internal `src/lib` modules (nifbuilder/nifreader, pulled
@@ -446,13 +500,41 @@ proc lastModTimeOrStale(path: string): int64 =
   except:
     result = -1'i64
 
-proc ensureParsed(nimFile: string; paths: openArray[string], nifcachePath: string): string =
+proc publishShared*(src, dst: string) =
+  ## Move `src` into place as `dst`, a file concurrent builds publish with the
+  ## same content. Windows refuses to replace a file that is open: then
+  ## another build published this very file, which is as good as ours.
+  if not vfsMoveInto(src, dst):
+    vfsRemove src
+    if not vfsExists(dst): quit "FAILURE: cannot move " & src & " to " & dst
+
+proc runParser*(nifler: string; flags: openArray[string]; nimFile, output: string) =
+  ## `nifler <flags> parse nimFile output`, which also writes the `.deps.nif`
+  ## next to `output`. Both appear by rename (`publishShared`), whatever the
+  ## parser does: builds that share the stdlib cache parse a stale file in it
+  ## without a lock, and the parser may be an older binary (the bootstrap's)
+  ## that writes in place, where a concurrent reader can catch the file still
+  ## empty.
+  let tmp = atomicTempPath(output) & ".nif"
+  var args: seq[string] = @[]
+  for f in flags: args.add f
+  args.add "parse"
+  args.add nimFile
+  args.add tmp
+  execArgs nifler, args
+  publishShared tmp, output
+  publishShared tmp.changeFileExt(".deps.nif"), output.changeFileExt(".deps.nif")
+
+proc ensureParsed(nimFile: string; config: NifConfig): string =
   ## Runs nifler on `nimFile` unless its `.p.nif` (the result) and
-  ## `.p.deps.nif` are fresh.
+  ## `.p.deps.nif` are fresh. A toolchain file's are in the stdlib cache, as
+  ## `deps.FilePair.std` puts them.
   let nifler = parserTool()
-  let name = moduleSuffix(nimFile, paths)
-  let src = nifcachePath / name & ".p.nif"
-  let depsFile = nifcachePath / name & ".p.deps.nif"
+  let name = moduleSuffix(nimFile, config)
+  let std = inStdcache(config, nimFile)
+  let dir = if std: config.stdcachePath else: config.nifcachePath
+  let src = dir / name & ".p.nif"
+  let depsFile = dir / name & ".p.deps.nif"
   # `include`d files are part of the dependency graph, so the driver's own
   # dep scan (`deps.execNifler`) has already parsed this file into the very
   # same `.p.nif` — with the identical command line — before it ever spawned
@@ -466,7 +548,7 @@ proc ensureParsed(nimFile: string; paths: openArray[string], nifcachePath: strin
       fileExists(depsFile) and lastModTimeOrStale(depsFile) > srcTime:
     discard "already parsed by the dep scan"
   else:
-    execArgs nifler, ["--portablePaths", "--deps", "parse", nimFile, src]
+    runParser nifler, parserFlags(std), nimFile, src
   result = src
 
 proc loadDepsFile*(depsFile: string): TokenBuf =
@@ -475,13 +557,13 @@ proc loadDepsFile*(depsFile: string): TokenBuf =
   parse(r, result)
   rd.close(r)
 
-proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
-  var r = rd.open(ensureParsed(nimFile, paths, nifcachePath))
+proc parseFile*(nimFile: string; config: NifConfig): TokenBuf =
+  var r = rd.open(ensureParsed(nimFile, config))
   result = createTokenBuf()
   parse(r, result, denseLineInfo = true)
   rd.close(r)
 
-proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: string;
+proc resolvedImports(nimFile: string; config: NifConfig;
                      allResolve: var bool): seq[string] =
   ## The modules `nimFile` imports plainly (no `{.plugin.}`, no `{.cyclic.}`),
   ## read off its nifler deps file like `deps.processImport` does. `when`
@@ -489,7 +571,7 @@ proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: st
   ## resolves on `paths` to a module outside of the plugin API (`src/nimony/lib`).
   result = @[]
   allResolve = true
-  var buf = loadDepsFile(ensureParsed(nimFile, paths, nifcachePath).changeFileExt(".deps.nif"))
+  var buf = loadDepsFile(ensureParsed(nimFile, config).changeFileExt(".deps.nif"))
   var files: seq[ImportedFilename] = @[]
   var n = beginRead(buf)
   n.into:  # (stmts …)
@@ -511,14 +593,13 @@ proc resolvedImports(nimFile: string; paths: openArray[string]; nifcachePath: st
       skip n
   let pluginDir = normalizedPath(pluginLibDir())
   for f in files:
-    let path = toAbsolutePath(resolveImport(paths, nimFile, f.path))
+    let path = toAbsolutePath(resolveImport(config.paths, nimFile, f.path))
     if fileExists(path) and cmpPaths(path.parentDir, pluginDir) != 0:
       result.add path
     else:
       allResolve = false
 
-proc pluginProgramImports*(plugin: string; paths: openArray[string];
-                           nifcachePath: string): seq[string] =
+proc pluginProgramImports*(plugin: string; config: NifConfig): seq[string] =
   ## The modules the plugin source `plugin` imports that join the program of
   ## the plugin's user, like a Nim macro module's imports: the plugin's
   ## `bindSym`s refer to their symbols (#2639). Left out are imports that do
@@ -526,8 +607,8 @@ proc pluginProgramImports*(plugin: string; paths: openArray[string];
   ## module with such an import.
   result = @[]
   var allResolve = true
-  for path in resolvedImports(plugin, paths, nifcachePath, allResolve):
-    discard resolvedImports(path, paths, nifcachePath, allResolve)
+  for path in resolvedImports(plugin, config, allResolve):
+    discard resolvedImports(path, config, allResolve)
     if allResolve: result.add path
 proc getFile*(info: NifLineInfo): string =
   let fid = info.file
@@ -915,9 +996,8 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let inputFile = basename & ".in.nif"
   let outputFile = basename & ".out.nif"
   let inputFileB = basename & ".types.nif"
-  let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
-
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
+  let pluginExe = pluginExePath(c.g.config, nf, p.name)
   ensurePlugin(c.g.config, nf, pluginExe)
   if nf notin c.pluginSources: c.pluginSources.add nf
 
@@ -947,7 +1027,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   var noAdditional = nifcore.createTokenBuf(1)
   runPlugin(c, dest, info, pluginName, input, noAdditional)
 
-proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
+proc runProgram(file: string; nimcachePath, stdcachePath: string; usedModules: HashSet[string];
                 commandLineArgs: string;
                 sourceDir = ""): tuple[output: string, exitCode: int] =
   # Compile the .p.nif through the full pipeline, then run the resulting
@@ -955,9 +1035,11 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
   # to the invoking compile). Only the execution step uses `workingDir` so
   # relative paths like `doc/version.md` resolve next to the caller module.
   let nimonyExe = findTool("nimony")
-  let compileCmd = quoteShell(nimonyExe) & shellArgs(commandLineArgs) &
-    " --nimcache:" & quoteShell(nimcachePath) &
-    " s " & quoteShell(file)
+  var compileCmd = quoteShell(nimonyExe) & shellArgs(commandLineArgs) &
+    " --nimcache:" & quoteShell(nimcachePath)
+  if stdcachePath.len > 0:
+    compileCmd.add " --stdcache:" & quoteShell(stdcachePath)
+  compileCmd.add " s " & quoteShell(file)
   try:
     result = execCmdEx(compileCmd)
   except:
@@ -983,76 +1065,55 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
 const
   writeNifModuleSuffix* = "wriwhv7qv"
 
-proc buildWriteNifModule(c: var SemContext): string =
-  # Forward the outer compile's CLI args (notably `--cc`) so the inner nimony
-  # emits a build file whose `nimsem` cmd-line MATCHES what the outer build
-  # file uses. Otherwise nifmake's per-cmd staleness check sees a different
-  # argv for `nimsem ... m sysvq0asl.p.nif`, decides the existing
-  # `sysvq0asl.s.nif` is stale, and tries to overwrite it — which on Windows
-  # fails because the outer nimsem (currently paused waiting on this exec)
-  # still has it mmap'd. The outer's args live on `c.commandLineArgs`.
-  let nimonyExe = findTool("nimony")
-  let cmd = quoteShell(nimonyExe) & shellArgs(c.commandLineArgs) &
-    " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
-    " c " & quoteShell(stdlibFile("std/writenif.nim"))
-  try:
-    let (output, exitCode) = execCmdEx(cmd)
-    result = if exitCode != 0: output else: ""
-  except:
-    result = "failed to run: " & cmd
-
-const StaleLockNs = 120'i64 * 1_000_000_000'i64
-  ## A writenif build takes seconds; a lock this old lost its holder.
-
-proc prepareEval*(c: var SemContext): string =
-  ## Bring `std/writenif` up to date in this nimcache, once per process. The
-  ## eval program's build graph has no rule for it and links against whatever
-  ## `.s.nif` is there, so its mere existence is not enough: one left by an
-  ## older stdlib (a `std/math` since split into modules, say) fails every
-  ## evaluation with "cannot evaluate expression at compile time" until the
-  ## nimcache is wiped. nifmake makes the build a no-op when it is current.
-  ## Every module of a parallel build that evaluates something at compile
-  ## time gets here, all sharing the nimcache, so the build is done under a
-  ## lock: two concurrent builds of it race on the same outputs, and on
-  ## Windows the loser cannot replace a file the winner's C compiler still
-  ## has open.
-  result = ""
-  if not c.checkedForWriteNifModule:
-    c.checkedForWriteNifModule = true
-    let lock = c.g.config.nifcachePath / writeNifModuleSuffix & ".lock"
-    while true:
-      if vfsTryLock(lock):
-        result = buildWriteNifModule(c)
-        vfsUnlock(lock)
-        break
-      if vfsNow() - vfsMtime(lock) > StaleLockNs:
-        vfsUnlock(lock)
-      else:
-        vfsSleepMs(20)
+proc evalCacheDir*(c: SemContext): string =
+  ## The nimcache of the builds that compile-time evaluation in this module
+  ## runs, one per module, beside its other artifacts (as a macro plugin's
+  ## `<stem>.host`). Such a build runs while the build of this module goes on
+  ## around it, and in the build's own nimcache it built what that build was
+  ## building too: two modules evaluating at once both hexed a module they
+  ## import, into the same `.x.nif`. Here only this module's nimsem writes,
+  ## and it evaluates one expression at a time.
+  c.g.config.nifcachePath / c.thisModuleSuffix & ".eval"
 
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
                usedModules: HashSet[string]; sourceDir = ""): string =
   ## Returns an error message if the evaluation failed, "" on success.
-  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
+  let evalCache = evalCacheDir(c)
+  # A stdlib module is semchecked in the stdlib cache, by a build holding its
+  # lock, so the program's build runs under that lock (`NIFMAKE_HELD_LOCKS`)
+  # while the outer one goes on semchecking other stdlib modules: in the
+  # shared cache the two would build `std/writenif`'s imports at once. The
+  # program's stdlib is this module's own then, like the rest of it.
+  let isStd = c.g.config.stdcachePath.len > 0 and
+              c.g.config.nifcachePath == c.g.config.stdcachePath
+  let progfile = evalCache / srcName.addFileExt(".p.nif")
   try:
+    createDir(path(evalCache))
     writeFileAndIndex(progfile, src)
 
-    # Write the .p.deps.nif file so that `nimony s` can find the imports.
-    # Always write — `nimony s` opens this unconditionally, so an empty
-    # `(stmts)` is needed when the original module has no imports.
-    var deps = createTokenBuf(c.importSnippets.len + 4)
+    # Write the .p.deps.nif file so that `nimony s` can find the imports:
+    # the module's own and `std/writenif`, which the program reports its
+    # result through. Being an import is what puts writenif into the
+    # program's build graph, so a stale one is rebuilt like any other module.
+    var deps = createTokenBuf(c.importSnippets.len + 8)
     deps.addParLe StmtsS, NoLineInfo
+    deps.copyIntoKind ImportS, NoLineInfo:
+      deps.copyIntoKind InfixX, NoLineInfo:
+        deps.addIdent "/", NoLineInfo
+        deps.addIdent "std", NoLineInfo
+        deps.addIdent "writenif", NoLineInfo
     if c.importSnippets.len > 0:
       deps.add c.importSnippets
     deps.addParRi()
-    let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
+    let depsFile = evalCache / srcName & ".p.deps.nif"
     writeFile(depsFile, toString(deps, true))
-    let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules,
+    let (output, exitCode) = runProgram(progfile, evalCache,
+                                        (if isStd: evalCache else: ""), usedModules,
                                         c.commandLineArgs, sourceDir)
     if exitCode != 0:
       result = ensureMove(output)
     else:
-      let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
+      let outfile = evalCache / srcName.addFileExt(".out.nif")
       var r = rd.open(outfile)
       parse(r, dest)
       rd.close(r)

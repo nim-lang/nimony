@@ -126,6 +126,10 @@ type
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
+    stdcachePath*: string ## where the stdlib's frontend artifacts and shared
+                          ## `.x.nif` live, shared by every build with the same
+                          ## frontend key (`deps.stdCacheDir`); empty = in
+                          ## `nifcachePath` like any other module
     bits*: int
     bitsExplicit*: bool  ## `--bits:N` (or an `intbits` config row) was given, so
                          ## `--cpu` must NOT overwrite it. Without this the two
@@ -159,6 +163,9 @@ type
                       # (empty = derive from module basename).
     outDir*: string   # directory portion set by `--out:DIR/NAME` (its
                       # dir half) and/or `--outdir:DIR`. Empty = cwd.
+    optionKey*: string   # nimsem's `--optionkey:`: the digest of the options
+                         # the driver builds with (`deps.optionKey`), recorded
+                         # in each `.s.deps.nif` nimsem writes
     checkFlags*: string  # active check modes as a `genFlags` string (e.g. "br"),
                          # forwarded to `hexer c` so nifcgen injects only the
                          # requested runtime checks (empty = none).
