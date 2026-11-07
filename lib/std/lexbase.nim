@@ -126,8 +126,8 @@ proc fillBuffer(L: var BaseLexer) =
           break
         s = L.buf.len - 1
 
-proc fillBaseLexer(L: var BaseLexer, pos: int): int {.
-    requires: 0 <= pos, ensures: 0 <= result.} =
+proc fillBaseLexer(L: var BaseLexer, pos: Natural): int {.
+    ensures: 0 <= result.} =
   assert(pos <= L.sentinel)
   if pos < L.sentinel:
     result = pos + 1 # nothing to do
