@@ -136,32 +136,32 @@ proc fillBaseLexer(L: var BaseLexer, pos: Natural): Natural =
     L.bufpos = 0
     result = 0
 
-proc handleCR*(L: var BaseLexer, pos: int): Natural {.
+proc handleCR*(L: var BaseLexer, pos: Natural): Natural {.
     ensures: L.lineStart == result.} =
   ## Call this if you scanned over `'\c'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
   ## of the `'\c'`. The returned position is recorded as `L.lineStart`.
-  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] == '\c')
+  assert(pos < L.buf.len and L.buf[pos] == '\c')
   inc(L.lineNumber)
   result = fillBaseLexer(L, pos)
-  if result >= 0 and result < L.buf.len and L.buf[result] == '\L':
+  if result < L.buf.len and L.buf[result] == '\L':
     result = fillBaseLexer(L, result)
   L.lineStart = result
 
-proc handleLF*(L: var BaseLexer, pos: int): Natural {.
+proc handleLF*(L: var BaseLexer, pos: Natural): Natural {.
     ensures: L.lineStart == result.} =
   ## Call this if you scanned over `'\L'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
   ## of the `'\L'`. The returned position is recorded as `L.lineStart`.
-  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] == '\L')
+  assert(pos < L.buf.len and L.buf[pos] == '\L')
   inc(L.lineNumber)
   result = fillBaseLexer(L, pos) #L.lastNL := result-1; // BUGFIX: was: result;
   L.lineStart = result
 
-proc handleRefillChar*(L: var BaseLexer, pos: int): Natural =
+proc handleRefillChar*(L: var BaseLexer, pos: Natural): Natural =
   ## Call this if a terminator character other than a new line is scanned
   ## at `pos`; it returns the position to continue the scanning from.
-  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] in L.refillChars)
+  assert(pos < L.buf.len and L.buf[pos] in L.refillChars)
   result = fillBaseLexer(L, pos) #L.lastNL := result-1; // BUGFIX: was: result;
 
 proc skipUtf8Bom(L: var BaseLexer) =
@@ -185,9 +185,11 @@ proc open*(L: var BaseLexer, input: Stream, bufLen: int = 8192;
   fillBuffer(L)
   skipUtf8Bom(L)
 
-func getColNumber*(L: BaseLexer, pos: int): int =
+func getColNumber*(L: BaseLexer, pos: Natural): Natural =
   ## retrieves the current column.
-  result = abs(pos - L.lineStart)
+  let diff = abs(pos - L.lineStart)
+  assert(diff >= 0)
+  result = Natural(diff)
 
 func getCurrentLine*(L: BaseLexer, marker: bool = true): string =
   ## retrieves the current line.
@@ -199,4 +201,5 @@ func getCurrentLine*(L: BaseLexer, marker: bool = true): string =
     inc(i)
   add(result, "\n")
   if marker:
-    add(result, spaces(getColNumber(L, L.bufpos)) & "^\n")
+    assert(L.bufpos >= 0)
+    add(result, spaces(getColNumber(L, Natural(L.bufpos))) & "^\n")
