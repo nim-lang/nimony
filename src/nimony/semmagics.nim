@@ -25,7 +25,7 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import nimony_model, builtintypes, decls, asthelpers, programs, sigmatch,
   nifconfig, typeprops, semdata, sembasics, semchecks, derefs,
-  renderer, langmodes
+  renderer, langmodes, semimport
 
 # --- thin shims forwarding into the sem core via SemContext callbacks ---
 
@@ -91,10 +91,44 @@ proc semDefined*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     it.typ = c.types.boolType
     commonType c, dest, it, beforeExpr, expected
 
+proc isDeclaredInModule(c: var SemContext; dot: Cursor; found: var bool): bool =
+  ## `declared(module.name)`. Returns false if the lhs of `dot` is not a
+  ## module; an undeclared lhs counts as a module that lacks `name`.
+  var n = dot
+  var lhsBuf = createTokenBuf(4)
+  var fieldName = StrId(0)
+  var lhs = default(Item)
+  n.into:
+    lhs = Item(n: n, typ: c.types.autoType)
+    semExpr c, lhsBuf, lhs, {AllowModuleSym}
+    n = lhs.n
+    fieldName = takeIdent(n)
+    while n.hasMore: skip n
+  lhs.n = cursorAt(lhsBuf, 0)
+  let moduleSym = dotLhsModuleSym(lhs)
+  if fieldName == StrId(0):
+    result = false
+  elif moduleSym != SymId(0):
+    var scratch = createTokenBuf(4)
+    let count =
+      if moduleSym == c.selfModuleSym:
+        buildSymChoiceForSelfModule(c, scratch, fieldName, lhs.n.info)
+      else:
+        buildSymChoiceForForeignModule(c, scratch, moduleSym, fieldName, lhs.n.info)
+    found = count > 0
+    result = true
+  elif lhs.n.isTagLit and lhs.n.cursorTagId == nifpools.ErrT:
+    found = false
+    result = true
+  else:
+    result = false
+
 proc semDeclared*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var info = NoLineInfo
   var orig = default(Cursor)
   var nameId = StrId(0)
+  var found = false
+  var valid = false
   it.n.into:
     info = it.n.info
     orig = it.n
@@ -104,14 +138,21 @@ proc semDeclared*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       # does not consider module quoted symbols for now
       it.n.peekInto:
         nameId = takeIdent(it.n)
+      skip it.n
+    elif it.n.isTagLit and it.n.exprKind == DotX:
+      valid = isDeclaredInModule(c, it.n, found)
+      skip it.n
     else:
       nameId = takeIdent(it.n)
-  if nameId == StrId(0):
+    while it.n.hasMore: skip it.n
+  if nameId != StrId(0):
+    found = isDeclared(c, nameId)
+    valid = true
+  if not valid:
     c.buildErr dest, info, "invalid expression for declared: " & asNimCode(orig), orig
   else:
-    let isDeclared = isDeclared(c, nameId)
     let beforeExpr = dest.len
-    dest.addParLe(if isDeclared: TrueX else: FalseX, info)
+    dest.addParLe(if found: TrueX else: FalseX, info)
     dest.addParRi()
     let expected = it.typ
     it.typ = c.types.boolType
