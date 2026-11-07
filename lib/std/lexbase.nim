@@ -185,9 +185,12 @@ proc open*(L: var BaseLexer, input: Stream, bufLen: int = 8192;
   fillBuffer(L)
   skipUtf8Bom(L)
 
+func columnDistance(L: BaseLexer, pos: int): int =
+  result = abs(pos - L.lineStart)
+
 func getColNumber*(L: BaseLexer, pos: Natural): Natural =
   ## retrieves the current column.
-  let diff = abs(pos - L.lineStart)
+  let diff = columnDistance(L, int(pos))
   assert(diff >= 0)
   result = Natural(diff)
 
@@ -201,5 +204,4 @@ func getCurrentLine*(L: BaseLexer, marker: bool = true): string =
     inc(i)
   add(result, "\n")
   if marker:
-    assert(L.bufpos >= 0)
-    add(result, spaces(getColNumber(L, Natural(L.bufpos))) & "^\n")
+    add(result, spaces(columnDistance(L, L.bufpos)) & "^\n")
