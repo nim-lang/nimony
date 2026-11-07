@@ -1297,6 +1297,32 @@ func sub*(c: Cursor): Cursor =
   result = c
   discard enterScope(result)
 
+proc sameTree*(a, b: Cursor): bool =
+  ## Structural equality of two subtrees. Line info is not compared. Two
+  ## exhausted cursors are equal.
+  if a.hasMore != b.hasMore: return false
+  if not a.hasMore: return true
+  if a.kind != b.kind: return false
+  case a.kind
+  of TagLit:
+    if a.cursorTagId != b.cursorTagId: return false
+    var x = sub(a)
+    var y = sub(b)
+    result = true
+    while result and x.hasMore and y.hasMore:
+      result = sameTree(x, y)
+      skip x
+      skip y
+    result = result and x.hasMore == y.hasMore
+  of Symbol, SymbolDef: result = a.symId == b.symId
+  of IntLit: result = intVal(a) == intVal(b)
+  of UIntLit: result = uintVal(a) == uintVal(b)
+  of CharLit: result = charLit(a) == charLit(b)
+  of FloatLit: result = floatVal(a) == floatVal(b)
+  of StrLit, Ident: result = strVal(a) == strVal(b)
+  of DotToken: result = true
+  else: result = false
+
 func isEscapedBody(c: Cursor): bool {.noinline.} =
   ## The last conjunct of `isEscapedTag`, out of line. Reached only once the tag
   ## at `c` IS the adapter's escape tag, which on nifbench is never: an adapter

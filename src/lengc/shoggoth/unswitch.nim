@@ -80,35 +80,6 @@ proc child0(c: Cursor): Cursor {.inline.} =
 proc isLocalSym(c: Context; s: SymId): bool {.inline.} =
   c.orig[].pool.symIsLocal(s)
 
-# ── structural equality ──────────────────────────────────────────────────────
-
-proc sameTree(a, b: Cursor): bool =
-  ## Token-wise structural equality of two subtrees (line info ignored).
-  if a.kind != b.kind: return false
-  case a.kind
-  of TagLit:
-    if a.cursorTagId != b.cursorTagId: return false
-    var x = a
-    var y = b
-    result = true
-    x.into:
-      y.into:
-        while x.hasMore and y.hasMore:
-          if result and not sameTree(x, y): result = false
-          skip x
-          skip y
-        if x.hasMore or y.hasMore: result = false
-        while x.hasMore: skip x
-        while y.hasMore: skip y
-  of Symbol, SymbolDef: result = a.symId == b.symId
-  of IntLit: result = intVal(a) == intVal(b)
-  of UIntLit: result = uintVal(a) == uintVal(b)
-  of CharLit: result = charLit(a) == charLit(b)
-  of StrLit, Ident: result = strVal(a) == strVal(b)
-  of FloatLit: result = floatVal(a) == floatVal(b)
-  of DotToken: result = true
-  else: result = false
-
 # ── condition purity + symbol collection ─────────────────────────────────────
 
 proc pureCondImpl(n: var Cursor; syms: var seq[SymId]): bool =

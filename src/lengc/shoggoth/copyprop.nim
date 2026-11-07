@@ -291,9 +291,11 @@ type
     patchset: Patchset
     synth: seq[TokenBuf]
     dotBuf: TokenBuf                   ## a single `.` token: replaces a dead decl
+    m: ptr MainModule                  ## declarations of the module's consts
+    constLoads: int                    ## const aggregate reads replaced by their element
 
-proc createContext(orig: ptr TokenBuf): Context =
-  result = Context(orig: orig,
+proc createContext(orig: ptr TokenBuf; m: ptr MainModule): Context =
+  result = Context(orig: orig, m: m,
           copyOf: initTracker[SymId, SymId](),
           litOf: initTracker[SymId, int](),
           addrOf: initTracker[SymId, int](),
@@ -458,6 +460,125 @@ proc trySubstitute(c: var Context; n: Cursor) =
   elif root != s:
     substituteSym(c, n, root)
 
+# ---- reads of constant aggregates ------------------------------------------
+#
+# `C[i]` with a known `i` is a literal the program spelled indirectly: `C` is a
+# `const` array or object (its declaration is in `m`, imported or not) and the
+# index is a literal or a local `litOf` already holds one for. Unrolling and
+# inlining are what make such reads appear (`things[i]` per unrolled iteration),
+# so they are folded right where the index literal becomes known.
+
+proc constInit(c: var Context; s: SymId): Cursor =
+  ## The array/object constructor a `const` named `s` is initialized with, or a
+  ## nil cursor.
+  result = default(Cursor)
+  if c.m == nil or c.orig[].pool.symIsLocal(s): return
+  if not c.m[].canLoadForeign(s): return
+  let d = c.m[].getDeclOrNil(s)
+  if d == nil or d.kind != ConstY: return
+  var it = child0(d.pos)
+  skip it                                  # name
+  skip it                                  # pragmas
+  skip it                                  # type
+  if it.kind == TagLit and it.exprKind in {AconstrC, OconstrC}: result = it
+
+proc knownInt(c: Context; n: Cursor; v: var int64): bool =
+  ## `n` is an integer literal or a local that currently holds one.
+  case n.kind
+  of IntLit:
+    v = intVal(n)
+    result = true
+  of Symbol:
+    let s = symId(n)
+    var lp = c.litOf[s]
+    if lp == 0: lp = c.litOf[resolve(c, s)]
+    result = lp != 0 and knownInt(c, cursorAt(c.orig[], lp - 1), v)
+  of TagLit:
+    case n.exprKind
+    of SufC: result = knownInt(c, child0(n), v)
+    of ConvC:
+      var t = child0(n)
+      skip t                               # the type
+      result = knownInt(c, t, v)
+    else: result = false
+  else: result = false
+
+proc constElem(c: var Context; n: Cursor; res: var Cursor): bool =
+  ## `n` reads a constant aggregate at known indexes and fields: `res` is the
+  ## part of the const's initializer it reads.
+  case n.kind
+  of Symbol:
+    res = constInit(c, symId(n))
+    result = not cursorIsNil(res)
+  of TagLit:
+    var it = child0(n)
+    var base = default(Cursor)
+    case n.exprKind
+    of AtC:
+      if not constElem(c, it, base) or base.exprKind != AconstrC: return false
+      skip it
+      var idx = 0'i64
+      if not knownInt(c, it, idx) or idx < 0: return false
+      var e = child0(base)
+      skip e                               # the type
+      var k = 0'i64
+      while e.hasMore:
+        if k == idx:
+          res = e
+          return true
+        inc k
+        skip e
+      result = false
+    of DotC:
+      if not constElem(c, it, base) or base.exprKind != OconstrC: return false
+      skip it
+      if it.kind != Symbol: return false
+      let field = symId(it)
+      skip it
+      if not (it.kind == IntLit and intVal(it) == 0): return false   # inheritance depth
+      var e = child0(base)
+      skip e                               # the type
+      while e.hasMore:
+        if e.kind == TagLit and e.substructureKind == KvU:
+          let f = child0(e)
+          if f.kind == Symbol and symId(f) == field:
+            res = f
+            skip res
+            return true
+        skip e
+      result = false
+    else: result = false
+  else: result = false
+
+proc isLiteralTree(n: Cursor): bool =
+  ## Leaf literals and constructors of them only: a copy into a body refers to
+  ## nothing.
+  if isLeafLit(n): return true
+  if n.kind != TagLit or n.exprKind notin {AconstrC, OconstrC}: return false
+  var it = child0(n)
+  skip it                                  # the type
+  while it.hasMore:
+    if it.kind == TagLit and it.substructureKind == KvU:
+      var v = child0(it)
+      skip v                               # the field
+      if not isLiteralTree(v): return false
+    elif not isLiteralTree(it):
+      return false
+    skip it
+  result = true
+
+proc tryConstLoad(c: var Context; n: Cursor; whole: bool): bool =
+  ## Replace the const read at `n` by the element it reads. A scalar element
+  ## anywhere a value is read; an aggregate one only as a whole initializer or
+  ## assignment source (`whole`), where SROA takes it apart.
+  if n.kind != TagLit or n.exprKind notin {AtC, DotC}: return false
+  var e = default(Cursor)
+  if not constElem(c, n, e): return false
+  if not (isLeafLit(e) or whole and isLiteralTree(e)): return false
+  c.patchset.addSubst(cursorToPosition(c.orig[], n), e)
+  inc c.constLoads
+  result = true
+
 proc enterScope(c: var Context) {.inline.} =
   c.scopeDecls.add @[]
 
@@ -485,6 +606,9 @@ proc trExpr(c: var Context; n: var Cursor) =
     trySubstitute(c, n)
     inc n
   of TagLit:
+    if tryConstLoad(c, n, whole = false):
+      skip n
+      return
     case n.exprKind
     of AddrC, HaddrC:
       # `addr x`: the *address* of `x`, not its value. On the leftmost STORAGE spine
@@ -590,7 +714,8 @@ proc trVar(c: var Context; n: var Cursor) =
     if n.hasMore:
       let initStart = n
       let initKind = initStart.kind
-      trExpr(c, n)                       # propagate inside the initializer
+      if tryConstLoad(c, n, whole = true): skip n
+      else: trExpr(c, n)                 # propagate inside the initializer
       if isLocal and c.isEligible(nameSym):
         bindCopy(c, nameSym, initStart)
         # Deletable if its initializer is a side-effect-free leaf or empty:
@@ -613,7 +738,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     if n.hasMore:
       rhs = n; haveRhs = true; skip n
     while n.hasMore: skip n
-  if haveRhs:
+  if haveRhs and not tryConstLoad(c, rhs, whole = true):
     var r = rhs
     trExpr(c, r)                         # propagate inside the value
   if haveLhs and haveRhs and lhs.kind == Symbol and rhs.kind == Symbol and
@@ -1202,13 +1327,15 @@ proc registerParams(c: var Context; params: Cursor) =
 
 proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
                   summaries: ptr FunctionSummaryTable = nil;
-                  m: ptr MainModule = nil) =
+                  m: ptr MainModule = nil): int {.discardable.} =
   ## In-place copy propagation + dead-binding elimination for a single proc body.
   ## `params` is the enclosing proc's `(params …)` node (empty for a bare body);
   ## its parameters become eligible copy sources (see `registerParams`).
   ## `summaries`/`m` feed the read-only addr-taken classification (nil ⇒ every
   ## call taking an address taints conservatively, the pre-extension behavior).
-  var ctx = createContext(addr buf)
+  ## Returns how many reads of constant aggregates were replaced by their
+  ## element (they need `m` too, see `constElem`).
+  var ctx = createContext(addr buf, m)
   registerParams(ctx, params)
   block:
     let pn = beginRead(buf)
@@ -1239,6 +1366,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
+  result = ctx.constLoads
 
 # ---- self-tests -----------------------------------------------------------
 

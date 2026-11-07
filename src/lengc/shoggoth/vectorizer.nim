@@ -144,36 +144,6 @@ proc createContext(orig: ptr TokenBuf; vecSuffix: string;
 
 # ── small tree utilities ────────────────────────────────────────────────────
 
-proc sameTree(a, b: Cursor): bool =
-  ## Structural equality of two subtrees, ignoring line info. Recursive rather
-  ## than a flat token walk: `inc` advances by a token's full width (line-info
-  ## suffixes included) while `subtreeWidth` counts slots, so a flat walk
-  ## overruns on real, line-info-carrying files.
-  if a.kind != b.kind:
-    result = false
-  else:
-    case a.kind
-    of TagLit:
-      if a.cursorTagId != b.cursorTagId:
-        result = false
-      else:
-        var x = sub(a)
-        var y = sub(b)
-        result = true
-        while result and x.hasMore and y.hasMore:
-          result = sameTree(x, y)
-          skip x
-          skip y
-        result = result and x.hasMore == y.hasMore
-    of Symbol, SymbolDef:
-      result = symId(a) == symId(b)
-    of IntLit, UIntLit:
-      result = intVal(a) == intVal(b)
-    of FloatLit:
-      result = floatVal(a) == floatVal(b)
-    else:
-      result = true
-
 proc collectAssigned(n: Cursor; assigned: var HashSet[SymId]) =
   ## Every symbol the subtree writes: `asgn` targets and every `var`
   ## declaration. Anything in this set is NOT loop-invariant.
@@ -1558,7 +1528,7 @@ when isMainModule:
    (var :ix.2 . (i 64) (add (i 64) j.0 i.0))
    (asgn (pat (dot (deref a.0) data.0 0) ix.2) e.0)
    (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert runVectorizer(buf, "M", "vec.M")
+    doAssert runVectorizer(buf, "vec.M")
     let s = toString(buf)
     doAssert s.contains("(instr fldrq.vec.M"), s
     doAssert s.contains("(instr vfmla.vec.M") or s.contains("vfmla.vec.M"), s
@@ -1584,7 +1554,7 @@ when isMainModule:
    (if (elif (not (lt ix.0 (dot (deref c.0) len.0 0))) (stmts (call panic.0))))
    (asgn (pat (dot (deref c.0) data.0 0) ix.0) 0.0)
    (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert runVectorizer(buf, "M", "vec.M")
+    doAssert runVectorizer(buf, "vec.M")
     let s = toString(buf)
     doAssert s.contains("(instr vdup.vec.M"), s
     doAssert s.contains("(instr fstrq.vec.M"), s
@@ -1606,7 +1576,7 @@ when isMainModule:
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (add (f 64) s.0 (deref p.0)))
    (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert runVectorizer(buf, "M", "vec.M")
+    doAssert runVectorizer(buf, "vec.M")
     let s = toString(buf)
     doAssert s.contains("(instr vaddv.vec.M"), s
     doAssert s.contains("(instr vdup.vec.M"), "zero-lane start expected: " & s
@@ -1636,7 +1606,7 @@ when isMainModule:
    (var :e.0 . (f 64) (mul (f 64) (deref p.0) (deref q.0)))
    (asgn s.0 (add (f 64) s.0 e.0))
    (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert runVectorizer(buf, "M", "vec.M")
+    doAssert runVectorizer(buf, "vec.M")
     let s = toString(buf)
     doAssert s.contains("(instr vfmla.vec.M"), "fused multiply-add expected: " & s
     doAssert not s.contains("(instr vfmul.vec.M"),
@@ -1659,7 +1629,7 @@ when isMainModule:
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (add (f 64) s.0 (deref p.0)))
    (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+    doAssert not runVectorizer(buf, "vec.M")
 
   block reject_addr_taken_acc:
     # the accumulator's address escapes — memory could observe it mid-loop
@@ -1674,7 +1644,7 @@ when isMainModule:
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (add (f 64) s.0 (deref p.0)))
    (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+    doAssert not runVectorizer(buf, "vec.M")
 
   block reject_product_reduction:
     # s = s * b[i] — not a sum; no lane-fold instruction carries it
@@ -1688,7 +1658,7 @@ when isMainModule:
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (mul (f 64) s.0 (deref p.0)))
    (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+    doAssert not runVectorizer(buf, "vec.M")
 
   block reject_call:
     var buf = parse("""
@@ -1697,7 +1667,7 @@ when isMainModule:
   (stmts
    (call f.0 i.0)
    (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+    doAssert not runVectorizer(buf, "vec.M")
 
   block reject_nonunit_iv:
     var buf = parse("""
@@ -1707,6 +1677,6 @@ when isMainModule:
    (var :ix.0 . (i 64) i.0)
    (asgn (pat (dot b.0 data.0 0) ix.0) 0.0)
    (asgn i.0 (add (i 64) i.0 2)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+    doAssert not runVectorizer(buf, "vec.M")
 
   echo "vectorizer.nim: all self-tests passed"
