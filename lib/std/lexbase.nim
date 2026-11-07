@@ -183,11 +183,11 @@ proc open*(L: var BaseLexer, input: Stream, bufLen: int = 8192;
   fillBuffer(L)
   skipUtf8Bom(L)
 
-proc getColNumber*(L: BaseLexer, pos: int): int =
+func getColNumber*(L: BaseLexer, pos: int): int =
   ## retrieves the current column.
   result = abs(pos - L.lineStart)
 
-proc getCurrentLine*(L: BaseLexer, marker: bool = true): string =
+func getCurrentLine*(L: BaseLexer, marker: bool = true): string =
   ## retrieves the current line.
   var i: int
   result = ""
