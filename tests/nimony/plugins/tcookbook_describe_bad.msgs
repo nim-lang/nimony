@@ -1,0 +1,1 @@
+tests/nimony/plugins/tcookbook_describe_bad.nim(5, 16) Error: describe needs an object type

@@ -1,0 +1,6 @@
+nextValue(calls) = 1
+calls: 1
+Person(name: Ann, age: 30)
+Empty()
+Odd(result: 1, value: 2)
+checked

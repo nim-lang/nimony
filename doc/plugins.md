@@ -21,6 +21,10 @@ The first four share the same API (`plugins`) and execution model. Import
 plugins are different in both respects; see [Import plugins](#import-plugins).
 
 
+For small end-to-end examples, see [Small metaprogramming recipes](plugin_recipes.md):
+a debug template, an object-description plugin calling helper templates, and
+a typed-block check with a source-located diagnostic.
+
 ## Quick start
 
 A plugin replaces a bodiless template. Where you would write:
