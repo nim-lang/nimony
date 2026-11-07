@@ -525,6 +525,35 @@ type
     ## `(for iter vars body)`.
     iter*, vars*, body*: NifCursor
 
+type
+  Call* = object
+    ## A `(call fn arg*)` expression or statement; walk its arguments with `args`
+    fn*: NifCursor
+    node: NifCursor
+
+  Dot* = object
+    ## The object and field of `(dot object field depth? access?)`
+    ## Optional inheritance and access metadata remain in the original tree
+    obj*, field*: NifCursor
+
+proc asCall*(c: NifCursor): Call =
+  ## Read a `call` node without advancing it; other call-like tags are not accepted
+  assert c.exprKind == CallX, "asCall needs a call node"
+  Call(fn: slot(c, 0), node: c)
+
+iterator args*(call: Call): NifCursor {.sideEffect.} =
+  ## Yield the arguments in order, including none for a zero-argument call
+  var c = firstChild(call.node)
+  skip c
+  while c.hasMore:
+    yield c
+    skip c
+
+proc asDot*(c: NifCursor): Dot =
+  ## Read field selection without advancing it; `ddot` is a different construct
+  assert c.exprKind == DotX, "asDot needs a dot node"
+  Dot(obj: slot(c, 0), field: slot(c, 1))
+
 proc asLocal*(c: NifCursor): Local =
   ## The named parts of a `let`, `var`, `const`, `param` or `fld` node.
   Local(name: slot(c, 0), exported: slot(c, 1), pragmas: slot(c, 2),
