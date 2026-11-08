@@ -226,7 +226,7 @@ proc writeNifler*(first: Node; pool: Pool; tags: TagPool; sizeHint: int;
 #   has to produce before the module can be checked.
 # * A module-level `const x {.strdefine: "name".} = "a"` (also `booldefine`,
 #   `intdefine`, and `define` typed `bool`/`int`/`string`) is
-#   `(define (when...)? x strdefine "name" "a")`, the default `.` unless it is
+#   `(define (when...)? x (strdefine) "name" "a")`, the default `.` unless it is
 #   a literal, so the scanner can decide `when x == "b": import y`.
 # * Nothing inside `runnableExamples` counts.
 
@@ -320,7 +320,8 @@ proc defineConst(d: var DepsWalker; n: Node) =
         d.w.b.addTree "define"
         d.whenMarker()
         d.w.b.addIdent d.w.pool.strings[strId(name)]
-        d.w.b.addIdent kindName
+        d.w.b.addTree kindName
+        d.w.b.endTree()
         d.w.b.addStrLit defineName
         let v = d.strOf(value)
         if v != nil:

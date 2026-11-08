@@ -299,7 +299,7 @@ proc handleCaseIdentDefs(n, parent: PNode; c: var TranslationContext) =
 proc emitDefineConst(c: var TranslationContext; name, pragma, typ, value: PNode) =
   ## `const x {.strdefine.} = "a"` at module level decides `when x == "b":
   ## import y` before sem. Record such consts in the deps file as
-  ## `(define (when ...)? x kind "defineName" default)`; the default is kept
+  ## `(define (when ...)? x (kind) "defineName" default)`; the default is kept
   ## only when it is a literal. Ordinary consts would bloat every deps file and
   ## need sem anyway.
   if c.nested > 0 or name.kind != nkIdent: return
@@ -326,7 +326,8 @@ proc emitDefineConst(c: var TranslationContext; name, pragma, typ, value: PNode)
       c.b.addTree "define"
       emitWhenMarker c
       c.b.addIdent name.ident.s
-      c.b.addIdent kind
+      c.b.addTree kind
+      c.b.endTree()
       c.b.addStrLit defineName
       case value.kind
       of nkStrLit..nkTripleStrLit: c.b.addStrLit value.strVal
