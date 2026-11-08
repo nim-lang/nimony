@@ -1413,10 +1413,22 @@ when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`(dest: TokenBuf) {.inline.} =
     if dest.owner != nil: decRcAndFree(dest.owner)
     elif dest.data != nil: dealloc(dest.data)
+    # A custom `=destroy` replaces the field-wise one, so the owned fields
+    # must be released here. The cursor owner holds references of its own on
+    # both pools (`ensureOwner`), so cursors still outlive the buffer.
+    `=destroy`(dest.openTags)
+    `=destroy`(dest.pool)
+    `=destroy`(dest.tags)
 else:
   proc `=destroy`(dest: var TokenBuf) {.inline.} =
     if dest.owner != nil: decRcAndFree(dest.owner)
     elif dest.data != nil: dealloc(dest.data)
+    # A custom `=destroy` replaces the field-wise one, so the owned fields
+    # must be released here. The cursor owner holds references of its own on
+    # both pools (`ensureOwner`), so cursors still outlive the buffer.
+    `=destroy`(dest.openTags)
+    `=destroy`(dest.pool)
+    `=destroy`(dest.tags)
 
 template requirePools*(b: var TokenBuf) =
   ## A buffer the interning builders and the cross-pool copy are about to write
