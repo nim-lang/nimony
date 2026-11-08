@@ -234,7 +234,7 @@ type
 func abs*[T: ComparableAndNegatable](x: T): T {.inline,
     ensures: not (result < T(0)).} =
   ## Returns the absolute value of `x`.
-  if x < 0: result = -x else: result = x
+  result = if x < 0: -x else: x
   {.assume: not (result < T(0)).}
 
 func abs*(x: float64): float64 {.inline.} =
