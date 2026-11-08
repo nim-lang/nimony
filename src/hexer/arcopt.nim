@@ -243,23 +243,23 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
         isDeclarative(n):
       skip n
       return
-    if n.exprKind in {DotX, AtX, PatX, DerefX} and b.wasMovedLocs.len > 0:
-      # A tracked location need not be a symbol: in a coroutine's state proc
-      # it is a frame field, `(dot (deref this) x)`. Meeting it — on its own or
-      # as the base of a longer path (`x.f = v` writes through it) — is a use,
-      # just like meeting the symbol is in the `Symbol` case.
-      b.invalidateWasMoved n
-
     var op = attachedDestroy
     var callArg = default(Cursor)
     var reverse = false
     if getCallInfo(n, op, callArg):
       case op
       of attachedWasMoved:
-        b.wasMovedLocs.add WasMovedLoc(
-          callPos: cursorToPosition(c.source[], n),
-          target: peelComparableArg(callArg)
-        )
+        # Only a whole local is tracked: the duplifier's pairs move and
+        # destroy full variables, and a mention of the symbol in between is
+        # what the `Symbol` case sees as a use. A path (a field, an element,
+        # a coroutine frame slot) can be reached in between without naming
+        # it, and a global by any call.
+        let target = peelComparableArg(callArg)
+        if target.kind == Symbol and isLocalName(pool.syms[target.symId]):
+          b.wasMovedLocs.add WasMovedLoc(
+            callPos: cursorToPosition(c.source[], n),
+            target: target
+          )
         # Do not descend into the children of `=wasMoved`/`=destroy`. Their
         # argument *is* the location being tracked, and the `Symbol` case
         # counts every occurrence as a use and calls `invalidateWasMoved` —
