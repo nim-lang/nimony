@@ -238,6 +238,7 @@
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |
 | `(establishesBorrow)` | NimonyPragma | `establishesBorrow` pragma: the routine's result borrows from its first parameter. `let v = f(x)` then starts a borrow of `x` that lasts until `v` dies, so `x` cannot be mutated or passed to a `var` parameter in between. This is what carries the borrow across the call boundary for view constructors such as `toOpenArray`, whose bodies build the view out of a raw pointer the borrow checker cannot follow. |
+| `(readonlyView)` | NimonyPragma | `readonlyView` pragma: the routine returns a view that never allows mutation, whatever its first argument is, so a call to it cannot be passed to a `var openArray` (or any `var` view) parameter. For view constructors over a buffer that may be shared or static, such as a copy-on-write `string`: writing through the view would skip the copy. |
 | `(incompleteStruct)` | NimonyPragma | `incompleteStruct` pragma |
 | `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
 | `(hderef X)` | NimonyExpr | hidden pointer deref operation |

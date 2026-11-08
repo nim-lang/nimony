@@ -442,6 +442,18 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParLe(pk, n.info)
       dest.addParRi()
     toPragmaArgs()
+  of ReadonlyViewP:
+    # Declares that the returned view never allows mutation: derefs refuses a
+    # call to it where a `var` view is expected, even for a mutable argument.
+    # A copy-on-write container needs this, as nothing makes its buffer unique
+    # before a write through the view.
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, $pk & " pragma is only allowed on routines"
+    else:
+      crucial.flags.incl pk
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+    toPragmaArgs()
   of EnableTraceP:
     buildErr c, dest, n.info, "`enableTrace` is a statement in the body of `nimTraceRef`"
     toPragmaArgs()
