@@ -71,6 +71,107 @@ expression is evaluated once per iteration of" (rule 2).
 That rule is the whole point. It is what lets a pass that needs a temporary
 *emit a statement* instead of fabricating one inside an expression.
 
+## Constructors: `construct` regions
+
+A constructor with a call (or any other complex value) among its values is not
+an expression in the normal form. `xelim` splits it into stores into its
+destination and wraps them in a `construct` region:
+
+```
+let x = Obj(a: f(), b: 2)    ⇒   (var x Obj .)
+                                 (construct x (stmts
+                                   (asgn (dot x a) (call f))
+                                   (asgn (dot x b) 2)))
+```
+
+A constructor whose values are all pure stays an `oconstr`/`aconstr`/
+`tupconstr`. Constants, static data and the optimizer's patterns over inline
+constructors are unaffected.
+
+### Why split, and why the wrapper
+
+Every call becomes a statement that binds to its destination, which is what
+the normal form wants of calls anyway (*Calls bind directly to their
+destination*, below). Three problems with the constructor as an expression go
+away with it:
+
+- **Temps.** The value no longer needs a temp of its own to be evaluated in
+  order. A 16 MB `default(array)` used to be built in a stack temp and copied
+  into a heap object (nimony#2846).
+- **Evaluation order.** A pass that hoists a pre-statement in front of "the
+  statement" now hoists it in front of one field's store, not in front of the
+  whole constructor, so the sibling fields keep source order. C's
+  initializer lists are unsequenced; separate stores are not.
+- **Analysis.** The prover sees a field value as an ordinary assignment, calls
+  included.
+
+The wrapper keeps what splitting would otherwise lose: that the stores, taken
+together, write the whole object. A pass that wants to combine stores
+(memidioms: a region of zero stores is one `memset`, a region copying from one
+source is one `memcpy`) reads that off the tag instead of proving coverage.
+
+### Rules
+
+`(construct D (stmts …))`, where `D` is an lvalue, the **destination**:
+
+1. **Fresh storage.** On entry `D` holds no value: it is a local, `result` or
+   global declared without a value, the payload of a `(newobj T (noinit))`, or
+   a location whose old value was destroyed. A store into `D` inside the region
+   *initializes*: there is no old value to destroy and no self-assignment to
+   guard against.
+2. **Coverage.** The region is equivalent to `(asgn D (oconstr T …))` with the
+   same values, so it inherits the totality rule of `oconstr` (`doc/tags.md`):
+   on every path from the region's start to its end, every field of `D` is
+   stored exactly once, inherited fields included. A field of aggregate type is
+   covered by a store to the field itself or by a nested `construct` region on it.
+   Array elements are `(at D i)`, tuple fields the tuple's field paths. A value
+   that is control flow lands in its field on each arm:
+   `Obj(a: if c: 1 else: 2)` becomes `(ite c (asgn D.a 1) (asgn D.a 2))`.
+3. **No reads of `D`.** Nothing in the region reads `D` or a part of it. A
+   reassignment whose values read the destination (`x = Obj(a: x.b, b: x.a)`) is
+   built into a fresh temp first. Reaching `D` through a raw pointer while the
+   region runs sees a partial object, as with `trySpliceAsgn`'s NRVO.
+4. **Exits.** Control leaves the region only at its end. There is no `jmp`
+   out of it, no `ret`, and no `raise`: a `.raises` value is bound to a temp
+   *before* the region, so after `eraiser` the region contains no raise check.
+   A `noreturn` call (a panic) may appear. A suspension point (`cps`) may
+   appear; the frame keeps the partial object.
+5. **Pre-statements.** Besides the stores, the region contains the statements
+   that compute their values: temps, the checks a pass emits for a value, and
+   control flow that stays inside the region. They follow the hoisting rule
+   at the granularity of the store they belong to.
+6. **After the region** `D` holds a value: it owns its fields and is destroyed
+   like any other value of its type.
+
+### What each layer does with it
+
+- **`xelim`** (both goals) produces it, for a complex constructor in any
+  position: a declaration's value, an `asgn`'s right-hand side, a `newobj`'s
+  fields, a constructor nested in another (a nested region or field paths).
+  In any other position (an argument, a `ret` value) the constructor goes into
+  a fresh `var` temp, and the region fills the temp.
+- **`newobj`.** `(newobj T (noinit))` allocates and leaves the payload
+  uninitialized. The `construct` region on `(deref p)` that follows fills it. The
+  duplifier emits the allocation and the out-of-memory check as before; the
+  allocation now runs before the field values. In its output the heap block
+  is `{rc, rootIdx?, data: payload}`, so it wraps the header stores and the
+  payload's region, now on `(dot (deref p) data)`, in an outer region on
+  `(deref p)`: the whole block is one region.
+- **duplifier** treats a store in a region as an initialization (rule 1).
+  Before a region that reassigns a live location it emits one `=destroy(D)`.
+- **destroyer**: `D` becomes live at the end of the region (rule 6). Rule 4
+  guarantees that no exit sees it half built.
+- **`contracts_fir`** marks `D` initialized at the region's end, accepts stores
+  into a `let` destination inside its region, and attributes a borrow stored
+  into a field (`establishesBorrow`, views) to `D`'s root.
+- **`intramodinliner`** splices a callee's `result` into a field-path
+  destination, so `D.f = default(array)` writes into `D.f` directly.
+- **`lengcgen`** keeps the tag: it is a Leng statement too
+  (`doc/internals/leng-spec.md`). lengc prints the stores and ignores the
+  wrapper. arkham may ignore it as well. It must route a call returning an
+  aggregate into a field path through the hidden result pointer, at the field's
+  address.
+
 ## `assume`
 
 `(assume <cond>)` is a statement the lowering vouches for: it asserts nothing

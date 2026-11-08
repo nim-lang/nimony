@@ -158,6 +158,7 @@ CaseStmt ::= (case Expr (of BranchRanges StmtList)* (else StmtList)?)
 LabelStmt ::= (lab SymbolDef)
 JumpStmt ::= (jmp Symbol)
 ScopeStmt ::= (scope StmtList)
+ConstructStmt ::= (construct Lvalue StmtList) # the stores in StmtList initialize all of Lvalue
 DiscardStmt ::= (discard Expr)
 IteStmt ::= (ite Expr StmtList [Empty | StmtList]) # if-then-else
 ItecStmt ::= (itec Expr StmtList [Empty | StmtList]) # same as ite
@@ -184,6 +185,7 @@ Stmt ::= Call |
          LabelStmt |
          JumpStmt |
          ScopeStmt |
+         ConstructStmt |
          MflagDecl |
          VflagDecl |
          JtrueStmt |
@@ -402,6 +404,43 @@ nothing earlier. A body that reads the flag therefore stays correct when it is
 inlined into a caller with checked arithmetic of its own. Read `(ovf)` right
 after its `keepovf`; a call in between may be inlined and bring a `keepovf` of
 its own. Native code generation relies on this: there the flag is the CPU's.
+
+
+The (construct) region
+----------------------
+
+`(construct Lvalue StmtList)` initializes the whole of `Lvalue`, the destination,
+by the stores in `StmtList`. Nimony produces it for an object, tuple or array
+constructor that has a call among its values. The constructor is split into one
+store per field, and the region says the stores belong together:
+
+```
+(construct (deref p.0) (stmts
+  (asgn (dot (deref p.0) rc.0 0) 0)
+  (construct (dot (deref p.0) data.0 0) (stmts
+    (asgn (dot (dot (deref p.0) data.0 0) items.0 0) (call default.0 ...))
+    (asgn (dot (dot (deref p.0) data.0 0) count.0 0) 0)))))
+```
+
+The rules (`doc/internals/multi_join_ir.md`, *Constructors: `construct` regions*):
+
+- On entry the destination holds no value, and a store into it initializes.
+- On every path through the region, every field of the destination is stored
+  exactly once, as an `oconstr` of it would name them. A field may itself be
+  filled by a nested `(construct)`.
+- Nothing in the region reads the destination.
+- Control leaves the region only at its end. A call that does not return may
+  appear inside it.
+
+Semantically the wrapper is a `(stmts)`, and a back end may emit just its
+statements: that is what lengc does. It exists for passes that combine stores.
+A region that stores the same byte everywhere is one `memset` of the
+destination, and one that copies field by field from a single source is one
+`memcpy`, with no need to prove that the stores cover the object.
+
+A call whose result is passed through a hidden pointer and whose destination
+is a field path inside a region gets that field's address as the pointer. The
+callee builds its result in place.
 
 
 NJ instructions
