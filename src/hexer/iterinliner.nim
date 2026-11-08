@@ -451,7 +451,13 @@ proc emitForBody(e: var EContext; dest: var TokenBuf; body: Cursor;
 
 type
   IterExit = object
-    lab: SymId   ## where the iterator's `return` goes: past the expansion
+    lab: SymId   ## where the iterator's `return` goes: past the expansion.
+                 ## The `(lab)` goes AFTER the expansion's `scope`, never
+                 ## inside it: inside, the `jmp` would stay within the scope
+                 ## that owns the iterator's locals, so the destroyer unwinds
+                 ## nothing at the jump and then destroys, after the label,
+                 ## every local of that scope — also the ones declared after
+                 ## the `return` and never initialized on that path.
     used: bool
 
 proc inlineIteratorBodyFir(e: var EContext; dest: var TokenBuf;
@@ -546,7 +552,7 @@ proc emitCoroForFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   dest.addParRi() # close corofor
 
 proc expandInlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
-                          iter, iterDecl: Cursor) =
+                          iter, iterDecl: Cursor; exit: var IterExit) =
   ## `iter` is at the callee of the iterator call.
   var iter = iter
   let routine = asRoutine(iterDecl, SkipInclBody)
@@ -599,15 +605,12 @@ proc expandInlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
   var fc = beginRead(freshBuf)
   transformStmt(e, inner, fc) # the iterator's own `for`s
   var ic = beginRead(inner)
-  var exit = IterExit()
   ic.into: # the wrapper's `stmts`: its children go straight into the scope
     while ic.hasMore:
       inlineIteratorBodyFir(e, dest, ic, forStmt, routine.retType, exit)
-  if exit.used:
-    dest.copyIntoKind LabS, forStmt.iter.info:
-      dest.addSymDef exit.lab, forStmt.iter.info
 
-proc inlineIteratorFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
+proc inlineIteratorFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
+                       exit: var IterExit) =
   var iter = forStmt.iter
   if iter.exprKind == HderefX:
     inc iter
@@ -623,15 +626,20 @@ proc inlineIteratorFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   if cursorIsNil(iterDecl):
     emitCoroForFir(e, dest, forStmt)
   else:
-    expandInlineIterator(e, dest, forStmt, iter, iterDecl)
+    expandInlineIterator(e, dest, forStmt, iter, iterDecl, exit)
 
 proc transformForFir(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   ## The whole expansion is one `scope`, so the iterator's parameters and
   ## locals die at its end; the `(lab exit)` after the `for` stays in place.
+  ## The iterator's `return` label follows the scope too (see `IterExit`).
   let forStmt = asForStmt(c)
+  var exit = IterExit()
   dest.addParLe ScopeS, c.info
-  inlineIteratorFir(e, dest, forStmt)
+  inlineIteratorFir(e, dest, forStmt, exit)
   dest.addParRi()
+  if exit.used:
+    dest.copyIntoKind LabS, forStmt.iter.info:
+      dest.addSymDef exit.lab, forStmt.iter.info
   skip c
 
 proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
