@@ -823,7 +823,9 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     else:
       bailCannotPassToVar()
   elif e.wantMutable:
-    if isViewType(retType) and firstArgIsMutable(c, callExpr):
+    # a `.readonlyView` routine's result is never mutable, see #2924
+    if isViewType(retType) and not hasPragma(pragmas, ReadonlyViewP) and
+        firstArgIsMutable(c, callExpr):
       finishCallArgs()
     else:
       bailCannotPassToVar()

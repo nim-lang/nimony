@@ -273,6 +273,24 @@ iterator pairs*(s: string): (int, char) {.inline.} =
       yield (i, p[i])
       inc i
 
+iterator mitems*(s: var string): var char {.inline.} =
+  ## Walks `s`'s bytes, writable in place.
+  ##
+  ## A string cannot be a `var openArray` (#2924): its buffer is copy-on-write
+  ## and a long string caches its first `AlwaysAvail` chars inline. So this
+  ## makes the buffer unique before the walk and syncs the cache when it ends,
+  ## also when the body leaves the loop early.
+  let n = len(s)
+  if n > 0 and makeUnique(s):
+    let p = rawData(s)
+    try:
+      var i = 0
+      while i < n:
+        yield p[i]
+        inc i
+    finally:
+      endStore(s)
+
 # ---- lifecycle hooks ----
 
 func `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
