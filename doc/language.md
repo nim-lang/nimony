@@ -2664,6 +2664,34 @@ through a borrow copies it, so it leaves freely:
     return -1
   ```
 
+### `readonlyView` pragma
+
+A call to a routine that returns a view, such as `toOpenArray`, can usually be
+passed to a `var openArray` parameter when its first argument is a mutable
+location. A routine marked `readonlyView`:idx: opts out: its result is never
+mutable, whatever its first argument is.
+
+This is what a container with copy-on-write storage needs. Its buffer may be
+shared with other values or be a literal's static storage, and only the
+container's own mutating operations make it unique first; a write through a
+raw view would skip that copy. `string` is such a container:
+
+  ```nim
+  converter toOpenArray*(s {.byref.}: string): openArray[char]
+      {.inline, establishesBorrow, readonlyView.} =
+    openArray[char](a: readRawData(s), len: s.len)
+
+  proc poke(p: var openArray[char]) = p[0] = 'X'
+
+  var a = "a much longer string that lives on the heap"
+  var b = a
+  poke(b)                 # Error: cannot pass b to var/out T parameter
+  poke(toOpenArray(b))    # Error: the same
+  ```
+
+`readonlyView` and `establishesBorrow` are independent: one says how the result
+may be used, the other what it keeps aliasing.
+
 ### Iterating through a `ref`
 
 A borrow is tracked along an access path, but a `ref` can have aliases that

@@ -17,4 +17,4 @@ c < 0
 [1] expected: uint64 but got: auto (declared in lib/std/system/comparisons.nim(84, 1))
 [1] expected: float32 but got: auto (declared in lib/std/system/comparisons.nim(95, 1))
 [1] expected: float64 but got: auto (declared in lib/std/system/comparisons.nim(96, 1))
-[1] expected: string but got: auto (declared in lib/std/system/stringimpl.nim(933, 1))
+[1] expected: string but got: auto (declared in lib/std/system/stringimpl.nim(951, 1))
