@@ -1732,6 +1732,9 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         put(g, tkParLe, "(")
         var afterFirst = false
         while n.hasMore:
+          if n.pragmaKind == NoinitP:
+            skip n # `(newobj T (noinit))`: its payload is a region's business
+            continue
           if afterFirst:
             gcomma(g)
           else:

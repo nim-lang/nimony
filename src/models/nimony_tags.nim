@@ -62,7 +62,7 @@ type
     DdotX = (ord(DdotTagId), "ddot")  ## deref dot: expression, field symbol, field index; optional trailing `STRLIT` is the same *access token* described on `(dot ...)` — names the module the private-field access was written in, which is what a re-check judges it against.
     HaddrX = (ord(HaddrTagId), "haddr")  ## hidden address: an address the COMPILER took to bind a location, not one the user asked for. `derefs.nim` inserts it wherever a `var`/`out` parameter needs the argument's location. It survives into Leng — where `(addr X)` is the user's `addr` — because the two mean different things to a consumer: `(addr x)` says "x's address is a value now", so x must have one, while `(haddr x)` says only "the callee wants x's *location*". An `(instr …)` operand slot whose row is `inout` can therefore bind the local's home directly instead of forcing it to memory. Everywhere else it lowers exactly like `(addr X)`
     NewrefX = (ord(NewrefTagId), "newref")  ## Nim's `new` magic proc that allocates a `ref T`; optional initializer expression
-    NewobjX = (ord(NewobjTagId), "newobj")  ## new object constructor
+    NewobjX = (ord(NewobjTagId), "newobj")  ## new object constructor. The `(noinit)` form allocates and leaves the payload uninitialized: it is the value of a `let p`, and a `(construct (deref p) …)` region right after it fills the payload (`xelim` splits a `newobj` with a call among its values that way, see `doc/internals/multi_join_ir.md`)
     TupX = (ord(TupTagId), "tup")  ## untyped tuple constructor
     TupconstrX = (ord(TupconstrTagId), "tupconstr")  ## tuple constructor
     SetconstrX = (ord(SetconstrTagId), "setconstr")  ## set constructor
@@ -160,6 +160,7 @@ type
     EmitS = (ord(EmitTagId), "emit")  ## emit statement
     AsgnS = (ord(AsgnTagId), "asgn")  ## assignment statement
     ScopeS = (ord(ScopeTagId), "scope")  ## explicit scope annotation, like `stmts`
+    ConstructS = (ord(ConstructTagId), "construct")  ## initializes the whole of the lvalue `X` by the stores in `S`: a constructor with a call among its values, split into one store per field (`xelim`). On entry `X` holds no value, so the stores initialize. On every path through `S` each field of `X` is stored exactly once, as an `oconstr` would name them, and nothing in `S` reads `X`. Control leaves only at the end: no `jmp` out, no `ret`, no `raise`. Semantically a `stmts`; the tag tells store-combining passes (memidioms) that the stores cover the whole object. See `doc/internals/multi_join_ir.md`, *Constructors: `construct` regions*
     IfS = (ord(IfTagId), "if")  ## if statement header
     WhenS = (ord(WhenTagId), "when")  ## when statement header
     BreakS = (ord(BreakTagId), "break")  ## `break` statement
@@ -206,7 +207,7 @@ type
     AlwaysS = (ord(AlwaysTagId), "always")  ## the statements of one replicated `finally` section: the eraiser emits one `(always …)` per way out of a `try`, so each copy stays recognizable as "runs on every path" after the `try` itself is gone. Like `stmts`, it opens no scope. Currently pure meta information: `lengcgen` emits its statements unwrapped, so `lengc`/`arkham` never see it. It is meant for checking that every path destroys a value and, later, for precise stack unwinding that runs custom logic
 
 proc rawTagIsNimonyStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CoroforTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, PragmaxTagId, InclTagId, ExclTagId, IncTagId, DecTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId, AlwaysTagId}
+  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, ConstructTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CoroforTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, PragmaxTagId, InclTagId, ExclTagId, IncTagId, DecTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId, AlwaysTagId}
 
 type
   NimonyType* = enum

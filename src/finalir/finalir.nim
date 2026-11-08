@@ -794,6 +794,13 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n
   of ScopeS:
     trScopedBody c, dest, n
+  of ConstructS:
+    # `(construct D (stmts …))` from `xelim`: the stores are `asgn`s and are
+    # lowered as such, so a call binds to its field (`callIsOver` included).
+    # Transparent like `stmts`: no scope.
+    copyInto dest, n:
+      takeTree dest, n # D
+      trStmt c, dest, n
   of AsgnS:
     trAsgn c, dest, n
   of IfS:

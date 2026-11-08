@@ -125,8 +125,8 @@ source is one `memcpy`) reads that off the tag instead of proving coverage.
    stored exactly once, inherited fields included. A field of aggregate type is
    covered by a store to the field itself or by a nested `construct` region on it.
    Array elements are `(at D i)`, tuple fields the tuple's field paths. A value
-   that is control flow lands in its field on each arm:
-   `Obj(a: if c: 1 else: 2)` becomes `(ite c (asgn D.a 1) (asgn D.a 2))`.
+   that is control flow may land in its field on each arm:
+   `Obj(a: if c: 1 else: 2)` as `(ite c (asgn D.a 1) (asgn D.a 2))`.
 3. **No reads of `D`.** Nothing in the region reads `D` or a part of it. A
    reassignment whose values read the destination (`x = Obj(a: x.b, b: x.a)`) is
    built into a fresh temp first. Reaching `D` through a raw pointer while the
@@ -145,32 +145,48 @@ source is one `memcpy`) reads that off the tag instead of proving coverage.
 
 ### What each layer does with it
 
-- **`xelim`** (both goals) produces it, for a complex constructor in any
-  position: a declaration's value, an `asgn`'s right-hand side, a `newobj`'s
-  fields, a constructor nested in another (a nested region or field paths).
-  In any other position (an argument, a `ret` value) the constructor goes into
-  a fresh `var` temp, and the region fills the temp.
+- **`xelim`** (both goals) produces it for an `oconstr`/`newobj` that names its
+  fields with `kv`s and has a complex value. In a declaration
+  (`var`/`let`/`gvar`/`glet`/`tvar`/`tlet`) the declared location is the
+  destination: `(var x T .)` then the region on `x`. In any other position (an
+  argument, an operand, an `asgn`'s right-hand side, a `ret` value) a fresh
+  temp is. A nested complex constructor fills its field in a nested region.
+  Values up to the last one that may leave the region (a `.raises` call, a
+  `raise`/`ret`/`jmp` in a value) are bound to temps in front of it, in order
+  (rule 4). Inside a region a store's call stays bound to the field.
 - **`newobj`.** `(newobj T (noinit))` allocates and leaves the payload
   uninitialized. The `construct` region on `(deref p)` that follows fills it. The
-  duplifier emits the allocation and the out-of-memory check as before; the
-  allocation now runs before the field values. In its output the heap block
-  is `{rc, rootIdx?, data: payload}`, so it wraps the header stores and the
-  payload's region, now on `(dot (deref p) data)`, in an outer region on
-  `(deref p)`: the whole block is one region.
-- **duplifier** treats a store in a region as an initialization (rule 1).
-  Before a region that reassigns a live location it emits one `=destroy(D)`.
+  duplifier emits the allocation, the out-of-memory check and the header
+  stores (`rc`, `rootIdx`); the allocation now runs before the field values. A
+  `newobj` whose type asks for the `nil` (`nil T`, `unchecked T`) is not split:
+  its payload stores are guarded.
+- **duplifier** treats a store into a path rooted at the region's destination
+  as an initialization (`isFirstAsgn`, rule 1): no `=destroy` of an old value.
 - **destroyer**: `D` becomes live at the end of the region (rule 6). Rule 4
   guarantees that no exit sees it half built.
-- **`contracts_fir`** marks `D` initialized at the region's end, accepts stores
-  into a `let` destination inside its region, and attributes a borrow stored
-  into a field (`establishesBorrow`, views) to `D`'s root.
-- **`intramodinliner`** splices a callee's `result` into a field-path
-  destination, so `D.f = default(array)` writes into `D.f` directly.
+- **`contracts_fir`** does not count naming `D` as a store's base as a read of
+  it, and marks `D` initialized at the region's end.
 - **`lengcgen`** keeps the tag: it is a Leng statement too
-  (`doc/internals/leng-spec.md`). lengc prints the stores and ignores the
-  wrapper. arkham may ignore it as well. It must route a call returning an
-  aggregate into a field path through the hidden result pointer, at the field's
-  address.
+  (`doc/internals/leng-spec.md`).
+- **`intramodinliner`** splices a call stored into a path rooted at the
+  region's destination with the callee's `result` substituted by that path, so
+  `D.f = default(array)` builds the array in `D.f`. That is sound because of
+  rule 3, and only inside a region: an ordinary `p.f = g()` may have `g` read
+  `p.f` through an alias. Afterwards `dropConstructRegions` replaces every
+  region by its body, so shoggoth and the back ends see plain stores.
+
+Not done yet:
+
+- `tupconstr`/`aconstr` are still built with temps, and so is the inheritance
+  form of `oconstr`.
+- A reassignment `x = Obj(…)` builds into a temp and copies, even when the
+  values do not read `x`; a region directly on `x` needs one `=destroy(x)`
+  in front of it.
+- The tag stops at the intra-module inliner. memidioms' store combining, the
+  cross-module inliner and arkham's hidden result pointer at a field's address
+  (for a call that is not inlined) need it to survive further.
+- `contracts_fir` does not yet attribute a borrow stored into a field
+  (`establishesBorrow`, views) to `D`'s root.
 
 ## `assume`
 

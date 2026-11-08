@@ -96,6 +96,8 @@ type
     goal: Goal
     bitCastsInBackend: bool  ## the backend reinterprets a cross-family `cast`
                              ## itself (arkham: `movq`), so it stays a `cast`
+    constructDepth: int      ## inside a `construct` region: a store's
+                             ## destination is fresh, so a call binds to it
 
 proc initTarget(m: Mode): Target {.inline.} =
   ## Every `Target` buffer is bound to the global pools up front: a `Target`
@@ -371,6 +373,166 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
 
   tar.t.addSymUse tmp, info
 
+# ---------------------------------------------------------------------------
+# `construct` regions (`doc/internals/multi_join_ir.md`, *Constructors:
+# `construct` regions*): a complex object constructor becomes one store per
+# field into its destination, wrapped in `(construct D (stmts …))`.
+
+proc refAsksForNil(typ: Cursor): bool =
+  ## `nil T`/`unchecked T`: the destination of a `newobj` wants the `nil` of a
+  ## failed allocation, so the duplifier guards the payload stores. Such a
+  ## `newobj` is not split: the region's stores would go through the `nil`.
+  ## The twin of `duplifier.asksForNil`.
+  var t = typ
+  while t.typeKind in {SinkT, MutT, LentT, OutT, OwnedT}:
+    inc t
+  if t.typeKind != RefT: return false
+  var marker = t.childCursor
+  skip marker # the element type
+  result = marker.hasMore and marker.substructureKind in {NilU, UncheckedU}
+
+proc isSplittableConstr(n: Cursor): bool =
+  ## An `oconstr`/`newobj` that names every field with a `kv`. The inheritance
+  ## form `(oconstr T (oconstr Base …) …)` and the positional RTTI child a later
+  ## pass adds are left as constructors.
+  result = n.kind == TagLit and n.exprKind in {OconstrX, NewobjX}
+  if result:
+    var it = n
+    it = sub(it) # peek only, never left
+    if n.exprKind == NewobjX and refAsksForNil(it): return false
+    skip it # the type
+    if not it.hasMore: return false # an empty `newobj`: a synthesized frame
+    while it.hasMore:
+      if not (it.isTagLit and it.substructureKind == KvU): return false
+      skip it
+
+proc mayLeaveRegion(c: var Context; n: Cursor): bool =
+  ## Can evaluating `n` leave a `construct` region before its end? A call to a
+  ## `.raises` routine can, and so can a value that is control flow with a
+  ## `raise`/`return`/`break`/`continue`/`jmp`/`try` in it. A region must not
+  ## (rule 4), so such values are evaluated in front of it.
+  if n.kind != TagLit: return false
+  if n.stmtKind in {RaiseS, RetS, BreakS, ContinueS, JmpS, TryS}: return true
+  if n.exprKind in CallKinds:
+    let fnType = getType(c.typeCache, n.childCursor, {SkipAliases})
+    if procHasPragma(fnType, RaisesP): return true
+  var it = n
+  it.loopInto:
+    if mayLeaveRegion(c, it): return true
+    skip it
+  result = false
+
+proc addFieldPath(dest: var TokenBuf; d: Cursor; kv: Cursor) =
+  ## `(dot D field depth)` for the field `kv` names.
+  var k = kv
+  k = sub(k) # peek only, never left
+  let field = k
+  skip k
+  skip k # the value
+  copyIntoKind dest, DotX, field.info:
+    dest.copyTree d
+    dest.copyTree field
+    if k.hasMore and k.kind == IntLit:
+      dest.copyTree k # inheritance depth
+    else:
+      dest.addIntLit(0, field.info)
+
+proc trConstructInto(c: var Context; dest: var TokenBuf; n: var Cursor; d: Cursor) =
+  ## `n` is a complex, splittable constructor and `d` its destination, which
+  ## holds no value yet. Values up to the last one that may leave the region
+  ## are bound to temps in front of it, in order, so that sibling fields keep
+  ## source order and the region itself never exits early.
+  let info = n.info
+  var lastExit = -1
+  block:
+    var it = n
+    it = sub(it) # peek only, never left
+    skip it # type
+    var i = 0
+    while it.hasMore:
+      var v = it
+      v = sub(v) # peek only, never left
+      skip v # field
+      if mayLeaveRegion(c, v): lastExit = i
+      skip it
+      inc i
+
+  var body = createTokenBuf(64)
+  n.into:
+    skip n # the type
+    var i = 0
+    while n.hasMore:
+      let kv = n
+      var path = createTokenBuf(8)
+      addFieldPath(path, d, kv)
+      let loc = beginRead(path)
+      n.into:
+        skip n # field
+        if i <= lastExit:
+          # in front of the region, as its own binding
+          let typ = getType(c, n)
+          var v = initTarget(IsBound)
+          trExpr c, dest, n, v
+          let tmp = pool.symId(tempSymName(c))
+          copyIntoKind dest, LetS, info:
+            dest.addSymDef tmp, info
+            dest.addEmpty2 info # export marker, pragmas
+            dest.copyTree typ
+            dest.addTarget v
+          copyIntoKind body, AsgnS, info:
+            body.copyTree loc
+            body.addSymUse tmp, info
+        elif isSplittableConstr(n) and isComplex(n, c.goal):
+          # a nested complex constructor fills its field in a region of its own
+          trConstructInto c, body, n, loc
+        else:
+          let vinfo = n.info
+          var v = initTarget(IsBound)
+          trExpr c, body, n, v
+          copyIntoKind body, AsgnS, vinfo:
+            body.copyTree loc
+            body.addTarget v
+        while n.hasMore: skip n # optional inheritance depth
+      inc i
+
+  copyIntoKind dest, ConstructS, info:
+    dest.copyTree d
+    copyIntoKind dest, StmtsS, info:
+      dest.add body
+
+proc emitNoinitNewobj(dest: var TokenBuf; refType: Cursor; info: NifLineInfo) =
+  ## `(newobj T (noinit))`: allocated, the payload left to a region.
+  copyIntoKind dest, NewobjX, info:
+    dest.copyTree refType
+    copyIntoKind dest, NoinitP, info: discard
+
+proc trConstructTemp(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## A complex, splittable constructor in a position with no destination of its
+  ## own (an argument, an operand): a fresh temp is the destination.
+  let info = n.info
+  let typ = getType(c, n)
+  let tmp = pool.symId(tempSymName(c))
+  var d = createTokenBuf(4)
+  if n.exprKind == NewobjX:
+    copyIntoKind dest, LetS, info:
+      dest.addSymDef tmp, info
+      dest.addEmpty2 info # export marker, pragmas
+      dest.copyTree typ
+      emitNoinitNewobj dest, typ, info
+    copyIntoKind d, DerefX, info:
+      d.addSymUse tmp, info
+  else:
+    copyIntoKind dest, VarS, info:
+      dest.addSymDef tmp, info
+      dest.addEmpty2 info # export marker, pragmas
+      dest.copyTree typ
+      dest.addDotToken() # no value: the region initializes it
+    d.addSymUse tmp, info
+  trConstructInto c, dest, n, beginRead(d)
+  if tar.m in {IsEmpty, IsBound}:
+    tar.m = IsAppend
+  tar.t.addSymUse tmp, info
+
 proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   ## Aggregate constructors (object / tuple / array / set / bracket /
   ## newobj) evaluate their value-children in **unspecified** order at the
@@ -388,6 +550,10 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
   ## *after* the values of earlier children.
   if not isComplex(n, c.goal):
     trExprLoop c, dest, n, tar
+    return
+
+  if isSplittableConstr(n):
+    trConstructTemp c, dest, n, tar
     return
 
   if tar.m in {IsEmpty, IsBound}:
@@ -1164,6 +1330,8 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tmp = createTokenBuf(30)
   let kind = n.symKind
+  var d = createTokenBuf(4)  # a region's destination, if the value is split
+  var constr = default(Cursor)
   copyInto tmp, n:
     let name = n.symId
     takeTree tmp, n # name
@@ -1171,10 +1339,29 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeTree tmp, n # pragmas
     c.typeCache.registerLocal(name, kind, n)
     takeTree tmp, n # type
-    var v = initTarget(IsBound)
-    trExpr c, dest, n, v
-    tmp.addTarget v
+    if kind in {VarY, LetY, GvarY, GletY, TvarY, TletY} and
+        isSplittableConstr(n) and isComplex(n, c.goal):
+      # The declared location is the region's destination: no temp at all.
+      # `x = (newobj T …)` allocates first, the region fills `x[]`.
+      let info = n.info
+      if n.exprKind == NewobjX:
+        var refType = n
+        inc refType
+        emitNoinitNewobj tmp, refType, info
+        copyIntoKind d, DerefX, info:
+          d.addSymUse name, info
+      else:
+        tmp.addDotToken() # no value: the region initializes it
+        d.addSymUse name, info
+      constr = n
+      skip n
+    else:
+      var v = initTarget(IsBound)
+      trExpr c, dest, n, v
+      tmp.addTarget v
   dest.add tmp
+  if d.len > 0:
+    trConstructInto c, dest, constr, beginRead(d)
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
@@ -1317,7 +1504,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `trBoundExpr` (a call binds directly to its destination — doc/final_ir.md).
     # `LowerCasts` keeps it too: the inliner splices `lhs = f(args)` straight
     # into `lhs` (`trySpliceAsgn`), so a temp would only add a copy.
-    let lhsIsResult = n.childCursor.kind == Symbol
+    # In a `construct` region every store's destination is fresh storage
+    # nothing else reads (`multi_join_ir.md`, rule 3): a call binds to the
+    # field directly, which is the point of the region.
+    let lhsIsResult = n.childCursor.kind == Symbol or c.constructDepth > 0
     tar.t.copyInto n:
       trExpr c, dest, n, tar
       if lhsIsResult:
@@ -1358,6 +1548,15 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyInto(dest, n):
       while n.hasMore:
         trStmt c, dest, n
+  of ConstructS:
+    # `(construct D (stmts …))`: `D` is a location path, its stores' values
+    # are lowered like any other statement's. No scope: a temp declared in
+    # the region belongs to the enclosing one.
+    inc c.constructDepth
+    copyInto(dest, n):
+      takeTree dest, n
+      trStmt c, dest, n
+    dec c.constructDepth
 
 proc isIntLike(tk: TypeKind): bool {.inline.} =
   tk in {IntT, UIntT, CharT, BoolT}
@@ -1532,7 +1731,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
          GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
          IteratorS, ConverterS, MethodS, MacroS, TemplateS,
-         TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
+         TypeS, EmitS, AsgnS, ScopeS, ConstructS, WhenS, BreakS, ContinueS,
          ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
          PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,

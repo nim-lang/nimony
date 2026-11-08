@@ -47,6 +47,8 @@ type
 
   Context = object
     dest: TokenBuf
+    regionDests: seq[Cursor]   ## destinations of the `construct` regions being
+                               ## translated: a store into one initializes
     lifter: ref LiftingCtx
     flags: set[ContextFlag]
     typeCache: TypeCache
@@ -388,15 +390,29 @@ proc isDefaultValue(c: Context; n: Cursor): bool =
   else:
     result = false
 
+proc rootedAt(lhs, d: Cursor): bool =
+  ## Is the location `lhs` the destination `d` or a field/element path into it?
+  var x = lhs
+  while true:
+    if sameTrees(x, d): return true
+    if x.isTagLit and x.exprKind in {DotX, AtX, ArratX, TupatX}:
+      inc x # the base
+    else:
+      return false
+
 proc isFirstAsgn(c: Context; n: Cursor): bool =
   ## Whether the `(asgn x v)` at `n` is the first store into the local `x`.
-  ## `x = f(x)` is not: it reads the old value.
+  ## `x = f(x)` is not: it reads the old value. A store into the fresh
+  ## destination of a `construct` region always is (`multi_join_ir.md`,
+  ## rules 1 and 3): nothing was there, and nothing in the region reads it.
   var n = n
   inc n # AsgnS
   if n.kind == Symbol and n.symId in c.unassigned:
     let x = n.symId
     skip n
     result = not containsSym(n, x)
+  elif c.regionDests.len > 0 and rootedAt(n, c.regionDests[^1]):
+    result = true
   else:
     result = false
 
@@ -937,7 +953,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         c.typeCache.closeScope()
       of CallS, CmdS, IteratorS, TemplateS, TypeS, BlockS,
           EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS, ForS,
-          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
+          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, AlwaysS, ConstructS, PragmasS,
           PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
           FromimportS, ImportexceptS, ExportS, ExportexceptS,
           CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
@@ -1383,39 +1399,57 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         copyIntoKind c.dest, NilX, info: discard
     c.dest.addParLe(StmtsS, info)
 
-  copyIntoKind c.dest, AsgnS, info:
-    copyIntoKind c.dest, DerefX, info:
-      c.dest.addSymUse(ow.s, info)
-    copyIntoKind c.dest, OconstrX, info:
-      c.dest.addSymUse(typeSym, info)
-      copyIntoKind c.dest, KvU, info:
-        let rcField = pool.symId(RcField)
-        c.dest.addSymUse(rcField, info)
+  var payload = n
+  skip payload, SkipType
+  if kind == NewobjX and payload.pragmaKind == NoinitP:
+    # `(newobj T (noinit))`: the `construct` region after it fills the payload
+    # (`multi_join_ir.md`), so only the header is stored here, field by field:
+    # a whole-cell constructor would leave the payload to a stack temp again.
+    template headerStore(field: string) =
+      copyIntoKind c.dest, AsgnS, info:
+        copyIntoKind c.dest, DotX, info:
+          copyIntoKind c.dest, DerefX, info:
+            c.dest.addSymUse(ow.s, info)
+          c.dest.addSymUse(pool.symId(field), info)
+          c.dest.addIntLit(0, info) # inheritance
         c.dest.addIntLit(0, info)
-      if c.lifter.cycles:
+    headerStore RcField
+    if c.lifter.cycles:
+      headerStore RootIdxField
+  else:
+    copyIntoKind c.dest, AsgnS, info:
+      copyIntoKind c.dest, DerefX, info:
+        c.dest.addSymUse(ow.s, info)
+      copyIntoKind c.dest, OconstrX, info:
+        c.dest.addSymUse(typeSym, info)
         copyIntoKind c.dest, KvU, info:
-          c.dest.addSymUse(pool.symId(RootIdxField), info)
+          let rcField = pool.symId(RcField)
+          c.dest.addSymUse(rcField, info)
           c.dest.addIntLit(0, info)
-      copyIntoKind c.dest, KvU, info:
-        let dataField = pool.symId(DataField)
-        c.dest.addSymUse(dataField, info)
-        if kind == NewobjX:
-          skip n, SkipType
-          if n.hasMore:
-            copyIntoKind c.dest, OconstrX, info:
-              c.dest.addSubtree baseType
-              trNewobjFields(c, n, baseType)
+        if c.lifter.cycles:
+          copyIntoKind c.dest, KvU, info:
+            c.dest.addSymUse(pool.symId(RootIdxField), info)
+            c.dest.addIntLit(0, info)
+        copyIntoKind c.dest, KvU, info:
+          let dataField = pool.symId(DataField)
+          c.dest.addSymUse(dataField, info)
+          if kind == NewobjX:
+            skip n, SkipType
+            if n.hasMore:
+              copyIntoKind c.dest, OconstrX, info:
+                c.dest.addSubtree baseType
+                trNewobjFields(c, n, baseType)
+            else:
+              # A `newobj` that a hexer pass synthesized for a type it invented (a
+              # closure environment, a coroutine frame) names no fields. The payload
+              # is fresh, uninitialized memory, and an `oconstr` is TOTAL
+              # (`doc/tags.md`): the native back end stores exactly what is listed,
+              # so an empty one left the frame's fields holding whatever the stack
+              # temp it is built in held.
+              addDefaultValue(c.dest, baseType, info, c.lifter.bits div 8)
           else:
-            # A `newobj` that a hexer pass synthesized for a type it invented (a
-            # closure environment, a coroutine frame) names no fields. The payload
-            # is fresh, uninitialized memory, and an `oconstr` is TOTAL
-            # (`doc/tags.md`): the native back end stores exactly what is listed,
-            # so an empty one left the frame's fields holding whatever the stack
-            # temp it is built in held.
-            addDefaultValue(c.dest, baseType, info, c.lifter.bits div 8)
-        else:
-          skip n, SkipType
-          tr c, n, WantOwner # process default(T) call
+            skip n, SkipType
+            tr c, n, WantOwner # process default(T) call
   if guardStores:
     c.dest.addParRi()      # close the `stmts` of the guard
     c.dest.addDotToken()   # no else
@@ -1822,6 +1856,16 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.closeScope()
       of StmtsS:
         trStmts c, n
+      of ConstructS:
+        # `(construct D (stmts …))`: `D` is translated as the location it is
+        # (a `ref`'s payload hop included); its stores initialize
+        # (`isFirstAsgn`).
+        copyInto c.dest, n:
+          let d = n
+          tr c, n, WantNonOwner
+          c.regionDests.add d
+          trStmts c, n
+          discard c.regionDests.pop()
       of BreakS, ContinueS, LabS, JmpS, MacroS, TemplateS:
         # Macros are compiled into out-of-process plugins by `nimony`
         # itself; templates are expanded at call-sites. Neither has a

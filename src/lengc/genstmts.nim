@@ -511,6 +511,12 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of StmtsS, AlwaysS:
     n.loopInto:
       genStmt(c, n)
+  of ConstructS:
+    # `(construct D (stmts …))`: its stores, the destination is no statement
+    # (`dropConstructRegions` normally removed the wrapper already)
+    n.into:
+      skip n
+      while n.hasMore: genStmt(c, n)
   of ScopeS:
     let oldInToplevel = c.inToplevel
     c.inToplevel = false

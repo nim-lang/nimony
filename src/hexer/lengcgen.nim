@@ -2139,6 +2139,13 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       n.into:
         while n.hasMore:
           trStmt c, dest, n, mode
+    of ConstructS:
+      # A Leng statement too (`leng-spec.md`): the destination is a location,
+      # the body a statement list. The intra-module inliner uses it and then
+      # strips it (`dropConstructRegions`), so no back end sees one yet.
+      takeInto dest, n:
+        trExpr c, dest, n
+        trStmt c, dest, n, mode
     of StmtsS:
       if mode == TraverseTopLevel:
         n.into:

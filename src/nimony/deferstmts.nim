@@ -198,7 +198,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trStmt c, dest, n
     of CallS, CmdS, GvarS, TvarS, VarS, ConstS, GletS, TletS, LetS, CursorS,
-       PatternvarS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS, YldS,
+       PatternvarS, EmitS, AsgnS, ScopeS, ConstructS, WhenS, BreakS, ContinueS, YldS,
        StmtsS, AlwaysS, PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
        FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
        RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,

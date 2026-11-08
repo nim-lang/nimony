@@ -1492,6 +1492,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         c.typeCache.openScope()
         trStmtList(c, dest, n)
         c.typeCache.closeScope()
+      of ConstructS:
+        # the destination is a location path, the body a statement list; a
+        # region opens no scope (`doc/internals/multi_join_ir.md`)
+        copyInto dest, n:
+          tr(c, dest, n)
+          trStmt(c, dest, n)
       of StmtsS, AlwaysS:
         trStmtList(c, dest, n, isTopScope = isTopScope)
       of AsgnS:

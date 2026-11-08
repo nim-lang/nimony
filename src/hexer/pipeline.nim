@@ -158,3 +158,4 @@ proc optimizeLengOutput*(buf: var TokenBuf; moduleSuffix: string; bits: int) =
   runArcopt(buf, moduleSuffix, bits)
   annotateFunctionSummaries(buf)
   intraModuleInline(moduleSuffix, buf)
+  dropConstructRegions(buf)

@@ -537,7 +537,7 @@ proc tr(c: var Context; n: var Cursor) =
       # bodies don't participate in lowering.
       takeTree c.dest, n
     of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
-        WhenS, ForS, YldS, StmtsS, AlwaysS, PragmasS,
+        WhenS, ForS, YldS, StmtsS, AlwaysS, ConstructS, PragmasS,
         PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,

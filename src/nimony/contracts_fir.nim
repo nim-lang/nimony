@@ -147,6 +147,9 @@ type
                                        # moved-from memory, so a `notnil` field
                                        # may legitimately be set to `nil` there.
     features: set[Feature]
+    constructing: seq[SymId]           # roots of the `construct` regions being
+                                       # traversed: their stores initialize, so
+                                       # the base they name is not a read.
     moduleSuffix: string
     nestedProcs: int
     loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
@@ -3912,6 +3915,11 @@ proc analyseOconstr(c: var FirContext; n: var Cursor) =
     let objType = n
     skip n # type
     while n.hasMore:
+      if n.pragmaKind == NoinitP:
+        # `(newobj T (noinit))`: the payload is left to the `construct`
+        # region that follows
+        skip n
+        continue
       assert n.substructureKind == KvU
       n.into:
         assert n.isSymbol
@@ -4086,7 +4094,7 @@ proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
     let symId = pc.symId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {VarY, LetY, CursorY, PatternvarY, ResultY}:
-      if c.tr.live and not isInitialized(c, symId):
+      if c.tr.live and not isInitialized(c, symId) and symId notin c.constructing:
         buildErr(c, pc.info, "cannot prove that " & asNimCode(pc) & " has been initialized")
         # don't report the same symbol twice from later references
         markInit(c, symId)
@@ -6104,6 +6112,18 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       n.into:
         while n.hasMore:
           traverseStmt c, n, call
+    of ConstructS:
+      # `(construct D (stmts …))`: the stores initialize `D`, which holds no
+      # value before (`multi_join_ir.md`, rules 1 and 6), so naming it as a
+      # store's base is no read of it; after the region it is initialized.
+      n.into:
+        let root = extractSymId(n)
+        skip n # D
+        if root != NoSymId: c.constructing.add root
+        traverseStmt c, n, call
+        if root != NoSymId:
+          discard c.constructing.pop()
+          markInit(c, root)
     of AsgnS:
       traverseAsgn c, n, call
     of ForS:

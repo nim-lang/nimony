@@ -1799,6 +1799,22 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
               while n.hasMore:
                 trGoto c, dest, n
             dest.addParRi()
+        of ConstructS:
+          # `(construct D (stmts …))`. A suspension point inside it needs its
+          # state label at the top level, so such a region is flattened: it
+          # is a `stmts` semantically, and the frame keeps the partial object.
+          # Otherwise the region stays, its destination rewritten like an
+          # `asgn`'s.
+          if containsSuspensionPoint(c, n):
+            n.into:
+              skip n                                # D
+              while n.hasMore: trGoto c, dest, n
+          else:
+            dest.addParLe(n.cursorTagId, n.info)
+            n.into:
+              trGotoValue c, dest, n                # D
+              trGotoScoped c, dest, n
+            dest.addParRi()
         of StmtsS, ScopeS:
           # FLATTEN. The Final IR wraps every body — an `ite` arm, a loop body,
           # a `block` — in its own `(stmts ...)`, and the scope ends are already
@@ -2661,7 +2677,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of CoroforS:
       trCoroFor c, dest, n
     of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS,
-        StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
+        StmtsS, AlwaysS, ConstructS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
         ExportexceptS, DiscardS, TryS, UnpackdeclS,
         AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
         HcallS, StaticstmtS, BindS, MixinS, UsingS,

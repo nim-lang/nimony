@@ -523,7 +523,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trSons(c, dest, n)
       c.typeCache.closeScope()
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CoroforS,
-      CaseS, RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
+      CaseS, RetS, YldS, StmtsS, AlwaysS, ConstructS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
@@ -1946,6 +1946,12 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       treStmts(c, dest, n)
       c.typeCache.closeScope()
+    of ConstructS:
+      # the destination is rewritten like any location (a captured local
+      # becomes an environment field), the body is a statement list
+      copyInto dest, n:
+        tre c, dest, n
+        treStmt c, dest, n
     of StmtsS, AlwaysS:
       treStmts(c, dest, n)
     of CoroforS:

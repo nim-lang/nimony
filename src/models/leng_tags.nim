@@ -68,6 +68,7 @@ type
     AsgnS = (ord(AsgnTagId), "asgn")  ## assignment statement
     KeepovfS = (ord(KeepovfTagId), "keepovf")  ## keep overflow flag statement
     ScopeS = (ord(ScopeTagId), "scope")  ## explicit scope annotation, like `stmts`
+    ConstructS = (ord(ConstructTagId), "construct")  ## initializes the whole of the lvalue `X` by the stores in `S`: a constructor with a call among its values, split into one store per field (`xelim`). On entry `X` holds no value, so the stores initialize. On every path through `S` each field of `X` is stored exactly once, as an `oconstr` would name them, and nothing in `S` reads `X`. Control leaves only at the end: no `jmp` out, no `ret`, no `raise`. Semantically a `stmts`; the tag tells store-combining passes (memidioms) that the stores cover the whole object. See `doc/internals/multi_join_ir.md`, *Constructors: `construct` regions*
     IfS = (ord(IfTagId), "if")  ## if statement header
     BreakS = (ord(BreakTagId), "break")  ## `break` statement
     WhileS = (ord(WhileTagId), "while")  ## `while` statement
@@ -90,7 +91,7 @@ type
     AlwaysS = (ord(AlwaysTagId), "always")  ## the statements of one replicated `finally` section: the eraiser emits one `(always …)` per way out of a `try`, so each copy stays recognizable as "runs on every path" after the `try` itself is gone. Like `stmts`, it opens no scope. Currently pure meta information: `lengcgen` emits its statements unwrapped, so `lengc`/`arkham` never see it. It is meant for checking that every path destroys a value and, later, for precise stack unwinding that runs custom logic
 
 proc rawTagIsLengStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, AlwaysTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, ConstructTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, AlwaysTagId}
 
 type
   LengType* = enum

@@ -852,6 +852,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trResultDecl c, dest, n
       of ScopeS:
         trScope c, dest, n
+      of ConstructS:
+        # `(construct D (stmts …))`: no `.raises` value sits inside a region
+        # (xelim binds it before), but its body is a statement list all the
+        # same, and `tr` of a `stmts` lands its hoists there.
+        copyInto dest, n:
+          tr c, dest, n                 # D
+          tr c, dest, n                 # the body
       of StmtsS, AlwaysS:
         trStmtList c, dest, n
       of RetS:

@@ -433,7 +433,10 @@ The rules (`doc/internals/multi_join_ir.md`, *Constructors: `construct` regions*
   appear inside it.
 
 Semantically the wrapper is a `(stmts)`, and a back end may emit just its
-statements: that is what lengc does. It exists for passes that combine stores.
+statements. It exists for passes that build into fresh storage or combine
+stores. Today only the intra-module inliner reads it, to splice a call into a
+field of the destination; it then replaces every region by its body, so
+shoggoth and the back ends never see one yet.
 A region that stores the same byte everywhere is one `memset` of the
 destination, and one that copies field by field from a single source is one
 `memcpy`, with no need to prove that the stores cover the object.

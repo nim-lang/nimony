@@ -242,6 +242,9 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
 type
   InlinerCtx* = object
     moduleSuffix*: string
+    regionDests: seq[Cursor]                # destinations of the `construct`
+                                            # regions being walked: fresh
+                                            # storage a call may build into
     counter: int                            # fresh-name suffix
     counterPrefix: string                   # disambiguates passes (hexer vs dce2)
     bodies: Table[SymId, int]               # same-module callee → offset in `src`
@@ -605,6 +608,10 @@ type
                                      ## to an assignment (or vanishes) and the
                                      ## ret's `dest = result'` self-copy is
                                      ## elided. SymId(0) = no forwarding.
+    targetPath: Cursor               ## a location path the splice writes its
+                                     ## result to instead of a symbol (a field
+                                     ## of a `construct` region's fresh
+                                     ## destination); nil for a symbol target
     dropDecl2: SymId                 ## the local the result was copied FROM in a
                                      ## `(asgn result L) (ret result)` tail — renamed
                                      ## to the destination as well, so its decl folds
@@ -640,8 +647,19 @@ proc isForwardedRet(bnd: Bindings; n: Cursor; targetSym: SymId): bool =
   ## RENAMED symbol may be compared: the callee's own names live in its scope, and
   ## a callee local can share its name with the caller's destination (both procs
   ## have a `canRaise.0`) while being a different variable (#2674).
-  result = n.isSymbol and not bnd.subst.hasKey(n.symId) and
-    bnd.rename.getOrDefault(n.symId, n.symId) == targetSym
+  if not cursorIsNil(bnd.targetPath):
+    # the forwarded result local IS the path (it is substituted by it)
+    result = n.isSymbol and bnd.dropDecl != SymId(0) and n.symId == bnd.dropDecl
+  else:
+    result = n.isSymbol and not bnd.subst.hasKey(n.symId) and
+      bnd.rename.getOrDefault(n.symId, n.symId) == targetSym
+
+proc emitTarget(dest: var TokenBuf; bnd: Bindings; targetSym: SymId; info: NifLineInfo) =
+  ## The splice destination: a symbol, or the location path `bnd.targetPath`.
+  if cursorIsNil(bnd.targetPath):
+    dest.addSymUse targetSym, info
+  else:
+    dest.addSubtree bnd.targetPath
 
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
@@ -1024,7 +1042,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
             skip body                       # `ret result`: dest IS result (forwarded)
           else:
             dest.addParLe TagId(AsgnS), info
-            dest.addSymUse targetSym, info
+            emitTarget(dest, bnd, targetSym, info)
             emitRenamed(dest, body, bnd)  # the returned expression
             dest.addParRi()
         else:
@@ -1044,7 +1062,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
         skip body                           # type
         if body.hasMore and not body.isDotToken:
           dest.addParLe TagId(AsgnS), vinfo
-          dest.addSymUse targetSym, vinfo
+          emitTarget(dest, bnd, targetSym, vinfo)
           emitRenamed(dest, body, bnd)      # the initializer expression
           dest.addParRi()
         while body.hasMore: skip body       # drain (`.` initializer / extras)
@@ -1105,7 +1123,7 @@ proc emitTailStmt(dest: var TokenBuf; body: var Cursor; bnd: Bindings;
           skip body                          # `ret result`: dest IS result (forwarded)
         else:
           dest.addParLe TagId(AsgnS), rinfo
-          dest.addSymUse targetSym, rinfo
+          emitTarget(dest, bnd, targetSym, rinfo)
           emitRenamed(dest, body, bnd)       # the returned expression
           dest.addParRi()
       else:
@@ -1387,7 +1405,8 @@ proc prepareSplice(c: var InlinerCtx; call: Cursor; site: var SpliceSite): bool 
   result = true
 
 proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
-                target: SymId; forwardResult: bool; info: NifLineInfo) =
+                target: SymId; forwardResult: bool; info: NifLineInfo;
+                targetPath = default(Cursor)) =
   ## The splice itself, identical whatever call position asked for it:
   ##
   ##   (scope
@@ -1411,9 +1430,10 @@ proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
 
   var resultLocal = SymId(0)
   var tailCopy = SymId(0)
+  let toPath = not cursorIsNil(targetPath)
   if forwardResult:
     resultLocal = resultLocalOf(site.pd.body, site.pSyms)
-    if resultLocal != SymId(0):
+    if resultLocal != SymId(0) and not toPath:
       rename[resultLocal] = target         # overrides the seed walk's fresh sym
       tailCopy = tailCopySource(site.pd.body, resultLocal, site.pSyms)
       if tailCopy != SymId(0):
@@ -1422,6 +1442,12 @@ proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
   var bnd = bindingsFor(c, site.pSyms, site.argCursors, site.pd.body, rename)
   bnd.dropDecl = resultLocal
   bnd.dropDecl2 = tailCopy
+  if toPath:
+    bnd.targetPath = targetPath
+    if resultLocal != SymId(0):
+      # the result local's every use becomes the path: the body builds the
+      # value in the destination itself
+      bnd.subst[resultLocal] = targetPath
 
   dest.addParLe TagId(ScopeS), info
 
@@ -1506,7 +1532,20 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   skip n
   result = 2                               # `(var …)` + `(scope …)`
 
-proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
+proc rootedAt(lhs, d: Cursor): bool =
+  ## Is the location `lhs` the destination `d` or a field/element path into
+  ## it?
+  let want = toString(d, false)
+  var x = lhs
+  while true:
+    if toString(x, false) == want: return true
+    if x.isTagLit and x.exprKind in {DotC, AtC}:
+      inc x                                # the base
+    else:
+      return false
+
+proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
+                    pathOk = false): int =
   ## `(asgn lhs (call f arg…))` with a symbol `lhs` — Final IR's "a call binds
   ## directly to its destination" form, which is how a non-void call reaches
   ## this pass whenever its result had a home already (`x = f(y)`; every
@@ -1520,11 +1559,27 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## local otherwise. Like NRVO, reading `lhs` through a raw pointer while the
   ## body runs sees the partial result: `y = f(addr y)` is the programmer's
   ## problem. A global `lhs` keeps the copy: the body may read it.
+  ##
+  ## `pathOk`: `lhs` is a path into the fresh destination of the `construct`
+  ## region being walked. Nothing reads that storage while the region runs
+  ## (`multi_join_ir.md`, rule 3), so the result is built in it directly.
   if not n.isTagLit or n.stmtKind != AsgnS: return 0
   let entry = n
   var probe = n
   inc probe                                # past `asgn` tag
-  if not probe.isSymbol: return 0
+  if not probe.isSymbol:
+    if not pathOk: return 0
+    let lhsPath = probe
+    skip probe                             # past lhs
+    var site = SpliceSite()
+    if not prepareSplice(c, probe, site): return 0
+    # A non-zero target: a `(ret X)` stores `X` (`emitTarget` writes the
+    # path); the symbol itself is never emitted.
+    emitSplice(c, dest, site, pool.symId("`regionDest.0"), forwardResult = true,
+               entry.info, targetPath = lhsPath)
+    n = entry
+    skip n
+    return 1
   let lhsSym = probe.symId
   inc probe                                # past lhs
 
@@ -2037,15 +2092,17 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             var probe = n
             inc probe
             var asgnCallee = SymId(0)
-            if probe.isSymbol:
-              inc probe                    # past lhs
+            let pathOk = not probe.isSymbol and c.regionDests.len > 0 and
+                         rootedAt(probe, c.regionDests[^1])
+            if probe.isSymbol or pathOk:
+              skip probe                   # past lhs
               if probe.isTagLit and probe.stmtKind == CallS:
                 inc probe
                 if probe.isSymbol:
                   asgnCallee = probe.symId
             if asgnCallee != SymId(0):
               var spliced = createTokenBuf(32)
-              let nEmitted = trySpliceAsgn(c, spliced, n)
+              let nEmitted = trySpliceAsgn(c, spliced, n, pathOk)
               if nEmitted > 0:
                 c.inProgress.incl asgnCallee
                 var expanded = createTokenBuf(spliced.len)
@@ -2057,6 +2114,19 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
                 prunedInto(dest, expanded)
                 continue
           trIntra(c, dest, n)
+      dest.addParRi()
+    of ConstructS:
+      # `(construct D (stmts …))` (`multi_join_ir.md`): `D` is fresh storage,
+      # so a store of a call into a path rooted at it may build the call's
+      # result in place (`trySpliceAsgn`'s `pathOk`).
+      dest.addParLe(n.cursorTagId, n.info)
+      into n:
+        let d = n
+        dest.takeTree n
+        c.regionDests.add d
+        while n.hasMore:
+          trIntra(c, dest, n)
+        discard c.regionDests.pop()
       dest.addParRi()
     of VarS, GvarS, TvarS, ConstS, ProcS:
       # `(var :tmp <pragmas> <type> (call …))` is the bound form `xelim`
@@ -2173,3 +2243,41 @@ proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
         dest.takeTree n
   dest.addParRi()
   buf = ensureMove(dest)
+
+proc hasConstructRegion(n: Cursor): bool =
+  if not n.isTagLit: return false
+  if n.stmtKind == ConstructS: return true
+  var it = n
+  it.loopInto:
+    if hasConstructRegion(it): return true
+    skip it
+  result = false
+
+proc dropConstructRegionsInto(dest: var TokenBuf; n: var Cursor) =
+  if n.isTagLit and n.stmtKind == ConstructS:
+    n.into:
+      skip n                               # D
+      while n.hasMore: dropConstructRegionsInto(dest, n) # the body
+  elif n.isTagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore: dropConstructRegionsInto(dest, n)
+    dest.addParRi()
+  else:
+    dest.addSubtree n
+    inc n
+
+proc dropConstructRegions*(buf: var TokenBuf) =
+  ## `(construct D (stmts …))` → `(stmts …)`. The region is a `stmts`
+  ## semantically; it lives in Leng only until the inliners have used it
+  ## (`trySpliceAsgn`'s `pathOk`), because neither shoggoth's passes nor the
+  ## back ends know it yet (`doc/internals/multi_join_ir.md`).
+  var r = beginRead(buf)
+  let any = hasConstructRegion(r)
+  if any:
+    var dest = createTokenBuf(buf.len)
+    dropConstructRegionsInto(dest, r)
+    endRead(r)
+    buf = ensureMove dest
+  else:
+    endRead(r)

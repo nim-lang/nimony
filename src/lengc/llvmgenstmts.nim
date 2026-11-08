@@ -504,6 +504,13 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
         while n.hasMore and n.stmtKind != LabS: skip n
   of ScopeS:
     genScopeLLVM c, n
+  of ConstructS:
+    # `(construct D (stmts …))`: its stores (`dropConstructRegions` normally
+    # removed the wrapper already)
+    n.into:
+      skip n
+      while n.hasMore:
+        genStmtLLVM(c, n)
   of InstrS:
     var instrResult = LLValue()
     genInstrLLVM(c, n, instrResult)

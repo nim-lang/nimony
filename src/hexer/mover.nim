@@ -276,6 +276,11 @@ const
 proc classify(n: Cursor): NodeClass =
   case n.stmtKind
   of BlockLikeKinds, AlwaysS: result = ncStmtList
+  of ConstructS:
+    # `(construct D (stmts …))` runs its children in order like a block. `D`
+    # comes first and is a destination; reading it as an operand only makes a
+    # query on `D`'s root more conservative.
+    result = ncStmtList
   of RoutineKinds: result = ncRoutine
   of CaseS: result = ncCase
   of TryS: result = ncTry
@@ -492,6 +497,15 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
     let fc = firstChild(base, pc)
     if fc < endOf(base, pc):
       pcs.add fc
+      result = true
+    else:
+      result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of ConstructS:
+    # `(construct D (stmts …))`: `D` is the fresh destination, not a read. The
+    # stores inside are `asgn`s and judged as such.
+    let body = endOf(base, firstChild(base, pc))
+    if body < endOf(base, pc):
+      pcs.add body
       result = true
     else:
       result = afterNode(m, base, pc, x, pcs, otherUsage)
