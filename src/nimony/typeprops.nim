@@ -455,7 +455,10 @@ type
     NotRaisable   ## neither `ErrorCode` nor a `ref` object type
     CodeRaises    ## `ErrorCode`: the code travels in the result's error slot
     RefRaises     ## a `ref` object: the slot says `Failure`, `exc` holds it
+    RefLacksRtti  ## a `ref` to an object without RTTI: `except` cannot test it
     UnknownRaises ## a type variable or an unresolvable symbol: judged later
+
+proc hasRtti*(s: SymId): bool
 
 proc raisesFamily*(t: Cursor): RaisesFamily =
   ## What `.raises: T` and `except T` may name. Nothing translates one kind
@@ -463,12 +466,14 @@ proc raisesFamily*(t: Cursor): RaisesFamily =
   ## routine it reaches have to agree on.
   var t = t
   var refSeen = false
+  var objSym = NoSymId # the type whose declaration holds the object
   for _ in 0 ..< 20:
     if t.isSymbol:
       if not refSeen and t.symId == pool.symId(ErrorCodeName): return CodeRaises
       let res = tryLoadSym(t.symId)
       if res.status != LacksNothing or res.decl.stmtKind != TypeS:
         return UnknownRaises
+      objSym = t.symId
       t = asTypeDecl(res.decl).body
     elif t.typeKind == InvokeT:
       inc t # the generic type it instantiates
@@ -476,7 +481,9 @@ proc raisesFamily*(t: Cursor): RaisesFamily =
       refSeen = true
       inc t
     elif t.typeKind == ObjectT and refSeen:
-      return RefRaises
+      # A raised `ref` travels as `ref Exception` and `except T` is an `of`
+      # test: both need the object's type header.
+      return if objSym != NoSymId and hasRtti(objSym): RefRaises else: RefLacksRtti
     elif t.typeKind == AutoT:
       return UnknownRaises
     else:

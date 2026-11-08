@@ -1,0 +1,20 @@
+tests/nimony/errmsgs/tfieldscontainers.nim(4, 18) Error: Type mismatch at [position]
+fields(a)
+[1] openArray[int64] does not match constraint T (declared in lib/std/system/iterators.nim(97, 1))
+[1] openArray[int64] does not match constraint T (declared in lib/std/system/iterators.nim(105, 1))
+tests/nimony/errmsgs/tfieldscontainers.nim(6, 16) Error: Type mismatch at [position]
+fields(@([1]))
+[1] seq[int64] does not match constraint T (declared in lib/std/system/iterators.nim(97, 1))
+[1] seq[int64] does not match constraint T (declared in lib/std/system/iterators.nim(105, 1))
+tests/nimony/errmsgs/tfieldscontainers.nim(7, 23) Error: Type mismatch at [position]
+fieldPairs(@([1]))
+[1] seq[int64] does not match constraint T (declared in lib/std/system/iterators.nim(113, 1))
+[1] seq[int64] does not match constraint T (declared in lib/std/system/iterators.nim(129, 1))
+tests/nimony/errmsgs/tfieldscontainers.nim(8, 16) Error: Type mismatch at [position]
+fields("ab")
+[1] string does not match constraint T (declared in lib/std/system/iterators.nim(97, 1))
+[1] string does not match constraint T (declared in lib/std/system/iterators.nim(105, 1))
+tests/nimony/errmsgs/tfieldscontainers.nim(9, 23) Error: Type mismatch at [position]
+fieldPairs("ab")
+[1] string does not match constraint T (declared in lib/std/system/iterators.nim(113, 1))
+[1] string does not match constraint T (declared in lib/std/system/iterators.nim(129, 1))

@@ -71,15 +71,99 @@ proc joinMembers*(dir: string; cat: Category; overwrite: bool): seq[string] =
       result.add x.path
   sort result
 
-proc joinedExpectedOutput*(files: openArray[string]): string =
-  ## What the joined program must print: each member's `.output` in import
-  ## order. A member without one is expected to print nothing — the same
-  ## contract `testFile` enforces is absent there, made explicit here.
-  result = ""
-  for f in items files:
-    let o = f.changeFileExt(".output")
-    if o.fileExists():
-      let spec = readFile(o).strip
-      if spec.len > 0:
-        if result.len > 0: result.add '\n'
-        result.add spec
+proc memberOutputSpec*(file: string): string =
+  ## The raw contents of `file`'s `.output`, or "" without one: a member with
+  ## no `.output` is expected to print nothing, as `testFile` checks.
+  let o = file.changeFileExt(".output")
+  result = if o.fileExists(): readFile(o) else: ""
+
+type
+  JoinedDiff* = object
+    ## Where the joined program's output first parts from its members'
+    ## `.output` files. `matchJoinedOutput` fills it.
+    ok*: bool
+    member*: int
+      ## The member whose expected segment holds the difference; -1 when the
+      ## output goes on past the last non-empty segment.
+    lastSegment*: int
+      ## The last member with a non-empty `.output` before the difference.
+    silent*: seq[int]
+      ## Members with no expected output just before the difference: any of
+      ## them may have printed the unexpected text.
+    expectedLine*, gotLine*: string
+    expectedLineNo*: int  ## 1-based, in the member's `.output` file
+    gotLineNo*: int       ## 1-based, in the program's output
+    atEnd*: bool          ## the program's output ended at the difference
+
+proc lineAround(s: string; pos: int): (string, int) =
+  ## The line of `s` holding offset `pos`, and its 1-based number.
+  var a = min(pos, s.len)
+  while a > 0 and s[a-1] != '\n': dec a
+  var b = min(pos, s.len)
+  while b < s.len and s[b] != '\n': inc b
+  var n = 1
+  for i in 0 ..< a:
+    if s[i] == '\n': inc n
+  result = (s.substr(a, b-1).strip(leading = false, chars = {'\r'}), n)
+
+proc matchJoinedOutput*(specs: openArray[string]; output: string): JoinedDiff =
+  ## Whether `output`, what the joined program printed, is what its members
+  ## print one after another, judged as `testFile` judges each member alone:
+  ## member `i` passes when what it prints, stripped, equals `specs[i]` (its
+  ## raw `.output`) stripped. So leading and trailing whitespace of each
+  ## member's share is free; each stripped spec must appear verbatim, in
+  ## order, with only whitespace between. A stripped spec starts with
+  ## non-whitespace, so skipping whitespace before it finds exactly where it
+  ## starts: the group passes exactly when `output` splits into consecutive
+  ## shares that each pass their member alone. Concatenating the stripped
+  ## specs instead loses a member's leading indentation, and a trailing blank
+  ## line, on one side only.
+  result = JoinedDiff(ok: true, member: -1, lastSegment: -1)
+  var p = 0
+  var silent: seq[int] = @[]
+  for i in 0 ..< specs.len:
+    let raw = specs[i]
+    let spec = raw.strip
+    if spec.len == 0:
+      silent.add i
+      continue
+    while p < output.len and output[p] in Whitespace: inc p
+    var q = 0
+    while q < spec.len and p < output.len and output[p] == spec[q]:
+      inc p
+      inc q
+    if q < spec.len:
+      let lead = raw.len - raw.strip(trailing = false).len
+      let (el, en) = lineAround(raw, lead + q)
+      let (gl, gn) = lineAround(output, p)
+      return JoinedDiff(ok: false, member: i, lastSegment: result.lastSegment,
+        silent: (if q == 0: silent else: @[]),
+        expectedLine: el, expectedLineNo: en, gotLine: gl, gotLineNo: gn,
+        atEnd: p >= output.len)
+    result.lastSegment = i
+    silent.setLen 0
+  while p < output.len and output[p] in Whitespace: inc p
+  if p < output.len:
+    let (gl, gn) = lineAround(output, p)
+    result = JoinedDiff(ok: false, member: -1, lastSegment: result.lastSegment,
+      silent: silent, gotLine: gl, gotLineNo: gn)
+
+proc describe*(d: JoinedDiff; files: openArray[string]): string =
+  ## Names the member whose expected segment holds the first difference, for
+  ## the line before a group's per-test rerun.
+  let got =
+    if d.atEnd: "the end of the output"
+    else: d.gotLine & "    (line " & $d.gotLineNo & " of the program's output)"
+  if d.member >= 0:
+    result = "  first difference: line " & $d.expectedLineNo & " of " &
+      files[d.member].changeFileExt(".output") & "\n" &
+      "    expected: " & d.expectedLine & "\n" &
+      "    got:      " & got
+  else:
+    result = "  unexpected output after " &
+      (if d.lastSegment >= 0: "the expected output of " & files[d.lastSegment]
+       else: "nothing: no member has an .output") & "\n" &
+      "    got:      " & got
+  if d.silent.len > 0:
+    result.add "\n  or printed by a member with no .output:"
+    for i in d.silent: result.add " " & files[i]

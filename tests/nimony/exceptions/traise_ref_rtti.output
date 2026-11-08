@@ -1,0 +1,8 @@
+ExcErr 1
+RootErr 2
+OwnRoot 3
+FinalErr 4
+GenErr 5
+bare RootErr
+bare OwnRoot
+local OwnRoot 6

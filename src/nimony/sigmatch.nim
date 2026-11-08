@@ -396,6 +396,23 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
   result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
 
+proc isBuiltinContainerSym(s: SymId; decl: Cursor): bool =
+  ## `string`, `seq` and `openArray` are declared as objects in `lib/std/system`,
+  ## but the language gives them kinds of their own: the `object` type class
+  ## must not see through to their declaration. `s` is the type or the head of
+  ## an invocation; `decl` is its declaration, whose generic parameters name the
+  ## head when `s` is an instance.
+  if s == pool.symId(StringName):
+    return true
+  var head = s
+  let td = asTypeDecl(decl)
+  if td.typevars.typeKind == InvokeT:
+    var inv = td.typevars
+    inc inv
+    if inv.isSymbol: head = inv.symId
+  let name = pool.symString(head)
+  result = name == SeqHeadName or name == OpenArrayHeadName
+
 proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
@@ -410,6 +427,8 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     if aTag.isSymbol:
       let res = tryLoadSym(aTag.symId)
       if res.status == LacksNothing and res.decl.stmtKind == TypeS:
+        # a built-in container has no type-class tag (`object`, `tuple`, …)
+        resolvable = not isBuiltinContainerSym(aTag.symId, res.decl)
         aTag = typeImpl(aTag.symId)
       else:
         # `(at <plugin template> …)`: a plugin that deferred its expansion. The
@@ -2030,7 +2049,7 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
     return false
   if a.typeKind == InvokeT:
     inc a # tag
-    result = a.isSymbol and pool.symString(a.symId) == "seq.0." & SystemModuleSuffix
+    result = a.isSymbol and pool.symString(a.symId) == SeqHeadName
     if result:
       inc a
       elemType = a
