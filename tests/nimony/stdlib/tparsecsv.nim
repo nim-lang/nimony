@@ -5,17 +5,13 @@ func rowCount(p: var CsvParser): int =
   ## a no-side-effect context.
   p.processedRows()
 
-func cell(p: var CsvParser; entry: string): string {.raises: CsvError.} =
+func cell(p: var CsvParser; entry: string): string {.raises.} =
   ## `rowEntry` is a `func` too; returning the value (not the `var` location)
-  ## is enough for the test. Convert its `KeyError` so the test's main proc can
-  ## remain typed as raising only `CsvError`.
-  try:
-    result = p.rowEntry(entry)
-  except ErrorCode:
-    raise CsvError(msg: "missing header: " & entry)
+  ## is enough for the test.
+  result = p.rowEntry(entry)
 
 proc parseOne(s: string; separator = ','; quote = '"'; escape = '\0';
-              skipInitialSpace = false): seq[string] {.raises: CsvError.} =
+              skipInitialSpace = false): seq[string] {.raises.} =
   var p = default(CsvParser)
   var strm = newStringStream(s)
   p.open(strm, "mem.csv", separator, quote, escape, skipInitialSpace)
@@ -23,7 +19,7 @@ proc parseOne(s: string; separator = ','; quote = '"'; escape = '\0';
   result = p.row
   p.close()
 
-proc main() {.raises: CsvError.} =
+proc main() {.raises.} =
   block: # basic rows, blank lines and EOF
     var p = default(CsvParser)
     var strm = newStringStream("One,Two,Three\n1,2,3\n\n10,20,30")
@@ -40,6 +36,8 @@ proc main() {.raises: CsvError.} =
     assert rowCount(p) == 4
     assert not p.readRow()
     assert rowCount(p) == 5
+    assert not p.hasError()
+    assert p.errorMsg() == ""
     p.close()
 
   block: # header row and rowEntry
@@ -93,24 +91,42 @@ proc main() {.raises: CsvError.} =
     var p = default(CsvParser)
     var strm = newStringStream("a,b\n")
     p.open(strm, "cols.csv")
-    var message = ""
+    var err = Success
     try:
       discard p.readRow(3)
-    except CsvError as e:
-      message = e.msg
-    assert message.contains("3 columns expected, but found 2 columns")
+    except ErrorCode as e:
+      err = e
+    assert err == SyntaxError
+    assert p.hasError()
+    assert p.errorMsg().contains("3 columns expected, but found 2 columns")
     p.close()
 
-  block: # unterminated quotes report a CsvError
+  block: # unterminated quotes raise SyntaxError
     var p = default(CsvParser)
     var strm = newStringStream("\"unterminated\n")
     p.open(strm, "bad.csv")
-    var caught = false
+    var err = Success
     try:
       discard p.readRow()
-    except CsvError as e:
-      caught = e.msg.contains("\" expected")
-    assert caught
+    except ErrorCode as e:
+      err = e
+    assert err == SyntaxError
+    assert p.hasError()
+    assert p.errorMsg().contains("\" expected")
+    p.close()
+
+  block: # a missing separator raises SyntaxError and reports it
+    var p = default(CsvParser)
+    var strm = newStringStream("\"a\"x,b\n")
+    p.open(strm, "sep.csv")
+    var err = Success
+    try:
+      discard p.readRow()
+    except ErrorCode as e:
+      err = e
+    assert err == SyntaxError
+    assert p.hasError()
+    assert p.errorMsg().contains(", expected")
     p.close()
 
   block: # reopening a parser resets its state
@@ -149,14 +165,17 @@ proc main() {.raises: CsvError.} =
     p.close()
     discard tryRemoveFile(path(filename))
 
-  block: # a missing file raises CsvError
+  block: # a missing file raises IOError
     var p = default(CsvParser)
-    var caught = false
+    let filename = getTempDir() / "nimony_tparsecsv_missing.csv"
+    var err = Success
     try:
-      p.open(getTempDir() / "nimony_tparsecsv_missing.csv")
-    except CsvError as e:
-      caught = e.msg.contains("cannot open")
-    assert caught
+      p.open(filename)
+    except ErrorCode as e:
+      err = e
+    assert err == IOError
+    assert p.hasError()
+    assert p.errorMsg() == "Error: cannot open: " & filename
 
 try:
   main()

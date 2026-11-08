@@ -12,9 +12,10 @@
 ##
 ## This is a port of Nim's `std/parsecsv` to Nimony. `CsvParser` still builds
 ## on `std/lexbase`, so parsing is streaming and only buffers around line
-## endings. Nimony represents ordinary exceptions as `ErrorCode` values, but a
-## CSV syntax error has a useful source position and message, so `CsvError`
-## stays a heap-allocated exception type (`ref object of Exception`).
+## endings. Nimony models errors as `ErrorCode` values: malformed CSV raises
+## `SyntaxError` and a file that cannot be opened raises `IOError`. The parser
+## keeps the first error's message; use `errorMsg <#errorMsg,CsvParser>`_ after
+## catching the error for a diagnostic with filename and position.
 ##
 ## Basic usage
 ## ===========
@@ -78,6 +79,10 @@
 import std/[lexbase, streams, strutils]
 
 type
+  CsvErrorKind = enum
+    errNone, errQuoteExpected, errSeparatorExpected, errColumnsExpected,
+    errCannotOpen, errRowChanged, errCannotGrowRow
+
   CsvRow* = seq[string] ## A row in a CSV file.
   CsvParser* = object of BaseLexer ## The parser object.
                                    ##
@@ -92,28 +97,67 @@ type
     skipWhite: bool
     currRow: int
     headers*: seq[string]
+    err: CsvErrorKind
+    errLine, errCol: int
+    errExpected, errFound: int
 
-  CsvError* = ref object of Exception ## Raised if a parsing error occurs.
-                                      ## `msg` contains a description with the
-                                      ## source position when available.
+func formatError(self: CsvParser; err: CsvErrorKind;
+                 line, col: int): string =
+  var msg = ""
+  case err
+  of errNone: return ""
+  of errCannotOpen: return "Error: cannot open: " & self.filename
+  of errRowChanged: return "Error: row changed during parsing"
+  of errCannotGrowRow: return "Error: cannot grow row"
+  of errQuoteExpected: msg = $self.quote & " expected"
+  of errSeparatorExpected: msg = $self.sep & " expected"
+  of errColumnsExpected:
+    msg = $self.errExpected & " columns expected, but found " &
+          $self.errFound & " columns"
+  result = "Error: "
+  if self.filename.len > 0:
+    result = self.filename & "(" & $line & ", " & $col & ") Error: "
+  result.add msg
 
-proc raiseEInvalidCsv(filename: string; line, col: int;
-                      msg: string) {.noreturn, raises: CsvError.} =
-  var text = "Error: "
-  if filename.len > 0:
-    text = filename & "(" & $line & ", " & $col & ") Error: "
-  text.add msg
-  raise CsvError(msg: text)
+func hasError*(self: CsvParser): bool {.inline.} =
+  ## True once the parser has recorded an error. The error message is
+  ## available through `errorMsg <#errorMsg,CsvParser>`_.
+  self.err != errNone
 
-proc error(self: CsvParser; pos: int; msg: string) {.noreturn, raises: CsvError.} =
-  raiseEInvalidCsv(self.filename, self.lineNumber, getColNumber(self, pos), msg)
+func errorMsg*(self: CsvParser): string =
+  ## Returns the first error's message, including the filename and source
+  ## position when available. Returns `""` if no error was recorded.
+  formatError(self, self.err, self.errLine, self.errCol)
+
+func setError(self: var CsvParser; err: CsvErrorKind; pos: int) =
+  ## Keeps the first error, like a parser error state. Does not raise; callers
+  ## pair this with the `ErrorCode` that describes the failure.
+  if self.err == errNone:
+    self.err = err
+    self.errLine = self.lineNumber
+    self.errCol = getColNumber(self, pos)
+
+func fail(self: var CsvParser; err: CsvErrorKind; pos: int;
+          code: ErrorCode) {.noreturn, raises.} =
+  setError(self, err, pos)
+  raise code
+
+func failColumns(self: var CsvParser; line, col, expected, found: int) {.
+    noreturn, raises.} =
+  if self.err == errNone:
+    self.err = errColumnsExpected
+    self.errLine = line
+    self.errCol = col
+    self.errExpected = expected
+    self.errFound = found
+  raise SyntaxError
 
 proc open*(self: var CsvParser; input: Stream; filename: string;
            separator = ','; quote = '"'; escape = '\0';
            skipInitialSpace = false) =
-  ## Initializes the parser with an input stream. `Filename` is only used
-  ## for nice error messages. The parser's behaviour can be controlled by
-  ## the diverse optional parameters:
+  ## Initializes the parser with an input stream. `filename` is used for error
+  ## messages. The parser's behaviour can be controlled by the diverse optional
+  ## parameters:
   ## - `separator`: character used to separate fields
   ## - `quote`: Used to quote fields containing special characters like
   ##   `separator`, `quote` or new-line characters. '\\0' disables the parsing
@@ -140,6 +184,11 @@ proc open*(self: var CsvParser; input: Stream; filename: string;
   self.headers.setLen(0)
   self.currRow = 0
   self.filename = filename
+  self.err = errNone
+  self.errLine = 0
+  self.errCol = 0
+  self.errExpected = 0
+  self.errFound = 0
   self.sep = separator
   self.quote = quote
   self.esc = escape
@@ -147,9 +196,10 @@ proc open*(self: var CsvParser; input: Stream; filename: string;
 
 proc open*(self: var CsvParser; filename: string;
            separator = ','; quote = '"'; escape = '\0';
-           skipInitialSpace = false) {.raises: CsvError.} =
+           skipInitialSpace = false) {.raises.} =
   ## Similar to the `other open proc<#open,CsvParser,Stream,string,char,char,char>`_,
-  ## but creates the file stream for you.
+  ## but creates the file stream for you. Raises `IOError` if the file cannot
+  ## be opened.
   runnableExamples:
     from std/os import removeFile
     writeFile("tmp.csv", "One,Two,Three\n1,2,3\n10,20,300")
@@ -158,14 +208,17 @@ proc open*(self: var CsvParser; filename: string;
     parser.close()
     removeFile("tmp.csv")
 
+  self.filename = filename
+  self.err = errNone
   var s = newFileStream(filename, fmRead)
   if s == nil:
-    raise CsvError(msg: "Error: cannot open: " & filename)
+    self.err = errCannotOpen
+    raise IOError
   open(self, s, filename, separator,
        quote, escape, skipInitialSpace)
 
 proc parseField(self: var CsvParser; col: int) {.
-    raises: CsvError, requires: col >= 0 and col < self.row.len.} =
+    raises, requires: col >= 0 and col < self.row.len.} =
   ## Parses the field starting at `self.bufpos` into `self.row[col]`.
   ## Takes the column index instead of a `var string` so the parser and its
   ## row are not passed as aliasing mutable arguments.
@@ -179,9 +232,8 @@ proc parseField(self: var CsvParser; col: int) {.
     while true:
       let c = charAt(self.buf, pos)
       if c == '\0':
-        self.bufpos = pos # can continue after exception?
-        error(self, pos, $self.quote & " expected")
-        break
+        self.bufpos = pos
+        self.fail(errQuoteExpected, pos, SyntaxError)
       elif c == self.quote:
         if self.esc == '\0' and charAt(self.buf, pos + 1) == self.quote:
           add(field, self.quote)
@@ -213,7 +265,7 @@ proc parseField(self: var CsvParser; col: int) {.
   # Re-establish the bound after handleCR/handleLF: they take the parser by
   # `var`, so the prover no longer knows what `self.row.len` is.
   if col < 0 or col >= self.row.len:
-    raise CsvError(msg: "Error: row changed during parsing")
+    self.fail(errRowChanged, self.bufpos, BugError)
   self.row[col] = move(field)
   self.bufpos = pos
 
@@ -242,7 +294,7 @@ func processedRows*(self: var CsvParser): int {.inline.} =
 
   self.currRow
 
-proc readRow*(self: var CsvParser; columns = 0): bool {.raises: CsvError.} =
+proc readRow*(self: var CsvParser; columns = 0): bool {.raises.} =
   ## Reads the next row; if `columns` > 0, it expects the row to have
   ## exactly this many columns. Returns false if the end of the file
   ## has been encountered else true.
@@ -271,20 +323,21 @@ proc readRow*(self: var CsvParser; columns = 0): bool {.raises: CsvError.} =
     strm.close()
 
   var col = 0 # current column
-  let oldpos = self.bufpos
   # skip initial empty lines #8365
   while true:
     case charAt(self.buf, self.bufpos)
     of '\c': self.bufpos = handleCR(self, self.bufpos)
     of '\l': self.bufpos = handleLF(self, self.bufpos)
     else: break
+  let rowLine = self.lineNumber
+  let rowCol = getColNumber(self, self.bufpos + 1)
   while charAt(self.buf, self.bufpos) != '\0':
     if self.row.len <= col:
       setLen(self.row, col + 1)
     if col >= 0 and col < self.row.len:
       parseField(self, col)
     else:
-      raise CsvError(msg: "Error: cannot grow row")
+      self.fail(errCannotGrowRow, self.bufpos, BugError)
     inc(col)
     if charAt(self.buf, self.bufpos) == self.sep:
       inc(self.bufpos)
@@ -298,21 +351,20 @@ proc readRow*(self: var CsvParser; columns = 0): bool {.raises: CsvError.} =
           of '\l': self.bufpos = handleLF(self, self.bufpos)
           else: break
       of '\0': discard
-      else: error(self, self.bufpos, $self.sep & " expected")
+      else: self.fail(errSeparatorExpected, self.bufpos, SyntaxError)
       break
 
   setLen(self.row, col)
   result = col > 0
   if result and col != columns and columns > 0:
-    error(self, oldpos + 1, $columns & " columns expected, but found " &
-          $col & " columns")
+    self.failColumns(rowLine, rowCol, columns, col)
   inc(self.currRow)
 
 proc close*(self: var CsvParser) {.inline.} =
   ## Closes the parser `self` and its associated input stream.
   lexbase.close(self)
 
-proc readHeaderRow*(self: var CsvParser) {.raises: CsvError.} =
+proc readHeaderRow*(self: var CsvParser) {.raises.} =
   ## Reads the first row and creates a look-up table for column numbers
   ## See also:
   ## * `rowEntry proc <#rowEntry,CsvParser,string>`_
@@ -378,6 +430,7 @@ when not defined(testing) and isMainModule:
       echo "new row: "
       for val in items(x.row):
         echo "##", val, "##"
-  except CsvError as e:
-    quit e.msg
+  except ErrorCode as e:
+    if x.hasError(): quit x.errorMsg()
+    quit "parsecsv: " & $e
   close(x)
