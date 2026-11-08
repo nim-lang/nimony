@@ -126,7 +126,7 @@ proc fillBuffer(L: var BaseLexer) =
           break
         s = L.buf.len - 1
 
-proc fillBaseLexer(L: var BaseLexer, pos: int): int =
+proc fillBaseLexer(L: var BaseLexer, pos: Natural): Natural =
   assert(pos <= L.sentinel)
   if pos < L.sentinel:
     result = pos + 1 # nothing to do
@@ -136,27 +136,29 @@ proc fillBaseLexer(L: var BaseLexer, pos: int): int =
     L.bufpos = 0
     result = 0
 
-proc handleCR*(L: var BaseLexer, pos: int): int =
+proc handleCR*(L: var BaseLexer, pos: int): Natural {.
+    ensures: L.lineStart == result.} =
   ## Call this if you scanned over `'\c'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
-  ## of the `'\c'`.
+  ## of the `'\c'`. The returned position is recorded as `L.lineStart`.
   assert(pos >= 0 and pos < L.buf.len and L.buf[pos] == '\c')
   inc(L.lineNumber)
   result = fillBaseLexer(L, pos)
-  if result >= 0 and result < L.buf.len and L.buf[result] == '\L':
+  if result < L.buf.len and L.buf[result] == '\L':
     result = fillBaseLexer(L, result)
   L.lineStart = result
 
-proc handleLF*(L: var BaseLexer, pos: int): int =
+proc handleLF*(L: var BaseLexer, pos: int): Natural {.
+    ensures: L.lineStart == result.} =
   ## Call this if you scanned over `'\L'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
-  ## of the `'\L'`.
+  ## of the `'\L'`. The returned position is recorded as `L.lineStart`.
   assert(pos >= 0 and pos < L.buf.len and L.buf[pos] == '\L')
   inc(L.lineNumber)
   result = fillBaseLexer(L, pos) #L.lastNL := result-1; // BUGFIX: was: result;
   L.lineStart = result
 
-proc handleRefillChar*(L: var BaseLexer, pos: int): int =
+proc handleRefillChar*(L: var BaseLexer, pos: int): Natural =
   ## Call this if a terminator character other than a new line is scanned
   ## at `pos`; it returns the position to continue the scanning from.
   assert(pos >= 0 and pos < L.buf.len and L.buf[pos] in L.refillChars)
@@ -183,11 +185,11 @@ proc open*(L: var BaseLexer, input: Stream, bufLen: int = 8192;
   fillBuffer(L)
   skipUtf8Bom(L)
 
-proc getColNumber*(L: BaseLexer, pos: int): int =
+func getColNumber*(L: BaseLexer, pos: int): Natural =
   ## retrieves the current column.
-  result = abs(pos - L.lineStart)
+  result = Natural(abs(pos - L.lineStart))
 
-proc getCurrentLine*(L: BaseLexer, marker: bool = true): string =
+func getCurrentLine*(L: BaseLexer, marker: bool = true): string =
   ## retrieves the current line.
   var i: int
   result = ""
