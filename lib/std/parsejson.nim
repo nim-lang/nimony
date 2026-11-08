@@ -109,7 +109,7 @@ const
     "{", "}", "[", "]", ":", ","
   ]
 
-proc handleHexChar(c: char, x: var int): bool {.inline.} =
+func handleHexChar(c: char, x: var int): bool {.inline.} =
   ## Converts a hexadecimal character to its ordinal value and folds the result
   ## into `x` (`x = x shl 4 + hex2Int(c)`). Returns `true` if `c` is a hex
   ## digit. Inlined here to avoid a dependency on `std/private/decode_helpers`.
@@ -139,42 +139,42 @@ proc close*(my: var JsonParser) {.inline.} =
   ## closes the parser `my` and its associated input stream.
   lexbase.close(my)
 
-proc str*(my: JsonParser): string {.inline.} =
+func str*(my: JsonParser): string {.inline.} =
   ## returns the character data for the events: `jsonInt`, `jsonFloat`,
   ## `jsonString`
   assert(my.kind == jsonInt or my.kind == jsonFloat or my.kind == jsonString)
-  return my.a
+  my.a
 
-proc getInt*(my: JsonParser): BiggestInt {.inline.} =
+func getInt*(my: JsonParser): BiggestInt {.inline.} =
   ## returns the number for the event: `jsonInt`
   assert(my.kind == jsonInt)
   result = 0
   discard parseBiggestInt(my.a, result)
 
-proc getFloat*(my: JsonParser): float {.inline.} =
+func getFloat*(my: JsonParser): float {.inline.} =
   ## returns the number for the event: `jsonFloat`
   assert(my.kind == jsonFloat)
   var f: BiggestFloat = 0.0
   discard parseBiggestFloat(my.a, f)
-  result = float(f)
+  float(f)
 
-proc kind*(my: JsonParser): JsonEventKind {.inline.} =
+func kind*(my: JsonParser): JsonEventKind {.inline.} =
   ## returns the current event type for the JSON parser
-  return my.kind
+  my.kind
 
-proc getColumn*(my: JsonParser): int {.inline.} =
+func getColumn*(my: JsonParser): int {.inline.} =
   ## get the current column the parser has arrived at.
-  result = getColNumber(my, my.bufpos)
+  getColNumber(my, my.bufpos)
 
-proc getLine*(my: JsonParser): int {.inline.} =
+func getLine*(my: JsonParser): int {.inline.} =
   ## get the current line the parser has arrived at.
-  result = my.lineNumber
+  my.lineNumber
 
-proc getFilename*(my: JsonParser): string {.inline.} =
+func getFilename*(my: JsonParser): string {.inline.} =
   ## get the filename of the file that the parser processes.
-  result = my.filename
+  my.filename
 
-proc errorMsgFor*(my: JsonParser, err: JsonError): string =
+func errorMsgFor*(my: JsonParser, err: JsonError): string =
   ## Format a diagnostic for a *specific* `JsonError`, in the
   ## `<file>(<line>, <col>) Error: <msg>` form. Non-raising (plain string
   ## concatenation, no `%`) so the whole parse stack stays `raises`-free. The
@@ -184,20 +184,20 @@ proc errorMsgFor*(my: JsonParser, err: JsonError): string =
   # an enum conversion is not range checked, so `err` may be outside the table
   var msg = ""
   if ord(err) >= 0 and ord(err) <= ord(high(JsonError)): msg = errorMessages[err]
-  result = my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
-           ") Error: " & msg
+  my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
+    ") Error: " & msg
 
-proc errorMsg*(my: JsonParser): string =
+func errorMsg*(my: JsonParser): string =
   ## returns a helpful error message for the current error state
-  result = errorMsgFor(my, my.err)
+  errorMsgFor(my, my.err)
 
-proc errorMsgExpected*(my: JsonParser, e: string): string =
+func errorMsgExpected*(my: JsonParser, e: string): string =
   ## returns an error message "`e` expected" in the same format as the
   ## other error messages
-  result = my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
-           ") Error: " & e & " expected"
+  my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
+    ") Error: " & e & " expected"
 
-proc parseEscapedUTF16*(buf: openArray[char], pos: var int): int =
+func parseEscapedUTF16*(buf: openArray[char], pos: var int): int =
   result = 0
   #UTF-16 escape is always 4 bytes.
   for _ in 0..3:
@@ -345,7 +345,7 @@ proc skip(my: var JsonParser) =
       break
   my.bufpos = pos
 
-proc parseNumber(my: var JsonParser) =
+func parseNumber(my: var JsonParser) =
   var pos = my.bufpos
   if charAt(my.buf, pos) == '-':
     add(my.a, '-')
@@ -375,7 +375,7 @@ proc parseNumber(my: var JsonParser) =
       inc(pos)
   my.bufpos = pos
 
-proc parseName(my: var JsonParser) =
+func parseName(my: var JsonParser) =
   var pos = my.bufpos
   if charAt(my.buf, pos) in IdentStartChars:
     while charAt(my.buf, pos) in IdentChars:
@@ -550,7 +550,7 @@ proc next*(my: var JsonParser) =
       my.kind = jsonError
       my.err = errExprExpected
 
-proc setError*(p: var JsonParser; err = errInvalidToken) {.inline.} =
+func setError*(p: var JsonParser; err = errInvalidToken) {.inline.} =
   ## Record a syntax error in the parser's state instead of raising. After this,
   ## `kind(p)` is `jsonError` and `hasError(p)` is true. The parser *collects*
   ## errors rather than raising, so callers (e.g. `std/json`) stay
@@ -558,11 +558,11 @@ proc setError*(p: var JsonParser; err = errInvalidToken) {.inline.} =
   p.kind = jsonError
   if p.err == errNone: p.err = err
 
-proc hasError*(my: JsonParser): bool {.inline.} =
+func hasError*(my: JsonParser): bool {.inline.} =
   ## True once the parser has recorded a syntax error (see `setError`).
   my.err != errNone
 
-proc raiseParseErr*(p: var JsonParser, msg: string) {.noinline.} =
+func raiseParseErr*(p: var JsonParser, msg: string) {.noinline.} =
   ## Records a syntax error in `p`'s state. Despite the historical name it no
   ## longer raises — `msg` only documents the expectation; use
   ## `errorMsgExpected(p, msg)` for the human-readable text.
