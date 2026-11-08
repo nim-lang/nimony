@@ -197,11 +197,6 @@ Not done yet:
   (for a call that is not inlined) need it to survive further.
 - `contracts_fir` does not yet attribute a borrow stored into a field
   (`establishesBorrow`, views) to `D`'s root.
-- A constructor inside a region gets no not-nil check of its fields, as values
-  of a constructor got none before. Checking them would reject sem's `T(nil)`
-  default of a not-nil field nested in another constructor
-  (`tests/nimony/opt/topt_memset_fill.nim` relies on it); that needs its own
-  decision.
 - An inheritable object (one with type info) is not split: `vtables` fills its
   type-info slot as the constructor's positional child, which no field store
   writes.

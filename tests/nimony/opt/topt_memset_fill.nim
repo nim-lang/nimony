@@ -9,7 +9,7 @@ type
   Color = enum red, green, blue, alpha
   Inner = object
     a: int
-    p: ptr int
+    p: nil ptr int
     s: string
   Obj = object
     x, y, z: int
