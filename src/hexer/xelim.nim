@@ -400,6 +400,11 @@ proc isSplittableConstr(n: Cursor): bool =
     var it = n
     it = sub(it) # peek only, never left
     if n.exprKind == NewobjX and refAsksForNil(it): return false
+    # An inheritable object carries its type info in a slot `vtables` fills
+    # in as the constructor's positional child; no field store writes it.
+    var objType = it
+    if n.exprKind == NewobjX and objType.typeKind == RefT: inc objType
+    if objType.kind == Symbol and hasRtti(objType.symId): return false
     skip it # the type
     if not it.hasMore: return false # an empty `newobj`: a synthesized frame
     while it.hasMore:
@@ -500,6 +505,16 @@ proc trConstructInto(c: var Context; dest: var TokenBuf; n: var Cursor; d: Curso
     copyIntoKind dest, StmtsS, info:
       dest.add body
 
+proc addPragmasWithNoinit(dest: var TokenBuf; pragmas: Cursor) =
+  ## `pragmas` (a `(pragmas …)` or `.`) with `(noinit)` added.
+  copyIntoKind dest, PragmasS, pragmas.info:
+    if pragmas.isTagLit:
+      var p = pragmas
+      p = sub(p) # peek only, never left
+      while p.hasMore:
+        dest.takeTree p
+    copyIntoKind dest, NoinitP, pragmas.info: discard
+
 proc emitNoinitNewobj(dest: var TokenBuf; refType: Cursor; info: NifLineInfo) =
   ## `(newobj T (noinit))`: allocated, the payload left to a region.
   copyIntoKind dest, NewobjX, info:
@@ -524,7 +539,9 @@ proc trConstructTemp(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var
   else:
     copyIntoKind dest, VarS, info:
       dest.addSymDef tmp, info
-      dest.addEmpty2 info # export marker, pragmas
+      dest.addDotToken() # export marker
+      copyIntoKind dest, PragmasS, info:
+        copyIntoKind dest, NoinitP, info: discard
       dest.copyTree typ
       dest.addDotToken() # no value: the region initializes it
     d.addSymUse tmp, info
@@ -552,7 +569,12 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
     trExprLoop c, dest, n, tar
     return
 
-  if isSplittableConstr(n):
+  if c.goal == TowardsFinalIr and isSplittableConstr(n):
+    # Only nimsem's run splits. The backend run sees constructors the
+    # hexer passes built (the duplifier's `newobj` cell), whose destination
+    # would be a fresh temp copied into place: no gain over binding the
+    # calls, and its stores would put call results into paths, which no back
+    # end accepts yet.
     trConstructTemp c, dest, n, tar
     return
 
@@ -1336,11 +1358,22 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let name = n.symId
     takeTree tmp, n # name
     takeTree tmp, n # export marker
-    takeTree tmp, n # pragmas
+    let pragmas = n
+    skip n
+    var value = n
+    skip value # the type
+    let split = c.goal == TowardsFinalIr and
+        kind in {VarY, LetY, GvarY, GletY, TvarY, TletY} and
+        isSplittableConstr(value) and isComplex(value, c.goal)
+    if split and value.exprKind == OconstrX:
+      # declared without a value: `(noinit)` says the region right after it
+      # initializes it (`contracts_fir` asks no default value of it)
+      addPragmasWithNoinit tmp, pragmas
+    else:
+      tmp.copyTree pragmas
     c.typeCache.registerLocal(name, kind, n)
     takeTree tmp, n # type
-    if kind in {VarY, LetY, GvarY, GletY, TvarY, TletY} and
-        isSplittableConstr(n) and isComplex(n, c.goal):
+    if split:
       # The declared location is the region's destination: no temp at all.
       # `x = (newobj T …)` allocates first, the region fills `x[]`.
       let info = n.info
@@ -1505,9 +1538,13 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `LowerCasts` keeps it too: the inliner splices `lhs = f(args)` straight
     # into `lhs` (`trySpliceAsgn`), so a temp would only add a copy.
     # In a `construct` region every store's destination is fresh storage
-    # nothing else reads (`multi_join_ir.md`, rule 3): a call binds to the
-    # field directly, which is the point of the region.
-    let lhsIsResult = n.childCursor.kind == Symbol or c.constructDepth > 0
+    # nothing else reads (`multi_join_ir.md`, rule 3): in nimsem's run a call
+    # binds to the field directly, so the prover sees it as one. The backend
+    # run keeps its `(inline)` temp: a back end cannot store a call's
+    # aggregate result into a field path yet (arkham), and the intra-module
+    # inliner folds `tmp = f(); D.f = tmp` into `D.f` when it splices `f`.
+    let lhsIsResult = n.childCursor.kind == Symbol or
+                      (c.constructDepth > 0 and c.goal == TowardsFinalIr)
     tar.t.copyInto n:
       trExpr c, dest, n, tar
       if lhsIsResult:

@@ -1544,6 +1544,99 @@ proc rootedAt(lhs, d: Cursor): bool =
     else:
       return false
 
+proc rootSym(n: Cursor): SymId =
+  var x = n
+  while x.isTagLit and x.exprKind in {DotC, AtC}:
+    inc x
+  result = if x.isSymbol: x.symId else: SymId(0)
+
+proc isCallNode(n: Cursor): bool {.inline.} =
+  n.isTagLit and (n.exprKind == CallC or n.stmtKind == CallS)
+
+proc storesCallIntoResult(n: Cursor; resultLocal: SymId): bool =
+  ## Would splicing this callee body into a PATH target store a call's value
+  ## into that path? A `(ret (call …))`, a `result` declared or assigned from a
+  ## call, or a call stored into a part of `result` would all become
+  ## `(asgn path (call …))`. Leng never holds that shape (`xelim` binds a call
+  ## to a temp unless its destination is a symbol) and arkham has no arm for a
+  ## call's aggregate result stored into a path, so such a callee is not
+  ## spliced into one.
+  if not n.isTagLit: return false
+  if n.stmtKind == RetS:
+    var v = n
+    inc v
+    if v.hasMore and isCallNode(v): return true
+  elif n.stmtKind == VarS and resultLocal != SymId(0):
+    var v = n
+    inc v
+    if v.isSymbolDef and v.symId == resultLocal:
+      skip v # name
+      skip v # pragmas
+      skip v # type
+      if v.hasMore and isCallNode(v): return true
+  elif n.stmtKind == AsgnS and resultLocal != SymId(0):
+    var v = n
+    inc v
+    let lhs = v
+    skip v
+    if rootSym(lhs) == resultLocal and isCallNode(v): return true
+  var it = n
+  it.loopInto:
+    if storesCallIntoResult(it, resultLocal): return true
+    skip it
+  result = false
+
+proc pathSpliceOk(site: SpliceSite): bool =
+  ## `site`'s callee may build its result in a path target.
+  not storesCallIntoResult(site.pd.body, resultLocalOf(site.pd.body, site.pSyms))
+
+proc trySpliceVarIntoPath(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
+                          callee: var SymId): int =
+  ## Inside a `construct` region: `(var tmp T (call f …))` followed by
+  ## `(asgn L tmp)`, `L` a path into the region's fresh destination and `tmp`
+  ## used nowhere else. `xelim` binds a store's call to such a temp so that a
+  ## back end never stores an aggregate call result into a path itself; when
+  ## `f` is spliced, its result is built in `L` and the temp goes away.
+  ## Consumes both statements and returns 1, or 0 leaving `n` untouched.
+  result = 0
+  if c.regionDests.len == 0 or not n.isTagLit or n.stmtKind != VarS: return
+  let entry = n
+  var p = n
+  inc p                                    # past `var`
+  if not p.isSymbolDef: return
+  let tmpSym = p.symId
+  skip p                                   # name
+  skip p                                   # pragmas
+  skip p                                   # type
+  if not (p.isTagLit and p.stmtKind == CallS): return
+  let callPos = p
+  var probe = p
+  inc probe
+  if not probe.isSymbol: return
+  var nx = entry
+  skip nx
+  if not (nx.hasMore and nx.isTagLit and nx.stmtKind == AsgnS): return
+  var a = nx
+  inc a                                    # past `asgn`
+  let lhs = a
+  if lhs.isSymbol or not rootedAt(lhs, c.regionDests[^1]): return
+  skip a
+  if not (a.isSymbol and a.symId == tmpSym): return
+  var after = nx
+  skip after
+  while after.hasMore:
+    if countSymUses(after, tmpSym) > 0: return
+    skip after
+  var site = SpliceSite()
+  if not prepareSplice(c, callPos, site): return
+  if not pathSpliceOk(site): return
+  callee = probe.symId
+  emitSplice(c, dest, site, pool.symId("`regionDest.0"), forwardResult = true,
+             entry.info, targetPath = lhs)
+  n = nx
+  skip n
+  result = 1
+
 proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
                     pathOk = false): int =
   ## `(asgn lhs (call f arg…))` with a symbol `lhs` — Final IR's "a call binds
@@ -1573,6 +1666,7 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
     skip probe                             # past lhs
     var site = SpliceSite()
     if not prepareSplice(c, probe, site): return 0
+    if not pathSpliceOk(site): return 0
     # A non-zero target: a `(ret X)` stores `X` (`emitTarget` writes the
     # path); the symbol itself is never emitted.
     emitSplice(c, dest, site, pool.symId("`regionDest.0"), forwardResult = true,
@@ -2068,6 +2162,20 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
               endRead(inner)
               if calleeSym != SymId(0):
                 c.inProgress.excl calleeSym
+              prunedInto(dest, expanded)
+              continue
+          if c.regionDests.len > 0 and n.isTagLit and n.stmtKind == VarS:
+            var pathCallee = SymId(0)
+            var spliced = createTokenBuf(32)
+            let nEmitted = trySpliceVarIntoPath(c, spliced, n, pathCallee)
+            if nEmitted > 0:
+              c.inProgress.incl pathCallee
+              var expanded = createTokenBuf(spliced.len)
+              var inner = beginRead(spliced)
+              for _ in 0 ..< nEmitted:
+                trIntra(c, expanded, inner)
+              endRead(inner)
+              c.inProgress.excl pathCallee
               prunedInto(dest, expanded)
               continue
           if n.isTagLit and n.stmtKind == VarS:

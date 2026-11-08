@@ -145,7 +145,7 @@ source is one `memcpy`) reads that off the tag instead of proving coverage.
 
 ### What each layer does with it
 
-- **`xelim`** (both goals) produces it for an `oconstr`/`newobj` that names its
+- **`xelim`**, in nimsem's run (`TowardsFinalIr`), produces it for an `oconstr`/`newobj` that names its
   fields with `kv`s and has a complex value. In a declaration
   (`var`/`let`/`gvar`/`glet`/`tvar`/`tlet`) the declared location is the
   destination: `(var x T .)` then the region on `x`. In any other position (an
@@ -153,7 +153,13 @@ source is one `memcpy`) reads that off the tag instead of proving coverage.
   temp is. A nested complex constructor fills its field in a nested region.
   Values up to the last one that may leave the region (a `.raises` call, a
   `raise`/`ret`/`jmp` in a value) are bound to temps in front of it, in order
-  (rule 4). Inside a region a store's call stays bound to the field.
+  (rule 4). In nimsem's run a store's call stays bound to its field, so the
+  prover sees one assignment. The backend run (`LowerCasts`) binds it to a temp
+  again, `tmp = f(); D.f = tmp`: no back end stores a call's aggregate result
+  into a path yet (arkham has no such arm), and the inliner folds the pair.
+  The backend run does not split constructors itself: those it sees were
+  built by hexer passes (the duplifier's `newobj` cell), and splitting one
+  would only trade the call temps for a whole-object temp.
 - **`newobj`.** `(newobj T (noinit))` allocates and leaves the payload
   uninitialized. The `construct` region on `(deref p)` that follows fills it. The
   duplifier emits the allocation, the out-of-memory check and the header
@@ -165,12 +171,16 @@ source is one `memcpy`) reads that off the tag instead of proving coverage.
 - **destroyer**: `D` becomes live at the end of the region (rule 6). Rule 4
   guarantees that no exit sees it half built.
 - **`contracts_fir`** does not count naming `D` as a store's base as a read of
-  it, and marks `D` initialized at the region's end.
+  it, and marks `D` initialized at the region's end. A destination declared
+  without a value carries `(noinit)`, so a global is not asked for a default
+  value.
 - **`lengcgen`** keeps the tag: it is a Leng statement too
   (`doc/internals/leng-spec.md`).
 - **`intramodinliner`** splices a call stored into a path rooted at the
-  region's destination with the callee's `result` substituted by that path, so
-  `D.f = default(array)` builds the array in `D.f`. That is sound because of
+  region's destination, directly (`D.f = f()`) or through the backend's temp
+  (`tmp = f(); D.f = tmp`, `tmp` used nowhere else), with the callee's
+  `result` substituted by that path, so `D.f = default(array)` builds the
+  array in `D.f`. That is sound because of
   rule 3, and only inside a region: an ordinary `p.f = g()` may have `g` read
   `p.f` through an alias. Afterwards `dropConstructRegions` replaces every
   region by its body, so shoggoth and the back ends see plain stores.
@@ -187,6 +197,14 @@ Not done yet:
   (for a call that is not inlined) need it to survive further.
 - `contracts_fir` does not yet attribute a borrow stored into a field
   (`establishesBorrow`, views) to `D`'s root.
+- A constructor inside a region gets no not-nil check of its fields, as values
+  of a constructor got none before. Checking them would reject sem's `T(nil)`
+  default of a not-nil field nested in another constructor
+  (`tests/nimony/opt/topt_memset_fill.nim` relies on it); that needs its own
+  decision.
+- An inheritable object (one with type info) is not split: `vtables` fills its
+  type-info slot as the constructor's positional child, which no field store
+  writes.
 
 ## `assume`
 

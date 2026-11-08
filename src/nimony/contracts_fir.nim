@@ -3926,7 +3926,12 @@ proc analyseOconstr(c: var FirContext; n: var Cursor) =
         let expected = lookupField(c.typeCache, objType, n.symId)
         assert not cursorIsNil(expected), "could not lookup type for " & pool.symString(n.symId)
         skip n # field name
-        checkNilMatch c, n, expected
+        # Inside a `construct` region a constructor is a former field value,
+        # and those were never analysed (values of a constructor are skipped
+        # below): a not-nil field's `T(nil)` default would only surface here.
+        # Kept that way until defaults of not-nil fields are settled.
+        if c.constructing.len == 0:
+          checkNilMatch c, n, expected
         skip n # value
         if n.hasMore:
           # optional inheritance

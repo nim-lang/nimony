@@ -243,6 +243,12 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
         isDeclarative(n):
       skip n
       return
+    if n.exprKind in {DotX, AtX, PatX, DerefX} and b.wasMovedLocs.len > 0:
+      # A tracked location need not be a symbol: in a coroutine's state proc
+      # it is a frame field, `(dot (deref this) x)`. Meeting it — on its own or
+      # as the base of a longer path (`x.f = v` writes through it) — is a use,
+      # just like meeting the symbol is in the `Symbol` case.
+      b.invalidateWasMoved n
 
     var op = attachedDestroy
     var callArg = default(Cursor)

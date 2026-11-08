@@ -657,7 +657,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
         trIfCaseTryBlockExpr c, n, BlockExpr, tar
       of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
          LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
-         MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
+         MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, ConstructS, WhenS,
          BreakS, ContinueS, JmpS, LabS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS,
          PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
@@ -1059,7 +1059,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trIf c, n, aa
   of WhileS:
     trWhile c, n
-  of StmtsS, AlwaysS, UnpackdeclS:
+  of StmtsS, ConstructS, AlwaysS, UnpackdeclS:
     n.into:
       while n.hasMore:
         trStmt c, n
