@@ -953,13 +953,18 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
                 inc at
                 elemType = genTypeLLVMReadOnly(c, at)
                 elemTypeCursor = at
+        var arrTypeCur = n
         skip n # type
         var elems: seq[string] = @[]
         while n.hasMore:
           let tc = genGlobalConstr(c, n, elemTypeCursor)
           elems.add operandStr(tc)
-        let arrTyp = newLLArrayType(elems.len, elemType)
-        result = rawConst(arrTyp, "[ " & elems.join(", ") & " ]")
+        if elems.len == 0 and arrTypeCur.typeKind != FlexarrayT:
+          # `(aconstr T)`: the all-zero array, whatever `T`'s length
+          result = rawConst(genTypeLLVMReadOnly(c, arrTypeCur), "zeroinitializer")
+        else:
+          let arrTyp = newLLArrayType(elems.len, elemType)
+          result = rawConst(arrTyp, "[ " & elems.join(", ") & " ]")
     of CastC, ConvC:
       n.into:
         skip n

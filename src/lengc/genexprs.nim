@@ -449,6 +449,9 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
         if i > 0: c.add Comma
         c.genx n
         inc i
+      if i == 0 and not isUncheckedArray:
+        # `(aconstr T)`: the all-zero array, whatever `T`'s length
+        c.add "0"
       if not isUncheckedArray:
         c.add CurlyRi
       c.add CurlyRi

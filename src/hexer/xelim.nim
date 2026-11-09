@@ -365,7 +365,12 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   let tmp = pool.symId(tempSymName(c))
   dest.addParLe LetS, info
   dest.addSymDef tmp, info
-  dest.addEmpty2 info  # export marker, pragmas
+  dest.addEmpty info  # export marker
+  # `(inline)` like `trExprCall`'s temps: it tells the backend this is
+  # xelim's own temp, which desugar relies on to replace a zero
+  # `default(array)` temp by its value (nimony#2846).
+  dest.copyIntoKind PragmasS, info:
+    dest.copyIntoKind InlineP, info: discard
   dest.copyTree typ
   dest.addTarget childTar
   dest.addParRi()

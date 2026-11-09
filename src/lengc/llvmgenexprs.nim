@@ -1297,9 +1297,13 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
                        ivElement: elemVal, ivAggType: typ, ivIndex: idx)
         current = res
         inc idx
-      if expectedLen >= 0 and idx != expectedLen:
-        error c.m, "array literal element count does not match its declared length: ", arrayTypeCursor
-      result = current
+      if idx == 0:
+        # `(aconstr T)`: the all-zero array, whatever `T`'s length
+        result = llZeroInit(typ)
+      else:
+        if expectedLen >= 0 and idx != expectedLen:
+          error c.m, "array literal element count does not match its declared length: ", arrayTypeCursor
+        result = current
   of BaseobjC:
     let loadType = genTypeLLVMReadOnly(c, getType(c.m, n))
     var lval = LLValue(); genLvalueLLVM(c, n, lval)

@@ -25,7 +25,7 @@
 | `(alignof T)`          | LengExpr, NimonyExpr | `alignof` operation |
 | `(offsetof T Y)`       | LengExpr, NimonyExpr | `offsetof` operation |
 | `(oconstr T (kv Y X)*)`; `(oconstr T (oconstr...)? (kv Y X*))` | LengExpr, NimonyExpr, NiflerKind | object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named |
-| `(aconstr T X*)`       | LengExpr, NimonyExpr | array constructor |
+| `(aconstr T X*)`       | LengExpr, NimonyExpr | array constructor. With no `X` it is the all-zero array of type `T`, whatever its length: desugar emits it for a zero `default(array)` (nimony#2846) so a huge array stays one node, and a back end fills `sizeof(T)` zero bytes in place |
 | `(bracket X*)`         | NimonyExpr, NiflerKind | untyped array constructor |
 | `(curly X*)`           | NimonyExpr, NiflerKind | untyped set constructor |
 | `(curlyat X X)`        | NimonyExpr, NiflerKind | curly expression `a{i}` |
