@@ -22,7 +22,7 @@ plugins are different in both respects; see [Import plugins](#import-plugins).
 
 
 For small end-to-end examples, see [Small metaprogramming recipes](plugin_recipes.md):
-a debug template, an object-description plugin calling helper templates, and
+an introduction to NIF, a plugin that returns its argument unchanged, and
 a typed-block check with a source-located diagnostic.
 
 ## Quick start

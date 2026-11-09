@@ -1,159 +1,106 @@
 # Small metaprogramming recipes
 
-Start with a template when the generated code has a fixed shape. Use a plugin
-when it needs to inspect syntax or declarations. A plugin can emit a call to
-a template instead of constructing the template's body node by node.
-
-These examples use the official `plugins` API. The runnable fixtures live in
+These examples introduce the NIF trees that a template plugin receives and
+returns. Start by reading a tree, then copy an expression, then inspect a block
+and report an error. The runnable examples are in
 [`tests/nimony/plugins`](../tests/nimony/plugins).
 
-## 1. Debug an expression with an ordinary template
+## 1. Read a NIF tree
 
-The `dbg` template in `deps/cookbook_support.nim` prints an expression and its
-value. `astToStr(value)` inspects its syntax without evaluating it; `value`
-appears once in the evaluated part of the expansion.
+NIF represents syntax as nested nodes. A node begins with its tag, followed by
+its children inside parentheses. For example, the shape of a function call is:
+
+```text
+(call FUNCTION ARGUMENT...)
+```
+
+`FUNCTION` and `ARGUMENT` are explanatory placeholders here. For example:
+
+```text
+(call twice.0.demo 3)
+```
+
+Here `call` is the tag, `twice.0.demo` is a symbol token naming a procedure,
+and `3` is its integer argument. The actual symbol suffix depends on the
+compiler's name assignment and the module. A call has one
+callee and zero or more arguments. A statement list has the shape
+`(stmts STATEMENT...)`. An integer literal such as `42` is an atom, with no
+children.
+
+A template plugin receives a wrapper with this shape:
+
+```text
+(stmts TEMPLATE_NAME ARGUMENT...)
+```
+
+For the `unchanged(nextValue(calls))` example below, its argument is a call
+node. Because the template parameter is `typed`, the compiler has already
+checked the expression and resolved its names. The callee and variable are
+symbol tokens identifying declarations; they are not just the source spellings
+`nextValue` and `calls`. Compiler-added nodes may also appear in typed input.
+
+Use `renderNode(n)` to inspect the textual NIF representation of a cursor.
+See [the tag reference](tags.md) for node layouts, and the
+[plugin guide](plugins.md) for cursor and builder operations.
+
+## 2. Return one expression unchanged
+
+Create `deps/mcookbook_identity.nim`:
+
+```nim
+import plugins
+
+proc transform(input: NifCursor): NifBuilder =
+  var expression = callArgs(input)
+  result = createTree()
+  result.takeTree expression
+
+saveTree transform(loadPluginInput())
+```
+
+A plugin is a separate program. Nimony builds and runs it during compilation.
+`loadPluginInput()` loads the compiler's input tree. `callArgs(input)` skips
+the wrapper and template name and returns a cursor at the first argument.
+This template has exactly one argument.
+
+`createTree()` creates the output builder. `takeTree` copies the complete
+subtree at the cursor into it and advances that cursor past the subtree.
+That is why `expression` is declared with `var`. Copying the existing subtree
+preserves its resolved symbols and source positions. `saveTree` writes the
+output for the compiler to use as the template expansion.
+
+Create a client next to the `deps` directory:
 
 ```nim
 import std / syncio
 
-template dbg(value: untyped) =
-  bind astToStr, echo
-  echo astToStr(value), " = ", value
+template unchanged(value: typed): untyped {.plugin: "deps/mcookbook_identity".}
 
 proc nextValue(calls: var int): int =
   inc calls
   calls
 
 var calls = 0
-dbg(nextValue(calls))
+echo unchanged(nextValue(calls))
 echo "calls: ", calls
 ```
 
 Output:
 
 ```text
-nextValue(calls) = 1
+1
 calls: 1
 ```
 
-No plugin or parser dependency is needed for this fixed expansion. The printed
-expression is the compiler's representation, not a byte-for-byte copy of the
-source. `bind` names the operations used by the template; it is not a promise
-of identical overload visibility to Nim 2, which has different declaration
-ordering rules. When a plugin must fix a particular set of overloads, pass
-explicitly bound AST arguments as in the next example.
+The plugin runs during compilation and copies the call's syntax once.
+`nextValue` runs when the compiled program executes; it increments `calls`
+once. The plugin also accepts atoms such as `unchanged(42)` because `takeTree`
+handles both atoms and compound nodes.
 
-## 2. Inspect object fields, then call helper templates
+## 3. Inspect calls and report an error
 
-A plugin can request an object's declaration, inspect its fields, and emit a
-call to a template that defines `describe`. The template contains ordinary Nim
-code; only the variable-shaped list of fields is assembled by the plugin.
-
-The helper file `deps/cookbook_support.nim` contains:
-
-```nim
-template appendField*(target, label, value, append, concat, format: untyped) {.untyped.} =
-  append(target, concat(label, format(value)))
-
-template describeImpl*(publicName, parameter, T, heading, returnType, append, fields: untyped) {.untyped.} =
-  proc publicName(parameter: T): returnType =
-    result = heading
-    fields
-    append(result, ")")
-```
-
-The plugin `deps/mcookbook_describe.nim`:
-
-```nim
-import plugins
-import cookbook_support
-
-proc transform(input: NifCursor): NifBuilder =
-  let typ = callArgs(input)
-  if typ.kind != Symbol:
-    return errorTree("describe needs a named object type", typ)
-  let decl = findTypeDecl(loadTypeDefinitions(), typ.symId)
-  if not decl.hasMore:
-    return needTypes(typ.symId)
-  let body = asTypeDecl(decl).body
-  if body.typeKind != ObjectT:
-    return errorTree("describe needs an object type", typ)
-  let obj = asObjectDecl(body)
-  if obj.parentType.kind != DotToken:
-    return errorTree("this example supports objects without inheritance", typ)
-  # Reject variant sections rather than silently leaving their fields out
-  var first = true
-  for child in body.children:
-    if first: first = false
-    elif child.otherKind != FldU:
-      return errorTree("this example supports plain object fields only", child)
-  result = createTree()
-  result.withTree CallX, input.info:
-    result.bindSym "describeImpl"
-    result.addIdent "describe"
-    result.addIdent "value"
-    var typeNode = typ
-    result.takeTree typeNode
-    result.addStrLit symBasename(typ.symId) & "("
-    result.bindSym "string"
-    result.bindSym "add"
-    result.withTree StmtsS, input.info:
-      var firstField = true
-      for field in obj.fields:
-        result.withTree CallX, field.name.info:
-          result.bindSym "appendField"
-          result.addIdent "result"
-          result.addStrLit (if firstField: "" else: ", ") & symBasename(field.name.symId) & ": "
-          result.withTree DotX, field.name.info:
-            result.addIdent "value"
-            result.addIdent symBasename(field.name.symId)
-          result.bindSym "add"
-          result.bindSym "&"
-          result.bindSym "$"
-        firstField = false
-
-saveTree transform(loadPluginInput())
-```
-
-The first invocation returns `needTypes`; the compiler supplies the declaration
-and invokes the plugin again. `findTypeDecl` distinguishes that supplied type
-from an absent declaration. This example demonstrates named objects with plain fields and no inheritance. `fields` only visits directly declared
-plain fields, so the plugin rejects other layouts rather than omitting them.
-
-The declaration name `describe` is deliberately resolved in the user's module.
-Parameter, result and field names are deliberately coordinated with the helper
-templates. In contrast, the helpers and string-formatting operations use
-`bindSym`: the references resolve in the plugin's definition scope. Passing
-`add`, `&` and `$` as AST arguments keeps formatting stable even if the user
-has overloads with those spellings.
-
-A client:
-
-```nim
-import std / syncio
-
-template defineDescribe(T: typedesc) {.plugin: "deps/mcookbook_describe".}
-
-type Person = object
-  name: string
-  age: int
-
-defineDescribe(Person)
-echo describe(Person(name: "Ann", age: 30))
-```
-
-It prints `Person(name: Ann, age: 30)`. See `tcookbook.nim` for an empty object
-and fields named `result` and `value`, and `tcookbook_shadow.nim` for caller
-formatting overloads.
-
-## 3. Reject a call and preserve the rest of a typed block
-
-A plugin can check a typed block and return it unchanged when it passes. This
-example rejects direct calls whose resolved symbol has basename `blocked`.
-It is a deliberately small syntactic check, not a sandbox: indirect calls,
-callee bodies and symbol identity across modules are outside its rule.
-
-`deps/mcookbook_check.nim`:
+Now walk a typed block and reject direct calls whose resolved symbol has the
+basename `blocked`. Create `deps/mcookbook_check.nim`:
 
 ```nim
 import plugins
@@ -179,6 +126,19 @@ proc transform(input: NifCursor): NifBuilder =
 saveTree transform(loadPluginInput())
 ```
 
+`exprKind` identifies a node's expression tag. After checking for `CallX`,
+`asCall(n).fn` gives the callee cursor. The callee may itself be an expression;
+this example tests for a `Symbol` before reading its name.
+
+`children` visits each immediate child. Calling `rejected` recursively on those
+children also finds calls inside nested statements and expressions. Each
+successful visit returns an empty builder. An error visit returns
+`errorTree(message, n)`, which attaches the diagnostic to the offending node.
+The first nonempty error is returned to the compiler.
+
+When the block passes, `transform` copies the original block into the output,
+just as the previous plugin copied one expression.
+
 Client:
 
 ```nim
@@ -190,32 +150,23 @@ checked:
   blocked()
 ```
 
-`errorTree(message, node)` attaches the diagnostic to the rejected call. The
-compiler reports `checked block may not call blocked` at `blocked()`.
-To accept the block, return its original subtree with `takeTree`; rebuilding
-names as strings would lose symbol identity and potentially private-access
-metadata.
+The compiler reports `checked block may not call blocked` at `blocked()`.
+A block containing `echo "checked"` instead is accepted and executes normally.
 
-## Run the examples
+This rule compares basenames, so any direct callee named `blocked` is rejected,
+even if it comes from another module. It does not inspect the bodies of called
+procedures or resolve indirect calls. It is a small tree-inspection example.
 
-From the repository root, use a toolchain with the matching plugin API:
+## Run the fixtures
+
+From the repository root, with a toolchain matching the plugin API:
 
 ```sh
 bin/nimony c -r tests/nimony/plugins/tcookbook.nim
-bin/nimony c -r tests/nimony/plugins/tcookbook_shadow.nim
-bin/nimony c tests/nimony/plugins/tcookbook_bad.nim  # expected error
+bin/nimony c tests/nimony/plugins/tcookbook_bad.nim
 ```
 
-The `.output` and `.msgs` sidecars make these examples part of the compiler's
-test suite. The negative fixture must fail at its offending call, not merely
-fail to compile for an unrelated reason.
-
-## Temporary names and preserved user code
-
-The examples deliberately name public declarations such as `describe`. For a
-private temporary introduced by a plugin, use `genSym`, `addSymDef` and
-`addSymUse`, as in
-[`mplugin_gensym.nim`](../tests/nimony/plugins/deps/mplugin_gensym.nim).
-Creating an identifier spelled `tmp` does not make it fresh. Likewise, copy a
-user-supplied expression with `takeTree` rather than rebuilding its identifiers;
-its already-resolved symbols and source locations belong to that expression.
+The second command is expected to fail at its `blocked()` call. The `.output`
+and `.msgs` sidecars record the expected results for the compiler's test runner.
+The positive fixture also checks a literal argument and nested uses of
+`unchanged`, including the runtime evaluation count.
