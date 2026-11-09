@@ -972,15 +972,41 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
   else:
     error c, "(pragmas) or '.' expected, but got: ", n
 
+proc endsInRet(n: Cursor): bool =
+  ## Is `n` a `ret`, or a `stmts` whose last statement ends in one? `return X`
+  ## reaches here wrapped (`(stmts (asgn result X) (ret result))`, or the
+  ## binding of a call temp before its `ret`), and the implicit `(ret result)`
+  ## after it is dead code. Worse than dead: the intra-module inliner forwards
+  ## a callee's result into the call's destination only when every `ret`
+  ## returns the same symbol, and a trailing `(ret result)` disagrees with the
+  ## `(ret tmp)` before it -- so every by-value `return f(…)` left a temp and a
+  ## copy at each site it was spliced into.
+  if n.stmtKind == RetS:
+    result = true
+  elif n.stmtKind == StmtsS:
+    result = false
+    var it = n
+    it.into:
+      while it.hasMore:
+        result = endsInRet(it)
+        skip it
+  else:
+    result = false
+
 proc trProcBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   if n.stmtKind == StmtsS:
     dest.addParLe(n.cursorTagId, n.info)
     n.into:
-      var prevStmt = NoStmt
+      var lastEndsInRet = false
       while n.hasMore:
-        prevStmt = n.stmtKind
+        if lastEndsInRet and n.stmtKind != LabS:
+          # unreachable: sem's `addReturnResult` appends `(ret result)` to
+          # every body, also after a `return X` (see `endsInRet`)
+          skip n
+          continue
+        lastEndsInRet = endsInRet(n)
         trStmt c, dest, n, TraverseInner
-      if prevStmt == RetS or c.resultSym == SymId(0):
+      if lastEndsInRet or c.resultSym == SymId(0):
         discard "ok, do not add another return"
       else:
         dest.addParLe(RetS, n.endInfo)
