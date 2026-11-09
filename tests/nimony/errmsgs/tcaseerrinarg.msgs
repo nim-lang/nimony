@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tcaseerrinarg.nim(11, 3) Error: illformed AST: `of` inside `case` expected
+tests/nimony/errmsgs/tcaseerrinarg.nim(13, 14) Error: not all cases are covered; missing: {kb}
+tests/nimony/errmsgs/tcaseerrinarg.nim(15, 14) Error: not all cases are covered; missing: {kb}
