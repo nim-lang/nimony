@@ -374,6 +374,7 @@ proc failed(command: string; exitCode = 0) =
     stdout.write ")"
   stdout.write ": "
   stdout.writeLine command
+  stdout.flushFile()
 
 proc toSeconds(d: Duration): float =
   float(d.inNanoseconds) / 1e9
@@ -655,7 +656,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
 
   while sched.done < sortedNodes.len:
     # Dispatch everything that fits.
-    while not aborted and pool.len < jobs and sched.ready.len > 0:
+    while (not aborted or KeepGoing in opt) and pool.len < jobs and sched.ready.len > 0:
       let nodeId = sched.takeReady()
       let node = addr dag.nodes[nodeId]
       if Force in opt or Rerun in opt or needsRebuild(sc, node[]):
@@ -709,16 +710,13 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
         stdout.write "\n"
         stdout.flushFile()
       failed job.command, exitCode
-      result = false
-      # `--keep-going`: the failed node's dependents never become ready, but
-      # everything else still runs.
-      if KeepGoing notin opt: aborted = true
+      aborted = true
       inc sched.done
 
   if profile != nil:
     profile[].execWallTime += toSeconds(getMonoTime() - execStart)
-  if not result:
-    return
+  if aborted:
+    return false
 
   prog.finish()
 
@@ -954,11 +952,10 @@ Commands:
 
 Options:
   -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
+  -k, --keep-going      Keep going after a command fails (for 'run'), skipping
+                        what depends on it. The run still fails.
   --makefile:<name>     Output Makefile name (default: Makefile)
   --force               Force rebuild of all targets
-  -k, --keep-going      Keep building after a command fails instead of
-                        stopping at the first failure: only what depends on
-                        the failed command is skipped. The run still fails.
   --rerun               Run every command regardless of staleness, but leave
                         the outputs' mtimes to the tools, so an interface file
                         that comes out unchanged still spares its dependents.
