@@ -267,102 +267,130 @@ template toSeq*(iter: untyped): untyped {.untyped.} =
       for x in iter: res.add(x)
       res
 
+template evalOnceAs(name, exp: untyped) {.untyped.} =
+  ## Binds `exp` to `name` so the templates below evaluate their collection
+  ## argument exactly once, and before they inject `it`/`a`/`b` — a caller's
+  ## own `a` must not be captured by the fold's accumulator (#2741). An
+  ## addressable `exp` is aliased through a pointer, so no seq is copied; an
+  ## rvalue is bound by `let`, which moves it.
+  when compiles(addr(exp)):
+    let p = addr(exp)
+    template name: untyped = p[]
+  else:
+    let name = exp
+
 template foldl*(s, operation: untyped): untyped {.untyped.} =
   ## Left-associative fold. `a` is the accumulator (seeded with the first
   ## element), `b` the current element.
   runnableExamples:
     assert foldl(@[1, 2, 3, 4], a + b) == 10
-  var acc = s[0]
-  for i in 1 ..< s.len:
-    let a {.inject.} = acc
-    let b {.inject.} = s[i]
-    acc = operation
-  acc
+  block:
+    evalOnceAs(sq, s)
+    var acc = sq[0]
+    for i in 1 ..< sq.len:
+      let a {.inject.} = acc
+      let b {.inject.} = sq[i]
+      acc = operation
+    acc
 
 template foldr*(s, operation: untyped): untyped {.untyped.} =
   ## Right-associative fold. `a` is the current element, `b` the accumulator
   ## (seeded with the last element).
   runnableExamples:
     assert foldr(@[1, 2, 3, 4], a + b) == 10
-  var acc = s[s.len - 1]
-  for k in 0 ..< s.len - 1:
-    let a {.inject.} = s[s.len - 2 - k]
-    let b {.inject.} = acc
-    acc = operation
-  acc
+  block:
+    evalOnceAs(sq, s)
+    var acc = sq[sq.len - 1]
+    for k in 0 ..< sq.len - 1:
+      let a {.inject.} = sq[sq.len - 2 - k]
+      let b {.inject.} = acc
+      acc = operation
+    acc
 
 template anyIt*(s, pred: untyped): bool {.untyped.} =
   ## Whether `pred` (referencing the injected `it`) holds for any element.
   runnableExamples:
     assert anyIt(@[1, 3, 4], it mod 2 == 0)
-  var res = false
-  for i in 0 ..< s.len:
-    let it {.inject.} = s[i]
-    if pred:
-      res = true
-      break
-  res
+  block:
+    evalOnceAs(sq, s)
+    var res = false
+    for i in 0 ..< sq.len:
+      let it {.inject.} = sq[i]
+      if pred:
+        res = true
+        break
+    res
 
 template allIt*(s, pred: untyped): bool {.untyped.} =
   ## Whether `pred` (referencing the injected `it`) holds for every element.
   runnableExamples:
     assert allIt(@[2, 4, 6], it mod 2 == 0)
-  var res = true
-  for i in 0 ..< s.len:
-    let it {.inject.} = s[i]
-    if not (pred):
-      res = false
-      break
-  res
+  block:
+    evalOnceAs(sq, s)
+    var res = true
+    for i in 0 ..< sq.len:
+      let it {.inject.} = sq[i]
+      if not (pred):
+        res = false
+        break
+    res
 
 template countIt*(s, pred: untyped): int {.untyped.} =
   ## Number of elements for which `pred` (referencing the injected `it`) holds.
   runnableExamples:
     assert countIt(@[1, 2, 3, 4], it mod 2 == 0) == 2
-  var res = 0
-  for i in 0 ..< s.len:
-    let it {.inject.} = s[i]
-    if pred: inc res
-  res
+  block:
+    evalOnceAs(sq, s)
+    var res = 0
+    for i in 0 ..< sq.len:
+      let it {.inject.} = sq[i]
+      if pred: inc res
+    res
 
 template mapIt*(s, op: untyped): untyped {.untyped.} =
   ## Returns a new sequence with `op` (referencing the injected `it`) applied to
   ## every element. The result element type is `typeof(op)`.
   ## Example: `mapIt(@[1, 2, 3], it * 10) == @[10, 20, 30]`.
-  var res: seq[typeof((block:
-    let it {.inject.} = s[0]
-    op))] = @[]
-  for i in 0 ..< s.len:
-    let it {.inject.} = s[i]
-    res.add(op)
-  res
+  block:
+    evalOnceAs(sq, s)
+    var res: seq[typeof((block:
+      let it {.inject.} = sq[0]
+      op))] = @[]
+    for i in 0 ..< sq.len:
+      let it {.inject.} = sq[i]
+      res.add(op)
+    res
 
 template filterIt*(s, pred: untyped): untyped {.untyped.} =
   ## Returns the elements for which `pred` (referencing the injected `it`) holds.
   ## Example: `filterIt(@[1, 2, 3, 4], it mod 2 == 0) == @[2, 4]`.
-  var res: seq[typeof(s[0])] = @[]
-  for i in 0 ..< s.len:
-    let it {.inject.} = s[i]
-    if pred: res.add(it)
-  res
+  block:
+    evalOnceAs(sq, s)
+    var res: seq[typeof(sq[0])] = @[]
+    for i in 0 ..< sq.len:
+      let it {.inject.} = sq[i]
+      if pred: res.add(it)
+    res
 
 template keepItIf*(s, pred: untyped) {.untyped.} =
   ## In-place `filterIt`: keeps only the elements of the seq `s` for which
   ## `pred` (referencing the injected `it`) holds.
   ## Example: `keepItIf(data, it mod 2 == 1)`.
-  var res: seq[typeof(s[0])] = @[]
-  for i in 0 ..< s.len:
-    let it {.inject.} = s[i]
+  let sq = addr(s)
+  var res: seq[typeof(sq[][0])] = @[]
+  for i in 0 ..< sq[].len:
+    let it {.inject.} = sq[][i]
     if pred: res.add(it)
-  s = res
+  sq[] = res
 
 template applyIt*(varSeq, op: untyped) {.untyped.} =
   ## In-place `mapIt`: replaces each element of the seq `varSeq` with `op`
   ## (referencing the injected `it`). `op` must yield the element type.
   ## Example: `applyIt(nums, it * 3)`.
-  for i in 0 ..< varSeq.len:
-    let it {.inject.} = varSeq[i]
-    varSeq[i] = op
+  let sq = addr(varSeq)
+  for i in 0 ..< sq[].len:
+    let it {.inject.} = sq[][i]
+    sq[][i] = op
 
 template newSeqWith*(len: int; init: untyped): untyped {.untyped.} =
   ## Creates a `seq` of length `len`, evaluating `init` for each element — handy
