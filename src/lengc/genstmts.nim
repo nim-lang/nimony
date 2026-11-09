@@ -501,138 +501,6 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
       c.add Semicolon
     while n.hasMore: skip n
 
-type
-  ZeroPathStep = object
-    ## One step from an assignment's destination into a part of it.
-    fld: Cursor        ## a field symbol; nil for an array element or a base
-    objBody: Cursor
-    imported: bool
-    depth: int         ## `.Q` hops in front of `fld`
-    index: int         ## the element of an array; -1 for a field or base
-
-proc isEmptyAconstr(n: Cursor): bool =
-  ## `(aconstr T)` with no element: the all-zero array (`doc/tags.md`).
-  if n.kind != TagLit or n.exprKind != AconstrC: return false
-  var x = sub(n)
-  skip x # the array type
-  result = not x.hasMore
-
-proc hasEmptyAconstr(n: Cursor): bool =
-  ## Does the constructor `n` hold an empty `(aconstr T)`, at any depth?
-  result = false
-  if n.kind != TagLit or n.exprKind notin {AconstrC, OconstrC}: return
-  if isEmptyAconstr(n): return true
-  var x = sub(n)
-  skip x # the constructed type
-  while x.hasMore and not result:
-    if x.substructureKind == KvU:
-      var v = sub(x)
-      skip v # the field
-      result = hasEmptyAconstr(v)
-    else:
-      result = hasEmptyAconstr(x)
-    skip x
-
-proc hasVtableSlot(n: Cursor): bool =
-  ## An RTTI object's constructor carries its vtable pointer as a positional
-  ## child, which C's brace elision puts into the innermost first member.
-  ## Such a constructor is stored whole rather than spelled out here.
-  result = false
-  var x = sub(n)
-  skip x # the object type
-  while x.hasMore and not result:
-    result = x.substructureKind != KvU and
-             (x.kind != TagLit or x.exprKind != OconstrC)
-    skip x
-
-proc genZeroPath(c: var GeneratedCode; lhs: Cursor; path: seq[ZeroPathStep]) =
-  var l = lhs
-  genLvalue c, l
-  for s in path:
-    if s.index >= 0:
-      c.add Dot
-      c.add "a"
-      c.add BracketLe
-      c.add $s.index
-      c.add BracketRi
-    else:
-      for _ in 0 ..< s.depth:
-        c.add ".Q"
-      if not cursorIsNil(s.fld):
-        c.add Dot
-        genField c, s.fld, s.objBody, s.imported
-
-proc genConstrStores(c: var GeneratedCode; lhs: Cursor; path: var seq[ZeroPathStep];
-                     n: Cursor) =
-  ## Store the constructor `n` part by part into `lhs` + `path`, which is
-  ## already all zero: an empty `aconstr` needs no store at all.
-  if isEmptyAconstr(n):
-    discard
-  elif hasEmptyAconstr(n) and n.exprKind == AconstrC:
-    var x = sub(n)
-    skip x # the array type
-    var i = 0
-    while x.hasMore:
-      path.add ZeroPathStep(index: i)
-      genConstrStores(c, lhs, path, x)
-      path.setLen path.len - 1
-      skip x
-      inc i
-  elif hasEmptyAconstr(n) and not hasVtableSlot(n):
-    var x = sub(n)
-    let objType = x
-    let objBody = navigateToObjectBody(c.m, objType)
-    let imported = c.m.isImportC(objType)
-    skip x
-    while x.hasMore:
-      if x.substructureKind == KvU:
-        var k = sub(x)
-        let fld = k
-        skip k
-        let v = k
-        skip k
-        var depth = 0
-        if k.hasMore and k.kind == IntLit: depth = int(intVal(k))
-        path.add ZeroPathStep(fld: fld, objBody: objBody, imported: imported,
-                              depth: depth, index: -1)
-        genConstrStores(c, lhs, path, v)
-      else:
-        # the inherited part, a positional `(oconstr Base …)`
-        path.add ZeroPathStep(depth: 1, index: -1)
-        genConstrStores(c, lhs, path, x)
-      path.setLen path.len - 1
-      skip x
-  else:
-    genZeroPath c, lhs, path
-    c.add AsgnOpr
-    var v = n
-    genx c, v
-    c.add Semicolon
-
-proc genZeroingAsgn(c: var GeneratedCode; n: var Cursor) =
-  ## `(asgn lhs <constructor holding an empty aconstr>)`. Written as one C
-  ## assignment it is a compound literal, which a C compiler without
-  ## optimization builds in a stack temporary of the full size and then
-  ## copies: a heap object with a huge array field overflowed the stack
-  ## that way (nimony#2846). So clear `lhs` in place and store only what
-  ## is not zero. The destination is a plain path (Leng's calls are
-  ## unnested), so naming it more than once evaluates nothing twice.
-  n.into:
-    let lhs = n
-    skip n
-    c.add "__builtin_memset(&"
-    var l = lhs
-    genLvalue c, l
-    c.add ", 0, sizeof("
-    l = lhs
-    genLvalue c, l
-    c.add "))"
-    c.add Semicolon
-    var path: seq[ZeroPathStep] = @[]
-    genConstrStores(c, lhs, path, n)
-    skip n
-    while n.hasMore: skip n
-
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
@@ -670,17 +538,12 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     genEmitStmt c, n
   of AsgnS:
     genCLineDir(c, info(n))
-    var rhs = sub(n)
-    skip rhs # the destination
-    if hasEmptyAconstr(rhs):
-      genZeroingAsgn c, n
-    else:
-      n.into:
-        genLvalue c, n
-        c.add AsgnOpr
-        genx c, n
-        c.add Semicolon
-        while n.hasMore: skip n
+    n.into:
+      genLvalue c, n
+      c.add AsgnOpr
+      genx c, n
+      c.add Semicolon
+      while n.hasMore: skip n
   of IfS: genIf c, n
   of IteS, ItecS: genIte c, n
   of WhileS: genWhile c, n
