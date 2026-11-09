@@ -546,6 +546,30 @@ proc describe(n: NifCursor): string =
 ```
 
 
+### Views of calls and field selections
+
+`asCall(n)` accepts a `call` expression or statement and exposes its `fn`.
+`for a in args(call)` visits only its arguments, in order. The callee may be
+an expression, such as a field holding a procedure, rather than a symbol.
+`infix`, `prefix`, and `cmd` nodes are not accepted by this view.
+
+`asDot(n)` exposes `obj` and `field` from a `dot` node. Optional inheritance
+depth and private-field access metadata stay in the original tree: this view
+reads its operands and does not rebuild or strip that metadata. `ddot` is a
+separate tag and is not accepted.
+
+Both views retain cursors into the original input, including symbol identities
+and source positions. Reading a view does not advance the input cursor.
+
+```nim
+if n.exprKind == CallX:
+  let call = asCall(n)
+  for argument in args(call):
+    if argument.exprKind == DotX:
+      let field = asDot(argument)
+      # field.obj is the receiver; field.field is the selected field
+```
+
 ### NifBuilder — building NIF output
 
 A `NifBuilder` is a move-only alias for `nifcore.TokenBuf`. It cannot be copied.
