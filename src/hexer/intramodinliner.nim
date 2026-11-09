@@ -725,15 +725,23 @@ const MaxPathSubstUses = 2
   ## (`cse` would re-fold the repeats, but it only runs under `--opt`.)
 
 proc countParamUses(c: Cursor; params: HashSet[SymId]; uses: var Table[SymId, int]) =
+  ## A `(kv f v)`'s field name and a `(dot o f d)`'s field slot are no uses:
+  ## `emitRenamed` copies them verbatim, and `vector(x, y, z) = Vec3(x: x, …)`
+  ## spells its params like the fields.
   case c.kind
   of Symbol:
     if c.symId in params: uses[c.symId] = uses.getOrDefault(c.symId) + 1
   of TagLit:
     var n = c
+    var idx = 0
+    let isKv = c.substructureKind == KvU
+    let isDot = c.exprKind == DotC
     n.into:
       while n.hasMore:
-        countParamUses(n, params, uses)
+        if not ((isKv and idx == 0) or (isDot and idx == 1)):
+          countParamUses(n, params, uses)
         skip n
+        inc idx
   else: discard
 
 proc isPurePathArg(c: Cursor): bool =
@@ -797,51 +805,54 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
       scanParamUsage(n, params, assigned, addrTaken, opaqueEffects)
       skip n
 
-proc scanRets(n: var Cursor; resultSym: var SymId; found, ok: var bool) =
-  ## Walk one subtree looking for `(ret X)`. `ok` stays true iff EVERY ret
-  ## returns the same bare symbol, reported in `resultSym`; `found` records
-  ## that at least one ret exists. Nested proc decls (if any) are skipped.
+proc scanRets(n: var Cursor; counts: var seq[(SymId, int)]; found: var bool) =
+  ## Walk one subtree looking for `(ret X)`: counts how many rets return each
+  ## bare symbol `X`; `found` records that at least one ret exists. Nested proc
+  ## decls (if any) are skipped.
   case n.kind
   of TagLit:
     if n.stmtKind == RetS:
-      var hasVal = false
-      var valIsSym = false
-      var valSym = SymId(0)
+      found = true
       into n:
-        if n.hasMore and not n.isDotToken:
-          hasVal = true
-          if n.isSymbol:
-            valIsSym = true
-            valSym = n.symId
+        if n.hasMore and n.isSymbol:
+          let s = n.symId
+          var seen = false
+          for e in counts.mitems:
+            if e[0] == s:
+              inc e[1]
+              seen = true
+          if not seen: counts.add (s, 1)
         while n.hasMore: skip n
-      if not hasVal or not valIsSym:
-        ok = false
-      elif not found:
-        resultSym = valSym
-        found = true
-      elif resultSym != valSym:
-        ok = false
     elif n.stmtKind == ProcS:
       skip n
     else:
       into n:
-        while n.hasMore: scanRets(n, resultSym, found, ok)
+        while n.hasMore: scanRets(n, counts, found)
   else:
     inc n
 
 proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
-  ## The callee's result LOCAL for destination forwarding: every `(ret X)` in
-  ## the body returns the same bare, body-local, non-param symbol (nimsem's
-  ## implicit `result` after lowering). SymId(0) when the pattern doesn't hold.
-  var resultSym = SymId(0)
+  ## The callee's result LOCAL for destination forwarding: the body-local,
+  ## non-param symbol most `(ret X)`s return (nimsem's implicit `result`, or
+  ## the temp of a `return f(…)`). SymId(0) when no ret returns a local.
+  ##
+  ## One local, not all of them: the forwarded local becomes the destination
+  ## itself, every other `(ret X)` stores `X` into it and leaves. That is sound
+  ## for any choice, because nothing reads the destination while the body runs
+  ## (a fresh temp, or a caller local no argument mentions) and a value
+  ## computed from the forwarded local reads the destination, which holds that
+  ## local's value. A callee with `return a` here and `return b` there keeps
+  ## one copy instead of two.
+  var counts: seq[(SymId, int)] = @[]
   var found = false
-  var ok = true
   var b = body
-  scanRets(b, resultSym, found, ok)
-  if not (found and ok) or resultSym == SymId(0): return SymId(0)
-  if resultSym in pSyms: return SymId(0)          # a param: bound to its arg
-  if not pool.symIsLocal(resultSym): return SymId(0)
-  result = resultSym
+  scanRets(b, counts, found)
+  result = SymId(0)
+  var best = 0
+  for (s, k) in counts:
+    if k > best and s notin pSyms and pool.symIsLocal(s):
+      result = s
+      best = k
 
 proc countSymUses(n: Cursor; sym: SymId): int =
   ## Count `Symbol` (use, not `SymbolDef`) occurrences of `sym` within the
@@ -1197,7 +1208,7 @@ proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
   ## This is the fact the two "cannot prove it without alias info" refusals in
   ## `isSubstitutableArg` / `isStableAddrArg` were missing. It is answered from
   ## the body about to be spliced — no summaries, no types, no alias partition.
-  if not body.isTagLit: return false
+  if not body.isTagLit: return true          # a leaf writes nothing
   result = true
   var n = body
   if n.stmtKind == AsgnS:
@@ -1211,6 +1222,48 @@ proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
     while m.hasMore:
       if not bodyIsCallerReadOnly(c, m): return false
       skip m
+
+proc isPureValueArg(c: Cursor): bool =
+  ## A pure path (`isPurePathArg`) or wrapping arithmetic over pure values:
+  ## no call, no constructor, and nothing that can trap -- Leng's `add`/`sub`/
+  ## `mul` wrap (overflow checking is an explicit `keepovf`), and only a FLOAT
+  ## `div` is admitted. Such an argument computes the same value wherever it is
+  ## evaluated, as long as nothing writes what it reads.
+  if isPurePathArg(c): return true
+  if not c.isTagLit: return false
+  case c.exprKind
+  of AddC, SubC, MulC, NegC, BitandC, BitorC, BitxorC, BitnotC, DivC:
+    if c.exprKind == DivC and c.childCursor.typeKind != FT: return false
+    result = true
+    var n = c
+    n.into:
+      skip n                               # type
+      while n.hasMore:
+        if not isPureValueArg(n): return false
+        skip n
+  else:
+    result = false
+
+proc hasLoopAux(n: Cursor; labels: var HashSet[SymId]): bool =
+  if not n.isTagLit: return false
+  if n.stmtKind in {WhileS, LoopS}: return true
+  if n.stmtKind == LabS and n.childCursor.isSymbolDef:
+    labels.incl n.childCursor.symId
+  elif n.stmtKind == JmpS and n.childCursor.isSymbol and
+       n.childCursor.symId in labels:
+    return true
+  var it = n
+  it.into:
+    while it.hasMore:
+      if hasLoopAux(it, labels): return true
+      skip it
+  result = false
+
+proc hasLoop(n: Cursor): bool =
+  ## Does the body repeat anything: a `while`/`loop`, or a jump back to a
+  ## label it already passed?
+  var labels = initHashSet[SymId]()
+  result = hasLoopAux(n, labels)
 
 proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
                  body: Cursor; rename: Table[SymId, SymId]): Bindings =
@@ -1235,16 +1288,19 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
   #   what a pure PATH argument needs to be stable across the splice.
   var uses = initTable[SymId, int]()
   var callerReadOnly = false
+  var bodyLoops = true
   when PathArgSubstitution:
     var anyPathArg = false
     for i in 0 ..< pSyms.len:
       if pSyms[i] notin assigned and pSyms[i] notin addrTaken and
-         not argCursors[i].isSymbol and isPurePathArg(argCursors[i]):
+         not argCursors[i].isSymbol and isPureValueArg(argCursors[i]):
         anyPathArg = true
         break
     if anyPathArg:
       callerReadOnly = bodyIsCallerReadOnly(c, body)
-      if callerReadOnly: countParamUses(body, paramSet, uses)
+      if callerReadOnly:
+        countParamUses(body, paramSet, uses)
+        bodyLoops = hasLoop(body)
   for i in 0 ..< pSyms.len:
     if pSyms[i] in assigned:
       continue                               # slot mutated → copy
@@ -1283,6 +1339,13 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
       # it leaves `(deref (haddr (dot o f)))` at the use, which the rewrite
       # engine's `deref_addr` rule folds back to `(dot o f)` — the same reason
       # `isStableAddrArg` exists, now without the bare-symbol restriction.
+      result.subst[pSyms[i]] = arg
+    elif callerReadOnly and isPureValueArg(arg) and
+         uses.getOrDefault(pSyms[i]) == 1 and not bodyLoops:
+      # Wrapping arithmetic over pure values (`vector(a.x * k, …)`): moved from
+      # the binding to its one use, outside any loop, it computes the same
+      # value once, as the copy did -- and the copy was a temp the destination
+      # took over only after a scalarizer split and a coalescing pass.
       result.subst[pSyms[i]] = arg
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
@@ -1506,6 +1569,56 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   skip n
   result = 2                               # `(var …)` + `(scope …)`
 
+proc resultWrittenLast(body: Cursor; res: SymId; watch: HashSet[SymId]): bool =
+  ## Is `res` written exactly once, as a whole (its initializer or one
+  ## `(asgn res X)`), never through its address or a field, and is no symbol of
+  ## `watch` read after that write? Program order is token order: the caller
+  ## rules out loops (`hasLoop`), so a jump can only skip ahead.
+  var writes = 0
+  var after = false
+  var ok = true
+  proc walk(n: Cursor; res: SymId; watch: HashSet[SymId];
+            writes: var int; after, ok: var bool) =
+    if not ok: return
+    case n.kind
+    of Symbol:
+      if after and n.symId in watch: ok = false
+    of TagLit:
+      if n.exprKind in AddrKinds and rootOf(n.childCursor) == res:
+        ok = false
+        return
+      if n.stmtKind == AsgnS:
+        let lhs = n.childCursor
+        var rhs = lhs
+        skip rhs
+        if lhs.isSymbol and lhs.symId == res:
+          walk(rhs, res, watch, writes, after, ok)   # read before the store
+          inc writes
+          after = true
+          return
+        if rootOf(lhs) == res:                       # a partial write
+          ok = false
+          return
+      elif n.stmtKind == VarS and n.childCursor.isSymbolDef and
+           n.childCursor.symId == res:
+        var v = n.childCursor
+        skip v                                       # name
+        skip v                                       # pragmas
+        skip v                                       # type
+        if v.hasMore and not v.isDotToken:
+          walk(v, res, watch, writes, after, ok)
+          inc writes
+          after = true
+        return
+      var m = n
+      m.into:
+        while m.hasMore:
+          walk(m, res, watch, writes, after, ok)
+          skip m
+    else: discard
+  walk(body, res, watch, writes, after, ok)
+  result = ok and writes == 1
+
 proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## `(asgn lhs (call f arg…))` with a symbol `lhs` — Final IR's "a call binds
   ## directly to its destination" form, which is how a non-void call reaches
@@ -1531,8 +1644,19 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   var site = SpliceSite()
   if not prepareSplice(c, probe, site): return 0
   var forward = pool.symIsLocal(lhsSym)
-  for a in site.argCursors:
-    if forward and countSymUses(a, lhsSym) > 0: forward = false
+  var watch = initHashSet[SymId]()
+  for i, a in site.argCursors:
+    if countSymUses(a, lhsSym) > 0: watch.incl site.pSyms[i]
+  if forward and watch.len > 0:
+    # `v = multiply(v, w)`: an argument reads the destination. The result may
+    # still be built in it if the body writes its result once, as a whole, and
+    # reads no such parameter after that store -- an assignment evaluates its
+    # value before it stores.
+    let res = resultLocalOf(site.pd.body, site.pSyms)
+    forward = res != SymId(0) and
+      tailCopySource(site.pd.body, res, site.pSyms) == SymId(0) and
+      not hasLoop(site.pd.body) and
+      resultWrittenLast(site.pd.body, res, watch)
   emitSplice(c, dest, site, lhsSym, forward, entry.info)
 
   n = entry
