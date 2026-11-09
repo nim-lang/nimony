@@ -112,6 +112,9 @@ type
     args: Table[SymId, Cursor]
     results: Table[SymId, VarId]
     olds: Table[string, VarId]
+    own: bool
+      ## The proposition is about the scope being analysed (no callee's
+      ## parameter in it), so the facts here describe its locations.
 
   CallContext = object
     ## What the calls of one statement established about the locations they
@@ -313,13 +316,13 @@ proc freshCall(): CallContext {.inline.} =
 proc plainReading(): Reading {.inline.} =
   ## A proposition that names what it is about.
   Reading(args: initTable[SymId, Cursor](), results: initTable[SymId, VarId](),
-          olds: initTable[string, VarId]())
+          olds: initTable[string, VarId](), own: true)
 
 proc ownReading(c: FirContext): Reading {.inline.} =
   ## A proposition of the routine being analysed: `old(e)` is the snapshot
   ## taken on entry.
   Reading(args: initTable[SymId, Cursor](), results: initTable[SymId, VarId](),
-          olds: c.ownOlds)
+          olds: c.ownOlds, own: true)
 
 proc extractSymId(n: Cursor): SymId {.inline.} =
   var n = n
@@ -340,11 +343,15 @@ proc extractSymIdForStore(n: Cursor): SymId =
     inc n
   result = extractSymId(n)
 
-proc skipSymbol(r: var Cursor): SymId {.inline.} =
-  ## Consume a bare Symbol or (v sym version) node and return its SymId.
+proc keepsValue(c: var FirContext; conv: Cursor; facts: bool): bool
+
+proc skipSymbol(c: var FirContext; r: var Cursor): SymId =
+  ## Consume a bare Symbol or (v sym version) node, under conversions that keep
+  ## its value, and return its SymId.
   ## Returns NoSymId (without advancing) if r is neither.
   var n = r
-  while n.exprKind in {HconvX, ConvX, BaseobjX}:
+  while n.exprKind == BaseobjX or
+      (n.exprKind in {HconvX, ConvX} and keepsValue(c, n, facts = true)):
     inc n
     skip n # type
   result = extractSymId(n)
@@ -821,12 +828,17 @@ proc foldOrdinal(bits: int; n: Cursor): xint =
   result = tryEvalOrdinal(bits, n)
   if not result.isNaN and foldWraps(bits, n): result = createNaN()
 
+const
+  ArithmeticExprs = {AddX, SubX, MulX, DivX, ModX, NegX, ShlX, ShrX, AshrX,
+                     BitandX, BitorX, BitxorX, BitnotX}
+
 proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
                  keepWrap = false): bool =
   ## The interval `n` lies in by its *shape* alone — no flow facts: a constant,
   ## `a and k` (`0..k` for a constant `k >= 0`, whatever `a` is), `a shr k` of a
-  ## non-negative bounded `a`, and a conversion whose target type holds the
-  ## operand's interval. What bit-twiddling code computes an index from —
+  ## non-negative bounded `a`, a conversion whose target type holds the
+  ## operand's interval, and at least the type of any integer operation, which
+  ## wraps. What bit-twiddling code computes an index from —
   ## `HexChars[(n and 0xF0) shr 4]`, `bits[u shr IntShift]` — is exactly this,
   ## and none of it is expressible as `a <= b + c`.
   result = false
@@ -991,20 +1003,23 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
                   result = not lo.isNaN and not hi.isNaN
       else:
         discard
-      if result and not keepWrap and n.exprKind in {AddX, SubX, MulX, ShlX}:
-        # The interval above is the *mathematical* one. Where the operation
-        # wraps and the interval leaves the type, the value is merely some
-        # value of the type.
+      if not keepWrap and n.exprKind in ArithmeticExprs:
+        # The interval above is the *mathematical* one. An operation on an
+        # integer type `T` yields a value of `T` whatever its operands, since
+        # it wraps (doc/language.md). So where the interval leaves `T`, or the
+        # operands gave none (`x * 3'u64` of an unbounded `x`, or one past
+        # what `xint` holds), the value is merely some value of `T`.
         var t = n
         t = sub(t)
         if typeWraps(t):
           var tLo = zero()
           var tHi = zero()
           if not integerTypeBounds(c.bits, arithType(t), tLo, tHi):
-            result = false
-          elif lo < tLo or tHi < hi:
+            if n.exprKind in {AddX, SubX, MulX, ShlX}: result = false
+          elif not result or lo < tLo or tHi < hi:
             lo = tLo
             hi = tHi
+            result = true
       if not result and (n.isSymbol or
           n.exprKind in {DotX, DdotX, TupatX, HderefX, DerefX, ArratX, AtX, PatX}):
         # a location lies in whatever the flow facts bound it to
@@ -1062,30 +1077,80 @@ const
   FirstDerivedVarId = -2
   MaxLocationDepth = 6   ## bounds accessor look-through and path nesting
 
-proc peelExpr(n: Cursor): Cursor =
+proc keepsValue(c: var FirContext; conv: Cursor; facts: bool): bool =
+  ## Does the conversion `conv` hand on its operand's value unchanged? A
+  ## conversion to an integer type does only where that type holds every value
+  ## of the operand's: `int64(a)` of an `int32` is `a`, but `uint32(a)` is not
+  ## (`-1` becomes `high(uint32)`), and neither is `uint8(i)` of an `int` —
+  ## unless, with `facts`, the flow facts keep the operand inside it: `uint(m)`
+  ## under `0 <= m`. Only for an operand of the scope being analysed: a
+  ## callee's parameter can share a symbol with a local here.
+  var n = conv
+  n = sub(n)
+  var tLo = zero()
+  var tHi = zero()
+  if not integerTypeBounds(c.bits, arithType(n), tLo, tHi): return true
+  skip n # the target type
+  var src = default(Cursor)
+  if n.isSymbol:
+    src = lookupSymbol(c.typeCache, n.symId)
+  elif n.kind in {IntLit, UIntLit}:
+    let v = if n.kind == IntLit: createXint(n.intVal) else: createXint(n.uintVal)
+    return tLo <= v and v <= tHi
+  elif n.isTagLit and n.exprKind in ArithmeticExprs + {ConvX, HconvX, CastX}:
+    src = sub(n) # the type operand
+  elif facts and not c.prescanning:
+    # an operand of the scope being analysed has a type the cache knows
+    src = getType(c.typeCache, n)
+  if cursorIsNil(src): return false
+  while src.typeKind in {LentT, SinkT, MutT, OutT, OwnedT}:
+    src = sub(src)
+  src = arithType(src)
+  if src.typeKind == BoolT: return true
+  var sLo = zero()
+  var sHi = zero()
+  if src.typeKind in {EnumT, OnumT, AnumT}:
+    # an enum is judged by the ordinals it declares: `eNeg = -1` does not
+    # survive `uint32`, nor `eb = 200` an `int8`
+    let b = enumBounds(src)
+    if b.lo.isNaN or b.hi.isNaN: return false
+    sLo = b.lo
+    sHi = b.hi
+  elif not integerTypeBounds(c.bits, src, sLo, sHi): return false
+  if facts and not (tLo <= sLo and sHi <= tHi):
+    var fLo = createNaN()
+    var fHi = createNaN()
+    operandRange(c, n, fLo, fHi)
+    if not fLo.isNaN and sLo < fLo: sLo = fLo
+    if not fHi.isNaN and fHi < sHi: sHi = fHi
+  result = tLo <= sLo and sHi <= tHi
+
+proc peelExpr(c: var FirContext; n: Cursor; facts = false): Cursor =
   ## Look through the wrappers a value picks up on its way into a parameter or
-  ## out of a location: hidden conversions, the hidden address of a `var`
-  ## argument, a literal's type suffix.
+  ## out of a location: conversions that keep its value (`keepsValue`), the
+  ## hidden address of a `var` argument, a literal's type suffix.
   result = n
   var guard = 0
   while guard < MaxLocationDepth:
     inc guard
     case result.exprKind
     of HconvX, ConvX:
+      if not keepsValue(c, result, facts): break
       inc result
       skip result # the target type
     of HaddrX, HderefX, ParX, SufX:
       inc result
     else: break
 
-proc argOf(n: Cursor; subst: Table[SymId, Cursor]): Cursor =
+proc argOf(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
+           own = false): Cursor =
   ## `n` with a substituted symbol replaced by the expression it stands for: a
   ## callee's parameter by the argument written at the call site, or an
   ## accessor's parameter by the expression it was applied to. `subst` is empty
   ## wherever the symbols already are the ones to reason about.
-  result = peelExpr(n)
+  result = peelExpr(c, n, facts = own or subst.len == 0)
   if result.isSymbol and subst.hasKey(result.symId):
-    result = peelExpr(subst.getOrQuit(result.symId))
+    result = peelExpr(c, subst.getOrQuit(result.symId), facts = true)
 
 proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor]) =
   ## `n` with every substituted symbol replaced by the expression it stands for.
@@ -1106,11 +1171,11 @@ proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor]) 
   else:
     dest.addSubtree n
 
-proc substitutes(n: Cursor; subst: Table[SymId, Cursor]): bool =
+proc substitutes(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): bool =
   ## Whether `argOf(n, subst)` replaces `n`. The replacement is an expression of
   ## the caller: it must be read with no substitution, because a caller's local
   ## can carry the same symbol id as a callee's parameter.
-  let p = peelExpr(n)
+  let p = peelExpr(c, n)
   result = p.isSymbol and subst.hasKey(p.symId)
 
 proc derivedIdOf(c: var FirContext; key: string; root: SymId): VarId =
@@ -1350,7 +1415,7 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   ## Canonical key of a pure location. `steps == 0` means the location *is* the
   ## plain variable `root`; anything else is derived.
   if depth > MaxLocationDepth: return false
-  let m = argOf(n, subst)
+  let m = argOf(c, n, subst)
   let s = extractSymId(m)
   if s != NoSymId:
     root = s
@@ -1399,7 +1464,7 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
       # accessor's own path then needs its parameter and nothing else — keeping
       # the outer map there would substitute twice, and a recursive call with
       # swapped arguments maps `a` to `b` and `b` back to `a`.
-      let resolved = argOf(arg, subst)
+      let resolved = argOf(c, arg, subst)
       if resolved.isSymbol or not resolved.isTagLit or subst.len == 0:
         var inner = accessorSubst(acc)
         inner[acc.param] = resolved
@@ -1476,7 +1541,7 @@ proc noteTypeRange(c: var FirContext; v: VarId; n: Cursor) =
   if staticRangeBounds(t, lo, hi) or integerTypeBounds(c.bits, arithType(t), lo, hi):
     c.typeRange[v] = RangeBounds(lo: lo, hi: hi)
 
-proc resultBound(bits: int; r: Cursor; resultSyms: seq[SymId]; lo, hi: var xint) =
+proc resultBound(c: var FirContext; r: Cursor; resultSyms: seq[SymId]; lo, hi: var xint) =
   ## Narrow `lo..hi` by one conjunct of an `.ensures` that compares `result`
   ## with an integer constant (`high(int)` among them); any other conjunct
   ## says nothing here.
@@ -1484,22 +1549,22 @@ proc resultBound(bits: int; r: Cursor; resultSyms: seq[SymId]; lo, hi: var xint)
   of AndX:
     var x = r
     x = sub(x)
-    resultBound(bits, x, resultSyms, lo, hi)
+    resultBound(c, x, resultSyms, lo, hi)
     skip x
-    resultBound(bits, x, resultSyms, lo, hi)
+    resultBound(c, x, resultSyms, lo, hi)
   of LeX, LtX:
     let strict = if r.exprKind == LtX: createXint(1'i64) else: zero()
     var x = r
     x = sub(x)
     skip x # the type operand
-    let a = peelExpr(x)
+    let a = peelExpr(c, x)
     skip x
-    let b = peelExpr(x)
+    let b = peelExpr(c, x)
     if b.isSymbol and b.symId in resultSyms:
-      let k = tryEvalOrdinal(bits, a)
+      let k = tryEvalOrdinal(c.bits, a)
       if not k.isNaN: lo = max(lo, k + strict)
     elif a.isSymbol and a.symId in resultSyms:
-      let k = tryEvalOrdinal(bits, b)
+      let k = tryEvalOrdinal(c.bits, b)
       if not k.isNaN: hi = min(hi, k - strict)
   else: discard
 
@@ -1530,7 +1595,7 @@ proc ensuredResultRange(c: var FirContext; call: Cursor; lo, hi: var xint): bool
   if resultSyms.len == 0: return
   lo = createXint(low(int64))
   hi = createXint(high(int64))
-  resultBound(c.bits, cond, resultSyms, lo, hi)
+  resultBound(c, cond, resultSyms, lo, hi)
   result = lo > createXint(low(int64)) or hi < createXint(high(int64))
 
 proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): VarId =
@@ -1541,7 +1606,7 @@ proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): V
   if locationKey(c, n, subst, root, key, steps, 0) and root != NoSymId:
     result = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
     if steps > 0 and not c.prescanning and not c.declaredRange.hasKey(result):
-      let m = argOf(n, subst)
+      let m = argOf(c, n, subst)
       var lo = zero()
       var hi = zero()
       if m.exprKind in CallKinds and ensuredResultRange(c, m, lo, hi):
@@ -1570,7 +1635,7 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   ## `high(s)`: a transparent accessor whose body is a location plus a
   ## constant (`s.len - 1`), read as that location and that constant.
   result = false
-  let m = argOf(n, subst)
+  let m = argOf(c, n, subst)
   if m.exprKind in CallKinds:
     var r = m
     r = sub(r)
@@ -1581,13 +1646,13 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
       # a call of a transparent accessor, its parameter standing for `arg`
       let arg = r
       skip r
-      let body = peelExpr(acc.value)
+      let body = peelExpr(c, acc.value)
       if not r.hasMore and body.exprKind in {AddX, SubX}:
         # ... with exactly that one argument, and a body `path ± k`
         var b = body
         b = sub(b)
         var inner = accessorSubst(acc)
-        inner[acc.param] = argOf(arg, subst)
+        inner[acc.param] = argOf(c, arg, subst)
         if typeWraps(b):
           # the body is in terms of the accessor's parameter: the facts rule
           # out a wrap of it with the argument in its place
@@ -1609,7 +1674,7 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
             k = if body.exprKind == SubX: -off else: off
             result = true
 
-proc matchStep(decl: Cursor; info: var StepInfo): bool =
+proc matchStep(c: var FirContext; decl: Cursor; info: var StepInfo): bool =
   ## Recognize a *step routine*: one whose whole body moves its first, `var`,
   ## parameter by a fixed amount. `inc`/`dec` are exactly that after sem:
   ##
@@ -1647,7 +1712,7 @@ proc matchStep(decl: Cursor; info: var StepInfo): bool =
   skip b
   if b.hasMore: return false          # a second statement: not a plain step
 
-  let v = peelExpr(value)
+  let v = peelExpr(c, value)
   if v.exprKind notin {AddX, SubX}: return false
   var e = v
   e = sub(e)
@@ -1661,7 +1726,7 @@ proc matchStep(decl: Cursor; info: var StepInfo): bool =
     info.stepSym = second
     return true
   # `inc` on a `Natural` steps by `(conv (rangetype …) 1)`
-  let lit = peelExpr(e)
+  let lit = peelExpr(c, e)
   case lit.kind
   of IntLit: info.stepLit = createXint(lit.intVal)
   of UIntLit: info.stepLit = createXint(lit.uintVal)
@@ -1676,7 +1741,7 @@ proc stepOf(c: var FirContext; fnSym: SymId; info: var StepInfo): bool =
     return true
   if fnSym in c.notSteps: return false
   let s = tryLoadSym(fnSym)
-  if s.status == LacksNothing and matchStep(s.decl, info):
+  if s.status == LacksNothing and matchStep(c, s.decl, info):
     c.steps[fnSym] = info
     return true
   c.notSteps.incl fnSym
@@ -1730,7 +1795,7 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
   if info.stepSym != NoSymId:
     # the step is the second parameter: read it from this call site
     if not r.hasMore: return false
-    let arg = peelExpr(r)
+    let arg = peelExpr(c, r, facts = true)
     case arg.kind
     of IntLit: step = createXint(arg.intVal)
     of UIntLit: step = createXint(arg.uintVal)
@@ -1750,7 +1815,7 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
       return false
     if c.prescanning:
       if not declaredStepFits(c, info.opType, loc, moved): mayWrap = true
-    elif not stepFits(c, info.opType, peelExpr(target), moved):
+    elif not stepFits(c, info.opType, peelExpr(c, target, facts = true), moved):
       if loc in c.assumedSteps: c.brokenSteps.incl loc
       loc = InvalidVarId
       stepArg = default(Cursor)
@@ -2055,10 +2120,6 @@ proc cannotProve(c: var FirContext; info: NifLineInfo; report: bool; msg: string
   c.obligationOpen = false
   if report: buildErr c, info, msg
 
-const
-  ArithmeticExprs = {AddX, SubX, MulX, DivX, ModX, NegX, ShlX, ShrX, AshrX,
-                     BitandX, BitorX, BitxorX, BitnotX}
-
 proc normalizedArith(c: var FirContext; n: Cursor): Cursor
 
 proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
@@ -2105,7 +2166,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   var off = zero()
   var isLit = false
   var r = value
-  let sym = skipSymbol(r)
+  let sym = skipSymbol(c, r)
   # The rules below read `+`, `-` and `*` mathematically, which a wrapping one
   # (`typeWraps`) only is once its operands keep it inside its type.
   let mathValue = value.exprKind notin {AddX, SubX, MulX} or noWrap(c, value)
@@ -2121,7 +2182,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     a = sub(a)
     skip a # the type operand
     let baseStart = a
-    var baseSym = skipSymbol(a)
+    var baseSym = skipSymbol(c, a)
     var baseLoc = if baseSym != NoSymId: getVarId(c, baseSym) else: InvalidVarId
     if baseSym == NoSymId:
       # a derived location as the base: `a.d[a.nd - 1]`
@@ -3313,7 +3374,7 @@ proc constStringLen(c: var FirContext; n: Cursor; rd: Reading;
     if fnSym != NoSymId and pool.symBasename(fnSym) == "len":
       skip r # the callee
       if r.hasMore:
-        let strSym = extractSymId(argOf(r, rd.args))
+        let strSym = extractSymId(argOf(c, r, rd.args, rd.own))
         skip r
         if strSym != NoSymId and not r.hasMore:
           var value = default(Cursor)
@@ -3337,13 +3398,20 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
   v = VarId(0)
   cnst = createXint(0'i32)
   if rd.results.len > 0:
-    let rs = extractSymId(peelExpr(n))
+    let rs = extractSymId(peelExpr(c, n))
     if rs != NoSymId and rd.results.hasKey(rs):
       v = rd.results.getOrQuit(rs)
       return true
-  if substitutes(n, rd.args):
-    return pureOperand(c, rd.args.getOrQuit(peelExpr(n).symId), default(Reading), v, cnst)
-  let m = peelExpr(n)
+  if substitutes(c, n, rd.args):
+    return pureOperand(c, rd.args.getOrQuit(peelExpr(c, n).symId), plainReading(), v, cnst)
+  let m = peelExpr(c, n, facts = rd.own)
+  if m.exprKind in {ConvX, HconvX} and not rd.own and rd.args.len > 0 and
+      rd.results.len == 0 and rd.olds.len == 0:
+    # whether `uint(s.len)` of a callee keeps its value is a question about
+    # the arguments: read it with them in place
+    var buf = createTokenBuf(16)
+    addSubstituted(buf, m, rd.args)
+    return pureOperand(c, cursorAt(buf, 0), plainReading(), v, cnst)
   case m.kind
   of IntLit:
     cnst = createXint(m.intVal)
@@ -3373,7 +3441,7 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     var baseConst = zero()
     if not pureOperand(c, r, rd, base, baseConst): return false
     skip r
-    let k = argOf(r, rd.args)
+    let k = argOf(c, r, rd.args, rd.own)
     var off = createXint(0'i32)
     case k.kind
     of IntLit: off = createXint(k.intVal)
@@ -3409,9 +3477,9 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     return false
   if constStringLen(c, m, rd, cnst):
     return true
-  if offsetAccessor(c, n, rd.args, v, cnst):
+  if offsetAccessor(c, m, rd.args, v, cnst):
     return true
-  let loc = locationVarId(c, n, rd.args)
+  let loc = locationVarId(c, m, rd.args)
   if loc != InvalidVarId:
     v = loc
     return true
@@ -3468,8 +3536,8 @@ proc operandInterval(c: var FirContext; n: Cursor; rd: Reading;
     lo = k
     hi = k
     result = true
-  elif rd.args.len == 0 or substitutes(n, rd.args):
-    result = valueBounds(c, argOf(n, rd.args), lo, hi)
+  elif rd.args.len == 0 or substitutes(c, n, rd.args):
+    result = valueBounds(c, argOf(c, n, rd.args, rd.own), lo, hi)
   else:
     # `m.value` of a callee's parameter `m`: `valueBounds` reads the caller's
     # scope, so it has to see the argument in place of `m` (#2643)
@@ -3482,7 +3550,7 @@ proc assumableSide(c: var FirContext; e: Cursor; rd: Reading): bool =
   ## May a comparison be *assumed* with its operand `e` read mathematically?
   ## A wrapped value is not ordered with the mathematical one at all, so a
   ## wrapping `e` must be known to stay inside its type.
-  let m = peelExpr(e)
+  let m = peelExpr(c, e, facts = rd.own)
   result = m.exprKind notin {AddX, SubX, MulX, NegX} or not typeWraps(sub(m)) or
            (rd.args.len == 0 and rd.results.len == 0 and noWrap(c, m))
 
@@ -3537,11 +3605,11 @@ proc proveMasked(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   var r = n
   r = sub(r)
   skip r # the type operand
-  let leftRd = if substitutes(r, rd.args): default(Reading) else: rd
-  let left = argOf(r, rd.args)
+  let leftRd = if substitutes(c, r, rd.args): plainReading() else: rd
+  let left = argOf(c, r, rd.args, rd.own)
   skip r
-  let rightRd = if substitutes(r, rd.args): default(Reading) else: rd
-  let right = argOf(r, rd.args)
+  let rightRd = if substitutes(c, r, rd.args): plainReading() else: rd
+  let right = argOf(c, r, rd.args, rd.own)
   let strict = if k == LtX: createXint(1'i64) else: zero()
   if left.exprKind == BitandX:
     var rv = VarId(0)
@@ -4501,7 +4569,17 @@ proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
     c.facts.add query(dest, VarId(0), hi)
   # a mask can bound it more tightly than the interval of a conversion around
   # it does: `int(h and mask)`
-  if (let v = peelExpr(value); v.exprKind == BitandX):
+  var v = peelExpr(c, value, facts = true)
+  var top = createNaN()
+  if v.exprKind in {ConvX, HconvX}:
+    # ... where the mask fits the conversion's type, which then keeps the value
+    var d = v
+    d = sub(d)
+    var tLo = zero()
+    if integerTypeBounds(c.bits, arithType(d), tLo, top):
+      skip d
+      v = peelExpr(c, d, facts = true)
+  if v.exprKind == BitandX:
     # `x and m` lies in `0..m` for a mask `m` known not to be negative: the
     # `hash and high(data)` every hash table starts its probe with.
     let rd = plainReading()
@@ -4512,7 +4590,8 @@ proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
       var mv = VarId(0)
       var mk = zero()
       if pureOperand(c, r, rd, mv, mk) and mv != VarId(0) and
-          impliesHere(c, query(VarId(0), mv, mk)):
+          impliesHere(c, query(VarId(0), mv, mk)) and
+          (top.isNaN or impliesHere(c, query(mv, VarId(0), top - mk))):
         # every such operand bounds it: `a.len and high(b)` is below both
         c.facts.add query(VarId(0), dest, zero())
         c.facts.add query(dest, mv, mk)
@@ -4557,7 +4636,7 @@ proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
   ## `x` lies within `d` of `y`. `x = d + y` is the same sum: both orientations
   ## of a `+` contribute, so the facts do not depend on the operands' order.
   result = false
-  let v = peelExpr(value)
+  let v = peelExpr(c, value)
   if v.exprKind notin {AddX, SubX}: return
   if not noWrap(c, v): return
   var r = v
@@ -4678,7 +4757,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     # `i = i ± k`, a step the loop's pre-scan may have assumed not to wrap
     let destLoc = plainLocationVarId(c, n)
     if destLoc in c.assumedSteps:
-      let v = peelExpr(valueFacts)
+      let v = peelExpr(c, valueFacts)
       if v.exprKind in {AddX, SubX} and not noWrap(c, v): c.brokenSteps.incl destLoc
 
   # Check borrow conflicts for the destination
@@ -4985,8 +5064,8 @@ proc preservedLocations(c: var FirContext; cond: Cursor; subst: Table[SymId, Cur
     skip r
     var oldOf = default(Cursor)
     var plain = lhs
-    if oldArg(argOf(lhs, subst), oldOf): plain = r
-    elif not oldArg(argOf(r, subst), oldOf): plain = default(Cursor)
+    if oldArg(argOf(c, lhs, subst), oldOf): plain = r
+    elif not oldArg(argOf(c, r, subst), oldOf): plain = default(Cursor)
     if not cursorIsNil(plain):
       let a = locationVarId(c, plain, subst)
       if a != InvalidVarId and a == locationVarId(c, oldOf, subst):
@@ -5031,7 +5110,7 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   ## `inc` takes.
   result = ivUnknown
   if cursorIsNil(value): return
-  let v = peelExpr(value)
+  let v = peelExpr(c, value)
   if v.exprKind in {ShrX, AshrX, BitandX}:
     # `v = v shr k` keeps `v >= 0` (given it held), and `v = v and k` makes it
     # so outright for a non-negative mask. Neither is monotone.
