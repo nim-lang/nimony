@@ -103,6 +103,7 @@ import std/sha1
 import std/smartcli
 import std/socket
 import std/stacktraces
+import std/stats
 import std/streamio
 import std/streams
 import std/stripes
