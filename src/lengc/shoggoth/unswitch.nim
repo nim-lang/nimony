@@ -343,9 +343,17 @@ proc expandCond(c: Context; dest: var TokenBuf; n: Cursor; bound: int;
     let li = rawLineInfo(n)
     dest.openTag n.cursorTagId
     if li.isValid: dest.appendLineInfo li
+    # the selector of a `dot` and the key of a `kv` are field names, not temps
+    let named = n.exprKind == DotC or n.substructureKind == KvU
+    let isSel = n.exprKind == DotC
     var it = n
+    var idx = 0
     it.loopInto:
-      expandCond(c, dest, it, bound, depth, active)
+      if not named or (idx == 0) == isSel:
+        expandCond(c, dest, it, bound, depth, active)
+      else:
+        dest.addSubtree it
+      inc idx
       skip it
     dest.closeTag()
   else:
@@ -611,7 +619,20 @@ proc emitSpec(c: var Context; dest: var TokenBuf; n: Cursor; cond: Cursor;
     let li = rawLineInfo(n)
     dest.openTag n.cursorTagId
     if li.isValid: dest.appendLineInfo li
-    emitSpecChildren(c, dest, n, cond, condTrue, rename)
+    if n.exprKind == DotC or n.substructureKind == KvU:
+      # a field shares its symbol with a local of the same name, not its
+      # identity: only the object of a `dot` and the value of a `kv` are
+      # renamed; the selector, depth and key stay
+      let isSel = n.exprKind == DotC
+      var it = n
+      var idx = 0
+      it.loopInto:
+        if (idx == 0) == isSel: emitSpec(c, dest, it, cond, condTrue, rename)
+        else: dest.addSubtree it
+        inc idx
+        skip it
+    else:
+      emitSpecChildren(c, dest, n, cond, condTrue, rename)
     dest.closeTag()
   of Symbol:
     if rename.hasKey(n.symId): dest.addSymUse rename.getOrDefault(n.symId)
