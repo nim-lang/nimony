@@ -261,6 +261,12 @@ proc genStringCall(c: var SynthesizeSerializerCtx; name, arg: string) =
     c.dest.addSymUse pool.symId(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addStrLit arg, c.info
 
+proc genTypeCall(c: var SynthesizeSerializerCtx; t: TypeCursor) =
+  ## Emits `t` as a raw atom. Like every atom it needs a leading space: a
+  ## type that is just a symbol (`Dur.0.m`) would otherwise fuse with the
+  ## tag in front of it, `(convDur.0.m …` (#2926).
+  genStringCall(c, "writeNifRaw", " " & toString(t, false))
+
 proc genParRiCall(c: var SynthesizeSerializerCtx) =
   c.dest.copyIntoKind CallS, c.info:
     c.dest.addSymUse pool.symId("writeNifParRi.0." & writeNifModuleSuffix), c.info
@@ -360,7 +366,7 @@ proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: Toke
 proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; depth: int) =
   genStringCall(c, "writeNifParLe", "oconstr")
   # we simply generate the type as a raw string:
-  genStringCall(c, "writeNifRaw", toString(orig, false))
+  genTypeCall(c, orig)
 
   var n = orig
   let needsDeref = n.typeKind in {RefT, PtrT}
@@ -383,7 +389,7 @@ proc unravelTuple(c: var SynthesizeSerializerCtx;
   assert orig.typeKind == TupleT
   genStringCall(c, "writeNifParLe", "tupconstr")
   # we simply generate the type as a raw string:
-  genStringCall(c, "writeNifRaw", toString(orig, false))
+  genTypeCall(c, orig)
 
   var n = orig
   var idx = 0
@@ -451,7 +457,7 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
 
   genStringCall(c, "writeNifParLe", "aconstr")
   # we simply generate the type as a raw string:
-  genStringCall(c, "writeNifRaw", toString(orig, false))
+  genTypeCall(c, orig)
 
   copyIntoKind c.dest, WhileS, c.info:
     indexVarLowerThanArrayLen c, indexVar, arrayLen
@@ -484,7 +490,7 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
 
   genStringCall(c, "writeNifParLe", "addr")
   genStringCall(c, "writeNifParLe", "aconstr")
-  genStringCall(c, "writeNifRaw", toString(uarrayType, false))
+  genTypeCall(c, uarrayType)
 
   copyIntoKind c.dest, WhileS, c.info:
     # while idx < len(param):
@@ -515,7 +521,7 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
   let baseType = orig.childCursor
   let maxValue = bitsetSizeInBytes(baseType) * createXint(8'i64)
   genStringCall(c, "writeNifParLe", "setconstr")
-  genStringCall(c, "writeNifRaw", toString(orig, false))
+  genTypeCall(c, orig)
 
   let indexVar = pool.symId("idx.0")
   declareIndexVar c, indexVar
@@ -568,7 +574,7 @@ proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
     return
   elif orig.typeKind == CstringT:
     genStringCall(c, "writeNifParLe", "conv")
-    genStringCall(c, "writeNifRaw", toString(orig, false))
+    genTypeCall(c, orig)
     primitiveCall(c, "writeNifStr", arg)
     genParRiCall c
     return
@@ -579,8 +585,19 @@ proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
     # do not lose the type:
     genStringCall(c, "writeNifParLe", "conv")
     # we simply generate the type as a raw string:
-    genStringCall(c, "writeNifRaw", toString(orig, false))
-    entryPoint(c, typ.childCursor, arg)
+    genTypeCall(c, orig)
+    let baseType = typ.childCursor
+    if typ.typeKind == DistinctT:
+      # the serializers only accept the base type and a distinct type does
+      # not convert to it implicitly, so unwrap `arg` (#2926):
+      var baseArg = createTokenBuf(8)
+      copyIntoKind baseArg, ConvX, c.info:
+        baseArg.addSubtree baseType
+        baseArg.addSubtree arg
+      entryPoint(c, baseType, readonlyCursorAt(baseArg, 0))
+    else:
+      # a range converts to its base type implicitly
+      entryPoint(c, baseType, arg)
     genParRiCall c
   of IT:
     primitiveCall(c, "writeNifInt", arg)

@@ -1550,6 +1550,8 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     buf.addSubtree n
     return
   let orig = typ
+  let start = buf.len
+  var n = n
   var typ = skipModifier(typ)
   var symType = default(Cursor)
   var opened = 0
@@ -1562,6 +1564,11 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         buf.addParLe(DconvX, n.info)
         buf.addSymUse(sym, n.info)
         inc opened
+        # a value computed by compile-time execution arrives as a `conv`
+        # to the distinct type (#2926); the `dconv` above replaces it
+        if n.isTagLit and n.exprKind in {ConvX, HconvX}:
+          inc n
+          skip n # type
         typ = decl.body
         inc typ # distinct tag
         continue
@@ -1806,9 +1813,8 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     err = true
 
   if err:
-    if opened > 0:
-      # could also replace with a general shrink to start
-      buf.shrink buf.len - opened
+    # drop the `(dconv T` prefixes opened above
+    buf.shrink start
     buf.addParLe nifpools.ErrT, n.info
     buf.addDotToken()
     let msg = "cannot annotate constant " & asNimCode(n) & " with type " & typeToString(orig)
