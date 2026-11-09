@@ -5034,6 +5034,11 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
         semSumTypeObjConstr(c, dest, it, efldSym, inferredExpected, info, oconstrStart)
         return
   it.typ = semLocalType(c, dest, it.n)
+  if it.typ.typeKind == ErrT:
+    # the type's own error, already in `dest`, is the diagnostic
+    while it.n.hasMore: skip it.n
+    it.n = oconstrStart; skip it.n
+    return
   dest.shrink exprStart
   var decl = default(TypeDecl)
   var objType = it.typ
