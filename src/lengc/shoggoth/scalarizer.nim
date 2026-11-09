@@ -517,30 +517,25 @@ proc synthCursor(c: var Context; idx: int): Cursor {.inline.} =
 
 # ---- splitting whole-object assignments -----------------------------------
 #
-# The inliner leaves every by-value aggregate result as
+# The inliner leaves a by-value aggregate result it forwards into a temp as
 #
-#   (var :r . T .) … (asgn r (oconstr T (kv x a) (kv y b))) … (asgn v r) … (dot v x)
+#   (var :r . T .) … (asgn r (oconstr T (kv x a) (kv y b))) … (dot r x)
 #
-# — a declaration without initializer, a whole-object store, a whole-object copy
-# into another local. Neither `r` nor `v` is a candidate above (`r` is used bare,
-# `v` has no initializer), so both stay in memory and every vector op of an
-# inlined `a - b` costs a store and a reload per component. This pre-pass splits
-# such assignments into field assignments, after which every use of the object
-# is a `(dot o f)` and the uninitialised-candidate rule scalarizes it:
+# -- a declaration without initializer and a whole-object store. `r` is not a
+# candidate above (it is used bare), so it stays in memory and every component
+# costs a store and a reload. This pre-pass splits such stores into field
+# assignments, after which every use of the object is a `(dot o f)` and the
+# uninitialised-candidate rule scalarizes it:
 #
 #   (asgn r (oconstr T (kv f v)…))   →  (asgn (dot r f) v) for the fields READ
-#   (asgn d s)   (both such locals)  →  (asgn (dot d f) (dot s f)) for d's fields
-#   (asgn d L)   (L a pure lvalue)   →  (asgn (dot d f) (dot L f)) likewise
 #
 # Only the fields some `(dot o f)` reads are kept: a field nobody reads has no
-# observer. A copy `d = s` makes every field read of `d` a field read of `s`, so
-# the read sets flow backwards along copies to a fixpoint. Disqualified (left
-# whole) is an object that escapes: any other bare use, an address of it or of a
-# field, a constructor store missing a field that is read (that field is zeroed
-# by the store, which a split would not do), or a store whose value mentions the
-# object itself. Disqualification spreads across a copy, whose two ends must be
-# split together or not at all. Sound regardless of control flow: each split
-# assignment writes exactly the fields some later read can observe.
+# observer. Disqualified (left whole) is an object that escapes: any other bare
+# use, an address of it or of a field, a constructor store missing a field
+# that is read (that field is zeroed by the store, which a split would not
+# do), or a store whose value mentions the object itself. Sound regardless of
+# control flow: each split assignment writes exactly the fields some later
+# read can observe.
 
 type
   SplitVar = object
@@ -549,11 +544,9 @@ type
     bad: bool
     declTwice: bool
 
-  SplitKind = enum skCtor, skCopy, skLoad
   SplitAsgn = object
-    pos: int
-    kind: SplitKind
-    dst, src: SymId                    ## skCopy: both locals; else src = 0
+    pos: int                           ## the `(asgn dst (oconstr …))`
+    dst: SymId
 
   SplitCtx = object
     orig: ptr TokenBuf
@@ -624,21 +617,10 @@ proc scanSplit(c: var SplitCtx; n: Cursor) =
           let fs = ctorFieldSet(rhs, ok)
           if ok:
             c.vars.getOrQuit(x).ctorFields.add fs
-            c.asgns.add SplitAsgn(pos: pos, kind: skCtor, dst: x)
+            c.asgns.add SplitAsgn(pos: pos, dst: x)
           else:
             markBad(c, x)
           scanSplit(c, rhs)                      # the values' own uses
-          return
-        if rhs.kind == Symbol and symId(rhs) in c.vars and symId(rhs) != x:
-          c.asgns.add SplitAsgn(pos: pos, kind: skCopy, dst: x, src: symId(rhs))
-          return
-        if rhs.kind == Symbol or (rhs.kind == TagLit and
-            rhs.exprKind in {DotC, AtC, PatC, DerefC} and isPureLvaluePath(rhs)):
-          if mentions(rhs, x):
-            markBad(c, x)
-          else:
-            c.asgns.add SplitAsgn(pos: pos, kind: skLoad, dst: x)
-          if rhs.kind == TagLit: scanSplit(c, rhs)
           return
         markBad(c, x)
         scanSplit(c, rhs)
@@ -667,34 +649,16 @@ proc scanSplit(c: var SplitCtx; n: Cursor) =
   else: discard
 
 proc settleSplit(c: var SplitCtx) =
-  var changed = true
-  while changed:
-    changed = false
-    for a in c.asgns:
-      if a.kind != skCopy: continue
-      let db = c.vars.getOrQuit(a.dst).bad
-      let sb = c.vars.getOrQuit(a.src).bad
-      if db != sb:
-        c.vars.getOrQuit(a.dst).bad = true
-        c.vars.getOrQuit(a.src).bad = true
-        changed = true
-      elif not db:
-        # collected first: `incl` into `c.vars` while iterating a set inside it
-        var missing: seq[SymId] = @[]
-        for f in c.vars.getOrQuit(a.dst).accessed:
-          if f notin c.vars.getOrQuit(a.src).accessed: missing.add f
-        for f in missing:
-          c.vars.getOrQuit(a.src).accessed.incl f
-          changed = true
-    for x, v in c.vars.mpairs:
-      if v.bad: continue
-      for fs in v.ctorFields:
-        for f in v.accessed:
-          if f notin fs:
-            v.bad = true
-            changed = true
-            break
-        if v.bad: break
+  ## A local whose read fields some constructor stored into it does not list
+  ## stays whole.
+  for x, v in c.vars.mpairs:
+    if v.bad: continue
+    for fs in v.ctorFields:
+      for f in v.accessed:
+        if f notin fs:
+          v.bad = true
+          break
+      if v.bad: break
 
 proc emitFieldOf(dest: var TokenBuf; tpl: Cursor; base: Cursor) =
   ## `(dot BASE f …)`, spelled like the template `(dot o f …)`.
@@ -709,13 +673,6 @@ proc emitFieldOf(dest: var TokenBuf; tpl: Cursor; base: Cursor) =
     else: dest.addSubtree t
     skip t
   dest.closeTag()
-
-proc sortedFields(c: SplitCtx; fs: HashSet[SymId]): seq[SymId] =
-  var pairs: seq[(int, SymId)] = @[]
-  for f in fs: pairs.add (c.dotTpl.getOrQuit(f), f)
-  pairs.sort(proc(a, b: (int, SymId)): int = cmp(a[0], b[0]))
-  result = @[]
-  for p in pairs: result.add p[1]
 
 proc containsCall(n: Cursor): bool =
   if n.kind != TagLit: return false
@@ -744,39 +701,27 @@ proc splitAggregateAssigns(buf: var TokenBuf) =
     skip rhs
     var out0 = createTokenBuf(32, buf.pool, buf.tags)
     out0.openTag TagId(ord(StmtsTagId))
-    let fields = sortedFields(c, c.vars.getOrQuit(a.dst).accessed)
-    case a.kind
-    of skCtor:
-      var first = true
-      var kv = rhs
-      kv.loopInto:
-        if first:
-          first = false
-        else:
-          let f = symId(child0(kv))
-          var v = child0(kv)
-          skip v
-          if f in c.vars.getOrQuit(a.dst).accessed:
-            let li = rawLineInfo(n)
-            out0.openTag n.cursorTagId           # asgn
-            if li.isValid: out0.appendLineInfo li
-            emitFieldOf(out0, cursorAt(buf, c.dotTpl.getOrQuit(f)), lhs)
-            out0.addSubtree v
-            out0.closeTag()
-          elif containsCall(v):
-            out0.openTag TagId(ord(DiscardTagId))
-            out0.addSubtree v
-            out0.closeTag()
-        skip kv
-    of skCopy, skLoad:
-      for f in fields:
-        let tpl = cursorAt(buf, c.dotTpl.getOrQuit(f))
-        let li = rawLineInfo(n)
-        out0.openTag n.cursorTagId
-        if li.isValid: out0.appendLineInfo li
-        emitFieldOf(out0, tpl, lhs)
-        emitFieldOf(out0, tpl, rhs)
-        out0.closeTag()
+    var first = true
+    var kv = rhs
+    kv.loopInto:
+      if first:
+        first = false
+      else:
+        let f = symId(child0(kv))
+        var v = child0(kv)
+        skip v
+        if f in c.vars.getOrQuit(a.dst).accessed:
+          let li = rawLineInfo(n)
+          out0.openTag n.cursorTagId           # asgn
+          if li.isValid: out0.appendLineInfo li
+          emitFieldOf(out0, cursorAt(buf, c.dotTpl.getOrQuit(f)), lhs)
+          out0.addSubtree v
+          out0.closeTag()
+        elif containsCall(v):
+          out0.openTag TagId(ord(DiscardTagId))
+          out0.addSubtree v
+          out0.closeTag()
+      skip kv
     out0.closeTag()
     synth.add ensureMove(out0)
   if synth.len == 0: return
@@ -946,22 +891,29 @@ when isMainModule:
       "(stmts (var :o.0.M . T.0.M src.0.M) (asgn x.0.M (dot o.0.M f.0.M)))",
       "(stmts (var :`sroa.1 . . (dot src.0.M f.0.M)) (asgn x.0.M `sroa.1))")
 
-  block split_inlined_result_chain:
-    # the inliner's by-value result: declared bare, stored whole, copied whole
+  block split_inlined_result:
+    # the inliner's by-value result forwarded into a temp: declared bare,
+    # stored whole, read by field
     chk(
+      "(stmts (var :r.0.M . T.0.M .) " &
+      "(asgn r.0.M (oconstr T.0.M (kv x.0.M a.0.M) (kv y.0.M b.0.M))) " &
+      "(call use.0.M (dot r.0.M x.0.M 0)))",
+      "(stmts (var :`sroa.1 . . .) " &
+      "(stmts (asgn `sroa.1 a.0.M)) (call use.0.M `sroa.1))")
+
+  block whole_copy_keeps_both_whole:
+    assertUnchanged(
       "(stmts (var :r.0.M . T.0.M .) (var :v.0.M . T.0.M .) " &
       "(asgn r.0.M (oconstr T.0.M (kv x.0.M a.0.M) (kv y.0.M b.0.M))) " &
-      "(asgn v.0.M r.0.M) (call use.0.M (dot v.0.M x.0.M 0)))",
-      "(stmts (var :`sroa.1 . . .) (var :`sroa.2 . . .) " &
-      "(stmts (asgn `sroa.1 a.0.M)) (stmts (asgn `sroa.2 `sroa.1)) (call use.0.M `sroa.2))")
+      "(asgn v.0.M r.0.M) (call use.0.M (dot v.0.M x.0.M 0)))")
 
   block split_needs_every_read_field_constructed:
     assertUnchanged(
       "(stmts (var :r.0.M . T.0.M .) " &
       "(asgn r.0.M (oconstr T.0.M (kv x.0.M a.0.M))) (call use.0.M (dot r.0.M y.0.M 0)))")
 
-  block split_escape_spreads_over_copy:
-    # `v` escapes whole, so `r` (copied into it) stays whole too
+  block split_escape_through_copy:
+    # `v` escapes whole, and `r` is copied whole into it
     assertUnchanged(
       "(stmts (var :r.0.M . T.0.M .) (var :v.0.M . T.0.M .) " &
       "(asgn r.0.M (oconstr T.0.M (kv x.0.M a.0.M))) " &

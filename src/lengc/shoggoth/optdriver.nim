@@ -27,7 +27,6 @@ import scalarizer                              # runScalarize (object → field 
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import unswitch                                # runUnswitch (loop unswitching)
 import unroll                                  # runUnroll (full loop unrolling)
-import coalesce                                # runCoalesce (single-use copy temps)
 import imi_bridge                             # runImi/parseModule (inter-module inliner)
 import vectorizer                             # runVectorizer (map loops -> (instr ...))
 export VecMode                                # the driver flag's type, for shoggoth.nim
@@ -55,7 +54,7 @@ let disabledPasses = block:
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## unroll, coalesce, memidioms, vectorize, sinkret, tailcall.
+  ## unroll, memidioms, vectorize, sinkret, tailcall.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -119,11 +118,6 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   if passOn("scalarize"): runScalarize(buf, m)
   var constLoads = 0
   if passOn("copyprop"): constLoads += runCopyProp(buf, params, summaries, m)
-  # Copyprop's backward twin: a temp defined once and copied once into another
-  # local becomes that local. The inliner's by-value results (`var r; … r = T(…)
-  # … v = r`, split field-wise by SROA) are chains of such copies whose temps
-  # die before the destination is read, so forward propagation cannot see them.
-  if passOn("coalesce"): runCoalesce(buf)
   # Fully unroll small constant-trip loops: every copy reads its iteration's
   # index as a literal, so `(at a i)` becomes a constant index for CSE and the
   # rewriter below, and the per-iteration compare-and-branch is gone. AFTER
