@@ -140,19 +140,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
     st.unrolled += n
     if n > 0 and passOn("copyprop"):
       constLoads += runCopyProp(buf, params, summaries, m)
-  # Copyprop folds a read of a const array/object at a literal index (an
-  # unrolled or inlined `things[i]`) to the element. A folded constructor is
-  # SROA's to take apart, and the literals it yields can decide further reads
-  # (`things[i].kind`), so each round that folded something gets another.
   st.constLoads += constLoads
-  if passOn("copyprop"):
-    for _ in 0 ..< 3:
-      if constLoads == 0: break
-      if passOn("ctorproj"): runConstructorProjection(buf)
-      if passOn("scalarize"): runScalarize(buf, m)
-      constLoads = runCopyProp(buf, params, summaries, m)
-      st.constLoads += constLoads
-      if passOn("coalesce"): runCoalesce(buf)
   # Hoist loop-invariant `if` conditions out of small loops by duplicating them
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
   # of per character. AFTER copyprop so propagated copies make structurally
