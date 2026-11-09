@@ -1893,6 +1893,9 @@ exceptions:
   translated by the compiler, the other statements are not checked for
   semantics! However, each condition is checked for semantics.
 
+In a checked generic, a `when` whose condition depends on a generic parameter
+follows different rules; see [Generics](#generics).
+
 The `when` statement enables conditional compilation techniques.
 
 
@@ -4375,6 +4378,19 @@ echo find(myCollection, 3) # 2
 ```
 
 These form of generics are called "checked generics" because the typing rules are checked at the point of definition and also at the point of instantiation.
+
+In a checked generic, a `when` whose condition depends on a generic parameter cannot be decided at the point of definition. It is checked like an `if` with a constant condition. Every branch is checked, against the constraints of the generic parameters, and every branch is its own scope. So a name declared in such a branch is not visible after the `when`:
+
+```nim
+proc f[T](x: T) =
+  when T is int:
+    var y = 1
+  else:
+    var y = "a"
+  echo y # Error: undeclared identifier: y
+```
+
+Declare the name before the `when`, or use an untyped generic, where `when` keeps the rules of the [When statement](#when-statement).
 
 
 ### Untyped generics
