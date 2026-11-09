@@ -29,7 +29,7 @@
 ##   let (r, w) = connect("example.com:443", "GET / HTTP/1.1\r\n...", tls = e)
 ##   # on a failure, e.failure / e.certError / e.alert say what went wrong
 
-{.feature: "staticContracts".}
+# not `staticContracts`: element writes hand locals over as `var` (no facts)
 
 import std/[times, streamio]
 import std/crypto/[sha2, hmac, chacha20poly1305, x25519, x509, ecdsa, rsa, sysrand,

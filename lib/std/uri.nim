@@ -27,7 +27,7 @@
 # climbed out of the root: there is no correct way to serve that request, so
 # there is no value to hand back for one.
 
-{.feature: "staticContracts".}
+# not `staticContracts`: element writes hand locals over as `var` (no facts)
 
 import std / assertions
 

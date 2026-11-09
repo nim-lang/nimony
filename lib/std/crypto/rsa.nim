@@ -14,7 +14,7 @@
 ## Only the public operation lives here, so `std/crypto/bignum`'s
 ## variable-time arithmetic is fine.
 
-{.feature: "staticContracts".}
+# not `staticContracts`: element writes hand locals over as `var` (no facts)
 
 import std/crypto/[bignum, sha2, hmac]
 

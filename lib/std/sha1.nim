@@ -116,7 +116,7 @@ proc update*(ctx: var Sha1State; data: openArray[char]) =
       let start = j
       for p in start ..< start + 64:
         ctx.buf[p - start] = byte(data[p])
-      j += 64
+      j = j + 64
       transform(ctx)
     let start = j
     for p in start ..< data.len:

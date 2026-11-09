@@ -197,11 +197,12 @@ func derInt(data: openArray[byte]; pos: var int; res: var seq[byte]): bool =
   ## leading zero) makes every signature malleable: the same signature
   ## spelled differently still verifies.
   result = false
-  if pos < 0 or pos > data.len - 2: return
-  if data[pos] != 2'u8: return
-  let L = int(data[pos + 1])
+  let p = pos   # a local copy: what `data`'s accessors are handed may be `pos`
+  if p < 0 or p > data.len - 2: return
+  if data[p] != 2'u8: return
+  let L = int(data[p + 1])
   if L == 0 or L >= 128: return
-  let start = pos + 2
+  let start = p + 2
   if start > data.len - L: return
   if start < data.len and (data[start] and 0x80'u8) != 0: return   # negative
   if L > 1 and start < data.len - 1 and data[start] == 0'u8 and

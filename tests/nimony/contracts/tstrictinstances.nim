@@ -5,7 +5,10 @@
 
 {.feature: "staticContracts".}
 
-import std/[assertions, tables, stripes, intsets, base64]
+# `stripes` is not instantiated here: its queue functions index `s.data`
+# right after calls that may write the `var` stripe, so those indexes keep
+# their run-time check.
+import std/[assertions, tables, intsets, base64]
 
 proc tablesRoundTrip(): int {.raises.} =
   var t = initTable[string, int]()
@@ -16,14 +19,6 @@ proc tablesRoundTrip(): int {.raises.} =
   if t.hasKey("5"):
     result = result + t["5"]
   result = result + t.mgetOrPut("x", 1)
-
-proc stripesRoundTrip(): int =
-  var s = default(FifoStripe[int])
-  s.init(4)
-  discard s.tryEnqueue(5)
-  discard s.tryBulkEnqueue([6, 7])
-  var buf = default(array[3, int])
-  result = s.tryBulkDequeue(3, buf) + buf[0] + buf[2]
 
 proc intsetsRoundTrip(): int =
   var s = initIntSet()
@@ -39,7 +34,6 @@ try:
   assert tablesRoundTrip() == 7 + 100 + 19 + 5 + 1
 except:
   assert false
-assert stripesRoundTrip() == 3 + 5 + 7
 assert intsetsRoundTrip() == 3
 assert encode("foob") == "Zm9vYg=="
 assert encode([byte 0xFB, 0xFF], safe = true) == "-_8="

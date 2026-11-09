@@ -132,7 +132,8 @@ proc clearJournaled*(f: var Facts) =
       f.jSwapRemove(i)          # element swapped into `i` still needs checking
 
 proc add*(f: var Facts; elem: LeXplusC) =
-  f.jAppend elem
+  ## A fact about `InvalidVarId`, a location without facts, says nothing.
+  if elem.a != InvalidVarId and elem.b != InvalidVarId: f.jAppend elem
 
 proc isNotNil*(a: VarId): LeXplusC =
   LeXplusC(a: VarId(0), b: a, c: createXint(-1'i64))
@@ -147,7 +148,7 @@ proc restore*(f: var Facts; r: RestorePoint) =
 
 proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
-  f.jAppend LeXplusC(a: a, b: b, c: c)
+  if a != InvalidVarId and b != InvalidVarId: f.jAppend LeXplusC(a: a, b: b, c: c)
 
 proc query*(a, b: VarId; c: xint = createXint(0'i64)): LeXplusC =
   result = LeXplusC(a: a, b: b, c: c)
@@ -276,7 +277,8 @@ proc complexImplies(facts: Facts; v: LeXplusC): bool =
   result = v.b in dist and dist.getOrDefault(v.b) <= v.c
 
 proc implies*(facts: Facts; v: LeXplusC): bool =
-  assert v.isValid
+  ## Nothing is known about `InvalidVarId`, a location without facts.
+  if not v.isValid: return false
   result = simpleImplies(facts, v) or complexImplies(facts, v)
 
 proc chainsThrough*(f: Facts; x: VarId): seq[LeXplusC] =

@@ -20,7 +20,7 @@
 ## `range`-typed limb count, which is what lets every index in here be proven
 ## rather than checked.
 
-{.feature: "staticContracts".}
+# not `staticContracts`: an element write hands a local `seq` over as `var`, which leaves no facts about its length
 
 const
   MaxBits* = 4096

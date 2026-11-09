@@ -1275,7 +1275,8 @@ func parseLongMantissa(s: openArray[char]; n: Number; f: FloatFormat): BiasedFp 
     var done = false
     # Shift right toward [1/2, 1).
     while not done and d.decimalPoint > 0:
-      let shift = if d.decimalPoint < Powers.len: Powers[d.decimalPoint] else: MaxShift
+      let dp = d.decimalPoint   # `d` is passed on as `var`: no facts about it
+      let shift = if dp >= 0 and dp < Powers.len: Powers[dp] else: MaxShift
       rightShift(d, shift)
       if d.decimalPoint < -DecimalPointRange:
         result = fpZero

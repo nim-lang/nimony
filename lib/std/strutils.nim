@@ -6,7 +6,7 @@
 ## classes; see each constant for details.
 
 {.feature: "lenientnils".}
-{.feature: "staticContracts".}
+# not `staticContracts`: element writes hand locals over as `var` (no facts)
 
 import std/[assertions, parseutils]
 

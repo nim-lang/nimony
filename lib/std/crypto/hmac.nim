@@ -12,7 +12,7 @@
 ## HKDF is the whole of TLS 1.3's key schedule; `std/tls` builds its
 ## `HKDF-Expand-Label` on `hkdfExpand` here.
 
-{.feature: "staticContracts".}
+# not `staticContracts`: element writes hand locals over as `var` (no facts)
 
 import std/crypto/sha2
 

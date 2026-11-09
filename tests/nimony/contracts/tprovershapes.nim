@@ -190,7 +190,7 @@ proc blockSum(data: openArray[int]): int =
     let start = j
     for p in start ..< start + 16:
       blk[p - start] = data[p]
-    j += 16
+    j = j + 16   # `j += 16` hands `j` over as `var`: no facts about it
     result = result + blk[15]
 
 proc ringAt(data: seq[int]; at: int): int =

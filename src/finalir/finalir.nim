@@ -647,10 +647,41 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## A `for` stays a `for`: hexer's `elimForLoops` still needs the iterator
   ## call and the loop variables. Its body is lowered like a `loop`'s.
   let info = n.info
-  let forStmt = asForStmt(n) # peek at structure before advancing
+  var forStmt = asForStmt(n) # peek at structure before advancing
   let forStart = n
   let forTag = n.cursorTagId
   n = sub(n)
+  # An iterator gets its arguments once. Where its `.ensures` bounds the loop
+  # variable by an integer variable, the variable is copied into a temp here,
+  # so the range is stated about the value the loop counts with, which no
+  # write in the body can change.
+  var iterBuf = createTokenBuf(16)
+  var routine = default(Routine)
+  var ens = default(Cursor)
+  if n.isTagLit and n.exprKind in CallKinds and iteratorEnsures(n, routine, ens):
+    var a = n
+    iterBuf.addParLe(a.cursorTagId, a.info)
+    a = sub(a)
+    iterBuf.takeTree a # the callee
+    while a.hasMore:
+      let t = if a.isSymbol: getType(c.typeCache, a) else: default(Cursor)
+      if not cursorIsNil(t) and t.typeKind in {IT, UT}:
+        let tmp = freshLabel(c, "`fa.")
+        dest.addParLe LetS, a.info
+        dest.addSymDef tmp, a.info
+        dest.addDotToken() # export marker
+        dest.addDotToken() # pragmas
+        dest.addSubtree t
+        dest.addSubtree a
+        dest.addParRi()
+        c.typeCache.registerLocal(tmp, LetY, t)
+        iterBuf.addSymUse tmp, a.info
+        skip a
+      else:
+        iterBuf.takeTree a
+    iterBuf.addParRi()
+
+  if iterBuf.len > 0: forStmt.iter = beginRead(iterBuf)
   var assumeBuf = createTokenBuf(0)
   forRangeAssumes(assumeBuf, forStmt, c.callExprs, info)
 
@@ -659,7 +690,11 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
                            scopeDepth: c.typeCache.scopeDepth)
   openScope c
   dest.addParLe(forTag, info)
-  takeTree dest, n # the iterator call, verbatim: xelim already normalized it
+  if iterBuf.len > 0:
+    dest.add iterBuf
+    skip n
+  else:
+    takeTree dest, n # the iterator call, verbatim: xelim already normalized it
   registerForVars c, n
   takeTree dest, n # the loop variables
   dest.addParLe ScopeS, info # as in `trLoopFromBody`: the body is a scope

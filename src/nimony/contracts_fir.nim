@@ -161,6 +161,10 @@ type
     derivedKeys: seq[string]           # parallel to `derivedRoots`: the location key
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
+    aliased: HashSet[SymId]            # locals of the routine whose address
+                                       # is taken: no facts (`getVarId`)
+    viewLocals: HashSet[SymId]         # locals of a view type: other names of
+                                       # what they view
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
     obligationOpen: bool               # a range obligation is being judged;
                                        # cleared when it is not discharged
@@ -691,7 +695,19 @@ proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
 proc endBorrow(c: var FirContext; sym: SymId) =
   c.flow.borrows.endBorrowsOf sym
 
-template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
+proc getVarId(c: var FirContext; symId: SymId): VarId =
+  ## An aliased local or parameter has no facts: it is no variable of the
+  ## analysis. A pointer keeps its own, its nil-ness. A global and a `var`
+  ## parameter stay exposed instead: whatever may write them unnamed drops
+  ## their facts anyway.
+  result = VarId(symId)
+  if symId in c.aliased:
+    let x = localInfoOf(c, symId)
+    if x.kind notin {GvarY, TvarY, GletY, TletY} and
+        not (isParamLike(x.kind) and x.typ.typeKind in {MutT, OutT}) and
+        x.typ.skipModifier.typeKind notin
+          {PtrT, RefT, PointerT, CstringT, ProctypeT, ItertypeT}:
+      result = InvalidVarId
 
 proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
                    olds: Table[string, VarId]; resultSym = NoSymId)
@@ -1192,6 +1208,195 @@ proc invalidateAllDerived(c: var FirContext) =
     if c.derivedRoots[i] != NoSymId:
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
+# --- Locations written without being named ---
+#
+# A local or a value parameter whose address is taken (`addr`, `unsafeAddr`,
+# a `var` argument) or that a nested routine names is *aliased*: the
+# analysis keeps no facts about it at all (`getVarId`). Nothing about it can
+# be inferred, so nothing needs tracking.
+#
+# Globals and `var`/`out` parameters are *exposed*: a call that is not a
+# `func`, through a routine value or handed a pointer or a view, a store
+# through a pointer, a `var` result or a view, and a `var` argument behind a
+# pointer may write them unnamed, and drop what is known about them
+# (`invalidateExposed`). A `var` parameter may be a global, so a write naming
+# one drops the other kind. Two `var` parameters are never one location, which
+# the call-site aliasing check guarantees (doc/language.md, "Call-site
+# aliasing checks"), short of `lenientAliasing`; two globals never are. A
+# pointer's nil-ness is the nil analysis's and stays.
+
+const
+  PointerLikeTypes = {PtrT, RefT, PointerT, CstringT, ProctypeT, ItertypeT}
+
+proc isCallerStorage(c: var FirContext; s: SymId): bool =
+  let x = localInfoOf(c, s)
+  result = isParamLike(x.kind) and x.typ.typeKind in {MutT, OutT}
+
+proc isExposed(c: var FirContext; s: SymId): bool =
+  result = localInfoOf(c, s).kind in {GvarY, TvarY} or isCallerStorage(c, s)
+
+proc isViewLen(c: FirContext; i: int; root: SymId): bool
+
+proc invalidateExposed(c: var FirContext; named = NoSymId) =
+  ## Forget what is known about the exposed locations a write may have hit,
+  ## and what is derived from them: every one for a write that names none,
+  ## the other kind for one that names `named`. A `var openArray` parameter
+  ## cannot be replaced, so its length stays.
+  var named = named
+  if named in c.viewLocals: named = NoSymId   # a write through a view
+  elif named != NoSymId and not isExposed(c, named): return
+  let byName = named != NoSymId
+  let namedIsParam = byName and isCallerStorage(c, named)
+  let paramsDistinct = LenientAliasingFeature notin c.features
+  template spared(x: SymId): bool =
+    byName and (if namedIsParam: paramsDistinct and isCallerStorage(c, x)
+                else: not isCallerStorage(c, x))
+  var seen = initHashSet[SymId]()
+  for i in 0 ..< c.facts.len:
+    for v in [c.facts[i].a, c.facts[i].b]:
+      if int(v) > 0 and SymId(int(v)) != named: seen.incl SymId(int(v))
+  for s in seen:
+    if isExposed(c, s) and not spared(s) and
+        localInfoOf(c, s).typ.skipModifier.typeKind notin PointerLikeTypes:
+      projectOut(c.facts, VarId(s))
+  for i in 0 ..< c.derivedRoots.len:
+    let r = c.derivedRoots[i]
+    if r != NoSymId and r != named and not spared(r) and
+        not isViewLen(c, i, r) and isExposed(c, r):
+      projectOut(c.facts, VarId(FirstDerivedVarId - i))
+
+proc writeReachesUnnamed(c: var FirContext; root: SymId): bool {.inline.} =
+  ## Does a store attributed to `root` reach other locations than `root`'s?
+  root == NoSymId or root in c.viewLocals or isExposed(c, root)
+
+proc exposeSymbolsIn(c: var FirContext; n: var Cursor;
+                     inits: Table[SymId, Cursor]; depth = 0) =
+  ## Every local named in `n`, and in what the inline temps among them hold.
+  if n.isSymbol:
+    let s = n.symId
+    if not c.aliased.containsOrIncl(s) and s in inits and depth < MaxLocationDepth:
+      var init = inits.getOrQuit(s)
+      exposeSymbolsIn(c, init, inits, depth+1)
+    skip n
+  elif n.isTagLit:
+    n.into:
+      while n.hasMore: exposeSymbolsIn(c, n, inits, depth)
+  else:
+    skip n
+
+proc exposeRoot(c: var FirContext; n: Cursor; inits: Table[SymId, Cursor];
+                depth = 0) =
+  ## The variable whose storage the location `n` lies in, and, for an inline
+  ## temp, the location it stands for. Index operands are not storage, and
+  ## behind a pointer or `ref` lies no variable's.
+  var r = n
+  for _ in 0 ..< 64:
+    if r.isSymbol:
+      let s = r.symId
+      if not c.aliased.containsOrIncl(s) and s in inits and depth < MaxLocationDepth:
+        exposeRoot(c, inits.getOrQuit(s), inits, depth+1)
+      return
+    if not r.isTagLit: return
+    case r.exprKind
+    of DotX, TupatX, ArratX, AtX, HderefX, AddrX, HaddrX:
+      r = r.childCursor
+    of ConvKinds:
+      r = r.childCursor
+      skip r # the type
+    of CallKinds:
+      # a `var` result lies in the first argument's storage only when that is
+      # passed as `var`; a value's `[]` points into what it refers to
+      r = r.childCursor
+      skip r # the callee
+      if r.exprKind != HaddrX: return
+    of BaseobjX:
+      r = r.childCursor
+      skip r
+    else: return
+
+proc collectExposed(c: var FirContext; n: var Cursor;
+                    inits: var Table[SymId, Cursor]) =
+  ## The variables of the routine body `n` whose address is taken (`addr`,
+  ## `unsafeAddr`, a `var` argument) or that a nested routine names, and its
+  ## locals of a `var` type. Flow-insensitive, so a pointer taken late in a
+  ## loop counts for the whole body.
+  if not n.isTagLit or n.substructureKind == PragmasU:
+    skip n
+  elif n.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
+    exposeSymbolsIn(c, n, inits)
+  else:
+    if n.exprKind in {AddrX, HaddrX}: exposeRoot(c, n, inits)
+    if n.symKind in {LetY, CursorY, VarY, ResultY}:
+      let local = asLocal(n)
+      if local.name.kind == SymbolDef:
+        if local.typ.typeKind in {MutT, LentT, OutT}:
+          c.viewLocals.incl local.name.symId
+        if n.symKind != ResultY and hasPragma(local.pragmas, InlineP):
+          inits[local.name.symId] = local.val
+    n.into:
+      while n.hasMore: collectExposed(c, n, inits)
+
+proc isViewType(c: var FirContext; t: Cursor): bool =
+  if t.typeKind in {PtrT, PointerT, VarargsT, LentT}: return true
+  if not t.isSymbol: return false
+  var decl = default(Cursor)
+  if c.moduleTypes.hasKey(t.symId):
+    decl = c.moduleTypes.getOrQuit(t.symId)
+  else:
+    let res = tryLoadSym(t.symId)
+    if res.status != LacksNothing or res.decl.symKind != TypeY: return false
+    decl = res.decl
+  result = hasPragma(asTypeDecl(decl).pragmas, ViewP)
+
+proc writesUnnamed(c: var FirContext; fn, params: Cursor; effect: Effect;
+                   targets: var seq[SymId]): bool =
+  ## Can the call of `fn` (its arguments follow it) write a location it does
+  ## not name? One that is not a `func` can, and so can a routine value
+  ## whatever its type says (sem lets a `.noSideEffect` closure write what it
+  ## captures), and a `func` handed a pointer or a view (`copyMem` is a `func`
+  ## over C). A pointer argument `addr x` reaches `x` only: it goes to
+  ## `targets`.
+  if effect == HasSideEffect or not params.isParamsTag: return true
+  let fnSym = extractSymId(fn)
+  if fnSym == NoSymId: return true
+  let routine = tryLoadSym(fnSym)
+  if routine.status != LacksNothing or not isRoutine(routine.decl.symKind): return true
+  result = false
+  var p = params
+  p = sub(p)
+  var a = fn
+  skip a
+  while p.hasMore and a.hasMore:
+    var t = takeLocal(p, SkipFinalParRi).typ
+    if t.typeKind in {MutT, OutT, SinkT}: t = sub(t)
+    if t.typeKind in {PtrT, PointerT}:
+      var x = a
+      while x.exprKind in ConvKinds:
+        x = x.childCursor
+        skip x # the target type
+      let root = if x.exprKind == AddrX: writtenRoot(c, x.childCursor) else: NoSymId
+      # an inline temp stands for some other location, and a local the loop
+      # pre-scan does not know yet may be one
+      if root == NoSymId or root in c.inlineVars or
+          localInfoOf(c, root).kind == NoSym:
+        return true
+      targets.add root
+    elif isViewType(c, t):
+      return true
+    skip a
+
+proc declWritesUnnamed(c: var FirContext; fn: Cursor; targets: var seq[SymId]): bool =
+  ## `writesUnnamed` for the callee `fn`, read off its declaration as the
+  ## loop pre-scan must; an unknown callee writes anything.
+  result = true
+  let fnSym = extractSymId(fn)
+  if fnSym != NoSymId:
+    let routine = tryLoadSym(fnSym)
+    if routine.status == LacksNothing and isRoutine(routine.decl.symKind):
+      let r = asRoutine(routine.decl)
+      result = writesUnnamed(c, fn, r.params,
+                             whichEffect(routine.decl.stmtKind, r.pragmas), targets)
+
 proc isKeyableCall(fnSym: SymId): bool =
   ## May a call to `fnSym` stand for a location of its own?
   ##
@@ -1539,6 +1744,8 @@ proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): V
   var key = ""
   var steps = 0
   if locationKey(c, n, subst, root, key, steps, 0) and root != NoSymId:
+    if steps > 0 and getVarId(c, root) == InvalidVarId:
+      return InvalidVarId   # nothing derived from an aliased local either
     result = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
     if steps > 0 and not c.prescanning and not c.declaredRange.hasKey(result):
       let m = argOf(n, subst)
@@ -2512,7 +2719,7 @@ proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
     c.facts.add query(v, VarId(0), hi)   # v <= hi
     # Also as a *type* bound, which survives the widening a loop applies to the
     # flow facts.
-    if not c.declaredRange.hasKey(v):
+    if v != InvalidVarId and not c.declaredRange.hasKey(v):
       c.declaredRange[v] = RangeBounds(lo: lo, hi: hi)
 
 # --- Fact extraction from conditions ---
@@ -4435,7 +4642,16 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       variableMovedWithin(c.facts, stepLoc, lo, hi)
       call.stepped = stepLoc
       isStep = true
+  var targets: seq[SymId] = @[]
+  if writesUnnamed(c, callCursor, paramsStart, effect, targets):
+    invalidateExposed(c)
+  for root in targets:
+    projectOut(c.facts, getVarId(c, root))
+    invalidateDerivedFrom(c, root)
+    if writeReachesUnnamed(c, root): invalidateExposed(c, root)
   for root in mutatedRoots:
+    # a global or a `var` parameter written may be another one's storage
+    if writeReachesUnnamed(c, root): invalidateExposed(c, root)
     if isStep and getVarId(c, root) == stepLoc:
       # the step above described this write exactly
       invalidateDerivedFrom(c, root)
@@ -4443,7 +4659,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       invalidateFactsAbout(c.facts, getVarId(c, root))
       invalidateDerivedFrom(c, root)
   if mutatesUnknown:
+    # a `var` argument behind a pointer (`bump(p[])`) may be anything exposed
     invalidateAllDerived(c)
+    invalidateExposed(c)
   for root in viewRoots:
     invalidateViewElements(c, root)
   for root in viewRoots: call.views.add root
@@ -4729,6 +4947,9 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     # Overwriting the variable invalidates every location derived from it:
     # after `s = other`, nothing is known about `s.len` any more.
     invalidateDerivedFrom(c, symId)
+    # a global or a `var` parameter may be another name of another one, and a
+    # view another name of anything
+    if writeReachesUnnamed(c, symId): invalidateExposed(c, symId)
 
     # Check for not-nil type match
     let expected = storeTargetType(c, n)
@@ -4791,6 +5012,9 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
       if rightHandSide(c, valueForFact, fact, call) and fact.a != fact.b:
         addAsgnFact c, fact
     traverseExpr c, n, call
+    if writeReachesUnnamed(c, destRoot):
+      # only once the destination itself has been judged
+      invalidateExposed(c, destRoot)
 
 proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## Handle `(asgn dest value)`. The value is the second operand but the first
@@ -4934,6 +5158,9 @@ type
       ## `Positive`-returning call is exactly that — declared inside the body,
       ## so no fact about it exists yet when this scan runs.
     opaque: bool          ## a write we could not attribute to any location
+    exposedWrite: bool    ## a write that may reach any exposed location
+    exposedRoots: HashSet[SymId] ## the exposed locations the body writes by
+                                 ## name, each of which may be another's alias
     preserved: seq[VarId] ## derived locations the call just scanned promises
                           ## to leave alone (`s.len == old(s.len)`); holds
                           ## for the `(unknown …)` that follows it too
@@ -5082,8 +5309,10 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   result = directionOf(v.exprKind == SubX, k)
 
 proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
-  if isElementWrite(dest): return
   let root = writtenRoot(c, dest)
+  if root == NoSymId or root in c.viewLocals: w.exposedWrite = true
+  elif isExposed(c, root): w.exposedRoots.incl root
+  if isElementWrite(dest): return
   if root == NoSymId:
     w.opaque = true
     return
@@ -5179,6 +5408,12 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     w.preserved = preservedByEnsures(c, n)
     var fnOf = n
     fnOf = sub(fnOf)
+    var targets: seq[SymId] = @[]
+    if declWritesUnnamed(c, fnOf, targets): w.exposedWrite = true
+    for root in targets:
+      noteWrite(w, getVarId(c, root), ivUnknown)
+      noteDerivedOf(c, w, root, InvalidVarId)
+      if writeReachesUnnamed(c, root): w.exposedRoots.incl root
     var params = default(Cursor)
     let fnSym = extractSymId(fnOf)
     if fnSym != NoSymId:
@@ -5226,7 +5461,8 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
       var lo = zero()
       var hi = zero()
       if staticRangeBounds(local.typ, lo, hi) and lo >= zero():
-        w.nonNeg.incl getVarId(c, local.name.symId)
+        let v = getVarId(c, local.name.symId)
+        if v != InvalidVarId: w.nonNeg.incl v
       noteWrite(w, getVarId(c, local.name.symId), ivUnknown)
       noteDerivedOf(c, w, local.name.symId, InvalidVarId)
   w.pendingStep = InvalidVarId
@@ -5294,7 +5530,7 @@ proc revokeProofs(c: var FirContext; mark: int) =
     of ProvenCall: c.provenCalls.excl pos
   c.proofLog.setLen mark
 
-proc analyseLoopBody(c: var FirContext; n: var Cursor) =
+proc analyseLoopBody(c: var FirContext; n: var Cursor; iterWrites = false) =
   ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
   ## via `(jmp loopExit)` and never falls through.
   ##
@@ -5353,6 +5589,8 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     block:
       var w = LoopWrites(kinds: initTable[VarId, IvKind](),
                          nonNeg: initHashSet[VarId](), opaque: false,
+                         exposedWrite: iterWrites,
+                         exposedRoots: initHashSet[SymId](),
                          assumed: initHashSet[VarId](),
                          pendingStep: InvalidVarId)
       var scan = n
@@ -5361,6 +5599,9 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
       c.prescanning = false
       for v in demoted:
         if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
+      # what reaches a location without naming it does so on the back-edge too
+      if w.exposedWrite: invalidateExposed(c)
+      for r in w.exposedRoots: invalidateExposed(c, r)
       restrictFactsToLoopInvariants(c, w)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
@@ -5476,11 +5717,15 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
   var call = freshCall()
   n.into: # for tag
     let firstArg = forIterFirstArg(c, n)
+    # the iterator runs again before every iteration
+    var targets: seq[SymId] = @[]
+    let iterWrites = n.exprKind notin CallKinds or
+                     declWritesUnnamed(c, n.childCursor, targets) or targets.len > 0
     traverseExpr c, n, call
     var binders: seq[SymId] = @[]
     declareForVars c, n, firstArg, binders
     skip n # the loop variables
-    analyseLoopBody c, n
+    analyseLoopBody c, n, iterWrites
     # The iterator running out is an exit no `jmp` stands for, so no `kill`
     # either: the loop variables die with the loop, and their borrows with them.
     for b in binders: endBorrow c, b
@@ -5953,7 +6198,17 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   # the never-initialized `result`, so we must skip the *traversal*, not merely
   # the final init check. An `{.assembler.}` body is machine code, kept
   # verbatim by `finalir` for the backend; there is nothing to analyse.
+  let oldAliased = c.aliased
+  let oldViewLocals = c.viewLocals
+  if not nested:
+    c.aliased = initHashSet[SymId]()
+
   if not isGeneric and not isExternProc and not isAsm:
+    # a nested routine keeps the enclosing one's exposed locals: it can reach
+    # them too
+    var scan = n
+    var inits = initTable[SymId, Cursor]()
+    collectExposed(c, scan, inits)
     traverseStmt c, n, call
     # Falling off the end is an exit too.
     verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info, c.resultSym
@@ -5991,6 +6246,8 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.ownEnsures = oldOwnEnsures
   c.ownOlds = oldOwnOlds
   c.inHook = oldInHook
+  c.aliased = oldAliased
+  c.viewLocals = oldViewLocals
 
 proc traversePragmaBlock(c: var FirContext; n: var Cursor; call: var CallContext) =
   let oldAssumeSync = c.assumeSync

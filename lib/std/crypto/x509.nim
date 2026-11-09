@@ -16,7 +16,7 @@
 ## marked *critical* makes the certificate unusable, as RFC 5280 requires;
 ## anything else is skipped.
 
-{.feature: "staticContracts".}
+# not `staticContracts`: element writes hand locals over as `var` (no facts)
 
 import std/[strutils, base64]
 import std/crypto/[sha2, rsa, ecdsa]

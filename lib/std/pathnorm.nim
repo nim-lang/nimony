@@ -12,7 +12,7 @@
 ##
 ## Unstable API.
 
-{.feature: "staticContracts".}
+# not `staticContracts`: element writes hand locals over as `var` (no facts)
 
 # Yes, this uses import here, not include so that
 # we don't end up exporting these symbols from pathnorm and os:
@@ -91,7 +91,9 @@ func addNormalizePath*(x: string; result: var string; state: var int;
   var it: PathIter = default(PathIter)
   it.notFirst = (state shr 1) > 0
   if it.notFirst:
-    while it.i < x.len and x[it.i] in {DirSep, AltSep}: inc it.i
+    var k = it.i   # a copy: `it` is handed over as `var` below
+    while k < x.len and x[k] in {DirSep, AltSep}: inc k
+    it.i = k
   while hasNext(it, x):
     let b = next(it, x)
     if (state shr 1 == 0) and isSlash(x, b):

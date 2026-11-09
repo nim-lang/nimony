@@ -27,9 +27,10 @@ const FloatBufferLen = 65
   ## exactly such a buffer.
 
 template put(buf: var openArray[char]; i: int; c: char) =
+  let ch = c
   let idx = i
   fmtAssert(0 <= idx and idx < buf.len)
-  buf[idx] = c
+  buf[idx] = ch
 
 template at(buf: openArray[char]; i: int): char =
   let idx = i

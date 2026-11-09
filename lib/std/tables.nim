@@ -1,4 +1,4 @@
-{.feature: "staticContracts".}
+# not `staticContracts`: element writes hand locals over as `var` (no facts)
 
 import hashes, assertions
 

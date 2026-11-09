@@ -135,7 +135,7 @@ proc iteratorCall(iter: Cursor; callExprs: var Table[SymId, TokenBuf]; call: var
     call = beginRead(callExprs.getOrQuit(call.symId))
   result = call.isTagLit and call.exprKind in CallKinds
 
-proc iteratorEnsures(call: Cursor; routine: var Routine; ens: var Cursor): bool =
+proc iteratorEnsures*(call: Cursor; routine: var Routine; ens: var Cursor): bool =
   ## The `.ensures` of the routine `call` invokes.
   result = false
   var fn = call
