@@ -1,0 +1,51 @@
+mayFail false
+0
+mayFail true
+1
+mayFail false
+2
+mayFail true
+f except
+2
+f if
+2
+3
+f if
+3
+s else
+3
+s of 0
+fs of 0
+3
+fs of 1
+s case else
+3
+5
+f block
+s when
+f nested try
+5
+s nested case
+5
+f generic
+5
+9
+s template
+10
+imported if
+10
+11
+f before return
+13
+12
+s tail
+14
+s loop
+s loop
+15
+16
+17
+18
+fs let
+f let
+2 0 1

@@ -580,10 +580,13 @@ proc semStmtsExpr(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScop
   let info = it.n.info
   dest.addParLe(it.n.cursorTagId, it.n.info)
   var empty = true
+  # Under a `void` expected type the list is in statement position, so its
+  # last son is a statement too and gets the discard rule.
+  let isStmt = classifyType(c, it.typ) == VoidT
   it.n.into:
     while it.n.hasMore:
       empty = false
-      if not isLastSon(it.n):
+      if isStmt or not isLastSon(it.n):
         semStmt c, dest, it.n, false
       else:
         semExpr c, dest, it
@@ -606,9 +609,10 @@ proc discardCallExplicitly(dest: var TokenBuf; exPos: int; info: NifLineInfo) =
   ## (`{.discardable.}` proc returning a `string`) was bound to a temp whose
   ## symbol was then left behind as a statement.
   var one = cursorAt(dest, exPos)
-  # Only a CALL: an `if`/`case` whose branches are discardable calls is
-  # typed by them too, but wrapping it would turn a statement without an
-  # `else` into an expression that does not always produce a value.
+  # Only a CALL: a statement `if`/`case` is `void` and its branches were
+  # discarded one by one (`semStmt`). One that still arrives typed, as an
+  # `untyped` template's expansion does, is not wrapped: that would turn a
+  # statement without an `else` into an expression that has no value.
   let isCall = one.exprKind in CallKinds
   skip one
   let single = cursorToPosition(dest, one) == dest.len
@@ -625,7 +629,13 @@ proc discardCallExplicitly(dest: var TokenBuf; exPos: int; info: NifLineInfo) =
 
 proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) =
   let info = n.info
-  var it = Item(n: n, typ: c.types.autoType)
+  # A construct that can also be an expression is a statement here: it must
+  # produce nothing, so each of its branches is a statement and gets the
+  # discard rule (`semStmtBranch`), whatever the order of the branches.
+  let expected =
+    if n.stmtKind in {IfS, CaseS, TryS, BlockS, WhenS, StmtsS, ScopeS}: c.types.voidType
+    else: c.types.autoType
+  var it = Item(n: n, typ: expected)
   let exPos = dest.len
   semExpr c, dest, it
   when defined(sealCheck):
