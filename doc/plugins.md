@@ -570,6 +570,42 @@ if n.exprKind == CallX:
       # field.obj is the receiver; field.field is the selected field
 ```
 
+### Views of built-ins and control flow
+
+| View | Accepted tags | Named parts |
+|------|---------------|-------------|
+| `asBinaryOp(n)` | `add sub mul div mod shr shl ashr bitand bitor bitxor eq neq le lt` | `typ lhs rhs` |
+| `asConversion(n)` | `conv hconv dconv` | `typ operand` |
+| `asIfStmt(n)` | `if` | `branches(statement)` iterator |
+| `asWhileStmt(n)` | `while` | `cond body` |
+
+`BinaryOp` reads built-ins with a type slot. Its `typ` is the operation's type
+slot, which can differ from the expression's result type (comparisons produce
+booleans). Boolean `and`/`or`, unary operators, `infix`, and ordinary calls have
+different grammars and are not accepted. `Conversion` excludes `cast`.
+
+Each item from `branches(asIfStmt(n))` has `isElse`, `cond`, and `body`.
+Conditional arms arrive in source order; the optional final else has
+`isElse == true` and an exhausted `cond` (`not branch.cond.hasMore`). It does
+not synthesize a true condition. A missing else produces no extra item.
+
+These views read semantically valid Nimony trees, assert on unsupported tags,
+and retain original cursors, including source positions. Reading or iterating
+a view does not advance its input or rebuild any subtree. They do not validate
+arbitrary malformed NIF.
+
+```nim
+if n.stmtKind == IfS:
+  for branch in branches(asIfStmt(n)):
+    if not branch.isElse:
+      inspectCondition(branch.cond)
+    inspectBody(branch.body)
+elif n.stmtKind == WhileS:
+  let loop = asWhileStmt(n)
+  inspectCondition(loop.cond)
+  inspectBody(loop.body)
+```
+
 ### NifBuilder — building NIF output
 
 A `NifBuilder` is a move-only alias for `nifcore.TokenBuf`. It cannot be copied.
