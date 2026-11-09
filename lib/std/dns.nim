@@ -529,14 +529,27 @@ proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
                   flags: 0x0100'u16)   # RD
   q.questions.add question
   encodeMessage(q, wire)
-  # One critical section for the whole "open if needed, then read what was
-  # published": a second task cannot observe a half-initialised resolver or
-  # open a second socket for the same resolver.
+  # `openUdp` suspends on ring ops, so it must not run under `sockLock`: a
+  # second task on another worker would block that worker's thread on the
+  # mutex while the holder is parked, and the pool can run out of threads to
+  # resume it (#2868). Open outside the lock, publish under it; a task that
+  # loses the race closes its socket again. Only the winner starts the
+  # receiver, so the resolver still ends up with exactly one socket.
+  var needOpen = false
   withLock(r.sockLock):
-    if not r.sockOpen:
-      r.sock = openUdp(0, never)
-      r.sockOpen = true
+    needOpen = not r.sockOpen
+  if needOpen:
+    var s = openUdp(0, never)
+    var won = false
+    withLock(r.sockLock):
+      if not r.sockOpen:
+        r.sock = move(s)
+        r.sockOpen = true
+        won = true
+    if won:
       submit(delay(receiverLoop(r)))
+    else:
+      close(s)
   let (rx, tx) = channel[Message](1)
   withLock(r.pendingLock):
     r.pending[q.id] = PendingQuery(tx: tx)
@@ -633,7 +646,7 @@ proc resolve*(r: var Resolver; hostIn: string; dl = never): string {.passive, ra
 # A lazily-initialised, process-wide `Resolver` so a caller that does not need
 # a custom one can write `resolve("hostname")` and get an answer without
 # wiring one up.  The first call reads `/etc/hosts` and `/etc/resolv.conf`
-# under a lock; subsequent calls skip the lock entirely (double-checked
+# and publishes the result under a lock; subsequent calls skip the lock entirely (double-checked
 # locking with `atomicLoad`/`atomicStore` on the flag).
 
 var
@@ -654,17 +667,23 @@ initLock(gDefaultResolver.sockLock)
 initLock(gDefaultResolver.pendingLock)
 
 proc defaultResolver(dl: Deadline): Resolver {.passive, raises.} =
-  ## The process-wide resolver, initialised on first use under a lock (the
-  ## double-check keeps the lock off the common path). Returns a snapshot
+  ## The process-wide resolver, initialised on first use and published under
+  ## a lock (the double-check keeps the lock off the common path). Returns a snapshot
   ## copy — a ref and a seq head — so the caller neither borrows the global
   ## nor holds the lock for the lookup that follows. `dl` bounds the initial
   ## `/etc/hosts`/`/etc/resolv.conf` read, which goes through the ring like
   ## the rest of this module.
   if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
+    # Build outside the lock: `initResolver` suspends on ring reads, and a
+    # worker blocked on an OS mutex whose holder is parked can starve the pool
+    # of the thread that would resume it (#2868). Concurrent first callers may
+    # each read the configuration; the first to publish wins and the others
+    # drop their copy, which has opened no socket yet.
+    var fresh = initResolver(dl)
     withLock(gDefaultResolverLock):
       if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
         {.cast(assumeSync).}: # written under `gDefaultResolverLock`
-          gDefaultResolver = initResolver(dl)
+          gDefaultResolver = move(fresh)
         atomicStore(gDefaultResolverInited, 1, moRelease)
   {.cast(assumeSync).}: # published by the release-store above, never written again
     result = gDefaultResolver
