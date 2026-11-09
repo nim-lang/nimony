@@ -1162,10 +1162,19 @@ proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor]) 
     else:
       dest.addSubtree n
   of TagLit:
+    # A field shares its symbol with a parameter of the same name, not its
+    # identity: the selector of a `dot`/`ddot` and the key of a `kv` stay.
+    let isSel = n.exprKind in {DotX, DdotX}
+    let isKey = n.substructureKind == KvU
     dest.addParLe(n.cursorTagId, n.info)
     n.into:
+      if (isSel or isKey) and n.hasMore:
+        if isSel: addSubstituted(dest, n, subst) # the object
+        else: dest.addSubtree n # the field name
+        skip n
       while n.hasMore:
-        addSubstituted(dest, n, subst)
+        if isSel: dest.addSubtree n # field selector, depth, access token
+        else: addSubstituted(dest, n, subst)
         skip n
       dest.addParRi(n.endInfo)
   else:
