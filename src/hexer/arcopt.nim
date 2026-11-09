@@ -250,10 +250,17 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
     if getCallInfo(n, op, callArg):
       case op
       of attachedWasMoved:
-        b.wasMovedLocs.add WasMovedLoc(
-          callPos: cursorToPosition(c.source[], n),
-          target: peelComparableArg(callArg)
-        )
+        # Only a whole local is tracked: the duplifier's pairs move and
+        # destroy full variables, and a mention of the symbol in between is
+        # what the `Symbol` case sees as a use. A path (a field, an element,
+        # a coroutine frame slot) can be reached in between without naming
+        # it, and a global by any call.
+        let target = peelComparableArg(callArg)
+        if target.kind == Symbol and isLocalName(pool.syms[target.symId]):
+          b.wasMovedLocs.add WasMovedLoc(
+            callPos: cursorToPosition(c.source[], n),
+            target: target
+          )
         # Do not descend into the children of `=wasMoved`/`=destroy`. Their
         # argument *is* the location being tracked, and the `Symbol` case
         # counts every occurrence as a use and calls `invalidateWasMoved` —
