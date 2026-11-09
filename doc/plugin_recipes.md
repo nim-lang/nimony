@@ -157,6 +157,87 @@ This rule compares basenames, so any direct callee named `blocked` is rejected,
 even if it comes from another module. It does not inspect the bodies of called
 procedures or resolve indirect calls. It is a small tree-inspection example.
 
+## 4. Bind names in an ordinary template
+
+`bind` resolves a name in the template's definition context. In Nimony,
+procedures do not need forward declarations: a procedure written later in the
+same module can already be in scope when `bind` is processed.
+
+Consider this complete program:
+
+```nim
+import std / syncio
+
+template appendBang(target: var string) =
+  bind add
+  add(target, "!")
+
+proc add(target: var string; value: string) =
+  target = "intercepted"
+
+var text = "base"
+appendBang(text)
+echo text
+```
+
+Nimony prints:
+
+```text
+intercepted
+```
+
+The local `add` procedure is already in scope when `bind add` is processed,
+even though its declaration appears below the template. It is the procedure
+selected in this example. Moving down the source file does not put that
+procedure outside the template's definition context.
+
+Nim 2.2.12 prints `base!` for this program. This difference was reported in
+[issue #2877](https://github.com/nim-lang/nimony/issues/2877). The maintainer
+[explained](https://github.com/nim-lang/nimony/issues/2877#issuecomment-6623571306)
+that the Nimony result is intentional because the later procedure is already
+in scope.
+
+To see a separate calling context, put this code in
+`deps/cookbook_binding.nim`:
+
+```nim
+proc label(value: string): string =
+  "library: " & value
+
+template boundLabel*(value: string): string =
+  bind label
+  label(value)
+```
+
+Then use the exported template from a client module:
+
+```nim
+import std / syncio
+import deps / cookbook_binding
+
+proc label(value: string): string =
+  "caller: " & value
+
+echo label("example")
+echo boundLabel("example")
+```
+
+Output:
+
+```text
+caller: example
+library: example
+```
+
+The direct call uses the client's `label`. Inside `boundLabel`, `bind label`
+resolves to the helper module's private procedure. The client's same-spelled
+procedure does not replace that binding. Ordinary template hygiene also
+influences name lookup; this example focuses on explicit binding.
+
+These are ordinary templates and need no plugin. The plugin builder operation
+`bindSym` is a separate API; these examples concern the template statement
+`bind`.
+
 ## Run the fixtures
 
 From the repository root, with a toolchain matching the plugin API:
@@ -164,6 +245,8 @@ From the repository root, with a toolchain matching the plugin API:
 ```sh
 bin/nimony c -r tests/nimony/plugins/tcookbook.nim
 bin/nimony c tests/nimony/plugins/tcookbook_bad.nim
+bin/nimony c -r tests/nimony/plugins/tcookbook_bind_local.nim
+bin/nimony c -r tests/nimony/plugins/tcookbook_bind_import.nim
 ```
 
 The second command is expected to fail at its `blocked()` call. The `.output`
