@@ -533,6 +533,18 @@ proc hasEmptyAconstr(n: Cursor): bool =
       result = hasEmptyAconstr(x)
     skip x
 
+proc hasVtableSlot(n: Cursor): bool =
+  ## An RTTI object's constructor carries its vtable pointer as a positional
+  ## child, which C's brace elision puts into the innermost first member.
+  ## Such a constructor is stored whole rather than spelled out here.
+  result = false
+  var x = sub(n)
+  skip x # the object type
+  while x.hasMore and not result:
+    result = x.substructureKind != KvU and
+             (x.kind != TagLit or x.exprKind != OconstrC)
+    skip x
+
 proc genZeroPath(c: var GeneratedCode; lhs: Cursor; path: seq[ZeroPathStep]) =
   var l = lhs
   genLvalue c, l
@@ -566,7 +578,7 @@ proc genConstrStores(c: var GeneratedCode; lhs: Cursor; path: var seq[ZeroPathSt
       path.setLen path.len - 1
       skip x
       inc i
-  elif hasEmptyAconstr(n):
+  elif hasEmptyAconstr(n) and not hasVtableSlot(n):
     var x = sub(n)
     let objType = x
     let objBody = navigateToObjectBody(c.m, objType)

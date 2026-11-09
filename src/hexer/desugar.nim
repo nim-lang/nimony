@@ -123,19 +123,19 @@ proc isZeroDefault(t: Cursor): bool =
   ## tuple or distinct type can bring its own, and a field default (`x = 5`)
   ## or an RTTI slot is not zero either. Those keep the call.
   let impl = toTypeImpl(t)
-  case impl.typeKind
-  of IntT, UIntT, FloatT, CharT, BoolT, PtrT, RefT, PointerT, CstringT,
-     NiltT, SetT, RoutineTypes:
+  let k = impl.typeKind
+  if k in {IntT, UIntT, FloatT, CharT, BoolT, PtrT, RefT, PointerT, CstringT,
+           NiltT, SetT} + RoutineTypes:
     result = true
-  of EnumT, HoleyEnumT, AnumT:
+  elif k in {EnumT, HoleyEnumT, AnumT}:
     result = enumBounds(impl).lo == createXint(0'i64)
-  of RangetypeT:
+  elif k == RangetypeT:
     var lo = impl
     inc lo # tag
     skip lo # base type
     result = (lo.kind == IntLit and lo.intVal == 0) or
              (lo.kind == UIntLit and lo.uintVal == 0'u64)
-  of ArrayT:
+  elif k == ArrayT:
     result = isZeroDefault(impl.childCursor)
   else:
     result = false
