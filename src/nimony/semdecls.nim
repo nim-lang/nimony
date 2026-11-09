@@ -200,6 +200,39 @@ proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial:
   else:
     semExpr c, dest, it
 
+proc isLiteralDefault(n: Cursor): bool =
+  ## The default a field without a written type may have: a literal, a
+  ## named constant, or a tuple, array or set constructor of those. Its
+  ## type is part of the object's layout, which the signature phase decides,
+  ## and that phase types exactly these; any other default needs a written
+  ## type. Checked on the default as written, so a local type section
+  ## follows the same rule.
+  if n.kind in {IntLit, UIntLit, FloatLit, StrLit, CharLit, Ident, Symbol}:
+    result = true
+  elif n.exprKind == SufX:
+    result = true
+  elif n.exprKind in {TupX, BracketX, CurlyX, ParX}:
+    result = true
+    var e = n
+    e.into:
+      while result and e.hasMore:
+        if e.substructureKind == KvU:
+          var v = e
+          inc v # tag
+          skip v # field name
+          result = isLiteralDefault(v)
+        else:
+          result = isLiteralDefault(e)
+        skip e
+  else:
+    result = false
+
+proc namesNoConstant(c: var SemContext; dest: TokenBuf; valueStart: int): bool =
+  ## A field default written as a name has to name a constant or an enum
+  ## value (`isLiteralDefault`), not a variable or a routine.
+  let v = readonlyCursorAt(dest, valueStart)
+  result = v.kind == Symbol and fetchSym(c, v.symId).kind notin {ConstY, EfldY}
+
 proc isStaticConstraint(n: Cursor): bool =
   ## Detects the `static[T]` / `static T` / bare `static` constraint forms of a
   ## parameter before semchecking: nifler keeps `static` as a plain identifier,
@@ -434,7 +467,20 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
             it.typ = typeToCursor(c, errBuf, 0)
             dest.takeTree it.n # empty value slot
         else:
-          semLocalValue c, dest, it, crucial # 4
+          let literal = kind notin {FldY, GfldY} or isLiteralDefault(it.n)
+          if literal:
+            semLocalValue c, dest, it, crucial # 4
+          else:
+            skip it.n
+          if kind in {FldY, GfldY} and (not literal or namesNoConstant(c, dest, beforeType)):
+            # the default is dropped: a construction must not evaluate it
+            # against the error type
+            dest.shrink beforeType
+            dest.addDotToken(delayed.info)
+            var errBuf = createTokenBuf(4)
+            c.buildErr errBuf, delayed.info, "field '" & pool.strings[delayed.lit] &
+              "' needs a type: its default is not a literal or a constant"
+            it.typ = typeToCursor(c, errBuf, 0)
         n = it.n
         let typ = skipModifier(it.typ)
         if classifyType(c, typ) == VoidT:
@@ -481,6 +527,12 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
           # here avoids phase-2 macro expansion and forward references to
           # not-yet-signatured procs (the reasons toplevel let/var were
           # body-only). Phase 3 re-sems this decl fully. See `localSigGuard`.
+          takeTree dest, n
+        elif c.phase == SemcheckSignatures and kind in {FldY, GfldY}:
+          # A field default is an expression evaluated at each construction,
+          # like a parameter default. It is carried as written here and
+          # checked once in the body phase (`semFieldDefaults`), after every
+          # type and layout of the section is known.
           takeTree dest, n
         else:
           var it = Item(n: n, typ: typ)
@@ -1764,6 +1816,33 @@ proc holdsByValue(t: Cursor; target: SymId; visited: var HashSet[SymId]): bool =
     skip n
     result = result or componentsHoldByValue(n, target, visited)
 
+proc semFieldDefaults(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## Copies a checked object body and types each field's default, which the
+  ## signature phase carried as written (`semLocal`). Runs in the body phase
+  ## when it reaches the declaration, or earlier on demand
+  ## (`loadSymWithPhase`), in the declaration's scope: a default may use any
+  ## routine, constant or type of the module, and every layout is known.
+  if n.isTagLit:
+    let isField = n.substructureKind in {FldU, GfldU}
+    dest.takeInto n:
+      if isField:
+        takeTree dest, n # name
+        takeTree dest, n # export marker
+        takeTree dest, n # pragmas
+        let typeStart = dest.len
+        semFieldDefaults c, dest, n # type: may be an object with fields itself
+        if n.isDotToken or readonlyCursorAt(dest, typeStart).typeKind == ErrT:
+          # no default, or the field's type is the error already reported
+          takeTree dest, n
+        else:
+          var it = Item(n: n, typ: typeToCursor(c, dest, typeStart))
+          semExpr c, dest, it
+          n = it.n
+      while n.hasMore:
+        semFieldDefaults c, dest, n
+  else:
+    takeTree dest, n
+
 proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let startCursor = n
   let declStart = dest.len
@@ -1864,7 +1943,11 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
             skip n
             dest.addParRi(n.endInfo)
       if not isRefPtrObj: # body not already handled
-        if isGeneric:
+        if c.phase == SemcheckBodies and n.typeKind == ObjectT:
+          # the declaration was checked in the signature phase: its field
+          # defaults are now
+          semFieldDefaults c, dest, n # body
+        elif isGeneric:
           # capture typevars for instantiation of forward declared types to work
           var ctx = createUntypedContext(addr c, UntypedForwardGeneric)
           addParams(ctx, dest, beforeGenerics)

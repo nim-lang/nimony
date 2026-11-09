@@ -1,0 +1,8 @@
+tests/nimony/object/tfielddefaultorder.nim(10, 22) Error: cannot construct 'Node' in a default value of its own fields
+tests/nimony/object/tfielddefaultorder.nim(14, 13) Error: cannot construct 'P' in a default value of its own fields
+tests/nimony/object/tfielddefaultorder.nim(16, 5) Error: field 's' needs a type: its default is not a literal or a constant
+tests/nimony/object/tfielddefaultorder.nim(17, 9) Error: undeclared identifier: laterK
+tests/nimony/object/tfielddefaultorder.nim(18, 5) Error: field 'm' needs a type: its default is not a literal or a constant
+tests/nimony/object/tfielddefaultorder.nim(20, 13) Error: cannot construct 'B' before its type section is checked
+tests/nimony/object/tfielddefaultorder.nim(32, 5) Error: field 'v' needs a type: its default is not a literal or a constant
+tests/nimony/object/tfielddefaultorder.nim(33, 5) Error: field 'w' needs a type: its default is not a literal or a constant

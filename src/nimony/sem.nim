@@ -4473,9 +4473,9 @@ proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
     dest.addParLe(KvU, info)
     dest.addSymUse(fieldSym, info)
     if not field.val.isDotToken:
-      # The field declares a constant default value (`x: int = -1`); the spec
+      # The field declares a default value (`x: int = -1`); the spec
       # requires construction to use it rather than the type's zero default.
-      # The value is already typed (semchecked at the type declaration), so
+      # The value is already typed (`fieldDefaultsTyped` saw to it), so
       # emit it directly — instantiating only if it carries generic params.
       if bindings.len != 0 and containsGenericParams(field.val):
         var v = Item(n: field.val, typ: c.types.autoType)
@@ -4690,6 +4690,24 @@ proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let field = takeLocal(n, SkipFinalParRi)
       buildObjConstrField(c, dest, field, setFields, info, bindings, depth, isUnion)
 
+proc fieldDefaultsTyped(c: var SemContext; dest: var TokenBuf; s: SymId; info: NifLineInfo): bool =
+  ## A constructor copies the type's typed field defaults (`buildObjConstrField`);
+  ## `loadSymWithPhase` types them on demand. A cycle means they are being
+  ## typed right now: a default constructs its own type. A declaration the
+  ## signature phase has not reached yet (a `const` constructs a type of a
+  ## later section) has no fields to construct.
+  # name `T`, not the object `T.Obj` split off `type T = ref object`
+  let owner = c.refObjOwners.getOrDefault(s, s)
+  if prog.mem.hasKey(s) and prog.mem[s].phase == SemcheckTopLevelSyms:
+    c.buildErr dest, info, "cannot construct '" & pool.symBasename(owner) &
+      "' before its type section is checked"
+    result = false
+  else:
+    result = loadSymWithPhase(c, s, SemcheckBodies).status != LacksOffset
+    if not result:
+      c.buildErr dest, info, "cannot construct '" & pool.symBasename(owner) &
+        "' in a default value of its own fields"
+
 proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
                            setFields: Table[SymId, Cursor]; info: NifLineInfo;
                            prebuiltBindings = initTable[SymId, Cursor]()) =
@@ -4701,6 +4719,8 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
   let invokeArgs = skipInvoke(objImpl)
   var objDecl = default(TypeDecl)
   if objImpl.isSymbol:
+    if not fieldDefaultsTyped(c, dest, objImpl.symId, info):
+      return
     objDecl = getTypeSection(objImpl.symId)
     if objDecl.kind == TypeY:
       objImpl = objDecl.objBody
@@ -5033,6 +5053,10 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   var typeSym = SymId(0)
   if objType.isSymbol:
     typeSym = objType.symId
+    if not fieldDefaultsTyped(c, dest, typeSym, info):
+      while it.n.hasMore: skip it.n
+      it.n = oconstrStart; skip it.n
+      return
     decl = getTypeSection(typeSym)
     if decl.kind != TypeY:
       # includes typevar case

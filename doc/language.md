@@ -651,7 +651,23 @@ type
 
 ## Default values for object fields
 
-Object fields are allowed to have a constant default value.
+Object fields are allowed to have a default value expression. Like a
+parameter's default value, it is evaluated every time it is used: at each
+construction of the object that does not give the field explicitly, and not at
+all when the construction gives it. Its effects belong to the construction: a
+default that calls a routine with side effects makes the construction have
+them, so a `func` cannot construct the object (`new(r)` included). The default
+is checked once, with the type declaration, and may use any routine, constant
+or type visible where the type is declared, including those declared after the
+type section; it must not construct its own type, directly or through the
+default values of other types. In a generic object type it may use the generic
+parameters and is checked like the body of a generic routine.
+
+A field without a written type takes the type of its default value, which then
+has to be a literal, a named constant, or a tuple, array or set constructor of
+those (`n = 3`, `e = red`, `t = (1, [2, 3])`); `-1` is a literal, `-K` is not.
+Any other default needs a written type (`s: seq[int] = @[1]`). The rule is the
+same in a type section inside a routine.
 
 ```nim test
 type
