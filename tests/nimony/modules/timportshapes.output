@@ -1,5 +1,7 @@
 doubled: 42
 split: 7 11
+when: 1
+when: 3
 split: 7 11
 7
 42

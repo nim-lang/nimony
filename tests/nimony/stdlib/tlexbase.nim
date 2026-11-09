@@ -1,5 +1,12 @@
 import std/[lexbase, streams, syncio, assertions, strutils]
 
+func currentColumn(L: BaseLexer; pos: int): int =
+  ## Keep the read-only lexer API callable from no-side-effect code.
+  getColNumber(L, pos)
+
+func currentLine(L: BaseLexer; marker = true): string =
+  getCurrentLine(L, marker)
+
 # Scan an entire input the way a real lexer would: advance a *local* pos char
 # by char (passing `L.bufpos` directly would alias the mutable `L`), calling
 # handleCR/handleLF at line endings (which is where the buffer may refill).
@@ -42,12 +49,12 @@ proc main() {.raises.} =
     open(L, newStringStream("hello\nworld"), 8192)
     var pos = L.bufpos
     while L.buf[pos] != '\L': inc pos     # advance to just before the newline
-    assert getColNumber(L, pos) == 5      # after "hello"
+    assert currentColumn(L, pos) == 5     # after "hello"
     pos = handleLF(L, pos)
     L.bufpos = pos
     assert L.lineNumber == 2
-    assert getColNumber(L, pos) == 0      # start of "world"
-    assert getCurrentLine(L) == "world\n^\n"
+    assert currentColumn(L, pos) == 0     # start of "world"
+    assert currentLine(L) == "world\n^\n"
     close(L)
 
   echo "ok"

@@ -94,6 +94,19 @@ type
       ## use of one has to project onto its value half. Filled as the
       ## declarations go by: a local is only ever used after it is declared,
       ## so a single forward pass sees every declaration before every use.
+    loopVarCalls: Table[SymId, Cursor]
+      ## The loop variable of every `corofor` in the routine being translated
+      ## (the module level statements for the outermost context), mapped to
+      ## that loop's iterator call. Per routine: local ids are only unique
+      ## within one. A raising `.passive` iterator yields into an
+      ## `(ErrorCode, T)` slot, so its loop variable is widened like a raising
+      ## call's temp — and the declaration comes BEFORE the loop that decides
+      ## it. See `trCoroFor`.
+    lowered: HashSet[SymId]
+      ## Routines an EARLIER pass already ran `lowerRaisesOfRoutine` on —
+      ## the procs lambdalifting cut a `.closure` iterator into. Their raising
+      ## calls are temps plus checks already; translating them again would
+      ## widen those temps a second time.
     canRaise: bool
       ## Does the ROUTINE being translated raise? Decides whether `result` and
       ## the returns carry a tuple.
@@ -159,6 +172,45 @@ proc callCanRaise*(typeCache: var TypeCache; n: Cursor): bool =
   skip fnType # return type
   # now pragmas follow:
   result = hasPragma(fnType, RaisesP)
+
+proc loopVarArg(call: Cursor): Cursor =
+  ## The `(haddr forLoopVar)` of a corofor's `(call iter args...
+  ## (haddr forLoopVar) (haddr cell))`: the second to last argument, a
+  ## structural invariant of the corofor producers (iterinliner and
+  ## lambdalifting's `trPassiveCoroFor`). `nil` when there is none.
+  result = default(Cursor)
+  var prev = default(Cursor)
+  var n = call
+  n = sub(n)   # peek only, never left
+  skip n       # the callee
+  while n.hasMore:
+    result = prev
+    prev = n
+    skip n
+
+proc loopVarOf(call: Cursor): SymId =
+  let arg = loopVarArg(call)
+  if not cursorIsNil(arg) and arg.exprKind == HaddrX and
+      arg.childCursor.kind == Symbol:
+    result = arg.childCursor.symId
+  else:
+    result = NoSymId
+
+proc collectLoopVars(n: Cursor; dest: var Table[SymId, Cursor]) =
+  ## Fills `Context.loopVarCalls`. A nested routine has a table of its own.
+  var n = n
+  if n.stmtKind in {ProcS, FuncS, MethodS, ConverterS, IteratorS}:
+    return
+  if n.stmtKind == CoroforS:
+    let call = n.childCursor
+    if call.exprKind in CallKinds:
+      let v = loopVarOf(call)
+      if v != NoSymId: dest[v] = call
+  if n.isTagLit:
+    n = sub(n)   # peek only, never left
+    while n.hasMore:
+      collectLoopVars n, dest
+      skip n
 
 # -------------------- the success tuple ------------------------------------
 
@@ -485,9 +537,14 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip val # pragmas
     skip val # type
     let cr = val.exprKind in CallKinds and callCanRaise(c.typeCache, val)
-    if cr:
+    # The variable a raising iterator yields into: its slot is the success
+    # tuple too. The loop checks it once it ends, see `trCoroFor`.
+    let loopCall = c.loopVarCalls.getOrDefault(target)
+    let loopVar = not cr and not cursorIsNil(loopCall) and
+                  callCanRaise(c.typeCache, loopCall)
+    if cr or loopVar:
       c.tupleVars.incl target
-    c.typeCache.takeLocalHeader(dest, n, kind, cr)
+    c.typeCache.takeLocalHeader(dest, n, kind, cr or loopVar)
     if n.exprKind in CallKinds:
       trCall c, dest, n, cr
     else:
@@ -544,12 +601,16 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
+  if r.name.kind == SymbolDef and c.lowered.contains(r.name.symId):
+    takeTree dest, n
+    return
   var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache),
                    hoisted: createTokenBuf(16),
                    tupleVars: initHashSet[SymId](),
                    canRaise: hasPragma(r.pragmas, RaisesP),
                    retType: r.retType, resultSym: SymId(0),
-                   errorCodeType: move(c.errorCodeType))
+                   errorCodeType: move(c.errorCodeType),
+                   loopVarCalls: initTable[SymId, Cursor]())
 
   # An `{.assembler.}` body is machine code, passed through verbatim.
   let isAsm = hasPragma(r.pragmas, AssemblerP)
@@ -562,6 +623,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if isConcrete and not isAsm and n.kind != DotToken:
       # No body (`.`): an importc or forward declaration stays bodyless.
       c2.typeCache.openScope()
+      collectLoopVars n, c2.loopVarCalls
       let info = n.info
       copyIntoKind dest, StmtsS, info:
         if n.stmtKind == StmtsS:
@@ -586,7 +648,13 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.canRaise:
     copyInto dest, n:
       if n.kind == DotToken:
-        dest.addSymUse pool.symId(SuccessName), n.info
+        if c.resultSym != SymId(0) and not isVoidType(c.retType):
+          # A `.passive` iterator's bare `return`: `result` is the slot its
+          # loop variable lives in, already the success tuple, and it says
+          # `Success` unless a raise left first.
+          dest.addSymUse c.resultSym, n.info
+        else:
+          dest.addSymUse pool.symId(SuccessName), n.info
         inc n
       elif n.kind == Symbol and n.symId == c.resultSym:
         # `(ret result)` — the trailing return every value-returning routine
@@ -777,6 +845,49 @@ proc trJmp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   emitFinsDownTo c, dest, i + 1
   takeTree dest, n
 
+proc trCoroForCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## The iterator call of a `corofor` is not a call whose value can be put
+  ## into a temp: it is the loop, `cps` expands it. Its arguments are
+  ## ordinary operands, except the loop variable's address, which hands the
+  ## iterator the whole slot — the success tuple, for a raising iterator.
+  var argCount = 0
+  var a = n
+  a = sub(a)   # peek only, never left
+  skip a       # the callee
+  while a.hasMore:
+    inc argCount
+    skip a
+  copyInto dest, n:
+    tr c, dest, n # the callee
+    var i = 0
+    while n.hasMore:
+      if i == argCount - 2:
+        takeTree dest, n # `(haddr forLoopVar)`, see `loopVarArg`
+      else:
+        tr c, dest, n
+      inc i
+
+proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `(corofor (call iter args... (haddr forLoopVar) (haddr cell)) BODY)`.
+  ## A raising `.passive` iterator writes its error code into the loop
+  ## variable's first half and ends, so once the loop is over the code is
+  ## checked like a raising call's temp. A `break` jumps past the check;
+  ## the code is `Success` on every other way out of the loop, since the
+  ## iterator's `result[0] = Success` runs on its first step.
+  let info = n.info
+  var loopVar = NoSymId
+  c.exits.add ExitScope(kind: BlockExit, label: NoSymId, exceptVar: NoSymId,
+                        fin: default(Cursor))
+  copyInto dest, n:
+    if n.exprKind in CallKinds:
+      let v = loopVarOf(n)
+      if v != NoSymId and c.tupleVars.contains(v): loopVar = v
+      trCoroForCall c, dest, n
+    while n.hasMore: tr c, dest, n
+  discard c.exits.pop()
+  if loopVar != NoSymId:
+    addPropagationCheck(c, dest, loopVar, false, info)
+
 proc trLoopOrBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `block`/`while`/`corofor`: a `break` inside lands here, so the unwinder
   ## has to be able to stop at it.
@@ -846,6 +957,15 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       case n.stmtKind
       of ProcS, FuncS, MethodS, ConverterS:
         trProcDecl c, dest, n
+      of IteratorS:
+        # A `.passive` iterator is a coroutine like any other: a raising one
+        # yields into an `(ErrorCode, T)` slot, see `trCoroFor`.
+        if hasPragma(asRoutine(n).pragmas, PassiveP):
+          trProcDecl c, dest, n
+        else:
+          copyInto dest, n:
+            while n.hasMore:
+              tr c, dest, n
       of LocalDecls - {ResultS}:
         trLocal c, dest, n
       of ResultS:
@@ -864,11 +984,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         bug "`break` reached Hexer: the Final IR lowers every `break` to a `jmp`", n
       of JmpS:
         trJmp c, dest, n
-      of BlockS, WhileS, CoroforS:
+      of BlockS, WhileS:
         trLoopOrBlock c, dest, n
+      of CoroforS:
+        trCoroFor c, dest, n
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
-      of AsgnS, CallS, CmdS, IteratorS, EmitS, IfS, WhenS,
+      of AsgnS, CallS, CmdS, EmitS, IfS, WhenS,
          ContinueS, ForS, CaseS, YldS,
          PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
@@ -882,13 +1004,32 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     raiseAssert "BUG: unexpected ParRi in eraiser.tr" # classic ParRi only
 
-proc injectRaisingCalls*(pass: var Pass; ptrSize: int) =
-  var n = pass.n  # Extract cursor locally
-  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(pass.bits),
+proc lowerRaisesOfRoutine*(dest: var TokenBuf; n: Cursor; bits: int) =
+  ## This pass for ONE routine declaration `n`, for a pass that runs before
+  ## it and needs a routine's exceptions lowered first: lambdalifting cuts a
+  ## `.closure` iterator into state procs, and in a state proc a raise has no
+  ## error channel left that this pass could see. Lowered first, the iterator
+  ## reaches the coroutine transform the way a `.passive` one reaches `cps`:
+  ## `result` is the success tuple and every raise is a `return`.
+  var n = n
+  var c = Context(ptrSize: bits div 8, typeCache: createTypeCache(bits),
                   hoisted: createTokenBuf(16), tupleVars: initHashSet[SymId](),
                   errorCodeType: createTokenBuf(1))
   c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
   c.retType = c.typeCache.builtins.voidType
+  c.typeCache.openScope()
+  trProcDecl(c, dest, n)
+  c.typeCache.closeScope()
+
+proc injectRaisingCalls*(pass: var Pass; ptrSize: int; lowered: sink HashSet[SymId]) =
+  ## `lowered`: the routines `lowerRaisesOfRoutine` has already translated.
+  var n = pass.n  # Extract cursor locally
+  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(pass.bits),
+                  hoisted: createTokenBuf(16), tupleVars: initHashSet[SymId](),
+                  errorCodeType: createTokenBuf(1), lowered: lowered)
+  c.errorCodeType.addSymUse pool.symId(ErrorCodeName), NoLineInfo
+  c.retType = c.typeCache.builtins.voidType
+  collectLoopVars n, c.loopVarCalls # skips the routines, they have their own
   c.typeCache.openScope()
   tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()

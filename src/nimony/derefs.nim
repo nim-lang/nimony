@@ -823,7 +823,9 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     else:
       bailCannotPassToVar()
   elif e.wantMutable:
-    if isViewType(retType) and firstArgIsMutable(c, callExpr):
+    # a `.readonlyView` routine's result is never mutable, see #2924
+    if isViewType(retType) and not hasPragma(pragmas, ReadonlyViewP) and
+        firstArgIsMutable(c, callExpr):
       finishCallArgs()
     else:
       bailCannotPassToVar()
@@ -1282,7 +1284,7 @@ proc trTry(c: var Context; n: var Cursor) =
       case raisesFamily(arm.declType)
       of RefRaises: frame.refArms.add arm.declType
       of CodeRaises: frame.catchesCode = true
-      of NotRaisable, UnknownRaises: discard # sem reported it
+      of NotRaisable, RefLacksRtti, UnknownRaises: discard # sem reported it
     arms.add arm
     skip probe
 

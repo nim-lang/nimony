@@ -111,11 +111,15 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           dest.addParRi()
     else:
       dest.addParLe(body.cursorTagId, body.info)
-      # Module scope survives exactly two steps: a `(stmts …)` list, and the NAME
-      # of a declaration sitting in one. Everything else — a routine body, a
+      # Module scope survives a `(stmts …)` list, the branches of a `when` (only
+      # one survives, and it declares into the enclosing scope), and the NAME of
+      # a declaration sitting in one. Everything else — a routine body, a
       # `block`, the branches of an `if` — is a scope of its own in `identToSym`'s
       # eyes, so a name declared under it keeps the local layout it already has.
-      let listy = body.stmtKind == StmtsS
+      # An `elif`/`else` passes module scope on only when its parent did, which
+      # of the three constructs owning them is `when` alone.
+      let listy = body.stmtKind in {StmtsS, WhenS} or
+                  body.substructureKind in {ElifU, ElseU}
       # A local declared in the body may have been typed `untyped` when the
       # template's own body was checked — `let n = call` can be nothing else
       # there. That type must not travel into the expansion: here the

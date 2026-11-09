@@ -442,6 +442,18 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParLe(pk, n.info)
       dest.addParRi()
     toPragmaArgs()
+  of ReadonlyViewP:
+    # Declares that the returned view never allows mutation: derefs refuses a
+    # call to it where a `var` view is expected, even for a mutable argument.
+    # A copy-on-write container needs this, as nothing makes its buffer unique
+    # before a write through the view.
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, $pk & " pragma is only allowed on routines"
+    else:
+      crucial.flags.incl pk
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+    toPragmaArgs()
   of EnableTraceP:
     buildErr c, dest, n.info, "`enableTrace` is a statement in the body of `nimTraceRef`"
     toPragmaArgs()
@@ -550,9 +562,16 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       # Sem-check the type properly
       let typeInfo = n.info
       crucial.raisesType = semLocalType(c, dest, n)
-      if raisesFamily(crucial.raisesType) == NotRaisable:
+      case raisesFamily(crucial.raisesType)
+      of NotRaisable:
         buildErr c, dest, typeInfo, "`.raises` takes `ErrorCode` or a `ref` object type, not `" &
           typeToString(crucial.raisesType) & "`"
+      of RefLacksRtti:
+        # The type is reported at the pragma: the expanded `ref` type carries
+        # its declaration's line info.
+        buildErr c, dest, start.info, "`.raises` takes a `ref` object type with RTTI, not `" &
+          typeToString(crucial.raisesType) & "`; inherit its object from `Exception`"
+      of CodeRaises, RefRaises, UnknownRaises: discard
       dest.addParRi()
       var emptyRaises = false
       if nn.exprKind == BracketX:

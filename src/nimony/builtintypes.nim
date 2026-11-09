@@ -55,6 +55,7 @@ const
     ## disambiguates it from `coro_transform.RootObjName`, which despite its
     ## name is `CoroutineBase`.
   OpenArrayHeadName* = "openArray.0." & SystemModuleSuffix
+  SeqHeadName* = "seq.0." & SystemModuleSuffix
 
 proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo) =
   ## The type a `.raises` routine's result actually travels in: `ErrorCode`
