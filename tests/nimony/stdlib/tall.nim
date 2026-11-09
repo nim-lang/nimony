@@ -49,6 +49,7 @@ import std/dirs
 import std/dns
 import std/editdistance
 import std/encodings
+import std/endians
 import std/envvars
 import std/fenv
 import std/files
