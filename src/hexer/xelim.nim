@@ -17,6 +17,7 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
 import ".." / finalir / finalir_model
+import ".." / models / tags
 include ".." / nimony / nif_annotations
 
 type
@@ -1249,6 +1250,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     elif n.finalIrKind == LoopV:
       copyInto(dest, n):
         trStmt c, dest, n
+    elif n.kind == TagLit and n.cursorTagId == TagId(KeepovfTagId):
+      # `(keepovf ArithExpr Lvalue)`, which `constparams` emits for checked
+      # arithmetic: its operands are expressions, and a nested checked
+      # operation in one of them is an `(expr (stmts ...) tmp)` to hoist.
+      trStmtCall c, dest, n
     else:
       takeTree dest, n
   of PragmaxS:
@@ -1326,7 +1332,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n, tar
     dest.addTarget tar
 
-  of AsmS, DeferS:
+  of AsmS, DeferS, EmitS:
+    # `(emit Expr+)`: its pieces are expressions too, a checked operation
+    # among them included.
     # IMPORTANT: Stores into `tar` helper!
     var tar = initTarget(IsAppend)
     tar.t.copyInto n:
@@ -1340,7 +1348,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of BlockS:
     var tar = initTarget(IsIgnored)
     trBlock c, dest, n, tar
-  of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+  of MacroS, TemplateS, TypeS, BreakS, ContinueS,
      IncludeS, ImportS, FromimportS, ImportexceptS,
      ExportS, CommentS, AssumeS, AssertS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,

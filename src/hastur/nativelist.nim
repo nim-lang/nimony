@@ -240,6 +240,9 @@ const
     # the reciprocal: the magic constants, the 65-bit "add" fixup and the signed
     # high half all go wrong quietly. Also two divisions in one expression.
     "tests/nimony/basicarith/tdivmodconst",
+    # Nested checked arithmetic in a `{.keepOverflowFlag.}` block: one `keepovf`
+    # per operation, the flag read right after the last one.
+    "tests/nimony/basicarith/toverflowflag_nested",
     # shoggoth's `(memset …)`/`(memcpy …)` nodes (#2350): arkham lowers them
     # with the inline `mem*` loops, whose operands are no longer leaves — the
     # address of `p[i]` stages its index through a scratch register.
