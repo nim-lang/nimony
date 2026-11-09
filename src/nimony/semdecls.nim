@@ -58,8 +58,9 @@ proc isTrailingRetOf(n: Cursor; res: SymId): bool =
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
                            lastSonInfo: var NifLineInfo; beforeLastSon: var int) =
   ## Process all statements in the proc body, treating the last one as an
-  ## expression. Stops in front of the trailing `(ret result)` of a body that
-  ## was sem-checked once already; the caller processes it.
+  ## expression unless it cannot be the routine's value. Stops in front of
+  ## the trailing `(ret result)` of a body that was sem-checked once already;
+  ## the caller processes it.
   ##
   ## Such a body (a routine declared in a template, which is checked when the
   ## template is defined and again where it is expanded) starts with its
@@ -67,6 +68,10 @@ proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
   ## statement before that `ret`: `proc g(): string = $v` with an untyped `v`
   ## could not be turned into `result = $v` the first time (nimony#2906).
   var oldRes = SymId(0)
+  # The tail of a routine that returns nothing, or of an iterator (which
+  # produces its values with `yield`), is not the routine's value.
+  let returnType = c.routine.returnType
+  let tailIsStmt = c.routine.kind == IteratorY or classifyType(c, returnType) == VoidT
   while it.n.hasMore:
     if it.n.stmtKind == ResultS and c.routine.resId == SymId(0) and oldRes == SymId(0):
       var d = it.n
@@ -79,6 +84,13 @@ proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
         inc decl
         if decl.kind == SymbolDef: c.routine.resId = decl.symId
       endRead decl
+    elif isLastSon(it.n) and tailIsStmt:
+      # Then the body is a statement list, its last son included: it gets
+      # the discard rule like every other statement.
+      beforeLastSon = dest.len
+      lastSonInfo = it.n.info
+      semStmt c, dest, it.n, false
+      it.typ = c.types.voidType
     elif isLastSon(it.n):
       beforeLastSon = dest.len
       lastSonInfo = it.n.info
@@ -134,33 +146,6 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
     dest.addUnstructured reemit
     endRead reemit
     dest.addParRi()
-  elif classifyType(c, returnType) == VoidT and
-       (it.typ.kind == Symbol or classifyType(c, it.typ) notin {AutoT, NoType}):
-    # A VOID routine whose body's TAIL is an expression of a CONCRETE non-void
-    # type. This used to fall through to `commonType` against `void`, reporting
-    #   type mismatch: got: bool but wanted: void
-    # without ever consulting `{.discardable.}` — so a discardable call written
-    # as the LAST statement of a void proc was rejected, while the SAME call
-    # followed by any other statement compiled, because `semStmt` applies the
-    # discard rule and this path did not. A one-line `register*Routes` proc is
-    # exactly that shape (15 of 21 `addAsyncHandler` call sites in the kaitake
-    # estate). Apply the rule `semStmt` applies, which also yields the correct
-    # diagnostic for the non-discardable case.
-    #
-    # `AutoT`/`NoType` are EXCLUDED deliberately: a `defer` as the tail of a
-    # void proc classifies as `auto`, and treating it as a discardable-eligible
-    # expression breaks tests/nimony/exceptions/tdefer.nim. Those keep the old
-    # `commonType` path. A named type (`string`, an object) is a `Symbol`, which
-    # `classifyType` also reports as `NoType`, so it is let through explicitly,
-    # as `semStmt` does.
-    var ex = cursorAt(dest, beforeLastSon)
-    let isDiscardable = implicitlyDiscardable(ex, dest)
-    endRead ex
-    if not isDiscardable:
-      buildErr c, dest, lastSonInfo,
-        "expression of type `" & typeToString(it.typ) & "` must be discarded"
-    else:
-      discardCallExplicitly dest, beforeLastSon, lastSonInfo
   else:
     commonType c, dest, it, beforeLastSon, returnType
 
