@@ -38,7 +38,7 @@ type
       ## callee -> its `delay` wrapper, one per callee and module
     zeroArrays: Table[SymId, Cursor]
       ## xelim temp -> its array type, for a temp holding a zero
-      ## `default(array)`; every use becomes `(aconstr T)`
+      ## `default(array)`; every use becomes `(aconstr T)`. Per routine.
 
 proc freshLabel(c: var Context): SymId =
   result = pool.symId("`desugarL." & $c.counter)
@@ -170,6 +170,11 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
       skip n
       return
+  # Any other declaration of the name ends the substitution: an inlined
+  # body can declare a local of the same name.
+  let name = n.childCursor
+  if name.kind == SymbolDef:
+    c.zeroArrays.del name.symId
   copyInto dest, n:
     c.typeCache.takeLocalHeader(dest, n, kind)
     tr(c, dest, n)
@@ -293,6 +298,10 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let wasPassiveIter = c.inPassiveIter
   c.inPassiveIter = decl.stmtKind == IteratorS and
                     hasPragma(asRoutine(decl).pragmas, PassiveP)
+  # xelim's temp names are unique within a routine only: another routine's
+  # `x.N` is a different local, so its uses must not become `(aconstr T)`.
+  var outerZeroArrays = initTable[SymId, Cursor]()
+  swap outerZeroArrays, c.zeroArrays
   copyInto dest, n:
     var pragmas = default(Cursor)
     let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
@@ -316,6 +325,7 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trAsmBody dest, n
     else:
       takeTree dest, n
+  swap outerZeroArrays, c.zeroArrays
   c.inPassiveIter = wasPassiveIter
   c.typeCache.closeScope()
 
