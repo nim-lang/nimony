@@ -76,6 +76,7 @@ import std/macros
 import std/math
 import std/md5
 import std/memfiles
+import std/mimetypes
 import std/monotimes
 import std/nativesocket
 import std/nifply
