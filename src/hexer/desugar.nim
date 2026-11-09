@@ -36,6 +36,9 @@ type
       ## only asked whether a type has a `=destroy` (`delayWrapper`)
     delayWrappers: Table[SymId, SymId]
       ## callee -> its `delay` wrapper, one per callee and module
+    zeroArrays: Table[SymId, Cursor]
+      ## xelim temp -> its array type, for a temp holding a zero
+      ## `default(array)`; every use becomes `(aconstr T)`
 
 proc freshLabel(c: var Context): SymId =
   result = pool.symId("`desugarL." & $c.counter)
@@ -114,8 +117,59 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = fals
       while n.hasMore:
         tr(c, dest, n, isTopScope)
 
+proc isZeroDefault(t: Cursor): bool =
+  ## Is `default(t)` all zero bits? Decided by the type alone, so it only
+  ## admits types whose `default` the user does not overload: an object,
+  ## tuple or distinct type can bring its own, and a field default (`x = 5`)
+  ## or an RTTI slot is not zero either. Those keep the call.
+  let impl = toTypeImpl(t)
+  case impl.typeKind
+  of IntT, UIntT, FloatT, CharT, BoolT, PtrT, RefT, PointerT, CstringT,
+     NiltT, SetT, RoutineTypes:
+    result = true
+  of EnumT, HoleyEnumT, AnumT:
+    result = enumBounds(impl).lo == createXint(0'i64)
+  of RangetypeT:
+    var lo = impl
+    inc lo # tag
+    skip lo # base type
+    result = (lo.kind == IntLit and lo.intVal == 0) or
+             (lo.kind == UIntLit and lo.uintVal == 0'u64)
+  of ArrayT:
+    result = isZeroDefault(impl.childCursor)
+  else:
+    result = false
+
+proc zeroArrayDefault(local: Local): bool =
+  ## `(let :tmp . (pragmas (inline)) T (call default T))` where `default` is
+  ## `system`'s `.semantics: "arrayDefault"` and the elements default to zero.
+  ## The `inline` pragma is xelim's: the temp is its own, written once and
+  ## only read, so its uses can each be the value itself.
+  if not hasPragma(local.pragmas, InlineP): return false
+  var call = local.val
+  if call.kind != TagLit or call.exprKind notin CallKinds: return false
+  inc call
+  if call.kind != Symbol: return false
+  let res = tryLoadSym(call.symId)
+  result = res.status == LacksNothing and isRoutine(res.decl.symKind) and
+    hasPragmaOfValue(asRoutine(res.decl).pragmas, SemanticsP, "arrayDefault") and
+    isZeroDefault(local.typ)
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
+  if kind == LetY:
+    let local = asLocal(n)
+    if zeroArrayDefault(local):
+      # nimony#2846: `Node()` with a huge array field bound the array to this
+      # temp and copied it into the heap object, overflowing the stack. The
+      # temp goes away and its uses read `(aconstr T)`, the all-zero array,
+      # which the back ends fill in place. This runs before the duplifier,
+      # destroyer and cps, so no hook, `=destroy` or frame slot ever names it.
+      c.zeroArrays[local.name.symId] = local.typ
+      dest.addParLe StmtsS, n.info
+      dest.addParRi()
+      skip n
+      return
   copyInto dest, n:
     c.typeCache.takeLocalHeader(dest, n, kind)
     tr(c, dest, n)
@@ -1416,7 +1470,16 @@ proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
-  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
+  of Symbol:
+    let typ = c.zeroArrays.getOrDefault(n.symId)
+    if cursorIsNil(typ):
+      takeTree dest, n
+    else:
+      dest.addParLe AconstrX, n.info
+      dest.addSubtree typ
+      dest.addParRi()
+      inc n
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of TagLit:
     case n.exprKind

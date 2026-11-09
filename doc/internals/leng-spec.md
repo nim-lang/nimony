@@ -119,7 +119,7 @@ Expr ::= Number | CharLiteral | StringLiteral |
          (alignof Type) |
          (offsetof Type SYMBOL) |
          (oconstr Type (kv Symbol Expr)*) |  # (object constructor){...}
-         (aconstr Type Expr*) |              # array constructor
+         (aconstr Type Expr*) |              # array constructor; no Expr: all zero
          ArithExpr |
          (shr Type Expr Expr) |
          (shl Type Expr Expr) |
