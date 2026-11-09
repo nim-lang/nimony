@@ -288,7 +288,16 @@ proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
   of TagLit:
     let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS, BlockS}
     let isLab = n.stmtKind == LabS
+    # a field shares its symbol with a local of the same name, not its
+    # identity: the selector of a `dot`/`ddot` and the key of a `kv` stay
+    let isSel = n.exprKind in {DotX, DdotX}
+    let isKey = n.substructureKind == KvU
     copyInto dest, n:
+      if isSel:
+        freshVars(n, newVars, idgen, dest) # the object
+        while n.hasMore: dest.takeTree n # selector, depth, access token
+      elif isKey:
+        dest.takeTree n # the field name
       if isLocalDecl and n.isSymbolDef:
         let repl = pool.symId("`ffv." & $idgen)
         newVars[n.symId] = repl
