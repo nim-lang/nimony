@@ -580,16 +580,15 @@ proc calleeHasSemantics(c: var FirContext; fn: Cursor; val: string): bool =
   ## type, which an instance of a generic carries too.
   result = false
   if fn.isSymbol and c.moduleRoutines.hasKey(fn.symId):
-    return hasPragmaOfValue(asRoutine(c.moduleRoutines.getOrQuit(fn.symId)).pragmas,
-                            SemanticsP, val)
-  if fn.isSymbol and getLocalInfo(c.typeCache, fn.symId).kind == NoSym and
-      tryLoadSym(fn.symId).status != LacksNothing:
-    return
-  var p = skipProcTypeToParams(getType(c.typeCache, fn))
-  if p.isParamsTag:
-    skip p # params
-    skip p # return type
-    result = hasPragmaOfValue(p, SemanticsP, val)
+    result = hasPragmaOfValue(asRoutine(c.moduleRoutines.getOrQuit(fn.symId)).pragmas,
+                              SemanticsP, val)
+  elif not fn.isSymbol or getLocalInfo(c.typeCache, fn.symId).kind != NoSym or
+      tryLoadSym(fn.symId).status == LacksNothing:
+    var p = skipProcTypeToParams(getType(c.typeCache, fn))
+    if p.isParamsTag:
+      skip p # params
+      skip p # return type
+      result = hasPragmaOfValue(p, SemanticsP, val)
 
 proc isElementAt(c: var FirContext; n: Cursor): bool =
   ## A call of an indexer declared `{.semantics: "elementAt".}`: its `var T`
@@ -823,10 +822,9 @@ proc collectDefs(n: var Cursor; defs: var HashSet[SymId]) =
 
 proc markUses(c: var FirContext; n: var Cursor; defs: HashSet[SymId]) =
   if n.kind == Symbol:
-    let s = n.symId
-    if s notin defs and s notin c.unanalysed and
-        localInfoOf(c, s).kind notin {GvarY, TvarY, GletY, TletY}:
-      c.unanalysed.incl s
+    # a local name the routine does not declare is a local of an enclosing one
+    if n.symId notin defs and isLocalName(pool.syms[n.symId]):
+      c.unanalysed.incl n.symId
     inc n
   elif n.isTagLit:
     n.into:
@@ -1444,6 +1442,20 @@ proc invalidateAllDerived(c: var FirContext) =
     if c.derivedRoots[i] != NoSymId:
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
+proc factVars(c: FirContext): HashSet[VarId] =
+  ## The variables and derived locations the facts mention. Collected before
+  ## any is projected out, which edits the facts.
+  result = initHashSet[VarId]()
+  for i in 0 ..< c.facts.len:
+    for v in [c.facts[i].a, c.facts[i].b]:
+      if int(v) > 0 or int(v) <= FirstDerivedVarId: result.incl v
+
+proc rootOf(c: FirContext; v: VarId): SymId =
+  ## The variable a fact about `v` is about: `v` itself, or the one a derived
+  ## location hangs off.
+  if int(v) > 0: SymId(int(v))
+  else: c.derivedRoots[FirstDerivedVarId - int(v)]
+
 proc forgetClasses(c: var FirContext; classes: set[RootClass];
                    spared: openArray[SymId] = []) =
   ## A write no name tells us may have hit any variable of `classes`: what is
@@ -1451,28 +1463,17 @@ proc forgetClasses(c: var FirContext; classes: set[RootClass];
   ## connected through it stays (`projectOut`). The `spared` roots are written
   ## by name, which the caller accounts for. A `lenientContracts` module
   ## vouches that no such write matters.
-  if classes == {} or LenientContractsFeature in c.features: return
-  var seen = initHashSet[VarId]()
-  for i in 0 ..< c.facts.len:
-    for v in [c.facts[i].a, c.facts[i].b]:
-      if int(v) > 0 or int(v) <= FirstDerivedVarId: seen.incl v
-  for v in seen:
-    let root = if int(v) > 0: SymId(int(v))
-               else: c.derivedRoots[FirstDerivedVarId - int(v)]
-    if root != NoSymId and rootClass(c, root) in classes and root notin spared:
-      projectOut(c.facts, v)
+  if classes != {} and LenientContractsFeature notin c.features:
+    for v in factVars(c):
+      let root = rootOf(c, v)
+      if root != NoSymId and rootClass(c, root) in classes and root notin spared:
+        projectOut(c.facts, v)
 
 proc forgetRoots(c: var FirContext; roots: HashSet[SymId]) =
   ## `forgetClasses` for single variables.
-  if roots.len == 0 or LenientContractsFeature in c.features: return
-  var seen = initHashSet[VarId]()
-  for i in 0 ..< c.facts.len:
-    for v in [c.facts[i].a, c.facts[i].b]:
-      if int(v) > 0 or int(v) <= FirstDerivedVarId: seen.incl v
-  for v in seen:
-    let root = if int(v) > 0: SymId(int(v))
-               else: c.derivedRoots[FirstDerivedVarId - int(v)]
-    if root in roots: projectOut(c.facts, v)
+  if roots.len > 0 and LenientContractsFeature notin c.features:
+    for v in factVars(c):
+      if rootOf(c, v) in roots: projectOut(c.facts, v)
 
 proc unnamedReach(c: var FirContext; loc: Cursor): set[RootClass] =
   ## The classes a write to the location `loc` may change without naming
@@ -1510,6 +1511,31 @@ proc prescanReach(c: var FirContext; loc: Cursor): set[RootClass] =
 proc isKeyableCall(fnSym: SymId): bool
 proc accessorOf(c: var FirContext; fnSym: SymId; a: var AccessorInfo): bool
 
+proc visibleRoutine(c: var FirContext; fn: Cursor; tt: var Cursor): bool =
+  ## Is the callee `fn` a routine whose declaration we can see? `tt` is then
+  ## its type. A routine value, a method or a symbol that does not load is not.
+  result = false
+  if fn.isSymbol and (getLocalInfo(c.typeCache, fn.symId).kind != NoSym or
+      tryLoadSym(fn.symId).status == LacksNothing):
+    tt = getType(c.typeCache, fn)
+    result = tt.stmtKind in {ProcS, FuncS, IteratorS, ConverterS}
+
+proc handedVarOrPointer(params, fn: Cursor; args: var int): bool =
+  ## Is the call whose callee is `fn`, followed by its `args` arguments,
+  ## handed a `var`/`out` or a pointer argument?
+  result = false
+  var p = params
+  p = sub(p)
+  var a = fn
+  skip a
+  while a.hasMore:
+    inc args
+    if p.hasMore:
+      var t = takeLocal(p, SkipFinalParRi).typ
+      if t.typeKind == SinkT: t = sub(t)
+      if t.typeKind in {MutT, OutT, PtrT, PointerT}: result = true
+    skip a
+
 proc callFootprint(c: var FirContext; fn: Cursor; viaArgs: var bool): set[RootClass] =
   ## The classes a call may change beyond the arguments it names; `fn` is its
   ## callee, followed by its arguments. A `proc`, a
@@ -1525,41 +1551,22 @@ proc callFootprint(c: var FirContext; fn: Cursor; viaArgs: var bool): set[RootCl
   ## about them holds.
   result = {rcBorrowed, rcGlobal}
   viaArgs = false
-  if not fn.isSymbol: return
-  let s = fn.symId
-  if getLocalInfo(c.typeCache, s).kind == NoSym and
-      tryLoadSym(s).status != LacksNothing:
-    return
-  let tt = getType(c.typeCache, fn)
-  if tt.stmtKind notin {ProcS, FuncS, IteratorS, ConverterS}: return
-  var params = skipProcTypeToParams(tt)
-  if not params.isParamsTag: return
-  var pragmas = params
-  skip pragmas # params
-  skip pragmas # return type
-  if calleeEffect(tt, pragmas) == HasSideEffect: return
-  var p = params
-  p = sub(p)
-  var a = fn
-  skip a
-  var args = 0
-  var reaches = false
-  while a.hasMore:
-    inc args
-    if p.hasMore:
-      var t = takeLocal(p, SkipFinalParRi).typ
-      if t.typeKind in {MutT, OutT}: reaches = true
-      if t.typeKind == SinkT: t = sub(t)
-      if t.typeKind in {PtrT, PointerT}: reaches = true
-    skip a
-  if reaches:
-    viaArgs = true
-    return
-  var acc = default(AccessorInfo)
-  if args == 1 and (accessorOf(c, s, acc) or isKeyableCall(s)):
-    result = {}
-  else:
-    result = {rcGlobal}
+  var tt = default(Cursor)
+  if visibleRoutine(c, fn, tt):
+    let params = skipProcTypeToParams(tt)
+    if params.isParamsTag:
+      var pragmas = params
+      skip pragmas # params
+      skip pragmas # return type
+      if calleeEffect(tt, pragmas) != HasSideEffect:
+        var args = 0
+        var acc = default(AccessorInfo)
+        if handedVarOrPointer(params, fn, args):
+          viaArgs = true
+        elif args == 1 and (accessorOf(c, fn.symId, acc) or isKeyableCall(fn.symId)):
+          result = {}
+        else:
+          result = {rcGlobal}
 
 proc isKeyableCall(fnSym: SymId): bool =
   ## May a call to `fnSym` stand for a location of its own?
