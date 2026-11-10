@@ -347,6 +347,8 @@ type LinearMatchFlag = enum
 const ConstraintMatchFlags = {InferActualTypevar}
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
+proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor;
+                    flags: set[LinearMatchFlag] = {})
 
 proc tryLinearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}): bool {.inline.} =
   let oldErr = m.err
@@ -1239,6 +1241,32 @@ proc rematchInferredTypevar(m: var Match; fs: SymId; prev: Cursor;
     inc f
 
 proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
+                     flags: set[LinearMatchFlag])
+
+proc matchChildren(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
+                   flags: set[LinearMatchFlag]) =
+  ## Generic tree: same tag, then match the children pairwise.
+  ## Compare tag ids, not raw operands — under `-d:virtualParRi` the
+  ## operand carries the sealed jump, which differs whenever the two
+  ## subtrees have different token counts (e.g. typevar vs. concrete).
+  if f.cursorTagId != a.cursorTagId:
+    m.error(InvalidMatch, fOrig, aOrig)
+  else:
+    let fStart = f
+    f = sub(f)
+    let aStart = a
+    a = sub(a)
+    while f.hasMore and a.hasMore and not m.err:
+      linearMatchTree m, f, a, fOrig, aOrig, flags
+    if not m.err:
+      if not f.hasMore and not a.hasMore:
+        f = fStart; skip f
+        a = aStart; skip a
+      else:
+        # different child counts
+        m.error(InvalidMatch, fOrig, aOrig)
+
+proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
                      flags: set[LinearMatchFlag]) =
   ## Matches a single tree/token of `f` against `a`, advancing both past it.
   ## On mismatch `m.err` is set and the cursors may be left mid-tree —
@@ -1382,27 +1410,20 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
           matchNilAnnotations m, f, a, fOrig, aOrig
           expectParRi m, f, fStart
           expectParRi m, a, aStart
-      else:
-        # generic tree: same tag, then match the children pairwise.
-        # Compare tag ids, not raw operands — under `-d:virtualParRi` the
-        # operand carries the sealed jump, which differs whenever the two
-        # subtrees have different token counts (e.g. typevar vs. concrete).
-        if f.cursorTagId != a.cursorTagId:
+      of ArrayT:
+        # An array reached through any enclosing type (`ptr array[N, T]`,
+        # `seq[array[N, T]]`, a tuple field, `typedesc[…]`): its index slot is
+        # the canonical `0 .. N-1` that only `matchArrayType` knows how to
+        # compare with an actual's folded `0 .. 2`. It leaves `a` mid-tree.
+        if a.typeKind != ArrayT:
           m.error(InvalidMatch, fOrig, aOrig)
         else:
-          let fStart = f
-          f = sub(f)
           let aStart = a
-          a = sub(a)
-          while f.hasMore and a.hasMore and not m.err:
-            linearMatchTree m, f, a, fOrig, aOrig, flags
+          matchArrayType m, f, a, flags
           if not m.err:
-            if not f.hasMore and not a.hasMore:
-              f = fStart; skip f
-              a = aStart; skip a
-            else:
-              # different child counts
-              m.error(InvalidMatch, fOrig, aOrig)
+            a = aStart; skip a
+      else:
+        matchChildren m, f, a, fOrig, aOrig, flags
     else:
       # ParRi/close (classic) or a stray suffix (nifcore) — unreachable: subtree
       # ends are consumed by the bounded scopes above.
@@ -1960,22 +1981,8 @@ proc symbolicArrayLength(f: Cursor): Cursor =
         if one.kind == IntLit and one.intVal == 1:
           result = lenExpr
 
-proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor)
-
-proc matchArrayElem(m: var Match; f, a: var Cursor) =
-  ## The element types of two arrays. A nested `array` has to go through
-  ## `matchArrayType` again: `linearMatch` compares index slots tree-wise and
-  ## would trip over a formal's canonical `0 .. N-1` versus an actual's folded
-  ## `0 .. 2`. `matchArrayType` leaves `a` mid-tree, so seal it here.
-  if f.typeKind == ArrayT and a.typeKind == ArrayT:
-    let aStart = a
-    matchArrayType m, f, a
-    a = aStart
-    skip a
-  else:
-    linearMatch m, f, a
-
-proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
+proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor;
+                    flags: set[LinearMatchFlag] = {}) =
   if a.typeKind == ArrayT:
     var a1 = a
     var f1 = f
@@ -2003,20 +2010,27 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
         let fStart = f
         f = sub(f)
         inc a
-        matchArrayElem m, f, a # element types; `a` lands on the index type
+        linearMatch m, f, a, flags # element types; `a` lands on the index type
         if not m.err:
           var fl = fLenExpr
           linearMatch m, fl, a
         skip f # index type
         expectParRi m, f, fStart
       else:
-        # match typevars
-        linearMatch m, f, a
+        # both lengths symbolic (a generic body checked against itself), or a
+        # concrete formal against a symbolic actual: compare structurally.
+        # Not `linearMatch`, which would route the array right back here.
+        let fOrig = f
+        let aOrig = a
+        matchChildren m, f, a, fOrig, aOrig, flags
+        if m.err:
+          f = fOrig; skip f
+          a = aOrig; skip a
     elif fLen == aLen:
       let fStart = f
       f = sub(f)
       inc a
-      matchArrayElem m, f, a # element types
+      linearMatch m, f, a, flags # element types
       skip f # index type
       expectParRi m, f, fStart
     else:
