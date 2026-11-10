@@ -464,7 +464,7 @@ func combine*(base, rel: Uri): Uri =
         cut = i
         break
     if cut >= 0:
-      for i in 0..cut: merged.add base.path[i]
+      merged.add substr(base.path, 0, cut)
     else:
       merged.add '/'
     merged.add rel.path

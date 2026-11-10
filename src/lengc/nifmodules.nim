@@ -262,17 +262,21 @@ proc buildDensifyRemap(dest: var TokenBuf; src: TokenBuf): DensifyRemap =
   result = DensifyRemap(srcPool: src.pool)
   result.tagMap = newSeq[TagId](src.tags.tags.len + 1)
   for i in 1 .. src.tags.tags.len:
-    result.tagMap[i] = dest.tags.registerTag(src.tags.tags[TagId(i)])
+    # copied first: `dest` may share `src`'s pools, which an insertion may grow
+    let tag = src.tags.tags[TagId(i)]
+    result.tagMap[i] = dest.tags.registerTag(tag)
   result.fileMap = newSeq[FileId](src.pool.filenames.len + 1)
   for i in 1 .. src.pool.filenames.len:
-    result.fileMap[i] = dest.pool.filenames.getOrIncl(src.pool.filenames[FileId(i)])
+    let file = src.pool.filenames[FileId(i)]
+    result.fileMap[i] = dest.pool.filenames.getOrIncl(file)
 
 proc mapInfo(dest: var TokenBuf; info: NifLineInfo; remap: DensifyRemap): NifLineInfo =
   result = info
   if remap.tagMap.len > 0 and info.isValid:
     result.file = remap.fileMap[int info.file]
     if result.comment != StrId(0):
-      result.comment = dest.pool.strings.getOrIncl(remap.srcPool.strings[result.comment])
+      let text = remap.srcPool.strings[result.comment]
+      result.comment = dest.pool.strings.getOrIncl(text)
 
 proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo;
              remap: DensifyRemap) =

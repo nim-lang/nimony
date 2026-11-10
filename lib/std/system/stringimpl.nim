@@ -56,8 +56,10 @@ template inlinePtrV(s: var string): ptr UncheckedArray[char] =
   ## Mutable pointer to the inline char storage (offset +1 from `bytes`).
   cast[ptr UncheckedArray[char]](cast[uint](addr s.bytes) + 1'u)
 
-template setInline(s: var string; i: int; c: char) =
-  ## Writes the inline char at `i`.
+func setInline(s: var string; i: int; c: char) {.inline.} =
+  ## Writes the inline char at `i`. A routine rather than a template: it takes
+  ## the address of `s`, which leaves the prover no facts about `s` where it
+  ## is taken (doc/language.md, "Aliasing"); the caller keeps its own.
   {.cast(noSideEffect).}: # writes into `s` itself, through its address
     inlinePtrV(s)[i] = c
 

@@ -647,8 +647,11 @@ proc buildRemap*(src: var TokenBuf; pool: Pool; tags: TagPool): PoolRemap =
                      identity: true)
   let nTags = src.tags.tags.len
   result.tags = newSeq[TagId](nTags + 1)
+  # Each entry is copied before it is interned: `tags` and `pool` may be
+  # `src`'s own, whose tables an insertion may grow under the argument.
   for i in 1 .. nTags:
-    let id = tags.tags.getOrIncl(src.tags.tags[TagId(i)])
+    let tag = src.tags.tags[TagId(i)]
+    let id = tags.tags.getOrIncl(tag)
     if uint32(id) > TagMask:
       quit "bif: tag pool overflow — '" & src.tags.tags[TagId(i)] &
            "' got id " & $id & ", but a TagLit holds only 9 bits"
@@ -657,7 +660,8 @@ proc buildRemap*(src: var TokenBuf; pool: Pool; tags: TagPool): PoolRemap =
   let nStrings = src.pool.strings.len
   result.strings = newSeq[StrId](nStrings + 1)
   for i in 1 .. nStrings:
-    let id = pool.strings.getOrIncl(src.pool.strings[StrId(i)])
+    let str = src.pool.strings[StrId(i)]
+    let id = pool.strings.getOrIncl(str)
     result.strings[i] = id
     if uint32(id) != uint32(i): result.identity = false
   let nSyms = src.pool.syms.len
@@ -669,7 +673,8 @@ proc buildRemap*(src: var TokenBuf; pool: Pool; tags: TagPool): PoolRemap =
   let nFiles = src.pool.filenames.len
   result.files = newSeq[FileId](nFiles + 1)
   for i in 1 .. nFiles:
-    let id = pool.filenames.getOrIncl(src.pool.filenames[FileId(i)])
+    let file = src.pool.filenames[FileId(i)]
+    let id = pool.filenames.getOrIncl(file)
     result.files[i] = id
     if uint32(id) != uint32(i): result.identity = false
 

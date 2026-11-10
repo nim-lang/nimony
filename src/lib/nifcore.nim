@@ -2055,7 +2055,10 @@ proc reinternLineInfo(dest: var TokenBuf; c: Cursor;
   let fname = if srcPool != nil: srcPool.filenames[li.file] else: ""
   var comment = StrId(0)
   if uint32(li.comment) != 0'u32 and srcPool != nil:
-    comment = dest.pool.strings.getOrIncl(srcPool.strings[li.comment])
+    # a copy first: `srcPool` may be `dest.pool`, whose table the insertion
+    # may grow under the argument
+    let text = srcPool.strings[li.comment]
+    comment = dest.pool.strings.getOrIncl(text)
   result = NifLineInfo(file: dest.pool.filenames.getOrIncl(fname),
                        line: li.line, col: li.col, comment: comment)
 

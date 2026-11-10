@@ -65,10 +65,13 @@ proc tryBulkDequeue*[T: HasDefault](s: var FifoStripe[T]; bulkSize: int; buf: va
   if s.count == 0: return 0
   acquireSys(s.lock)
   result = min(s.count, min(bulkSize, buf.len))
-  if s.data.len > 0:
+  # moved into a local: what is known about a local outlasts the calls
+  var data = move s.data
+  if data.len > 0:
     for i in 0 ..< result:
-      buf[i] = s.data[s.head and (s.data.len - 1)]
-      s.head = (s.head + 1) and (s.data.len - 1)
+      buf[i] = data[s.head and (data.len - 1)]
+      s.head = (s.head + 1) and (data.len - 1)
+  s.data = ensureMove data
   dec s.count, result
   releaseSys(s.lock)
 

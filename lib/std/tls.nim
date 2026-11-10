@@ -180,7 +180,8 @@ proc getBytes(d: openArray[byte]; pos: var int; limit, n: int; res: var seq[byte
   result = false
   if n < 0 or pos < 0 or pos + n > limit or limit > d.len: return
   res = @[]
-  for i in pos ..< pos + n:
+  let start = pos # a local: `res.add` may change what `pos` refers to
+  for i in start ..< start + n:
     if i < d.len: res.add d[i]
   pos = pos + n
   result = true

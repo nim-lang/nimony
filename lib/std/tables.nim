@@ -31,9 +31,11 @@ func resize(t: var seq[HashEntry]) =
   var s = newSeq[HashEntry](newLen)
   # the allocation failed: keep probing the old index, full as it is
   if s.len == 0: return
-  for i in 0 ..< t.len:
-    if isFilled(t[i]):
-      s[emptySlot(s, t[i].fullhash)] = t[i]
+  # moved into a local: what is known about a local outlasts the calls
+  let old = move t
+  for i in 0 ..< old.len:
+    if isFilled(old[i]):
+      s[emptySlot(s, old[i].fullhash)] = old[i]
   t = ensureMove s
 
 const
@@ -48,11 +50,15 @@ func fillHashPart[K: Keyable, V](t: var Table[K, V]) =
   ## `emptySlot` with no free slot to find.
   var cap = HashThreshold*2
   while mustRehash(cap, t.data.len): cap = cap * 2
-  t.hashes = newSeq[HashEntry](cap)
-  if t.hashes.len == 0: return
-  for i in 0 ..< t.data.len:
-    let fullhash = hash(t.data[i][0])
-    t.hashes[emptySlot(t.hashes, fullhash)] = HashEntry(fullhash: fullhash, position: i+1)
+  # both as locals: what is known about a local outlasts the calls
+  var data = move t.data
+  var hashes = newSeq[HashEntry](cap)
+  if hashes.len > 0:
+    for i in 0 ..< data.len:
+      let fullhash = hash(data[i][0])
+      hashes[emptySlot(hashes, fullhash)] = HashEntry(fullhash: fullhash, position: i+1)
+  t.data = ensureMove data
+  t.hashes = ensureMove hashes
 
 func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int {.
     ensures: result < t.data.len.} =

@@ -255,9 +255,12 @@ when defined(windows):
     var para = CertChainPara(cbSize: uint32(sizeof(CertChainPara)),
       requestedUsage: CertUsageMatch(dwType: USAGE_MATCH_TYPE_AND, usage: CertEnhkeyUsage(
         cUsageIdentifier: 1'u32, rgpszUsageIdentifier: addr serverAuth)))
-    var ctx: nil pointer = nil
-    if certGetCertificateChain(nil, leaf, nil, extra, addr para, 0'u32, nil,
-                               addr ctx) != 0'i32 and ctx != nil:
+    var chain: nil pointer = nil
+    # a second variable: `chain`'s address is taken, so nothing is known of it
+    let ctx = if certGetCertificateChain(nil, leaf, nil, extra, addr para, 0'u32,
+                                         nil, addr chain) != 0'i32: chain
+              else: nil
+    if ctx != nil:
       var h = host
       var name = newWideCString(h.toCString)
       var ssl = SslExtraPolicyPara(cbSize: uint32(sizeof(SslExtraPolicyPara)),
