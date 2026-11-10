@@ -1397,15 +1397,37 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
   else:
     cannotEval n
 
+proc firstErrorNode(n: Cursor): Cursor =
+  ## The first `(err ...)` node in `n`'s subtree (`n` itself included), or nil.
+  result = default(Cursor)
+  var n = n
+  if n.isTagLit and n.cursorTagId == nifpools.ErrT:
+    result = n
+  else:
+    n.linearScan:
+      if n.cursorTagId == nifpools.ErrT:
+        result = n
+        break
+
 proc evalExpr*(c: var SemContext, n: var Cursor;
                expectedType: TypeCursor = default(Cursor);
                keepEnumFields = false): TokenBuf =
   ## When `keepEnumFields` is set, an enum constant folds to its field symbol
   ## rather than its bare ordinal, preserving the enum type.
-  var ec = initEvalContext(addr c)
-  ec.expectedType = expectedType
-  ec.keepEnumFields = keepEnumFields
-  let val = eval(ec, n)
+  ##
+  ## An expression whose semcheck already produced an error is not evaluated:
+  ## like an `(err ...)` operand in `evalImpl`, the error is its value, so it
+  ## stays the diagnostic (as `buildErr` keeps an inner error of its `orig`)
+  ## instead of being wrapped in "cannot evaluate", and the erroneous tree
+  ## never reaches a sub-compile.
+  var val = firstErrorNode(n)
+  if cursorIsNil(val):
+    var ec = initEvalContext(addr c)
+    ec.expectedType = expectedType
+    ec.keepEnumFields = keepEnumFields
+    val = eval(ec, n)
+  else:
+    skip n
   result = createTokenBuf(val.subtreeWidth)
   result.addSubtree val
 
