@@ -295,7 +295,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of PragmaxX:
       trPragmaBlock c, dest, n
     of AddX, SubX, MulX, DivX, ModX:
-      if c.keepOverflowFlag:
+      # `overflowFlag()` reports the last `+`, `-` or `*` (`doc/language.md`,
+      # "Signed overflow"): `div` and `mod` stay plain, as outside the block.
+      if c.keepOverflowFlag and ek in {AddX, SubX, MulX}:
         checkedArithOp c, dest, n
       else:
         copyInto dest, n:
