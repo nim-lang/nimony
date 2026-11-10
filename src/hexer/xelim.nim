@@ -106,6 +106,8 @@ proc initTarget(m: Mode): Target {.inline.} =
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
+proc trListStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc tempSymName(c: var Context): string {.inline.} =
   # Separate prefixes: the `LowerCasts` run in hexer sees the temps nimsem's
@@ -838,9 +840,9 @@ proc trBranchBody(c: var Context; dest: var TokenBuf; n: var Cursor;
   elif n.stmtKind == StmtsS:
     n.into:
       while n.hasMore:
-        trStmt c, dest, n
+        trListStmt c, dest, n
   else:
-    trStmt c, dest, n
+    trListStmt c, dest, n
 
 proc trIfFlat(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   ## `if c1: B1 elif c2: B2 else: B3` laid out as
@@ -1236,14 +1238,15 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trStmt c, dest, n
     dest.addParRi()
 
-proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trListStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Lowers one statement into a statement list: the temps its operands are
+  ## bound to come out in front of it, as statements of the same list.
   case n.stmtKind
   of NoStmt:
     if n.exprKind == ExprX:
-      # One statement out, like every other case here: the callers put it in
-      # a slot that holds exactly one (an `elif`/`of`/`else` body). A branch
-      # ending in a discardable call is an `(expr)`, and lowering it emits the
-      # temps its operands are bound to before the call's own binding.
+      # One statement out: a branch ending in a discardable call is an
+      # `(expr)`, and lowering it emits the temps its operands are bound to
+      # before the call's own binding.
       dest.addParLe(StmtsS, n.info)
       var tar = initTarget(IsEmpty)
       trExpr c, dest, n, tar
@@ -1365,12 +1368,35 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.typeCache.openScope()
     copyInto(dest, n):
       while n.hasMore:
-        trStmt c, dest, n
+        trListStmt c, dest, n
     c.typeCache.closeScope()
   of StmtsS, AlwaysS, UnpackdeclS:
     copyInto(dest, n):
       while n.hasMore:
-        trStmt c, dest, n
+        trListStmt c, dest, n
+
+proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Lowers a statement into a slot that holds exactly one (a branch, loop,
+  ## block or routine body): a statement whose operands are bound to temps
+  ## comes out as several, which are then wrapped in one `(stmts ...)`.
+  ## A statement list comes out as one list and needs no check.
+  if n.stmtKind in {StmtsS, ScopeS}:
+    trListStmt c, dest, n
+  else:
+    let before = dest.len
+    trListStmt c, dest, n
+    var first = cursorAt(dest, before)
+    skip first
+    let several = cursorToPosition(dest, first) < dest.len
+    endRead first
+    if several:
+      var span = createTokenBuf(dest.len - before)
+      # balanced span: raw copy keeps its seals
+      for i in before ..< dest.len: span.add dest[i]
+      dest.shrink before
+      dest.addParLe(StmtsS, span[0].info)
+      dest.add span
+      dest.addParRi()
 
 proc isIntLike(tk: TypeKind): bool {.inline.} =
   tk in {IntT, UIntT, CharT, BoolT}
@@ -1489,7 +1515,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       n.into:
         while n.hasMore:
           if not isLastSon(n):
-            trStmt c, dest, n
+            trListStmt c, dest, n
           else:
             trExpr c, dest, n, tar
     of AndX:
@@ -1599,7 +1625,7 @@ proc lowerExprs*(pass: var Pass; goal: Goal; bitCastsInBackend = false) =
   pass.dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
-      trStmt c, pass.dest, n
+      trListStmt c, pass.dest, n
   pass.dest.addParRi()
   c.typeCache.closeScope()
   pass.nextTemp = c.counter
