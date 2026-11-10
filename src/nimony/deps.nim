@@ -1490,9 +1490,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       # GCC's overreach instead of contorting the codegen. Real GCC only:
       # clang has no such warning name and would spam
       # `-Wunknown-warning-option` into every tracked test output — and on
-      # macOS `gcc` IS clang, so gate on the target OS as well.
+      # macOS and Android `gcc` is commonly clang, so gate on the target OS
+      # as well.
       if extractCCKey(ccProgram) != "clang" and
-          c.config.targetOS notin {osMacosx, osIos}:
+          c.config.targetOS notin {osMacosx, osIos, osAndroid}:
         ccArgs.add "-Wno-stringop-overflow"
       # Note on TLS for clang/Windows: clang emits native PE TLS by default,
       # which is what we want — `__thread` access compiles to a single
@@ -2450,9 +2451,10 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addStrLit "-Wno-attributes"
       b.addStrLit "-fwrapv"
       # See the sibling cc cmd above: real-GCC-only workaround for the gcc-14
-      # arm64 stringop-overflow false positive.
+      # arm64 stringop-overflow false positive. macOS and Android commonly
+      # spell clang as `gcc`.
       if extractCCKey(config.cc) != "clang" and
-          config.targetOS notin {osMacosx, osIos}:
+          config.targetOS notin {osMacosx, osIos, osAndroid}:
         b.addStrLit "-Wno-stringop-overflow"
       b.addKeyw "args"
       b.addKeyw "input"
