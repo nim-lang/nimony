@@ -136,6 +136,7 @@ type
     enumType: SymId
     thisValue: xint
     hasHole: bool
+    hasPrevField: bool # a field was declared before the current one
     declaredNames: HashSet[StrId]
 
 proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: var EnumTypeState)
@@ -170,6 +171,7 @@ proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType:
         signed = true
       lastValue = state.thisValue
       inc state.thisValue
+      state.hasPrevField = true
     if state.hasHole:
       dest.retagAt(start, HoleyEnumT, readonlyCursorAt(dest, start).info)
     var baseType: Cursor
