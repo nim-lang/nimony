@@ -1281,7 +1281,7 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     n.into:
       arrayTypeCursor = n
       typ = genTypeLLVM(c, n)
-      expectedLen = fixedArrayLen(c, arrayTypeCursor)
+      expectedLen = fixedArrayLen(c.m, arrayTypeCursor)
       var elemBody = navigateToObjectBody(c.m, arrayTypeCursor)
       inc elemBody
       let elemTyp = genTypeLLVMReadOnly(c, elemBody)
