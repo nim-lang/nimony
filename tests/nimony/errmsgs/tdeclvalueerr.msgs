@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tdeclvalueerr.nim(7, 17) Error: undeclared identifier: zz2
+tests/nimony/errmsgs/tdeclvalueerr.nim(7, 22) Error: undeclared identifier: zz3
+tests/nimony/errmsgs/tdeclvalueerr.nim(10, 18) Error: undeclared identifier: zz4
+tests/nimony/errmsgs/tdeclvalueerr.nim(11, 7) Error: expression 'echo "x"' has no type (or is ambiguous)
+tests/nimony/errmsgs/tdeclvalueerr.nim(14, 18) Error: undeclared identifier: zz6
+tests/nimony/errmsgs/tdeclvalueerr.nim(16, 5) Error: expression 'echo "y"' has no type (or is ambiguous)
