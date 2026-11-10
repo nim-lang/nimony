@@ -1381,7 +1381,7 @@ proc trForHelper(c: var Context; n: var Cursor; dangerous: seq[SymId]) =
           c.r.dangerousLocations[s] = n.info
     tr c, n, WantT # iterator call
     trSons c, n, WantT # decls
-    trSons c, n, WantT # loop body
+    tr c, n, WantT # loop body: a statement list or a lone statement
 
 proc collectDangerousLoopVars(nn: var Cursor; dangerous: var seq[SymId]) =
   ## `nn` sits at an `(unpackflat …)`/`(unpacktup …)` node whose children are

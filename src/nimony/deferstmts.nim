@@ -80,11 +80,12 @@ proc wrapScopeDefers(c: var Context; dest: var TokenBuf; scopeId: int;
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.stmtKind notin {ScopeS, StmtsS}:
-    # Sem gives every statement body a `(stmts …)`, so this is the branch of an
-    # `if`/`case` EXPRESSION (`let x = if c: f() else: 2`): a value, not a
-    # block. It used to be wrapped into a `(stmts …)` like a statement body,
-    # which turned the branch into a statement, so the lowering that assigns
-    # each branch's value to the expression's temp found no value to assign.
+    # A lone statement (a body written in parentheses, `(for x in a: s)`)
+    # or the branch of an `if`/`case` EXPRESSION (`let x = if c: f() else: 2`),
+    # a value, not a block. Wrapping it into a `(stmts …)` like a statement
+    # body used to turn such a branch into a statement, so the lowering that
+    # assigns each branch's value to the expression's temp found no value to
+    # assign.
     trStmt c, dest, n
     return
   let beforeBody = dest.len+1

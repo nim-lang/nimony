@@ -561,12 +561,20 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if used:
     emitLab dest, exitL, info
 
-proc emitLoopBody(c: var Context; dest: var TokenBuf; body: var TokenBuf;
+proc emitLoopBody(c: var Context; dest: var TokenBuf; n: var Cursor;
                   info: NifLineInfo) =
-  ## The translated statements of a loop body, then its back-edge. With a
-  ## `continue`, the statements get their own `scope` and the label follows
-  ## it: a `jmp` must not skip a declaration whose destructor would then run
-  ## on an uninitialized value.
+  ## The translated statements of a loop body `n`, then its back-edge. The
+  ## body is a statement list or a lone statement (`(while c: s)` in
+  ## parentheses parses so). With a `continue`, the statements get their own
+  ## `scope` and the label follows it: a `jmp` must not skip a declaration
+  ## whose destructor would then run on an uninitialized value.
+  var body = createTokenBuf(64)
+  if n.stmtKind in {StmtsS, ScopeS}:
+    n.into:
+      while n.hasMore:
+        trStmt c, body, n
+  else:
+    trStmt c, body, n
   if c.current.exits[^1].contUsed:
     dest.addParLe ScopeS, info
     dest.add body
@@ -589,15 +597,7 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openScope c
   dest.addParLe LoopV, info
   dest.addParLe ScopeS, info # a loop body is a scope: its locals die each iteration
-  var body = createTokenBuf(64)
-  if n.stmtKind in {StmtsS, ScopeS}:
-    n.into: # the body statement list
-      while n.hasMore:
-        trStmt c, body, n
-  else:
-    # a lone statement, as a pass ahead of this one may build it
-    trStmt c, body, n
-  emitLoopBody c, dest, body, info
+  emitLoopBody c, dest, n, info
   dest.addParRi() # close `scope`
   dest.addParRi() # close `loop`
   let used = c.current.exits[^1].used
@@ -665,12 +665,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe ScopeS, info # as in `trLoopFromBody`: the body is a scope
   if assumeBuf.len > 0:
     dest.add assumeBuf
-  assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
-  var body = createTokenBuf(64)
-  n.into: # the body statement list
-    while n.hasMore:
-      trStmt c, body, n
-  emitLoopBody c, dest, body, info
+  emitLoopBody c, dest, n, info
   dest.addParRi() # close `scope`
   dest.addParRi(n.endInfo) # close `for`
   c.current.exits.shrink(c.current.exits.len - 1)
