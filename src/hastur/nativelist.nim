@@ -248,6 +248,9 @@ const
     # Nested checked arithmetic in a `{.keepOverflowFlag.}` block: one `keepovf`
     # per operation, the flag read right after the last one.
     "tests/nimony/basicarith/toverflowflag_nested",
+    # `div`/`mod` in a `{.keepOverflowFlag.}` block are plain operations, so
+    # a sub-64-bit one needs no narrow `keepovf`.
+    "tests/nimony/basicarith/toverflowflag_divmod",
     # shoggoth's `(memset …)`/`(memcpy …)` nodes (#2350): arkham lowers them
     # with the inline `mem*` loops, whose operands are no longer leaves — the
     # address of `p[i]` stages its index through a scratch register.
