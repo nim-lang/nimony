@@ -1468,8 +1468,9 @@ proc getFnIdent(c: var SemContext; dest: var TokenBuf): StrId =
   var n = beginRead(dest)
   result = takeIdent(n)
 
-proc findMagicInSyms(syms: Cursor): ExprKind =
-  ## Looks for a magic in a bare symbol or anywhere in a symchoice tree.
+proc findMagicInSyms(syms: Cursor; magicSym: var SymId): ExprKind =
+  ## Looks for a magic in a bare symbol or anywhere in a symchoice tree;
+  ## `magicSym` is the routine that declares it.
   var syms = syms
   result = NoExpr
   case syms.kind
@@ -1482,15 +1483,32 @@ proc findMagicInSyms(syms: Cursor): ExprKind =
         inc n # skip the SymbolDef
         if n.isTagLit:
           result = n.exprKind
+          magicSym = syms.symId
   of TagLit:
     if syms.exprKind in {OchoiceX, CchoiceX}:
       syms.loopInto:
-        result = findMagicInSyms(syms)
+        result = findMagicInSyms(syms, magicSym)
         if result != NoExpr: return
         skip syms
   else: discard
 
-proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; magic: ExprKind) =
+proc addDeclaredDefaults(dest: var TokenBuf; fn: SymId; given: int) =
+  ## Appends the declared defaults of `fn`'s parameters after the first
+  ## `given`: the early magic call skips signature matching, which is what
+  ## fills them in for an ordinary call.
+  let res = tryLoadSym(fn)
+  if res.status == LacksNothing:
+    var params = asRoutine(res.decl).params
+    var i = 0
+    params.into ParamsU:
+      while params.hasMore:
+        let param = takeLocal(params, SkipFinalParRi)
+        if i >= given and not param.val.isDotToken:
+          dest.addSubtree param.val
+        inc i
+
+proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState;
+                             magic: ExprKind; magicSym: SymId) =
   if cs.args.len != 0:
     # keep args after if they were produced by dotcall: retag the head tree
     # in place and reopen it so the appended args + `addParRi` re-seal it.
@@ -1501,9 +1519,12 @@ proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item
   else:
     cs.dest.shrink 0
     cs.dest.addParLe(magic, cs.callNodeInfo)
+  var given = cs.args.len
   while it.n.hasMore:
     # add all args in call:
     takeTree cs.dest, it.n
+    inc given
+  addDeclaredDefaults cs.dest, magicSym, given
   cs.dest.addParRi(it.n.endInfo)
   it.n = cs.scope; skip it.n
   var magicCall = Item(n: beginRead(cs.dest), typ: it.typ)
@@ -1655,10 +1676,11 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
   if EarlyMagicsFeature in c.features and cs.fnName in c.unoverloadableMagics:
     # transform call early before semchecking arguments
     let syms = beginRead(dest)
-    let magic = findMagicInSyms(syms)
+    var magicSym = SymId(0)
+    let magic = findMagicInSyms(syms, magicSym)
     if magic != NoExpr:
       swap dest, cs.dest
-      unoverloadableMagicCall(c, dest, it, cs, magic)
+      unoverloadableMagicCall(c, dest, it, cs, magic, magicSym)
       return
   when defined(debug):
     let oldDebugAllowErrors = c.debugAllowErrors
