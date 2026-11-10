@@ -2615,24 +2615,44 @@ proc semWhen(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semWhenImpl(c, dest, it, NormalWhen, state)
   dec c.inWhen
 
+proc checkCaseRange(c: var SemContext; dest: var TokenBuf; rangePos: int; info: NifLineInfo;
+                    a, b: xint; seen: var seq[(xint, xint)]) =
+  ## Checks the case label range `a..b` just emitted at `rangePos`. `seen`
+  ## takes only a range of two values with `a <= b`. An error replaces the
+  ## range and keeps it as its origin, so the label stays one node.
+  var msg = ""
+  if a.isNaN or b.isNaN:
+    discard "a bound that failed to evaluate has its error in the tree already"
+  elif b < a:
+    msg = "empty range in case label: " & asNimCode(readonlyCursorAt(dest, rangePos))
+  elif seen.doesOverlapOrIncl(a, b):
+    msg = "overlapping values"
+  if msg.len > 0:
+    var orig = createTokenBuf()
+    for i in rangePos..<dest.len: orig.add dest[i]
+    dest.shrink rangePos
+    c.buildErr dest, info, msg, beginRead(orig)
+
 proc semCaseOfValueImpl(c: var SemContext; dest: var TokenBuf; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
   while it.n.hasMore:
     let info = it.n.info
     if isRangeExpr(it.n):
+      let rangePos = dest.len
+      var a, b: xint
       it.n.into: # call
         skip it.n # `..`
         dest.buildTree RangeU, it.n.info:
-          let a = evalConstIntExpr(c, dest, it.n, selectorType)
-          let b = evalConstIntExpr(c, dest, it.n, selectorType)
-          if seen.doesOverlapOrIncl(a, b):
-            buildErr c, dest, info, "overlapping values"
+          a = evalConstIntExpr(c, dest, it.n, selectorType)
+          b = evalConstIntExpr(c, dest, it.n, selectorType)
+      checkCaseRange c, dest, rangePos, info, a, b, seen
     elif it.n.substructureKind == RangeU:
+      let rangePos = dest.len
+      var a, b: xint
       takeInto dest, it.n:
-        let a = evalConstIntExpr(c, dest, it.n, selectorType)
-        let b = evalConstIntExpr(c, dest, it.n, selectorType)
-        if seen.doesOverlapOrIncl(a, b):
-          buildErr c, dest, info, "overlapping values"
+        a = evalConstIntExpr(c, dest, it.n, selectorType)
+        b = evalConstIntExpr(c, dest, it.n, selectorType)
+      checkCaseRange c, dest, rangePos, info, a, b, seen
     else:
       if it.n.exprKind == CurlyX:
         var beforeSetType = dest.len
