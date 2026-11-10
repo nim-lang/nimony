@@ -439,6 +439,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
   of AconstrC:
     n.into:
       let isUncheckedArray = n.typeKind in {PtrT, AptrT, FlexarrayT}
+      let isZeroSizedArray = not isUncheckedArray and isZeroSized(c.m, n)
       c.objConstrType(n)
       c.add CurlyLe
       if not isUncheckedArray:
@@ -449,8 +450,12 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
         if i > 0: c.add Comma
         c.genx n
         inc i
-      if i == 0 and not isUncheckedArray:
-        # `(aconstr T)`: the all-zero array, whatever `T`'s length
+      if i == 0 and not isUncheckedArray and not isZeroSizedArray:
+        # `(aconstr T)`: the all-zero array, whatever `T`'s length. A
+        # zero-sized array (`a[0]` or an array of zero-sized elements, both
+        # GNU extensions) takes `{}`: brace elision would hand the `0` to a
+        # zero-length array, an excess initializer. Only arrays reach this
+        # path: desugar keeps the `default` call for objects.
         c.add "0"
       if not isUncheckedArray:
         c.add CurlyRi

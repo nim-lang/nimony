@@ -151,6 +151,11 @@ const
     # The libc extern `remove` names no import library on Windows (arkham:
     # "annotate the declaration with `dynlib`"); the native build fails on Linux too.
     "tests/nimony/stdlib/tsyncio_filemodes",
+    # A C-backend test (it makes C excess initializers fatal). On win_x64 a
+    # proc taking a zero-sized array by value fails in nifasm: "unwind info:
+    # unmodelled prologue step in f0 (cfa delta 0, 0 saves)", on d484b018 too;
+    # `nimony n --os:windows` reproduces it on Linux.
+    "tests/nimony/types/tzero_sized_array_default",
     # The one test on Windows that drives the ring on real sockets — every other
     # test in `tests/nimony/threads` either stubs itself out here or never
     # reaches `rawthreads.create`. Three native gaps have been found through it;
