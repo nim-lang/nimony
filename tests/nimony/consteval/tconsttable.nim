@@ -38,3 +38,14 @@ assert not t.contains("missing")
 const empty: Table[string, int] = initTable[string, int]()
 assert empty.len == 0
 assert not empty.contains("anything")
+
+proc makeBig(): Table[string, int] =
+  result = initTable[string, int]()
+  for i in 0 ..< 6:
+    result[$i] = i
+
+# More than four entries also serialises the open-addressed `hashes` index.
+const big: Table[string, int] = makeBig()
+assert big.len == 6
+assert big.getOrDefault("3", -1) == 3
+assert not big.contains("missing")
