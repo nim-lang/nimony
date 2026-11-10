@@ -3331,6 +3331,28 @@ proc isIterator(c: var SemContext; dest: var TokenBuf; s: SymId): bool =
   else:
     result = false
 
+proc semLoopVarsOfType(c: var SemContext; dest: var TokenBuf; it: var Item; varType: TypeCursor) =
+  ## Declares the remaining loop variables, nested groups included, with
+  ## `varType`: their own types are not known here.
+  while it.n.hasMore:
+    if it.n.substructureKind == UnpacktupU:
+      takeInto dest, it.n:
+        semLoopVarsOfType c, dest, it, varType
+    else:
+      semForLoopVar c, dest, it, varType
+
+proc semLoopVarsNoTuple(c: var SemContext; dest: var TokenBuf; it: var Item;
+                        typ: TypeCursor; headReported: bool) =
+  ## Loop variables that unpack need a tuple and `typ` is not one. That is an
+  ## error, also in a generic body, unless `typ` is `untyped` (the expansion
+  ## or instance is checked) or the iterator call already reported its error.
+  ## The variables are declared all the same, `untyped` as a single loop
+  ## variable would be over an `untyped` call, `auto` otherwise.
+  if not headReported and typ.typeKind != UntypedT:
+    buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(typ.skipModifier)
+  let varType = if typ.typeKind == UntypedT: typ else: c.types.autoType
+  semLoopVarsOfType c, dest, it, varType
+
 proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup: TypeCursor; loopvarTypeMod = NoType) =
   var tup = tup
   var loopvarTypeMod = loopvarTypeMod
@@ -3345,7 +3367,7 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
         if field.skipModifier.typeKind == TupleT:
           semForLoopTupleVar c, dest, it, field, loopvarTypeMod
         else:
-          buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(field)
+          semLoopVarsNoTuple c, dest, it, field, false
     else:
       semForLoopVar c, dest, it, field, loopvarTypeMod
     skip tup
@@ -3623,6 +3645,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
         else:
           dest.shrink beforeCall
           buildErr c, dest, callInfo, "no implicit `" & name & "` iterator found for type " & typeToString(argType)
+  let headReported = hasErrorSince(dest, beforeCall)
   withNewScope c:
     case substructureKind(it.n)
     of UnpackflatU:
@@ -3634,10 +3657,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
           if iterCall.typ.skipModifier.typeKind == TupleT:
             semForLoopTupleVar c, dest, it, iterCall.typ
           else:
-            # error handling
-            while it.n.hasMore:
-              let autoType = c.types.autoType
-              semForLoopVar c, dest, it, autoType
+            semLoopVarsNoTuple c, dest, it, iterCall.typ, headReported
         else:
           semForLoopVar c, dest, it, iterCall.typ
     of UnpacktupU:
@@ -3645,7 +3665,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
         if iterCall.typ.skipModifier.typeKind == TupleT:
           semForLoopTupleVar c, dest, it, iterCall.typ
         else:
-          buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(iterCall.typ)
+          semLoopVarsNoTuple c, dest, it, iterCall.typ, headReported
     of NoSub, NilU, NotnilU, UncheckedU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU, TypevarU,
        StaticTypevarU, EfldU, FldU, GfldU, WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU,
        StmtsU, ParamsU, PragmasU, EitherU, JoinU, CallargsU, ForcallU, ExceptU, FinU,
