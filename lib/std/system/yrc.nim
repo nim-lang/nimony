@@ -24,6 +24,10 @@
 #   synchronization.
 
 {.feature: "lenientnils".}
+# `upstream/yrc`, fetched from Nim, reads its globals across calls and takes
+# their addresses: it is not written in the style the prover's aliasing rules
+# ask for (doc/language.md, "Aliasing").
+{.feature: "lenientContracts".}
 
 include "nimrtshim"
 

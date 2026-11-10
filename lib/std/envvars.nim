@@ -1,4 +1,7 @@
 {.feature: "staticContracts".}
+# The cached `environment` is indexed across calls that leave it alone; the
+# prover would have every such call change a global (doc/language.md, "Aliasing").
+{.feature: "lenientContracts".}
 
 when defined(nodejs):
   proc getEnv*(key: string, default = ""): string {.tags: [ReadEnvEffect].} =

@@ -236,7 +236,8 @@ func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
   ## Unchecked pointer to `s`'s element storage (valid for `0 ..< s.len`).
   result = s.data
 
-func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} = s.data[i]
+func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline,
+    semantics: "elementAt".} = s.data[i]
 
 func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0),
     ensures: s.len == old(s.len), inline, linear.} =
@@ -245,7 +246,8 @@ func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i
   # through the `data` pointer may reach as far as the prover can tell
   {.assume: s.len == old(s.len).}
 
-func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} = s.data[int i]
+func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline,
+    semantics: "elementAt".} = s.data[int i]
 
 func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint),
     ensures: s.len == old(s.len), inline, linear.} =

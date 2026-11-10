@@ -60,6 +60,7 @@ import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof
+import ".." / hexer / lifter
 
 type
   BorrowableCheck = enum
@@ -68,6 +69,17 @@ type
     IsBorrowableFromGlobal
     HasAddr            ## an explicit `addr` on the way — unsafe escape hatch
     NotBorrowable      ## rooted at nothing a borrow can be tracked on
+
+  RootClass = enum
+    ## Who may write the own storage of a variable without naming it
+    ## (doc/language.md, "Aliasing"). Facts about it last until then.
+    rcPrivate   ## locals, `result`, parameters passed by copy: nobody
+    rcBorrowed  ## parameters passed by reference: the caller's storage, which
+                ## a `proc` call, a write through a `ref` or a write to a
+                ## global may reach
+    rcGlobal    ## globals and threadvars: any call, any write through a
+                ## pointer, a `ref` or a view, and a write to a borrowed one
+    rcNone      ## its address is taken, or a nested routine names it: no facts
 
   IvKind = enum
     ivUnknown      ## an arbitrary write: nothing known about it survives a loop
@@ -165,6 +177,13 @@ type
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
+    unanalysed: HashSet[SymId]         # variables of class `rcNone` in the
+                                       # routine (`collectUnanalysed`)
+    borrowedParams: HashSet[SymId]     # its parameters of class `rcBorrowed`
+    dtorLocals: HashSet[SymId]         # its live locals whose type has a
+                                       # destructor: leaving their scope runs
+                                       # a `proc` (`killsAtScopeExit`)
+    lifter: ref LiftingCtx             # asks a type for its `=destroy`
     obligationOpen: bool               # a range obligation is being judged;
                                        # cleared when it is not discharged
     root: Cursor                       # the lowered module, for token positions
@@ -180,6 +199,9 @@ type
                                        # load before the module is written
     moduleTypes: Table[SymId, Cursor]  # `type`s declared in this module, which
                                        # `tryLoadSym` cannot load yet either
+    moduleRoutines: Table[SymId, Cursor] # routines declared in this module,
+                                       # generic instances included, which
+                                       # `tryLoadSym` cannot load yet
     moduleFuncs: HashSet[SymId]        # `func`s declared in this module, generic
                                        # instances included (see `collectAccessors`)
     steps: Table[SymId, StepInfo]      # routines that are just `x = x ± k`
@@ -553,15 +575,41 @@ proc writtenRoot(c: var FirContext; n: Cursor): SymId =
     inc guard
   result = if r.isSymbol: r.symId else: NoSymId
 
-proc isSelector(n: Cursor): bool {.inline.} =
-  n.isTagLit and n.exprKind in {DotX, DdotX, TupatX, ArratX, AtX, PatX}
+proc rootClass(c: var FirContext; s: SymId): RootClass
+
+proc calleeHasSemantics(c: var FirContext; fn: Cursor; val: string): bool =
+  ## Does the routine `fn` names declare `{.semantics: val.}`? Read off its
+  ## type, which an instance of a generic carries too.
+  result = false
+  if fn.isSymbol and c.moduleRoutines.hasKey(fn.symId):
+    return hasPragmaOfValue(asRoutine(c.moduleRoutines.getOrQuit(fn.symId)).pragmas,
+                            SemanticsP, val)
+  if fn.isSymbol and getLocalInfo(c.typeCache, fn.symId).kind == NoSym and
+      tryLoadSym(fn.symId).status != LacksNothing:
+    return
+  var p = skipProcTypeToParams(getType(c.typeCache, fn))
+  if p.isParamsTag:
+    skip p # params
+    skip p # return type
+    result = hasPragmaOfValue(p, SemanticsP, val)
+
+proc isElementAt(c: var FirContext; n: Cursor): bool =
+  ## A call of an indexer declared `{.semantics: "elementAt".}`: its `var T`
+  ## result is the element of its first argument at the index its second
+  ## argument gives, and different indexes give different elements.
+  result = n.isTagLit and n.exprKind in CallKinds and
+    calleeHasSemantics(c, n.childCursor, "elementAt")
+
+proc isSelector(c: var FirContext; n: Cursor): bool =
+  result = n.isTagLit and
+    (n.exprKind in {DotX, DdotX, TupatX, ArratX, AtX, PatX} or isElementAt(c, n))
 
 proc nextSelector(c: var FirContext; n: Cursor; follow: bool): Cursor =
   ## The outermost field or index selection of the location `n`, or its root
   ## when there is none.
   result = n
   var guard = 0
-  while not isSelector(result) and guard < 64:
+  while not isSelector(c, result) and guard < 64:
     let inner = locInner(c, result, follow)
     if cursorIsNil(inner): break
     result = inner
@@ -570,14 +618,17 @@ proc nextSelector(c: var FirContext; n: Cursor; follow: bool): Cursor =
 proc selectorDepth(c: var FirContext; n: Cursor; follow: bool): int =
   result = 0
   var r = nextSelector(c, n, follow)
-  while isSelector(r):
+  while isSelector(c, r):
     inc result
-    r = nextSelector(c, r.childCursor, follow)
+    r = nextSelector(c, locInner(c, r, follow), follow)
 
 proc selectorsDisjoint(a, b: Cursor): bool =
-  ## Do the two selections of one value certainly pick different parts?
+  ## Do the two selections of one value certainly pick different parts? An
+  ## `elementAt` call selects by its second argument, like an `(at …)`.
   var x = a.childCursor
   var y = b.childCursor
+  if a.exprKind in CallKinds: skip x # the indexer
+  if b.exprKind in CallKinds: skip y
   skip x # the value selected from
   skip y
   if a.exprKind in {DotX, DdotX} and b.exprKind in {DotX, DdotX}:
@@ -587,29 +638,194 @@ proc selectorsDisjoint(a, b: Cursor): bool =
   else:
     result = false
 
+proc comparablePart(c: var FirContext; n: Cursor; follow: bool): Cursor =
+  ## The part of the location `n` whose selections can be compared with those
+  ## of another location. A call other than an `elementAt` one (a view such
+  ## as `toOpenArray`, a getter) yields some part of its first argument, but
+  ## which one is unknown: the selections above it say nothing, so the
+  ## location is cut back to that argument.
+  result = n
+  var r = n
+  var guard = 0
+  while not cursorIsNil(r) and guard < 64:
+    if r.isTagLit and r.exprKind in CallKinds and not isElementAt(c, r):
+      let inner = locInner(c, r, follow)
+      if not cursorIsNil(inner): result = inner
+    r = locInner(c, r, follow)
+    inc guard
+
+type
+  StepKind = enum
+    skRoot, skSel, skRefDeref, skPtrDeref
+  PathStep = object
+    kind: StepKind
+    node: Cursor   ## the selector, the dereferenced expression, or the root
+    typ: Cursor    ## for `skRefDeref` and `skRoot`: the type of the object
+
+proc objectTypeOf(c: var FirContext; t: Cursor; throughRef: bool): Cursor =
+  ## `t` without modifiers and, for `throughRef`, through a `ref` type to what
+  ## it points to.
+  result = t
+  var guard = 0
+  while guard < 16:
+    inc guard
+    if result.typeKind in {MutT, OutT, LentT, SinkT} or
+        (throughRef and result.typeKind == RefT):
+      result = sub(result)
+    elif result.isSymbol:
+      var decl = default(Cursor)
+      if c.moduleTypes.hasKey(result.symId):
+        decl = c.moduleTypes.getOrQuit(result.symId)
+      else:
+        let res = tryLoadSym(result.symId)
+        if res.status == LacksNothing and res.decl.symKind == TypeY: decl = res.decl
+      if cursorIsNil(decl): return
+      let body = asTypeDecl(decl).body
+      # a named `ref object` is what it points to; any other name stays
+      if throughRef and body.typeKind == RefT: result = sub(body)
+      else: return
+    else:
+      return
+
+proc inHierarchy(c: var FirContext; t: Cursor): bool =
+  ## Is `t` an object type of an inheritance hierarchy, which another type of
+  ## the hierarchy may stand for?
+  var t = t
+  var guard = 0
+  while guard < 16:
+    inc guard
+    if t.isSymbol:
+      var decl = default(Cursor)
+      if c.moduleTypes.hasKey(t.symId):
+        decl = c.moduleTypes.getOrQuit(t.symId)
+      else:
+        let res = tryLoadSym(t.symId)
+        if res.status == LacksNothing and res.decl.symKind == TypeY: decl = res.decl
+      if cursorIsNil(decl): return true # unknown: assume it may be related
+      let td = asTypeDecl(decl)
+      if hasPragma(td.pragmas, InheritableP): return true
+      t = td.body
+    elif t.typeKind in {RefT, PtrT}:
+      t = sub(t)
+    elif t.typeKind == ObjectT:
+      return not sub(t).isDotToken # it has a parent
+    else:
+      return false
+  result = true
+
+proc typesMayAlias(c: var FirContext; x, y: Cursor): bool =
+  ## May an object of type `x` be one of type `y`? Only when they are the
+  ## same type or related by inheritance.
+  result = sameTrees(x, y) or (inHierarchy(c, x) and inHierarchy(c, y))
+
+proc locPath(c: var FirContext; n: Cursor; follow: bool): seq[PathStep] =
+  ## The location `n` as its root followed by its selections and
+  ## dereferences, outermost last.
+  var rev: seq[PathStep] = @[]
+  var r = n
+  var guard = 0
+  while not cursorIsNil(r) and guard < 64:
+    inc guard
+    if r.isTagLit:
+      case r.exprKind
+      of DerefX, DdotX:
+        if r.exprKind == DdotX: rev.add PathStep(kind: skSel, node: r)
+        let t = getType(c.typeCache, r.childCursor)
+        if t.typeKind in {PtrT, PointerT}:
+          rev.add PathStep(kind: skPtrDeref, node: r.childCursor)
+        else:
+          rev.add PathStep(kind: skRefDeref, node: r.childCursor,
+                           typ: objectTypeOf(c, t, throughRef = true))
+      of PatX:
+        rev.add PathStep(kind: skSel, node: r)
+        rev.add PathStep(kind: skPtrDeref, node: r.childCursor)
+      else:
+        if isSelector(c, r): rev.add PathStep(kind: skSel, node: r)
+    let inner = locInner(c, r, follow)
+    if cursorIsNil(inner):
+      # the declared type: a `var` parameter's says so
+      rev.add PathStep(kind: skRoot, node: r,
+                       typ: (if r.isSymbol: getLocalInfo(c.typeCache, r.symId).typ
+                             else: default(Cursor)))
+      break
+    r = inner
+  result = newSeqOfCap[PathStep](rev.len)
+  for i in countdown(rev.len-1, 0): result.add rev[i]
+
+proc suffixesOverlap(a: seq[PathStep]; i: int; b: seq[PathStep]; j: int): bool =
+  ## Starting from one object, do the steps `a[i..]` and `b[j..]` reach
+  ## overlapping storage? They do unless a pair of selections tells them apart.
+  var k = 0
+  while i+k < a.len and j+k < b.len:
+    let x = a[i+k]
+    let y = b[j+k]
+    if x.kind == skSel and y.kind == skSel:
+      if selectorsDisjoint(x.node, y.node): return false
+    elif x.kind != y.kind:
+      return true
+    inc k
+  result = true
+
+proc borrowedVarRoot(c: var FirContext; p: seq[PathStep]): bool =
+  ## Is the path rooted at a borrowed `var`/`out` parameter, which may be the
+  ## caller's `r[]` or a part of it?
+  result = p.len > 0 and p[0].kind == skRoot and p[0].node.isSymbol and
+    rootClass(c, p[0].node.symId) == rcBorrowed and
+    p[0].typ.typeKind in {MutT, OutT}
+
+proc throughRefOverlap(c: var FirContext; a, b: seq[PathStep]): bool =
+  ## Two locations reached through `ref`s may lie in one object: `r1.s` and
+  ## `r2.s[0]` with `r2 = r1`. They overlap unless a selection after the two
+  ## dereferences tells them apart. The objects must be of types that may be
+  ## the same object.
+  for i in 0 ..< a.len:
+    if a[i].kind != skRefDeref: continue
+    for j in 0 ..< b.len:
+      if b[j].kind == skRefDeref and typesMayAlias(c, a[i].typ, b[j].typ) and
+          suffixesOverlap(a, i+1, b, j+1):
+        return true
+  # a borrowed `var` parameter may be the object behind a `ref` of its type
+  for (x, y) in [(a, b), (b, a)]:
+    if borrowedVarRoot(c, x):
+      for j in 0 ..< y.len:
+        if y[j].kind == skRefDeref and
+            typesMayAlias(c, objectTypeOf(c, x[0].typ, throughRef = false), y[j].typ) and
+            suffixesOverlap(x, 1, y, j+1):
+          return true
+  result = false
+
 proc overlaps(c: var FirContext; a: Cursor; followA: bool;
               b: Cursor; followB: bool): bool =
   ## Can the locations `a` and `b` share storage? Rooted at the same variable,
   ## one lies within the other unless a field or index selection on the way
   ## tells them apart: `a.b` and `a.c` do not overlap, `s[0]` and `s[1]` do not
-  ## either, `s[i]` and `s[j]` may.
+  ## either, `s[i]` and `s[j]` may. Above a view or a getter nothing tells
+  ## them apart: `toOpenArray(s, 1, 2)[0]` lies somewhere in `s`, maybe `s[1]`.
+  ## Through `ref`s, or from a borrowed `var` parameter, two locations of
+  ## different roots may be one (`throughRefOverlap`).
+  let pa = comparablePart(c, a, followA)
+  let pb = comparablePart(c, b, followB)
   let ra = locRootSym(c, a, followA)
-  if ra == NoSymId or ra != locRootSym(c, b, followB): return false
-  var x = nextSelector(c, a, followA)
-  var y = nextSelector(c, b, followB)
-  var dx = selectorDepth(c, x, followA)
-  var dy = selectorDepth(c, y, followB)
-  while dx > dy:
-    x = nextSelector(c, x.childCursor, followA)
-    dec dx
-  while dy > dx:
-    y = nextSelector(c, y.childCursor, followB)
-    dec dy
-  result = true
-  while isSelector(x) and isSelector(y):
-    if selectorsDisjoint(x, y): return false
-    x = nextSelector(c, x.childCursor, followA)
-    y = nextSelector(c, y.childCursor, followB)
+  if ra != NoSymId and ra == locRootSym(c, b, followB):
+    var x = nextSelector(c, pa, followA)
+    var y = nextSelector(c, pb, followB)
+    var dx = selectorDepth(c, x, followA)
+    var dy = selectorDepth(c, y, followB)
+    while dx > dy:
+      x = nextSelector(c, locInner(c, x, followA), followA)
+      dec dx
+    while dy > dx:
+      y = nextSelector(c, locInner(c, y, followB), followB)
+      dec dy
+    result = true
+    while isSelector(c, x) and isSelector(c, y):
+      if selectorsDisjoint(x, y):
+        result = false
+        break
+      x = nextSelector(c, locInner(c, x, followA), followA)
+      y = nextSelector(c, locInner(c, y, followB), followB)
+    if result: return true
+  result = throughRefOverlap(c, locPath(c, pa, followA), locPath(c, pb, followB))
 
 proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo) =
   var conflict = false
@@ -698,7 +914,140 @@ proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
 proc endBorrow(c: var FirContext; sym: SymId) =
   c.flow.borrows.endBorrowsOf sym
 
-template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
+# --- Aliasing: which variables a fact may be kept about ---
+#
+# A fact may stay only while nothing can write its location without naming
+# it. Every variable is in one class (`RootClass`), and each class has one
+# rule for what drops its facts (doc/language.md, "Aliasing"):
+#
+# - A *private* variable changes only when it is written by name or passed as
+#   `var`: a `var` borrow ends when the call returns, as a routine may not
+#   write its `var` parameter through a kept address afterwards.
+# - A *borrowed* parameter is the caller's storage, which may be a global or
+#   lie behind a `ref`: a call to a `proc`, a call to a `func` that has a
+#   `var` or pointer argument, a write through a `ref` and a write to a
+#   global may change it.
+# - A *global* changes in any call but a pure accessor (`len`), in any write
+#   through a pointer, a `ref` or a view, and in a write to a borrowed
+#   parameter.
+# - A variable whose address the routine takes, or that a nested routine
+#   names, has no facts at all: `getVarId` gives it no slot.
+#
+# Leaving the scope of a local with a destructor runs a `proc`.
+
+proc rootClass(c: var FirContext; s: SymId): RootClass =
+  if s in c.unanalysed: rcNone
+  elif s in c.borrowedParams: rcBorrowed
+  elif localInfoOf(c, s).kind in {GvarY, TvarY}: rcGlobal
+  else: rcPrivate
+
+proc getVarId(c: var FirContext; symId: SymId): VarId {.inline.} =
+  ## The slot of the variable `symId`'s facts; none for class `rcNone`.
+  if symId in c.unanalysed: InvalidVarId else: VarId(symId)
+
+proc addrRoot(c: var FirContext; n: Cursor; inits: Table[SymId, Cursor]): SymId =
+  ## The variable whose own storage the operand `n` of an `addr` lies in, read
+  ## off the tree: the pre-pass runs before any local is declared. A call is
+  ## followed into its first argument, an inline temp into what it stands
+  ## for; a dereference ends the walk, and so does an `elementAt` indexer,
+  ## whose element lies in the buffer the container points to, not in the
+  ## container's own storage (`addr s[0]` for a `seq` or an `openArray`).
+  result = NoSymId
+  var r = n
+  var guard = 0
+  while guard < 64:
+    inc guard
+    if r.isSymbol:
+      if r.symId in inits:
+        r = inits.getOrQuit(r.symId)
+        continue
+      return r.symId
+    if not r.isTagLit: return NoSymId
+    case r.exprKind
+    of DotX, TupatX, ArratX, AtX, AddrX, HaddrX, HderefX:
+      r = r.childCursor
+    of ConvKinds:
+      r = r.childCursor
+      skip r # type
+    of BaseobjX:
+      r = r.childCursor
+      skip r # type
+      skip r # intlit
+    of CallKinds:
+      if isElementAt(c, r): return NoSymId
+      r = r.childCursor
+      skip r # fn
+      if not r.hasMore: return NoSymId
+    else:
+      if r.finalIrKind in {EtupatV, VV}: r = r.childCursor
+      else: return NoSymId
+
+proc collectDefs(n: var Cursor; defs: var HashSet[SymId]) =
+  if n.kind == SymbolDef:
+    defs.incl n.symId
+    inc n
+  elif n.isTagLit:
+    n.into:
+      while n.hasMore: collectDefs(n, defs)
+  else:
+    inc n
+
+proc markUses(c: var FirContext; n: var Cursor; defs: HashSet[SymId]) =
+  if n.kind == Symbol:
+    let s = n.symId
+    if s notin defs and s notin c.unanalysed and
+        localInfoOf(c, s).kind notin {GvarY, TvarY, GletY, TletY}:
+      c.unanalysed.incl s
+    inc n
+  elif n.isTagLit:
+    n.into:
+      while n.hasMore: markUses(c, n, defs)
+  else:
+    inc n
+
+proc markCaptured(c: var FirContext; n: Cursor) =
+  ## Every variable the nested routine `n` names but does not declare, except
+  ## a global: the routine may write it whenever it runs.
+  var defs = initHashSet[SymId]()
+  var r = n
+  collectDefs(r, defs)
+  r = n
+  markUses(c, r, defs)
+
+proc collectUnanalysed(c: var FirContext; n: var Cursor;
+                       inits: var Table[SymId, Cursor]) =
+  ## Pre-pass over a routine body: the variables of class `rcNone`, those whose
+  ## address is taken anywhere in it (`addr x`, `unsafeAddr x`) and those a
+  ## nested routine names. Flow-insensitive: a pointer taken late in a loop
+  ## counts for the whole body.
+  if not n.isTagLit or n.substructureKind == PragmasU:
+    skip n
+  elif n.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
+    markCaptured(c, n)
+    skip n
+  else:
+    if n.exprKind == AddrX:
+      let r = addrRoot(c, n.childCursor, inits)
+      if r != NoSymId: c.unanalysed.incl r
+    elif n.symKind in {LetY, CursorY, VarY}:
+      let local = asLocal(n)
+      if local.name.kind == SymbolDef and hasPragma(local.pragmas, InlineP):
+        inits[local.name.symId] = local.val
+    n.into:
+      while n.hasMore: collectUnanalysed(c, n, inits)
+
+proc collectUnanalysedToplevel(c: var FirContext; n: var Cursor;
+                               inits: var Table[SymId, Cursor]) =
+  ## `collectUnanalysed` for the module's own statements; its routines have
+  ## their own.
+  if n.stmtKind in {StmtsS, PragmaxS}:
+    n.into:
+      while n.hasMore: collectUnanalysedToplevel(c, n, inits)
+  elif n.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+                      TemplateS, TypeS}:
+    skip n
+  else:
+    collectUnanalysed(c, n, inits)
 
 proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
                    olds: Table[string, VarId]; resultSym = NoSymId)
@@ -1266,6 +1615,122 @@ proc invalidateAllDerived(c: var FirContext) =
     if c.derivedRoots[i] != NoSymId:
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
+proc forgetClasses(c: var FirContext; classes: set[RootClass];
+                   spared: openArray[SymId] = []) =
+  ## A write no name tells us may have hit any variable of `classes`: what is
+  ## known about each, and about what is derived from it, goes. What the facts
+  ## connected through it stays (`projectOut`). The `spared` roots are written
+  ## by name, which the caller accounts for. A `lenientContracts` module
+  ## vouches that no such write matters.
+  if classes == {} or LenientContractsFeature in c.features: return
+  var seen = initHashSet[VarId]()
+  for i in 0 ..< c.facts.len:
+    for v in [c.facts[i].a, c.facts[i].b]:
+      if int(v) > 0 or int(v) <= FirstDerivedVarId: seen.incl v
+  for v in seen:
+    let root = if int(v) > 0: SymId(int(v))
+               else: c.derivedRoots[FirstDerivedVarId - int(v)]
+    if root != NoSymId and rootClass(c, root) in classes and root notin spared:
+      projectOut(c.facts, v)
+
+proc forgetRoots(c: var FirContext; roots: HashSet[SymId]) =
+  ## `forgetClasses` for single variables.
+  if roots.len == 0 or LenientContractsFeature in c.features: return
+  var seen = initHashSet[VarId]()
+  for i in 0 ..< c.facts.len:
+    for v in [c.facts[i].a, c.facts[i].b]:
+      if int(v) > 0 or int(v) <= FirstDerivedVarId: seen.incl v
+  for v in seen:
+    let root = if int(v) > 0: SymId(int(v))
+               else: c.derivedRoots[FirstDerivedVarId - int(v)]
+    if root in roots: projectOut(c.facts, v)
+
+proc unnamedReach(c: var FirContext; loc: Cursor): set[RootClass] =
+  ## The classes a write to the location `loc` may change without naming
+  ## them. Behind a `ref` lie borrowed parameters and what a global holds a
+  ## pointer to, behind a `ptr` only the latter (overlap with a borrowed
+  ## parameter through `ptr` is undefined behaviour). A borrowed parameter may
+  ## be a global, and the other way round.
+  if throughPointer(c, loc, {RefT}):
+    result = {rcBorrowed, rcGlobal}
+  elif throughPointer(c, loc, {PtrT, PointerT}):
+    result = {rcGlobal}
+  else:
+    let r = locRootSym(c, loc)
+    if r == NoSymId:
+      result = {rcGlobal} # a view whose root is unknown
+    else:
+      case rootClass(c, r)
+      of rcGlobal: result = {rcBorrowed}
+      of rcBorrowed: result = {rcGlobal}
+      of rcPrivate, rcNone: result = {}
+
+proc prescanReach(c: var FirContext; loc: Cursor): set[RootClass] =
+  ## `unnamedReach` for the loop pre-scan, which may not ask for a type: any
+  ## dereference counts as one of a `ref`.
+  let r = writtenRoot(c, loc)
+  if r == NoSymId:
+    result = {rcBorrowed, rcGlobal}
+  else:
+    case rootClass(c, r)
+    of rcGlobal: result = {rcBorrowed}
+    of rcBorrowed: result = {rcGlobal}
+    of rcPrivate, rcNone: result = {}
+
+proc isKeyableCall(fnSym: SymId): bool
+proc accessorOf(c: var FirContext; fnSym: SymId; a: var AccessorInfo): bool
+
+proc callFootprint(c: var FirContext; fn: Cursor; viaArgs: var bool): set[RootClass] =
+  ## The classes a call may change beyond the arguments it names; `fn` is its
+  ## callee, followed by its arguments. A `proc`, a
+  ## method, a routine value or a callee we cannot see may write a global or
+  ## anything behind a `ref`. A `func` writes no global, but through a `var`
+  ## argument it may write behind a `ref` (doc/language.md, "Func"), and an
+  ## `importc` one writes through a pointer it is handed; so a `func` with a
+  ## `var` or pointer argument may reach a borrowed parameter. Every call but
+  ## a pure accessor (`len`) counts against globals: a pointer to one may be
+  ## hidden in an argument. `viaArgs` tells that only the `func`'s `var` or
+  ## pointer arguments reach the borrowed parameters: the ones it is handed
+  ## as `var` arguments it writes by name, and what its `.ensures` states
+  ## about them holds.
+  result = {rcBorrowed, rcGlobal}
+  viaArgs = false
+  if not fn.isSymbol: return
+  let s = fn.symId
+  if getLocalInfo(c.typeCache, s).kind == NoSym and
+      tryLoadSym(s).status != LacksNothing:
+    return
+  let tt = getType(c.typeCache, fn)
+  if tt.stmtKind notin {ProcS, FuncS, IteratorS, ConverterS}: return
+  var params = skipProcTypeToParams(tt)
+  if not params.isParamsTag: return
+  var pragmas = params
+  skip pragmas # params
+  skip pragmas # return type
+  if calleeEffect(tt, pragmas) == HasSideEffect: return
+  var p = params
+  p = sub(p)
+  var a = fn
+  skip a
+  var args = 0
+  var reaches = false
+  while a.hasMore:
+    inc args
+    if p.hasMore:
+      var t = takeLocal(p, SkipFinalParRi).typ
+      if t.typeKind in {MutT, OutT}: reaches = true
+      if t.typeKind == SinkT: t = sub(t)
+      if t.typeKind in {PtrT, PointerT}: reaches = true
+    skip a
+  if reaches:
+    viaArgs = true
+    return
+  var acc = default(AccessorInfo)
+  if args == 1 and (accessorOf(c, s, acc) or isKeyableCall(s)):
+    result = {}
+  else:
+    result = {rcGlobal}
+
 proc isKeyableCall(fnSym: SymId): bool =
   ## May a call to `fnSym` stand for a location of its own?
   ##
@@ -1613,6 +2078,8 @@ proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): V
   var key = ""
   var steps = 0
   if locationKey(c, n, subst, root, key, steps, 0) and root != NoSymId:
+    if getVarId(c, root) == InvalidVarId:
+      return InvalidVarId # nothing derived from a variable without facts either
     result = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
     if steps > 0 and not c.prescanning and not c.declaredRange.hasKey(result):
       let m = argOf(c, n, subst)
@@ -1926,6 +2393,9 @@ proc collectAccessors(c: var FirContext; n: var Cursor) =
     if local.name.kind == SymbolDef and not cursorIsNil(local.val):
       c.moduleConsts[local.name.symId] = local.val
   if n.symKind in RoutineKinds:
+    var rname = n
+    rname = sub(rname)
+    if rname.kind == SymbolDef: c.moduleRoutines[rname.symId] = n
     if n.symKind == FuncY:
       var fname = n
       fname = sub(fname)
@@ -1986,6 +2456,7 @@ proc baseTypeBounds(typ: Cursor; bits: int; lo, hi: var xint): bool =
 
 proc impliesHere(c: var FirContext; fact: LeXplusC): bool =
   ## The flow facts, plus what the locations' own `range` types state.
+  if not fact.isValid: return false # about a variable without facts
   if implies(c.facts, fact): return true
   if fact.a == VarId(0) and c.declaredRange.hasKey(fact.b):
     # `0 <= b + k` holds when the declared `lo` is at least `-k`.
@@ -2007,6 +2478,7 @@ proc impliesNoWrap(c: var FirContext; fact: LeXplusC): bool =
   ## `impliesHere`, with the bounds the locations' integer types state as well:
   ## the chain `i <= s.len - 1`, `s.len <= high(int)` is what keeps `i + 1`
   ## from wrapping. Only the types of locations the facts mention can take part.
+  if not fact.isValid: return false
   if impliesHere(c, fact): return true
   var extended = c.facts
   for v, r in c.declaredRange:
@@ -2578,6 +3050,7 @@ proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
   var hi = zero()
   if staticRangeBounds(typ, lo, hi):
     let v = getVarId(c, sym)
+    if v == InvalidVarId: return
     c.facts.add query(VarId(0), v, -lo)  # lo <= v
     c.facts.add query(v, VarId(0), hi)   # v <= hi
     # Also as a *type* bound, which survives the widening a loop applies to the
@@ -4239,10 +4712,13 @@ type
     amByPointer     ## immutable, but the callee reads it through a pointer
     amForwardedMut  ## a `var` parameter passed on to a `var`/`out` formal
 
-proc borrowCheckForCall(c: var FirContext; args: Cursor; modes: seq[ArgMode]) =
+proc borrowCheckForCall(c: var FirContext; args: Cursor; modes: seq[ArgMode];
+                        aliasSafe: bool) =
   ## `modes[i]` is how argument `i` is passed. A forwarded `var` parameter is
   ## already a location and so carries no `(haddr …)`: it is just as mutable
   ## as one that does. An argument past the formals counts as by pointer.
+  ## An `aliasSafe` callee accepts overlapping `var` arguments (`swap`), but
+  ## not a `var` argument that overlaps an immutable one.
   var muts: seq[Cursor] = @[]
   var imms: seq[Cursor] = @[]
   var n = args
@@ -4276,6 +4752,7 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor; modes: seq[ArgMode]) =
         buildErr c, muts[i].info, "mutable argument aliases with immutable parameter"
         break
   # Mutable argument must not overlap with any other mutable argument:
+  if aliasSafe: return
   for i in 0 ..< muts.len:
     for j in 0 ..< muts.len:
       if i != j and overlaps(c, muts[i], true, muts[j], true):
@@ -4379,6 +4856,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   var mutatedRoots: seq[SymId] = @[]
   var viewRoots: seq[SymId] = @[]
   var mutatesUnknown = false
+  var reach: set[RootClass] = {} # what the `var` arguments reach unnamed
   while n.hasMore:
     if not fnType.hasMore:
       # All formal params consumed but args remain (e.g. varargs that were
@@ -4419,6 +4897,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     # judge by it rather than by the shape of the argument.
     if pk in {MutT, OutT}:
       let root = writtenRoot(c, n)
+      reach.incl unnamedReach(c, if isMut: n.childCursor else: n)
       let argSym = extractSymId(n)
       if argSym != NoSymId:
         let argInfo = getLocalInfo(c.typeCache, argSym)
@@ -4435,11 +4914,12 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
         let tracked = borrowMode(c, n).isTracked
         if tracked:
           checkBorrowConflict(c, n, n.info)
-        # ... and against the other arguments of this call. Only a forwarded
-        # parameter: an inline temp holding a `var T` call result (`s[i]`)
-        # was never judged as a location for a local either.
-        if n.kind == Symbol and
-            isParamLike(getLocalInfo(c.typeCache, n.symId).kind) and tracked:
+        # ... and against the other arguments of this call: a forwarded
+        # parameter, or an inline temp holding a `var T` call result (`s[i]`
+        # for a `seq`), which `locInner` follows to the location it names.
+        if n.kind == Symbol and tracked and
+            (isParamLike(getLocalInfo(c.typeCache, n.symId).kind) or
+             n.symId in c.inlineVars):
           needsBorrowCheck = true
           modes[modes.len-1] = amForwardedMut
       if root != NoSymId and isVarOpenArray(c, param.typ) and
@@ -4464,7 +4944,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     traverseExpr c, n, call
     if syncRoot >= 0: c.syncArgs.excl syncRoot
   if needsBorrowCheck and not c.features.contains(LenientAliasingFeature):
-    borrowCheckForCall c, args, modes
+    borrowCheckForCall c, args, modes, hasPragmaOfValue(fnPragmas, SemanticsP, "aliasSafe")
   while fnType.hasMore: skip fnType
   fnType = paramsStart; skip fnType
   skip fnType # skip return type
@@ -4512,6 +4992,10 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       variableMovedWithin(c.facts, stepLoc, lo, hi)
       call.stepped = stepLoc
       isStep = true
+  var viaArgs = false
+  let footprint = callFootprint(c, callCursor, viaArgs)
+  if viaArgs: forgetClasses(c, footprint + reach, mutatedRoots)
+  else: forgetClasses(c, footprint + reach)
   for root in mutatedRoots:
     if isStep and getVarId(c, root) == stepLoc:
       # the step above described this write exactly
@@ -4775,6 +5259,9 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
   if not c.features.contains(LenientAliasingFeature):
     checkDestAliasesValue(c, n, valueStart)
   checkEscapingBorrow(c, valueStart, locRootSym(c, n))
+  # A write through a pointer, or to a global or a borrowed parameter, may
+  # change what other names refer to; once the destination itself is judged.
+  let reach = unnamedReach(c, n)
 
   # Now handle the destination (a Symbol; the NJVL `(v symId version)` form
   # is no longer produced, see the `VV` branch of `traverseStmt`)
@@ -4849,6 +5336,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     seedRangeFacts c, symId, expected
     # ... and whatever the callee promised about what it just returned.
     assumeEnsures c, valueStart, getVarId(c, symId), call.olds, symId
+    forgetClasses(c, reach)
 
     skip n
   else:
@@ -4879,6 +5367,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
       if rightHandSide(c, valueForFact, fact, call) and fact.a != fact.b:
         addAsgnFact c, fact
     traverseExpr c, n, call
+    forgetClasses(c, reach)
 
 proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## Handle `(asgn dest value)`. The value is the second operand but the first
@@ -5022,6 +5511,9 @@ type
       ## `Positive`-returning call is exactly that — declared inside the body,
       ## so no fact about it exists yet when this scan runs.
     opaque: bool          ## a write we could not attribute to any location
+    kills: set[RootClass] ## the classes the body may write without naming
+                          ## them (`forgetClasses`)
+    killRoots: HashSet[SymId] ## and the single variables it may so write
     preserved: seq[VarId] ## derived locations the call just scanned promises
                           ## to leave alone (`s.len == old(s.len)`); holds
                           ## for the `(unknown …)` that follows it too
@@ -5170,6 +5662,7 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   result = directionOf(v.exprKind == SubX, k)
 
 proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
+  w.kills.incl prescanReach(c, dest)
   if isElementWrite(dest): return
   let root = writtenRoot(c, dest)
   if root == NoSymId:
@@ -5267,6 +5760,9 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     w.preserved = preservedByEnsures(c, n)
     var fnOf = n
     fnOf = sub(fnOf)
+    var viaArgs = false
+    let footprint = callFootprint(c, fnOf, viaArgs)
+    var named: seq[SymId] = @[]
     var params = default(Cursor)
     let fnSym = extractSymId(fnOf)
     if fnSym != NoSymId:
@@ -5300,21 +5796,35 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
         if viewRoot != NoSymId:
           for i in 0 ..< c.derivedRoots.len:
             if isViewLen(c, i, viewRoot): w.preserved.add VarId(FirstDerivedVarId - i)
+      if writes:
+        w.kills.incl prescanReach(c, r)
+        named.add writtenRoot(c, r)
       if writes and sym != NoSymId:
         let info = getLocalInfo(c.typeCache, sym)
         if not cursorIsNil(info.typ) and info.typ.typeKind in {MutT, OutT}:
           noteWrite(w, getVarId(c, sym), ivUnknown)
           noteDerivedOf(c, w, sym, InvalidVarId)
       skip r
+    if viaArgs:
+      # the borrowed parameters it is not handed by name
+      w.kills.incl footprint - {rcBorrowed}
+      for p in c.borrowedParams:
+        if p notin named: w.killRoots.incl p
+    else:
+      w.kills.incl footprint
   elif isLocal(n.symKind):
     # A local declared inside the body is rebound every iteration.
     w.preserved.setLen 0
     let local = asLocal(n)
     if local.name.kind == SymbolDef:
+      # it dies at the end of the iteration at the latest
+      if n.symKind in {VarY, LetY} and hasDestroyHook(c.lifter[], local.typ):
+        w.kills.incl {rcBorrowed, rcGlobal}
       var lo = zero()
       var hi = zero()
       if staticRangeBounds(local.typ, lo, hi) and lo >= zero():
-        w.nonNeg.incl getVarId(c, local.name.symId)
+        let v = getVarId(c, local.name.symId)
+        if v != InvalidVarId: w.nonNeg.incl v
       noteWrite(w, getVarId(c, local.name.symId), ivUnknown)
       noteDerivedOf(c, w, local.name.symId, InvalidVarId)
   w.pendingStep = InvalidVarId
@@ -5382,7 +5892,7 @@ proc revokeProofs(c: var FirContext; mark: int) =
     of ProvenCall: c.provenCalls.excl pos
   c.proofLog.setLen mark
 
-proc analyseLoopBody(c: var FirContext; n: var Cursor) =
+proc analyseLoopBody(c: var FirContext; n: var Cursor; iterKills: set[RootClass] = {}) =
   ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
   ## via `(jmp loopExit)` and never falls through.
   ##
@@ -5441,6 +5951,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     block:
       var w = LoopWrites(kinds: initTable[VarId, IvKind](),
                          nonNeg: initHashSet[VarId](), opaque: false,
+                         kills: iterKills, killRoots: initHashSet[SymId](),
                          assumed: initHashSet[VarId](),
                          pendingStep: InvalidVarId)
       var scan = n
@@ -5449,6 +5960,9 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
       c.prescanning = false
       for v in demoted:
         if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
+      # what the body writes unnamed it writes before the next iteration too
+      forgetClasses(c, w.kills)
+      forgetRoots(c, w.killRoots)
       restrictFactsToLoopInvariants(c, w)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
@@ -5564,11 +6078,15 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
   var call = freshCall()
   n.into: # for tag
     let firstArg = forIterFirstArg(c, n)
+    # the iterator runs again before every iteration
+    var viaArgs = false
+    let iterKills = if n.exprKind in CallKinds: callFootprint(c, n.childCursor, viaArgs)
+                    else: {rcBorrowed, rcGlobal}
     traverseExpr c, n, call
     var binders: seq[SymId] = @[]
     declareForVars c, n, firstArg, binders
     skip n # the loop variables
-    analyseLoopBody c, n
+    analyseLoopBody c, n, iterKills
     # The iterator running out is an exit no `jmp` stands for, so no `kill`
     # either: the loop variables die with the loop, and their borrows with them.
     for b in binders: endBorrow c, b
@@ -5594,11 +6112,17 @@ proc traverseJmp(c: var FirContext; n: var Cursor) =
     inc n # symuse
   leaveToLabel(c, label)
 
+proc killsAtScopeExit(c: var FirContext) =
+  ## `return` and `raise` leave every scope: the live locals with a destructor
+  ## are destroyed, which is a call to a `proc`.
+  if c.dtorLocals.len > 0: forgetClasses(c, {rcBorrowed, rcGlobal})
+
 proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `(ret .X)` — primitive return, bound by the proc root. A `return value`
   ## with a non-`result` operand *provides* the result directly (the NJVL path
   ## rewrote this to `result = value`), so it initializes `result` on this exit.
   let info = n.info
+  killsAtScopeExit(c)
   n.into:
     if n.isDotToken:
       verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), info, c.resultSym
@@ -5635,6 +6159,7 @@ proc traverseRaise(c: var FirContext; n: var Cursor; call: var CallContext) =
       inc n # bare re-raise
     else:
       traverseExpr c, n, call
+  killsAtScopeExit(c)
   leaveToRaise(c)
 
 proc addCaseFacts(c: var FirContext; selSym: SymId; ranges: Cursor) =
@@ -5797,6 +6322,8 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip n # pragmas
   c.typeCache.registerLocal(name, kind, n)
   let localType = n
+  if kind in {VarY, LetY} and hasDestroyHook(c.lifter[], localType):
+    c.dtorLocals.incl name
   skip n # type
   let initStart = n
   if not n.isDotToken or skipInitCheck:
@@ -5946,6 +6473,21 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
           buildErr c, info, "cannot prove assertion: " & asNimCode(cond)
         assumeCond(c, cond, rd)
 
+proc isBorrowedParam(c: var FirContext; param: Local; passedByRef: bool): bool =
+  ## Does the parameter name the caller's storage (class `rcBorrowed`)? A
+  ## `var`, `out` or `lent` one does, and so does one the code generator
+  ## passes by reference. A view (`openArray`, `var openArray`, `varargs`)
+  ## is the callee's own value: only its length can carry a fact.
+  let t = param.typ
+  if t.typeKind in {MutT, OutT}:
+    result = not isVarOpenArray(c, t)
+  elif t.typeKind == LentT:
+    result = true
+  elif t.typeKind in {SinkT, VarargsT} or isViewType(t):
+    result = false
+  else:
+    result = passedByRef or passByConstRef(t, param.pragmas, c.bits div 8)
+
 proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   var call = freshCall()
   let decl = n
@@ -5989,6 +6531,13 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   let oldOwnEnsures = c.ownEnsures
   let oldOwnOlds = move c.ownOlds
   var outParams: seq[SymId] = @[]
+  let oldUnanalysed = c.unanalysed
+  let oldBorrowed = move c.borrowedParams
+  let oldDtorLocals = move c.dtorLocals
+  c.borrowedParams = initHashSet[SymId]()
+  c.dtorLocals = initHashSet[SymId]()
+  # a nested routine keeps the enclosing one's: it reaches them too
+  if not nested: c.unanalysed = initHashSet[SymId]()
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
       c.procCanRaise = hasPragma(n, RaisesP)
@@ -6004,12 +6553,15 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
       isGeneric = n.substructureKind == TypevarsU
     elif i == ParamsPos:
       if n.isTagLit:
+        let byRefFirst = firstParamPassedByRef(n)
         var p = n
         p = sub(p) # peek only, never left
         var isFirst = true
         while p.hasMore:
           let r = takeLocal(p, SkipFinalParRi)
           if not isFirst: c.laterParams.incl r.name.symId
+          if isBorrowedParam(c, r, isFirst and byRefFirst):
+            c.borrowedParams.incl r.name.symId
           isFirst = false
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
@@ -6042,6 +6594,10 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   # the final init check. An `{.assembler.}` body is machine code, kept
   # verbatim by `finalir` for the backend; there is nothing to analyse.
   if not isGeneric and not isExternProc and not isAsm:
+    if LenientContractsFeature notin c.features:
+      var scan = n
+      var inits = initTable[SymId, Cursor]()
+      collectUnanalysed(c, scan, inits)
     traverseStmt c, n, call
     # Falling off the end is an exit too.
     verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info, c.resultSym
@@ -6079,6 +6635,9 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.ownEnsures = oldOwnEnsures
   c.ownOlds = oldOwnOlds
   c.inHook = oldInHook
+  c.unanalysed = oldUnanalysed
+  c.borrowedParams = ensureMove oldBorrowed
+  c.dtorLocals = ensureMove oldDtorLocals
 
 proc traversePragmaBlock(c: var FirContext; n: var Cursor; call: var CallContext) =
   let oldAssumeSync = c.assumeSync
@@ -6139,6 +6698,13 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       for b in escaping:
         buildErr c, b.info, "borrow of " & borrowedName(c, locRootSym(c, b.loc)) &
           " escapes its scope; it does not live long enough"
+      # a dying local with a destructor is a call to a `proc` here
+      var destroys = false
+      for s in dying:
+        if s in c.dtorLocals:
+          destroys = true
+          c.dtorLocals.excl s
+      if destroys: forgetClasses(c, {rcBorrowed, rcGlobal})
       # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
         let s = extractSymId(n)
@@ -6485,9 +7051,12 @@ proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int): Toke
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
+proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int;
+                     hooks: ref Table[SymId, HooksPerType]; verbose = false): TokenBuf =
   ## Analyze contracts on an already lowered module. When `verbose` is true,
   ## every contract/init failure dumps the enclosing proc's IR to stderr.
+  let lifter = createLiftingCtx(moduleSuffix, bits, hooks)
+  assert lifter != nil # `lifter` is a `lenientnils` module
   var c = FirContext(
     errors: initTokenBuf(),
     typeCache: createTypeCache(bits),
@@ -6503,7 +7072,8 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     brokenSteps: initHashSet[VarId](),
     verbose: verbose,
     features: features,
-    bits: bits
+    bits: bits,
+    lifter: lifter
   )
   c.typeCache.openScope()
   var ownSplits = initHashSet[SymId]()
@@ -6519,6 +7089,11 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     endRead(scan2)
     for s in ownSplits: c.splitRoutines.incl s
 
+  if LenientContractsFeature notin c.features:
+    var scan = beginRead(finalBuf)
+    var inits = initTable[SymId, Cursor]()
+    collectUnanalysedToplevel(c, scan, inits)
+    endRead(scan)
   block:
     var fin = beginRead(finalBuf)
     c.root = fin
@@ -6536,7 +7111,8 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
   ## Lower `input` and analyze it. nimsem lowers once and calls
   ## `analyzeFinalIr` directly.
   var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
-  result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits, verbose)
+  result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits,
+                          (ref Table[SymId, HooksPerType])(), verbose)
 
 when isMainModule:
   import std / [syncio, os]

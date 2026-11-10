@@ -128,7 +128,8 @@ func popLast*[T](d: var Deque[T]): T {.requires: d.count > 0.} =
   result = move(d.data[d.tail])
   dec d.count
 
-func `[]`*[T](d: Deque[T]; i: int): var T {.requires: i >= 0 and i < d.count.} =
+func `[]`*[T](d: Deque[T]; i: int): var T {.requires: i >= 0 and i < d.count,
+    semantics: "elementAt".} =
   ## Accesses the `i`-th element of `d` (0-based, counting from the front).
   ## Requires `i` to be in range.
   runnableExamples:

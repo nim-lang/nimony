@@ -320,7 +320,7 @@
 | `(deprecated X?)` | NimonyPragma | `deprecated` pragma |
 | `(sideEffect)` | NimonyPragma | explicit `sideEffect` pragma |
 | `(keepOverflowFlag)` | NimonyPragma | keep overflow flag |
-| `(semantics STR)` | NimonyPragma | proc with builtin behavior for expreval |
+| `(semantics STR)` | NimonyPragma | proc with builtin behavior for expreval; on a routine, `"elementAt"`: a `var T` result is the element of argument 1 at index argument 2, `"aliasSafe"`: `var` arguments may overlap (both read by the contract prover) |
 | `(inheritable)` | NimonyPragma | `inheritable` pragma |
 | `(base)` | NimonyPragma | `base` pragma (currently ignored) |
 | `(pure)` | NimonyPragma | `pure` pragma (currently ignored) |

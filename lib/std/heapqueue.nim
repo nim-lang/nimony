@@ -27,7 +27,7 @@ func len*[T](heap: HeapQueue[T]): int {.inline.} =
   ## Number of elements in `heap`.
   heap.data.len
 
-func `[]`*[T](heap: HeapQueue[T]; i: Natural): var T {.inline.} =
+func `[]`*[T](heap: HeapQueue[T]; i: Natural): var T {.inline, semantics: "elementAt".} =
   ## Accesses the `i`-th element of `heap`'s internal array. `heap[0]` is the
   ## smallest element.
   heap.data[i]

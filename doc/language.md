@@ -2207,6 +2207,9 @@ or a `for` loop variable is allowed:
   echo cast[ptr string](t2)[]
   ```
 
+A `var` parameter may refer to the caller's stack. Writing through its address
+after the call has returned is undefined (see [Aliasing](#aliasing)).
+
 
 ## Procs
 
@@ -2536,6 +2539,61 @@ Disjoint fields of the same object are fine:
   var o = Obj(x: 1, y: 2)
   swap(o.x, o.y)   # OK: disjoint fields
   ```
+
+Elements of an array, a `seq` or an `openArray` are told apart only by
+constant indexes that differ, applied to the same container path. Any other
+two indexes into the same container may name one element, and so may an
+element of a view such as `toOpenArray(s, 1, 2)[0]` and an element of `s`
+itself:
+
+  ```nim
+  proc bump(a, b: var int) =
+    inc a; inc b
+
+  var s = @[1, 2, 3]
+  var i = 0
+  var j = 0
+  bump(s[0], s[1])   # OK: different constant indexes
+  bump(s[i], s[j])   # Error: mutable argument aliases with mutable parameter
+  bump(toOpenArray(s, 1, 2)[0], s[1])   # Error: mutable argument aliases with mutable parameter
+  ```
+
+An indexer declares with `{.semantics: "elementAt".}` that its `var T` result
+is the element of its first argument at the index its second argument gives,
+as `[]` does for `seq` and `openArray`. Such an element lies in the buffer the
+container points to, not in the container's own storage.
+
+Two `ref`s may point to one object, so two locations reached through `ref`
+dereferences overlap unless a field or index selected after the dereferences
+tells them apart; the two objects must be of the same type or of types related
+by inheritance. A `var` parameter may itself be the object behind a `ref`, so a
+location rooted at it and one reached through a `ref` to an object of its type
+overlap in the same way:
+
+  ```nim
+  type O = ref object
+    s: seq[int]
+    t: seq[int]
+  proc gotcha(s: var seq[int]; e: var int) = ...
+  let r1 = O(s: @[1, 2, 3])
+  let r2 = r1
+  gotcha(r1.s, r2.s[0])   # Error: mutable argument aliases with mutable parameter
+  gotcha(r1.s, r2.t[0])   # OK: different fields
+
+  type P = object
+    n: int
+  proc g(x, y: var int) = ...
+  proc f(a: var P; r: ref P) =
+    g(a.n, r.n)           # Error: `a` may be `r[]`
+  ```
+
+A routine declared `{.semantics: "aliasSafe".}` accepts `var` arguments that
+overlap each other; a `var` argument that overlaps an immutable one is still
+an error. The declaration is an unchecked promise by the routine's author that
+overlapping `var` arguments are harmless: inside the routine the parameters
+are still assumed to be distinct, so a wrong promise is undefined behavior.
+`system.swap` is declared so, because swapping a location with itself leaves
+it unchanged: `swap(s[i], s[j])` and even `swap(s, s)` are accepted.
 
 ### Mutation of borrowed paths
 
@@ -3259,6 +3317,83 @@ run-time check for debugging, compiled out by `-d:noAssertions` and
 other, but an obligation that only it discharges stops being provable once it
 is switched off — the build then fails rather than losing a check. State such a
 claim with `{.assert.}`.
+
+### Aliasing
+
+The prover remembers what it learned about a variable until the variable might
+change. A local changes only when you write it by name, or pass it as `var`. A
+global can change in any call. A `var` parameter can change in a call to a
+`proc`, in a call to a `func` that is handed a `var` or pointer argument, and
+through a `ref`. A variable whose address you take, or that a closure
+captures, is never remembered. To keep a fact, copy the value into a local.
+
+A fact is only ever about a variable, its fields, and pure accessors of them
+such as `len`; never about what lies behind a pointer or a `ref`, and never
+about an element. Each variable is in one of four classes:
+
+| class | which variables | facts last until |
+|---|---|---|
+| private | locals, `result`, `sink` parameters, parameters passed by copy, the length of an `openArray`/`varargs` parameter | a write that names it |
+| borrowed | `var`, `out` and `lent` parameters, and parameters the compiler passes by reference (a large object, `{.byref.}`) | a write that names it; a call to a `proc`, a method or a routine value; a call to a `func` with a `var` or pointer argument; a write through a `ref`; a write to a global |
+| global | globals and threadvars | a write that names it; any call except a pure accessor such as `len`; a write through a pointer, a `ref` or a view; a write to a borrowed parameter |
+| none | a variable whose address the routine takes (`addr x`, also inside `uncheckedBorrow`), and a local a nested routine names | no facts at all |
+
+`addr s[i]` through an indexer declared `elementAt` points into the
+container's buffer, not into `s`'s own storage, so `s` keeps its facts. A
+`func` writes no global, but through a `var` argument it may write behind a
+`ref` (see [Func](#func)), which is where a borrowed parameter may lie. Leaving
+the scope of a local whose type has a destructor, also through `return`,
+`break` or `raise`, runs that destructor, which counts as a call to a `proc`.
+
+```nim
+var gLen = 0
+proc f(s: seq[int]) =
+  if gLen < s.len:
+    log("x")          # a call: `gLen` may have changed
+    echo s[gLen]      # checked at run time
+  let n = gLen        # a local copy keeps the fact
+  if n < s.len:
+    log("x")
+    echo s[n]         # proven
+```
+
+Passing a local as `var` is a write by name: what the callee's `ensures`
+states about it holds afterwards. That rests on the callee not writing the
+argument once it has returned (rule 2 below): a routine that keeps a pointer
+for later writes takes a `ptr T` parameter, so that the caller writes `addr x`
+and the prover keeps no facts about `x`.
+
+The prover assumes the following; breaking any of them is **undefined
+behaviour**, and the compiler may have removed a check because of a fact that
+no longer holds:
+
+1. *Overlap through pointers.* Two `var` arguments of one call, or a `var`
+   argument and a location the callee writes through a `ptr`, must not overlap
+   where the overlap goes through `addr`, `ptr` or `cast`. The compiler rejects
+   the overlaps it can see; `g(x, p[])` with `p = addr x` compiles, and is
+   undefined.
+2. *A `var` argument changes only during the call.* A routine that keeps the
+   address of its `var`/`out` parameter, or of a field of it, must not write
+   through it once it has returned, and neither may anything it handed the
+   address to. Pointers to the *elements* of a container the parameter holds
+   (`addr s[0]`, `toCString`) are exempt.
+3. *Non-`var` parameters are read-only.* Writing a non-`var` parameter through
+   `addr` or a `cast` is undefined, even when it is passed by copy.
+4. *Distinct globals are distinct storage.* Two `importc` globals must not name
+   one C variable. An `importc` routine is taken at its declared signature: an
+   `importc` `func` writes only its `var` parameters and the targets of the
+   pointers it is handed.
+5. *`{.cast(noSideEffect).}`* promises that the writes inside are invisible to
+   the caller, except through `var` parameters and pointer arguments.
+6. *Data races.* Under `{.cast(assumeSync).}`, a global written by another
+   thread while a routine reasons about it is undefined.
+
+`{.feature: "lenientContracts".}` switches these rules off for a module: the
+prover keeps what it knows about every variable until a write that names it,
+also about a variable whose address is taken. The module's author vouches that no write the prover cannot see
+changes a variable a proof depends on; where one does, the behaviour is
+undefined as above. It is meant for code that is not written in this style
+and cannot be changed, such as a module shared with Nim 2.
 
 ## Lifetime-tracking hooks
 
@@ -4938,6 +5073,7 @@ The following features are available:
 | `"lenientAliasing"` | Allow for aliasing like `f(#[byvar]# x, x)` in function calls. For compatibility with Nim 2. |
 | `"runtimeContracts"` | Check `.requires` contracts at run time only: no call site in this module is judged statically. |
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
+| `"lenientContracts"` | The contract prover keeps its facts about a variable across writes that do not name it; the module's author vouches that such writes leave it alone. See [Aliasing](#aliasing). |
 | `"anonBlockBreaks"` | An unlabeled `break` leaves the innermost loop *or* `block`, as in Nim 2. Without it an unlabeled `break` only leaves a loop. |
 | `"assumeSync"` | Turns off the shared-global check for this module and trusts the module's own globals everywhere: a routine may otherwise access a mutable global only by passing it to a `var`/`ptr` parameter of a `.sync` routine (atomics, lock operations) or inside `{.cast(assumeSync).}:`. For compatibility with Nim 2. |
 | `"staticOverloads"` | When two overloads differ only in whether a parameter is `static[T]` or `T`, prefer the `static` one for a constant argument instead of reporting an ambiguity. For compatibility with Nim 2. |

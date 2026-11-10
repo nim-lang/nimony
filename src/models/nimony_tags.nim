@@ -361,7 +361,7 @@ type
     DeprecatedP = (ord(DeprecatedTagId), "deprecated")  ## `deprecated` pragma
     SideEffectP = (ord(SideEffectTagId), "sideEffect")  ## explicit `sideEffect` pragma
     KeepOverflowFlagP = (ord(KeepOverflowFlagTagId), "keepOverflowFlag")  ## keep overflow flag
-    SemanticsP = (ord(SemanticsTagId), "semantics")  ## proc with builtin behavior for expreval
+    SemanticsP = (ord(SemanticsTagId), "semantics")  ## proc with builtin behavior for expreval; on a routine, `"elementAt"`: a `var T` result is the element of argument 1 at index argument 2, `"aliasSafe"`: `var` arguments may overlap (both read by the contract prover)
     InheritableP = (ord(InheritableTagId), "inheritable")  ## `inheritable` pragma
     BaseP = (ord(BaseTagId), "base")  ## `base` pragma (currently ignored)
     PureP = (ord(PureTagId), "pure")  ## `pure` pragma (currently ignored)

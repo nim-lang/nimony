@@ -45,6 +45,10 @@ type
       ## followed by `s[0]` is undecided and demanding proof everywhere still
       ## rejects a seventh of the test suite. Loops are no longer the obstacle.
       ## `runtimeContracts` wins over it if both are given.
+    LenientContractsFeature
+      ## The prover keeps what it knows about a variable across the writes that
+      ## do not name it (doc/language.md, "Aliasing"): the module's author
+      ## vouches that no such write changes a variable a proof depends on.
     AnonBlockBreaksFeature
       ## Nim-2-style `break`: without a label it leaves the innermost loop *or*
       ## `block`. Without the feature an unlabeled `break` only ever leaves a
@@ -90,6 +94,7 @@ proc parseFeatures*(s: string): set[Feature] =
   of "lenientaliasing": {LenientAliasingFeature}
   of "runtimecontracts": {RuntimeContractsFeature}
   of "staticcontracts": {StaticContractsFeature}
+  of "lenientcontracts": {LenientContractsFeature}
   of "anonblockbreaks": {AnonBlockBreaksFeature}
   of "assumesync": {AssumeSyncFeature}
   of "staticoverloads": {StaticOverloadsFeature}

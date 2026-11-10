@@ -132,7 +132,9 @@ proc clearJournaled*(f: var Facts) =
       f.jSwapRemove(i)          # element swapped into `i` still needs checking
 
 proc add*(f: var Facts; elem: LeXplusC) =
-  f.jAppend elem
+  ## A fact about `InvalidVarId`, a variable the analysis keeps no facts
+  ## about, says nothing.
+  if elem.a != InvalidVarId and elem.b != InvalidVarId: f.jAppend elem
 
 proc isNotNil*(a: VarId): LeXplusC =
   LeXplusC(a: VarId(0), b: a, c: createXint(-1'i64))
@@ -147,7 +149,7 @@ proc restore*(f: var Facts; r: RestorePoint) =
 
 proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
-  f.jAppend LeXplusC(a: a, b: b, c: c)
+  f.add LeXplusC(a: a, b: b, c: c)
 
 proc query*(a, b: VarId; c: xint = createXint(0'i64)): LeXplusC =
   result = LeXplusC(a: a, b: b, c: c)
