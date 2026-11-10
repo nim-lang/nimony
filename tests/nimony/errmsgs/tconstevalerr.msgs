@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tconstevalerr.nim(4, 10) Error: undeclared identifier: zzz
+tests/nimony/errmsgs/tconstevalerr.nim(5, 30) Error: undeclared identifier: yyy
+tests/nimony/errmsgs/tconstevalerr.nim(6, 3) Error: computed message
+tests/nimony/errmsgs/tconstevalerr.nim(10, 19) Error: undeclared identifier: www
+tests/nimony/errmsgs/tconstevalerr.nim(15, 21) Error: undeclared identifier: vvv
