@@ -1650,7 +1650,8 @@ proc unnamedReach(c: var FirContext; loc: Cursor): set[RootClass] =
   ## them. Behind a `ref` lie borrowed parameters and what a global holds a
   ## pointer to, behind a `ptr` only the latter (overlap with a borrowed
   ## parameter through `ptr` is undefined behaviour). A borrowed parameter may
-  ## be a global, and the other way round.
+  ## be a global, and the other way round; it may also be another borrowed
+  ## parameter, as a `lenientAliasing` caller passes one variable twice.
   if throughPointer(c, loc, {RefT}):
     result = {rcBorrowed, rcGlobal}
   elif throughPointer(c, loc, {PtrT, PointerT}):
@@ -1662,7 +1663,7 @@ proc unnamedReach(c: var FirContext; loc: Cursor): set[RootClass] =
     else:
       case rootClass(c, r)
       of rcGlobal: result = {rcBorrowed}
-      of rcBorrowed: result = {rcGlobal}
+      of rcBorrowed: result = {rcGlobal, rcBorrowed}
       of rcPrivate, rcNone: result = {}
 
 proc prescanReach(c: var FirContext; loc: Cursor): set[RootClass] =
@@ -5262,6 +5263,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
   # A write through a pointer, or to a global or a borrowed parameter, may
   # change what other names refer to; once the destination itself is judged.
   let reach = unnamedReach(c, n)
+  let namedRoot = locRootSym(c, n)
 
   # Now handle the destination (a Symbol; the NJVL `(v symId version)` form
   # is no longer produced, see the `VV` branch of `traverseStmt`)
@@ -5336,7 +5338,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     seedRangeFacts c, symId, expected
     # ... and whatever the callee promised about what it just returned.
     assumeEnsures c, valueStart, getVarId(c, symId), call.olds, symId
-    forgetClasses(c, reach)
+    forgetClasses(c, reach, [namedRoot])
 
     skip n
   else:
@@ -5367,7 +5369,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
       if rightHandSide(c, valueForFact, fact, call) and fact.a != fact.b:
         addAsgnFact c, fact
     traverseExpr c, n, call
-    forgetClasses(c, reach)
+    forgetClasses(c, reach, [namedRoot])
 
 proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## Handle `(asgn dest value)`. The value is the second operand but the first
@@ -5663,6 +5665,11 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
 
 proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
   w.kills.incl prescanReach(c, dest)
+  # a write to a borrowed parameter may change every other one
+  let borrowed = writtenRoot(c, dest)
+  if borrowed != NoSymId and rootClass(c, borrowed) == rcBorrowed:
+    for p in c.borrowedParams:
+      if p != borrowed: w.killRoots.incl p
   if isElementWrite(dest): return
   let root = writtenRoot(c, dest)
   if root == NoSymId:

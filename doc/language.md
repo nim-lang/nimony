@@ -3334,7 +3334,7 @@ about an element. Each variable is in one of four classes:
 | class | which variables | facts last until |
 |---|---|---|
 | private | locals, `result`, `sink` parameters, parameters passed by copy, the length of an `openArray`/`varargs` parameter | a write that names it |
-| borrowed | `var`, `out` and `lent` parameters, and parameters the compiler passes by reference (a large object, `{.byref.}`) | a write that names it; a call to a `proc`, a method or a routine value; a call to a `func` with a `var` or pointer argument; a write through a `ref`; a write to a global |
+| borrowed | `var`, `out` and `lent` parameters, and parameters the compiler passes by reference (a large object, `{.byref.}`) | a write that names it; a call to a `proc`, a method or a routine value; a call to a `func` with a `var` or pointer argument; a write through a `ref`; a write to a global; a write to another borrowed parameter |
 | global | globals and threadvars | a write that names it; any call except a pure accessor such as `len`; a write through a pointer, a `ref` or a view; a write to a borrowed parameter |
 | none | a variable whose address the routine takes (`addr x`, also inside `uncheckedBorrow`), and a local a nested routine names | no facts at all |
 

@@ -179,8 +179,8 @@ proc get24(d: openArray[byte]; pos: var int; limit: int; v: var int): bool =
 proc getBytes(d: openArray[byte]; pos: var int; limit, n: int; res: var seq[byte]): bool =
   result = false
   if n < 0 or pos < 0 or pos + n > limit or limit > d.len: return
+  let start = pos # a local: a write to `res` may change what `pos` refers to
   res = @[]
-  let start = pos # a local: `res.add` may change what `pos` refers to
   for i in start ..< start + n:
     if i < d.len: res.add d[i]
   pos = pos + n
