@@ -771,13 +771,13 @@ proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
         # unresolved index types are left alone
         dest.addSubtree index
     elif index.typeKind != NoType:
-      c.buildErr dest, index.info, "invalid array index type: " & typeToString(index)
+      c.buildErr dest, index.info, "invalid array index type: " & typeToString(index), index
     else:
       # length expression
       var err = false
       let length = asSigned(evalOrdinal(c, index), err)
       if err:
-        c.buildErr dest, index.info, "invalid array index type: " & typeToString(index)
+        c.buildErr dest, index.info, "invalid array index type: " & typeToString(index), index
       else:
         dest.addParLe(RangetypeT, info)
         let ordinal = evalExpr(c, index)
