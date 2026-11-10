@@ -1,0 +1,14 @@
+tests/nimony/errmsgs/tconstvalueerr.nim(5, 18) Error: undeclared identifier: zz1
+tests/nimony/errmsgs/tconstvalueerr.nim(6, 11) Error: undeclared identifier: 'foo'
+tests/nimony/errmsgs/tconstvalueerr.nim(7, 23) Error: undeclared identifier: zz2
+tests/nimony/errmsgs/tconstvalueerr.nim(8, 17) Error: undeclared identifier: zz3
+tests/nimony/errmsgs/tconstvalueerr.nim(10, 9) Error: undeclared identifier: zz4
+tests/nimony/errmsgs/tconstvalueerr.nim(12, 16) Error: undeclared identifier: zz5
+tests/nimony/errmsgs/tconstvalueerr.nim(13, 19) Error: undeclared identifier: zz6
+tests/nimony/errmsgs/tconstvalueerr.nim(14, 26) Error: undeclared identifier: zz7
+tests/nimony/errmsgs/tconstvalueerr.nim(15, 27) Error: undeclared identifier: zz8
+tests/nimony/errmsgs/tconstvalueerr.nim(16, 6) Error: undeclared identifier: 'bar'
+tests/nimony/errmsgs/tconstvalueerr.nim(19, 32) Error: undeclared identifier: zz9
+tests/nimony/errmsgs/tconstvalueerr.nim(22, 20) Error: undeclared identifier: zz10
+tests/nimony/errmsgs/tconstvalueerr.nim(25, 20) Error: undeclared identifier: zz11
+tests/nimony/errmsgs/tconstvalueerr.nim(27, 18) Error: undeclared identifier: zz12
