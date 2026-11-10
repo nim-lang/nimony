@@ -2540,61 +2540,6 @@ Disjoint fields of the same object are fine:
   swap(o.x, o.y)   # OK: disjoint fields
   ```
 
-Elements of an array, a `seq` or an `openArray` are told apart only by
-constant indexes that differ, applied to the same container path. Any other
-two indexes into the same container may name one element, and so may an
-element of a view such as `toOpenArray(s, 1, 2)[0]` and an element of `s`
-itself:
-
-  ```nim
-  proc bump(a, b: var int) =
-    inc a; inc b
-
-  var s = @[1, 2, 3]
-  var i = 0
-  var j = 0
-  bump(s[0], s[1])   # OK: different constant indexes
-  bump(s[i], s[j])   # Error: mutable argument aliases with mutable parameter
-  bump(toOpenArray(s, 1, 2)[0], s[1])   # Error: mutable argument aliases with mutable parameter
-  ```
-
-An indexer declares with `{.semantics: "elementAt".}` that its `var T` result
-is the element of its first argument at the index its second argument gives,
-as `[]` does for `seq` and `openArray`. Such an element lies in the buffer the
-container points to, not in the container's own storage.
-
-Two `ref`s may point to one object, so two locations reached through `ref`
-dereferences overlap unless a field or index selected after the dereferences
-tells them apart; the two objects must be of the same type or of types related
-by inheritance. A `var` parameter may itself be the object behind a `ref`, so a
-location rooted at it and one reached through a `ref` to an object of its type
-overlap in the same way:
-
-  ```nim
-  type O = ref object
-    s: seq[int]
-    t: seq[int]
-  proc gotcha(s: var seq[int]; e: var int) = ...
-  let r1 = O(s: @[1, 2, 3])
-  let r2 = r1
-  gotcha(r1.s, r2.s[0])   # Error: mutable argument aliases with mutable parameter
-  gotcha(r1.s, r2.t[0])   # OK: different fields
-
-  type P = object
-    n: int
-  proc g(x, y: var int) = ...
-  proc f(a: var P; r: ref P) =
-    g(a.n, r.n)           # Error: `a` may be `r[]`
-  ```
-
-A routine declared `{.semantics: "aliasSafe".}` accepts `var` arguments that
-overlap each other; a `var` argument that overlaps an immutable one is still
-an error. The declaration is an unchecked promise by the routine's author that
-overlapping `var` arguments are harmless: inside the routine the parameters
-are still assumed to be distinct, so a wrong promise is undefined behavior.
-`system.swap` is declared so, because swapping a location with itself leaves
-it unchanged: `swap(s[i], s[j])` and even `swap(s, s)` are accepted.
-
 ### Mutation of borrowed paths
 
 When iterating over a collection, the compiler borrows from the underlying path.
@@ -3323,8 +3268,8 @@ claim with `{.assert.}`.
 The prover remembers what it learned about a variable until the variable might
 change. A local changes only when you write it by name, or pass it as `var`. A
 global can change in any call. A `var` parameter can change in a call to a
-`proc`, in a call to a `func` that is handed a `var` or pointer argument, and
-through a `ref`. A variable whose address you take, or that a closure
+`proc`, in a call to a `func` that is handed a `var` or pointer argument,
+through a `ref`, and when another `var` parameter is written. A variable whose address you take, or that a closure
 captures, is never remembered. To keep a fact, copy the value into a local.
 
 A fact is only ever about a variable, its fields, and pure accessors of them
@@ -3338,8 +3283,10 @@ about an element. Each variable is in one of four classes:
 | global | globals and threadvars | a write that names it; any call except a pure accessor such as `len`; a write through a pointer, a `ref` or a view; a write to a borrowed parameter |
 | none | a variable whose address the routine takes (`addr x`, also inside `uncheckedBorrow`), and a local a nested routine names | no facts at all |
 
-`addr s[i]` through an indexer declared `elementAt` points into the
-container's buffer, not into `s`'s own storage, so `s` keeps its facts. A
+An indexer declares with `{.semantics: "elementAt".}` that its `var T` result
+is an element in the buffer its first argument points to, as `[]` does for
+`seq` and `openArray`. `addr s[i]` through such an indexer does not point into
+`s`'s own storage, so `s` keeps its facts. A
 `func` writes no global, but through a `var` argument it may write behind a
 `ref` (see [Func](#func)), which is where a borrowed parameter may lie. Leaving
 the scope of a local whose type has a destructor, also through `return`,
@@ -3367,11 +3314,10 @@ The prover assumes the following; breaking any of them is **undefined
 behaviour**, and the compiler may have removed a check because of a fact that
 no longer holds:
 
-1. *Overlap through pointers.* Two `var` arguments of one call, or a `var`
-   argument and a location the callee writes through a `ptr`, must not overlap
-   where the overlap goes through `addr`, `ptr` or `cast`. The compiler rejects
-   the overlaps it can see; `g(x, p[])` with `p = addr x` compiles, and is
-   undefined.
+1. *Overlap through pointers.* A `var` argument must not overlap a location
+   the callee writes through a `ptr` or a `cast`. Two `var` arguments may
+   overlap (`g(x, p[])` with `p = addr x`, or in a `lenientAliasing` module):
+   a write to one drops what is known of the other.
 2. *A `var` argument changes only during the call.* A routine that keeps the
    address of its `var`/`out` parameter, or of a field of it, must not write
    through it once it has returned, and neither may anything it handed the

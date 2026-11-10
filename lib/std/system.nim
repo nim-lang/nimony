@@ -134,7 +134,7 @@ template len*[I, T](x: array[I, T]): int =
   ## This is roughly the same as `high(T)-low(T)+1`.
   len(array[I, T])
 
-func swap*[T](x, y: var T) {.inline, nodestroy, semantics: "aliasSafe".} =
+func swap*[T](x, y: var T) {.inline, nodestroy.} =
   ## Swaps two values bitwise without invoking `=sink`, `=copy`, or `=dup`.
   let tmp = x
   x = y

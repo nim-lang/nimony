@@ -575,8 +575,6 @@ proc writtenRoot(c: var FirContext; n: Cursor): SymId =
     inc guard
   result = if r.isSymbol: r.symId else: NoSymId
 
-proc rootClass(c: var FirContext; s: SymId): RootClass
-
 proc calleeHasSemantics(c: var FirContext; fn: Cursor; val: string): bool =
   ## Does the routine `fn` names declare `{.semantics: val.}`? Read off its
   ## type, which an instance of a generic carries too.
@@ -600,16 +598,15 @@ proc isElementAt(c: var FirContext; n: Cursor): bool =
   result = n.isTagLit and n.exprKind in CallKinds and
     calleeHasSemantics(c, n.childCursor, "elementAt")
 
-proc isSelector(c: var FirContext; n: Cursor): bool =
-  result = n.isTagLit and
-    (n.exprKind in {DotX, DdotX, TupatX, ArratX, AtX, PatX} or isElementAt(c, n))
+proc isSelector(n: Cursor): bool {.inline.} =
+  n.isTagLit and n.exprKind in {DotX, DdotX, TupatX, ArratX, AtX, PatX}
 
 proc nextSelector(c: var FirContext; n: Cursor; follow: bool): Cursor =
   ## The outermost field or index selection of the location `n`, or its root
   ## when there is none.
   result = n
   var guard = 0
-  while not isSelector(c, result) and guard < 64:
+  while not isSelector(result) and guard < 64:
     let inner = locInner(c, result, follow)
     if cursorIsNil(inner): break
     result = inner
@@ -618,17 +615,14 @@ proc nextSelector(c: var FirContext; n: Cursor; follow: bool): Cursor =
 proc selectorDepth(c: var FirContext; n: Cursor; follow: bool): int =
   result = 0
   var r = nextSelector(c, n, follow)
-  while isSelector(c, r):
+  while isSelector(r):
     inc result
-    r = nextSelector(c, locInner(c, r, follow), follow)
+    r = nextSelector(c, r.childCursor, follow)
 
 proc selectorsDisjoint(a, b: Cursor): bool =
-  ## Do the two selections of one value certainly pick different parts? An
-  ## `elementAt` call selects by its second argument, like an `(at …)`.
+  ## Do the two selections of one value certainly pick different parts?
   var x = a.childCursor
   var y = b.childCursor
-  if a.exprKind in CallKinds: skip x # the indexer
-  if b.exprKind in CallKinds: skip y
   skip x # the value selected from
   skip y
   if a.exprKind in {DotX, DdotX} and b.exprKind in {DotX, DdotX}:
@@ -638,194 +632,29 @@ proc selectorsDisjoint(a, b: Cursor): bool =
   else:
     result = false
 
-proc comparablePart(c: var FirContext; n: Cursor; follow: bool): Cursor =
-  ## The part of the location `n` whose selections can be compared with those
-  ## of another location. A call other than an `elementAt` one (a view such
-  ## as `toOpenArray`, a getter) yields some part of its first argument, but
-  ## which one is unknown: the selections above it say nothing, so the
-  ## location is cut back to that argument.
-  result = n
-  var r = n
-  var guard = 0
-  while not cursorIsNil(r) and guard < 64:
-    if r.isTagLit and r.exprKind in CallKinds and not isElementAt(c, r):
-      let inner = locInner(c, r, follow)
-      if not cursorIsNil(inner): result = inner
-    r = locInner(c, r, follow)
-    inc guard
-
-type
-  StepKind = enum
-    skRoot, skSel, skRefDeref, skPtrDeref
-  PathStep = object
-    kind: StepKind
-    node: Cursor   ## the selector, the dereferenced expression, or the root
-    typ: Cursor    ## for `skRefDeref` and `skRoot`: the type of the object
-
-proc objectTypeOf(c: var FirContext; t: Cursor; throughRef: bool): Cursor =
-  ## `t` without modifiers and, for `throughRef`, through a `ref` type to what
-  ## it points to.
-  result = t
-  var guard = 0
-  while guard < 16:
-    inc guard
-    if result.typeKind in {MutT, OutT, LentT, SinkT} or
-        (throughRef and result.typeKind == RefT):
-      result = sub(result)
-    elif result.isSymbol:
-      var decl = default(Cursor)
-      if c.moduleTypes.hasKey(result.symId):
-        decl = c.moduleTypes.getOrQuit(result.symId)
-      else:
-        let res = tryLoadSym(result.symId)
-        if res.status == LacksNothing and res.decl.symKind == TypeY: decl = res.decl
-      if cursorIsNil(decl): return
-      let body = asTypeDecl(decl).body
-      # a named `ref object` is what it points to; any other name stays
-      if throughRef and body.typeKind == RefT: result = sub(body)
-      else: return
-    else:
-      return
-
-proc inHierarchy(c: var FirContext; t: Cursor): bool =
-  ## Is `t` an object type of an inheritance hierarchy, which another type of
-  ## the hierarchy may stand for?
-  var t = t
-  var guard = 0
-  while guard < 16:
-    inc guard
-    if t.isSymbol:
-      var decl = default(Cursor)
-      if c.moduleTypes.hasKey(t.symId):
-        decl = c.moduleTypes.getOrQuit(t.symId)
-      else:
-        let res = tryLoadSym(t.symId)
-        if res.status == LacksNothing and res.decl.symKind == TypeY: decl = res.decl
-      if cursorIsNil(decl): return true # unknown: assume it may be related
-      let td = asTypeDecl(decl)
-      if hasPragma(td.pragmas, InheritableP): return true
-      t = td.body
-    elif t.typeKind in {RefT, PtrT}:
-      t = sub(t)
-    elif t.typeKind == ObjectT:
-      return not sub(t).isDotToken # it has a parent
-    else:
-      return false
-  result = true
-
-proc typesMayAlias(c: var FirContext; x, y: Cursor): bool =
-  ## May an object of type `x` be one of type `y`? Only when they are the
-  ## same type or related by inheritance.
-  result = sameTrees(x, y) or (inHierarchy(c, x) and inHierarchy(c, y))
-
-proc locPath(c: var FirContext; n: Cursor; follow: bool): seq[PathStep] =
-  ## The location `n` as its root followed by its selections and
-  ## dereferences, outermost last.
-  var rev: seq[PathStep] = @[]
-  var r = n
-  var guard = 0
-  while not cursorIsNil(r) and guard < 64:
-    inc guard
-    if r.isTagLit:
-      case r.exprKind
-      of DerefX, DdotX:
-        if r.exprKind == DdotX: rev.add PathStep(kind: skSel, node: r)
-        let t = getType(c.typeCache, r.childCursor)
-        if t.typeKind in {PtrT, PointerT}:
-          rev.add PathStep(kind: skPtrDeref, node: r.childCursor)
-        else:
-          rev.add PathStep(kind: skRefDeref, node: r.childCursor,
-                           typ: objectTypeOf(c, t, throughRef = true))
-      of PatX:
-        rev.add PathStep(kind: skSel, node: r)
-        rev.add PathStep(kind: skPtrDeref, node: r.childCursor)
-      else:
-        if isSelector(c, r): rev.add PathStep(kind: skSel, node: r)
-    let inner = locInner(c, r, follow)
-    if cursorIsNil(inner):
-      # the declared type: a `var` parameter's says so
-      rev.add PathStep(kind: skRoot, node: r,
-                       typ: (if r.isSymbol: getLocalInfo(c.typeCache, r.symId).typ
-                             else: default(Cursor)))
-      break
-    r = inner
-  result = newSeqOfCap[PathStep](rev.len)
-  for i in countdown(rev.len-1, 0): result.add rev[i]
-
-proc suffixesOverlap(a: seq[PathStep]; i: int; b: seq[PathStep]; j: int): bool =
-  ## Starting from one object, do the steps `a[i..]` and `b[j..]` reach
-  ## overlapping storage? They do unless a pair of selections tells them apart.
-  var k = 0
-  while i+k < a.len and j+k < b.len:
-    let x = a[i+k]
-    let y = b[j+k]
-    if x.kind == skSel and y.kind == skSel:
-      if selectorsDisjoint(x.node, y.node): return false
-    elif x.kind != y.kind:
-      return true
-    inc k
-  result = true
-
-proc borrowedVarRoot(c: var FirContext; p: seq[PathStep]): bool =
-  ## Is the path rooted at a borrowed `var`/`out` parameter, which may be the
-  ## caller's `r[]` or a part of it?
-  result = p.len > 0 and p[0].kind == skRoot and p[0].node.isSymbol and
-    rootClass(c, p[0].node.symId) == rcBorrowed and
-    p[0].typ.typeKind in {MutT, OutT}
-
-proc throughRefOverlap(c: var FirContext; a, b: seq[PathStep]): bool =
-  ## Two locations reached through `ref`s may lie in one object: `r1.s` and
-  ## `r2.s[0]` with `r2 = r1`. They overlap unless a selection after the two
-  ## dereferences tells them apart. The objects must be of types that may be
-  ## the same object.
-  for i in 0 ..< a.len:
-    if a[i].kind != skRefDeref: continue
-    for j in 0 ..< b.len:
-      if b[j].kind == skRefDeref and typesMayAlias(c, a[i].typ, b[j].typ) and
-          suffixesOverlap(a, i+1, b, j+1):
-        return true
-  # a borrowed `var` parameter may be the object behind a `ref` of its type
-  for (x, y) in [(a, b), (b, a)]:
-    if borrowedVarRoot(c, x):
-      for j in 0 ..< y.len:
-        if y[j].kind == skRefDeref and
-            typesMayAlias(c, objectTypeOf(c, x[0].typ, throughRef = false), y[j].typ) and
-            suffixesOverlap(x, 1, y, j+1):
-          return true
-  result = false
-
 proc overlaps(c: var FirContext; a: Cursor; followA: bool;
               b: Cursor; followB: bool): bool =
   ## Can the locations `a` and `b` share storage? Rooted at the same variable,
   ## one lies within the other unless a field or index selection on the way
   ## tells them apart: `a.b` and `a.c` do not overlap, `s[0]` and `s[1]` do not
-  ## either, `s[i]` and `s[j]` may. Above a view or a getter nothing tells
-  ## them apart: `toOpenArray(s, 1, 2)[0]` lies somewhere in `s`, maybe `s[1]`.
-  ## Through `ref`s, or from a borrowed `var` parameter, two locations of
-  ## different roots may be one (`throughRefOverlap`).
-  let pa = comparablePart(c, a, followA)
-  let pb = comparablePart(c, b, followB)
+  ## either, `s[i]` and `s[j]` may.
   let ra = locRootSym(c, a, followA)
-  if ra != NoSymId and ra == locRootSym(c, b, followB):
-    var x = nextSelector(c, pa, followA)
-    var y = nextSelector(c, pb, followB)
-    var dx = selectorDepth(c, x, followA)
-    var dy = selectorDepth(c, y, followB)
-    while dx > dy:
-      x = nextSelector(c, locInner(c, x, followA), followA)
-      dec dx
-    while dy > dx:
-      y = nextSelector(c, locInner(c, y, followB), followB)
-      dec dy
-    result = true
-    while isSelector(c, x) and isSelector(c, y):
-      if selectorsDisjoint(x, y):
-        result = false
-        break
-      x = nextSelector(c, locInner(c, x, followA), followA)
-      y = nextSelector(c, locInner(c, y, followB), followB)
-    if result: return true
-  result = throughRefOverlap(c, locPath(c, pa, followA), locPath(c, pb, followB))
+  if ra == NoSymId or ra != locRootSym(c, b, followB): return false
+  var x = nextSelector(c, a, followA)
+  var y = nextSelector(c, b, followB)
+  var dx = selectorDepth(c, x, followA)
+  var dy = selectorDepth(c, y, followB)
+  while dx > dy:
+    x = nextSelector(c, x.childCursor, followA)
+    dec dx
+  while dy > dx:
+    y = nextSelector(c, y.childCursor, followB)
+    dec dy
+  result = true
+  while isSelector(x) and isSelector(y):
+    if selectorsDisjoint(x, y): return false
+    x = nextSelector(c, x.childCursor, followA)
+    y = nextSelector(c, y.childCursor, followB)
 
 proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo) =
   var conflict = false
@@ -4713,13 +4542,10 @@ type
     amByPointer     ## immutable, but the callee reads it through a pointer
     amForwardedMut  ## a `var` parameter passed on to a `var`/`out` formal
 
-proc borrowCheckForCall(c: var FirContext; args: Cursor; modes: seq[ArgMode];
-                        aliasSafe: bool) =
+proc borrowCheckForCall(c: var FirContext; args: Cursor; modes: seq[ArgMode]) =
   ## `modes[i]` is how argument `i` is passed. A forwarded `var` parameter is
   ## already a location and so carries no `(haddr …)`: it is just as mutable
   ## as one that does. An argument past the formals counts as by pointer.
-  ## An `aliasSafe` callee accepts overlapping `var` arguments (`swap`), but
-  ## not a `var` argument that overlaps an immutable one.
   var muts: seq[Cursor] = @[]
   var imms: seq[Cursor] = @[]
   var n = args
@@ -4753,7 +4579,6 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor; modes: seq[ArgMode];
         buildErr c, muts[i].info, "mutable argument aliases with immutable parameter"
         break
   # Mutable argument must not overlap with any other mutable argument:
-  if aliasSafe: return
   for i in 0 ..< muts.len:
     for j in 0 ..< muts.len:
       if i != j and overlaps(c, muts[i], true, muts[j], true):
@@ -4915,12 +4740,11 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
         let tracked = borrowMode(c, n).isTracked
         if tracked:
           checkBorrowConflict(c, n, n.info)
-        # ... and against the other arguments of this call: a forwarded
-        # parameter, or an inline temp holding a `var T` call result (`s[i]`
-        # for a `seq`), which `locInner` follows to the location it names.
-        if n.kind == Symbol and tracked and
-            (isParamLike(getLocalInfo(c.typeCache, n.symId).kind) or
-             n.symId in c.inlineVars):
+        # ... and against the other arguments of this call. Only a forwarded
+        # parameter: an inline temp holding a `var T` call result (`s[i]`)
+        # was never judged as a location for a local either.
+        if n.kind == Symbol and
+            isParamLike(getLocalInfo(c.typeCache, n.symId).kind) and tracked:
           needsBorrowCheck = true
           modes[modes.len-1] = amForwardedMut
       if root != NoSymId and isVarOpenArray(c, param.typ) and
@@ -4945,7 +4769,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     traverseExpr c, n, call
     if syncRoot >= 0: c.syncArgs.excl syncRoot
   if needsBorrowCheck and not c.features.contains(LenientAliasingFeature):
-    borrowCheckForCall c, args, modes, hasPragmaOfValue(fnPragmas, SemanticsP, "aliasSafe")
+    borrowCheckForCall c, args, modes
   while fnType.hasMore: skip fnType
   fnType = paramsStart; skip fnType
   skip fnType # skip return type

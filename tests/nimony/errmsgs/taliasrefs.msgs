@@ -1,6 +1,0 @@
-tests/nimony/errmsgs/taliasrefs.nim(25, 12) Error: mutable argument aliases with mutable parameter [pass --verbose for the Final IR]
-tests/nimony/errmsgs/taliasrefs.nim(25, 18) Error: mutable argument aliases with mutable parameter [pass --verbose for the Final IR]
-tests/nimony/errmsgs/taliasrefs.nim(29, 6) Error: mutable argument aliases with mutable parameter [pass --verbose for the Final IR]
-tests/nimony/errmsgs/taliasrefs.nim(29, 11) Error: mutable argument aliases with mutable parameter [pass --verbose for the Final IR]
-tests/nimony/errmsgs/taliasrefs.nim(32, 6) Error: mutable argument aliases with mutable parameter [pass --verbose for the Final IR]
-tests/nimony/errmsgs/taliasrefs.nim(32, 11) Error: mutable argument aliases with mutable parameter [pass --verbose for the Final IR]
