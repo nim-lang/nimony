@@ -54,6 +54,7 @@ type
     requests: seq[GenProcRequest]
     usedModules: HashSet[string]
     errorMsg: string
+    indexVars: int           # counter for `newIndexVar`
     semCtx: ptr SemContext   # used to resolve `InvokeT` types via sem's
                              # `instantiateType` (kept as a ptr so this
                              # struct stays trivially-copyable; the SemContext
@@ -437,6 +438,14 @@ proc incIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
       copyIntoSymUse c.dest, indexVar, c.info
       c.dest.addIntLit(+1, c.info)
 
+proc newIndexVar(c: var SynthesizeSerializerCtx): SymId =
+  ## A fresh index variable for one serializer loop. The program is
+  ## re-checked from idents (`rewriteSymsToIdents`), so the loops of one
+  ## routine, nested (an array of arrays) or in sequence (a tuple of
+  ## arrays), must differ by basename, not only by symbol.
+  result = pool.symId("`idx" & $c.indexVars & ".0")
+  inc c.indexVars
+
 proc declareIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
   copyIntoKind c.dest, VarY, c.info:
     addSymDef c.dest, indexVar, c.info
@@ -452,7 +461,7 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
   inc n
   let baseType = n
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "aconstr")
@@ -485,7 +494,7 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
   inc ft # past uarray tag
   let baseType = ft
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "addr")
@@ -523,7 +532,7 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
   genStringCall(c, "writeNifParLe", "setconstr")
   genTypeCall(c, orig)
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
   # the element is our int indexVar, converted back to the set's base type
   var indexVarAsBuf = createTokenBuf(4)
