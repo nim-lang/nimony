@@ -36,7 +36,7 @@ proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: 
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
 
 proc semStmtBody(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) =
-  ## The body of a loop or a `finally`: a branch that produces nothing.
+  ## The body of a loop, `finally` or `defer`: a branch that produces nothing.
   var it = Item(n: n, typ: c.types.voidType)
   semStmtBranch c, dest, it, isNewScope
   n = it.n
@@ -5764,7 +5764,7 @@ proc semDefer(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   takeInto dest, it.n:
     openScope c
-    semStmt c, dest, it.n, false
+    semStmtBody c, dest, it.n, false
     closeScope c
   c.routine.hasDefer = true
   it.typ = c.types.voidType

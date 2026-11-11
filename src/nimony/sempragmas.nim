@@ -1550,7 +1550,10 @@ proc semPragmaExpr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
         semPragmaLine c, dest, it, true
     if hasUncheckedAccess:
       inc c.inUncheckedAccess
-    semStmt(c, dest, it.n, false)
+    var list = createTokenBuf(0)
+    var body = bodyAsList(it.n, list)
+    semStmt(c, dest, body, false)
+    skip it.n
     if hasUncheckedAccess:
       dec c.inUncheckedAccess
   producesVoid c, dest, info, it.typ

@@ -77,3 +77,13 @@ echo t
 # a lambda with a one-line body inside a parenthesised statement list
 let absOf = (discard 0; proc (x: int): int = (if x > 0: x else: -x))
 echo absOf(-3)
+
+# `defer` and a pragma block with a one-line body
+proc deferred(t: var int) =
+  (discard 0; defer: t = f(g(t + 1)))
+  t = 5
+total = 0
+deferred(total)
+echo total
+(discard 0; {.cast(noSideEffect).}: total = f(g(total + 1)))
+echo total
