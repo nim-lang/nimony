@@ -13,7 +13,7 @@ from std / os import `/`
 import std / [assertions, sets, tables, hashes, syncio]
 import ".." / models / tags
 import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops,
-  typenav, typekeys, expreval, semos, derefs, sembasics, sigmatch
+  typenav, typekeys, expreval, semos, derefs, sembasics
 import ".." / lib / symparser
 
 const
@@ -58,7 +58,6 @@ type
     usedModules: HashSet[string]
     errorMsg: string
     indexVars: int           # counter for `newIndexVar`
-    isSeq: bool              # the object `unravelObj` serializes is a `seq`
     semCtx: ptr SemContext   # used to resolve `InvokeT` types via sem's
                              # `instantiateType` (kept as a ptr so this
                              # struct stays trivially-copyable; the SemContext
@@ -486,14 +485,6 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
       incIndexVar c, indexVar
   genParRiCall c
 
-proc addRoutine(dest: var TokenBuf; inSystem: bool; name: string; info: NifLineInfo) =
-  if inSystem:
-    copyIntoKind dest, DotX, info:
-      dest.addIdent "system", info
-      dest.addIdent name, info
-  else:
-    dest.addIdent name, info
-
 proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
                             fieldType: Cursor; param: TokenBuf) =
   ## ptr-to-nif for a `ptr UncheckedArray[T]` field. Emits runtime code
@@ -524,16 +515,16 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
       addIntType c
       copyIntoSymUse c.dest, indexVar, c.info
       copyIntoKind c.dest, CallS, c.info:
-        addRoutine c.dest, c.isSeq, "len", c.info
+        c.dest.addIdent "len", c.info
         c.dest.add param
     copyIntoKind c.dest, StmtsS, c.info:
-      # entryPoint(baseType, param[idx]). Using `(arrat …)` would only work
-      # for raw arrays, not for `seq`, which routes subscript through `[]`.
-      # A `seq`'s are `system.len` and ``system.`[]` ``, so that a `len` or
-      # `[]` of the user's that the evaluated code calls cannot take them.
+      # entryPoint(baseType, param[idx]) — emitted as `(call [] param idx)`
+      # so the sub-compile resolves it against the user-defined `[]`
+      # overload. Using `(arrat …)` would only work for raw arrays, not
+      # for objects (seq, string, …) that route subscript through `[]`.
       var elemAccess = createTokenBuf(8)
       copyIntoKind elemAccess, CallS, c.info:
-        addRoutine elemAccess, c.isSeq, "[]", c.info
+        elemAccess.addIdent "[]", c.info
         copyTree elemAccess, param
         copyIntoSymUse elemAccess, indexVar, c.info
       entryPoint(c, baseType, readonlyCursorAt(elemAccess, 0))
@@ -668,7 +659,6 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
   of ObjectT:
     if orig.isSymbol and hasRtti(orig.symId):
       c.routineKind = MethodY
-    c.isSeq = isSomeSeqType(orig)
     unravelObj c, typ, param, 0
   of TupleT:
     unravelTuple c, typ, param
