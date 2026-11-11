@@ -643,14 +643,41 @@ proc isForwardedRet(bnd: Bindings; n: Cursor; targetSym: SymId): bool =
   result = n.isSymbol and not bnd.subst.hasKey(n.symId) and
     bnd.rename.getOrDefault(n.symId, n.symId) == targetSym
 
+proc peelValueConv(c: Cursor): Cursor =
+  ## Skip the value-preserving wrappers a call site puts around an argument:
+  ## `(conv T x)`, `(cast T x)`, `(suf x "T")`, `(par x)`. `copyMem(addr x, …)`
+  ## arrives as `(conv (ptr (void)) (addr x))`, `sizeof(x)` as a `size_t` conv.
+  result = c
+  while result.isTagLit:
+    case result.exprKind
+    of ConvC, CastC:
+      var t = result; inc t; skip t     # past the target type
+      result = t
+    of SufC, ParC:
+      var t = result; inc t
+      result = t
+    else: break
+
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
   ## spliced at every use instead of bound to a parameter copy. (Symbol args are
   ## NOT included: the inliner cannot prove the caller's variable is unmodified
-  ## during the body without alias info.)
+  ## during the body without alias info.) `(sizeof T)`/`(alignof T)` are
+  ## constants too: binding `zeroMem(addr x, sizeof x)`'s size to a temp hid the
+  ## constant from arkham, so a 16-byte clear ran as a runtime memset loop.
+  ##
+  ## A conversion around a numeric constant (`csize_t(8)`) is peeled; one around
+  ## `nil` is NOT: `(conv (ptr T) (nil))` spliced into a dead `if p != nil` arm
+  ## folds to a `(deref nil)` that the native back end cannot type.
   case c.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLit: true
-  of TagLit: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit: return true
+  of TagLit:
+    if c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}: return true
+  else: return false
+  let p = peelValueConv(c)
+  case p.kind
+  of IntLit, UIntLit, FloatLit, CharLit: true
+  of TagLit: p.exprKind in {SizeofC, AlignofC}
   else: false
 
 proc isStableDerefArg(c: Cursor): bool =
@@ -684,6 +711,11 @@ proc isStableAddrArg(c: Cursor): bool =
   ## A compound lvalue (`(haddr (dot o f))`, `(haddr (at a i))`) is excluded: the
   ## path would be re-evaluated at each use, and the body could write through
   ## another pointer parameter to a symbol the path mentions.
+  ##
+  ## A pointer conversion around the address (`(conv (ptr (void)) (addr x))`, the
+  ## shape every `copyMem(addr x, …)`/`zeroMem(addr x, …)` call site has) does not
+  ## change that: the converted address is just as constant.
+  let c = peelValueConv(c)
   if not c.isTagLit or c.exprKind notin AddrKinds: return false
   result = c.childCursor.isSymbol
 
