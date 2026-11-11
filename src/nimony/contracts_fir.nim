@@ -70,17 +70,6 @@ type
     HasAddr            ## an explicit `addr` on the way — unsafe escape hatch
     NotBorrowable      ## rooted at nothing a borrow can be tracked on
 
-  RootClass = enum
-    ## Who may write the own storage of a variable without naming it
-    ## (doc/language.md, "Aliasing"). Facts about it last until then.
-    rcPrivate   ## locals, `result`, parameters passed by copy: nobody
-    rcBorrowed  ## parameters passed by reference: the caller's storage, which
-                ## a `proc` call, a write through a `ref` or a write to a
-                ## global may reach
-    rcGlobal    ## globals and threadvars: any call, any write through a
-                ## pointer, a `ref` or a view, and a write to a borrowed one
-    rcNone      ## its address is taken, or a nested routine names it: no facts
-
   IvKind = enum
     ivUnknown      ## an arbitrary write: nothing known about it survives a loop
     ivIncreasing   ## every write in the loop moves it up (or leaves it alone)
@@ -177,9 +166,11 @@ type
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
-    unanalysed: HashSet[SymId]         # variables of class `rcNone` in the
-                                       # routine (`collectUnanalysed`)
-    borrowedParams: HashSet[SymId]     # its parameters of class `rcBorrowed`
+    unanalysed: HashSet[SymId]         # variables of the routine whose address
+                                       # is taken or that a nested routine
+                                       # names (`collectUnanalysed`): shared
+    borrowedParams: HashSet[SymId]     # its parameters that name the caller's
+                                       # storage: shared
     dtorLocals: HashSet[SymId]         # its live locals whose type has a
                                        # destructor: leaving their scope runs
                                        # a `proc` (`killsAtScopeExit`)
@@ -744,34 +735,27 @@ proc endBorrow(c: var FirContext; sym: SymId) =
 
 # --- Aliasing: which variables a fact may be kept about ---
 #
-# A fact may stay only while nothing can write its location without naming
-# it. Every variable is in one class (`RootClass`), and each class has one
-# rule for what drops its facts (doc/language.md, "Aliasing"):
+# The prover reasons about values, and a variable stands for a value only
+# while nothing can change it except a write that names it
+# (doc/language.md, "Aliasing"):
 #
-# - A *private* variable changes only when it is written by name or passed as
-#   `var`: a `var` borrow ends when the call returns, as a routine may not
-#   write its `var` parameter through a kept address afterwards.
-# - A *borrowed* parameter is the caller's storage, which may be a global or
-#   lie behind a `ref`: a call to a `proc`, a call to a `func` that has a
-#   `var` or pointer argument, a write through a `ref` and a write to a
-#   global may change it.
-# - A *global* changes in any call but a pure accessor (`len`), in any write
-#   through a pointer, a `ref` or a view, and in a write to a borrowed
-#   parameter.
-# - A variable whose address the routine takes, or that a nested routine
-#   names, has no facts at all: `getVarId` gives it no slot.
-#
-# Leaving the scope of a local with a destructor runs a `proc`.
+# - An *owned* variable -- a local, `result`, a parameter passed by copy --
+#   keeps its facts until a write that names it. Passing it as `var` is one:
+#   a `var` borrow ends when the call returns; an address kept past it is
+#   `addr`, which is unsafe.
+# - Every other variable is *shared* (`isShared`) and keeps its facts until
+#   the next *barrier* that does not name it: a call that can write
+#   (`isBarrierCall`), a store whose target is not an owned variable
+#   (`isBarrierStore`), the destructor of a local leaving its scope.
 
-proc rootClass(c: var FirContext; s: SymId): RootClass =
-  if s in c.unanalysed: rcNone
-  elif s in c.borrowedParams: rcBorrowed
-  elif localInfoOf(c, s).kind in {GvarY, TvarY}: rcGlobal
-  else: rcPrivate
+proc isShared(c: var FirContext; s: SymId): bool =
+  ## Can `s` be written without being named? A parameter that names the
+  ## caller's storage, a global, a variable whose address is taken and a local
+  ## that a nested routine names can.
+  s in c.unanalysed or s in c.borrowedParams or
+    localInfoOf(c, s).kind in {GvarY, TvarY}
 
-proc getVarId(c: var FirContext; symId: SymId): VarId {.inline.} =
-  ## The slot of the variable `symId`'s facts; none for class `rcNone`.
-  if symId in c.unanalysed: InvalidVarId else: VarId(symId)
+template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
 
 proc addrRoot(c: var FirContext; n: Cursor; inits: Table[SymId, Cursor]): SymId =
   ## The variable whose own storage the operand `n` of an `addr` lies in, read
@@ -843,10 +827,10 @@ proc markCaptured(c: var FirContext; n: Cursor) =
 
 proc collectUnanalysed(c: var FirContext; n: var Cursor;
                        inits: var Table[SymId, Cursor]) =
-  ## Pre-pass over a routine body: the variables of class `rcNone`, those whose
-  ## address is taken anywhere in it (`addr x`, `unsafeAddr x`) and those a
-  ## nested routine names. Flow-insensitive: a pointer taken late in a loop
-  ## counts for the whole body.
+  ## Pre-pass over a routine body: the variables that are shared because their
+  ## address is taken anywhere in it (`addr x`, `unsafeAddr x`) or because a
+  ## nested routine names them. Flow-insensitive: a pointer taken late in a
+  ## loop counts for the whole body.
   if not n.isTagLit or n.substructureKind == PragmasU:
     skip n
   elif n.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
@@ -1456,60 +1440,33 @@ proc rootOf(c: FirContext; v: VarId): SymId =
   if int(v) > 0: SymId(int(v))
   else: c.derivedRoots[FirstDerivedVarId - int(v)]
 
-proc forgetClasses(c: var FirContext; classes: set[RootClass];
-                   spared: openArray[SymId] = []) =
-  ## A write no name tells us may have hit any variable of `classes`: what is
-  ## known about each, and about what is derived from it, goes. What the facts
-  ## connected through it stays (`projectOut`). The `spared` roots are written
-  ## by name, which the caller accounts for. A `lenientContracts` module
-  ## vouches that no such write matters.
-  if classes != {} and LenientContractsFeature notin c.features:
+proc forgetShared(c: var FirContext; spared: openArray[SymId] = []) =
+  ## A barrier: what is known about every shared variable, and about what is
+  ## derived from it, goes. What the facts connected through it stays
+  ## (`projectOut`). The `spared` roots are the ones the barrier names, which
+  ## the caller accounts for. A `lenientContracts` module vouches that no
+  ## barrier matters.
+  if LenientContractsFeature notin c.features:
     for v in factVars(c):
       let root = rootOf(c, v)
-      if root != NoSymId and rootClass(c, root) in classes and root notin spared:
+      if root != NoSymId and root notin spared and isShared(c, root):
         projectOut(c.facts, v)
 
-proc forgetRoots(c: var FirContext; roots: HashSet[SymId]) =
-  ## `forgetClasses` for single variables.
-  if roots.len > 0 and LenientContractsFeature notin c.features:
-    for v in factVars(c):
-      if rootOf(c, v) in roots: projectOut(c.facts, v)
-
-proc unnamedReach(c: var FirContext; loc: Cursor): set[RootClass] =
-  ## The classes a write to the location `loc` may change without naming
-  ## them. Behind a `ref` lie borrowed parameters and what a global holds a
-  ## pointer to, behind a `ptr` only the latter (overlap with a borrowed
-  ## parameter through `ptr` is undefined behaviour). A borrowed parameter may
-  ## be a global, and the other way round; it may also be another borrowed
-  ## parameter, as a `lenientAliasing` caller passes one variable twice.
-  if throughPointer(c, loc, {RefT}):
-    result = {rcBorrowed, rcGlobal}
-  elif throughPointer(c, loc, {PtrT, PointerT}):
-    result = {rcGlobal}
+proc isBarrierStore(c: var FirContext; loc: Cursor): bool =
+  ## Is a write to the location `loc` a barrier? It is unless `loc` lies in
+  ## the own storage of an owned variable: behind a pointer, a `ref` or a view
+  ## may lie any shared variable, a `var` parameter may be a global or another
+  ## `var` parameter, and the other way round.
+  if throughPointer(c, loc, {RefT, PtrT, PointerT}):
+    result = true
   else:
     let r = locRootSym(c, loc)
-    if r == NoSymId:
-      result = {rcGlobal} # a view whose root is unknown
-    else:
-      case rootClass(c, r)
-      of rcGlobal: result = {rcBorrowed}
-      of rcBorrowed: result = {rcGlobal, rcBorrowed}
-      of rcPrivate, rcNone: result = {}
+    result = r == NoSymId or isShared(c, r)
 
-proc prescanReach(c: var FirContext; loc: Cursor): set[RootClass] =
-  ## `unnamedReach` for the loop pre-scan, which may not ask for a type: any
-  ## dereference counts as one of a `ref`.
+proc isBarrierStorePrescan(c: var FirContext; loc: Cursor): bool =
+  ## `isBarrierStore` for the loop pre-scan, which may not ask for a type.
   let r = writtenRoot(c, loc)
-  if r == NoSymId:
-    result = {rcBorrowed, rcGlobal}
-  else:
-    case rootClass(c, r)
-    of rcGlobal: result = {rcBorrowed}
-    of rcBorrowed: result = {rcGlobal}
-    of rcPrivate, rcNone: result = {}
-
-proc isKeyableCall(fnSym: SymId): bool
-proc accessorOf(c: var FirContext; fnSym: SymId; a: var AccessorInfo): bool
+  result = r == NoSymId or isShared(c, r)
 
 proc visibleRoutine(c: var FirContext; fn: Cursor; tt: var Cursor): bool =
   ## Is the callee `fn` a routine whose declaration we can see? `tt` is then
@@ -1536,20 +1493,17 @@ proc handedVarOrPointer(params, fn: Cursor; args: var int): bool =
       if t.typeKind in {MutT, OutT, PtrT, PointerT}: result = true
     skip a
 
-proc callFootprint(c: var FirContext; fn: Cursor; viaArgs: var bool): set[RootClass] =
-  ## The classes a call may change beyond the arguments it names; `fn` is its
-  ## callee, followed by its arguments. A `proc`, a
-  ## method, a routine value or a callee we cannot see may write a global or
-  ## anything behind a `ref`. A `func` writes no global, but through a `var`
-  ## argument it may write behind a `ref` (doc/language.md, "Func"), and an
-  ## `importc` one writes through a pointer it is handed; so a `func` with a
-  ## `var` or pointer argument may reach a borrowed parameter. Every call but
-  ## a pure accessor (`len`) counts against globals: a pointer to one may be
-  ## hidden in an argument. `viaArgs` tells that only the `func`'s `var` or
-  ## pointer arguments reach the borrowed parameters: the ones it is handed
-  ## as `var` arguments it writes by name, and what its `.ensures` states
-  ## about them holds.
-  result = {rcBorrowed, rcGlobal}
+proc isBarrierCall(c: var FirContext; fn: Cursor; viaArgs: var bool): bool =
+  ## Is the call a barrier? `fn` is its callee, followed by its arguments. A
+  ## `proc`, a method, a routine value or a callee we cannot see may write a
+  ## global or anything behind a `ref`. A `func` writes no global, but through
+  ## a `var` argument it may write behind a `ref` (doc/language.md, "Func"),
+  ## and an `importc` one writes through a pointer it is handed. A `func` that
+  ## is handed neither writes nothing its caller can see. `viaArgs` tells that
+  ## the call is a barrier only through a `func`'s `var` or pointer arguments:
+  ## the variables it is handed as `var` it writes by name, and what its
+  ## `.ensures` states about them holds.
+  result = true
   viaArgs = false
   var tt = default(Cursor)
   if visibleRoutine(c, fn, tt):
@@ -1560,13 +1514,10 @@ proc callFootprint(c: var FirContext; fn: Cursor; viaArgs: var bool): set[RootCl
       skip pragmas # return type
       if calleeEffect(tt, pragmas) != HasSideEffect:
         var args = 0
-        var acc = default(AccessorInfo)
         if handedVarOrPointer(params, fn, args):
           viaArgs = true
-        elif args == 1 and (accessorOf(c, fn.symId, acc) or isKeyableCall(fn.symId)):
-          result = {}
         else:
-          result = {rcGlobal}
+          result = false
 
 proc isKeyableCall(fnSym: SymId): bool =
   ## May a call to `fnSym` stand for a location of its own?
@@ -1915,8 +1866,6 @@ proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): V
   var key = ""
   var steps = 0
   if locationKey(c, n, subst, root, key, steps, 0) and root != NoSymId:
-    if getVarId(c, root) == InvalidVarId:
-      return InvalidVarId # nothing derived from a variable without facts either
     result = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
     if steps > 0 and not c.prescanning and not c.declaredRange.hasKey(result):
       let m = argOf(c, n, subst)
@@ -2887,7 +2836,6 @@ proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
   var hi = zero()
   if staticRangeBounds(typ, lo, hi):
     let v = getVarId(c, sym)
-    if v == InvalidVarId: return
     c.facts.add query(VarId(0), v, -lo)  # lo <= v
     c.facts.add query(v, VarId(0), hi)   # v <= hi
     # Also as a *type* bound, which survives the widening a loop applies to the
@@ -4689,7 +4637,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   var mutatedRoots: seq[SymId] = @[]
   var viewRoots: seq[SymId] = @[]
   var mutatesUnknown = false
-  var reach: set[RootClass] = {} # what the `var` arguments reach unnamed
+  var reach = false # is a `var` argument a shared variable?
   while n.hasMore:
     if not fnType.hasMore:
       # All formal params consumed but args remain (e.g. varargs that were
@@ -4730,7 +4678,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     # judge by it rather than by the shape of the argument.
     if pk in {MutT, OutT}:
       let root = writtenRoot(c, n)
-      reach.incl unnamedReach(c, if isMut: n.childCursor else: n)
+      if isBarrierStore(c, if isMut: n.childCursor else: n): reach = true
       let argSym = extractSymId(n)
       if argSym != NoSymId:
         let argInfo = getLocalInfo(c.typeCache, argSym)
@@ -4825,9 +4773,10 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       call.stepped = stepLoc
       isStep = true
   var viaArgs = false
-  let footprint = callFootprint(c, callCursor, viaArgs)
-  if viaArgs: forgetClasses(c, footprint + reach, mutatedRoots)
-  else: forgetClasses(c, footprint + reach)
+  let barrier = isBarrierCall(c, callCursor, viaArgs)
+  if barrier or reach:
+    if viaArgs: forgetShared(c, mutatedRoots)
+    else: forgetShared(c)
   for root in mutatedRoots:
     if isStep and getVarId(c, root) == stepLoc:
       # the step above described this write exactly
@@ -5093,7 +5042,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
   checkEscapingBorrow(c, valueStart, locRootSym(c, n))
   # A write through a pointer, or to a global or a borrowed parameter, may
   # change what other names refer to; once the destination itself is judged.
-  let reach = unnamedReach(c, n)
+  let reach = isBarrierStore(c, n)
   let namedRoot = locRootSym(c, n)
 
   # Now handle the destination (a Symbol; the NJVL `(v symId version)` form
@@ -5169,7 +5118,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     seedRangeFacts c, symId, expected
     # ... and whatever the callee promised about what it just returned.
     assumeEnsures c, valueStart, getVarId(c, symId), call.olds, symId
-    forgetClasses(c, reach, [namedRoot])
+    if reach: forgetShared(c, [namedRoot])
 
     skip n
   else:
@@ -5200,7 +5149,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
       if rightHandSide(c, valueForFact, fact, call) and fact.a != fact.b:
         addAsgnFact c, fact
     traverseExpr c, n, call
-    forgetClasses(c, reach, [namedRoot])
+    if reach: forgetShared(c, [namedRoot])
 
 proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## Handle `(asgn dest value)`. The value is the second operand but the first
@@ -5344,9 +5293,9 @@ type
       ## `Positive`-returning call is exactly that — declared inside the body,
       ## so no fact about it exists yet when this scan runs.
     opaque: bool          ## a write we could not attribute to any location
-    kills: set[RootClass] ## the classes the body may write without naming
-                          ## them (`forgetClasses`)
-    killRoots: HashSet[SymId] ## and the single variables it may so write
+    barriers: int         ## how many barriers the body has (`forgetShared`) ...
+    namedBy: Table[SymId, int] ## ... and how many of them name each variable;
+                          ## one that all of them name keeps its facts
     preserved: seq[VarId] ## derived locations the call just scanned promises
                           ## to leave alone (`s.len == old(s.len)`); holds
                           ## for the `(unknown …)` that follows it too
@@ -5494,13 +5443,18 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
     mayWrap = true
   result = directionOf(v.exprKind == SubX, k)
 
+proc noteBarrier(w: var LoopWrites; named: openArray[SymId]) =
+  inc w.barriers
+  for r in named:
+    if r != NoSymId: w.namedBy.mgetOrPut(r, 0) += 1
+
+proc sparedByBarriers(w: LoopWrites): seq[SymId] =
+  result = @[]
+  for r, n in w.namedBy:
+    if n == w.barriers: result.add r
+
 proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
-  w.kills.incl prescanReach(c, dest)
-  # a write to a borrowed parameter may change every other one
-  let borrowed = writtenRoot(c, dest)
-  if borrowed != NoSymId and rootClass(c, borrowed) == rcBorrowed:
-    for p in c.borrowedParams:
-      if p != borrowed: w.killRoots.incl p
+  if isBarrierStorePrescan(c, dest): noteBarrier(w, [writtenRoot(c, dest)])
   if isElementWrite(dest): return
   let root = writtenRoot(c, dest)
   if root == NoSymId:
@@ -5599,7 +5553,8 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     var fnOf = n
     fnOf = sub(fnOf)
     var viaArgs = false
-    let footprint = callFootprint(c, fnOf, viaArgs)
+    let barrier = isBarrierCall(c, fnOf, viaArgs)
+    var reach = false
     var named: seq[SymId] = @[]
     var params = default(Cursor)
     let fnSym = extractSymId(fnOf)
@@ -5635,7 +5590,7 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
           for i in 0 ..< c.derivedRoots.len:
             if isViewLen(c, i, viewRoot): w.preserved.add VarId(FirstDerivedVarId - i)
       if writes:
-        w.kills.incl prescanReach(c, r)
+        if isBarrierStorePrescan(c, r): reach = true
         named.add writtenRoot(c, r)
       if writes and sym != NoSymId:
         let info = getLocalInfo(c.typeCache, sym)
@@ -5643,13 +5598,10 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
           noteWrite(w, getVarId(c, sym), ivUnknown)
           noteDerivedOf(c, w, sym, InvalidVarId)
       skip r
-    if viaArgs:
-      # the borrowed parameters it is not handed by name
-      w.kills.incl footprint - {rcBorrowed}
-      for p in c.borrowedParams:
-        if p notin named: w.killRoots.incl p
-    else:
-      w.kills.incl footprint
+    if barrier or reach:
+      # a `func` writes the variables it is handed as `var` by name
+      if viaArgs: noteBarrier(w, named)
+      else: noteBarrier(w, [])
   elif isLocal(n.symKind):
     # A local declared inside the body is rebound every iteration.
     w.preserved.setLen 0
@@ -5657,12 +5609,11 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     if local.name.kind == SymbolDef:
       # it dies at the end of the iteration at the latest
       if n.symKind in {VarY, LetY} and hasDestroyHook(c.lifter[], local.typ):
-        w.kills.incl {rcBorrowed, rcGlobal}
+        noteBarrier(w, [])
       var lo = zero()
       var hi = zero()
       if staticRangeBounds(local.typ, lo, hi) and lo >= zero():
-        let v = getVarId(c, local.name.symId)
-        if v != InvalidVarId: w.nonNeg.incl v
+        w.nonNeg.incl getVarId(c, local.name.symId)
       noteWrite(w, getVarId(c, local.name.symId), ivUnknown)
       noteDerivedOf(c, w, local.name.symId, InvalidVarId)
   w.pendingStep = InvalidVarId
@@ -5730,7 +5681,7 @@ proc revokeProofs(c: var FirContext; mark: int) =
     of ProvenCall: c.provenCalls.excl pos
   c.proofLog.setLen mark
 
-proc analyseLoopBody(c: var FirContext; n: var Cursor; iterKills: set[RootClass] = {}) =
+proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false) =
   ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
   ## via `(jmp loopExit)` and never falls through.
   ##
@@ -5789,7 +5740,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterKills: set[RootClass]
     block:
       var w = LoopWrites(kinds: initTable[VarId, IvKind](),
                          nonNeg: initHashSet[VarId](), opaque: false,
-                         kills: iterKills, killRoots: initHashSet[SymId](),
+                         namedBy: initTable[SymId, int](),
                          assumed: initHashSet[VarId](),
                          pendingStep: InvalidVarId)
       var scan = n
@@ -5799,8 +5750,8 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterKills: set[RootClass]
       for v in demoted:
         if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
       # what the body writes unnamed it writes before the next iteration too
-      forgetClasses(c, w.kills)
-      forgetRoots(c, w.killRoots)
+      if iterBarrier: noteBarrier(w, [])
+      if w.barriers > 0: forgetShared(c, sparedByBarriers(w))
       restrictFactsToLoopInvariants(c, w)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
@@ -5918,13 +5869,12 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
     let firstArg = forIterFirstArg(c, n)
     # the iterator runs again before every iteration
     var viaArgs = false
-    let iterKills = if n.exprKind in CallKinds: callFootprint(c, n.childCursor, viaArgs)
-                    else: {rcBorrowed, rcGlobal}
+    let iterBarrier = n.exprKind notin CallKinds or isBarrierCall(c, n.childCursor, viaArgs)
     traverseExpr c, n, call
     var binders: seq[SymId] = @[]
     declareForVars c, n, firstArg, binders
     skip n # the loop variables
-    analyseLoopBody c, n, iterKills
+    analyseLoopBody c, n, iterBarrier
     # The iterator running out is an exit no `jmp` stands for, so no `kill`
     # either: the loop variables die with the loop, and their borrows with them.
     for b in binders: endBorrow c, b
@@ -5953,7 +5903,7 @@ proc traverseJmp(c: var FirContext; n: var Cursor) =
 proc killsAtScopeExit(c: var FirContext) =
   ## `return` and `raise` leave every scope: the live locals with a destructor
   ## are destroyed, which is a call to a `proc`.
-  if c.dtorLocals.len > 0: forgetClasses(c, {rcBorrowed, rcGlobal})
+  if c.dtorLocals.len > 0: forgetShared(c)
 
 proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `(ret .X)` — primitive return, bound by the proc root. A `return value`
@@ -6312,7 +6262,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
         assumeCond(c, cond, rd)
 
 proc isBorrowedParam(c: var FirContext; param: Local; passedByRef: bool): bool =
-  ## Does the parameter name the caller's storage (class `rcBorrowed`)? A
+  ## Does the parameter name the caller's storage, which makes it shared? A
   ## `var`, `out` or `lent` one does, and so does one the code generator
   ## passes by reference. A view (`openArray`, `var openArray`, `varargs`)
   ## is the callee's own value: only its length can carry a fact.
@@ -6542,7 +6492,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
         if s in c.dtorLocals:
           destroys = true
           c.dtorLocals.excl s
-      if destroys: forgetClasses(c, {rcBorrowed, rcGlobal})
+      if destroys: forgetShared(c)
       # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
         let s = extractSymId(n)

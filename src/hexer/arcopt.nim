@@ -35,12 +35,12 @@ type
     callPos: int
     target: Cursor
 
-  BasicBlock = object
+  BasicBlock = ref object
     wasMovedLocs: seq[WasMovedLoc]
     kind: BasicBlockKind
     hasReturn: bool
     label: SymId
-    parent: ptr BasicBlock
+    parent: BasicBlock
     symToDel: seq[Cursor]
 
   Con = object
@@ -98,27 +98,27 @@ proc sameLocation(a, b: Cursor): bool {.inline.} =
   var b = peelComparableArg(b)
   result = sameTrees(a, b)
 
-proc nestedBlock(parent: var BasicBlock; kind = BbOther): BasicBlock =
+proc nestedBlock(parent: BasicBlock; kind = BbOther): BasicBlock =
   BasicBlock(
     wasMovedLocs: @[],
     kind: kind,
     hasReturn: false,
     label: NoLabel,
-    parent: addr(parent),
+    parent: parent,
     symToDel: @[]
   )
 
-proc returnStmt(b: var BasicBlock) =
+proc returnStmt(b: BasicBlock) =
   b.hasReturn = true
-  var it = addr(b)
+  var it = b
   while it != nil:
     it.wasMovedLocs.setLen 0
     it = it.parent
 
-proc joinStmt(b: var BasicBlock) =
+proc joinStmt(b: BasicBlock) =
   ## A label that some `jmp` targets is a join: the other predecessors need
   ## not have run the pending `=wasMoved` calls, so nothing survives it.
-  var it = addr(b)
+  var it = b
   while it != nil:
     it.wasMovedLocs.setLen 0
     it = it.parent
@@ -146,7 +146,7 @@ proc collectJmpTargets(targets: var IntSet; n: var Cursor) =
   else:
     inc n
 
-proc invalidateWasMoved(c: var BasicBlock; x: Cursor) =
+proc invalidateWasMoved(c: BasicBlock; x: Cursor) =
   var i = 0
   while i < c.wasMovedLocs.len:
     if sameLocation(c.wasMovedLocs[i].target, x):
@@ -154,14 +154,14 @@ proc invalidateWasMoved(c: var BasicBlock; x: Cursor) =
     else:
       inc i
 
-proc mergeBasicBlockInfo(parent: var BasicBlock; this: BasicBlock) {.inline.} =
+proc mergeBasicBlockInfo(parent: BasicBlock; this: BasicBlock) {.inline.} =
   if this.hasReturn:
     parent.wasMovedLocs.setLen 0
     parent.hasReturn = true
   elif this.symToDel.len > 0:
     parent.symToDel = this.symToDel
-    for i in this.symToDel:
-      invalidateWasMoved(parent, i)
+    for i in 0 ..< this.symToDel.len:
+      invalidateWasMoved(parent, this.symToDel[i])
 
 proc wasMovedTarget(matches: var IntSet; branch: seq[WasMovedLoc];
                     moveTarget: Cursor): bool =
@@ -210,7 +210,7 @@ proc getCallInfo(n: Cursor; attachedOp: var AttachedOp; arg: var Cursor): bool =
   arg = it
   result = true
 
-proc wasMovedDestroyPair(c: var Con; b: var BasicBlock; d, darg: Cursor) =
+proc wasMovedDestroyPair(c: var Con; b: BasicBlock; d, darg: Cursor) =
   var i = 0
   while i < b.wasMovedLocs.len:
     if sameLocation(b.wasMovedLocs[i].target, darg):
@@ -221,9 +221,9 @@ proc wasMovedDestroyPair(c: var Con; b: var BasicBlock; d, darg: Cursor) =
     else:
       inc i
 
-proc analyse(c: var Con; b: var BasicBlock; n: var Cursor)
+proc analyse(c: var Con; b: BasicBlock; n: var Cursor)
 
-proc analyseChildren(c: var Con; b: var BasicBlock; n: var Cursor) =
+proc analyseChildren(c: var Con; b: BasicBlock; n: var Cursor) =
   assert n.isTagLit
   n.into:
     while n.hasMore and n.kind != EofToken:
@@ -232,7 +232,7 @@ proc analyseChildren(c: var Con; b: var BasicBlock; n: var Cursor) =
       if n.hasMore and n.kind != EofToken and cursorToPosition(c.source[], n) == before:
         skip n
 
-proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
+proc analyse(c: var Con; b: BasicBlock; n: var Cursor) =
   case n.kind
   of Symbol:
     b.invalidateWasMoved n

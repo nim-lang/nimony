@@ -68,7 +68,7 @@ type
     destroyProc: SymId
     arg: SymId
 
-  Scope = object
+  Scope = ref object
     label: SymId
     labels: seq[SymId]
       ## The `(lab :L)`s declared directly in this scope's statement list. A
@@ -79,7 +79,7 @@ type
     isTopLevel: bool
     destroyOps: seq[DestructorOp]
     info: NifLineInfo
-    parent: ptr Scope
+    parent: Scope
 
   Context = object
     currentScope: Scope
@@ -139,10 +139,10 @@ proc labelIdOf(n: Cursor): LabelId =
   assert n.kind in {Symbol, SymbolDef}, "lab/jmp operand is not a symbol"
   LabelId(uint32(n.symId))
 
-proc createNestedScope(kind: ScopeKind; parent: var Scope; info: NifLineInfo;
+proc createNestedScope(kind: ScopeKind; parent: Scope; info: NifLineInfo;
                        label = NoLabel): Scope =
   Scope(label: label,
-    kind: kind, destroyOps: @[], info: info, parent: addr(parent),
+    kind: kind, destroyOps: @[], info: info, parent: parent,
     isTopLevel: false)
 
 proc createEntryScope(info: NifLineInfo): Scope =
@@ -163,7 +163,7 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId) =
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor)
 
-proc leaveScope(c: var Context; sptr: ptr Scope) =
+proc leaveScope(c: var Context; sptr: Scope) =
   ## Walk-out of one scope: run its destructors, innermost declaration first.
   ##
   ## This used to also replicate the scope's `finally` body, with a `ScopeKind`
@@ -173,6 +173,10 @@ proc leaveScope(c: var Context; sptr: ptr Scope) =
   ## `jmp`/`lab`/`ret`, which this walk already handled.
   for i in countdown(sptr.destroyOps.high, 0):
     callDestroy c, sptr.destroyOps[i].destroyProc, sptr.destroyOps[i].arg
+
+proc leaveCurrentScope(c: var Context) =
+  let s = c.currentScope
+  leaveScope(c, s)
 
 proc trReturn(c: var Context; n: var Cursor) =
   if c.terminates:
@@ -186,7 +190,7 @@ proc trReturn(c: var Context; n: var Cursor) =
        `(ret result)`. ]#
     takeTree c.dest, n
     return
-  var it = addr(c.currentScope)
+  var it = c.currentScope
   while it != nil:
     leaveScope(c, it)
     it = it.parent
@@ -202,7 +206,7 @@ proc trRaise(c: var Context; n: var Cursor) =
     # unreachable: an earlier jump already left these scopes
     takeTree c.dest, n
     return
-  var it = addr(c.currentScope)
+  var it = c.currentScope
   while it != nil:
     leaveScope(c, it)
     it = it.parent
@@ -244,7 +248,7 @@ proc trScope(c: var Context; body: var Cursor) =
        paired `=wasMoved` together with the first, genuinely dead,
        destroy). ]#
     if not c.terminates:
-      leaveScope(c, addr(c.currentScope))
+      leaveCurrentScope(c)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   if not params.isTagLit: return
@@ -294,11 +298,11 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   c.dest.addParRi()
 
 proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
-  var oldScope = move c.currentScope
+  let oldScope = c.currentScope
   c.currentScope = createNestedScope(kind, oldScope, body.info, NoLabel)
   c.currentScope.labels = collectLabels(body)
   trScope c, body
-  swap c.currentScope, oldScope
+  c.currentScope = oldScope
 
 proc trWhile(c: var Context; n: var Cursor) =
   #[ while prop(createsObj())
@@ -328,7 +332,7 @@ proc trWhile(c: var Context; n: var Cursor) =
 proc trBlock(c: var Context; n: var Cursor) =
   let label = n.childCursor
   let labelId = if label.kind == SymbolDef: label.symId else: c.anonBlock
-  var oldScope = move c.currentScope
+  let oldScope = c.currentScope
   c.currentScope = createNestedScope(WhileOrBlock, oldScope, n.info, labelId)
   copyInto(c.dest, n):
     takeTree c.dest, n
@@ -340,7 +344,7 @@ proc trBlock(c: var Context; n: var Cursor) =
     trScope c, n
     c.flow.closeBranch()
     c.flow.closeBranches()
-    swap c.currentScope, oldScope
+    c.currentScope = oldScope
 
 proc trLoop(c: var Context; n: var Cursor) =
   ## Final IR `(loop body)`. It is only left by `jmp`s to a label after it, so
@@ -351,10 +355,10 @@ proc trLoop(c: var Context; n: var Cursor) =
     c.flow.clearAll()
     c.flow.openBranches()
     c.flow.openBranch()
-    var oldScope = move c.currentScope
+    let oldScope = c.currentScope
     c.currentScope = createNestedScope(Loop, oldScope, n.info)
     tr c, n
-    swap c.currentScope, oldScope
+    c.currentScope = oldScope
     c.flow.closeBranch()
     c.flow.closeBranches()
     c.flow.clearAll()
@@ -364,7 +368,7 @@ proc trContinue(c: var Context; n: var Cursor) =
   ## The loop's back-edge. Like a `break`, it runs the destructors of every
   ## scope up to the loop first; after it they would be dead code.
   if not c.terminates:
-    var it = addr(c.currentScope)
+    var it = c.currentScope
     while it != nil and it.kind != Loop:
       leaveScope(c, it)
       it = it.parent
@@ -472,7 +476,7 @@ proc tr(c: var Context; n: var Cursor) =
       # bodies are no longer nested inside `(elif ... (stmts ...))`, they are
       # `(scope ...)` siblings in the enclosing statement list, and a
       # condition operand's temporaries get a `(scope …)` of their own.
-      var oldScope = move c.currentScope
+      let oldScope = c.currentScope
       c.currentScope = createNestedScope(Other, oldScope, n.info)
       c.currentScope.labels = collectLabels(n)
       c.dest.addParLe(n.cursorTagId, n.info)
@@ -480,9 +484,9 @@ proc tr(c: var Context; n: var Cursor) =
         while n.hasMore:
           tr c, n
         if not c.terminates:
-          leaveScope(c, addr(c.currentScope))
+          leaveCurrentScope(c)
       c.dest.addParRi()
-      swap c.currentScope, oldScope
+      c.currentScope = oldScope
     of JmpS:
       # A structural forward transfer: run the destructors of every scope it
       # leaves, then jump. Two passes — the first only looks for the scope
@@ -493,11 +497,11 @@ proc tr(c: var Context; n: var Cursor) =
       let sym = n.childCursor
       let target = labelIdOf(sym)
       let targetSym = sym.symId
-      var probe = addr(c.currentScope)
+      var probe = c.currentScope
       while probe != nil and targetSym notin probe.labels:
         probe = probe.parent
       if probe != nil:
-        var it = addr(c.currentScope)
+        var it = c.currentScope
         while it != nil and targetSym notin it.labels:
           leaveScope(c, it)
           it = it.parent
@@ -572,7 +576,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     while n.hasMore:
       tr(c, n)
 
-    leaveScope c, addr(c.currentScope)
+    leaveCurrentScope(c)
   # The root `(stmts` is deliberately left OPEN: the pipeline appends the
   # generated hooks and closes it. An emitted close cannot be rolled back
   # under `-d:virtualParRi` (it seals the tag and is elided), so the old

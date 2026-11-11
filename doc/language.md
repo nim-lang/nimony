@@ -2207,9 +2207,6 @@ or a `for` loop variable is allowed:
   echo cast[ptr string](t2)[]
   ```
 
-A `var` parameter may refer to the caller's stack. Writing through its address
-after the call has returned is undefined (see [Aliasing](#aliasing)).
-
 
 ## Procs
 
@@ -3265,81 +3262,63 @@ claim with `{.assert.}`.
 
 ### Aliasing
 
-The prover remembers what it learned about a variable until the variable might
-change. A local changes only when you write it by name, or pass it as `var`. A
-global can change in any call. A `var` parameter can change in a call to a
-`proc`, in a call to a `func` that is handed a `var` or pointer argument,
-through a `ref`, and when another `var` parameter is written. A variable whose address you take, or that a closure
-captures, is never remembered. To keep a fact, copy the value into a local.
+The prover reasons about values. A variable stands for a value only while
+nothing can change it except a write that names it:
+
+- An **owned** variable is a local, `result`, or a parameter passed by copy,
+  whose address is not taken and that no nested routine names. What is known
+  about it holds until a write that names it. Passing it as `var` is such a
+  write; afterwards what the callee's `ensures` states about it holds.
+- Every other variable is **shared**: a `var`, `out` or `lent` parameter, a
+  parameter the compiler passes by reference, a global, a variable whose
+  address is taken, a local that a nested routine names. What is known about
+  it holds until the next *barrier* that does not name it.
+
+A **barrier** is anything that can write a location without naming it:
+
+- a call to a `proc`, a method or a routine value;
+- a call to a `func` that is handed a `var` or a pointer argument;
+- a store whose target is not an owned variable: through a `ptr`, a `ref` or
+  a view, to a global, or to a `var` parameter;
+- leaving the scope of a local whose type has a destructor.
+
+A `func` that is handed neither a `var` nor a pointer writes nothing its
+caller can see, so it is no barrier; `len` and `[]` are such calls. A barrier
+spares the variable it names: `s[i] = x` and `s.add x` are writes to `s`,
+which the prover accounts for, and barriers for every other shared variable.
 
 A fact is only ever about a variable, its fields, and pure accessors of them
 such as `len`; never about what lies behind a pointer or a `ref`, and never
-about an element. Each variable is in one of four classes:
-
-| class | which variables | facts last until |
-|---|---|---|
-| private | locals, `result`, `sink` parameters, parameters passed by copy, the length of an `openArray`/`varargs` parameter | a write that names it |
-| borrowed | `var`, `out` and `lent` parameters, and parameters the compiler passes by reference (a large object, `{.byref.}`) | a write that names it; a call to a `proc`, a method or a routine value; a call to a `func` with a `var` or pointer argument; a write through a `ref`; a write to a global; a write to another borrowed parameter |
-| global | globals and threadvars | a write that names it; any call except a pure accessor such as `len`; a write through a pointer, a `ref` or a view; a write to a borrowed parameter |
-| none | a variable whose address the routine takes (`addr x`, also inside `uncheckedBorrow`), and a local a nested routine names | no facts at all |
-
-An indexer declares with `{.semantics: "elementAt".}` that its `var T` result
-is an element in the buffer its first argument points to, as `[]` does for
-`seq` and `openArray`. `addr s[i]` through such an indexer does not point into
-`s`'s own storage, so `s` keeps its facts. A
-`func` writes no global, but through a `var` argument it may write behind a
-`ref` (see [Func](#func)), which is where a borrowed parameter may lie. Leaving
-the scope of a local whose type has a destructor, also through `return`,
-`break` or `raise`, runs that destructor, which counts as a call to a `proc`.
+about an element.
 
 ```nim
 var gLen = 0
 proc f(s: seq[int]) =
   if gLen < s.len:
-    log("x")          # a call: `gLen` may have changed
+    log("x")          # a barrier: `gLen` is shared
     echo s[gLen]      # checked at run time
-  let n = gLen        # a local copy keeps the fact
+  let n = gLen        # an owned copy keeps the fact
   if n < s.len:
     log("x")
     echo s[n]         # proven
 ```
 
-Passing a local as `var` is a write by name: what the callee's `ensures`
-states about it holds afterwards. That rests on the callee not writing the
-argument once it has returned (rule 2 below): a routine that keeps a pointer
-for later writes takes a `ptr T` parameter, so that the caller writes `addr x`
-and the prover keeps no facts about `x`.
+To keep a fact about a shared variable across a barrier, copy the value into
+a local.
 
-The prover assumes the following; breaking any of them is **undefined
-behaviour**, and the compiler may have removed a check because of a fact that
-no longer holds:
-
-1. *Overlap through pointers.* A `var` argument must not overlap a location
-   the callee writes through a `ptr` or a `cast`. Two `var` arguments may
-   overlap (`g(x, p[])` with `p = addr x`, or in a `lenientAliasing` module):
-   a write to one drops what is known of the other.
-2. *A `var` argument changes only during the call.* A routine that keeps the
-   address of its `var`/`out` parameter, or of a field of it, must not write
-   through it once it has returned, and neither may anything it handed the
-   address to. Pointers to the *elements* of a container the parameter holds
-   (`addr s[0]`, `toCString`) are exempt.
-3. *Non-`var` parameters are read-only.* Writing a non-`var` parameter through
-   `addr` or a `cast` is undefined, even when it is passed by copy.
-4. *Distinct globals are distinct storage.* Two `importc` globals must not name
-   one C variable. An `importc` routine is taken at its declared signature: an
-   `importc` `func` writes only its `var` parameters and the targets of the
-   pointers it is handed.
-5. *`{.cast(noSideEffect).}`* promises that the writes inside are invisible to
-   the caller, except through `var` parameters and pointer arguments.
-6. *Data races.* Under `{.cast(assumeSync).}`, a global written by another
-   thread while a routine reasons about it is undefined.
+A `var` or `out` parameter is borrowed for the call and no longer. Its
+location may leave the routine as the routine's `var T` result (see
+[Var return type](#var-return-type)): the caller then knows that a write
+through the result is a write to the first argument. The prover does not
+follow pointers: `addr` is unsafe, and a routine that keeps the address of its
+`var` parameter past the call is as unsafe as one that keeps the address of a
+local.
 
 `{.feature: "lenientContracts".}` switches these rules off for a module: the
-prover keeps what it knows about every variable until a write that names it,
-also about a variable whose address is taken. The module's author vouches that no write the prover cannot see
-changes a variable a proof depends on; where one does, the behaviour is
-undefined as above. It is meant for code that is not written in this style
-and cannot be changed, such as a module shared with Nim 2.
+prover keeps what it knows about every variable until a write that names it.
+That is a module-wide `{.assume.}`: the author's word that no barrier changes
+a variable a proof depends on. It is meant for code that is not written in
+this style and cannot be changed, such as a module shared with Nim 2.
 
 ## Lifetime-tracking hooks
 
