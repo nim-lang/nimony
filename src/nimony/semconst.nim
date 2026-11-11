@@ -212,16 +212,10 @@ proc evalConstIntExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
   let value = beginRead(valueBuf)
   result = getConstOrdinalValue(value)
   if result.isNaN:
-    # The error takes the place of the semchecked expression: one node in,
-    # one node out, or the enclosing node grows a child its readers do not expect.
-    # An expression that already holds an error is kept: it is one node and
-    # carries the precise error.
     if value.isTagLit and value.cursorTagId == nifpools.ErrT:
-      if not hasErrorSince(dest, start):
-        dest.shrink start
-        dest.add valueBuf
+      dest.add valueBuf
     else:
-      combineErr c, dest, start, info, "expected constant integer value but got: " & asNimCode(value)
+      buildErr c, dest, info, "expected constant integer value but got: " & asNimCode(value)
   else:
     foldIntoDest dest, start, expected, value
 
@@ -232,15 +226,9 @@ proc evalConstStrExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
   let value = beginRead(valueBuf)
   result = getConstStringValue(value)
   if result == StrId(0):
-    # The error takes the place of the semchecked expression: one node in,
-    # one node out, or the enclosing node grows a child its readers do not expect.
-    # An expression that already holds an error is kept: it is one node and
-    # carries the precise error.
     if value.isTagLit and value.cursorTagId == nifpools.ErrT:
-      if not hasErrorSince(dest, start):
-        dest.shrink start
-        dest.add valueBuf
+      dest.add valueBuf
     else:
-      combineErr c, dest, start, info, "expected constant string value but got: " & asNimCode(value)
+      buildErr c, dest, info, "expected constant string value but got: " & asNimCode(value)
   else:
     foldIntoDest dest, start, expected, value
