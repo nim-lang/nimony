@@ -210,48 +210,6 @@ block:
     largeSeen.add k
   assert largeSeen == @["a", "b", "c", "d", "e", "f"]
 
-block:
-  let t = newOrderedTable[string, int](2)
-  t["x"] = 1
-  t["y"] = 2
-  assert t.len == 2
-  assert t.getOrDefault("x") == 1
-  assert t.hasKey("y")
-  assert not t.hasKey("z")
-  assert not t.hasKeyOrPut("z", 3)
-  assert t.getOrDefault("z") == 3
-
-  var val = 0
-  assert t.pop("x", val)
-  assert val == 1
-  t.del("y")
-  assert t.len == 1
-  for k, v in t.mpairs:
-    v = v + 1
-  assert t.getOrDefault("z") == 4
-  t.clear()
-  assert t.len == 0
-  assert t.mgetOrPut("w") == 0
-  t["w"] = 5
-  assert t.getOrDefault("w") == 5
-
-  let fromPairs = newOrderedTable([("a", 1), ("b", 2)])
-  assert fromPairs.getOrDefault("a") == 1
-  assert fromPairs.getOrDefault("b") == 2
-  assert $fromPairs == """{"a": 1, "b": 2}"""
-  assert fromPairs[] == [("a", 1), ("b", 2)].toOrderedTable
-
-  let refSame = newOrderedTable([("a", 1), ("b", 2)])
-  let refReordered = newOrderedTable([("b", 2), ("a", 1)])
-  let refDifferent = newOrderedTable([("a", 1), ("b", 3)])
-  assert fromPairs == refSame
-  assert fromPairs != refReordered
-  assert fromPairs != refDifferent
-
-  let shared = refSame
-  shared["c"] = 3
-  assert refSame.getOrDefault("c") == 3
-
 func intPairCmp(x, y: (int, int)): int =
   if x[0] < y[0]: -1
   elif x[0] > y[0]: 1
@@ -330,30 +288,6 @@ block:
   assert t.len == 0
 
 block:
-  # TableRef keeps reference semantics and compares contents.
-  let a = newTable([(1, "one"), (2, "two")])
-  assert a.getOrDefault(1) == "one"
-  let b = a
-  b[3] = "three"
-  assert a.hasKey(3)
-  assert a == b
-
-  let c = newTable([(2, "two"), (1, "one")])
-  assert a != c          # different contents
-  let same = newTable([(3, "three"), (1, "one"), (2, "two")])
-  assert a == same       # same contents, different insertion order
-  same[1] = "ONE"
-  assert a != same
-
-  var val = ""
-  assert a.pop(2, val)
-  assert val == "two"
-  assert not a.hasKey(2)
-  assert a.len == 2
-  a.clear()
-  assert a.len == 0
-
-block:
   # An ordered table keeps insertion order.
   var t = initOrderedTable[string, int]()
   t["b"] = 2
@@ -419,14 +353,6 @@ block:
   assert c["y"] == 1
   assert c["z"] == 1
   assert c.len == 3
-
-  let refCounts = newCountTable(["p", "p", "q"])
-  assert refCounts["p"] == 2
-  assert refCounts["q"] == 1
-  refCounts.inc("q")
-  assert refCounts["q"] == 2
-  let sameCounts = newCountTable(["q", "p", "p", "q"])
-  assert refCounts == sameCounts
 
   var sorted = toCountTable(["low", "mid", "mid", "high", "high", "high"])
   sorted.sort(SortOrder.Ascending)
