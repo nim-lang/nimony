@@ -169,8 +169,8 @@ type
     unanalysed: HashSet[SymId]         # variables of the routine whose address
                                        # is taken or that a nested routine
                                        # names (`collectUnanalysed`): shared
-    borrowedParams: HashSet[SymId]     # its parameters that name the caller's
-                                       # storage: shared
+    borrowedParams: HashSet[SymId]     # its `var`, `out` and `lent`
+                                       # parameters: shared
     dtorLocals: HashSet[SymId]         # its live locals whose type has a
                                        # destructor: leaving their scope runs
                                        # a `proc` (`killsAtScopeExit`)
@@ -6261,20 +6261,17 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
           buildErr c, info, "cannot prove assertion: " & asNimCode(cond)
         assumeCond(c, cond, rd)
 
-proc isBorrowedParam(c: var FirContext; param: Local; passedByRef: bool): bool =
+proc isBorrowedParam(c: var FirContext; param: Local): bool =
   ## Does the parameter name the caller's storage, which makes it shared? A
-  ## `var`, `out` or `lent` one does, and so does one the code generator
-  ## passes by reference. A view (`openArray`, `var openArray`, `varargs`)
-  ## is the callee's own value: only its length can carry a fact.
+  ## `var`, `out` or `lent` one does. Every other parameter is a value the
+  ## routine cannot see change, however the code generator passes it. A view
+  ## (`openArray`, `var openArray`, `varargs`) is the callee's own value too:
+  ## only its length can carry a fact.
   let t = param.typ
   if t.typeKind in {MutT, OutT}:
     result = not isVarOpenArray(c, t)
-  elif t.typeKind == LentT:
-    result = true
-  elif t.typeKind in {SinkT, VarargsT} or isViewType(t):
-    result = false
   else:
-    result = passedByRef or passByConstRef(t, param.pragmas, c.bits div 8)
+    result = t.typeKind == LentT
 
 proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   var call = freshCall()
@@ -6341,14 +6338,13 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
       isGeneric = n.substructureKind == TypevarsU
     elif i == ParamsPos:
       if n.isTagLit:
-        let byRefFirst = firstParamPassedByRef(n)
         var p = n
         p = sub(p) # peek only, never left
         var isFirst = true
         while p.hasMore:
           let r = takeLocal(p, SkipFinalParRi)
           if not isFirst: c.laterParams.incl r.name.symId
-          if isBorrowedParam(c, r, isFirst and byRefFirst):
+          if isBorrowedParam(c, r):
             c.borrowedParams.incl r.name.symId
           isFirst = false
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)

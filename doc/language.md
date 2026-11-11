@@ -3265,14 +3265,19 @@ claim with `{.assert.}`.
 The prover reasons about values. A variable stands for a value only while
 nothing can change it except a write that names it:
 
-- An **owned** variable is a local, `result`, or a parameter passed by copy,
-  whose address is not taken and that no nested routine names. What is known
-  about it holds until a write that names it. Passing it as `var` is such a
-  write; afterwards what the callee's `ensures` states about it holds.
+- An **owned** variable is a local, `result`, or a parameter that is not
+  `var`, `out` or `lent`, whose address is not taken and that no nested
+  routine names. What is known about it holds until a write that names it.
+  Passing it as `var` is such a write; afterwards what the callee's `ensures`
+  states about it holds.
 - Every other variable is **shared**: a `var`, `out` or `lent` parameter, a
-  parameter the compiler passes by reference, a global, a variable whose
-  address is taken, a local that a nested routine names. What is known about
-  it holds until the next *barrier* that does not name it.
+  global, a variable whose address is taken, a local that a nested routine
+  names. What is known about it holds until the next *barrier* that does not
+  name it.
+
+A parameter that is not `var`, `out` or `lent` is read-only: the prover
+assumes it does not change while the routine runs, whether the compiler
+passes it by copy or by reference.
 
 A **barrier** is anything that can write a location without naming it:
 
