@@ -721,9 +721,11 @@ proc joinIdents*(p: var Parser; m: Mark) =
 
 proc inSemiStmtList*(p: Parser): bool {.inline.} =
   ## `parseStmt`'s `if p.inSemiStmtList > 0: result = simpleStmt(p)`: inside
-  ## a parenthesised statement list a one-line body is the bare statement,
-  ## not a `stmts` -- `(if a: b else: c)` is `(elif a b)`. The counter is not
-  ## reset by what nests inside, so neither is this.
+  ## a parenthesised statement list a one-line body is one statement, and the
+  ## `;` after it belongs to the list. parser.nim returns it bare; here it is
+  ## a `stmts` like every other body -- `(if a: b else: c)` is
+  ## `(elif a (stmts b))`. The counter is not reset by what nests inside, so
+  ## neither is this.
   p.inSemiStmtList > 0
 
 proc stmtListExprLayout*(p: var Parser; m: Mark) =

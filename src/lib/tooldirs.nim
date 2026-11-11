@@ -30,8 +30,9 @@ proc parserTool*(): string =
   ## The Nim-to-NIF parser: `nifler2` once it is built, `nifler` before. The
   ## fallback is the bootstrap -- nifler2 is itself compiled by nimony, which
   ## must parse it with something. Both write byte-identical `.p.nif` and deps
-  ## files; nifler stays the tool for `config` and `--docs`, which nifler2
-  ## does not implement.
+  ## files, except for a one-line body inside parentheses, which only nifler2
+  ## wraps in `(stmts ...)`; nifler stays the tool for `config` and `--docs`,
+  ## which nifler2 does not implement.
   result = findTool("nifler2")
   if not fileExists(result):
     result = findTool("nifler")

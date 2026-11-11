@@ -1140,11 +1140,14 @@ literals, `callstrlit`, statement-list expressions and the section leak above.
 body is a `stmts` in nifler, a single statement included: `if c: x` is
 `(if (elif c (stmts x)))`. Both `stmt` alternatives carry the tag now.
 
-The exception is inside parentheses. `semiStmtList` increments
+Inside parentheses `parseStmt` differs. `semiStmtList` increments
 `p.inSemiStmtList`, and while it is non-zero `parseStmt`'s one-line branch
-returns the bare statement — `(if a: b else: c)` is `(elif a b)`. The counter
-is not reset by anything nested, so the runtime keeps the same counter and
-`stmt` has a third, predicated alternative. The list itself is an
+takes one statement, leaving the `;` to the list, and returns it bare. The
+counter is not reset by anything nested, so the runtime keeps the same counter
+and `stmt` has a third, predicated alternative. That alternative carries the
+tag too — `(if a: b else: c)` is `(elif a (stmts b))` — because the passes
+after the parser read a body as a statement list. nifler still writes
+parser.nim's bare statement there. The list itself is an
 `nkStmtListExpr`, written `(expr (stmts <all but the last>) <last>)`, which
 `stmtListExprLayout` builds.
 

@@ -1005,7 +1005,7 @@ grammar:
   # took the *next* proc into its body,
   # which also gives up the over-indentation diagnostic here. `module` keeps
   # it, and that is the one that matters for a bad dedent.
-  stmt "&(oneLinerStart) &inSemiStmtList notInd simpleStmt"
+  stmt "&(oneLinerStart) &inSemiStmtList notInd stmts[ simpleStmt ]"
   stmt "&(oneLinerStart) stmts[ NO_IND simpleStmt ^+ ';' ]"
   # GRAMMAR.TXT: `parseStmt` rejects the statements that need a block of their
   # own before it tries `simpleStmt` ("nestable statement requires
