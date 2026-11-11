@@ -1605,10 +1605,10 @@ func genBytecode*(a: Dfa; res: var Regex) =
     # The assertions come first: their edges lead to a superset of this state
     # (see `nfaToDfa`), so taking one loses nothing, while reading a byte first
     # would lose the ways that pass an assertion here.
-    for dest in allDests(a, src):
-      let (others, _) = allTransitions(a, src, dest)
-      for x in others:
-        if x.kind != reChar: genTest(res, x, dest)
+    for e in a.trans[src]:
+      if isAssertion(a.letters, e.letter):
+        genTest(res, a.letters.markers[e.letter - classCount(a.letters)],
+                int(e.dest))
     for dest in allDests(a, src):
       let (others, cs) = allTransitions(a, src, dest)
       for x in others: genCapture(res, x, dest)
