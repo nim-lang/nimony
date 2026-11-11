@@ -1176,9 +1176,21 @@ proc collectTargets(sb: var SubsetBuilder; a: Nfa; letters: Letters;
         sb.targets[c].incl int(e.dest)
   sort sb.letters, cmpInt
 
+func isAssertion(l: Letters; c: int): bool {.inline.} =
+  c >= classCount(l) and
+    l.markers[c - classCount(l)].kind in {reBegin, reEnd, reWordBoundary,
+                                          reWordBoundaryNot}
+
 proc nfaToDfa(a: Nfa; letters: Letters; classOf: array[256, int]): Dfa =
   ## Subset construction (see "Modern Compiler Implementation"). State `0` is
   ## the empty set, "no match"; an edge into it is not recorded at all.
+  ##
+  ## An assertion edge leads to its source's set *plus* the states past the
+  ## assertion. A matcher follows the first assertion that holds, and the
+  ## assertion reads nothing, so the ways that do not pass it must still be
+  ## open afterwards: in `a\ *\bb` the `\b` holds right after the `a`, where
+  ## the `\ *` has yet to read the space. An assertion that adds no state is
+  ## left out, so a matcher never loops on one at the same position.
   result = default(Dfa)
   let n = letterCount(letters)
   var sb = SubsetBuilder(states: @[initIntSet()],
@@ -1200,6 +1212,9 @@ proc nfaToDfa(a: Nfa; letters: Letters; classOf: array[256, int]): Dfa =
       sb.targets[c] = initIntSet()
       sb.hasLetter[c] = false
       closure(a, e, sb.stack)
+      if isAssertion(letters, c):
+        for l in sb.states[j]: e.incl l
+        if e.len == sb.states[j].len: continue # a superset of the same size
       var i = sb.known.getOrDefault(e, 0)
       if i == 0:
         i = sb.states.len
@@ -1587,13 +1602,21 @@ func genBytecode*(a: Dfa; res: var Regex) =
         if getRule(a, int(edge.dest)) != rule:
           gen res, opcAccept, rule
           break
+    # The assertions come first: their edges lead to a superset of this state
+    # (see `nfaToDfa`), so taking one loses nothing, while reading a byte first
+    # would lose the ways that pass an assertion here.
+    for dest in allDests(a, src):
+      let (others, _) = allTransitions(a, src, dest)
+      for x in others:
+        if x.kind != reChar: genTest(res, x, dest)
     for dest in allDests(a, src):
       let (others, cs) = allTransitions(a, src, dest)
       for x in others: genCapture(res, x, dest)
       if cs != {}:
         gen res, opcTestSet, genData(res, cs)
         gen res, opcTJmp, dest
-      for x in others: genTest(res, x, dest)
+      for x in others:
+        if x.kind == reChar: genTest(res, x, dest)
     if rule == 0: gen res, opcRet, 0
     else: gen res, opcRetAccept, rule
   # The jumps were emitted with state numbers; patch them to code offsets now
