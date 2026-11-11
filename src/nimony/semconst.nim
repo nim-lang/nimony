@@ -212,6 +212,8 @@ proc evalConstIntExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
   let value = beginRead(valueBuf)
   result = getConstOrdinalValue(value)
   if result.isNaN:
+    # the error takes the expression's place: one node in, one node out
+    dest.shrink start
     if value.isTagLit and value.cursorTagId == nifpools.ErrT:
       dest.add valueBuf
     else:
@@ -226,6 +228,8 @@ proc evalConstStrExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
   let value = beginRead(valueBuf)
   result = getConstStringValue(value)
   if result == StrId(0):
+    # the error takes the expression's place: one node in, one node out
+    dest.shrink start
     if value.isTagLit and value.cursorTagId == nifpools.ErrT:
       dest.add valueBuf
     else:
