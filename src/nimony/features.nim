@@ -12,7 +12,6 @@ type
     UntypedFeature
     CanRaiseFeature
     LenientConvertersFeature
-    EarlyMagicsFeature
     AutoClosuresFeature
     LenientNilsFeature
     IgnoreStyleFeature
@@ -81,7 +80,6 @@ proc parseFeatures*(s: string): set[Feature] =
   of "untyped": {UntypedFeature}
   of "canraise": {CanRaiseFeature}
   of "lenientconverters": {LenientConvertersFeature}
-  of "earlymagics": {EarlyMagicsFeature}
   of "autoclosures": {AutoClosuresFeature}
   of "lenientnils": {LenientNilsFeature}
   of "ignorestyle": {IgnoreStyleFeature}
@@ -94,7 +92,7 @@ proc parseFeatures*(s: string): set[Feature] =
   of "assumesync": {AssumeSyncFeature}
   of "staticoverloads": {StaticOverloadsFeature}
   of "ownedrefs": {OwnedRefsFeature}
-  of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
+  of "v2": {UntypedFeature, LenientConvertersFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,
             RuntimeContractsFeature, AnonBlockBreaksFeature, AssumeSyncFeature,
