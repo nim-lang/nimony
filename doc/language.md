@@ -4994,7 +4994,6 @@ The following features are available:
 | `"canraise"` | Allows procs without a `raises` annotation to raise exceptions. |
 | `"lenientconverters"` | Allows the definition of converters for basic types such as `int`. For compatibility with Nim 2. |
 | `"untyped"` | Treats templates and generic procs as `.untyped` by default. For compatibility with Nim 2. |
-| `"earlymagics"` | Resolves magic procs before overload resolution. For compatibility with Nim 2. |
 | `"ignoreStyle"` | Be compatible with Nim 2's style insensitivity rules. |
 | `"varToverloads"` | Allow for overloading via `var T`. For compatibility with Nim 2. |
 | `"lenientFloats"` | Allows implicit narrowing of float *values* (named constants and arbitrary expressions, not just literals) to a smaller float type. Off by default because the narrowing can lose precision. For compatibility with Nim 2. |
