@@ -17,7 +17,8 @@ import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, ty
 import ".." / lib / symparser
 
 const
-  ParamSymName = "dest.0"
+  ParamSymName = "`dest.0" # unspellable: the program is re-checked from
+                           # idents beside the user's declarations
 
 when false:
   proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
