@@ -422,10 +422,10 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
           semLocalValue c, dest, it, crucial # 4
         n = it.n
         let typ = skipModifier(it.typ)
-        if classifyType(c, typ) == VoidT and not hasErrorSince(dest, beforeType):
-          # An error inside the value is the diagnostic already. Otherwise
-          # this error replaces the value, so the decl keeps its arity (an
-          # extra child crashes the phase that reads the decl again).
+        if classifyType(c, typ) == VoidT:
+          # This error replaces the value, so the decl keeps its arity (an
+          # extra child crashes the phase that reads the decl again). An
+          # error inside the value is the one `buildErr` reports.
           # Point at the declared name (the decl's close info is elided under vpr):
           var errBuf = createTokenBuf()
           c.buildErr errBuf, delayed.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)",

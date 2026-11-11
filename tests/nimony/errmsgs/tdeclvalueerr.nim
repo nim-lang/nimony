@@ -1,6 +1,6 @@
-# A declaration whose value holds an error reports that error alone, and a
-# value without a type is replaced by "has no type": in neither case does the
-# declaration grow an extra child.
+# A declaration whose value has no type gets "has no type" in place of the
+# value, never beside it. If the value holds an error, its first error is
+# the one reported.
 
 import std/syncio
 
