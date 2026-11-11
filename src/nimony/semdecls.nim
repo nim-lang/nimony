@@ -1401,6 +1401,9 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
                           isMagic = crucial.magic.len > 0)
       let beforeBody = dest.len
       if not it.n.isDotToken:
+        var list = createTokenBuf(0)
+        let body = it.n
+        it.n = bodyAsList(body, list)
         case pass
         of checkGenericInst:
           semBodyGenericInst(c, dest, it, crucial, symId, beforeParams, hk)
@@ -1428,6 +1431,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
           else:
             c.buildErr dest, it.n.info, "inside a `concept` a routine cannot have a body"
             skip it.n
+        it.n = body
+        skip it.n
       else:
         semEmptyBody(c, dest, it, kind, crucial, pass, symId, beforeParams, hookName, info)
       if c.routine.hasDefer and kind != TemplateY:
