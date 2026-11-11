@@ -60,7 +60,7 @@ proc r7global(v: var int): int =    # R7: a write to a global
     g = 1000000000
     result = arr[v]
 
-proc r7byref(a: Big): int =         # R7: a value parameter passed by reference
+proc r7byref(a: Big): int =         # a value parameter is read-only: no error
   result = 0
   if a.n >= 0 and a.n < 10:
     clobber()

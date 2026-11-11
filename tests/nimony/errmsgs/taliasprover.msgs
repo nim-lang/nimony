@@ -3,7 +3,6 @@ tests/nimony/errmsgs/taliasprover.nim(43, 18) Error: cannot prove 'x' is in rang
 tests/nimony/errmsgs/taliasprover.nim(49, 19) Error: cannot prove value is in range 0..9 [pass --verbose for the Final IR]
 tests/nimony/errmsgs/taliasprover.nim(55, 19) Error: cannot prove value is in range 0..9 [pass --verbose for the Final IR]
 tests/nimony/errmsgs/taliasprover.nim(61, 18) Error: cannot prove 'v' is in range 0..9 [pass --verbose for the Final IR]
-tests/nimony/errmsgs/taliasprover.nim(67, 19) Error: cannot prove value is in range 0..9 [pass --verbose for the Final IR]
 tests/nimony/errmsgs/taliasprover.nim(73, 19) Error: cannot prove value is in range 0..9 [pass --verbose for the Final IR]
 tests/nimony/errmsgs/taliasprover.nim(79, 18) Error: cannot prove 'g' is in range 0..9 [pass --verbose for the Final IR]
 tests/nimony/errmsgs/taliasprover.nim(85, 18) Error: cannot prove 'g' is in range 0..9 [pass --verbose for the Final IR]
