@@ -41,7 +41,6 @@ proc swapRows(x: array[2, array[3, int]]): array[2, array[3, int]] = [x[1], x[0]
 const
   g2 = grid2()
   g3 = grid3()
-  empty = default(array[2, array[0, int]])
   tab = table()
   gr = mkGrid()
   ta = twoArrays()
@@ -54,7 +53,6 @@ const
 
 echo g2[0][0], g2[0][1], g2[0][2], g2[1][0], g2[1][1], g2[1][2]
 echo g3[0][0][0], g3[0][0][1], g3[0][1][0], g3[0][1][1], g3[1][0][0], g3[1][0][1], g3[1][1][0], g3[1][1][1]
-echo empty.len, " ", empty[1].len
 echo tab[red][blue], " ", tab[green][red], " ", tab[blue][green]
 echo gr.m[0][2], gr.m[1][0], " ", gr.k
 echo ta[0][0], ta[0][1], ta[1][0], ta[1][1], ta[1][2]
