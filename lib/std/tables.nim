@@ -22,11 +22,6 @@ type
     ## key-value pairs. Tiny tables are scanned linearly; larger ones keep an
     ## open-addressed index beside the dense pair sequence.
 
-  TableRefImpl[T] = object
-    r: ref TableData[T]
-  TableRef*[A, B] = object ## Ref version of `Table`.
-    impl: TableRefImpl[(A, B)]
-
 # ------------------------------ helpers ---------------------------------
 
 func isEmpty(hcode: Hash): bool {.inline.} =
@@ -58,10 +53,11 @@ func slotsNeeded(count: int): int {.inline.} =
   let wanted = if count < 0: 4 else: count div 2 + count + 4
   nextPowerOfTwo(wanted)
 
-func initialProbe(hc: Hash; dataLen: int): int {.inline,
-    requires: dataLen > 0, ensures: 0 <= result and result < dataLen.} =
-  ## Home slot for `hc`; `dataLen` is always a power of two.
-  result = int(hc and uint(dataLen - 1))
+func initialProbe(hc: Hash; mask: int): int {.inline,
+    requires: mask >= 0, ensures: 0 <= result and result <= mask.} =
+  ## Home slot for `hc`; `mask` is one less than a power-of-two table size.
+  result = int(hc and uint(mask))
+  {.assume: 0 <= result and result <= mask.}
 
 func nextProbe(h, mask: int): int {.inline, requires: mask >= 0,
     ensures: 0 <= result and result <= mask.} =
@@ -382,103 +378,6 @@ else:
       raise newException(KeyError, "key not found")
     result = t.data[index][1]
 
-# ---------------------------- TableRef ----------------------------------
-
-proc newTable*[A: Keyable, B](initialSize = defaultInitialSize): TableRef[A, B] =
-  ## Creates a new empty ref table.
-  var tmp = initTable[A, B](initialSize)
-  var inner: ref TableData[(A, B)]
-  new(inner)
-  inner[].data = move(tmp.data)
-  inner[].hashes = move(tmp.hashes)
-  result = TableRef[A, B](impl: TableRefImpl[(A, B)](r: inner))
-
-proc newTable*[A: Keyable, B](pairs: openArray[(A, B)]): TableRef[A, B] =
-  ## Creates a new ref table containing `pairs`.
-  result = newTable[A, B](pairs.len)
-  for (key, val) in pairs:
-    result[key] = val
-
-func `[]`*[A, B](t: TableRef[A, B]): var Table[A, B] =
-  ## Dereferences a ref table. The result aliases the ref's storage.
-  t.impl.r[]
-
-func `[]`*[A: Keyable, B](t: TableRef[A, B]; key: A): var B {.raises.} =
-  t.impl.r[][key]
-
-proc `[]=`*[A: Keyable, B](t: TableRef[A, B]; key: sink A; val: sink B) =
-  t.impl.r[][key] = val
-
-func hasKey*[A: Keyable, B](t: TableRef[A, B]; key: A): bool {.inline.} =
-  t.impl.r[].hasKey(key)
-
-func contains*[A: Keyable, B](t: TableRef[A, B]; key: A): bool {.inline.} =
-  t.impl.r[].contains(key)
-
-proc hasKeyOrPut*[A: Keyable, B](t: TableRef[A, B]; key: A; val: B): bool =
-  t.impl.r[].hasKeyOrPut(key, val)
-
-func getOrDefault*[A: Keyable, B: HasDefault](t: TableRef[A, B]; key: A): B =
-  t.impl.r[].getOrDefault(key)
-
-func getOrDefault*[A: Keyable, B](t: TableRef[A, B]; key: A; fallback: B): B =
-  t.impl.r[].getOrDefault(key, fallback)
-
-func getOrQuit*[A: Keyable, B](t: TableRef[A, B]; key: A): var B =
-  t.impl.r[].getOrQuit(key)
-
-proc mgetOrPut*[A: Keyable, B](t: TableRef[A, B]; key: sink A;
-                              val: sink B): var B =
-  t.impl.r[].mgetOrPut(key, val)
-
-proc mgetOrPut*[A: Keyable, B: HasDefault](t: TableRef[A, B];
-    key: sink A): var B =
-  t.impl.r[].mgetOrPut(key)
-
-func len*[A, B](t: TableRef[A, B]): int {.inline.} =
-  t.impl.r[].data.len
-
-proc del*[A: Keyable, B](t: TableRef[A, B]; key: A) =
-  t.impl.r[].del(key)
-
-proc pop*[A: Keyable, B](t: TableRef[A, B]; key: A; val: var B): bool =
-  t.impl.r[].pop(key, val)
-
-proc take*[A: Keyable, B](t: TableRef[A, B]; key: A; val: var B): bool {.inline.} =
-  pop(t, key, val)
-
-proc clear*[A, B](t: TableRef[A, B]) =
-  t.impl.r[].clear()
-
-iterator pairs*[A, B](t: TableRef[A, B]): (lent A, lent B) =
-  for i in 0 ..< t.impl.r[].data.len:
-    yield (t.impl.r[].data[i][0],
-           t.impl.r[].data[i][1])
-
-iterator mpairs*[A, B](t: TableRef[A, B]): (lent A, var B) =
-  for i in 0 ..< t.impl.r[].data.len:
-    yield (t.impl.r[].data[i][0],
-           t.impl.r[].data[i][1])
-
-iterator keys*[A, B](t: TableRef[A, B]): lent A =
-  for i in 0 ..< t.impl.r[].data.len:
-    yield t.impl.r[].data[i][0]
-
-iterator values*[A, B](t: TableRef[A, B]): lent B =
-  for i in 0 ..< t.impl.r[].data.len:
-    yield t.impl.r[].data[i][1]
-
-iterator mvalues*[A, B](t: TableRef[A, B]): var B =
-  for i in 0 ..< t.impl.r[].data.len:
-    yield t.impl.r[].data[i][1]
-
-func `$`*[A: Stringable, B: Stringable](t: TableRef[A, B]): string =
-  $t[]
-
-func `==`*[T: Equatable](a, b: TableRefImpl[T]): bool =
-  ## Exported for the structural equality instantiated in importing modules.
-  a.r[] == b.r[]
-
 # --------------------------- OrderedTable --------------------------------
 
 type
@@ -490,17 +389,12 @@ type
   OrderedTable*[A, B] = OrderedTableData[(A, B)] ## Hash table that remembers
     ## insertion order.
 
-  OrderedTableRefImpl[T] = object
-    r: ref OrderedTableData[T]
-  OrderedTableRef*[A, B] = object ## Ref version of `OrderedTable`.
-    impl: OrderedTableRefImpl[(A, B)]
-
 func ordRawGetKnownHC[A: Keyable, B](t: OrderedTable[A, B]; key: A;
                                     hc: Hash): int =
   result = -1
   if t.data.len > 0:
     let mask = t.data.len - 1
-    var h = initialProbe(hc, t.data.len)
+    var h = initialProbe(hc, mask)
     var searching = true
     while searching and 0 <= h and h < t.data.len and
         isFilled(t.data[h].hcode):
@@ -909,137 +803,6 @@ func `==`*[T: Equatable](s, t: OrderedTableData[T]): bool =
     hs = s.data[hs].next
     ht = t.data[ht].next
   result = hs < 0 and ht < 0
-# --------------------------- OrderedTableRef -----------------------------
-
-proc newOrderedTable*[A: Keyable, B](
-    initialSize = defaultInitialSize): OrderedTableRef[A, B] =
-  var tmp = initOrderedTable[A, B](initialSize)
-  var inner: ref OrderedTableData[(A, B)]
-  new(inner)
-  inner[].data = move(tmp.data)
-  inner[].counter = tmp.counter
-  inner[].first = tmp.first
-  inner[].last = tmp.last
-  result = OrderedTableRef[A, B](
-      impl: OrderedTableRefImpl[(A, B)](r: inner))
-
-proc newOrderedTable*[A: Keyable, B](
-    pairs: openArray[(A, B)]): OrderedTableRef[A, B] =
-  result = newOrderedTable[A, B](pairs.len)
-  for (key, val) in pairs:
-    result[key] = val
-
-func `[]`*[A, B](t: OrderedTableRef[A, B]): var OrderedTable[A, B] =
-  ## Dereferences a ref ordered table. The result aliases the ref's storage.
-  t.impl.r[]
-
-func `[]`*[A: Keyable, B](t: OrderedTableRef[A, B]; key: A): var B {.raises.} =
-  t.impl.r[][key]
-
-proc `[]=`*[A: Keyable, B](t: OrderedTableRef[A, B]; key: sink A;
-                          val: sink B) =
-  t.impl.r[][key] = val
-
-func hasKey*[A: Keyable, B](t: OrderedTableRef[A, B]; key: A): bool {.inline.} =
-  t.impl.r[].hasKey(key)
-
-func contains*[A: Keyable, B](
-    t: OrderedTableRef[A, B]; key: A): bool {.inline.} =
-  t.impl.r[].contains(key)
-
-proc hasKeyOrPut*[A: Keyable, B](t: OrderedTableRef[A, B]; key: A;
-                                val: B): bool =
-  t.impl.r[].hasKeyOrPut(key, val)
-
-func getOrDefault*[A: Keyable, B: HasDefault](
-    t: OrderedTableRef[A, B]; key: A): B =
-  t.impl.r[].getOrDefault(key)
-
-func getOrDefault*[A: Keyable, B](t: OrderedTableRef[A, B]; key: A;
-                                  fallback: B): B =
-  t.impl.r[].getOrDefault(key, fallback)
-
-func getOrQuit*[A: Keyable, B](
-    t: OrderedTableRef[A, B]; key: A): var B =
-  t.impl.r[].getOrQuit(key)
-
-proc mgetOrPut*[A: Keyable, B](t: OrderedTableRef[A, B]; key: sink A;
-                              val: sink B): var B =
-  t.impl.r[].mgetOrPut(key, val)
-
-proc mgetOrPut*[A: Keyable, B: HasDefault](
-    t: OrderedTableRef[A, B]; key: sink A): var B =
-  t.impl.r[].mgetOrPut(key)
-
-func len*[A, B](t: OrderedTableRef[A, B]): int {.inline.} =
-  t.impl.r[].counter
-
-proc del*[A: Keyable, B](t: OrderedTableRef[A, B]; key: A) =
-  t.impl.r[].del(key)
-
-proc pop*[A: Keyable, B](t: OrderedTableRef[A, B]; key: A; val: var B): bool =
-  t.impl.r[].pop(key, val)
-
-proc take*[A: Keyable, B](t: OrderedTableRef[A, B]; key: A;
-                          val: var B): bool {.inline.} =
-  pop(t, key, val)
-
-proc clear*[A, B](t: OrderedTableRef[A, B]) =
-  t.impl.r[].clear()
-
-proc sort*[A: Keyable, B](t: OrderedTableRef[A, B];
-    cmp: proc (x, y: (A, B)): int; order = SortOrder.Ascending) =
-  t.impl.r[].sort(cmp, order)
-
-iterator pairs*[A, B](t: OrderedTableRef[A, B]): (lent A, lent B) =
-  var h = t.impl.r[].first
-  while 0 <= h and h < t.impl.r[].data.len:
-    let nxt = t.impl.r[].data[h].next
-    if isFilled(t.impl.r[].data[h].hcode):
-      yield (t.impl.r[].data[h].item[0],
-             t.impl.r[].data[h].item[1])
-    h = nxt
-
-iterator mpairs*[A, B](t: OrderedTableRef[A, B]): (lent A, var B) =
-  var h = t.impl.r[].first
-  while 0 <= h and h < t.impl.r[].data.len:
-    let nxt = t.impl.r[].data[h].next
-    if isFilled(t.impl.r[].data[h].hcode):
-      yield (t.impl.r[].data[h].item[0],
-             t.impl.r[].data[h].item[1])
-    h = nxt
-
-iterator keys*[A, B](t: OrderedTableRef[A, B]): lent A =
-  var h = t.impl.r[].first
-  while 0 <= h and h < t.impl.r[].data.len:
-    let nxt = t.impl.r[].data[h].next
-    if isFilled(t.impl.r[].data[h].hcode):
-      yield t.impl.r[].data[h].item[0]
-    h = nxt
-
-iterator values*[A, B](t: OrderedTableRef[A, B]): lent B =
-  var h = t.impl.r[].first
-  while 0 <= h and h < t.impl.r[].data.len:
-    let nxt = t.impl.r[].data[h].next
-    if isFilled(t.impl.r[].data[h].hcode):
-      yield t.impl.r[].data[h].item[1]
-    h = nxt
-
-iterator mvalues*[A, B](t: OrderedTableRef[A, B]): var B =
-  var h = t.impl.r[].first
-  while 0 <= h and h < t.impl.r[].data.len:
-    let nxt = t.impl.r[].data[h].next
-    if isFilled(t.impl.r[].data[h].hcode):
-      yield t.impl.r[].data[h].item[1]
-    h = nxt
-
-func `$`*[A: Stringable, B: Stringable](t: OrderedTableRef[A, B]): string =
-  $t[]
-
-func `==`*[T: Equatable](a, b: OrderedTableRefImpl[T]): bool =
-  ## Exported for the structural equality instantiated in importing modules.
-  a.r[] == b.r[]
-
 # ----------------------------- CountTable --------------------------------
 
 type
@@ -1052,16 +815,11 @@ type
   CountTable*[A] = CountTableData[A] ## Hash table that counts the occurrences
     ## of keys.
 
-  CountTableRefImpl[A] = object
-    r: ref CountTableData[A]
-  CountTableRef*[A] = object ## Ref version of `CountTable`.
-    impl: CountTableRefImpl[A]
-
 func ctRawGet[A: Keyable](t: CountTable[A]; key: A): int =
   result = -1
   if t.data.len > 0:
     let mask = t.data.len - 1
-    var h = initialProbe(genHash(key), t.data.len)
+    var h = initialProbe(genHash(key), mask)
     var searching = true
     while searching and 0 <= h and h < t.data.len and
         t.data[h].val != 0:
@@ -1106,7 +864,7 @@ func ctEnlarge[A: Keyable](t: var CountTable[A]): bool =
   let mask = dataLen - 1
   for i in 0 ..< n.len:
     if n[i].val != 0:
-      var j = initialProbe(genHash(n[i].key), dataLen)
+      var j = initialProbe(genHash(n[i].key), mask)
       while 0 <= j and j < t.data.len and
           t.data[j].val != 0:
         j = nextProbe(j, mask)
@@ -1149,7 +907,7 @@ func countDelIdx[A: Keyable](t: var CountTable[A]; i: int) =
         {.assume: 0 <= i and i < t.data.len.}
         if t.data[i].val == 0:
           break outer
-        let r = initialProbe(genHash(t.data[i].key), t.data.len)
+        let r = initialProbe(genHash(t.data[i].key), mask)
         if not ((i >= r and r > j) or (r > j and j > i) or (j > i and i >= r)):
           break
       {.assume: 0 <= j and j < t.data.len.}
@@ -1257,7 +1015,7 @@ func del*[A: Keyable](t: var CountTable[A]; key: A) =
   if t.data.len == 0:
     return
   let mask = t.data.len - 1
-  var h = initialProbe(genHash(key), t.data.len)
+  var h = initialProbe(genHash(key), mask)
   {.assume: 0 <= h and h < t.data.len.}
   while 0 <= h and h < t.data.len and t.data[h].val != 0:
     if t.data[h].key == key:
@@ -1348,7 +1106,7 @@ func `==`*[A: Keyable](s, t: CountTableData[A]): bool =
   for h in 0 ..< s.data.len:
     if s.data[h].val != 0:
       let hc = genHash(s.data[h].key)
-      var i = initialProbe(hc, t.data.len)
+      var i = initialProbe(hc, mask)
       var found = false
       while 0 <= i and i < t.data.len and t.data[i].val != 0:
         if t.data[i].key == s.data[h].key:
@@ -1360,99 +1118,3 @@ func `==`*[A: Keyable](s, t: CountTableData[A]): bool =
       if not found:
         return false
   true
-# --------------------------- CountTableRef -------------------------------
-
-proc newCountTable*[A: Keyable](
-    initialSize = defaultInitialSize): CountTableRef[A] =
-  var tmp = initCountTable[A](initialSize)
-  var inner: ref CountTableData[A]
-  new(inner)
-  inner[].data = move(tmp.data)
-  inner[].counter = tmp.counter
-  inner[].isSorted = tmp.isSorted
-  result = CountTableRef[A](impl: CountTableRefImpl[A](r: inner))
-
-proc newCountTable*[A: Keyable](keys: openArray[A]): CountTableRef[A] =
-  result = newCountTable[A](keys.len)
-  for key in keys:
-    result.inc(key)
-
-func `[]`*[A](t: CountTableRef[A]): var CountTable[A] =
-  ## Dereferences a ref count table. The result aliases the ref's storage.
-  t.impl.r[]
-
-func `[]`*[A: Keyable](t: CountTableRef[A]; key: A): int =
-  t.impl.r[][key]
-
-proc `[]=`*[A: Keyable](t: CountTableRef[A]; key: A; val: int) =
-  t.impl.r[][key] = val
-
-proc inc*[A: Keyable](t: CountTableRef[A]; key: A; val = 1) =
-  t.impl.r[].inc(key, val)
-
-func smallest*[A](t: CountTableRef[A]): tuple[key: A, val: int] =
-  t.impl.r[].smallest()
-
-func largest*[A](t: CountTableRef[A]): tuple[key: A, val: int] =
-  t.impl.r[].largest()
-
-func hasKey*[A: Keyable](t: CountTableRef[A]; key: A): bool {.inline.} =
-  t.impl.r[].hasKey(key)
-
-func contains*[A: Keyable](t: CountTableRef[A]; key: A): bool {.inline.} =
-  t.impl.r[].contains(key)
-
-func getOrDefault*[A: Keyable](t: CountTableRef[A]; key: A; def = 0): int =
-  t.impl.r[].getOrDefault(key, def)
-
-func len*[A](t: CountTableRef[A]): int {.inline.} =
-  t.impl.r[].counter
-
-proc del*[A: Keyable](t: CountTableRef[A]; key: A) =
-  t.impl.r[].del(key)
-
-proc pop*[A: Keyable](t: CountTableRef[A]; key: A; val: var int): bool =
-  t.impl.r[].pop(key, val)
-
-proc clear*[A](t: CountTableRef[A]) =
-  t.impl.r[].clear()
-
-proc sort*[A](t: CountTableRef[A]; order = SortOrder.Descending) =
-  t.impl.r[].sort(order)
-
-proc merge*[A: Keyable](s, t: CountTableRef[A]) =
-  s.impl.r[].merge(t.impl.r[])
-
-iterator pairs*[A](t: CountTableRef[A]): (lent A, int) =
-  for h in 0 ..< t.impl.r[].data.len:
-    if t.impl.r[].data[h].val != 0:
-      yield (t.impl.r[].data[h].key,
-             t.impl.r[].data[h].val)
-
-iterator mpairs*[A](t: CountTableRef[A]): (lent A, var int) =
-  for h in 0 ..< t.impl.r[].data.len:
-    if t.impl.r[].data[h].val != 0:
-      yield (t.impl.r[].data[h].key,
-             t.impl.r[].data[h].val)
-
-iterator keys*[A](t: CountTableRef[A]): lent A =
-  for h in 0 ..< t.impl.r[].data.len:
-    if t.impl.r[].data[h].val != 0:
-      yield t.impl.r[].data[h].key
-
-iterator values*[A](t: CountTableRef[A]): int =
-  for h in 0 ..< t.impl.r[].data.len:
-    if t.impl.r[].data[h].val != 0:
-      yield t.impl.r[].data[h].val
-
-iterator mvalues*[A](t: CountTableRef[A]): var int =
-  for h in 0 ..< t.impl.r[].data.len:
-    if t.impl.r[].data[h].val != 0:
-      yield t.impl.r[].data[h].val
-
-func `$`*[A: Stringable](t: CountTableRef[A]): string =
-  $t[]
-
-func `==`*[A: Keyable](a, b: CountTableRefImpl[A]): bool =
-  ## Exported for the structural equality instantiated in importing modules.
-  a.r[] == b.r[]
