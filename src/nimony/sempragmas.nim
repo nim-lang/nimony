@@ -1218,12 +1218,11 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       it.n = start; skip it.n
     else: skipParRi it.n # degenerate bare-ident form; historical behavior
   if c.phase == SemcheckSignatures and not isPragmaBlock and
-      it.n.pragmaKind in {CompileP, LinkP, PassCP, PassLP, ErrorP}:
+      it.n.pragmaKind in {CompileP, LinkP, PassCP, PassLP}:
     # These evaluate their arguments as constant expressions, which needs the
     # bodies phase: in the signatures phase a toplevel call like `a & "b"` is
     # left unchecked, so it cannot be evaluated (and would come back as an
-    # expression statement). `error` is among them because its message is
-    # such a constant string expression. Re-emit the line for `SemcheckBodies`.
+    # expression statement). Re-emit the line for `SemcheckBodies`.
     dest.addParLe PragmasS, it.n.info
     if hasScope:
       var line = start
