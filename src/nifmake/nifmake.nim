@@ -952,7 +952,7 @@ Commands:
 
 Options:
   -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
-  -k, --keep-going      Keep going after a command fails (for 'run'), skipping
+  -k, --keepgoing       Keep going after a command fails (for 'run'), skipping
                         what depends on it. The run still fails.
   --makefile:<name>     Output Makefile name (default: Makefile)
   --force               Force rebuild of all targets
@@ -1116,7 +1116,7 @@ proc main() =
           if gMaxJobs < 1: quit "--parallel value must be >= 1"
       of "makefile": outputMakefile = val
       of "force": opt.incl Force
-      of "keep-going", "k": opt.incl KeepGoing
+      of "keepgoing", "k": opt.incl KeepGoing
       of "rerun": opt.incl Rerun
       of "verbose": opt.incl Verbose
       of "base": baseDir = val

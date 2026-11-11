@@ -113,7 +113,7 @@ for scenario in ["serial", "parallel", "failure", "signal", "keepgoing"]:
   writeFile(graphFile, graph)
   let parallel = case scenario
     of "serial": ""
-    of "keepgoing": " --parallel:2 --keep-going"
+    of "keepgoing": " --parallel:2 --keepgoing"
     else: " --parallel:2"
   let command = nifmake & parallel & " --profile --report run " & graphFile.quoteShell
   let (output, code) = execCmdEx(command)
@@ -137,7 +137,7 @@ for scenario in ["serial", "parallel", "failure", "signal", "keepgoing"]:
     require(not fileExists(dir / "blocked"), "launched dependent of failed child")
     if scenario == "keepgoing":
       require(output.contains("total=3") and fileExists(dir / "after"),
-              "--keep-going stopped an independent job:\n" & output)
+              "--keepgoing stopped an independent job:\n" & output)
     else:
       require(output.contains("total=2") and not fileExists(dir / "after"),
               "launched a job after a failure:\n" & output)
