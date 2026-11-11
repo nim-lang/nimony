@@ -2622,8 +2622,7 @@ proc checkCaseRange(c: var SemContext; dest: var TokenBuf; rangePos: int; info: 
   ## range and keeps it as its origin, so the label stays one node.
   var msg = ""
   if a.isNaN or b.isNaN:
-    # the bound's own error is inside the range and is the one reported
-    msg = "invalid range in case label"
+    discard "a bound that failed to evaluate has its error in the tree already"
   elif b < a:
     msg = "empty range in case label: " & asNimCode(readonlyCursorAt(dest, rangePos))
   elif seen.doesOverlapOrIncl(a, b):
