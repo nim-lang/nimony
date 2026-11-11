@@ -3,7 +3,7 @@
 when not defined(nimony):
   import errorcodes
 
-when defined(linux):
+when defined(linux) or defined(standalone):
   proc posixToErrorCode*(err: int32): ErrorCode =
     if err == 0'i32:
       Success
@@ -460,7 +460,7 @@ elif defined(illumos):
       UnrecoverableState
     else:
       Failure
-
+  
   proc errorCodeToPosix*(err: ErrorCode): int32 =
     case err
     of Success: 0'i32
@@ -503,7 +503,7 @@ elif defined(illumos):
     of UnreachableHost: 148'i32
     of UnrecoverableState: 59'i32
     else: 1'i32
-
+  
 else:
   var EOVERFLOW {.importc: "EOVERFLOW", header: "<errno.h>".}: int32
   var ERANGE {.importc: "ERANGE", header: "<errno.h>".}: int32
