@@ -11,5 +11,6 @@ default kb hello
 Holder kb 3
 KC 7
 KB 4
+else const
 arg kb 3
 arg false 1

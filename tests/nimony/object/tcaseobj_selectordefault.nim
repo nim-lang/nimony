@@ -53,6 +53,10 @@ type
     of ka: a: int = 5
     of kb: b: T
     of kc: c: int = 7
+  ElsF = object
+    case k: K
+    of ka: a: int = 4
+    else: e: string = "dflt"
   Holder = object
     x: int
     m: Mid
@@ -77,6 +81,7 @@ proc main() =
   let h = Holder(); echo "Holder ", h.m.k, " ", h.m.b
   let c3 = Mid(k: KC); echo "KC ", c3.c
   let c4 = Mid(k: KB, b: 4); echo "KB ", c4.b
+  let e1 = ElsF(k: KC, e: "const"); echo "else ", e1.e
   takeMid()
   takeBo()
 

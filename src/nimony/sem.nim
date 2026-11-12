@@ -4660,7 +4660,9 @@ proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let selectorKv = dest.len
       buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
       var selectorKvCursor = cursorAt(dest, selectorKv)
-      let value = tryEvalOrdinal(c.g.config.bits, getValueInKv(selectorKvCursor))
+      let selectorVal = getValueInKv(selectorKvCursor)
+      let value = if selectorVal.exprKind == ErrX: createNaN()
+                  else: tryEvalOrdinal(c.g.config.bits, selectorVal)
       endRead selectorKvCursor
       fieldsPresentInBranch(c, dest, body, field, value, setFields, info, bindings, depth)
       skip n
