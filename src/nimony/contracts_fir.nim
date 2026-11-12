@@ -42,13 +42,17 @@ array index loses its bounds. The backend then emits a check only where one is
 still owed (`applyVerdicts`, `splitsOnRequires`).
 
 Compile `nimsem` with `-d:contractStats` to get one
-`CONTRACT <verdict> <line> <contract>` line per call site on stderr, and one
+`CONTRACT <verdict> <line> <contract>` line per call site, and one
 `INDEX discharged|checked <line> <index>` line per array index; that is how the
-prover's coverage is measured. Adding `-d:contractLeaves` breaks each call site
+prover's coverage is measured. The lines of a module are sorted and written in
+one piece: to `$NIMONY_CONTRACT_STATS/<module>.stats` if that variable names a
+directory, to stderr otherwise. Adding `-d:contractLeaves` breaks each call site
 down per conjunct.
 ]##
 
 import std / [assertions, tables, hashes, sets, strutils, syncio]
+when defined(contractStats):
+  import std / [os, algorithm]
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -221,6 +225,7 @@ type
                                        # "Shared globals" below
     syncArgs: HashSet[int]             # positions of global symbols passed to a
                                        # `.sync` routine's `var`/`ptr` parameter
+    stats: seq[string]                 # -d:contractStats: this module's lines
     verbose: bool                      # --verbose: dump final IR on init/contract
                                        # failures for easier debugging
     bits: int                          # target `int` width for compile-time folding
@@ -3970,7 +3975,7 @@ proc checkRequires(c: var FirContext; req: Cursor; rd: Reading;
   if not c.tr.live: return
   let res = proveCond(c, req, rd)
   when defined(contractStats):
-    stderr.writeLine "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
+    c.stats.add "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
   case res
   of Proven:
     result = true
@@ -4085,7 +4090,7 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
       c.obligationOpen = false
       checkIndexInBounds c, idx, pc
       when defined(contractStats):
-        stderr.writeLine "INDEX " & (if c.obligationOpen: "discharged" else: "checked") &
+        c.stats.add "INDEX " & (if c.obligationOpen: "discharged" else: "checked") &
           " " & infoToStr(idx.info) & " " & asNimCode(idx)
       if c.obligationOpen and not c.dischargedIndexes.containsOrIncl(nodePos) and
           c.assumedSteps.len > 0:
@@ -6526,6 +6531,18 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     endRead(fin)
 
   c.typeCache.closeScope()
+  when defined(contractStats):
+    sort c.stats
+    var text = ""
+    for i in 0 ..< c.stats.len:
+      if i == 0 or c.stats[i] != c.stats[i-1]:
+        text.add c.stats[i]
+        text.add "\n"
+    let dir = getEnv("NIMONY_CONTRACT_STATS")
+    if dir.len > 0:
+      writeFile(dir / moduleSuffix & ".stats", text)
+    else:
+      stderr.write text
   # Only this module's routines are split here; imported ones were split by
   # their own module.
   if c.dischargedIndexes.len > 0 or c.provenCalls.len > 0 or ownSplits.len > 0:
