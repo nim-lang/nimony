@@ -21,8 +21,8 @@ assert max("b", "a") == "b"
 assert abs(0) == 0
 assert abs(1) == 1
 assert abs(-1) == 1
-let absNonNegative: Natural = abs(-1) # abs carries `ensures: result >= 0`
-assert absNonNegative == 1
+# Signed arithmetic wraps, so `abs` has no `0 <= result` to promise.
+assert abs(low(int)) == low(int)
 # TODO: Test overflow checks
 #abs(int.low)
 

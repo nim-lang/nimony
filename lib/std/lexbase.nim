@@ -187,7 +187,10 @@ proc open*(L: var BaseLexer, input: Stream, bufLen: int = 8192;
 
 func getColNumber*(L: BaseLexer, pos: int): Natural =
   ## retrieves the current column.
-  result = Natural(abs(pos - L.lineStart))
+  let d = pos - L.lineStart
+  if d >= 0: result = d
+  elif d != low(int): result = -d # not `abs`: `-low(int)` wraps to `low(int)`
+  else: result = high(int)
 
 func getCurrentLine*(L: BaseLexer, marker: bool = true): string =
   ## retrieves the current line.
