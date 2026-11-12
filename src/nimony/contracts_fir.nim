@@ -181,6 +181,11 @@ type
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
+    unanalysed: HashSet[SymId]         # variables of the routine whose address
+                                       # is taken or that a nested routine
+                                       # names (`collectUnanalysed`): shared
+    borrowedParams: HashSet[SymId]     # its `var`, `out` and `lent`
+                                       # parameters: shared
     obligationOpen: bool               # a range obligation is being judged;
                                        # cleared when it is not discharged
     root: Cursor                       # the lowered module, for token positions
@@ -717,6 +722,128 @@ proc endBorrow(c: var FirContext; sym: SymId) =
   c.flow.borrows.endBorrowsOf sym
 
 template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
+
+# --- Aliasing: which variables a fact may be kept about ---
+#
+# The prover reasons about values, and a variable stands for a value only
+# while nothing can change it except a write that names it
+# (doc/language.md, "Aliasing"):
+#
+# - An *owned* variable -- a local, `result`, a parameter that is not `var`,
+#   `out` or `lent` -- keeps its facts until a write that names it.
+# - Every other variable is *shared* (`isShared`) and keeps its facts until
+#   the next *barrier* that does not name it. The lowering marks the barriers:
+#   `(unknown . x…)` (doc/internals/multi_join_ir.md, "Versions").
+
+proc isShared(c: var FirContext; s: SymId): bool =
+  ## Can `s` be written without being named? A parameter that names the
+  ## caller's storage, a global, a variable whose address is taken and a local
+  ## that a nested routine names can.
+  s in c.unanalysed or s in c.borrowedParams or
+    localInfoOf(c, s).kind in {GvarY, TvarY}
+
+proc addrRoot(c: var FirContext; n: Cursor; inits: Table[SymId, Cursor]): SymId =
+  ## The variable whose own storage the operand `n` of an `addr` lies in, read
+  ## off the tree: the pre-pass runs before any local is declared. A call is
+  ## followed into its first argument, an inline temp into what it stands
+  ## for; a dereference ends the walk, and so does a call that takes its first
+  ## argument by value: what it returns lies in the buffer that argument
+  ## points to, not in its own storage (`addr s[0]` for a `seq`).
+  result = NoSymId
+  var r = n
+  var guard = 0
+  while guard < 64:
+    inc guard
+    if r.isSymbol:
+      if r.symId in inits:
+        r = inits.getOrQuit(r.symId)
+        continue
+      return r.symId
+    if not r.isTagLit: return NoSymId
+    case r.exprKind
+    of DotX, TupatX, ArratX, AtX, AddrX, HaddrX, HderefX:
+      r = r.childCursor
+    of ConvKinds:
+      r = r.childCursor
+      skip r # type
+    of BaseobjX:
+      r = r.childCursor
+      skip r # type
+      skip r # intlit
+    of CallKinds:
+      if resultOutsideFirstArg(c.typeCache, r): return NoSymId
+      r = r.childCursor
+      skip r # fn
+      if not r.hasMore: return NoSymId
+    else:
+      if r.finalIrKind in {EtupatV, VV}: r = r.childCursor
+      else: return NoSymId
+
+proc collectDefs(n: var Cursor; defs: var HashSet[SymId]) =
+  if n.kind == SymbolDef:
+    defs.incl n.symId
+    inc n
+  elif n.isTagLit:
+    n.into:
+      while n.hasMore: collectDefs(n, defs)
+  else:
+    inc n
+
+proc markUses(c: var FirContext; n: var Cursor; defs: HashSet[SymId]) =
+  if n.kind == Symbol:
+    # a local name the routine does not declare is a local of an enclosing one
+    if n.symId notin defs and isLocalName(pool.syms[n.symId]):
+      c.unanalysed.incl n.symId
+    inc n
+  elif n.isTagLit:
+    n.into:
+      while n.hasMore: markUses(c, n, defs)
+  else:
+    inc n
+
+proc markCaptured(c: var FirContext; n: Cursor) =
+  ## Every variable the nested routine `n` names but does not declare, except
+  ## a global: the routine may write it whenever it runs.
+  var defs = initHashSet[SymId]()
+  var r = n
+  collectDefs(r, defs)
+  r = n
+  markUses(c, r, defs)
+
+proc collectUnanalysed(c: var FirContext; n: var Cursor;
+                       inits: var Table[SymId, Cursor]) =
+  ## Pre-pass over a routine body: the variables that are shared because their
+  ## address is taken anywhere in it (`addr x`, `unsafeAddr x`) or because a
+  ## nested routine names them. Flow-insensitive: a pointer taken late in a
+  ## loop counts for the whole body.
+  if not n.isTagLit or n.substructureKind == PragmasU:
+    skip n
+  elif n.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
+    markCaptured(c, n)
+    skip n
+  else:
+    if n.exprKind == AddrX:
+      let r = addrRoot(c, n.childCursor, inits)
+      if r != NoSymId: c.unanalysed.incl r
+    elif n.symKind in {LetY, CursorY, VarY}:
+      let local = asLocal(n)
+      if local.name.kind == SymbolDef and hasPragma(local.pragmas, InlineP):
+        inits[local.name.symId] = local.val
+    n.into:
+      while n.hasMore: collectUnanalysed(c, n, inits)
+
+proc collectUnanalysedToplevel(c: var FirContext; n: var Cursor;
+                               inits: var Table[SymId, Cursor]) =
+  ## `collectUnanalysed` for the module's own statements; its routines have
+  ## their own.
+  if n.stmtKind in {StmtsS, PragmaxS}:
+    n.into:
+      while n.hasMore: collectUnanalysedToplevel(c, n, inits)
+  elif n.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+                      TemplateS, TypeS}:
+    skip n
+  else:
+    collectUnanalysed(c, n, inits)
 
 proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
                    olds: Table[string, VarId]; resultSym = NoSymId)
@@ -1283,6 +1410,40 @@ proc invalidateAllDerived(c: var FirContext) =
   for i in 0 ..< c.derivedRoots.len:
     if c.derivedRoots[i] != NoSymId:
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+
+proc factVars(c: FirContext): HashSet[VarId] =
+  ## The variables and derived locations the facts mention. Collected before
+  ## any is projected out, which edits the facts.
+  result = initHashSet[VarId]()
+  for i in 0 ..< c.facts.len:
+    for v in [c.facts[i].a, c.facts[i].b]:
+      if int(v) > 0 or int(v) <= FirstDerivedVarId: result.incl v
+
+proc rootOf(c: FirContext; v: VarId): SymId =
+  ## The variable a fact about `v` is about: `v` itself, or the one a derived
+  ## location hangs off.
+  if int(v) > 0: SymId(int(v))
+  else: c.derivedRoots[FirstDerivedVarId - int(v)]
+
+proc forgetShared(c: var FirContext; spared: openArray[SymId] = []) =
+  ## A barrier: what is known about every shared variable, and about what is
+  ## derived from it, goes. What the facts connected through it stays
+  ## (`projectOut`). The `spared` variables are the ones the barrier names:
+  ## the write to them is accounted for where it is made.
+  for v in factVars(c):
+    let root = rootOf(c, v)
+    if root != NoSymId and root notin spared and isShared(c, root):
+      projectOut(c.facts, v)
+
+proc sparedByBarrier(n: Cursor): seq[SymId] =
+  ## The variables `(unknown . x…)` names.
+  result = @[]
+  var r = n
+  r.into:
+    inc r # the `.`
+    while r.hasMore:
+      result.add r.symId
+      inc r
 
 proc isKeyableCall(fnSym: SymId): bool =
   ## May a call to `fnSym` stand for a location of its own?
@@ -5190,6 +5351,9 @@ type
       ## `Positive`-returning call is exactly that — declared inside the body,
       ## so no fact about it exists yet when this scan runs.
     opaque: bool          ## a write we could not attribute to any location
+    barriers: int         ## how many barriers the body has (`forgetShared`) ...
+    namedBy: Table[SymId, int] ## ... and how many of them name each variable;
+                          ## one that all of them name keeps its facts
     preserved: seq[VarId] ## derived locations the call just scanned promises
                           ## to leave alone (`s.len == old(s.len)`); holds
                           ## for the `(unknown …)` that follows it too
@@ -5379,7 +5543,13 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if not n.isTagLit:
     skip n
     return
+  if n.substructureKind == JoinU:
+    skip n
+    return
   if isVersionFact(n):
+    # a barrier in the body is one before every iteration too
+    inc w.barriers
+    for s in sparedByBarrier(n): w.namedBy.mgetOrPut(s, 0) += 1
     skip n
     return
   if n.stmtKind in {IncS, DecS}:
@@ -5613,6 +5783,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     block:
       var w = LoopWrites(kinds: initTable[VarId, IvKind](),
                          nonNeg: initHashSet[VarId](), opaque: false,
+                         namedBy: initTable[SymId, int](),
                          assumed: initHashSet[VarId](),
                          pendingStep: InvalidVarId)
       var scan = n
@@ -5621,6 +5792,11 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
       c.prescanning = false
       for v in demoted:
         if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
+      if w.barriers > 0:
+        var spared: seq[SymId] = @[]
+        for s, k in w.namedBy:
+          if k == w.barriers: spared.add s
+        forgetShared(c, spared)
       restrictFactsToLoopInvariants(c, w)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
@@ -6150,6 +6326,18 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
           buildErr c, info, "cannot prove assertion: " & asNimCode(cond)
         assumeCond(c, cond, rd)
 
+proc isBorrowedParam(c: var FirContext; param: Local): bool =
+  ## Does the parameter name the caller's storage, which makes it shared? A
+  ## `var`, `out` or `lent` one does. Every other parameter is a value the
+  ## routine cannot see change, however the code generator passes it. A view
+  ## (`openArray`, `var openArray`, `varargs`) is the callee's own value too:
+  ## only its length can carry a fact.
+  let t = param.typ
+  if t.typeKind in {MutT, OutT}:
+    result = not isVarOpenArray(c, t)
+  else:
+    result = t.typeKind == LentT
+
 proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   var call = freshCall()
   let decl = n
@@ -6173,6 +6361,11 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   let oldLaterParams = move c.laterParams
   let oldVers = move c.vers
   c.vers = Versions()
+  let oldUnanalysed = c.unanalysed
+  let oldBorrowed = move c.borrowedParams
+  c.borrowedParams = initHashSet[SymId]()
+  # a nested routine keeps the enclosing one's: it reaches them too
+  if not nested: c.unanalysed = initHashSet[SymId]()
   c.laterParams = initHashSet[SymId]()
   let oldInlineVars = move c.inlineVars
   let oldProcStart = c.currentProcStart
@@ -6216,6 +6409,8 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
         while p.hasMore:
           let r = takeLocal(p, SkipFinalParRi)
           if not isFirst: c.laterParams.incl r.name.symId
+          if isBorrowedParam(c, r):
+            c.borrowedParams.incl r.name.symId
           isFirst = false
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
@@ -6248,6 +6443,10 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   # the final init check. An `{.assembler.}` body is machine code, kept
   # verbatim by `finalir` for the backend; there is nothing to analyse.
   if not isGeneric and not isExternProc and not isAsm:
+    block:
+      var scan = n
+      var inits = initTable[SymId, Cursor]()
+      collectUnanalysed(c, scan, inits)
     traverseStmt c, n, call
     # Falling off the end is an exit too.
     verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info, c.resultSym
@@ -6280,6 +6479,8 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.resultSym = oldResultSym
   c.laterParams = ensureMove oldLaterParams
   c.vers = ensureMove oldVers
+  c.unanalysed = oldUnanalysed
+  c.borrowedParams = ensureMove oldBorrowed
   c.inlineVars = ensureMove oldInlineVars
   c.currentProcStart = oldProcStart
   c.stmtContext = oldStmtContext
@@ -6308,6 +6509,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   if isVersionFact(n):
     # `(unknown . x…)`: a barrier
     defVersion c, MemVar
+    forgetShared(c, sparedByBarrier(n))
     skip n
     return
   let leaf = isVersionLeaf(n)
@@ -6745,6 +6947,11 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     endRead(scan2)
     for s in ownSplits: c.splitRoutines.incl s
 
+  block:
+    var scan = beginRead(finalBuf)
+    var inits = initTable[SymId, Cursor]()
+    collectUnanalysedToplevel(c, scan, inits)
+    endRead(scan)
   block:
     var fin = beginRead(finalBuf)
     c.root = fin

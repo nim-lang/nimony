@@ -165,3 +165,17 @@ proc callDefs*(tc: var TypeCache; call: Cursor; defs: var seq[DefRoot];
     if isVar and not isRvalueBase(n):
       defs.add defRoot(tc, n)
     skip n
+
+proc resultOutsideFirstArg*(tc: var TypeCache; call: Cursor): bool =
+  ## Does the call take its first argument by value? Then a `var T` it returns
+  ## is no part of that argument's own storage, which is read-only to the
+  ## callee: it lies behind a pointer the argument holds (`s[i]` for a `seq`).
+  var n = call
+  inc n
+  var tt = default(Cursor)
+  var params = routineParams(tc, n, tt)
+  result = false
+  if not cursorIsNil(params):
+    params = sub(params)
+    if params.hasMore:
+      result = takeLocal(params, SkipFinalParRi).typ.typeKind notin {MutT, OutT, LentT}
