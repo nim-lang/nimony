@@ -1430,6 +1430,25 @@ proc tryEvalOrdinal*(bits: int; n: Cursor): xint =
   else:
     result = getConstOrdinalValue(val)
 
+proc rangesContain*(ranges: Cursor; value: xint; bits: int): bool =
+  ## Does the `(ranges ...)` of a case object's `of` branch hold `value`?
+  ## Compared by value, not by spelling: a discriminator can be a constant,
+  ## a declared default or `default(T)`. False when `value` is NaN.
+  result = false
+  if not value.isNaN:
+    var n = sub(ranges)
+    while n.hasMore and not result:
+      if n.substructureKind == RangeU:
+        var b = sub(n)
+        let lo = tryEvalOrdinal(bits, b)
+        skip b
+        let hi = tryEvalOrdinal(bits, b)
+        result = not lo.isNaN and not hi.isNaN and lo <= value and value <= hi
+      else:
+        let v = tryEvalOrdinal(bits, n)
+        result = not v.isNaN and v == value
+      skip n
+
 proc getConstStringValue*(val: Cursor): StrId =
   if val.isStringLit:
     result = val.strId

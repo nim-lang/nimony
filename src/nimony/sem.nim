@@ -4575,102 +4575,42 @@ template wrongBranchError(c: var SemContext; dest: var TokenBuf, info: NifLineIn
       "are in conflict with this value.") %
       [asNimSym(discriminator), asNimCode(discriminatorVal), asNimSym(field)])
 
-proc caseBranchMatchesExprRaw(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor; selectorType: Cursor): bool =
-  result = false
-  var branch = branch
-  branch = sub(branch)
-  while branch.hasMore:
-    case branch.substructureKind
-    of RangeU:
-      branch.into:
-        let a = evalConstIntExpr(c, dest, branch, selectorType)
-        let b = evalConstIntExpr(c, dest, branch, selectorType)
-
-        var matched = matched
-        let value = evalConstIntExpr(c, dest, matched, selectorType)
-        if value >= a and value <= b:
-          return true
-    of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, StaticParamU, TypevarU, StaticTypevarU, EfldU, FldU,
-       WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU,
-       EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
-       CallargsU, ForcallU, DeferexpansionU, NeedtypesU:
-      if sameTrees(branch, matched):
-        return true
-      skip branch
-
-proc isConstDiscriminator(c: var SemContext; n: Cursor): bool =
-  ## Is the (semchecked) discriminator value spelled as a constant, i.e. the
-  ## way the `of` labels it is compared against are? Deliberately no constant
-  ## EVALUATION: that re-runs sem and can shell out to a sub-compile.
-  case n.kind
-  of IntLit, UIntLit, CharLit:
-    result = true
-  of Symbol:
-    result = fetchSym(c, n.symId).kind == EfldY
-  of TagLit:
-    result = n.exprKind in {TrueX, FalseX}
-  else:
-    result = false
-
-proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor;
-                           selectorType: Cursor): bool =
-  ## `evalConstIntExpr` semchecks the range bounds *into* `dest`, but here `dest`
-  ## is the object constructor currently being built: leaving the scratch output
-  ## behind produces `(oconstr T (kv ...) <leftovers>)` which later passes -- they
-  ## expect nothing but `kv` children -- choke on. The bounds were already checked
-  ## at the type declaration, so throw the scratch tokens away again.
-  let destStart = dest.len
-  result = caseBranchMatchesExprRaw(c, dest, branch, matched, selectorType)
-  dest.shrink destStart
-
-type
-  BranchState = enum
-    NoSelector
-    Unknown
-    ThisBranch
-
 proc getValueInKv(n: Cursor): Cursor =
   result = n
   inc result
   skip result
 
 proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor; selector: Local;
-                setFields: Table[SymId, Cursor]; info: NifLineInfo;
+                selectorVal: xint; setFields: Table[SymId, Cursor]; info: NifLineInfo;
                 bindings: Table[SymId, Cursor]; depth: int) =
+  ## `selectorVal` is the constructor's value for the selector (the value
+  ## set, the declared default or `default(T)`), NaN when not constant. The
+  ## branch it selects is filled, its omitted fields with their defaults.
   var lastFieldSymId = SymId(0)
   var isBranchSelected = false
   let selectorSymId = selector.name.symId
+  let selectorSet = setFields.hasKey(selectorSymId)
 
-  var bestBranch = default(Cursor)
   block matched:
     while n.hasMore:
       case n.substructureKind
       of OfU:
         n.into:
-          var state: BranchState
-          if setFields.hasKey(selectorSymId):
-            let discriminatorVal = getValueInKv(setFields.getOrQuit(selectorSymId))
-            if caseBranchMatchesExpr(c, dest, n, discriminatorVal, selector.typ):
-              state = ThisBranch
-              isBranchSelected = true
-            else:
-              state = Unknown
-          else:
-            state = NoSelector
+          let selected = rangesContain(n, selectorVal, c.g.config.bits)
+          if selected:
+            isBranchSelected = true
           skip n
 
-          if bestBranch == default(Cursor):
-            bestBranch = n
           let (hasField, presentFieldSymId) = fieldsPresentInInitExpr(c, n, setFields)
           if hasField:
             if lastFieldSymId != SymId(0):
               conflictingBranchesError c, dest, info, lastFieldSymId, presentFieldSymId
-            elif state == Unknown:
+            elif selectorSet and not selected:
               wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
-          elif state == ThisBranch:
+          elif selected:
             # The constructor selects this branch but sets none of its fields:
             # they still get their defaults. `oconstr` is total (doc/tags.md),
             # and the native back end stores exactly what is listed.
@@ -4690,8 +4630,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
           elif not isBranchSelected and lastFieldSymId == SymId(0) and
-              setFields.hasKey(selectorSymId) and
-              isConstDiscriminator(c, getValueInKv(setFields.getOrQuit(selectorSymId))):
+              not selectorVal.isNaN:
             # A constant discriminator no `of` matched selects the `else`
             # branch; its fields get their defaults (see the `of` arm above).
             n.into: # stmt
@@ -4704,12 +4643,8 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
          CallargsU, ForcallU, DeferexpansionU, NeedtypesU:
         error "illformed AST inside case object: ", n
 
-  if selectorSymId notin setFields:
-    if lastFieldSymId != SymId(0):
-      badDiscriminatorError(c, dest, info, lastFieldSymId, selectorSymId)
-    elif bestBranch != default(Cursor):
-      bestBranch.peekInto: # stmt
-        buildObjConstrFields(c, dest, bestBranch, setFields, info, bindings, depth)
+  if not selectorSet and lastFieldSymId != SymId(0):
+    badDiscriminatorError(c, dest, info, lastFieldSymId, selectorSymId)
 
 proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
@@ -4722,9 +4657,12 @@ proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       body = sub(body) # bound the branch walk; `body` is a copy
       # selector
       let field = takeLocal(body, SkipFinalParRi)
+      let selectorKv = dest.len
       buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
-
-      fieldsPresentInBranch(c, dest, body, field, setFields, info, bindings, depth)
+      var selectorKvCursor = cursorAt(dest, selectorKv)
+      let value = tryEvalOrdinal(c.g.config.bits, getValueInKv(selectorKvCursor))
+      endRead selectorKvCursor
+      fieldsPresentInBranch(c, dest, body, field, value, setFields, info, bindings, depth)
       skip n
     else:
       let field = takeLocal(n, SkipFinalParRi)
