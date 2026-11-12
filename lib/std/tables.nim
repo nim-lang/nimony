@@ -75,7 +75,7 @@ func emptySlot(s: seq[HashEntry]; h: Hash): int {.requires: s.len > 0,
     inc i
   result = int(i and high(s).uint)
 
-func resizeIndex(t: var seq[HashEntry]) =
+func resize(t: var seq[HashEntry]) =
   ## Grows an existing index. The old index stays in place when allocation
   ## fails; callers then refuse the insert rather than let `data` outgrow it.
   let newLen = if t.len == 0: 4 else: t.len * 2
@@ -147,7 +147,7 @@ func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
     if t.data.len >= linearScanLimit:
       fillHashPart(t)
   elif indexNeedsGrowth(t.hashes.len, t.data.len):
-    resizeIndex(t.hashes)
+    resize(t.hashes)
     if indexNeedsGrowth(t.hashes.len, t.data.len):
       # The index could not grow. Refuse the insert; the dense sequence must
       # not run past an index whose probe loops still assume a free slot.
