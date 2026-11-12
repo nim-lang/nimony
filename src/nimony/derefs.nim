@@ -342,7 +342,9 @@ proc mutatesThroughPointer(c: var Context; n: Cursor): bool =
   ## Is the location `n` reached through a `ref`/`ptr` dereference? A `var`
   ## parameter at the head of the path does not change that: a `func` may write
   ## the own storage of its `var` parameter, not what the parameter points to.
-  ## A call that returns `var T` ends the walk: the callee answers for it.
+  ## A call that returns `var T` or a view borrows from its first argument
+  ## (`s[i]` for a `seq`, `toOpenArray(s, a, b)`), so the walk continues there,
+  ## as it does into the last expression of a template's `(expr ...)`.
   result = false
   var n = n
   while true:
@@ -352,6 +354,15 @@ proc mutatesThroughPointer(c: var Context; n: Cursor): bool =
       inc n
     of DotX, AtX, ArratX, TupatX, ParX, HderefX:
       inc n
+    of ExprX:
+      n = sub(n)
+      while not isLastSon(n): skip n
+    of CallKinds:
+      let t = getType(c.typeCache, n)
+      if t.typeKind != MutT and not isViewType(t): break
+      n = sub(n)
+      skip n # skip the `fn`
+      if not n.hasMore: break
     of DconvX:
       inc n
       skip n # skip the type
