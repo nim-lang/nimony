@@ -480,6 +480,7 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
     var args: seq[LLValue] = @[]
     skip n                                  # the callee symbol
+    let firstArg = n
     while n.hasMore:
       var a = LLValue()
       genExprLLVM(c, n, a)
@@ -489,13 +490,32 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     if op.isAtomic:
       genAtomicCall(c, cBuiltinFor(op, bits), args, retType, result)
     elif op.isMemOp:
-      # the same lowering as a call to the importc'd C function of that name
-      args[2] = sizeToI64(c, args[2])
+      # The same lowering as a call to the importc'd C function of that name. The
+      # location operands arrive as `(haddr L)`, i.e. pointers here; an absent byte
+      # count is the size of the first location's type.
+      let nLoc = memLocOperands(op)
+      var size: LLValue
+      if args.len > nLoc:
+        size = sizeToI64(c, args[nLoc])
+      else:
+        var inner = firstArg
+        if inner.exprKind == HaddrC: inc inner
+        let typ = genTypeLLVMReadOnly(c, getType(c.m, inner))
+        let t1 = c.emitGEP(typ, llNull(c.prim.ptrT), [llIntTextC("1", c.prim.i32)],
+            inbounds = false)
+        let t2 = c.nextTemp()
+        let res = llReg(t2, c.llIntBits(c.bits))
+        c.emit LLInstr(kind: llPtrtoint, result: res, castOp: "ptrtoint", castSrc: t1,
+                       castDstType: c.llIntBits(c.bits))
+        size = sizeToI64(c, res)
+      let callArgs =
+        if op == ZeroMemOp: @[args[0], llIntTextC("0", c.prim.i32), size]
+        else: @[args[0], args[1], size]
       let name = case op
-                 of MemsetOp: "memset"
-                 of MemcpyOp: "memcpy"
+                 of ZeroMemOp: "memset"
+                 of CopyMemOp: "memcpy"
                  else: "memcmp"
-      genMemIntrinsicCall(c, name, args, retType, result)
+      genMemIntrinsicCall(c, name, callArgs, retType, result)
 
     else:
       let builtin = cBuiltinFor(op, bits)

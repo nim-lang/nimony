@@ -110,10 +110,10 @@ proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
   # what matters here, and a function-like macro has exactly the one `genInstr`
   # emits.
   of CpuRelaxOp: "NIM_CPU_RELAX"
-  # The size operand is a Leng integer; C converts it to `size_t` implicitly.
-  of MemsetOp: "__builtin_memset"
-  of MemcpyOp: "__builtin_memcpy"
-  of MemcmpOp: "__builtin_memcmp"
+  # Location operands render as `&L`; see `genInstr` for the optional size.
+  of ZeroMemOp: "__builtin_memset"
+  of CopyMemOp: "__builtin_memcpy"
+  of CmpMemOp: "__builtin_memcmp"
   # gcc/clang expand these inline (`sqrtsd`), with an errno slow path for a
   # negative operand unless `-fno-math-errno`.
   of SqrtOp: (if bits == 32: "__builtin_sqrtf" else: "__builtin_sqrt")

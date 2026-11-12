@@ -895,6 +895,12 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
     # An int the back end reads as a LITERAL (32/64) at the call site; the
     # declared parameter type is any integer.
     result = intBitsOf(c, typ) > 0
+  of ptLoc:
+    # A location of ANY type: `zeroMemIns[T](x: var T)` is generic, and what the
+    # op does to it is decided by the type's size, not by a pattern.
+    result = true
+  of ptOptSize:
+    result = intBitsOf(c, typ) > 0
   of ptImmLit:
     # Same shape as `ptLaneBits` and checked the same way: the DECLARATION only
     # has to say "an integer". That the argument must be a literal is a fact
@@ -945,7 +951,9 @@ proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
       inc i
       skip p
   if result.len == 0:
-    if i != row.arity:
+    # A trailing `ptOptSize` (the block-memory rows' byte count) may be omitted.
+    let optional = row.arity > 0 and row.params[row.arity - 1] == ptOptSize
+    if i != row.arity and not (optional and i == row.arity - 1):
       result = "`" & opName & "` takes " & $row.arity & " operand(s), " &
                "but " & $i & " were declared"
     else:
