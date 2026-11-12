@@ -493,7 +493,9 @@ proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
   if c.g.config.keepSemTree:
     # The structured tree, for the sem validator; the compiler never reads it.
     onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif")
-  var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
+  let hooks = c.typeHooks
+  assert hooks != nil # `semdata` is a `lenientnils` module
+  var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits, hooks)
   if c.g.config.keepSemTree:
     # What the prover reads: the lowered tree with its `kill`, `unknown` and
     # `join` facts, which the published module no longer has.

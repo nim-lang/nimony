@@ -4597,6 +4597,18 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     # whatever was known about `s`. The formal parameter is right here, so
     # judge by it rather than by the shape of the argument.
     if pk in {MutT, OutT}:
+      when defined(contractStats):
+        block:
+          let loc = if n.exprKind == HaddrX: n.childCursor else: n
+          let rs = locRootSym(c, loc)
+          let cls =
+            if throughPointer(c, loc, {RefT}): "ref"
+            elif throughPointer(c, loc, {PtrT}): "ptr"
+            elif borrowMode(c, loc) == IsBorrowableFromGlobal: "global"
+            elif rs != NoSymId and rs in c.unanalysed: "addrtaken"
+            else: "unique"
+          c.stats.add "VARARG " & cls & (if effect == HasSideEffect: " proc " else: " func ") &
+            infoToStr(n.info) & " " & asNimCode(loc)
       let root = writtenRoot(c, n)
       let argSym = extractSymId(n)
       if argSym != NoSymId:
@@ -6903,14 +6915,15 @@ proc applyVerdicts(buf: var TokenBuf; dischargedIndexes, provenCalls: HashSet[in
     endRead(n)
   swap buf, res
 
-proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
+proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int;
+                     hooks: ref Table[SymId, HooksPerType]): TokenBuf =
   ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
   var n = beginRead(input)
   # this storage is reused for the Final IR, which is up to 1.5x its input
   var buf = createTokenBuf(input.len + input.len div 2)
   buf.addSubtree n
   var pass = initPass(move buf, moduleSuffix, "xelim_finalir", bits)
-  toFinalIr(pass)
+  toFinalIr(pass, hooks)
   result = ensureMove pass.dest
 
 proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
@@ -6980,7 +6993,8 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
 proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
   ## Lower `input` and analyze it. nimsem lowers once and calls
   ## `analyzeFinalIr` directly.
-  var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
+  var finalBuf = lowerToFinalIr(input, moduleSuffix, bits,
+                                (ref Table[SymId, HooksPerType])())
   result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits, verbose)
 
 when isMainModule:

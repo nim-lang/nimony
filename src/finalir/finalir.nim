@@ -41,7 +41,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
-import ".." / hexer / [xelim, mover, passes]
+import ".." / hexer / [xelim, mover, passes, lifter]
 import ".." / lib / symparser
 import finalir_model, condextractor, defroots
 
@@ -93,6 +93,7 @@ type
     thisModuleSuffix: string
     current: CurrentProc
     analysisFacts: bool ## emit `kill`/`unknown`; only the prover reads them
+    lifter: ref LiftingCtx ## asks a type for its `=destroy`
     callExprs: Table[SymId, TokenBuf] ## whole init call of a local, so a `for`
                                       ## whose iterator xelim hoisted into a
                                       ## temp can still be read (see `trFor`)
@@ -102,11 +103,37 @@ type
 proc openScope(c: var Context) =
   c.typeCache.openScope()
 
+const
+  MemSym = SymId(0) ## stands for every location a barrier can write
+
+proc newDef(c: var Context; s: SymId): int
+
+proc isDestroyed(c: var Context; kind: SymKind; typ: Cursor): bool =
+  ## Does a local of this kind and type die by a `=destroy` that is a barrier?
+  kind in {VarY, LetY} and c.analysisFacts and destroyHasSideEffect(c.lifter[], typ)
+
+proc diesByBarrier(c: var Context; s: SymId): bool =
+  let li = getLocalInfo(c.typeCache, s)
+  result = isDestroyed(c, li.kind, li.typ)
+
 template emitKill(c: var Context; dest: var TokenBuf; info: NifLineInfo;
                   locals: untyped) =
   ## `(kill …)` for the symbols `locals` yields, if any. A scope yields its
   ## locals in declaration order, so the output is deterministic as it is.
+  ##
+  ## A local with a destructor dies by a call of its `=destroy`, which the
+  ## tree does not show yet. Unless it is a `func`, it is a call like any
+  ## other `proc` and can write what a `ref` in the local points to, or a
+  ## global: `(unknown .)`, a barrier, in front of the `kill`.
   if c.analysisFacts:
+    var destroys = false
+    for s in locals:
+      if diesByBarrier(c, s): destroys = true
+    if destroys:
+      dest.addParLe("unknown", info)
+      dest.addDotToken()
+      dest.addParRi()
+      discard newDef(c, MemSym)
     var first = true
     for s in locals:
       if first:
@@ -132,9 +159,6 @@ proc freshLabel(c: var Context; prefix: string): SymId =
   inc c.current.tmpCounter
 
 # ---------------------------------------------------------------- versions
-
-const
-  MemSym = SymId(0) ## stands for every location a barrier can write
 
 proc slotOf(c: var Context; s: SymId): int =
   result = int c.current.slots.getOrDefault(s, -1'i32)
@@ -850,6 +874,11 @@ proc scanLoopDefs(c: var Context; body: Cursor): seq[LoopJoin] =
       callDefs c.typeCache, n, defs, barrier
       for d in defs: note d
       if barrier and MemSym notin syms: syms.add MemSym
+    elif n.stmtKind in {RetS, RaiseS} or
+        (n.symKind in {VarY, LetY} and isDestroyed(c, n.symKind, asLocal(n).typ)):
+      # a local with a destructor dies in the body, or may: an exit kills
+      # the locals of the scopes it leaves (see `emitKill`)
+      if MemSym notin syms: syms.add MemSym
   var n = body
   if n.isTagLit:
     visit n
@@ -1280,11 +1309,15 @@ proc stripAnalysisFacts*(buf: sink TokenBuf): TokenBuf =
   while n.hasMore:
     stripAnalysisFactsInto result, n
 
-proc toFinalIr*(pass: var Pass; analysisFacts = true) =
-  ## `analysisFacts`: see `Context.analysisFacts`.
+proc toFinalIr*(pass: var Pass; hooks: ref Table[SymId, HooksPerType];
+                analysisFacts = true) =
+  ## `analysisFacts`: see `Context.analysisFacts`. `hooks`: the hooks of the
+  ## types of the module, which their declarations do not list yet.
+  let lifter = createLiftingCtx(pass.moduleSuffix, pass.bits, hooks)
+  assert lifter != nil # `lifter` is a `lenientnils` module
   var c = Context(counter: 0, typeCache: createTypeCache(pass.bits),
                   thisModuleSuffix: pass.moduleSuffix,
-                  analysisFacts: analysisFacts)
+                  analysisFacts: analysisFacts, lifter: lifter)
   c.current.live = true
   c.openScope()
   lowerExprs(pass, TowardsFinalIr)
@@ -1309,6 +1342,9 @@ proc toFinalIr*(pass: var Pass; analysisFacts = true) =
       stmt.shrink 0
     closeScope c, pass.dest, n.endInfo
   pass.dest.addParRi()
+
+proc toFinalIr*(pass: var Pass; analysisFacts = true) =
+  toFinalIr(pass, (ref Table[SymId, HooksPerType])(), analysisFacts)
 
 when isMainModule:
   from std/os import paramStr, paramCount
