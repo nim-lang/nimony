@@ -99,7 +99,7 @@ type
     temps: seq[(SymId, Cursor)]
       ## The `{.inline.}` temps `value` refers to, with what they stand for.
       ## Like `param` they are the accessor's own symbols, so reading `value`
-      ## substitutes them (`accessorSubst`).
+      ## expands them (`accessorValue`).
 
   Reading = object
     ## How a proposition is read where it is judged or assumed. At a call site
@@ -1152,13 +1152,20 @@ proc argOf(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   if result.isSymbol and subst.hasKey(result.symId):
     result = peelExpr(c, subst.getOrQuit(result.symId), facts = true)
 
-proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor]) =
+proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor];
+                     sameRoutine = false) =
   ## `n` with every substituted symbol replaced by the expression it stands for.
+  ## An argument is an expression of the caller and is copied as it is; with
+  ## `sameRoutine` the replacements belong to the routine `n` is from (an
+  ## accessor's temps) and are substituted in turn.
   var n = n
   case n.kind
   of Symbol:
     if subst.hasKey(n.symId):
-      dest.addSubtree subst.getOrQuit(n.symId)
+      if sameRoutine:
+        addSubstituted(dest, subst.getOrQuit(n.symId), subst, sameRoutine)
+      else:
+        dest.addSubtree subst.getOrQuit(n.symId)
     else:
       dest.addSubtree n
   of TagLit:
@@ -1169,12 +1176,12 @@ proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor]) 
     dest.addParLe(n.cursorTagId, n.info)
     n.into:
       if (isSel or isKey) and n.hasMore:
-        if isSel: addSubstituted(dest, n, subst) # the object
+        if isSel: addSubstituted(dest, n, subst, sameRoutine) # the object
         else: dest.addSubtree n # the field name
         skip n
       while n.hasMore:
         if isSel: dest.addSubtree n # field selector, depth, access token
-        else: addSubstituted(dest, n, subst)
+        else: addSubstituted(dest, n, subst, sameRoutine)
         skip n
       dest.addParRi(n.endInfo)
   else:
@@ -1391,12 +1398,26 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
   value = val
   result = true
 
-proc accessorSubst(a: AccessorInfo): Table[SymId, Cursor] =
-  ## The substitution reading `a.value` needs for its temps; a caller that
-  ## applies the accessor to an argument adds `a.param`.
-  result = initTable[SymId, Cursor]()
+proc accessorValue(a: AccessorInfo; buf: var TokenBuf): Cursor =
+  ## `a.value` in terms of `a.param` alone: every temp it names, and every temp
+  ## those name, replaced by what it stands for. A caller that applies the
+  ## accessor substitutes `a.param` only.
+  if a.temps.len == 0: return a.value
+  var temps = initTable[SymId, Cursor]()
   for it in a.temps:
-    result[it[0]] = it[1]
+    temps[it[0]] = it[1]
+  addSubstituted(buf, a.value, temps, sameRoutine = true)
+  result = cursorAt(buf, 0)
+
+proc callerArg(c: var FirContext; arg: Cursor; subst: Table[SymId, Cursor];
+               buf: var TokenBuf): Cursor =
+  ## `arg`, written where `subst` applies, in the terms of the scope being
+  ## analysed: what an accessor applied to `arg` reads its parameter as.
+  if subst.len == 0 or substitutes(c, arg, subst):
+    result = argOf(c, arg, subst)
+  else:
+    addSubstituted(buf, arg, subst)
+    result = cursorAt(buf, 0)
 
 proc accessorOf(c: var FirContext; fnSym: SymId; a: var AccessorInfo): bool =
   ## `c.accessors` is filled by a pre-pass over the module being analysed, which
@@ -1424,6 +1445,11 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   ## Canonical key of a pure location. `steps == 0` means the location *is* the
   ## plain variable `root`; anything else is derived.
   if depth > MaxLocationDepth: return false
+  if substitutes(c, n, subst):
+    # an argument, an expression of the caller: none of its symbols is one
+    # `subst` stands for
+    let noSubst = initTable[SymId, Cursor]()
+    return locationKey(c, argOf(c, n, subst), noSubst, root, key, steps, depth)
   let m = argOf(c, n, subst)
   let s = extractSymId(m)
   if s != NoSymId:
@@ -1467,38 +1493,14 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     if accessorOf(c, fnSym, acc):
       # Key the *path the accessor returns*, so that `len(s)` and the `s.len`
       # written inside the defining module are one and the same location.
-      # The argument is resolved against the substitution in flight *first*: in
-      # a callee's `.requires`, `len(a)` applies the accessor to the callee's
-      # parameter `a`, which stands for the argument at the call site. The
-      # accessor's own path then needs its parameter and nothing else — keeping
-      # the outer map there would substitute twice, and a recursive call with
-      # swapped arguments maps `a` to `b` and `b` back to `a`.
-      let resolved = argOf(c, arg, subst)
-      if resolved.isSymbol or not resolved.isTagLit or subst.len == 0:
-        var inner = accessorSubst(acc)
-        inner[acc.param] = resolved
-        return locationKey(c, acc.value, inner, root, key, steps, depth+1)
-      # A path argument (`len(b.data)`) still names the callee's parameters
-      # inside: key it under the substitution in flight, then graft the path
-      # the accessor returns onto it.
-      var argRoot = NoSymId
-      var argKey = ""
-      var argSteps = 0
-      if not locationKey(c, arg, subst, argRoot, argKey, argSteps, depth+1): return false
-      var own = NoSymId
-      var ownKey = ""
-      var ownSteps = 0
-      # in terms of the accessor's own parameter: only its temps are resolved
-      let ownSubst = accessorSubst(acc)
-      if not locationKey(c, acc.value, ownSubst, own, ownKey, ownSteps, depth+1): return false
-      let paramKey = "v" & $uint32(acc.param)
-      if own != acc.param or not ownKey.startsWith(paramKey) or
-          (ownKey.len > paramKey.len and ownKey[paramKey.len] notin {'.', '-'}):
-        return false
-      root = argRoot
-      key = argKey & ownKey.substr(paramKey.len)
-      steps = argSteps + ownSteps
-      return true
+      # The accessor's parameter stands for the argument in the caller's
+      # terms: in a callee's `.requires`, `len(a)` and `len(b.data)` name the
+      # callee's parameters, which the substitution in flight replaces first.
+      var vbuf = createTokenBuf(16)
+      var abuf = createTokenBuf(16)
+      var inner = initTable[SymId, Cursor]()
+      inner[acc.param] = callerArg(c, arg, subst, abuf)
+      return locationKey(c, accessorValue(acc, vbuf), inner, root, key, steps, depth+1)
     if not isKeyableCall(fnSym): return false
     if not locationKey(c, arg, subst, root, key, steps, depth+1): return false
     key = "c" & $uint32(fnSym) & "(" & key & ")"
@@ -1609,6 +1611,10 @@ proc ensuredResultRange(c: var FirContext; call: Cursor; lo, hi: var xint): bool
 
 proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): VarId =
   ## The `VarId` standing for the location `n` denotes, or `InvalidVarId`.
+  if substitutes(c, n, subst):
+    # an argument is read in the caller's scope, with no substitution
+    let noSubst = initTable[SymId, Cursor]()
+    return locationVarId(c, argOf(c, n, subst), noSubst)
   var root = NoSymId
   var key = ""
   var steps = 0
@@ -1655,13 +1661,15 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
       # a call of a transparent accessor, its parameter standing for `arg`
       let arg = r
       skip r
-      let body = peelExpr(c, acc.value)
+      var vbuf = createTokenBuf(16)
+      let body = peelExpr(c, accessorValue(acc, vbuf))
       if not r.hasMore and body.exprKind in {AddX, SubX}:
         # ... with exactly that one argument, and a body `path ± k`
         var b = body
         b = sub(b)
-        var inner = accessorSubst(acc)
-        inner[acc.param] = argOf(c, arg, subst)
+        var abuf = createTokenBuf(16)
+        var inner = initTable[SymId, Cursor]()
+        inner[acc.param] = callerArg(c, arg, subst, abuf)
         if typeWraps(b):
           # the body is in terms of the accessor's parameter: the facts rule
           # out a wrap of it with the argument in its place
