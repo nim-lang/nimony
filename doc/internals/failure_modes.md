@@ -264,7 +264,7 @@ a table that is short of what was asked for but wholly consistent. Two related
 rules fall out:
 
 - `fillHashPart` is the only thing that builds an index from `data`, and it
-  sizes for what `data` already holds. `resizeIndex` only grows an existing
+  sizes for what `data` already holds. `resize` only grows an existing
   index, so using it to create one would leave an index that is non-empty and
   yet missing every key already stored -- which `rawGet` would trust.
 - `rawGet` falls back to a linear scan when there is no index at all. Slow, but
