@@ -33,6 +33,8 @@ template atomicFetchAdd(p: ptr int; val: int; mem: AtomMemModel): int =
   atomicAddFetch(p, val, mem) -% val
 template atomicFetchSub(p: ptr int; val: int; mem: AtomMemModel): int =
   atomicSubFetch(p, val, mem) +% val
+func atomicFetchOr(p: ptr int; val: int; mem: AtomMemModel): int {.sync,
+  intrinsic: "AtomicFetchOr".}
 proc atomicInc(memLoc: var int; x: int = 1): int {.inline.} =
   atomicAddFetch(addr memLoc, x, ATOMIC_SEQ_CST)
 proc atomicDec(memLoc: var int; x: int = 1): int {.inline.} =
