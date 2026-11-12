@@ -42,14 +42,28 @@ proc isSharedVar*(tc: var TypeCache; s: SymId): bool =
 
 proc routineParams(tc: var TypeCache; fn: Cursor; tt: var Cursor): Cursor =
   ## The `(params …)` of the routine the callee `fn` names, `tt` its type; a
-  ## nil cursor for a routine value, a method or a symbol that does not load.
+  ## nil cursor for a routine value or a symbol that does not load. For a
+  ## method these are the formals every override shares; what the call does
+  ## beyond them is unknown, see `hasUnknownEffect`.
   result = default(Cursor)
   if fn.isSymbol and (getLocalInfo(tc, fn.symId).kind != NoSym or
       tryLoadSym(fn.symId).status == LacksNothing):
     tt = getType(tc, fn)
-    if tt.stmtKind in {ProcS, FuncS, IteratorS, ConverterS}:
+    if tt.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
       let p = skipProcTypeToParams(tt)
       if p.isParamsTag: result = p
+
+proc hasUnknownEffect(tt, params: Cursor): bool =
+  ## Can a call of the routine of type `tt` write more than its `var`
+  ## arguments? A method call runs an override that is not known here, so the
+  ## pragmas of the method that was named say nothing.
+  if tt.stmtKind == MethodS:
+    result = true
+  else:
+    var pragmas = params
+    skip pragmas # params
+    skip pragmas # return type
+    result = calleeEffect(tt, pragmas) == HasSideEffect
 
 proc isBarrierCallee*(tc: var TypeCache; fn: Cursor): bool =
   ## Is a call of `fn` a barrier? A `func` writes nothing but the variables it
@@ -57,13 +71,7 @@ proc isBarrierCallee*(tc: var TypeCache; fn: Cursor): bool =
   ## global or what lies behind a `ref`.
   var tt = default(Cursor)
   let params = routineParams(tc, fn, tt)
-  if cursorIsNil(params):
-    result = true
-  else:
-    var pragmas = params
-    skip pragmas # params
-    skip pragmas # return type
-    result = calleeEffect(tt, pragmas) == HasSideEffect
+  result = cursorIsNil(params) or hasUnknownEffect(tt, params)
 
 proc defRoot*(tc: var TypeCache; loc: Cursor): DefRoot =
   ## The variable a write to the location `loc` defines. A field, a tuple
@@ -93,7 +101,8 @@ proc defRoot*(tc: var TypeCache; loc: Cursor): DefRoot =
       inc n
       var tt = default(Cursor)
       var params = routineParams(tc, n, tt)
-      if cursorIsNil(params): return
+      # an override may return a location from anywhere
+      if cursorIsNil(params) or tt.stmtKind == MethodS: return
       params = sub(params)
       if not params.hasMore: return
       var t = takeLocal(params, SkipFinalParRi).typ
@@ -150,10 +159,7 @@ proc callDefs*(tc: var TypeCache; call: Cursor; defs: var seq[DefRoot];
       let p = skipProcTypeToParams(getType(tc, n))
       if p.isParamsTag: params = p
   else:
-    var pragmas = params
-    skip pragmas # params
-    skip pragmas # return type
-    barrier = calleeEffect(tt, pragmas) == HasSideEffect
+    barrier = hasUnknownEffect(tt, params)
   let known = not cursorIsNil(params)
   if known: params = sub(params)
   skip n # fn
@@ -175,7 +181,7 @@ proc resultOutsideFirstArg*(tc: var TypeCache; call: Cursor): bool =
   var tt = default(Cursor)
   var params = routineParams(tc, n, tt)
   result = false
-  if not cursorIsNil(params):
+  if not cursorIsNil(params) and tt.stmtKind != MethodS:
     params = sub(params)
     if params.hasMore:
       result = takeLocal(params, SkipFinalParRi).typ.typeKind notin {MutT, OutT, LentT}
