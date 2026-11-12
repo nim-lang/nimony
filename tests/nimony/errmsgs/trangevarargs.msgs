@@ -1,0 +1,33 @@
+tests/nimony/errmsgs/trangevarargs.nim(19, 6) Error: Type mismatch at [position]
+setIt(r, 1000)
+[1] expected: int64 but got: 0..7 (declared in tests/nimony/errmsgs/trangevarargs.nim(12, 1))
+tests/nimony/errmsgs/trangevarargs.nim(20, 7) Error: Type mismatch at [position]
+readIt(r)
+[1] expected: int64 but got: 0..7 (declared in tests/nimony/errmsgs/trangevarargs.nim(13, 1))
+tests/nimony/errmsgs/trangevarargs.nim(22, 6) Error: Type mismatch at [position]
+setIt(n, -1)
+[1] expected: int64 but got: 0..9223372036854775807 (declared in tests/nimony/errmsgs/trangevarargs.nim(12, 1))
+tests/nimony/errmsgs/trangevarargs.nim(24, 6) Error: Type mismatch at [position]
+setIt(o.r, 9)
+[1] expected: int64 but got: 0..7 (declared in tests/nimony/errmsgs/trangevarargs.nim(12, 1))
+tests/nimony/errmsgs/trangevarargs.nim(26, 6) Error: Type mismatch at [position]
+setIt(a[0], 9)
+[1] expected: int64 but got: 0..7 (declared in tests/nimony/errmsgs/trangevarargs.nim(12, 1))
+tests/nimony/errmsgs/trangevarargs.nim(28, 5) Error: Type mismatch at [position]
+setC(ch)
+[1] expected: char but got: 97..102 (declared in tests/nimony/errmsgs/trangevarargs.nim(14, 1))
+tests/nimony/errmsgs/trangevarargs.nim(30, 3) Error: Type mismatch at [position]
+sw(r, i)
+[2] expected: 0..7 but got: int64 (declared in tests/nimony/errmsgs/trangevarargs.nim(16, 1))
+tests/nimony/errmsgs/trangevarargs.nim(32, 5) Error: Type mismatch at [position]
+setR(i, 1)
+[1] expected: 0..7 but got: int64 (declared in tests/nimony/errmsgs/trangevarargs.nim(15, 1))
+tests/nimony/errmsgs/trangevarargs.nim(34, 5) Error: Type mismatch at [position]
+setR(s, 7)
+[1] expected: 0..7 but got: 2..5 (declared in tests/nimony/errmsgs/trangevarargs.nim(15, 1))
+tests/nimony/errmsgs/trangevarargs.nim(35, 27) Error: Type mismatch at [position]
+setIt(x, 100)
+[1] expected: int64 but got: 0..7 (declared in tests/nimony/errmsgs/trangevarargs.nim(12, 1))
+tests/nimony/errmsgs/trangevarargs.nim(47, 7) Error: Type mismatch at [position]
+outB(d)
+[1] subtype relation not available for `out` parameters (declared in tests/nimony/errmsgs/trangevarargs.nim(44, 1))
