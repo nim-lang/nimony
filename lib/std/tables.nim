@@ -6,37 +6,324 @@ type
   Keyable* = concept of Hashable ## Types usable as table keys: `Hashable` plus `==`.
     func `==`(a, b: Self): bool
 
-const
-  defaultInitialSize* = 32
-  growthFactor = 2
-  linearScanLimit = 4
-
-type
   HashEntry = object
     fullhash: Hash
-    position: int # 1-based index into `data`; 0 marks an empty slot
-  Table*[A, B] = object ## Generic hash table, consisting of key-value pairs.
-    ## Tiny tables are scanned linearly; larger ones keep an open-addressed
-    ## index beside the dense pair sequence.
-    data: seq[(A, B)]
+    position: int # index into `data`; 1 based so that 0 means "unfilled"
+  Table*[K, V] = object ## Generic hash map storing key/value pairs (linear scan when tiny, open addressing otherwise).
+    data: seq[(K, V)]
     hashes: seq[HashEntry]
 
-# ------------------------------ helpers ---------------------------------
+func mustRehash(length, counter: int): bool {.inline.} =
+  result = (length < counter div 2 + counter) or (length - counter < 4)
+
+func isIndexed(a: HashEntry): bool {.inline.} = a.position > 0
+
+func emptySlot(s: seq[HashEntry]; h: Hash): int {.requires: s.len > 0,
+    ensures: 0 <= result and result < s.len, inline.} =
+  ## The first unfilled slot on `h`'s linear probe sequence.
+  var i = h
+  while isIndexed(s[i and high(s).uint]): inc i
+  result = int(i and high(s).uint)
+
+func resize(t: var seq[HashEntry]) =
+  # does not have to be generic.
+  let newLen = if t.len == 0: 4 else: t.len * 2
+  var s = newSeq[HashEntry](newLen)
+  # the allocation failed: keep probing the old index, full as it is
+  if s.len == 0: return
+  for i in 0 ..< t.len:
+    if isIndexed(t[i]):
+      s[emptySlot(s, t[i].fullhash)] = t[i]
+  t = ensureMove s
+
+const
+  HashThreshold = 4
+  defaultInitialSize* = 32
+  growthFactor = 2
+
+func fillHashPart[K: Keyable, V](t: var Table[K, V]) =
+  ## Builds a COMPLETE index for `data`, or leaves `hashes` empty.
+  ##
+  ## Sized for what `data` already holds rather than a fixed minimum: this runs
+  ## again after an earlier attempt could not allocate, by which time `data` may
+  ## be far past `HashThreshold`, and an index too small for it would leave
+  ## `emptySlot` with no free slot to find.
+  var cap = HashThreshold*2
+  while mustRehash(cap, t.data.len): cap = cap * 2
+  t.hashes = newSeq[HashEntry](cap)
+  if t.hashes.len == 0: return
+  for i in 0 ..< t.data.len:
+    let fullhash = hash(t.data[i][0])
+    t.hashes[emptySlot(t.hashes, fullhash)] = HashEntry(fullhash: fullhash, position: i+1)
+
+func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: out Hash): int {.
+    ensures: result < t.data.len.} =
+  if t.data.len <= HashThreshold or t.hashes.len == 0:
+    kh = 0
+    # No index: either the table is still tiny, or the index could not be
+    # allocated. A linear scan is slow but correct, and correctness is what
+    # matters here -- answering "absent" would make `[]=` store a second copy
+    # of a key that is already present.
+    for i in 0 ..< t.data.len:
+      if t.data[i][0] == k: return i
+  else:
+    kh = hash(k)
+    var h = kh
+    while isIndexed(t.hashes[h and high(t.hashes).uint]):
+      let d = t.hashes[h and high(t.hashes).uint]
+      # `position` points into `data` for every filled entry; an entry that
+      # does not is no match rather than a read past its end
+      if d.fullhash == kh and d.position >= 1 and d.position <= t.data.len and
+          t.data[d.position-1][0] == k:
+        return d.position-1
+      inc h
+  result = -1
+
+func contains*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
+  ## True if `k` is stored in `t`.
+  var hc: Hash
+  rawGet(t, k, hc) >= 0
+
+func hasKey*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
+  ## Alias for `contains`.
+  contains(t, k)
+
+func hasKeyOrPut*[K: Keyable, V](t: var Table[K, V]; key: K; val: V): bool =
+  ## True when `key` is present; otherwise inserts it with `val` and returns
+  ## false.
+  var hc: Hash
+  let index = rawGet(t, key, hc)
+  if index >= 0:
+    return true
+  rawPut(t, key, val, hc)
+  false
+
+func getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
+  var hc: Hash
+  let idx = rawGet(t, k, hc)
+  if idx >= 0:
+    t.data[idx][1]
+  else:
+    default(V)
+
+func getOrDefault*[K: Keyable, V](t: Table[K, V]; k: K; fallback: V): V =
+  ## Return `t[k]` if the key is present, otherwise `fallback`.
+  var hc: Hash
+  let idx = rawGet(t, k, hc)
+  if idx >= 0:
+    t.data[idx][1]
+  else:
+    fallback
+
+func getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
+  ## Like `[]`, but terminates the program if `k` is missing (after `assert`).
+  var hc: Hash
+  let idx = rawGet(t, k, hc)
+  if idx < 0:
+    {.cast(noSideEffect).}:
+      raiseAssert "key not found"
+  t.data[idx][1]
+
+when defined(nimony):
+  func `[]`*[K: Keyable, V](t: Table[K, V]; k: K): var V {.raises.} =
+    ## Retrieves `k`'s value or raises `KeyError` when absent.
+    var hc: Hash
+    let idx = rawGet(t, k, hc)
+    if idx < 0:
+      raise KeyError
+    t.data[idx][1]
+
+else:
+  func `[]`*[K, V](t: var Table[K, V]; k: K): var V {.raises.} =
+    var hc: Hash
+    let idx = rawGet(t, k, hc)
+    if idx < 0:
+      raise KeyError
+    t.data[idx][1]
+
+  func `[]`*[K, V](t: Table[K, V]; k: K): V {.raises.} =
+    var hc: Hash
+    let idx = rawGet(t, k, hc)
+    if idx < 0:
+      raise KeyError
+    t.data[idx][1]
+
+func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
+  if t.hashes.len == 0:
+    # `fillHashPart` is the only thing that builds an index from `data`;
+    # `resize` merely grows an existing one, so using it here would leave an
+    # index that is non-empty and yet missing every key already stored, and
+    # `rawGet` would trust it.
+    if t.data.len >= HashThreshold:
+      fillHashPart t
+  elif mustRehash(t.hashes.len, t.data.len):
+    resize t.hashes
+    if mustRehash(t.hashes.len, t.data.len):
+      # The index could not grow. Storing the pair anyway would eventually fill
+      # every slot, and both probe loops in this module assume a free slot
+      # exists -- a lookup for an absent key would then never terminate. Refuse
+      # the insert instead: it is an allocation failure like any other, and the
+      # table stays consistent and usable.
+      return
+  var kh = h
+  if t.hashes.len > 0 and kh == 0:
+    kh = hash(k)
+  let oldLen = t.data.len
+  t.data.add (k, v)
+  # Two ways this can have no new entry to index: an index that could not be
+  # allocated (`hashes` empty), or an `add` that could not allocate -- which
+  # leaves `data` untouched, so `data.len` is the test. Indexing anyway would
+  # write a slot whose `position` names an OLD pair: `rawGet` compares keys and
+  # so never matches it, but it stays filled forever, and enough of them make
+  # `emptySlot` spin on a probe sequence with no free slot left.
+  if t.data.len > oldLen and t.hashes.len > 0:
+    t.hashes[emptySlot(t.hashes, kh)] = HashEntry(fullhash: kh, position: t.data.len)
+
+func `[]=`*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V) =
+  ## Inserts or updates `k` with `v`.
+  var hc: Hash
+  let idx = rawGet(t, k, hc)
+  if idx >= 0:
+    t.data[idx][1] = v
+  else:
+    rawPut(t, k, v, hc)
+
+func mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V =
+  ## Returns `t[k]`, inserting `v` when `k` was missing; result is mutable.
+  var hc: Hash
+  var idx = rawGet(t, k, hc)
+  if idx < 0:
+    let oldLen = t.data.len
+    rawPut(t, k, v, hc)
+    idx = t.data.len-1
+    # When the insert was refused, `data.len-1` names the pair BEFORE the one
+    # asked for, so a reference to someone else's value would escape. Both tests
+    # matter: `idx < 0` for a table that is still empty, and `len <= oldLen` for
+    # a refusal that left a non-empty one. Keeping `idx < 0` explicit is also
+    # what tells the contract prover that the index below is in range.
+    if idx < 0 or t.data.len <= oldLen:
+      {.cast(noSideEffect).}:
+        raiseAssert "out of memory"
+  result = t.data[idx][1]
+
+func mgetOrPut*[K: Keyable, V: HasDefault](t: var Table[K, V];
+    k: sink K): var V =
+  mgetOrPut(t, k, default(V))
+
+func len*[K, V](t: Table[K, V]): int {.inline.} =
+  ## Number of key/value pairs stored in `t`.
+  t.data.len
+
+iterator pairs*[K, V](t: Table[K, V]): (lent K, lent V) =
+  ## Yields every `(key, value)` stored in `t`.
+  for i in 0 ..< t.data.len:
+    yield (t.data[i][0], t.data[i][1])
+
+iterator mpairs*[K, V](t: Table[K, V]): (lent K, var V) =
+  ## Mutable variant of `pairs` (values can be updated in place).
+  for i in 0 ..< t.data.len:
+    yield (t.data[i][0], t.data[i][1])
+
+iterator keys*[K, V](t: Table[K, V]): lent K =
+  for i in 0 ..< t.data.len:
+    yield t.data[i][0]
+
+iterator values*[K, V](t: Table[K, V]): lent V =
+  for i in 0 ..< t.data.len:
+    yield t.data[i][1]
+
+iterator mvalues*[K, V](t: var Table[K, V]): var V =
+  for i in 0 ..< t.data.len:
+    yield t.data[i][1]
+
+func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
+  ## Remove `k` from `t`. No-op if absent. Preserves insertion order by
+  ## shifting later entries down; the hash index is rebuilt afterwards
+  ## because the shift renamed every entry's data position.
+  var hc: Hash
+  let idx = rawGet(t, k, hc)
+  if idx < 0: return
+  var j = idx
+  while j < t.data.len - 1:
+    let next = t.data[j+1]
+    t.data[j] = next
+    inc j
+  t.data.shrink(t.data.len - 1)
+  if t.data.len > HashThreshold:
+    # `rawGet` does NOT rebuild lazily: when `data.len > HashThreshold`
+    # it indexes into `t.hashes` directly, so leaving `hashes = @[]`
+    # turns the next lookup into an out-of-bounds read. Rebuild the
+    # hash table sized to fit the current data.
+    var size = HashThreshold * 2
+    while size < t.data.len * 2:
+      size = size * 2
+    t.hashes = newSeq[HashEntry](size)
+    if t.hashes.len == 0: return
+    for i in 0 ..< t.data.len:
+      let fullhash = hash(t.data[i][0])
+      t.hashes[emptySlot(t.hashes, fullhash)] = HashEntry(fullhash: fullhash, position: i+1)
+  else:
+    # data fits the linear-scan threshold; drop the hash table entirely.
+    t.hashes.shrink(0)
+
+func pop*[K: Keyable, V](t: var Table[K, V]; key: K; val: var V): bool =
+  ## Removes `key` and stores its value in `val`.
+  var hc: Hash
+  let index = rawGet(t, key, hc)
+  if index < 0:
+    return false
+  val = move(t.data[index][1])
+  del(t, key)
+  true
+
+func take*[K: Keyable, V](t: var Table[K, V]; key: K; val: var V): bool {.inline.} =
+  pop(t, key, val)
+
+func initTable*[K, V](initialSize = defaultInitialSize): Table[K, V] =
+  ## Creates an empty table.
+  discard initialSize
+  Table[K, V](data: @[], hashes: @[])
+
+func toTable*[K: Keyable, V](pairs: openArray[(K, V)]): Table[K, V] =
+  ## Creates a table containing `pairs`.
+  result = initTable[K, V](pairs.len)
+  for (key, val) in pairs:
+    result[key] = val
+
+func clear*[K, V](t: var Table[K, V]) =
+  ## Remove all entries from `t`.
+  t.data.shrink(0)
+  t.hashes = @[]
+
+func `$`*[K: Stringable, V: Stringable](t: Table[K, V]): string =
+  if t.data.len == 0:
+    return "{:}"
+  result = "{"
+  var first = true
+  for i in 0 ..< t.data.len:
+    if not first:
+      result.add ", "
+    first = false
+    result.addQuoted t.data[i][0]
+    result.add ": "
+    result.addQuoted t.data[i][1]
+  result.add "}"
+
+func `==`*[K: Keyable, V: Equatable](s, t: Table[K, V]): bool =
+  ## Content equality: insertion order and internal index layout do not matter.
+  if s.data.len != t.data.len:
+    return false
+  for i in 0 ..< s.data.len:
+    var hc: Hash
+    let idx = rawGet(t, s.data[i][0], hc)
+    if idx < 0 or t.data[idx][1] != s.data[i][1]:
+      return false
+  true
+
+# --------------------------- OrderedTable --------------------------------
 
 func isFilled(hcode: Hash): bool {.inline.} =
   hcode != 0
-
-func isIndexed(a: HashEntry): bool {.inline.} =
-  a.position > 0
-
-func indexNeedsGrowth(length, counter: int): bool {.inline.} =
-  ## Whether an index of `length` slots is too full for `counter` entries.
-  ## Total, unlike `mustRehash`, so the dense table can also try to build an
-  ## index after an earlier allocation failure left it without one.
-  result = (length < counter div 2 + counter) or (length - counter < 4)
-
-func mustRehash(length, counter: int): bool {.inline, requires: length > counter.} =
-  result = (length < counter div 2 + counter) or (length - counter < 4)
 
 func nextPowerOfTwo(x: int): int {.inline.} =
   result = 1
@@ -59,331 +346,20 @@ func nextProbe(h, mask: int): int {.inline, requires: mask >= 0,
     ensures: 0 <= result and result <= mask.} =
   result = (h + 1) and mask
 
-func genHash[A: Hashable](key: A): Hash {.inline.} =
+func genHash[K: Hashable](key: K): Hash {.inline.} =
   result = hash(key)
   # A zero hash marks an empty slot, so real keys never carry one.
   if result == 0:
     result = 314159265'u
 
-# ------------------------- dense table helpers ---------------------------
-
-func emptySlot(s: seq[HashEntry]; h: Hash): int {.requires: s.len > 0,
-    ensures: 0 <= result and result < s.len, inline.} =
-  ## The first unfilled slot on `h`'s linear probe sequence.
-  var i = h
-  while isIndexed(s[i and high(s).uint]):
-    inc i
-  result = int(i and high(s).uint)
-
-func resize(t: var seq[HashEntry]) =
-  ## Grows an existing index. The old index stays in place when allocation
-  ## fails; callers then refuse the insert rather than let `data` outgrow it.
-  let newLen = if t.len == 0: 4 else: t.len * 2
-  var s = newSeq[HashEntry](newLen)
-  if s.len == 0:
-    return
-  for i in 0 ..< t.len:
-    if isIndexed(t[i]):
-      s[emptySlot(s, t[i].fullhash)] = t[i]
-  t = ensureMove s
-
-func fillHashPart[K: Keyable, V](t: var Table[K, V]) =
-  ## Builds a complete index for `data`, or leaves `hashes` empty. The
-  ## capacity is chosen for what `data` already holds, including the case
-  ## where an earlier attempt failed and `data` kept growing without an index.
-  var cap = linearScanLimit * 2
-  while cap <= t.data.len or
-      indexNeedsGrowth(cap, t.data.len):
-    cap = cap * 2
-  t.hashes = newSeq[HashEntry](cap)
-  if t.hashes.len == 0:
-    return
-  for i in 0 ..< t.data.len:
-    let fullhash = hash(t.data[i][0])
-    t.hashes[emptySlot(t.hashes, fullhash)] =
-      HashEntry(fullhash: fullhash, position: i + 1)
-
-func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: out Hash): int {.
-    ensures: result < t.data.len.} =
-  ## Returns the dense index of `k`, or -1. `kh` receives the normalized hash
-  ## only when the index is consulted; tiny tables only scan.
-  if t.data.len <= linearScanLimit or t.hashes.len == 0:
-    kh = 0
-    for i in 0 ..< t.data.len:
-      if t.data[i][0] == k:
-        return i
-  else:
-    let h = hash(k)
-    kh = h
-    var probe = h
-    while isIndexed(t.hashes[probe and high(t.hashes).uint]):
-      let d = t.hashes[probe and high(t.hashes).uint]
-      # `position` names a live pair; a stale entry is never a match.
-      if d.fullhash == h and d.position >= 1 and
-          d.position <= t.data.len and
-          t.data[d.position - 1][0] == k:
-        return d.position - 1
-      inc probe
-  result = -1
-
-func delAt[K: Keyable, V](t: var Table[K, V]; idx: int) =
-  ## Removes the dense entry at `idx`, preserving insertion order.
-  if idx < 0 or idx >= t.data.len:
-    return
-  var j = idx
-  while j < t.data.len - 1:
-    t.data[j] = move(t.data[j + 1])
-    inc j
-  t.data.shrink(t.data.len - 1)
-  if t.data.len > linearScanLimit:
-    fillHashPart(t)
-  else:
-    t.hashes.shrink(0)
-
-func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
-  ## Appends a missing pair and keeps the index in step. Hashing is delayed
-  ## until the fourth entry is exceeded.
-  if t.hashes.len == 0:
-    if t.data.len >= linearScanLimit:
-      fillHashPart(t)
-  elif indexNeedsGrowth(t.hashes.len, t.data.len):
-    resize(t.hashes)
-    if indexNeedsGrowth(t.hashes.len, t.data.len):
-      # The index could not grow. Refuse the insert; the dense sequence must
-      # not run past an index whose probe loops still assume a free slot.
-      return
-  var kh = h
-  if t.hashes.len > 0 and kh == 0:
-    kh = hash(k)
-  let oldLen = t.data.len
-  t.data.add (k, v)
-  # `data.add` can also fail. Only index when a new pair was actually stored.
-  if t.data.len > oldLen and t.hashes.len > 0:
-    t.hashes[emptySlot(t.hashes, kh)] =
-      HashEntry(fullhash: kh, position: t.data.len)
-
-# ------------------------------ Table -----------------------------------
-
-func initTable*[A, B](initialSize = defaultInitialSize): Table[A, B] =
-  ## Creates a new empty hash table. `initialSize` is a capacity hint; the
-  ## dense representation grows with its entries.
-  discard initialSize
-  result = Table[A, B](data: @[], hashes: @[])
-
-func toTable*[A: Keyable, B](pairs: openArray[(A, B)]): Table[A, B] =
-  ## Creates a table containing `pairs`.
-  result = initTable[A, B](pairs.len)
-  for (key, val) in pairs:
-    result[key] = val
-
-func `[]=`*[A: Keyable, B](t: var Table[A, B]; key: sink A; val: sink B) =
-  ## Inserts or updates `(key, val)`.
-  var hc: Hash
-  let index = rawGet(t, key, hc)
-  if index >= 0:
-    t.data[index][1] = val
-  else:
-    rawPut(t, key, val, hc)
-
-func hasKey*[A: Keyable, B](t: Table[A, B]; key: A): bool =
-  var hc: Hash
-  rawGet(t, key, hc) >= 0
-
-func contains*[A: Keyable, B](t: Table[A, B]; key: A): bool {.inline.} =
-  hasKey(t, key)
-
-func hasKeyOrPut*[A: Keyable, B](t: var Table[A, B]; key: A; val: B): bool =
-  ## True when `key` is present; otherwise inserts it with `val` and returns
-  ## false.
-  var hc: Hash
-  let index = rawGet(t, key, hc)
-  if index >= 0:
-    return true
-  rawPut(t, key, val, hc)
-  false
-
-func getOrDefault*[A: Keyable, B: HasDefault](t: Table[A, B]; key: A): B =
-  var hc: Hash
-  let index = rawGet(t, key, hc)
-  if index >= 0:
-    t.data[index][1]
-  else:
-    default(B)
-
-func getOrDefault*[A: Keyable, B](t: Table[A, B]; key: A; fallback: B): B =
-  var hc: Hash
-  let index = rawGet(t, key, hc)
-  if index >= 0:
-    t.data[index][1]
-  else:
-    fallback
-
-func getOrQuit*[A: Keyable, B](t: Table[A, B]; key: A): var B =
-  ## Like `[]`, but terminates the program when `key` is absent.
-  var hc: Hash
-  let index = rawGet(t, key, hc)
-  if index < 0:
-    {.cast(noSideEffect).}:
-      raiseAssert "key not found"
-  result = t.data[index][1]
-
-func mgetOrPut*[A: Keyable, B](t: var Table[A, B]; key: sink A;
-                              val: sink B): var B =
-  ## Retrieves `t[key]`, inserting `val` when the key is missing. The result is
-  ## mutable.
-  var hc: Hash
-  var index = rawGet(t, key, hc)
-  if index < 0:
-    let oldLen = t.data.len
-    rawPut(t, key, val, hc)
-    index = t.data.len - 1
-    # A refused insert leaves the old pair at `len - 1`; never return a ref to
-    # somebody else's value.
-    if index < 0 or t.data.len <= oldLen:
-      {.cast(noSideEffect).}:
-        raiseAssert "out of memory"
-  result = t.data[index][1]
-
-func mgetOrPut*[A: Keyable, B: HasDefault](t: var Table[A, B];
-    key: sink A): var B =
-  mgetOrPut(t, key, default(B))
-
-func len*[A, B](t: Table[A, B]): int {.inline.} =
-  t.data.len
-
-func del*[A: Keyable, B](t: var Table[A, B]; key: A) =
-  ## Removes `key`; does nothing when it is absent.
-  var hc: Hash
-  let index = rawGet(t, key, hc)
-  if index >= 0:
-    delAt(t, index)
-
-func pop*[A: Keyable, B](t: var Table[A, B]; key: A; val: var B): bool =
-  ## Removes `key` and stores its value in `val`.
-  var hc: Hash
-  let index = rawGet(t, key, hc)
-  if index < 0:
-    return false
-  val = move(t.data[index][1])
-  delAt(t, index)
-  true
-
-func take*[A: Keyable, B](t: var Table[A, B]; key: A; val: var B): bool {.inline.} =
-  pop(t, key, val)
-
-func clear*[A, B](t: var Table[A, B]) =
-  t.data.shrink(0)
-  t.hashes.shrink(0)
-
-iterator pairs*[A, B](t: Table[A, B]): (lent A, lent B) =
-  for i in 0 ..< t.data.len:
-    yield (t.data[i][0], t.data[i][1])
-
-iterator mpairs*[A, B](t: var Table[A, B]): (lent A, var B) =
-  for i in 0 ..< t.data.len:
-    yield (t.data[i][0], t.data[i][1])
-
-iterator keys*[A, B](t: Table[A, B]): lent A =
-  for i in 0 ..< t.data.len:
-    yield t.data[i][0]
-
-iterator values*[A, B](t: Table[A, B]): lent B =
-  for i in 0 ..< t.data.len:
-    yield t.data[i][1]
-
-iterator mvalues*[A, B](t: var Table[A, B]): var B =
-  for i in 0 ..< t.data.len:
-    yield t.data[i][1]
-
-func `$`*[A: Stringable, B: Stringable](t: Table[A, B]): string =
-  if t.data.len == 0:
-    return "{:}"
-  result = "{"
-  var first = true
-  for i in 0 ..< t.data.len:
-    if not first:
-      result.add ", "
-    first = false
-    result.addQuoted t.data[i][0]
-    result.add ": "
-    result.addQuoted t.data[i][1]
-  result.add "}"
-
-func `==`*[A: Keyable, B: Equatable](s, t: Table[A, B]): bool =
-  ## Content equality: insertion order and internal index layout do not matter.
-  if s.data.len != t.data.len:
-    return false
-  if s.data.len == 0:
-    return true
-  if s.hashes.len > 0 and t.hashes.len > 0:
-    for i in 0 ..< s.hashes.len:
-      let entry = s.hashes[i]
-      if entry.position == 0:
-        continue
-      if entry.position < 1 or entry.position > s.data.len:
-        return false
-      let hc = entry.fullhash
-      var probe = hc
-      var probes = 0
-      var found = false
-      while probes < t.hashes.len and
-          isIndexed(t.hashes[probe and high(t.hashes).uint]):
-        let candidate = t.hashes[probe and high(t.hashes).uint]
-        if candidate.fullhash == hc and candidate.position >= 1 and
-            candidate.position <= t.data.len and
-            t.data[candidate.position - 1] == s.data[entry.position - 1]:
-          found = true
-          break
-        inc probe
-        inc probes
-      if not found:
-        return false
-    return true
-  # At least one table has no index (it is tiny, or an index allocation was
-  # refused). The linear scan also keeps equality independent of slot order.
-  for i in 0 ..< s.data.len:
-    var found = false
-    for j in 0 ..< t.data.len:
-      if s.data[i] == t.data[j]:
-        found = true
-        break
-    if not found:
-      return false
-  true
-
-when defined(nimony):
-  func `[]`*[A: Keyable, B](t: Table[A, B]; key: A): var B {.raises.} =
-    ## Retrieves `key`'s value or raises `KeyError` when absent.
-    var hc: Hash
-    let index = rawGet(t, key, hc)
-    if index < 0:
-      raise KeyError
-    result = t.data[index][1]
-else:
-  func `[]`*[A, B](t: var Table[A, B]; key: A): var B {.raises.} =
-    var hc: Hash
-    let index = rawGet(t, key, hc)
-    if index < 0:
-      raise newException(KeyError, "key not found")
-    result = t.data[index][1]
-
-  func `[]`*[A, B](t: Table[A, B]; key: A): B {.raises.} =
-    var hc: Hash
-    let index = rawGet(t, key, hc)
-    if index < 0:
-      raise newException(KeyError, "key not found")
-    result = t.data[index][1]
-
-# --------------------------- OrderedTable --------------------------------
-
 type
   OrderedKeyValuePair[T] = tuple[hcode: Hash, next: int, item: T]
   OrderedKeyValuePairSeq[T] = seq[OrderedKeyValuePair[T]]
-  OrderedTable*[A, B] = object ## Hash table that remembers insertion order.
-    data: OrderedKeyValuePairSeq[(A, B)]
+  OrderedTable*[K, V] = object ## Hash table that remembers insertion order.
+    data: OrderedKeyValuePairSeq[(K, V)]
     counter, first, last: int
 
-func ordRawGetKnownHC[A: Keyable, B](t: OrderedTable[A, B]; key: A;
+func ordRawGetKnownHC[K: Keyable, V](t: OrderedTable[K, V]; key: K;
                                     hc: Hash): int =
   result = -1
   if t.data.len > 0:
@@ -400,11 +376,11 @@ func ordRawGetKnownHC[A: Keyable, B](t: OrderedTable[A, B]; key: A;
     if searching:
       result = -1 - h
 
-func ordRawGet[A: Keyable, B](t: OrderedTable[A, B]; key: A; hc: out Hash): int =
+func ordRawGet[K: Keyable, V](t: OrderedTable[K, V]; key: K; hc: out Hash): int =
   hc = genHash(key)
   result = ordRawGetKnownHC(t, key, hc)
 
-func ordRawInsert[A, B](t: var OrderedTable[A, B]; key: sink A; val: sink B;
+func ordRawInsert[K, V](t: var OrderedTable[K, V]; key: sink K; val: sink V;
                      hc: Hash; h: int) {.
     requires: 0 <= h and h < t.data.len.} =
   t.data[h] = (hcode: hc, next: -1, item: (key, val))
@@ -416,9 +392,9 @@ func ordRawInsert[A, B](t: var OrderedTable[A, B]; key: sink A; val: sink B;
     t.data[t.last].next = h
   t.last = h
 
-func ordInitImpl[A, B](t: var OrderedTable[A, B]; initialSize: int): bool =
+func ordInitImpl[K, V](t: var OrderedTable[K, V]; initialSize: int): bool =
   let correctSize = slotsNeeded(initialSize)
-  var s = newSeq[OrderedKeyValuePair[(A, B)]](correctSize)
+  var s = newSeq[OrderedKeyValuePair[(K, V)]](correctSize)
   if s.len < correctSize:
     return false
   t.data = s
@@ -427,16 +403,16 @@ func ordInitImpl[A, B](t: var OrderedTable[A, B]; initialSize: int): bool =
   t.last = -1
   true
 
-func ordCheckIfInitialized[A, B](t: var OrderedTable[A, B]): bool =
+func ordCheckIfInitialized[K, V](t: var OrderedTable[K, V]): bool =
   if t.data.len > 0:
     return true
   ordInitImpl(t, defaultInitialSize)
 
-func ordEnlarge[A: Keyable, B](t: var OrderedTable[A, B]): bool =
+func ordEnlarge[K: Keyable, V](t: var OrderedTable[K, V]): bool =
   let oldLen = t.data.len
   if oldLen == 0:
     return false
-  var n = newSeq[OrderedKeyValuePair[(A, B)]](oldLen * growthFactor)
+  var n = newSeq[OrderedKeyValuePair[(K, V)]](oldLen * growthFactor)
   if n.len < oldLen * growthFactor:
     return false
   var h = t.first
@@ -455,8 +431,8 @@ func ordEnlarge[A: Keyable, B](t: var OrderedTable[A, B]): bool =
     h = nxt
   true
 
-func ordPutWithHash[A: Keyable, B](t: var OrderedTable[A, B]; key: sink A;
-                                val: sink B; hc: Hash; index: int): int =
+func ordPutWithHash[K: Keyable, V](t: var OrderedTable[K, V]; key: sink K;
+                                val: sink V; hc: Hash; index: int): int =
   var idx = index
   {.assume: t.data.len > t.counter.}
   if mustRehash(t.data.len, t.counter):
@@ -469,24 +445,24 @@ func ordPutWithHash[A: Keyable, B](t: var OrderedTable[A, B]; key: sink A;
   inc t.counter
   result = idx
 
-func initOrderedTable*[A, B](
-    initialSize = defaultInitialSize): OrderedTable[A, B] =
+func initOrderedTable*[K, V](
+    initialSize = defaultInitialSize): OrderedTable[K, V] =
   ## Creates a new empty ordered table.
-  result = OrderedTable[A, B](
-      data: default(OrderedKeyValuePairSeq[(A, B)]),
+  result = OrderedTable[K, V](
+      data: default(OrderedKeyValuePairSeq[(K, V)]),
       counter: 0, first: -1, last: -1)
   discard ordInitImpl(result, initialSize)
 
-func toOrderedTable*[A: Keyable, B](
-    pairs: openArray[(A, B)]): OrderedTable[A, B] =
+func toOrderedTable*[K: Keyable, V](
+    pairs: openArray[(K, V)]): OrderedTable[K, V] =
   ## Creates an ordered table containing `pairs`. A repeated key keeps its
   ## first position and its last value.
-  result = initOrderedTable[A, B](pairs.len)
+  result = initOrderedTable[K, V](pairs.len)
   for (key, val) in pairs:
     result[key] = val
 
-func `[]=`*[A: Keyable, B](t: var OrderedTable[A, B]; key: sink A;
-                          val: sink B) =
+func `[]=`*[K: Keyable, V](t: var OrderedTable[K, V]; key: sink K;
+                          val: sink V) =
   if not ordCheckIfInitialized(t):
     return
   var hc: Hash
@@ -498,7 +474,7 @@ func `[]=`*[A: Keyable, B](t: var OrderedTable[A, B]; key: sink A;
     discard ordPutWithHash(t, key, val, hc, index)
 
 when defined(nimony):
-  func `[]`*[A: Keyable, B](t: OrderedTable[A, B]; key: A): var B {.raises.} =
+  func `[]`*[K: Keyable, V](t: OrderedTable[K, V]; key: K): var V {.raises.} =
     ## Retrieves `key`'s value or raises `KeyError` when absent.
     var hc: Hash
     let index = ordRawGet(t, key, hc)
@@ -507,7 +483,7 @@ when defined(nimony):
     {.assume: 0 <= index and index < t.data.len.}
     result = t.data[index].item[1]
 else:
-  func `[]`*[A, B](t: var OrderedTable[A, B]; key: A): var B {.raises.} =
+  func `[]`*[K, V](t: var OrderedTable[K, V]; key: K): var V {.raises.} =
     var hc: Hash
     let index = ordRawGet(t, key, hc)
     if index < 0:
@@ -515,7 +491,7 @@ else:
     {.assume: 0 <= index and index < t.data.len.}
     result = t.data[index].item[1]
 
-  func `[]`*[A, B](t: OrderedTable[A, B]; key: A): B {.raises.} =
+  func `[]`*[K, V](t: OrderedTable[K, V]; key: K): V {.raises.} =
     var hc: Hash
     let index = ordRawGet(t, key, hc)
     if index < 0:
@@ -523,15 +499,15 @@ else:
     {.assume: 0 <= index and index < t.data.len.}
     result = t.data[index].item[1]
 
-func hasKey*[A: Keyable, B](t: OrderedTable[A, B]; key: A): bool =
+func hasKey*[K: Keyable, V](t: OrderedTable[K, V]; key: K): bool =
   var hc: Hash
   ordRawGet(t, key, hc) >= 0
 
-func contains*[A: Keyable, B](t: OrderedTable[A, B]; key: A): bool {.inline.} =
+func contains*[K: Keyable, V](t: OrderedTable[K, V]; key: K): bool {.inline.} =
   hasKey(t, key)
 
-func hasKeyOrPut*[A: Keyable, B](t: var OrderedTable[A, B]; key: A;
-                                val: B): bool =
+func hasKeyOrPut*[K: Keyable, V](t: var OrderedTable[K, V]; key: K;
+                                val: V): bool =
   if not ordCheckIfInitialized(t):
     return false
   var hc: Hash
@@ -541,18 +517,18 @@ func hasKeyOrPut*[A: Keyable, B](t: var OrderedTable[A, B]; key: A;
   discard ordPutWithHash(t, key, val, hc, index)
   false
 
-func getOrDefault*[A: Keyable, B: HasDefault](
-    t: OrderedTable[A, B]; key: A): B =
+func getOrDefault*[K: Keyable, V: HasDefault](
+    t: OrderedTable[K, V]; key: K): V =
   var hc: Hash
   let index = ordRawGet(t, key, hc)
   if index >= 0:
     {.assume: 0 <= index and index < t.data.len.}
     t.data[index].item[1]
   else:
-    default(B)
+    default(V)
 
-func getOrDefault*[A: Keyable, B](t: OrderedTable[A, B]; key: A;
-                                  fallback: B): B =
+func getOrDefault*[K: Keyable, V](t: OrderedTable[K, V]; key: K;
+                                  fallback: V): V =
   var hc: Hash
   let index = ordRawGet(t, key, hc)
   if index >= 0:
@@ -561,7 +537,7 @@ func getOrDefault*[A: Keyable, B](t: OrderedTable[A, B]; key: A;
   else:
     fallback
 
-func getOrQuit*[A: Keyable, B](t: OrderedTable[A, B]; key: A): var B =
+func getOrQuit*[K: Keyable, V](t: OrderedTable[K, V]; key: K): var V =
   var hc: Hash
   let index = ordRawGet(t, key, hc)
   if index < 0:
@@ -570,8 +546,8 @@ func getOrQuit*[A: Keyable, B](t: OrderedTable[A, B]; key: A): var B =
   {.assume: 0 <= index and index < t.data.len.}
   result = t.data[index].item[1]
 
-func mgetOrPut*[A: Keyable, B](t: var OrderedTable[A, B]; key: sink A;
-                              val: sink B): var B =
+func mgetOrPut*[K: Keyable, V](t: var OrderedTable[K, V]; key: sink K;
+                              val: sink V): var V =
   if not ordCheckIfInitialized(t):
     {.cast(noSideEffect).}:
       raiseAssert "out of memory"
@@ -585,15 +561,15 @@ func mgetOrPut*[A: Keyable, B](t: var OrderedTable[A, B]; key: sink A;
   {.assume: 0 <= index and index < t.data.len.}
   result = t.data[index].item[1]
 
-func mgetOrPut*[A: Keyable, B: HasDefault](t: var OrderedTable[A, B];
-    key: sink A): var B =
-  mgetOrPut(t, key, default(B))
+func mgetOrPut*[K: Keyable, V: HasDefault](t: var OrderedTable[K, V];
+    key: sink K): var V =
+  mgetOrPut(t, key, default(V))
 
-func len*[A, B](t: OrderedTable[A, B]): int {.inline.} =
+func len*[K, V](t: OrderedTable[K, V]): int {.inline.} =
   t.counter
 
-func ordDelImpl[A: Keyable, B](t: var OrderedTable[A, B]; key: A;
-    n: var OrderedKeyValuePairSeq[(A, B)]): bool =
+func ordDelImpl[K: Keyable, V](t: var OrderedTable[K, V]; key: K;
+    n: var OrderedKeyValuePairSeq[(K, V)]): bool =
   ## Rebuilds `t` into the caller-provided `n`, dropping `key`. `n` must
   ## already be large enough; no allocation happens here.
   if t.counter == 0:
@@ -622,24 +598,24 @@ func ordDelImpl[A: Keyable, B](t: var OrderedTable[A, B]; key: A;
     h = nxt
   true
 
-func del*[A: Keyable, B](t: var OrderedTable[A, B]; key: A) =
+func del*[K: Keyable, V](t: var OrderedTable[K, V]; key: K) =
   ## Removes `key`; does nothing when it is absent.
   if t.counter == 0:
     return
   let oldLen = t.data.len
-  var n = newSeq[OrderedKeyValuePair[(A, B)]](oldLen)
+  var n = newSeq[OrderedKeyValuePair[(K, V)]](oldLen)
   if n.len < oldLen:
     return
   discard ordDelImpl(t, key, n)
 
-func pop*[A: Keyable, B](t: var OrderedTable[A, B]; key: A;
-                         val: var B): bool =
+func pop*[K: Keyable, V](t: var OrderedTable[K, V]; key: K;
+                         val: var V): bool =
   var hc: Hash
   let index = ordRawGet(t, key, hc)
   if index < 0:
     return false
   let oldLen = t.data.len
-  var n = newSeq[OrderedKeyValuePair[(A, B)]](oldLen)
+  var n = newSeq[OrderedKeyValuePair[(K, V)]](oldLen)
   if n.len < oldLen:
     return false
   {.assume: 0 <= index and index < t.data.len.}
@@ -647,19 +623,19 @@ func pop*[A: Keyable, B](t: var OrderedTable[A, B]; key: A;
   discard ordDelImpl(t, key, n)
   true
 
-func take*[A: Keyable, B](t: var OrderedTable[A, B]; key: A;
-                          val: var B): bool {.inline.} =
+func take*[K: Keyable, V](t: var OrderedTable[K, V]; key: K;
+                          val: var V): bool {.inline.} =
   pop(t, key, val)
 
-func clear*[A, B](t: var OrderedTable[A, B]) =
+func clear*[K, V](t: var OrderedTable[K, V]) =
   for i in 0 ..< t.data.len:
-    t.data[i] = default(OrderedKeyValuePair[(A, B)])
+    t.data[i] = default(OrderedKeyValuePair[(K, V)])
   t.counter = 0
   t.first = -1
   t.last = -1
 
-proc sort*[A: Keyable, B](t: var OrderedTable[A, B];
-    cmp: proc (x, y: (A, B)): int; order = SortOrder.Ascending) =
+proc sort*[K: Keyable, V](t: var OrderedTable[K, V];
+    cmp: proc (x, y: (K, V)): int; order = SortOrder.Ascending) =
   ## Sorts the internal insertion-order list. Lookups still work afterwards.
   var list = t.first
   var p, q, e, tail: int
@@ -725,7 +701,7 @@ proc sort*[A: Keyable, B](t: var OrderedTable[A, B];
   t.first = list
   t.last = tail
 
-iterator pairs*[A, B](t: OrderedTable[A, B]): (lent A, lent B) =
+iterator pairs*[K, V](t: OrderedTable[K, V]): (lent K, lent V) =
   var h = t.first
   while 0 <= h and h < t.data.len:
     let nxt = t.data[h].next
@@ -733,7 +709,7 @@ iterator pairs*[A, B](t: OrderedTable[A, B]): (lent A, lent B) =
       yield (t.data[h].item[0], t.data[h].item[1])
     h = nxt
 
-iterator mpairs*[A, B](t: var OrderedTable[A, B]): (lent A, var B) =
+iterator mpairs*[K, V](t: var OrderedTable[K, V]): (lent K, var V) =
   var h = t.first
   while 0 <= h and h < t.data.len:
     let nxt = t.data[h].next
@@ -741,7 +717,7 @@ iterator mpairs*[A, B](t: var OrderedTable[A, B]): (lent A, var B) =
       yield (t.data[h].item[0], t.data[h].item[1])
     h = nxt
 
-iterator keys*[A, B](t: OrderedTable[A, B]): lent A =
+iterator keys*[K, V](t: OrderedTable[K, V]): lent K =
   var h = t.first
   while 0 <= h and h < t.data.len:
     let nxt = t.data[h].next
@@ -749,7 +725,7 @@ iterator keys*[A, B](t: OrderedTable[A, B]): lent A =
       yield t.data[h].item[0]
     h = nxt
 
-iterator values*[A, B](t: OrderedTable[A, B]): lent B =
+iterator values*[K, V](t: OrderedTable[K, V]): lent V =
   var h = t.first
   while 0 <= h and h < t.data.len:
     let nxt = t.data[h].next
@@ -757,7 +733,7 @@ iterator values*[A, B](t: OrderedTable[A, B]): lent B =
       yield t.data[h].item[1]
     h = nxt
 
-iterator mvalues*[A, B](t: var OrderedTable[A, B]): var B =
+iterator mvalues*[K, V](t: var OrderedTable[K, V]): var V =
   var h = t.first
   while 0 <= h and h < t.data.len:
     let nxt = t.data[h].next
@@ -765,7 +741,7 @@ iterator mvalues*[A, B](t: var OrderedTable[A, B]): var B =
       yield t.data[h].item[1]
     h = nxt
 
-func `$`*[A: Stringable, B: Stringable](t: OrderedTable[A, B]): string =
+func `$`*[K: Stringable, V: Stringable](t: OrderedTable[K, V]): string =
   if t.counter == 0:
     return "{:}"
   result = "{"
@@ -783,7 +759,7 @@ func `$`*[A: Stringable, B: Stringable](t: OrderedTable[A, B]): string =
     h = nxt
   result.add "}"
 
-func `==`*[A: Keyable, B: Equatable](s, t: OrderedTable[A, B]): bool =
+func `==`*[K: Keyable, V: Equatable](s, t: OrderedTable[K, V]): bool =
   ## Ordered equality: both the contents and the order must match.
   if s.counter != t.counter:
     return false
@@ -797,17 +773,18 @@ func `==`*[A: Keyable, B: Equatable](s, t: OrderedTable[A, B]): bool =
     hs = s.data[hs].next
     ht = t.data[ht].next
   result = hs < 0 and ht < 0
+
 # ----------------------------- CountTable --------------------------------
 
 type
-  CountEntry[A] = tuple[key: A, val: int]
-  CountEntrySeq[A] = seq[CountEntry[A]]
-  CountTable*[A] = object ## Hash table that counts the occurrences of keys.
-    data: CountEntrySeq[A]
+  CountEntry[K] = tuple[key: K, val: int]
+  CountEntrySeq[K] = seq[CountEntry[K]]
+  CountTable*[K] = object ## Hash table that counts the occurrences of keys.
+    data: CountEntrySeq[K]
     counter: int
     isSorted: bool
 
-func ctRawGet[A: Keyable](t: CountTable[A]; key: A): int =
+func ctRawGet[K: Keyable](t: CountTable[K]; key: K): int =
   result = -1
   if t.data.len > 0:
     let mask = t.data.len - 1
@@ -823,13 +800,13 @@ func ctRawGet[A: Keyable](t: CountTable[A]; key: A): int =
     if searching:
       result = -1 - h
 
-func ctRawInsert[A](data: var CountEntrySeq[A]; key: sink A; val: int;
+func ctRawInsert[K](data: var CountEntrySeq[K]; key: sink K; val: int;
                     h: int) {.requires: 0 <= h and h < data.len.} =
   data[h] = (key: key, val: val)
 
-func ctInitImpl[A](t: var CountTable[A]; initialSize: int): bool =
+func ctInitImpl[K](t: var CountTable[K]; initialSize: int): bool =
   let correctSize = slotsNeeded(initialSize)
-  var s = newSeq[CountEntry[A]](correctSize)
+  var s = newSeq[CountEntry[K]](correctSize)
   if s.len < correctSize:
     return false
   t.data = s
@@ -837,16 +814,16 @@ func ctInitImpl[A](t: var CountTable[A]; initialSize: int): bool =
   t.isSorted = false
   true
 
-func ctCheckIfInitialized[A](t: var CountTable[A]): bool =
+func ctCheckIfInitialized[K](t: var CountTable[K]): bool =
   if t.data.len > 0:
     return true
   ctInitImpl(t, defaultInitialSize)
 
-func ctEnlarge[A: Keyable](t: var CountTable[A]): bool =
+func ctEnlarge[K: Keyable](t: var CountTable[K]): bool =
   let oldLen = t.data.len
   if oldLen == 0:
     return false
-  var n = newSeq[CountEntry[A]](oldLen * growthFactor)
+  var n = newSeq[CountEntry[K]](oldLen * growthFactor)
   if n.len < oldLen * growthFactor:
     return false
   swap(t.data, n)
@@ -865,7 +842,7 @@ func ctEnlarge[A: Keyable](t: var CountTable[A]): bool =
       ctRawInsert(t.data, move(n[i].key), v, j)
   true
 
-func putCount[A: Keyable](t: var CountTable[A]; key: A; val: int;
+func putCount[K: Keyable](t: var CountTable[K]; key: K; val: int;
                           index: int): bool =
   ## Inserts a missing key with a positive count.
   var idx = index
@@ -880,7 +857,7 @@ func putCount[A: Keyable](t: var CountTable[A]; key: A; val: int;
   inc t.counter
   true
 
-func countDelIdx[A: Keyable](t: var CountTable[A]; i: int) =
+func countDelIdx[K: Keyable](t: var CountTable[K]; i: int) =
   if i < 0 or i >= t.data.len:
     return
   let dataLen = t.data.len
@@ -893,7 +870,7 @@ func countDelIdx[A: Keyable](t: var CountTable[A]; i: int) =
     while true:
       var j = i
       {.assume: 0 <= i and i < t.data.len.}
-      t.data[i] = default(CountEntry[A])
+      t.data[i] = default(CountEntry[K])
       while true:
         i = nextProbe(i, mask)
         {.assume: 0 <= i and i < t.data.len.}
@@ -905,19 +882,19 @@ func countDelIdx[A: Keyable](t: var CountTable[A]; i: int) =
       {.assume: 0 <= j and j < t.data.len.}
       t.data[j] = move(t.data[i])
 
-func initCountTable*[A](initialSize = defaultInitialSize): CountTable[A] =
+func initCountTable*[K](initialSize = defaultInitialSize): CountTable[K] =
   ## Creates a new empty count table.
-  result = CountTable[A](
-      data: default(CountEntrySeq[A]), counter: 0, isSorted: false)
+  result = CountTable[K](
+      data: default(CountEntrySeq[K]), counter: 0, isSorted: false)
   discard ctInitImpl(result, initialSize)
 
-func toCountTable*[A: Keyable](keys: openArray[A]): CountTable[A] =
+func toCountTable*[K: Keyable](keys: openArray[K]): CountTable[K] =
   ## Counts how often each element of `keys` occurs.
-  result = initCountTable[A](keys.len)
+  result = initCountTable[K](keys.len)
   for key in keys:
     result.inc(key)
 
-func `[]`*[A: Keyable](t: CountTable[A]; key: A): int =
+func `[]`*[K: Keyable](t: CountTable[K]; key: K): int =
   ## Returns the count of `key`, or zero when absent.
   assert(not t.isSorted, "CountTable must not be used after sorting")
   let index = ctRawGet(t, key)
@@ -927,7 +904,7 @@ func `[]`*[A: Keyable](t: CountTable[A]; key: A): int =
   else:
     0
 
-func `[]=`*[A: Keyable](t: var CountTable[A]; key: A; val: int) =
+func `[]=`*[K: Keyable](t: var CountTable[K]; key: K; val: int) =
   assert(not t.isSorted, "CountTable must not be used after sorting")
   assert(val >= 0, "CountTable values must be non-negative")
   if val == 0:
@@ -942,7 +919,7 @@ func `[]=`*[A: Keyable](t: var CountTable[A]; key: A; val: int) =
   else:
     discard putCount(t, key, val, index)
 
-func inc*[A: Keyable](t: var CountTable[A]; key: A; val = 1) =
+func inc*[K: Keyable](t: var CountTable[K]; key: K; val = 1) =
   ## Increments `t[key]` by `val`.
   assert(not t.isSorted, "CountTable must not be used after sorting")
   if not ctCheckIfInitialized(t):
@@ -958,10 +935,10 @@ func inc*[A: Keyable](t: var CountTable[A]; key: A; val = 1) =
   elif val != 0:
     discard putCount(t, key, val, index)
 
-func len*[A](t: CountTable[A]): int {.inline.} =
+func len*[K](t: CountTable[K]): int {.inline.} =
   t.counter
 
-func smallest*[A](t: CountTable[A]): CountEntry[A] =
+func smallest*[K](t: CountTable[K]): CountEntry[K] =
   assert(t.len > 0, "counttable is empty")
   var minIdx = -1
   for h in 0 ..< t.data.len:
@@ -975,7 +952,7 @@ func smallest*[A](t: CountTable[A]): CountEntry[A] =
   {.assume: 0 <= minIdx and minIdx < t.data.len.}
   result = (t.data[minIdx].key, t.data[minIdx].val)
 
-func largest*[A](t: CountTable[A]): CountEntry[A] =
+func largest*[K](t: CountTable[K]): CountEntry[K] =
   assert(t.len > 0, "counttable is empty")
   {.assume: t.data.len > 0.}
   var maxIdx = 0
@@ -987,14 +964,14 @@ func largest*[A](t: CountTable[A]): CountEntry[A] =
   {.assume: 0 <= maxIdx and maxIdx < t.data.len.}
   result = (t.data[maxIdx].key, t.data[maxIdx].val)
 
-func hasKey*[A: Keyable](t: CountTable[A]; key: A): bool =
+func hasKey*[K: Keyable](t: CountTable[K]; key: K): bool =
   assert(not t.isSorted, "CountTable must not be used after sorting")
   ctRawGet(t, key) >= 0
 
-func contains*[A: Keyable](t: CountTable[A]; key: A): bool {.inline.} =
+func contains*[K: Keyable](t: CountTable[K]; key: K): bool {.inline.} =
   hasKey(t, key)
 
-func getOrDefault*[A: Keyable](t: CountTable[A]; key: A; def = 0): int =
+func getOrDefault*[K: Keyable](t: CountTable[K]; key: K; def = 0): int =
   let index = ctRawGet(t, key)
   if index >= 0:
     {.assume: 0 <= index and index < t.data.len.}
@@ -1002,7 +979,7 @@ func getOrDefault*[A: Keyable](t: CountTable[A]; key: A; def = 0): int =
   else:
     def
 
-func del*[A: Keyable](t: var CountTable[A]; key: A) =
+func del*[K: Keyable](t: var CountTable[K]; key: K) =
   ## Removes `key`; does nothing when it is absent.
   if t.data.len == 0:
     return
@@ -1016,7 +993,7 @@ func del*[A: Keyable](t: var CountTable[A]; key: A) =
     h = nextProbe(h, mask)
     {.assume: 0 <= h and h < t.data.len.}
 
-func pop*[A: Keyable](t: var CountTable[A]; key: A; val: var int): bool =
+func pop*[K: Keyable](t: var CountTable[K]; key: K; val: var int): bool =
   let index = ctRawGet(t, key)
   if index < 0:
     return false
@@ -1025,54 +1002,54 @@ func pop*[A: Keyable](t: var CountTable[A]; key: A; val: var int): bool =
   countDelIdx(t, index)
   true
 
-func clear*[A](t: var CountTable[A]) =
+func clear*[K](t: var CountTable[K]) =
   for i in 0 ..< t.data.len:
-    t.data[i] = default(CountEntry[A])
+    t.data[i] = default(CountEntry[K])
   t.counter = 0
   t.isSorted = false
 
-func ctCmp[A](a, b: CountEntry[A]): int =
+func ctCmp[K](a, b: CountEntry[K]): int =
   if a.val < b.val: -1
   elif a.val > b.val: 1
   else: 0
 
-proc sort*[A](t: var CountTable[A]; order = SortOrder.Descending) =
+proc sort*[K](t: var CountTable[K]; order = SortOrder.Descending) =
   ## Sorts by count. Once sorted, the table must not be modified.
-  algorithm.sort(t.data, proc (x, y: CountEntry[A]): int = ctCmp(x, y), order)
+  algorithm.sort(t.data, proc (x, y: CountEntry[K]): int = ctCmp(x, y), order)
   t.isSorted = true
 
-proc merge*[A: Keyable](s: var CountTable[A]; t: CountTable[A]) =
+proc merge*[K: Keyable](s: var CountTable[K]; t: CountTable[K]) =
   assert(not s.isSorted, "CountTable must not be used after sorting")
   for h in 0 ..< t.data.len:
     if t.data[h].val != 0:
       s.inc(t.data[h].key, t.data[h].val)
 
-iterator pairs*[A](t: CountTable[A]): (lent A, int) =
+iterator pairs*[K](t: CountTable[K]): (lent K, int) =
   for h in 0 ..< t.data.len:
     if t.data[h].val != 0:
       yield (t.data[h].key, t.data[h].val)
 
-iterator mpairs*[A](t: var CountTable[A]): (lent A, var int) =
+iterator mpairs*[K](t: var CountTable[K]): (lent K, var int) =
   for h in 0 ..< t.data.len:
     if t.data[h].val != 0:
       yield (t.data[h].key, t.data[h].val)
 
-iterator keys*[A](t: CountTable[A]): lent A =
+iterator keys*[K](t: CountTable[K]): lent K =
   for h in 0 ..< t.data.len:
     if t.data[h].val != 0:
       yield t.data[h].key
 
-iterator values*[A](t: CountTable[A]): int =
+iterator values*[K](t: CountTable[K]): int =
   for h in 0 ..< t.data.len:
     if t.data[h].val != 0:
       yield t.data[h].val
 
-iterator mvalues*[A](t: var CountTable[A]): var int =
+iterator mvalues*[K](t: var CountTable[K]): var int =
   for h in 0 ..< t.data.len:
     if t.data[h].val != 0:
       yield t.data[h].val
 
-func `$`*[A: Stringable](t: CountTable[A]): string =
+func `$`*[K: Stringable](t: CountTable[K]): string =
   if t.counter == 0:
     return "{:}"
   result = "{"
@@ -1087,7 +1064,7 @@ func `$`*[A: Stringable](t: CountTable[A]): string =
       result.addQuoted t.data[h].val
   result.add "}"
 
-func `==`*[A: Keyable](s, t: CountTable[A]): bool =
+func `==`*[K: Keyable](s, t: CountTable[K]): bool =
   if s.counter != t.counter:
     return false
   if s.counter == 0:
@@ -1110,3 +1087,20 @@ func `==`*[A: Keyable](s, t: CountTable[A]): bool =
       if not found:
         return false
   true
+
+when isMainModule:
+  import std/syncio
+
+  var tab: Table[string, int] = initTable[string, int]()
+  for i in 0..<1000:
+    tab[$i] = i
+    assert hasKey(tab, $i)
+    assert not hasKey(tab, $(i+1))
+    assert tab[$i] == i
+  #echo tab.data
+  #echo tab.hashes
+  assert tab.hasKey("100")
+  echo tab.getOrDefault("500")
+  echo tab["600"]
+  tab.mgetOrPut("abc", -12) = -24
+  echo tab["abc"]
