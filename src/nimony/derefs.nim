@@ -339,9 +339,10 @@ proc skipToRoot(n: Cursor): Cursor =
   result = n
 
 proc mutatesThroughPointer(c: var Context; n: Cursor): bool =
-  ## Is the location `n` reached through a `ref`/`ptr` dereference? Allowed
-  ## nonetheless when the head of the access path is of type `var T`
-  ## (a `var` parameter or a call returning `var T`).
+  ## Is the location `n` reached through a `ref`/`ptr` dereference? A `var`
+  ## parameter at the head of the path does not change that: a `func` may write
+  ## the own storage of its `var` parameter, not what the parameter points to.
+  ## A call that returns `var T` ends the walk: the callee answers for it.
   result = false
   var n = n
   while true:
@@ -359,8 +360,6 @@ proc mutatesThroughPointer(c: var Context; n: Cursor): bool =
       skip n # skip intlit
       skip n # skip type
     else: break
-  if result and getType(c.typeCache, n).typeKind in {MutT, OutT}:
-    result = false
 
 proc checkPointerMutation(c: var Context; n: Cursor): bool =
   ## A `.noSideEffect` routine must not mutate state behind a `ref`/`ptr`;
@@ -369,6 +368,16 @@ proc checkPointerMutation(c: var Context; n: Cursor): bool =
   if result:
     buildLocalErr c.dest, n.info, "cannot mutate " & asNimCode(n) &
       " through a ref/ptr in a `.noSideEffect` context", n
+
+proc varResultThroughPointer(c: var Context; n: Cursor): bool =
+  ## A `.noSideEffect` routine must not hand out a `var T` view of a location
+  ## behind a `ref`/`ptr` either: its caller would write there.
+  result = IsNoSideEffect in c.r.props and c.r.returnType.typeKind == MutT and
+    mutatesThroughPointer(c, n)
+
+proc varResultErr(c: var Context; n: Cursor) =
+  buildLocalErr c.dest, n.info, "cannot return " & asNimCode(n) &
+    " as `var` through a ref/ptr in a `.noSideEffect` context"
 
 proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   result = false
@@ -457,6 +466,9 @@ proc trReturn(c: var Context; n: var Cursor) =
       var err = c.r.returnExpects == WantVarTResult and not validBorrowsFrom(c, n)
       if err:
         buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
+        skip n
+      elif c.r.returnExpects == WantVarTResult and varResultThroughPointer(c, n):
+        varResultErr(c, n)
         skip n
       else:
         if n.exprKind == TupconstrX:
@@ -880,6 +892,10 @@ proc trAsgn(c: var Context; n: var Cursor) =
         tr c, n, e
         if not validBorrowsFrom(c, n):
           err = InvalidBorrow
+        elif varResultThroughPointer(c, n):
+          errAlreadyEmitted = true
+          varResultErr(c, n)
+          skip n
       else:
         tr c, n, e
         if n.exprKind == TupconstrX:

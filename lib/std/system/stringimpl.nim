@@ -326,22 +326,32 @@ func `=destroy`*(s: string) {.exportc: "nimStrDestroy", alwaysInline.} =
   if ssLen(s) == HeapSlen:
     destroyHeapStr(s.more)
 
+# A `func` may write the own storage of its `var` parameter, not what the
+# parameter points to. The heap block of a long string is part of the string's
+# value, which is what the `{.cast(noSideEffect).}` in the routines below state.
+func isUniqueHeap(s: string): bool {.inline.} =
+  ## Is the heap block of the long string `s` unshared?
+  {.cast(noSideEffect).}:
+    result = arcIsUnique(s.more.rc)
+
 func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", nodestroy.} =
   let ssrc = ssLen(src)
   if ssrc <= PayloadSize:
     # short/medium: destroy dest heap block if any, then bitcopy
     let sdest = ssLen(dest)
     if sdest == HeapSlen:
-      if arcDec(dest.more.rc):
-        dealloc(dest.more)
+      {.cast(noSideEffect).}:
+        if arcDec(dest.more.rc):
+          dealloc(dest.more)
     copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
   else:
     # long or static: COW share
     if addr(dest) == addr(src): return
     let sdest = ssLen(dest)
     if sdest == HeapSlen:
-      if arcDec(dest.more.rc):
-        dealloc(dest.more)
+      {.cast(noSideEffect).}:
+        if arcDec(dest.more.rc):
+          dealloc(dest.more)
     if ssrc == HeapSlen:
       {.cast(noSideEffect).}:
         arcInc(src.more.rc)
@@ -404,8 +414,8 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
   let sl = ssLen(s)
   let isHeap = sl == HeapSlen
   let cap = if isHeap: s.more.capImpl else: 0
-  if isHeap and arcIsUnique(s.more.rc) and newLen <= cap:
-    s.more.fullLen = newLen
+  if isHeap and isUniqueHeap(s) and newLen <= cap:
+    {.cast(noSideEffect).}: s.more.fullLen = newLen
     # Prefix already matches the heap once the string is long; recopying it on
     # every append (via `copyMem` of a runtime 0..7) dominated bif.
     if oldLen < AlwaysAvail:
@@ -478,13 +488,13 @@ func makeUnique(s: var string): bool =
   ## `false` when the private copy was refused and `s` is the OOM marker.
   result = true
   let sl = ssLen(s)
-  if sl == StaticSlen or (sl == HeapSlen and not arcIsUnique(s.more.rc)):
+  if sl == StaticSlen or (sl == HeapSlen and not isUniqueHeap(s)):
     if sl == HeapSlen:
       # Reached only when `not arcIsUnique`, i.e. the count is non-zero and
       # another owner remains to free the block. That guard is what makes
       # discarding the result safe: `arcDec` may answer "you are the last one"
       # without writing the decrement back, and here nobody would act on it.
-      discard arcDec(s.more.rc)
+      {.cast(noSideEffect).}: discard arcDec(s.more.rc)
     let old = s.more
     let oldLen = old.fullLen
     let p = allocLong(oldLen)
@@ -552,23 +562,23 @@ func add*(s: var string; c: char) =
     setSSLen(s, newLen)
   elif sl > PayloadSize:
     let l = s.more.fullLen
-    if sl == HeapSlen and arcIsUnique(s.more.rc) and l < s.more.capImpl:
-      s.more.data[l] = c
-      s.more.fullLen = l + 1
+    if sl == HeapSlen and isUniqueHeap(s) and l < s.more.capImpl:
+      {.cast(noSideEffect).}: s.more.data[l] = c
+      {.cast(noSideEffect).}: s.more.fullLen = l + 1
       if l < AlwaysAvail:
         setInline(s, l, c)
     else:
       let oldLen = s.more.fullLen
       ensureUniqueLong(s, oldLen, oldLen + 1)
       if ssLen(s) == HeapSlen:
-        s.more.data[oldLen] = c
+        {.cast(noSideEffect).}: s.more.data[oldLen] = c
         if oldLen < AlwaysAvail:
           setInline(s, oldLen, c)
   else:
     # sl == PayloadSize → transition to long
     transitionToLong(s, sl, sl + 1)
     if ssLen(s) == HeapSlen:
-      s.more.data[sl] = c
+      {.cast(noSideEffect).}: s.more.data[sl] = c
 
 func add*(s: var string; part: string) =
   let partLen = part.len
@@ -636,7 +646,7 @@ func shrink*(s: var string; newLen: int) =
       # about to mutate, so `s.more.fullLen = newLen` is safe afterwards. On
       # refusal `s` is already the (shorter) OOM marker, with no `more`.
       if makeUnique(s):
-        s.more.fullLen = newLen
+        {.cast(noSideEffect).}: s.more.fullLen = newLen
         copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
 
 func setLen*(s: var string; newLen: int) =
@@ -682,7 +692,7 @@ func `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0),
   # A refused copy leaves the 7-char OOM marker, which `i` may lie past.
   if makeUnique(s):
     if ssLen(s) > PayloadSize:
-      s.more.data[i] = c
+      {.cast(noSideEffect).}: s.more.data[i] = c
       if i < AlwaysAvail: setInline(s, i, c)
     else:
       setInline(s, i, c)
