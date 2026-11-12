@@ -1,10 +1,8 @@
 # `zeroMemIns`/`copyMemIns`/`cmpMemIns`: block-memory intrinsics that take
-# LOCATIONS, not pointers, with an optional byte count. On a register-sized
-# local the native backend lowers them as `x = 0`, a move and a compare — no
-# stack slot, no call; everything else (aggregates, array spans, a count that is
-# not the operand's width) takes the inline memory loop. Every shape is here and
-# every result is printed. `cmpMemIns` promises only memcmp's SIGN, so the
-# compares print `sgn`.
+# LOCATIONS, not pointers, with an optional byte count (default: the size of the
+# first operand). Scalars, aggregates, array spans and a count that is not the
+# operand's width are all here, and every result is printed. `cmpMemIns`
+# promises only memcmp's SIGN, so the compares print `sgn`.
 
 import std / syncio
 
@@ -20,7 +18,7 @@ proc keep(p: ptr int) {.noinline.} =
 
 proc sgn(x: int32): int = (if x < 0: -1 elif x > 0: 1 else: 0)
 
-# ---- register form --------------------------------------------------------
+# ---- scalars --------------------------------------------------------------
 
 proc zeroInt(a: int): int {.noinline.} =
   var x = a
@@ -73,8 +71,7 @@ proc inLoop(n: int): int {.noinline.} =
     result = result + t
 
 proc alsoAddrTaken(a: int): int {.noinline.} =
-  # `x` is address-taken by `keep`, so it lives on the stack: the register form
-  # must store to the slot.
+  # `x` is address-taken by `keep` as well.
   var x = 0
   keep(addr x)
   var y = a
@@ -83,10 +80,10 @@ proc alsoAddrTaken(a: int): int {.noinline.} =
   zeroMemIns(y)
   result = x + y
 
-# ---- memory form ----------------------------------------------------------
+# ---- partial counts, aggregates, spans --------------------------------------
 
-proc partial(a: int): int {.noinline.} =
-  # 4 of 8 bytes: not a whole-register move, keeps the memory path.
+proc partial(a: int64): int64 {.noinline.} =
+  # 4 of 8 bytes (`int64`: the web targets' `int` is 32 bits).
   var x = a
   zeroMemIns(x, 4)
   result = x

@@ -257,11 +257,12 @@ type
     CselhsOp
     # ── block memory operations (`{.intrinsic: "zeroMemIns".}` …). Portable.
     #    The operands are LOCATIONS, not pointers: `zeroMemIns(x)` names `x`
-    #    itself, and the call site spells it `(haddr x)` — the tag that says "bind
-    #    x's location", which a register is (see `ptLoc`). So a scalar local stays
-    #    eligible for a register, and arkham lowers the op as a move or a compare
-    #    when it is one; only a location that really is memory makes it a loop
-    #    over the argument registers (and then a CALL POINT). The byte count is
+    #    itself. The written one is spelled `(haddr x)`, like every intrinsic's
+    #    `var` operand, and the read ones are the bare lvalues (see `ptLoc`), so
+    #    nothing forces a scalar local out of its register: on a scalar the op
+    #    is `x = 0`, a move or a compare, on an aggregate or a span straight-line
+    #    memory operations. Only a byte count that is not a literal makes it a
+    #    loop (in arkham a CALL POINT, like the C function). The byte count is
     #    OPTIONAL (`ptOptSize`): absent, it is the size of the first operand's
     #    type, which is what the back ends know best anyway; present, the op
     #    covers that many bytes starting at the location (an array span — what

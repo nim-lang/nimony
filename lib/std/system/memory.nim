@@ -28,10 +28,11 @@ func c_memset(dest: pointer; val: cint; size: csize_t) {.importc: "memset", head
 # variable (or field, or element) itself, and the byte count defaults to the
 # size of its type. Without an `addr` nothing forces a local into memory, so the
 # native back end lowers `zeroMemIns(x)` on a register-sized local as `x = 0`,
-# `copyMemIns(x, y)` as a move and `cmpMemIns(x, y)` as a compare; only a
-# location that is memory anyway (an aggregate, an array span) takes the inline
-# loop. With an explicit `size` the operation covers that many bytes starting at
-# the location (an array span); the regions of a copy must not overlap.
+# `copyMemIns(x, y)` as a move and `cmpMemIns(x, y)` as a compare, and an
+# aggregate or an array span as straight-line memory operations. With an
+# explicit `size` the operation covers that many bytes starting at the location
+# (an array span); the regions of a copy must not overlap. Only a `size` that is
+# not a literal runs a loop.
 
 func zeroMemIns*[T](dest: var T) {.intrinsic: "zeroMemIns".}
   ## Sets every byte of `dest` to zero. Runs no destructor: like `zeroMem`, it is

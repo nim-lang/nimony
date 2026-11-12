@@ -161,39 +161,12 @@ proc applicationTag(n: Cursor): string =
         if hasPragma(pragmas, InstructionP) or hasPragma(pragmas, IntrinsicP):
           result = "instr"
 
-proc memRowOf(n: Cursor): IntrinsicOp =
-  ## The block-memory row (`zeroMemIns`/`copyMemIns`/`cmpMemIns`) a call-shaped
-  ## node applies, else `NoIntrinsicOp`.
-  result = NoIntrinsicOp
-  if n.isTagLit:
-    let callee = sub(n)
-    if callee.kind == Symbol:
-      let res = tryLoadSym(callee.symId)
-      if res.status == LacksNothing and res.decl.symKind.isRoutine:
-        let v = extractPragma(asRoutine(res.decl, SkipExclBody).pragmas, IntrinsicP)
-        if not cursorIsNil(v) and v.kind == StrLit:
-          let op = intrinsicOpByName(pool.strings[v.strId], icPortable)
-          if op.isMemOp: result = op
-
 proc trApplication(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(call …)` / `(instr …)`. A block-memory row's operands are LOCATIONS
-  ## (`intrinsics.ptLoc`): the written one arrives as `(haddr d)` because it is
-  ## declared `var`, and the read-only ones are wrapped here, so that every
-  ## location operand carries the same tag — "bind this location", never a
-  ## pointer value — and a back end needs no second spelling.
-  let memOp = memRowOf(n)
+  ## `(call …)` / `(instr …)`.
   dest.addParLe(applicationTag(n), n.info)
   n.into:
-    var i = -1                                 # -1: the callee
     while n.hasMore:
-      if memOp != NoIntrinsicOp and i >= 0 and i < memLocOperands(memOp) and
-         n.exprKind != HaddrX:
-        dest.addParLe("haddr", n.info)
-        trExpr c, dest, n
-        dest.addParRi()
-      else:
-        trExpr c, dest, n
-      inc i
+      trExpr c, dest, n
     dest.addParRi(n.endInfo)
 
 proc externKind(p: CollectedPragmas): string =

@@ -58,8 +58,9 @@
 ## included, which is what makes the `setLen` tails match. The row is a ZERO fill
 ## (it takes no byte), so a loop storing any other constant stays a loop.
 ##
-## The row's operands are LOCATIONS, spelled `(haddr L)`: the element where the
-## span starts, plus the span's byte count (the optional size operand).
+## The row's operands are LOCATIONS — the written one spelled `(haddr L)`, the
+## read one the bare element — where the span starts, plus the span's byte count
+## (the optional size operand).
 ##
 ## **Where it runs.** After CSE and before the vectorizer, which would
 ## otherwise turn the same loops into vector stores. The backends lower the
@@ -75,7 +76,7 @@
 ## untouched loop, guarded by a runtime test that the byte ranges are disjoint:
 ##
 ##   (if (elif (and (lt IV HI) DISJOINT)
-##     (stmts (instr copyMemIns (haddr D[IV]) (haddr S[IV]) N) (asgn IV HI))))
+##     (stmts (instr copyMemIns (haddr D[IV]) S[IV] N) (asgn IV HI))))
 ##   (while (true) …)                     ; finds IV == HI and exits at once
 ##
 ## so an overlapping copy still runs the loop it always ran, and no label in
@@ -663,8 +664,9 @@ proc emitAddr(b: var TokenBuf; elem: Cursor) =
   b.closeTag()
 
 proc emitLoc(b: var TokenBuf; elem: Cursor) =
-  ## A block-memory row's location operand: `(haddr ELEM)` — the element itself,
-  ## not a pointer value (`intrinsics.ptLoc`).
+  ## A block-memory row's WRITTEN location operand: `(haddr ELEM)`, the spelling
+  ## of every intrinsic's `var` operand — the element itself, not a pointer value
+  ## (`intrinsics.ptLoc`). A read location is the bare element.
   b.openTag TagId(HaddrC)
   b.addSubtree elem
   b.closeTag()
@@ -689,11 +691,11 @@ proc memIntrinsicName(op: IntrinsicOp; suffix: string): string =
   (if op == CopyMemOp: "copyMemIns." else: "zeroMemIns.") & suffix
 
 proc emitMemStmt(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool) =
-  ## `(instr zeroMemIns (haddr DST) N)` / `(instr copyMemIns (haddr DST) (haddr SRC) N)`.
+  ## `(instr zeroMemIns (haddr DST) N)` / `(instr copyMemIns (haddr DST) SRC N)`.
   b.openTag TagId(InstrS)
   b.addSymUse name
   emitLoc(b, lm.lhs)
-  if isCopy: emitLoc(b, lm.value)
+  if isCopy: b.addSubtree lm.value
   emitBytes(b, lm)
   b.closeTag()
 

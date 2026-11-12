@@ -495,9 +495,16 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     var args: seq[LLValue] = @[]
     skip n                                  # the callee symbol
     let firstArg = n
+    let nLocs = if op.isMemOp: memLocOperands(op) else: 0
     while n.hasMore:
       var a = LLValue()
-      genExprLLVM(c, n, a)
+      if args.len < nLocs and n.exprKind != HaddrC:
+        # a block-memory row's read location, a bare lvalue: pass its address
+        var lv = LLValue()
+        genLvalueLLVM(c, n, lv)
+        a = lv.withType(c.prim.ptrT)
+      else:
+        genExprLLVM(c, n, a)
       args.add a
 
     c.setLoc(start.info)
@@ -505,8 +512,8 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       genAtomicCall(c, cBuiltinFor(op, bits), args, retType, result)
     elif op.isMemOp:
       # The same lowering as a call to the importc'd C function of that name. The
-      # location operands arrive as `(haddr L)`, i.e. pointers here; an absent byte
-      # count is the size of the first location's type.
+      # location operands are pointers here (`(haddr L)`, or a bare lvalue's
+      # address); an absent byte count is the size of the first location's type.
       let nLoc = memLocOperands(op)
       var size: LLValue
       if args.len > nLoc:
