@@ -57,63 +57,50 @@ func swapEndian16*(outp, inp: pointer) {.inline.} =
   tmp = bswap16(tmp)
   copyMem(outp, addr tmp, 2)
 
-when defined(bigEndian):
-  func littleEndian64*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 64-bit little-endian order.
-    ## Both buffers are supposed to contain at least 8 bytes.
+func littleEndian64*(outp, inp: pointer) {.inline.} =
+  ## Copies `inp` to `outp`, storing it in 64-bit little-endian order.
+  ## Both buffers are supposed to contain at least 8 bytes.
+  when defined(bigEndian):
     swapEndian64(outp, inp)
+  else:
+    copyMem(outp, inp, 8)
 
-  func littleEndian32*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 32-bit little-endian order.
-    ## Both buffers are supposed to contain at least 4 bytes.
+func littleEndian32*(outp, inp: pointer) {.inline.} =
+  ## Copies `inp` to `outp`, storing it in 32-bit little-endian order.
+  ## Both buffers are supposed to contain at least 4 bytes.
+  when defined(bigEndian):
     swapEndian32(outp, inp)
+  else:
+    copyMem(outp, inp, 4)
 
-  func littleEndian16*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 16-bit little-endian order.
-    ## Both buffers are supposed to contain at least 2 bytes.
+func littleEndian16*(outp, inp: pointer) {.inline.} =
+  ## Copies `inp` to `outp`, storing it in 16-bit little-endian order.
+  ## Both buffers are supposed to contain at least 2 bytes.
+  when defined(bigEndian):
     swapEndian16(outp, inp)
-
-  func bigEndian64*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 64-bit big-endian order.
-    ## Both buffers are supposed to contain at least 8 bytes.
-    copyMem(outp, inp, 8)
-
-  func bigEndian32*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 32-bit big-endian order.
-    ## Both buffers are supposed to contain at least 4 bytes.
-    copyMem(outp, inp, 4)
-
-  func bigEndian16*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 16-bit big-endian order.
-    ## Both buffers are supposed to contain at least 2 bytes.
-    copyMem(outp, inp, 2)
-else:
-  func littleEndian64*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 64-bit little-endian order.
-    ## Both buffers are supposed to contain at least 8 bytes.
-    copyMem(outp, inp, 8)
-
-  func littleEndian32*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 32-bit little-endian order.
-    ## Both buffers are supposed to contain at least 4 bytes.
-    copyMem(outp, inp, 4)
-
-  func littleEndian16*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 16-bit little-endian order.
-    ## Both buffers are supposed to contain at least 2 bytes.
+  else:
     copyMem(outp, inp, 2)
 
-  func bigEndian64*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 64-bit big-endian order.
-    ## Both buffers are supposed to contain at least 8 bytes.
+func bigEndian64*(outp, inp: pointer) {.inline.} =
+  ## Copies `inp` to `outp`, storing it in 64-bit big-endian order.
+  ## Both buffers are supposed to contain at least 8 bytes.
+  when defined(bigEndian):
+    copyMem(outp, inp, 8)
+  else:
     swapEndian64(outp, inp)
 
-  func bigEndian32*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 32-bit big-endian order.
-    ## Both buffers are supposed to contain at least 4 bytes.
+func bigEndian32*(outp, inp: pointer) {.inline.} =
+  ## Copies `inp` to `outp`, storing it in 32-bit big-endian order.
+  ## Both buffers are supposed to contain at least 4 bytes.
+  when defined(bigEndian):
+    copyMem(outp, inp, 4)
+  else:
     swapEndian32(outp, inp)
 
-  func bigEndian16*(outp, inp: pointer) {.inline.} =
-    ## Copies `inp` to `outp`, storing it in 16-bit big-endian order.
-    ## Both buffers are supposed to contain at least 2 bytes.
+func bigEndian16*(outp, inp: pointer) {.inline.} =
+  ## Copies `inp` to `outp`, storing it in 16-bit big-endian order.
+  ## Both buffers are supposed to contain at least 2 bytes.
+  when defined(bigEndian):
+    copyMem(outp, inp, 2)
+  else:
     swapEndian16(outp, inp)
