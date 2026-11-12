@@ -1224,7 +1224,7 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
       # for uints, ashr and shr are the same
       evalShiftOp(c, n, `shr`)
     of AshrX:
-      # xints.shr keeps the sign the same, so has ashr behavior for signed ints
+      # xints.shr is an arithmetic shift (rounds toward negative infinity)
       evalShiftOp(c, n, `shr`)
     of EqX:
       evalCmpOp(c, n, `==`)
