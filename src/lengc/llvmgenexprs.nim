@@ -412,6 +412,14 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
       callCallee: llGlobalRef(iname, c.prim.ptrT),
       callRetType: rtype, callArgs: @[args[0], llIntTextC("0", c.prim.i1)])
     res
+  template callUnary(iname: string; rtype: LLType): LLValue =
+    # `llvm.bswap` takes the value alone: no `is_zero_poison` flag
+    let t = c.nextTemp()
+    let res = llReg(t, rtype)
+    c.emit LLInstr(kind: llCall, result: res,
+      callCallee: llGlobalRef(iname, c.prim.ptrT),
+      callRetType: rtype, callArgs: @[args[0]])
+    res
   case externName
   of "__builtin_ctzll":
     let r = callIntrinsic("llvm.cttz.i64", c.prim.i64)
@@ -444,19 +452,25 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
   of "__builtin_popcount":
     result = callIntrinsic("llvm.ctpop.i32", c.prim.i32)
   of "__builtin_bswap16":
-    result = callIntrinsic("llvm.bswap.i16", c.prim.i16)
+    result = callUnary("llvm.bswap.i16", c.prim.i16)
   of "__builtin_bswap32":
-    result = callIntrinsic("llvm.bswap.i32", c.prim.i32)
+    result = callUnary("llvm.bswap.i32", c.prim.i32)
   of "__builtin_bswap64":
-    result = callIntrinsic("llvm.bswap.i64", c.prim.i64)
+    result = callUnary("llvm.bswap.i64", c.prim.i64)
   of "__builtin_expect":
     result = args[0]
-  of "__builtin_sqrt", "__builtin_sqrtf":
+  of "__builtin_sqrt", "__builtin_sqrtf", "__builtin_floor", "__builtin_floorf",
+     "__builtin_ceil", "__builtin_ceilf", "__builtin_trunc", "__builtin_truncf",
+     "__builtin_round", "__builtin_roundf":
+    # `__builtin_floorf` → `llvm.floor.f32`: the one-operand float intrinsics.
+    let single = externName[^1] == 'f'
+    let stem = externName.substr(len("__builtin_"),
+                                 externName.len - 1 - ord(single))
     let t = c.nextTemp()
     let res = llReg(t, retType)
     c.emit LLInstr(kind: llCall, result: res,
-      callCallee: llGlobalRef(if externName == "__builtin_sqrtf": "llvm.sqrt.f32"
-                              else: "llvm.sqrt.f64", c.prim.ptrT),
+      callCallee: llGlobalRef("llvm." & stem & (if single: ".f32" else: ".f64"),
+                              c.prim.ptrT),
       callRetType: retType, callArgs: @[args[0]])
     result = res
   else:

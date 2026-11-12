@@ -117,6 +117,12 @@ proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
   # gcc/clang expand these inline (`sqrtsd`), with an errno slow path for a
   # negative operand unless `-fno-math-errno`.
   of SqrtOp: (if bits == 32: "__builtin_sqrtf" else: "__builtin_sqrt")
+  # Inline (`frintm`, `roundsd`) only where the target has the instruction;
+  # elsewhere a libm call, which is why `std/math` uses these on arm64 alone.
+  of FloorOp: (if bits == 32: "__builtin_floorf" else: "__builtin_floor")
+  of CeilOp: (if bits == 32: "__builtin_ceilf" else: "__builtin_ceil")
+  of TruncOp: (if bits == 32: "__builtin_truncf" else: "__builtin_trunc")
+  of RoundOp: (if bits == 32: "__builtin_roundf" else: "__builtin_round")
   else: ""
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =

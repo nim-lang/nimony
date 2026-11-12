@@ -68,7 +68,7 @@ func copySign*(x, y: float64): float64 =
 ## Floor
 ##
 ## Finds the nearest integer less than or equal to `x`.
-func floor*(x: float32): float32 =
+func floorSoft(x: float32): float32 =
   var ix = cast[uint32](x)
   let e = getExpUnbiased(x)
 
@@ -100,7 +100,7 @@ func floor*(x: float32): float32 =
       # -1.0 < x < 0.0; rounding down goes toward -1.0.
       return -1'f32
 
-func floor*(x: float64): float64 =
+func floorSoft(x: float64): float64 =
   var ix = cast[uint64](x)
   let e = getExpUnbiased(x)
 
@@ -135,7 +135,7 @@ func floor*(x: float64): float64 =
 ## Ceil
 ##
 ## Finds the nearest integer greater than or equal to `x`.
-func ceil*(x: float32): float32 =
+func ceilSoft(x: float32): float32 =
   var ix = cast[uint32](x)
   let e = getExpUnbiased(x)
 
@@ -170,7 +170,7 @@ func ceil*(x: float32): float32 =
       # +0.0 remains unchanged
       return x
 
-func ceil*(x: float64): float64 =
+func ceilSoft(x: float64): float64 =
   var ix = cast[uint64](x)
   let e = getExpUnbiased(x)
 
@@ -253,30 +253,55 @@ func truncStatus(x: float64): tuple[val: float64, status: int] {.inline.} =
   # Now zero the bits we need to truncate and return.
   (cast[float64](xi xor cleared), status)
 
-func trunc*(x: float32): float32 =
-  truncStatus(x).val
+const HardwareRounding = defined(arm64) or (defined(amd64) and defined(nimNativeBackend))
+  ## Where the `Floor`/`Ceil`/`Trunc` intrinsics are one instruction: AArch64
+  ## (`frintm`/`frintp`/`frintz`, also what gcc emits for `__builtin_floor`) and
+  ## native x86-64 (SSE4.1 `roundsd`). A C compiler targeting baseline x86-64
+  ## turns the builtin into a libm call instead, so the C backend keeps the
+  ## bit-level routines there.
+const HardwareRound = defined(arm64)
+  ## `Round` (ties away from zero) is `frinta` on AArch64; SSE has no such mode.
 
-func trunc*(x: float64): float64 =
-  truncStatus(x).val
+when HardwareRounding:
+  func floor*(x: float32): float32 {.intrinsic: "Floor".}
+  func floor*(x: float64): float64 {.intrinsic: "Floor".}
+  func ceil*(x: float32): float32 {.intrinsic: "Ceil".}
+  func ceil*(x: float64): float64 {.intrinsic: "Ceil".}
+  func trunc*(x: float32): float32 {.intrinsic: "Trunc".}
+  func trunc*(x: float64): float64 {.intrinsic: "Trunc".}
+else:
+  func floor*(x: float32): float32 {.inline.} = floorSoft(x)
+  func floor*(x: float64): float64 {.inline.} = floorSoft(x)
+  func ceil*(x: float32): float32 {.inline.} = ceilSoft(x)
+  func ceil*(x: float64): float64 {.inline.} = ceilSoft(x)
+  func trunc*(x: float32): float32 {.inline.} = truncStatus(x).val
+  func trunc*(x: float64): float64 {.inline.} = truncStatus(x).val
 
 ## Round
 ##
 ## Round `x` to the nearest integer, breaking ties away from zero.
-func round*(x: float32): float32 =
+func roundSoft(x: float32): float32 {.inline.} =
   let f0p5 = 0.5'f32  # 0.5
   let f0p25 = 0.25'f32  # 0.25
   # Approximation of EPSILON for f32: 2^-23
   let actualEps = 1.1920928955078125e-7'f32  # 2^-23
 
-  truncStatus(x + copySign(f0p5 - f0p25 * actualEps, x)).val
+  trunc(x + copySign(f0p5 - f0p25 * actualEps, x))
 
-func round*(x: float64): float64 =
+func roundSoft(x: float64): float64 {.inline.} =
   let f0p5 = 0.5  # 0.5
   let f0p25 = 0.25  # 0.25
   # Approximation of EPSILON for f64: 2^-52
   let actualEps = 2.220446049250313080847e-16  # 2^-52
 
-  truncStatus(x + copySign(f0p5 - f0p25 * actualEps, x)).val
+  trunc(x + copySign(f0p5 - f0p25 * actualEps, x))
+
+when HardwareRound:
+  func round*(x: float32): float32 {.intrinsic: "Round".}
+  func round*(x: float64): float64 {.intrinsic: "Round".}
+else:
+  func round*(x: float32): float32 {.inline.} = roundSoft(x)
+  func round*(x: float64): float64 {.inline.} = roundSoft(x)
 
 ## Reduce a significand modulo another after multiplying it by a power of two.
 func reduceMod32(x, exponent: uint32, y: uint32): uint32 {.inline.} =

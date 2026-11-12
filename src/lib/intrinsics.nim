@@ -278,6 +278,16 @@ type
     #    call it also made each float local live across it a spill on x86-64,
     #    where no xmm register is callee-saved.
     SqrtOp       # f = Sqrt(x: f)  — f32 or f64
+    # Rounding to an integral value, in the float's own format. Each is one
+    # instruction on AArch64 (`frintm`/`frintp`/`frintz`/`frinta`) and, apart
+    # from `Round`, on x86-64 with SSE4.1 (`roundsd` with a mode immediate) —
+    # the same baseline `Popcount`'s `popcnt` already assumes. `Round` rounds
+    # halfway cases AWAY from zero (C's `round`), which no SSE rounding mode
+    # does, so it has no x86-64 row: `std/math` builds it from `Trunc` there.
+    FloorOp      # f = Floor(x: f)
+    CeilOp       # f = Ceil(x: f)
+    TruncOp      # f = Trunc(x: f)
+    RoundOp      # f = Round(x: f) — halfway cases away from zero
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -453,7 +463,7 @@ const
     "cseleq", "cselne", "csellt", "cselle", "cselgt", "cselge", "csello",
     "csells", "cselhi", "cselhs",
     "zeroMemIns", "copyMemIns", "cmpMemIns",
-    "Sqrt"]
+    "Sqrt", "Floor", "Ceil", "Trunc", "Round"]
 
   Imm8 = [ptImmLit, ptNone, ptNone, ptNone, ptNone, ptNone]
     ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -1178,10 +1188,22 @@ const
     # ── floating point ──
     IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Sqrt
                  params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Floor
+                 params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Ceil
+                 params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Trunc
+                 params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgA64}, arity: 1,   # Round
+                 params: FUn, roles: AllIn, ret: ptFloatW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = SqrtOp
+const LastIntrinsicOp* = RoundOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -1313,6 +1335,12 @@ proc memLocOperands*(op: IntrinsicOp): int {.inline.} =
   ## How many LEADING operands of a block-memory row are locations: the size, if
   ## any, follows them.
   if op == ZeroMemOp: 1 else: 2
+
+proc isFloatUnary*(op: IntrinsicOp): bool {.inline.} =
+  ## A float-to-float row of one operand in the operand's own format: `Sqrt`
+  ## and the rounding rows. The back ends lower them alike — the operand is
+  ## produced into the result register and the instruction runs in place.
+  ord(op) >= ord(SqrtOp) and ord(op) <= ord(RoundOp)
 
 proc isVolatile*(op: IntrinsicOp): bool {.inline.} =
   ## A volatile access. Two of them may not be reordered against each other, may
