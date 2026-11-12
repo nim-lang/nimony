@@ -4015,6 +4015,9 @@ In the example the constructors `newLit` and `newPlus` are procs
 because they should use static binding, but `eval` is a method because it
 requires dynamic binding.
 
+An override of a `.noSideEffect` method must be `.noSideEffect` itself: a call
+is checked against the method it resolves to statically.
+
 
 ### Inhibit dynamic method resolution via procCall
 
