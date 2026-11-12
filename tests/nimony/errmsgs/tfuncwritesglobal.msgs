@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tfuncwritesglobal.nim(7, 3) Error: use of global/thread-local variable 'g' in .noSideEffect context
+tests/nimony/errmsgs/tfuncwritesglobal.nim(10, 1) Error: use of global/thread-local variable 'g' in .noSideEffect context
