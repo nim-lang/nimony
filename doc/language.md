@@ -3285,7 +3285,6 @@ passes it by copy or by reference.
 A **barrier** is anything that can write a location without naming it:
 
 - a call to a `proc`, a method or a routine value;
-- a call to a `func` that is handed a pointer argument;
 - a store whose target is not an owned variable: through a `ptr`, a `ref` or
   a view, to a global, or to a `var` parameter;
 - leaving the scope of a local whose type has a destructor.
