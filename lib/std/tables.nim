@@ -23,9 +23,6 @@ type
 
 # ------------------------------ helpers ---------------------------------
 
-func isEmpty(hcode: Hash): bool {.inline.} =
-  hcode == 0
-
 func isFilled(hcode: Hash): bool {.inline.} =
   hcode != 0
 
