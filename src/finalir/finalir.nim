@@ -43,7 +43,7 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import ".." / hexer / [xelim, mover, passes, lifter]
 import ".." / lib / symparser
-import finalir_model, condextractor, defroots
+import finalir_model, condextractor, defroots, versions
 
 type
   Exit = object
@@ -60,10 +60,6 @@ type
     scopeDepth: int    # `typeCache.scopeDepth` outside the construct; a jump
                        # out kills the locals of the scopes above it
 
-  VersionEntry = object
-    pos: int32   ## index of the entry in `CurrentProc.journal`
-    val: int32   ## the variable's version from there on
-
   LoopJoin = object
     sym: SymId
     entry, header: int
@@ -73,17 +69,9 @@ type
     returnType: Cursor
     tmpCounter: int
     exits: seq[Exit]
-    # Versions (doc/internals/multi_join_ir.md, "Versions"). Every change of a
-    # variable's current version is one journal entry: a definition, a join,
-    # and the reset at the start of an `else` or `of` branch. What the version
-    # was at any earlier point is then a search in `history`, so a `jmp` only
-    # has to remember how long the journal was.
-    journal: seq[SymId]
-    slots: Table[SymId, int32]            ## a variable's index in the next two
-    history: seq[seq[VersionEntry]]
-    count: seq[int32]                     ## versions handed out so far
-    labelEdges: Table[SymId, seq[int32]]  ## journal lengths at the `jmp`s to a label
-    live: bool                            ## can control fall through to here?
+    vers: Versions                       ## the versions of its variables
+    labelEdges: Table[SymId, seq[Mark]]  ## where the `jmp`s to a label are
+    live: bool                           ## can control fall through to here?
     pendingBarrier: bool                  ## a barrier whose `(unknown .)` is owed
     spared: seq[SymId]                    ## the shared variables it names
 
@@ -160,70 +148,31 @@ proc freshLabel(c: var Context; prefix: string): SymId =
 
 # ---------------------------------------------------------------- versions
 
-proc slotOf(c: var Context; s: SymId): int =
-  result = int c.current.slots.getOrDefault(s, -1'i32)
+proc curVersion(c: var Context; s: SymId): int {.inline.} =
+  current(c.current.vers, s)
 
-proc curVersion(c: var Context; s: SymId): int =
-  let slot = slotOf(c, s)
-  if slot >= 0:
-    let last = c.current.history[slot].len - 1
-    result = int c.current.history[slot][last].val
-  else:
-    result = 0
-
-proc versionAt(c: var Context; s: SymId; pos: int): int =
-  ## The version `s` had when the journal was `pos` entries long.
-  result = 0
-  let slot = slotOf(c, s)
-  if slot >= 0:
-    var lo = 0
-    var hi = c.current.history[slot].len
-    while lo < hi:
-      let mid = (lo + hi) shr 1
-      if int(c.current.history[slot][mid].pos) < pos: lo = mid + 1
-      else: hi = mid
-    if lo > 0: result = int c.current.history[slot][lo-1].val
-
-proc setVersion(c: var Context; s: SymId; val: int) =
-  var slot = slotOf(c, s)
-  if slot < 0:
-    slot = c.current.history.len
-    c.current.slots[s] = int32(slot)
-    c.current.history.add @[]
-    c.current.count.add 0'i32
-  c.current.history[slot].add VersionEntry(
-    pos: int32(c.current.journal.len), val: int32(val))
-  c.current.journal.add s
+proc here(c: var Context): Mark {.inline.} =
+  mark(c.current.vers)
 
 proc newDef(c: var Context; s: SymId): int =
   ## A definition of `s`: it gets the next version.
-  if not c.analysisFacts: return 0
-  let slot = slotOf(c, s)
-  result = if slot >= 0: int(c.current.count[slot]) + 1 else: 1
-  setVersion c, s, result
-  c.current.count[slotOf(c, s)] = int32(result)
+  if c.analysisFacts: define(c.current.vers, s) else: 0
 
 proc inScope(c: var Context; s: SymId): bool =
   s == MemSym or getLocalInfo(c.typeCache, s).kind != NoSym or
     not isLocalName(pool.syms[s])
 
-proc changedSince(c: var Context; pos: int): seq[SymId] =
-  ## The variables still in scope whose version changed since the journal was
-  ## `pos` entries long, in the order they first did.
+proc sourcesAt(c: var Context; since: Mark; marks: openArray[Mark]): seq[Sources] =
+  ## `versions.sourcesAt` for the variables that are still in scope.
   result = @[]
-  var seen = initHashSet[SymId]()
-  for i in pos ..< c.current.journal.len:
-    let s = c.current.journal[i]
-    if not seen.containsOrIncl(s) and inScope(c, s):
-      result.add s
+  let all = sourcesAt(c.current.vers, since, marks)
+  for src in all:
+    if inScope(c, src.sym): result.add src
 
-proc restoreTo(c: var Context; pos: int) =
+proc restoreTo(c: var Context; m: Mark) =
   ## Entering another branch: every variable is back at the version it had
-  ## when the journal was `pos` entries long.
-  if not c.analysisFacts: return
-  for s in changedSince(c, pos):
-    let v = versionAt(c, s, pos)
-    if v != curVersion(c, s): setVersion c, s, v
+  ## at `m`.
+  if c.analysisFacts: restore c.current.vers, m
 
 proc emitJoin(c: var Context; dest: var TokenBuf; s: SymId; olds: openArray[int];
               unknownSource: bool; info: NifLineInfo) =
@@ -238,35 +187,31 @@ proc emitJoin(c: var Context; dest: var TokenBuf; s: SymId; olds: openArray[int]
   if unknownSource: dest.addDotToken()
   dest.addParRi()
 
-proc emitJoinsOf(c: var Context; dest: var TokenBuf; start: int;
-                 ends: openArray[int]; info: NifLineInfo) =
-  ## The joins after a construct whose branches ended when the journal was
-  ## `ends[i]` entries long; it began at `start`.
+proc emitJoinsOf(c: var Context; dest: var TokenBuf; start: Mark;
+                 ends: openArray[Mark]; info: NifLineInfo) =
+  ## The joins after a construct that began at `start` and whose branches
+  ## ended at `ends`.
   if not c.analysisFacts: return
-  for s in changedSince(c, start):
-    var olds: seq[int] = @[]
+  for src in sourcesAt(c, start, ends):
     var differ = false
-    for e in ends:
-      let v = versionAt(c, s, e)
-      if olds.len > 0 and v != olds[0]: differ = true
-      olds.add v
-    if differ or (olds.len > 0 and olds[0] != curVersion(c, s)):
-      emitJoin c, dest, s, olds, false, info
+    for v in src.olds:
+      if v != src.olds[0]: differ = true
+    if differ or (src.olds.len > 0 and src.olds[0] != curVersion(c, src.sym)):
+      emitJoin c, dest, src.sym, src.olds, false, info
 
-proc emitUnknownJoins(c: var Context; dest: var TokenBuf; start, known: int;
+proc emitUnknownJoins(c: var Context; dest: var TokenBuf; start, known: Mark;
                       info: NifLineInfo) =
-  ## Entering an `except` or a `fin`: a variable the `try` body may have
-  ## defined arrives with a value nothing is known about, and one that only
-  ## an earlier handler touched is back at what it was before the `try`.
+  ## Entering an `except` or a `fin`: a variable the `try` body, which ended
+  ## at `known`, may have defined arrives with a value nothing is known
+  ## about, and one that only an earlier handler touched is back at what it
+  ## was before the `try`.
   if not c.analysisFacts: return
-  var inBody = initHashSet[SymId]()
-  for i in start ..< known: inBody.incl c.current.journal[i]
-  for s in changedSince(c, start):
-    if s in inBody:
-      emitJoin c, dest, s, [], true, info
-    else:
-      let v = versionAt(c, s, start)
-      if v != curVersion(c, s): emitJoin c, dest, s, [v], false, info
+  let inBody = changedBetween(c.current.vers, start, known)
+  for src in sourcesAt(c, start, [start]):
+    if src.sym in inBody:
+      emitJoin c, dest, src.sym, [], true, info
+    elif src.olds[0] != curVersion(c, src.sym):
+      emitJoin c, dest, src.sym, src.olds, false, info
 
 proc noteBarrier(c: var Context; d: DefRoot) =
   if d.barrier:
@@ -295,7 +240,7 @@ proc flushBarrier(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
     c.current.spared.setLen 0
 
 proc emitLab(c: var Context; dest: var TokenBuf; name: SymId; info: NifLineInfo;
-             headerEdge = -1) =
+             headerEdge = NoMark) =
   ## `(lab L join…)`. The sources of a join are listed in the order of the
   ## `jmp`s to `L`, then the fall-through if control can reach the label that
   ## way. `headerEdge`: the exit of a `for`, which is also reached from the
@@ -303,26 +248,25 @@ proc emitLab(c: var Context; dest: var TokenBuf; name: SymId; info: NifLineInfo;
   dest.addParLe LabV, info
   dest.addSymDef name, info
   if c.analysisFacts:
-    var edges: seq[int32] = @[]
-    if headerEdge >= 0: edges.add int32(headerEdge)
+    var edges: seq[Mark] = @[]
+    if headerEdge != NoMark: edges.add headerEdge
     if c.current.labelEdges.hasKey(name):
       let jumps = c.current.labelEdges.getOrDefault(name)
       for e in jumps: edges.add e
       c.current.labelEdges.del name
     if edges.len > 0:
-      var lo = int edges[0]
-      for e in edges: lo = min(lo, int e)
-      for s in changedSince(c, lo):
-        let here = curVersion(c, s)
-        var olds: seq[int] = @[]
+      var lo = edges[0]
+      for e in edges:
+        if e < lo: lo = e
+      for src in sourcesAt(c, lo, edges):
+        let cur = curVersion(c, src.sym)
+        var olds = src.olds
         var differ = false
-        for e in edges:
-          let v = versionAt(c, s, int e)
-          if v != here: differ = true
-          olds.add v
+        for v in olds:
+          if v != cur: differ = true
         if differ:
-          if c.current.live: olds.add here
-          emitJoin c, dest, s, olds, false, info
+          if c.current.live: olds.add cur
+          emitJoin c, dest, src.sym, olds, false, info
   c.current.live = true
   dest.addParRi()
 
@@ -331,7 +275,7 @@ proc emitJmp(c: var Context; dest: var TokenBuf; name: SymId; info: NifLineInfo)
   dest.addSymUse name, info
   dest.addParRi()
   if c.analysisFacts:
-    c.current.labelEdges.mgetOrPut(name, @[]).add int32(c.current.journal.len)
+    c.current.labelEdges.mgetOrPut(name, @[]).add here(c)
   c.current.live = false
 
 # Mutually recursive translators:
@@ -676,11 +620,11 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let elifStart = n # skip `elif`
   n = sub(n)
   trCond c, dest, n, "ite", false, info # condition
-  let start = c.current.journal.len
+  let start = here(c)
   let liveBefore = c.current.live
   trScopedBody c, dest, n    # then-branch
   n = elifStart; skip n      # end of `elif`
-  let thenEnd = c.current.journal.len
+  let thenEnd = here(c)
   let thenLive = c.current.live
   c.current.live = liveBefore
 
@@ -695,7 +639,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if n.hasMore:
       bug "`if` with a branch after its `else` reached the Final IR"
     # `(join x new then else)`
-    emitJoinsOf c, dest, start, [thenEnd, c.current.journal.len], info
+    emitJoinsOf c, dest, start, [thenEnd, here(c)], info
   else:
     dest.addDotToken()       # no else section
     # without an `else` the second source is what held before the `ite`
@@ -715,9 +659,9 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let caseStart = n
   n = sub(n)
   trCond c, dest, n, "case", false, info # selector
-  let start = c.current.journal.len
+  let start = here(c)
   let liveBefore = c.current.live
-  var ends: seq[int] = @[]
+  var ends: seq[Mark] = @[]
   var anyLive = false
   var hasElse = false
   while n.substructureKind == OfU:
@@ -726,7 +670,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeInto dest, n:        # `of`
       takeTree dest, n       # ranges (pure constants)
       trScopedBody c, dest, n # branch body
-    ends.add c.current.journal.len
+    ends.add here(c)
     anyLive = anyLive or c.current.live
   if n.substructureKind == ElseU:
     hasElse = true
@@ -734,7 +678,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.current.live = liveBefore
     takeInto dest, n:        # `else`
       trScopedBody c, dest, n
-    ends.add c.current.journal.len
+    ends.add here(c)
     anyLive = anyLive or c.current.live
   if n.hasMore:
     # the resync below would silently drop it
@@ -890,12 +834,13 @@ proc scanLoopDefs(c: var Context; body: Cursor): seq[LoopJoin] =
       result.add LoopJoin(sym: s, entry: entry, header: newDef(c, s))
 
 proc emitLoopJoins(c: var Context; dest: var TokenBuf; joins: seq[LoopJoin];
-                   bodyStart: int; info: NifLineInfo) =
+                   bodyStart: Mark; info: NifLineInfo) =
   ## `(join x new entry back)` for a loop: `new` is what `x` is at the top of
   ## every iteration, `entry` what it was in front of the loop and `back` what
   ## the back-edge brings along.
   if not c.analysisFacts: return
-  for s in changedSince(c, bodyStart):
+  for src in sourcesAt(c, bodyStart, []):
+    let s = src.sym
     var listed = false
     for j in joins:
       if j.sym == s: listed = true
@@ -949,7 +894,7 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.current.exits.add Exit(name: exitL, isLoop: true, cont: freshLabel(c, "´lc."),
                            scopeDepth: c.typeCache.scopeDepth)
   let joins = scanLoopDefs(c, n)
-  let bodyStart = c.current.journal.len
+  let bodyStart = here(c)
   openScope c
   var body = createTokenBuf(64)
   if n.stmtKind in {StmtsS, ScopeS}:
@@ -1034,7 +979,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while iter.exprKind in {HderefX, HaddrX}: inc iter
     if iter.exprKind in CallKinds:
       callDefs c.typeCache, iter, iterDefs, iterBarrier
-  let bodyStart = c.current.journal.len
+  let bodyStart = here(c)
   openScope c
   dest.addParLe(forTag, info)
   takeTree dest, n # the iterator call, verbatim: xelim already normalized it
@@ -1070,9 +1015,9 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe("try", info)
   let tryStart = n
   n = sub(n)
-  let start = c.current.journal.len
+  let start = here(c)
   trScopedBody c, dest, n # try body
-  let bodyEnd = c.current.journal.len
+  let bodyEnd = here(c)
   var ends = @[bodyEnd]
   while n.substructureKind == ExceptU:
     takeInto dest, n: # `except`
@@ -1089,12 +1034,12 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
           takeTree dest, n
         else:
           takeTree dest, n # exception type pattern
-    ends.add c.current.journal.len
+    ends.add here(c)
   if n.substructureKind == FinU:
     takeInto dest, n: # `fin`
       # entered from the end of the body, from a handler, and from wherever
       # an exception, a `ret` or a `jmp` leaves them
-      emitUnknownJoins c, dest, start, c.current.journal.len, info
+      emitUnknownJoins c, dest, start, here(c), info
       trScopedBody c, dest, n
   else:
     # `(join x new body handler…)`
