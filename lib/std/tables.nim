@@ -15,12 +15,11 @@ type
   HashEntry = object
     fullhash: Hash
     position: int # 1-based index into `data`; 0 marks an empty slot
-  TableData[T] = object
-    data: seq[T]
+  Table*[A, B] = object ## Generic hash table, consisting of key-value pairs.
+    ## Tiny tables are scanned linearly; larger ones keep an open-addressed
+    ## index beside the dense pair sequence.
+    data: seq[(A, B)]
     hashes: seq[HashEntry]
-  Table*[A, B] = TableData[(A, B)] ## Generic hash table, consisting of
-    ## key-value pairs. Tiny tables are scanned linearly; larger ones keep an
-    ## open-addressed index beside the dense pair sequence.
 
 # ------------------------------ helpers ---------------------------------
 
@@ -172,7 +171,7 @@ func initTable*[A, B](initialSize = defaultInitialSize): Table[A, B] =
   ## Creates a new empty hash table. `initialSize` is a capacity hint; the
   ## dense representation grows with its entries.
   discard initialSize
-  result = TableData[(A, B)](data: @[], hashes: @[])
+  result = Table[A, B](data: @[], hashes: @[])
 
 func toTable*[A: Keyable, B](pairs: openArray[(A, B)]): Table[A, B] =
   ## Creates a table containing `pairs`.
@@ -313,7 +312,7 @@ func `$`*[A: Stringable, B: Stringable](t: Table[A, B]): string =
     result.addQuoted t.data[i][1]
   result.add "}"
 
-func `==`*[T: Equatable](s, t: TableData[T]): bool =
+func `==`*[A: Keyable, B: Equatable](s, t: Table[A, B]): bool =
   ## Content equality: insertion order and internal index layout do not matter.
   if s.data.len != t.data.len:
     return false
@@ -383,11 +382,9 @@ else:
 type
   OrderedKeyValuePair[T] = tuple[hcode: Hash, next: int, item: T]
   OrderedKeyValuePairSeq[T] = seq[OrderedKeyValuePair[T]]
-  OrderedTableData[T] = object
-    data: OrderedKeyValuePairSeq[T]
+  OrderedTable*[A, B] = object ## Hash table that remembers insertion order.
+    data: OrderedKeyValuePairSeq[(A, B)]
     counter, first, last: int
-  OrderedTable*[A, B] = OrderedTableData[(A, B)] ## Hash table that remembers
-    ## insertion order.
 
 func ordRawGetKnownHC[A: Keyable, B](t: OrderedTable[A, B]; key: A;
                                     hc: Hash): int =
@@ -478,7 +475,7 @@ func ordPutWithHash[A: Keyable, B](t: var OrderedTable[A, B]; key: sink A;
 func initOrderedTable*[A, B](
     initialSize = defaultInitialSize): OrderedTable[A, B] =
   ## Creates a new empty ordered table.
-  result = OrderedTableData[(A, B)](
+  result = OrderedTable[A, B](
       data: default(OrderedKeyValuePairSeq[(A, B)]),
       counter: 0, first: -1, last: -1)
   discard ordInitImpl(result, initialSize)
@@ -789,7 +786,7 @@ func `$`*[A: Stringable, B: Stringable](t: OrderedTable[A, B]): string =
     h = nxt
   result.add "}"
 
-func `==`*[T: Equatable](s, t: OrderedTableData[T]): bool =
+func `==`*[A: Keyable, B: Equatable](s, t: OrderedTable[A, B]): bool =
   ## Ordered equality: both the contents and the order must match.
   if s.counter != t.counter:
     return false
@@ -798,7 +795,7 @@ func `==`*[T: Equatable](s, t: OrderedTableData[T]): bool =
   var hs = s.first
   var ht = t.first
   while 0 <= hs and hs < s.data.len and 0 <= ht and ht < t.data.len:
-    if not (s.data[hs].item == t.data[ht].item):
+    if s.data[hs].item != t.data[ht].item:
       return false
     hs = s.data[hs].next
     ht = t.data[ht].next
@@ -808,12 +805,10 @@ func `==`*[T: Equatable](s, t: OrderedTableData[T]): bool =
 type
   CountEntry[A] = tuple[key: A, val: int]
   CountEntrySeq[A] = seq[CountEntry[A]]
-  CountTableData[A] = object
+  CountTable*[A] = object ## Hash table that counts the occurrences of keys.
     data: CountEntrySeq[A]
     counter: int
     isSorted: bool
-  CountTable*[A] = CountTableData[A] ## Hash table that counts the occurrences
-    ## of keys.
 
 func ctRawGet[A: Keyable](t: CountTable[A]; key: A): int =
   result = -1
@@ -915,7 +910,7 @@ func countDelIdx[A: Keyable](t: var CountTable[A]; i: int) =
 
 func initCountTable*[A](initialSize = defaultInitialSize): CountTable[A] =
   ## Creates a new empty count table.
-  result = CountTableData[A](
+  result = CountTable[A](
       data: default(CountEntrySeq[A]), counter: 0, isSorted: false)
   discard ctInitImpl(result, initialSize)
 
@@ -1095,7 +1090,7 @@ func `$`*[A: Stringable](t: CountTable[A]): string =
       result.addQuoted t.data[h].val
   result.add "}"
 
-func `==`*[A: Keyable](s, t: CountTableData[A]): bool =
+func `==`*[A: Keyable](s, t: CountTable[A]): bool =
   if s.counter != t.counter:
     return false
   if s.counter == 0:
