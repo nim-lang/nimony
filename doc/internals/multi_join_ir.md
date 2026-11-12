@@ -110,6 +110,70 @@ Two consequences of the same "not inlined yet" fact are worth knowing:
   once there.
 * The loop variable has no declaration to attach an init-state to.
 
+## Versions
+
+The contract prover reasons about values, so it wants to know which value of a
+variable a use sees. The lowering tells it: every definition of a variable
+makes a new *version* of it, and every place where control flow merges says
+which versions meet there. The form is SSA with the φ-nodes written where the
+merge already is:
+
+```
+(lab L (join x 7 3 5))          # at L, x is x7: x3 or x5, whichever came
+(ite c A B (join x 4 2 3))      # after the `ite`: A left x2, B left x3
+(loop (join i 2 1 6) body)      # at the top of each iteration i is i2:
+                                # i1 from in front of the loop, i6 from the
+                                # back-edge
+```
+
+A use carries no version. A reader keeps the current version of each variable
+as it walks the routine, and the rules for that are the whole format:
+
+- A variable starts at version 0. A **definition** gives it the next version
+  that was never used for it: versions are handed out in the order of the text.
+- Definitions are: a local's declaration; an `(asgn …)`, which defines the
+  variable its destination is part of; a call, which defines every argument it
+  binds to a `var` or `out` parameter, left to right, once its arguments are
+  evaluated; `inc`, `dec`, `incl`, `excl` and the hook calls. A `for` defines
+  what its iterator is handed as `var` at the end of each iteration.
+  `defroots.defRoot` and `defroots.callDefs` say which variable a written
+  location belongs to; a location behind a `ptr`, a `ref` or a view belongs to
+  none.
+- `(join x new old…)` is a definition too, and the only one whose number is
+  written down: `x` is `new` from here on. It lists one `old` per way of
+  getting here, in the order of the text: for a `lab` the `jmp`s to it and
+  then the fall-through, if there is one; for an `ite` the then-branch and the
+  else-branch (what held in front of the `ite` if it has none); for a `case`
+  and a `try` their branches; for a `loop` and a `for` the entry and the
+  back-edge. The exit label of a `for` lists the loop's header first: the
+  iterator running out is a way of getting there. A `.` in place of an `old`
+  is a path on which nothing is known about `x`, which is how an `except` and
+  a `fin` are entered.
+- A branch starts with the versions its construct started with, not with what
+  the branch before it left behind.
+- A variable without a `join` at a merge has the version it had in the text
+  right in front of it. The lowering writes a `join` with a single `old`
+  where that would be wrong, after a `ret` for example.
+
+**Memory** is one more variable, written `.`: `(join . 5 3 4)`. Its
+definitions are the *barriers* of doc/language.md ("Aliasing"), which the
+lowering marks with `(unknown . x…)`: a call of a routine that is not a
+`func`, and a write to a location that can be reached under another name (a
+global, a `var` parameter, anything behind a pointer). The variables listed
+after the `.` were written by name in the same statement and are not affected
+by it.
+
+`finalir.nim` keeps a journal of version changes per routine to produce all
+this in its one pass: what a variable's version was at a `jmp` is a search in
+that journal, so a `jmp` records one integer. The one thing it cannot know in
+time is what a loop body will define, since the header's `join` takes its
+number before the body's definitions do; `scanLoopDefs` reads that off the
+body ahead of translating it.
+
+The `join`s and the barrier marks are for the prover only. `stripAnalysisFacts`
+removes them together with `kill` and `unknown` before the module is published.
+`nimony --keepsemtree` writes the tree that still has them to `<module>.fir.nif`.
+
 ## Why `xelim` used to run three times
 
 `xelim` ("eliminate eXpressions") is the pass that establishes rule 1: it

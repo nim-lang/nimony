@@ -5212,8 +5212,24 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
     # like are keyed on the root, so stay conservative there.
     noteWrite(w, getVarId(c, root), ivUnknown)
 
+proc isVersionFact(n: Cursor): bool =
+  ## `(join …)` and the barrier `(unknown . …)`: what `finalir.nim` says about
+  ## versions (doc/internals/multi_join_ir.md, "Versions").
+  if n.substructureKind == JoinU:
+    result = true
+  elif n.finalIrKind == UnknownV:
+    result = n.childCursor.isDotToken
+  else:
+    result = false
+
+proc skipJoins(n: var Cursor) {.inline.} =
+  while n.hasMore and n.substructureKind == JoinU: skip n
+
 proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if not n.isTagLit:
+    skip n
+    return
+  if isVersionFact(n):
     skip n
     return
   if n.stmtKind in {IncS, DecS}:
@@ -5513,6 +5529,7 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## falls through. The `(lab loopExit)` that follows installs the merged
   ## break state via `bindLoopExit`.
   n.into: # loop tag
+    skipJoins n
     analyseLoopBody c, n
 
   recordLoopExitLabel c, n
@@ -5573,6 +5590,7 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
     var binders: seq[SymId] = @[]
     declareForVars c, n, firstArg, binders
     skip n # the loop variables
+    skipJoins n
     analyseLoopBody c, n
     # The iterator running out is an exit no `jmp` stands for, so no `kill`
     # either: the loop variables die with the loop, and their borrows with them.
@@ -5586,6 +5604,7 @@ proc traverseLabel(c: var FirContext; n: var Cursor) =
   n.into:
     label = n.symId
     inc n # symdef
+    skipJoins n
   if c.loopExitLabels.contains(label):
     bindLoopExit(c.tr, c.flow, label)
   else:
@@ -5781,6 +5800,7 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
 
   if n.substructureKind == FinU:
     n.into:
+      skipJoins n
       traverseStmt c, n, call # finally body, on the merged fall-through
   n = tryStart; skip n # close 'try'
 
@@ -6098,6 +6118,9 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `call` holds what the calls of the preceding statement established; an
   ## `(unknown …)` reads it and leaves it for the next one, every other
   ## statement starts it afresh.
+  if isVersionFact(n):
+    skip n
+    return
   if n.finalIrKind != UnknownV:
     call = freshCall()
   # See `stmtContext`: a statement from another file is expanded code, and
