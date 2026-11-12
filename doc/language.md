@@ -3118,7 +3118,7 @@ A `func` is a `proc` that is treated as `noSideEffect` by default. Likewise, `it
 
 A routine is **side-effect free** when it does not access global or thread-local variables, does not call any routine that has side effects and does not mutate memory through a `ref` or `ptr`.
 
-The last rule covers every way a location can be mutated: an assignment to it and passing it to a `var` or `out` parameter. A location is "behind a `ref`/`ptr`" when its access path contains a dereference — `p[]`, `r.field` for a `ref`/`ptr` typed `r`, or `p[i]` for a `ptr UncheckedArray`. The mutation is nonetheless allowed when the head of the access path is already of a `var` type: a `var`/`out` parameter or a call that returns `var T`. The caller handed that state over for mutation explicitly.
+The last rule covers every way a location can be mutated: an assignment to it and passing it to a `var` or `out` parameter. A location is "behind a `ref`/`ptr`" when its access path contains a dereference — `p[]`, `r.field` for a `ref`/`ptr` typed `r`, or `p[i]` for a `ptr UncheckedArray`. A `var`/`out` parameter at the head of the access path does not change that: a `func` may write the own storage of its `var` parameter — the variable the caller named — but not what that variable points to. For the same reason a `func` cannot return a location behind a `ref`/`ptr` as its `var T` result. So a call to a `func` writes exactly the variables it is handed as `var`, which is what lets the compiler reason about `s.add x` or `inc i` precisely (see [Aliasing](#aliasing)). `var T` means "this variable may be assigned", not "everything reachable from it is mutable": a `var ref T` parameter lets a `func` make the variable refer to another object, and neither it nor a `ref T` parameter lets a `func` change the object.
 
 ```nim
 type
@@ -3134,18 +3134,21 @@ func badLocal(h: Holder) =
   var copy = h
   copy.r.x = 5     # Error: `copy` is a local, its `r` still aliases `h.r`
 
-func fine(h: var Holder) =
-  inc h.r.x        # the head `h` is `var Holder`
+func alsoBad(h: var Holder) =
+  inc h.r.x        # Error: `h` is `var`, but `h.r.x` is behind the `ref`
+
+func fine(h: var Holder; n: Node) =
+  h.r = n          # the own storage of the `var` parameter
 ```
 
 `result` is not of a `var` type either, so a `func` that returns a fresh `ref` builds it with an object constructor — `Node(x: 5)` — rather than filling in its fields afterwards.
 
-Low-level code that writes through a pointer that is not rooted at a `var` parameter — a freshly allocated block, say — states that the mutation is invisible to the outside world with `{.cast(noSideEffect).}`:
+Low-level code that writes through a pointer — the block a container owns, say — states that the mutation is invisible to the outside world, or part of the value of its `var` parameter, with `{.cast(noSideEffect).}`:
 
 ```nim
 func add*[T](s: var seq[T]; elem: sink T) =
   ...
-  let impl = s.p     # a plain `ptr`, no longer rooted at the `var` parameter
+  let impl = s.p     # the block `s` owns
   {.cast(noSideEffect).}:
     impl.data[impl.len] = elem
 ```
@@ -3259,6 +3262,66 @@ run-time check for debugging, compiled out by `-d:noAssertions` and
 other, but an obligation that only it discharges stops being provable once it
 is switched off — the build then fails rather than losing a check. State such a
 claim with `{.assert.}`.
+
+### Aliasing
+
+The prover reasons about values. A variable stands for a value only while
+nothing can change it except a write that names it:
+
+- An **owned** variable is a local, `result`, or a parameter that is not
+  `var`, `out` or `lent`, whose address is not taken and that no nested
+  routine names. What is known about it holds until a write that names it.
+  Passing it as `var` is such a write; afterwards what the callee's `ensures`
+  states about it holds.
+- Every other variable is **shared**: a `var`, `out` or `lent` parameter, a
+  global, a variable whose address is taken, a local that a nested routine
+  names. What is known about it holds until the next *barrier* that does not
+  name it.
+
+A parameter that is not `var`, `out` or `lent` is read-only: the prover
+assumes it does not change while the routine runs, whether the compiler
+passes it by copy or by reference.
+
+A **barrier** is anything that can write a location without naming it:
+
+- a call to a `proc`, a method or a routine value;
+- a store whose target is not an owned variable: through a `ptr`, a `ref` or
+  a view, to a global, or to a `var` parameter.
+
+A `func` writes nothing but the variables it is handed as `var` (see
+[Func](#func)), so a call to one is a write to those variables and nothing
+else: `inc i` and `s.add x` for an owned `i` and `s` are no barriers at all,
+and neither are `len` and `[]`. Only when the variable handed over is itself
+shared is the call a barrier, as any other write to it is. A barrier spares
+the variable it names: `s[i] = x` and `s.add x` are writes to `s`, which the
+prover accounts for.
+
+A fact is only ever about a variable, its fields, and pure accessors of them
+such as `len`; never about what lies behind a pointer or a `ref`, and never
+about an element.
+
+```nim
+var gLen = 0
+proc f(s: seq[int]) =
+  if gLen < s.len:
+    log("x")          # a barrier: `gLen` is shared
+    echo s[gLen]      # checked at run time
+  let n = gLen        # an owned copy keeps the fact
+  if n < s.len:
+    log("x")
+    echo s[n]         # proven
+```
+
+To keep a fact about a shared variable across a barrier, copy the value into
+a local.
+
+A `var` or `out` parameter is borrowed for the call and no longer. Its
+location may leave the routine as the routine's `var T` result (see
+[Var return type](#var-return-type)): the caller then knows that a write
+through the result is a write to the first argument. The prover does not
+follow pointers: `addr` is unsafe, and a routine that keeps the address of its
+`var` parameter past the call is as unsafe as one that keeps the address of a
+local.
 
 ## Lifetime-tracking hooks
 
