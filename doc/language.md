@@ -3286,8 +3286,7 @@ A **barrier** is anything that can write a location without naming it:
 
 - a call to a `proc`, a method or a routine value;
 - a store whose target is not an owned variable: through a `ptr`, a `ref` or
-  a view, to a global, or to a `var` parameter;
-- leaving the scope of a local whose type has a destructor.
+  a view, to a global, or to a `var` parameter.
 
 A `func` writes nothing but the variables it is handed as `var` (see
 [Func](#func)), so a call to one is a write to those variables and nothing
