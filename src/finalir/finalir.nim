@@ -487,7 +487,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let closeInfo = n.endInfo
   n = localStart; skip n
   dest.addParRi(closeInfo)
-  discard newDef(c, symId)
+  if kind != ConstY: discard newDef(c, symId) # a const is no variable
   callIsOver(c, dest, callInfo)
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =

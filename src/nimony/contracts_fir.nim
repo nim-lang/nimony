@@ -59,7 +59,7 @@ include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / lib / symparser
-import ".." / finalir / [finalir_model, finalir]
+import ".." / finalir / [finalir_model, finalir, defroots]
 import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
@@ -136,6 +136,18 @@ type
     olds: Table[string, VarId]
       ## The `old(e)` snapshots of the last call, which a store or a local that
       ## binds its result reads the callee's `.ensures` with.
+
+  VerUndo = object
+    sym: SymId
+    cur, count: int32
+  Versions = object
+    ## Which version of a variable a use sees
+    ## (doc/internals/multi_join_ir.md, "Versions"). The lowering wrote the
+    ## numbers at the joins; in between the definitions are counted here.
+    cur, count: Table[SymId, int32]
+    journal: seq[VerUndo]       ## how to undo each change
+    iterDefs: seq[seq[SymId]]   ## per open loop: what its iterator defines
+                                ## at the back-edge
 
   ProofKind = enum
     ProvenIndex, ProvenCall
@@ -226,6 +238,7 @@ type
     syncArgs: HashSet[int]             # positions of global symbols passed to a
                                        # `.sync` routine's `var`/`ptr` parameter
     stats: seq[string]                 # -d:contractStats: this module's lines
+    vers: Versions                     # the current version of each variable
     verbose: bool                      # --verbose: dump final IR on init/contract
                                        # failures for easier debugging
     bits: int                          # target `int` width for compile-time folding
@@ -4897,6 +4910,152 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   storeValue c, n, valueStart, normalizedArith(c, valueStart), call
   n = asgnStart; skip n
 
+# --- Versions ---
+
+const
+  MemVar = SymId(0) ## every location a barrier can write
+
+proc versionOf(c: FirContext; s: SymId): int {.inline.} =
+  int c.vers.cur.getOrDefault(s, 0'i32)
+
+proc setVersion(c: var FirContext; s: SymId; cur, count: int) =
+  c.vers.journal.add VerUndo(sym: s, cur: c.vers.cur.getOrDefault(s, 0'i32),
+                             count: c.vers.count.getOrDefault(s, 0'i32))
+  c.vers.cur[s] = int32(cur)
+  c.vers.count[s] = int32(count)
+
+proc defVersion(c: var FirContext; s: SymId) =
+  ## A definition of `s`: the next version nothing used yet.
+  let v = int(c.vers.count.getOrDefault(s, 0'i32)) + 1
+  setVersion c, s, v, v
+
+proc versionsBranch(c: var FirContext; mark: int) =
+  ## Another branch of the construct that began at `mark` starts: every
+  ## variable is back at the version it had there. The numbers handed out
+  ## stay handed out.
+  var seen = initHashSet[SymId]()
+  let last = c.vers.journal.len
+  for i in mark ..< last:
+    let e = c.vers.journal[i]
+    if not seen.containsOrIncl(e.sym) and versionOf(c, e.sym) != int(e.cur):
+      setVersion c, e.sym, int(e.cur), int(c.vers.count.getOrDefault(e.sym, 0'i32))
+
+proc versionsRewind(c: var FirContext; mark: int) =
+  ## The code since `mark` is about to be analysed again: forget it was seen.
+  var i = c.vers.journal.len - 1
+  while i >= mark:
+    let e = c.vers.journal[i]
+    c.vers.cur[e.sym] = e.cur
+    c.vers.count[e.sym] = e.count
+    dec i
+  c.vers.journal.setLen mark
+
+proc applyJoin(c: var FirContext; n: var Cursor) =
+  ## `(join x new old…)`: `x` is `new` from here on.
+  let info = n.info
+  n.into:
+    let s = if n.isDotToken: MemVar else: n.symId
+    inc n
+    let v = int n.intVal
+    let count = int c.vers.count.getOrDefault(s, 0'i32)
+    when defined(checkVersions):
+      if v != count + 1:
+        quit "version mismatch at " & infoToStr(info) & ": join of " &
+          (if s == MemVar: "(memory)" else: pool.syms[s]) & " is " & $v &
+          " after " & $count & " definitions"
+    setVersion c, s, v, max(v, count)
+    while n.hasMore: skip n
+
+proc applyJoins(c: var FirContext; n: var Cursor) =
+  while n.hasMore and n.substructureKind == JoinU: applyJoin c, n
+
+proc countCalls(c: var FirContext; n: Cursor) =
+  ## The definitions the calls in the expression `n` make: a call defines
+  ## what it binds to a `var` parameter once its arguments are evaluated.
+  if n.isTagLit:
+    let isCall = n.exprKind in CallKinds
+    var r = n
+    r.into:
+      while r.hasMore:
+        countCalls c, r
+        skip r
+    if isCall:
+      var defs: seq[DefRoot] = @[]
+      var barrier = false
+      callDefs c.typeCache, n, defs, barrier
+      for d in defs:
+        if d.sym != NoSymId: defVersion c, d.sym
+
+proc countStmtDefs(c: var FirContext; n: Cursor) =
+  ## The definitions the statement `n` makes, counted as `finalir.nim`
+  ## counted them.
+  if isLocal(n.symKind):
+    let local = asLocal(n)
+    countCalls c, local.val
+    if n.symKind != ConstY: defVersion c, local.name.symId
+  elif n.stmtKind == AsgnS:
+    var r = n
+    r = sub(r)
+    let dest = r
+    countCalls c, r
+    skip r
+    countCalls c, r
+    let d = defRoot(c.typeCache, dest)
+    if d.sym != NoSymId: defVersion c, d.sym
+  elif n.stmtKind in {IncS, DecS, InclS, ExclS} or
+      n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX}:
+    countCalls c, n
+    var loc = n
+    inc loc
+    if n.stmtKind in {IncS, DecS, InclS, ExclS}: skip loc # the type
+    let d = defRoot(c.typeCache, loc)
+    if d.sym != NoSymId: defVersion c, d.sym
+  elif n.stmtKind in {AssumeS, AssertS}:
+    discard "a proposition, not code"
+  else:
+    countCalls c, n
+
+proc defForVars(c: var FirContext; vars: Cursor) =
+  var vars = vars
+  if vars.substructureKind in {UnpackflatU, UnpacktupU}:
+    vars = sub(vars) # peek only, never left
+    while vars.hasMore:
+      defForVars c, vars
+      skip vars
+  elif isLocal(vars.symKind):
+    defVersion c, asLocal(vars).name.symId
+
+proc isVersionLeaf(n: Cursor): bool =
+  ## Does the statement `n` make its definitions itself, rather than hold the
+  ## statements that do?
+  if not n.isTagLit:
+    result = false
+  elif n.finalIrKind in {IteV, ItecV, LoopV, LabV, JmpV, ContinueV, KillV,
+                         UnknownV, AssumeV, AssertV}:
+    result = false
+  elif n.stmtKind in {StmtsS, ScopeS, ForS, CaseS, TryS, ProcS, FuncS, MethodS,
+                      ConverterS, IteratorS, MacroS, TemplateS, TypeS,
+                      ImportS, ImportasS, FromimportS, ImportexceptS, IncludeS,
+                      ExportS, ExportexceptS, CommentS, PragmasS}:
+    result = false
+  elif n.exprKind == PragmaxX or n.substructureKind == JoinU:
+    result = false
+  else:
+    result = true
+
+proc isVersionFact(n: Cursor): bool =
+  ## `(join …)` and the barrier `(unknown . …)`: what `finalir.nim` says about
+  ## versions (doc/internals/multi_join_ir.md, "Versions").
+  if n.substructureKind == JoinU:
+    result = true
+  elif n.finalIrKind == UnknownV:
+    result = n.childCursor.isDotToken
+  else:
+    result = false
+
+proc skipJoins(n: var Cursor) {.inline.} =
+  while n.hasMore and n.substructureKind == JoinU: skip n
+
 proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `(inc T x y?)` is `x = succ(x, y)`, `dec` is `pred`: the `succ` owes `T`'s
   ## range where the `inc` is written, and the store shifts what is known about
@@ -4973,7 +5132,9 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   # false path knows; only it can tell the two apart (`a != b` is the case where
   # all the knowledge sits on the false path).
   var condFactsList: seq[LeXplusC] = @[]
+  countCalls c, n
   discard analyseCondition(c, n, condFactsList, call)
+  let versMark = c.vers.journal.len
 
   # then-branch (under assume(c)):
   let liveBeforeThen = c.tr.live
@@ -4992,7 +5153,9 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   if n.isDotToken:
     inc n
   else:
+    versionsBranch c, versMark
     traverseStmt c, n, call
+  applyJoins c, n
   # `mergeBranches` joins the then-branch (in `b`) with the current else-branch,
   # merging both the init-set and the facts; a leaving arm drops out.
   mergeBranches(c.tr, c.flow, b)
@@ -5212,19 +5375,6 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
     # like are keyed on the root, so stay conservative there.
     noteWrite(w, getVarId(c, root), ivUnknown)
 
-proc isVersionFact(n: Cursor): bool =
-  ## `(join …)` and the barrier `(unknown . …)`: what `finalir.nim` says about
-  ## versions (doc/internals/multi_join_ir.md, "Versions").
-  if n.substructureKind == JoinU:
-    result = true
-  elif n.finalIrKind == UnknownV:
-    result = n.childCursor.isDotToken
-  else:
-    result = false
-
-proc skipJoins(n: var Cursor) {.inline.} =
-  while n.hasMore and n.substructureKind == JoinU: skip n
-
 proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if not n.isTagLit:
     skip n
@@ -5441,6 +5591,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
   ## location changes nothing and its step need not be judged.
   var call = freshCall()
   let bodyStart = n
+  let versMark = c.vers.journal.len
   let errMark = c.errors.len
   let proofMark = c.proofLog.len
   let exitsMark = exitsCheckpoint(c.tr)
@@ -5496,6 +5647,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     c.flow.rollbackTo base
     call = freshCall()
     n = bodyStart
+    versionsRewind c, versMark
   # What this body broke of the enclosing loops' assumptions is theirs to judge.
   for v in outerBroken: c.brokenSteps.incl v
   # Outside every loop no assumption can be taken back any more.
@@ -5529,8 +5681,10 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## falls through. The `(lab loopExit)` that follows installs the merged
   ## break state via `bindLoopExit`.
   n.into: # loop tag
-    skipJoins n
+    applyJoins c, n
+    c.vers.iterDefs.add @[]
     analyseLoopBody c, n
+    discard c.vers.iterDefs.pop()
 
   recordLoopExitLabel c, n
 
@@ -5586,12 +5740,27 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
   var call = freshCall()
   n.into: # for tag
     let firstArg = forIterFirstArg(c, n)
+    # what the iterator is handed as `var` it defines when it is resumed
+    var iterDefs: seq[SymId] = @[]
+    block:
+      var iter = n
+      while iter.exprKind in {HderefX, HaddrX}: inc iter
+      if iter.exprKind in CallKinds:
+        var defs: seq[DefRoot] = @[]
+        var barrier = false
+        callDefs c.typeCache, iter, defs, barrier
+        for d in defs:
+          if d.sym != NoSymId: iterDefs.add d.sym
     traverseExpr c, n, call
     var binders: seq[SymId] = @[]
     declareForVars c, n, firstArg, binders
+    let forVars = n
     skip n # the loop variables
-    skipJoins n
+    applyJoins c, n
+    defForVars c, forVars
+    c.vers.iterDefs.add iterDefs
     analyseLoopBody c, n
+    discard c.vers.iterDefs.pop()
     # The iterator running out is an exit no `jmp` stands for, so no `kill`
     # either: the loop variables die with the loop, and their borrows with them.
     for b in binders: endBorrow c, b
@@ -5604,7 +5773,7 @@ proc traverseLabel(c: var FirContext; n: var Cursor) =
   n.into:
     label = n.symId
     inc n # symdef
-    skipJoins n
+    applyJoins c, n
   if c.loopExitLabels.contains(label):
     bindLoopExit(c.tr, c.flow, label)
   else:
@@ -5699,7 +5868,9 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
   n = sub(n)
   let selCursor = n
   let selSym = extractSymId(selCursor)
+  countCalls c, n
   traverseExpr c, n, call # selector (init-checked)
+  let versMark = c.vers.journal.len
 
   # Collect (ranges, body) per branch, walking past the whole case.
   var branches: seq[tuple[ranges, body: Cursor]] = @[]
@@ -5713,6 +5884,7 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
     n.into:
       branches.add (default(Cursor), n)
       skip n
+  var caseJoins = n
   n = caseStart; skip n # close 'case'
 
   let cp = c.flow.checkpoint()
@@ -5725,6 +5897,7 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
     # Each branch resumes from the pre-case state (the selector chose this arm).
     c.flow.rollbackTo cp
     c.tr.live = baseLive
+    versionsBranch c, versMark
     if not cursorIsNil(br.ranges):
       addCaseFacts(c, selSym, br.ranges)
     var bc = br.body
@@ -5733,6 +5906,7 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
       merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
       haveMerged = true
 
+  applyJoins c, caseJoins
   # A case with no `else` is exhaustive (sem guarantees this), so the selector
   # always matches some branch — there is no implicit fall-through to add.
   if haveMerged:
@@ -5772,10 +5946,14 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
     n.into: # 'except'
       var boundExc = NoSymId
       while n.hasMore and n.stmtKind notin {StmtsS, ScopeS}:
+        if n.substructureKind == JoinU:
+          applyJoin c, n
+          continue
         if isLocal(n.symKind):
           let local = asLocal(n)
           c.typeCache.registerLocal(local.name.symId, n.symKind, local.typ)
           boundExc = local.name.symId
+          defVersion c, boundExc
         skip n
       # handler entry = pre-try state (a raise may interrupt the body anywhere):
       c.flow.rollbackTo cp
@@ -5800,8 +5978,9 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
 
   if n.substructureKind == FinU:
     n.into:
-      skipJoins n
+      applyJoins c, n
       traverseStmt c, n, call # finally body, on the merged fall-through
+  applyJoins c, n
   n = tryStart; skip n # close 'try'
 
 proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
@@ -5992,6 +6171,8 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
     inheritInits(c.flow, oldFlow)
   let oldResultSym = c.resultSym
   let oldLaterParams = move c.laterParams
+  let oldVers = move c.vers
+  c.vers = Versions()
   c.laterParams = initHashSet[SymId]()
   let oldInlineVars = move c.inlineVars
   let oldProcStart = c.currentProcStart
@@ -6098,6 +6279,7 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.flow = ensureMove oldFlow
   c.resultSym = oldResultSym
   c.laterParams = ensureMove oldLaterParams
+  c.vers = ensureMove oldVers
   c.inlineVars = ensureMove oldInlineVars
   c.currentProcStart = oldProcStart
   c.stmtContext = oldStmtContext
@@ -6114,13 +6296,26 @@ proc traversePragmaBlock(c: var FirContext; n: var Cursor; call: var CallContext
       traverseStmt c, n, call
   c.assumeSync = oldAssumeSync
 
+proc traverseStmtImpl(c: var FirContext; n: var Cursor; call: var CallContext)
+
 proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `call` holds what the calls of the preceding statement established; an
   ## `(unknown …)` reads it and leaves it for the next one, every other
   ## statement starts it afresh.
+  if n.substructureKind == JoinU:
+    applyJoin c, n
+    return
   if isVersionFact(n):
+    # `(unknown . x…)`: a barrier
+    defVersion c, MemVar
     skip n
     return
+  let leaf = isVersionLeaf(n)
+  let stmtStart = n
+  traverseStmtImpl c, n, call
+  if leaf: countStmtDefs c, stmtStart
+
+proc traverseStmtImpl(c: var FirContext; n: var Cursor; call: var CallContext) =
   if n.finalIrKind != UnknownV:
     call = freshCall()
   # See `stmtContext`: a statement from another file is expanded code, and
@@ -6205,6 +6400,9 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       skip n # the unknown location
   of ContinueV:
     # The loop back-edge.
+    if c.vers.iterDefs.len > 0:
+      let defs = c.vers.iterDefs[c.vers.iterDefs.len-1]
+      for s in defs: defVersion c, s
     skip n
     leaveToContinue(c)
   of VV:
