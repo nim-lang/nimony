@@ -127,17 +127,6 @@ proc genTypeLLVMReadOnly(c: var LLVMCode; n: Cursor): LLType =
   var nn = n
   result = genTypeLLVM(c, nn)
 
-proc fixedArrayLen(c: var LLVMCode; n: Cursor): int =
-  result = -1
-  var t = navigateToObjectBody(c.m, n)
-  if t.typeKind == ArrayT:
-    inc t
-    skip t
-    if t.kind == IntLit:
-      result = int(intVal(t))
-    elif t.kind == UIntLit:
-      result = int(uintVal(t))
-
 proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
   case n.typeKind
   of IT, UT, CT:

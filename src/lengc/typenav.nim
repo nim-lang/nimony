@@ -216,6 +216,29 @@ proc navigateToObjectBody*(c: var MainModule; n: Cursor): Cursor =
     else:
       break
 
+proc fixedArrayLen*(c: var MainModule; n: Cursor): int =
+  ## The length of the `(array T N)` that `n` names, or -1 if `n` is not one.
+  result = -1
+  var t = navigateToObjectBody(c, n)
+  if t.typeKind == ArrayT:
+    inc t
+    skip t
+    if t.kind == IntLit:
+      result = int(intVal(t))
+    elif t.kind == UIntLit:
+      result = int(uintVal(t))
+
+proc isZeroSized*(c: var MainModule; n: Cursor): bool =
+  ## Whether the array type `n` names occupies no storage: its length is 0,
+  ## or its element type is zero-sized by the same rule. Any other type
+  ## counts as sized.
+  var t = navigateToObjectBody(c, n)
+  if t.typeKind == ArrayT:
+    inc t
+    result = fixedArrayLen(c, n) == 0 or isZeroSized(c, t)
+  else:
+    result = false
+
 # ---- the navigator --------------------------------------------------------
 
 proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =

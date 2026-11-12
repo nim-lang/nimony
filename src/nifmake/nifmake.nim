@@ -91,7 +91,7 @@ type
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
   CliOption = enum
-    Parallel, Force, Rerun, Verbose, Profile, Report, Progress
+    Parallel, Force, Rerun, Verbose, Profile, Report, Progress, KeepGoing
 
   CmdStats = object
     sec: float
@@ -374,6 +374,7 @@ proc failed(command: string; exitCode = 0) =
     stdout.write ")"
   stdout.write ": "
   stdout.writeLine command
+  stdout.flushFile()
 
 proc toSeconds(d: Duration): float =
   float(d.inNanoseconds) / 1e9
@@ -655,7 +656,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
 
   while sched.done < sortedNodes.len:
     # Dispatch everything that fits.
-    while not aborted and pool.len < jobs and sched.ready.len > 0:
+    while (not aborted or KeepGoing in opt) and pool.len < jobs and sched.ready.len > 0:
       let nodeId = sched.takeReady()
       let node = addr dag.nodes[nodeId]
       if Force in opt or Rerun in opt or needsRebuild(sc, node[]):
@@ -951,6 +952,8 @@ Commands:
 
 Options:
   -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
+  -k, --keepgoing       Keep going after a command fails (for 'run'), skipping
+                        what depends on it. The run still fails.
   --makefile:<name>     Output Makefile name (default: Makefile)
   --force               Force rebuild of all targets
   --rerun               Run every command regardless of staleness, but leave
@@ -1113,6 +1116,7 @@ proc main() =
           if gMaxJobs < 1: quit "--parallel value must be >= 1"
       of "makefile": outputMakefile = val
       of "force": opt.incl Force
+      of "keepgoing", "k": opt.incl KeepGoing
       of "rerun": opt.incl Rerun
       of "verbose": opt.incl Verbose
       of "base": baseDir = val

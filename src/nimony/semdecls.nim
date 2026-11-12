@@ -423,8 +423,15 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         n = it.n
         let typ = skipModifier(it.typ)
         if classifyType(c, typ) == VoidT:
-          # point at the declared name (the decl's close info is elided under vpr):
-          c.buildErr dest, delayed.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)"
+          # This error replaces the value, so the decl keeps its arity (an
+          # extra child crashes the phase that reads the decl again). An
+          # error inside the value is the one `buildErr` reports.
+          # Point at the declared name (the decl's close info is elided under vpr):
+          var errBuf = createTokenBuf()
+          c.buildErr errBuf, delayed.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)",
+            readonlyCursorAt(dest, beforeType)
+          dest.shrink beforeType
+          dest.add errBuf
         insertType c, dest, typ, beforeType
       else:
         let typeStart = dest.len
@@ -655,6 +662,13 @@ proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): 
         dest.addUIntLit(valU, info)
   c.phase = oldPhase
 
+proc takeExplicitValue(state: var EnumTypeState; value: xint) =
+  # A hole is a gap between a field and the field before it. The first field
+  # has no predecessor, so its explicit value, `1` or any other, is no hole.
+  if state.hasPrevField and value != state.thisValue:
+    state.hasHole = true
+  state.thisValue = value
+
 proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: var EnumTypeState) =
   let declStart = dest.len
   var delayed = default(DelayedSym)
@@ -714,9 +728,7 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
       if n.isTagLit and n.exprKind == TupX:
         takeInto dest, n:
           let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
-          if explicitValue != state.thisValue:
-            state.hasHole = true
-            state.thisValue = explicitValue
+          takeExplicitValue state, explicitValue
           dest.add evalExpr(c, n)
       else:
         var ec = initEvalContext(addr c)
@@ -731,9 +743,7 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
         else:
           dest.addParLe(TupX, n.info)
           let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
-          if explicitValue != state.thisValue:
-            state.hasHole = true
-            state.thisValue = explicitValue
+          takeExplicitValue state, explicitValue
           dest.addStrLit(delayed.lit, n.endInfo)
           dest.addParRi()
     dest.addParRi(n.endInfo)

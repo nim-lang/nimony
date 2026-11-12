@@ -293,7 +293,7 @@ proc readRequestedSyms(dest: var TokenBuf; outputStart: int; syms: var seq[SymId
   endRead o
 
 proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor;
-                  errMsg: var string): PluginOutcome =
+                  callInfo: NifLineInfo; errMsg: var string): PluginOutcome =
   result = NoPluginRan
   var p = temp.pragmas
   if not p.isTagLit:
@@ -321,21 +321,24 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
   var provided = initHashSet[SymId]()
   var rounds = 0
 
+  # A zero-argument call's `args` sits at a scope's end and has no valid info
+  # of its own: anchor the plugin's input at the call site instead.
+  let inputInfo = if args.endInfo.isValid: args.endInfo else: callInfo
   while true:
     inc rounds
     var b = createTokenBuf(30)
-    b.addParLe StmtsS, args.endInfo # zero-arg calls: args sits at a scope's end
+    b.addParLe StmtsS, inputInfo
     # Pass the invoked template's name as the first child of the input
     # so a single shared plugin can dispatch on which template was
     # called. The plugin reads it with `pluginName` and skips to
     # the real call-site arguments with `callArgs`.
-    b.addIdent(symToIdent(temp.name.symId), args.endInfo)
+    b.addIdent(symToIdent(temp.name.symId), inputInfo)
     var a = args
     while a.hasMore:
       b.takeTree a
     b.addParRi()
 
-    var types = buildTypeDefsInput(decls, args.endInfo)
+    var types = buildTypeDefsInput(decls, inputInfo)
     let outputStart = dest.len
     runPlugin(c, dest, pathInfo, pool.strings[path], b, types)
 
@@ -540,7 +543,7 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      info: NifLineInfo; errMsg: var string): PluginOutcome =
   var templ = asRoutine(templateDecl, SkipInclBody)
 
-  result = expandPlugin(c, dest, templ, args, errMsg)
+  result = expandPlugin(c, dest, templ, args, info, errMsg)
   if result != NoPluginRan:
     return
 

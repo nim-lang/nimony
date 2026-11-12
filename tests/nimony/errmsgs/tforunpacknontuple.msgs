@@ -1,0 +1,7 @@
+tests/nimony/errmsgs/tforunpacknontuple.nim(5, 15) Error: undeclared identifier: 'nosuchIterator'
+tests/nimony/errmsgs/tforunpacknontuple.nim(8, 18) Error: undeclared identifier: 'nosuchIterator'
+tests/nimony/errmsgs/tforunpacknontuple.nim(11, 5) Error: tuple types expected, but got: int64
+tests/nimony/errmsgs/tforunpacknontuple.nim(14, 5) Error: tuple types expected, but got: int64
+tests/nimony/errmsgs/tforunpacknontuple.nim(17, 5) Error: tuple types expected, but got: int64
+tests/nimony/errmsgs/tforunpacknontuple.nim(21, 7) Error: tuple types expected, but got: T
+tests/nimony/errmsgs/tforunpacknontuple.nim(31, 7) Error: tuple types expected, but got: int64

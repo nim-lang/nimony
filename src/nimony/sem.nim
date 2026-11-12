@@ -2626,24 +2626,44 @@ proc semWhen(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semWhenImpl(c, dest, it, NormalWhen, state)
   dec c.inWhen
 
+proc checkCaseRange(c: var SemContext; dest: var TokenBuf; rangePos: int; info: NifLineInfo;
+                    a, b: xint; seen: var seq[(xint, xint)]) =
+  ## Checks the case label range `a..b` just emitted at `rangePos`. `seen`
+  ## takes only a range of two values with `a <= b`. An error replaces the
+  ## range and keeps it as its origin, so the label stays one node.
+  var msg = ""
+  if a.isNaN or b.isNaN:
+    discard "a bound that failed to evaluate has its error in the tree already"
+  elif b < a:
+    msg = "empty range in case label: " & asNimCode(readonlyCursorAt(dest, rangePos))
+  elif seen.doesOverlapOrIncl(a, b):
+    msg = "overlapping values"
+  if msg.len > 0:
+    var orig = createTokenBuf()
+    for i in rangePos..<dest.len: orig.add dest[i]
+    dest.shrink rangePos
+    c.buildErr dest, info, msg, beginRead(orig)
+
 proc semCaseOfValueImpl(c: var SemContext; dest: var TokenBuf; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
   while it.n.hasMore:
     let info = it.n.info
     if isRangeExpr(it.n):
+      let rangePos = dest.len
+      var a, b: xint
       it.n.into: # call
         skip it.n # `..`
         dest.buildTree RangeU, it.n.info:
-          let a = evalConstIntExpr(c, dest, it.n, selectorType)
-          let b = evalConstIntExpr(c, dest, it.n, selectorType)
-          if seen.doesOverlapOrIncl(a, b):
-            buildErr c, dest, info, "overlapping values"
+          a = evalConstIntExpr(c, dest, it.n, selectorType)
+          b = evalConstIntExpr(c, dest, it.n, selectorType)
+      checkCaseRange c, dest, rangePos, info, a, b, seen
     elif it.n.substructureKind == RangeU:
+      let rangePos = dest.len
+      var a, b: xint
       takeInto dest, it.n:
-        let a = evalConstIntExpr(c, dest, it.n, selectorType)
-        let b = evalConstIntExpr(c, dest, it.n, selectorType)
-        if seen.doesOverlapOrIncl(a, b):
-          buildErr c, dest, info, "overlapping values"
+        a = evalConstIntExpr(c, dest, it.n, selectorType)
+        b = evalConstIntExpr(c, dest, it.n, selectorType)
+      checkCaseRange c, dest, rangePos, info, a, b, seen
     else:
       if it.n.exprKind == CurlyX:
         var beforeSetType = dest.len
@@ -3344,6 +3364,19 @@ proc isIterator(c: var SemContext; dest: var TokenBuf; s: SymId): bool =
   else:
     result = false
 
+proc semLoopVarsNoTuple(c: var SemContext; dest: var TokenBuf; it: var Item; typ: TypeCursor) =
+  ## The loop variables unpack, and `typ` is not a tuple. `untyped` is checked
+  ## at expansion and `auto` is an iterator call that already failed.
+  if typ.typeKind notin {UntypedT, AutoT}:
+    buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(typ.skipModifier)
+  let varType = if typ.typeKind == UntypedT: typ else: c.types.autoType
+  while it.n.hasMore:
+    if it.n.substructureKind == UnpacktupU:
+      takeInto dest, it.n:
+        semLoopVarsNoTuple c, dest, it, varType
+    else:
+      semForLoopVar c, dest, it, varType
+
 proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup: TypeCursor; loopvarTypeMod = NoType) =
   var tup = tup
   var loopvarTypeMod = loopvarTypeMod
@@ -3358,7 +3391,7 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
         if field.skipModifier.typeKind == TupleT:
           semForLoopTupleVar c, dest, it, field, loopvarTypeMod
         else:
-          buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(field)
+          semLoopVarsNoTuple c, dest, it, field
     else:
       semForLoopVar c, dest, it, field, loopvarTypeMod
     skip tup
@@ -3647,10 +3680,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
           if iterCall.typ.skipModifier.typeKind == TupleT:
             semForLoopTupleVar c, dest, it, iterCall.typ
           else:
-            # error handling
-            while it.n.hasMore:
-              let autoType = c.types.autoType
-              semForLoopVar c, dest, it, autoType
+            semLoopVarsNoTuple c, dest, it, iterCall.typ
         else:
           semForLoopVar c, dest, it, iterCall.typ
     of UnpacktupU:
@@ -3658,7 +3688,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
         if iterCall.typ.skipModifier.typeKind == TupleT:
           semForLoopTupleVar c, dest, it, iterCall.typ
         else:
-          buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(iterCall.typ)
+          semLoopVarsNoTuple c, dest, it, iterCall.typ
     of NoSub, NilU, NotnilU, UncheckedU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU, TypevarU,
        StaticTypevarU, EfldU, FldU, GfldU, WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU,
        StmtsU, ParamsU, PragmasU, EitherU, JoinU, CallargsU, ForcallU, ExceptU, FinU,

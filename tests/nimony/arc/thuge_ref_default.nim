@@ -19,6 +19,9 @@ type
   Small = ref object
     x: array[4, int]
     y: int = 7
+  Empty = ref object
+    none: array[0, int]
+    z: int
 
 proc main =
   let n = Node(tag: 3)
@@ -30,5 +33,9 @@ proc main =
   var loc = default(array[8, int])
   loc[2] = 4
   echo loc[2]
+  # a length-0 array: the empty `(aconstr T)` must not get a `0` element
+  let e = Empty(z: 5)
+  echo e.none.len, " ", e.z
+  echo default(array[0, int]).len
 
 main()

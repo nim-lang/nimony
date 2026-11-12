@@ -1468,48 +1468,6 @@ proc getFnIdent(c: var SemContext; dest: var TokenBuf): StrId =
   var n = beginRead(dest)
   result = takeIdent(n)
 
-proc findMagicInSyms(syms: Cursor): ExprKind =
-  ## Looks for a magic in a bare symbol or anywhere in a symchoice tree.
-  var syms = syms
-  result = NoExpr
-  case syms.kind
-  of Symbol:
-    let res = tryLoadSym(syms.symId)
-    if res.status == LacksNothing:
-      var n = res.decl
-      inc n # skip the symbol kind
-      if n.isSymbolDef:
-        inc n # skip the SymbolDef
-        if n.isTagLit:
-          result = n.exprKind
-  of TagLit:
-    if syms.exprKind in {OchoiceX, CchoiceX}:
-      syms.loopInto:
-        result = findMagicInSyms(syms)
-        if result != NoExpr: return
-        skip syms
-  else: discard
-
-proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; magic: ExprKind) =
-  if cs.args.len != 0:
-    # keep args after if they were produced by dotcall: retag the head tree
-    # in place and reopen it so the appended args + `addParRi` re-seal it.
-    var t = cs.dest[0]
-    setTag(t, cast[TagId](uint32(ord(magic))))
-    cs.dest[0] = t
-    cs.dest.reopenLastTree(0)
-  else:
-    cs.dest.shrink 0
-    cs.dest.addParLe(magic, cs.callNodeInfo)
-  while it.n.hasMore:
-    # add all args in call:
-    takeTree cs.dest, it.n
-  cs.dest.addParRi(it.n.endInfo)
-  it.n = cs.scope; skip it.n
-  var magicCall = Item(n: beginRead(cs.dest), typ: it.typ)
-  semExpr c, dest, magicCall, cs.flags
-  it.typ = magicCall.typ
-
 proc atHasTypeArgs(c: var SemContext; n: Cursor): bool =
   ## True when `n` points at type arguments inside `(at Op Type ...)`.
   ## Distinguishes explicit generic instantiation from value subscripting
@@ -1652,14 +1610,6 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     semExpr(c, dest, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads})
     cs.fnName = getFnIdent(c, dest)
     it.n = cs.fn.n
-  if EarlyMagicsFeature in c.features and cs.fnName in c.unoverloadableMagics:
-    # transform call early before semchecking arguments
-    let syms = beginRead(dest)
-    let magic = findMagicInSyms(syms)
-    if magic != NoExpr:
-      swap dest, cs.dest
-      unoverloadableMagicCall(c, dest, it, cs, magic)
-      return
   when defined(debug):
     let oldDebugAllowErrors = c.debugAllowErrors
     if cs.fnName in c.unoverloadableMagics:

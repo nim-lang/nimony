@@ -7,7 +7,8 @@ type
     a: ptr UncheckedArray[T]
     len: int
 
-func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} = x.a[idx]
+func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} =
+  {.cast(noSideEffect).}: result = x.a[idx]
 
 func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem

@@ -3212,25 +3212,28 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
       return FirstWins
     elif aInh > bInh:
       return SecondWins
-    let diff = a.inferred.len - b.inferred.len
-    if diff < 0:
-      result = FirstWins
-    elif diff > 0:
-      result = SecondWins
+    # Compare the formals before falling back to the inferred-typevar count:
+    # a concrete formal like `Box[A, B]` is more specific than a constrained
+    # typevar like `T: object`, even though the latter infers fewer typevars.
+    if a.fn.typ.typeKind in RoutineTypes and b.fn.typ.typeKind in RoutineTypes:
+      result = mutualGenericMatch(a, b)
     else:
-      if a.fn.typ.typeKind in RoutineTypes and b.fn.typ.typeKind in RoutineTypes:
-        result = mutualGenericMatch(a, b)
-      else:
-        result = NobodyWins
-      if result == NobodyWins and a.context != nil and
-          StaticOverloadsFeature in a.context.features:
-        # Nim 2's preference for the more-constant candidate. Applied last so
-        # it only breaks otherwise-exact ties; without the feature candidates
-        # that differ only in static-ness stay ambiguous.
-        if a.staticArgs > b.staticArgs:
-          result = FirstWins
-        elif a.staticArgs < b.staticArgs:
-          result = SecondWins
+      result = NobodyWins
+    if result == NobodyWins:
+      let diff = a.inferred.len - b.inferred.len
+      if diff < 0:
+        result = FirstWins
+      elif diff > 0:
+        result = SecondWins
+    if result == NobodyWins and a.context != nil and
+        StaticOverloadsFeature in a.context.features:
+      # Nim 2's preference for the more-constant candidate. Applied last so
+      # it only breaks otherwise-exact ties; without the feature candidates
+      # that differ only in static-ness stay ambiguous.
+      if a.staticArgs > b.staticArgs:
+        result = FirstWins
+      elif a.staticArgs < b.staticArgs:
+        result = SecondWins
 
 type
   ParamsInfo = object

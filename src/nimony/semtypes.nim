@@ -136,6 +136,7 @@ type
     enumType: SymId
     thisValue: xint
     hasHole: bool
+    hasPrevField: bool # a field was declared before the current one
     declaredNames: HashSet[StrId]
 
 proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: var EnumTypeState)
@@ -170,6 +171,7 @@ proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType:
         signed = true
       lastValue = state.thisValue
       inc state.thisValue
+      state.hasPrevField = true
     if state.hasHole:
       dest.retagAt(start, HoleyEnumT, readonlyCursorAt(dest, start).info)
     var baseType: Cursor
@@ -771,13 +773,13 @@ proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
         # unresolved index types are left alone
         dest.addSubtree index
     elif index.typeKind != NoType:
-      c.buildErr dest, index.info, "invalid array index type: " & typeToString(index)
+      c.buildErr dest, index.info, "invalid array index type: " & typeToString(index), index
     else:
       # length expression
       var err = false
       let length = asSigned(evalOrdinal(c, index), err)
       if err:
-        c.buildErr dest, index.info, "invalid array index type: " & typeToString(index)
+        c.buildErr dest, index.info, "invalid array index type: " & typeToString(index), index
       else:
         dest.addParLe(RangetypeT, info)
         let ordinal = evalExpr(c, index)

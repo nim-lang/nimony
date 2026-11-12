@@ -151,6 +151,11 @@ const
     # The libc extern `remove` names no import library on Windows (arkham:
     # "annotate the declaration with `dynlib`"); the native build fails on Linux too.
     "tests/nimony/stdlib/tsyncio_filemodes",
+    # A C-backend test (it makes C excess initializers fatal). On win_x64 a
+    # proc taking a zero-sized array by value fails in nifasm: "unwind info:
+    # unmodelled prologue step in f0 (cfa delta 0, 0 saves)", on d484b018 too;
+    # `nimony n --os:windows` reproduces it on Linux.
+    "tests/nimony/types/tzero_sized_array_default",
     # The one test on Windows that drives the ring on real sockets — every other
     # test in `tests/nimony/threads` either stubs itself out here or never
     # reaches `rawthreads.create`. Three native gaps have been found through it;
@@ -243,6 +248,9 @@ const
     # Nested checked arithmetic in a `{.keepOverflowFlag.}` block: one `keepovf`
     # per operation, the flag read right after the last one.
     "tests/nimony/basicarith/toverflowflag_nested",
+    # `div`/`mod` in a `{.keepOverflowFlag.}` block are plain operations, so
+    # a sub-64-bit one needs no narrow `keepovf`.
+    "tests/nimony/basicarith/toverflowflag_divmod",
     # shoggoth's `(memset …)`/`(memcpy …)` nodes (#2350): arkham lowers them
     # with the inline `mem*` loops, whose operands are no longer leaves — the
     # address of `p[i]` stages its index through a scratch register.
