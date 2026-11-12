@@ -1688,13 +1688,40 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # would flatten into several statements. A body that suspends must
           # be flattened all the same — its state labels belong at the top
           # level — and only a `cast` block can give up its wrapper for that,
-          # since it means nothing at run time.
+          # since it means nothing at run time. Any other pragma block
+          # (`keepOverflowFlag`) still matters to `constparams`, so its
+          # flattened body is cut at each state label and every piece gets
+          # the wrapper back.
           let pragmas = n.childCursor
-          if containsSuspensionPoint(c, n) and
-              pragmas.childCursor.pragmaKind == CastP:
+          let suspends = containsSuspensionPoint(c, n)
+          if suspends and pragmas.childCursor.pragmaKind == CastP:
             n.into:
               skip n                                # pragmas
               while n.hasMore: trGoto c, dest, n
+          elif suspends:
+            let info = n.info
+            var body = createTokenBuf(64)
+            n.into:
+              skip n                                # pragmas
+              while n.hasMore: trGoto c, body, n
+            var b = beginRead(body)
+            var wrapped = false
+            while b.hasMore:
+              if b.stmtKind == LabS and b.childCursor.kind == IntLit:
+                if wrapped:
+                  dest.addParRi()                   # stmts
+                  dest.addParRi()                   # pragmax
+                  wrapped = false
+              elif not wrapped:
+                dest.addParLe(PragmaxS, info)
+                dest.addSubtree pragmas
+                dest.addParLe(StmtsS, info)
+                wrapped = true
+              dest.takeTree b
+            if wrapped:
+              dest.addParRi()
+              dest.addParRi()
+            endRead b
           else:
             dest.addParLe(n.cursorTagId, n.info)
             n.into:
