@@ -1,0 +1,1 @@
+[Error] tests/nimony/cps/tdelaynosuspend.nim(8, 16) `delay()` with no arguments must be followed by a suspension point in the same state; add `suspend()` or a call to a `.passive` routine after it: (delay0)

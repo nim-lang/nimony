@@ -103,7 +103,7 @@ when defined(linux):
 
 proc nativeTestFile*(c: var TestCounters; file: string; overwrite: bool) =
   let msgs = file.changeFileExt(".msgs")
-  if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+  if msgs.fileExists() and readFile(msgs).containsError:
     return
   inc c.total
   let (compilerOutput, compilerExitCode) = execNimonyNative(quoteShell(file))
@@ -143,7 +143,7 @@ proc nativeValgrindTestFile*(c: var TestCounters; file: string) =
   ## bug they were hunting. The only way to know the instrumentation is honest is
   ## to run a corpus that is known good and demand silence.
   let msgs = file.changeFileExt(".msgs")
-  if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+  if msgs.fileExists() and readFile(msgs).containsError:
     return
   inc c.total
   let (compilerOutput, compilerExitCode) = execNimonyNative("-d:valgrind " & quoteShell(file))
@@ -295,7 +295,7 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
   sort files
   for file in files:
     let msgs = file.changeFileExt(".msgs")
-    if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+    if msgs.fileExists() and readFile(msgs).containsError:
       continue                              # negative test: not a codegen case
     inc c.total
     let cacheArg =
