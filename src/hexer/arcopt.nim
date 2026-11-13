@@ -294,6 +294,35 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
         joinStmt(b)
       skip n
       return
+    if tag == TagId(leng_tags.IteS):
+      # `(ite C T E|.)`: `IfS` below with one condition. The condition is not a
+      # branch of its own; with a real else-branch the two arms are exhaustive.
+      var wasMovedSet: seq[WasMovedLoc] = @[]
+      n.into:
+        if n.hasMore: analyse(c, b, n)        # the condition
+        var thenB = nestedBlock(b)
+        if n.hasMore: analyse(c, thenB, n)
+        mergeBasicBlockInfo(b, thenB)
+        if n.hasMore and n.kind != DotToken:
+          var elseB = nestedBlock(b)
+          analyse(c, elseB, n)
+          mergeBasicBlockInfo(b, elseB)
+          wasMovedSet = move(thenB.wasMovedLocs)
+          wasMovedSet.intersect(elseB.wasMovedLocs)
+        while n.hasMore: skip n
+      for x in wasMovedSet:
+        b.wasMovedLocs.add x
+      return
+    if tag == TagId(leng_tags.LoopS):
+      # `(loop (stmts … (continue .X)))`: `WhileS` below; the `continue`'s
+      # condition is read inside the body.
+      n.into:
+        if n.hasMore:
+          var loopBody = nestedBlock(b, BbWhileStmt)
+          analyse(c, loopBody, n)
+          mergeBasicBlockInfo(b, loopBody)
+        while n.hasMore: skip n
+      return
 
     case n.stmtKind
     of AsgnS:

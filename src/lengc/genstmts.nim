@@ -119,7 +119,8 @@ proc genIte(c: var GeneratedCode; n: var Cursor) =
   c.add Semicolon
 
 proc genLoop(c: var GeneratedCode; n: var Cursor) =
-  ## `(loop body)`: infinite, left only by a `break`/`jmp` inside the body.
+  ## `(loop (stmts … (continue .X)))`: left by a `jmp` past it, or by the
+  ## trailing `(continue X)` when `X` is false (see `ContinueS` in `genStmt`).
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
   n.into:
@@ -545,9 +546,25 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       c.add Semicolon
       while n.hasMore: skip n
   of IfS: genIf c, n
-  of IteS, ItecS: genIte c, n
+  of IteS: genIte c, n
   of WhileS: genWhile c, n
   of LoopS: genLoop c, n
+  of ContinueS:
+    # The loop's trailing back-edge (`genLoop` emits `while (NIM_TRUE)`):
+    # `(continue .)` is the fall-through, `(continue X)` leaves unless `X`.
+    n.into:
+      if n.kind == DotToken:
+        inc n
+      else:
+        c.add IfKeyword
+        c.add ParLe
+        c.add "!"
+        c.genCond n
+        c.add ParRi
+        c.add Space
+        c.add BreakKeyword
+        c.add Semicolon
+      while n.hasMore: skip n
   of BreakS:
     n.into:
       c.add BreakKeyword

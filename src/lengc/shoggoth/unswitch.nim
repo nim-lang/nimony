@@ -55,7 +55,7 @@ const
   MaxSubstDepth = 8       ## how deep the loop-local temp chase goes
   SingleTestMinCost = 3   ## what a ONCE-tested condition must cost to qualify
 
-  ControlStmts = {IfS, CaseS, WhileS, TryS, IteS, ItecS, LoopS, OnerrS}
+  ControlStmts = {IfS, CaseS, WhileS, TryS, IteS, LoopS, OnerrS}
     ## statements a definition can hide inside: a def under one of these does
     ## not necessarily run before the test does, so it is not chased.
 
@@ -404,32 +404,37 @@ proc subtreeSpan(orig: ptr TokenBuf; n: Cursor): int =
   skip e
   cursorToPosition(orig[], e) - a
 
+proc considerCond(c: var Context; cond: Cursor; assigned: HashSet[SymId];
+                  opaque: bool; conds: var seq[int]) =
+  ## Record `cond` (an `elif`'s or an `ite`'s) when it is pure and invariant.
+  if cond.kind == TagLit and cond.exprKind in {TrueC, FalseC}: return
+  # Purity and invariance are asked of the CANONICAL condition — the one with
+  # the loop's own temps substituted away — because that is the expression that
+  # will be evaluated before the loop.
+  var canon = canonAt(c, cond)
+  var syms: seq[SymId] = @[]
+  if pureCond(cursorAt(canon, 0), syms) and syms.len > 0:
+    var ok = true
+    for s in syms:
+      if s in assigned: ok = false
+      elif (s in c.procAddrTaken or not isLocalSym(c, s)) and opaque: ok = false
+    if ok:
+      conds.add cursorToPosition(c.orig[], cond)
+
 proc invariantConds(c: var Context; n: Cursor;
                     assigned: HashSet[SymId]; opaque: bool;
                     conds: var seq[int]) =
-  ## Every elif condition under `n` (not descending into nested whiles) that is
-  ## pure and invariant w.r.t. the enclosing loop, as orig positions.
+  ## Every elif/ite condition under `n` (not descending into nested loops) that
+  ## is pure and invariant w.r.t. the enclosing loop, as orig positions.
   if n.kind != TagLit: return
-  if n.stmtKind == WhileS: return              # inner loop: its own candidate
-  if n.stmtKind == IfS:
+  if n.stmtKind in {WhileS, LoopS}: return     # inner loop: its own candidate
+  if n.stmtKind == IteS:
+    considerCond(c, child0(n), assigned, opaque, conds)
+  elif n.stmtKind == IfS:
     var it = n
     it.loopInto:
       if it.substructureKind == ElifU:
-        let cond = child0(it)
-        if not (cond.kind == TagLit and cond.exprKind in {TrueC, FalseC}):
-          # Purity and invariance are asked of the CANONICAL condition — the one
-          # with the loop's own temps substituted away — because that is the
-          # expression that will be evaluated before the loop.
-          var canon = canonAt(c, cond)
-          var syms: seq[SymId] = @[]
-          if pureCond(cursorAt(canon, 0), syms) and syms.len > 0:
-            var ok = true
-            for s in syms:
-              if s in assigned: ok = false
-              elif (s in c.procAddrTaken or not isLocalSym(c, s)) and
-                   opaque: ok = false
-            if ok:
-              conds.add cursorToPosition(c.orig[], cond)
+        considerCond(c, child0(it), assigned, opaque, conds)
         # a nested if inside this elif's body is caught by the recursion below
       skip it
   var it = n
@@ -442,7 +447,7 @@ proc scanWhiles(c: var Context; n: Cursor; cands: var seq[Candidate]) =
   ## scanned by the generic recursion below and its ifs are invisible to the
   ## enclosing loop's `invariantConds`).
   if n.kind != TagLit: return
-  if n.stmtKind == WhileS and subtreeSpan(c.orig, n) <= MaxUnswitchSpan:
+  if n.stmtKind in {WhileS, LoopS} and subtreeSpan(c.orig, n) <= MaxUnswitchSpan:
     var assigned = initHashSet[SymId]()
     var opaque = false
     scanEffects(n, assigned, opaque)
@@ -450,7 +455,7 @@ proc scanWhiles(c: var Context; n: Cursor; cands: var seq[Candidate]) =
     var conds: seq[int] = @[]
     var body = n
     body.into:
-      if body.hasMore: skip body               # the loop condition
+      if n.stmtKind == WhileS and body.hasMore: skip body   # the loop condition
       while body.hasMore:
         invariantConds(c, body, assigned, opaque, conds)
         skip body
@@ -526,6 +531,21 @@ proc emitSpec(c: var Context; dest: var TokenBuf; n: Cursor; cond: Cursor;
   ## branch shape.
   case n.kind
   of TagLit:
+    if n.stmtKind == IteS:
+      var cc = canonAt(c, child0(n))
+      if sameTree(cursorAt(cc, 0), cond):
+        # the known arm replaces the `ite`; a missing else-branch leaves nothing
+        var it = n
+        it.into:
+          skip it                              # the condition
+          if not condTrue: skip it             # the then-branch
+          if condTrue or (it.hasMore and it.kind != DotToken):
+            emitSpec(c, dest, it, cond, condTrue, rename)
+          else:
+            dest.openTag TagId(ord(StmtsTagId))
+            dest.closeTag()
+          while it.hasMore: skip it
+        return
     if n.stmtKind == IfS:
       # does any elif carry the hoisted condition?
       var matchIdx = -1
@@ -653,23 +673,25 @@ proc applyCandidate(c: var Context; cand: Candidate): TokenBuf =
   var canon = canonCond(c, cand.condPos)
   let cond = cursorAt(canon, 0)
   var repl = createTokenBuf(256, c.orig[].pool, c.orig[].tags)
-  repl.openTag TagId(ord(IfTagId))
+  # A `(loop)` is the new form, and so is the `ite` that dispatches its copies.
+  let asIte = whileCur.stmtKind == LoopS
+  repl.openTag TagId(ord(if asIte: IteTagId else: IfTagId))
   block trueArm:
-    repl.openTag TagId(ord(ElifTagId))
+    if not asIte: repl.openTag TagId(ord(ElifTagId))
     repl.addSubtree cond
     repl.openTag TagId(ord(StmtsTagId))
     let empty = initTable[SymId, string]()
     emitSpec(c, repl, whileCur, cond, condTrue = true, empty)
     repl.closeTag()
-    repl.closeTag()
+    if not asIte: repl.closeTag()
   block falseArm:
-    repl.openTag TagId(ord(ElseTagId))
+    if not asIte: repl.openTag TagId(ord(ElseTagId))
     repl.openTag TagId(ord(StmtsTagId))
     var rename = initTable[SymId, string]()
     collectDefs(whileCur, c, rename)
     emitSpec(c, repl, whileCur, cond, condTrue = false, rename)
     repl.closeTag()
-    repl.closeTag()
+    if not asIte: repl.closeTag()
   repl.closeTag()
   var ps = initPatchset(c.orig)
   ps.addSubst(cand.whilePos, cursorAt(repl, 0))

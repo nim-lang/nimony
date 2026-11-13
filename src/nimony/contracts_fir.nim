@@ -6213,7 +6213,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
                          n.info.file == c.p.currentProcStart.info.file):
     c.p.stmtContext = n.info
   case n.finalIrKind
-  of IteV, ItecV:
+  of IteV:
     traverseIte c, n
   of LoopV:
     traverseLoop c, n

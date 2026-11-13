@@ -180,11 +180,22 @@ proc tailStmtOf(n: Cursor; res: var Cursor): bool =
   if result: res = cur
 
 proc matchTotalIf(n: Cursor; bodies: var seq[Cursor]): bool =
-  ## Every arm's body of a TOTAL `if` — one that has an `else`. Without an
+  ## Every arm's body of a TOTAL `if`/`ite` — one that has an `else`. Without an
   ## `else` a path leaves the `if` having assigned nothing, and sinking would
   ## delete the `ret` that path still needed. A malformed arm answers false too.
   result = false
-  if n.kind == TagLit and n.stmtKind == IfS:
+  if n.kind == TagLit and n.stmtKind == IteS:
+    # `(ite C T E)`: total exactly when it has an else-branch.
+    bodies.setLen 0
+    var it = n.childCursor
+    skip it                                     # the condition
+    if it.hasMore:
+      bodies.add it
+      skip it
+      if it.hasMore and it.kind != DotToken:
+        bodies.add it
+        result = true
+  elif n.kind == TagLit and n.stmtKind == IfS:
     bodies.setLen 0
     var hasElse = false
     var ok = true

@@ -7,7 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [hashes, os, tables, sets, assertions, syncio]
+import std / [hashes, os, tables, sets, assertions, syncio, envvars]
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
@@ -2015,40 +2015,75 @@ proc trStmtList(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   else:
     trStmt c, dest, n
 
+let loopIteMode = existsEnv("SHOGGOTH_LOOPITE")
+  ## Migration switch (nimony#2984): Leng keeps the multi-join IR's `ite` and
+  ## `loop` instead of spelling them `if` and `while true`. Removed once every
+  ## consumer reads them and it becomes the only form.
+
 proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(ite cond then else|.)` becomes an `if`: Leng's back ends and optimizer
-  ## passes read `if`.
+  ## `(ite cond then else|.)`: Leng's own `ite`, or, without `loopIteMode`, an
+  ## `if` for the consumers that do not read `ite` yet.
   let info = n.info
+  # `{.assembler.}` bodies are arkham's transliteration path, which reads `if`.
+  let asIte = loopIteMode and not c.inAsmBody
   n.into:
-    dest.copyIntoKind IfS, info:
-      dest.copyIntoKind ElifU, info:
-        trExpr c, dest, n
-        trStmtList c, dest, n
+    if asIte:
+      dest.addParLe(TagId(IteTagId), info)
+      trExpr c, dest, n
+      trStmtList c, dest, n
       if n.isDotToken:
+        dest.addDotToken()
         inc n
       else:
-        dest.copyIntoKind ElseU, info:
+        trStmtList c, dest, n
+      dest.addParRi()
+    else:
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          trExpr c, dest, n
           trStmtList c, dest, n
+        if n.isDotToken:
+          inc n
+        else:
+          dest.copyIntoKind ElseU, info:
+            trStmtList c, dest, n
 
 proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(loop (scope BODY (continue .)))` becomes `while true: BODY`. Falling
+  ## `(loop (scope BODY (continue .)))` becomes Leng's `(loop (stmts BODY
+  ## (continue .)))`, or, without `loopIteMode`, `while true: BODY`. Falling
   ## off the body is the back-edge; every exit is a `jmp` past the loop.
   let info = n.info
+  let asLoop = loopIteMode and not c.inAsmBody   # see `trIte`
   n.into:
-    dest.copyIntoKind WhileS, info:
+    if asLoop:
+      dest.addParLe(TagId(LoopTagId), info)
+    else:
+      dest.addParLe(WhileS, info)
       dest.addParPair TrueX, info
-      assert n.stmtKind in {StmtsS, ScopeS}, "loop body expected"
-      c.typeCache.openScope()
-      dest.addParLe(StmtsS, n.info)
-      n.into:
-        while n.hasMore:
-          if n.stmtKind == ContinueS:
-            skip n, ContinueS
-            assert not n.hasMore, "`continue` is only the loop's trailing back-edge"
-          else:
-            trStmt c, dest, n
+    assert n.stmtKind in {StmtsS, ScopeS}, "loop body expected"
+    c.typeCache.openScope()
+    dest.addParLe(StmtsS, n.info)
+    var sawContinue = false
+    n.into:
+      while n.hasMore:
+        if n.stmtKind == ContinueS:
+          let cinfo = n.info
+          skip n, ContinueS
+          assert not n.hasMore, "`continue` is only the loop's trailing back-edge"
+          sawContinue = true
+          if asLoop:
+            dest.addParLe(TagId(ContinueTagId), cinfo)
+            dest.addDotToken()
+            dest.addParRi()
+        else:
+          trStmt c, dest, n
+    if asLoop and not sawContinue:
+      dest.addParLe(TagId(ContinueTagId), info)
+      dest.addDotToken()
       dest.addParRi()
-      c.typeCache.closeScope()
+    dest.addParRi()
+    c.typeCache.closeScope()
+    dest.addParRi()
 
 include stringcases
 

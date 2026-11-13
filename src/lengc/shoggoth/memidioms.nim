@@ -449,6 +449,7 @@ type
     srStore                          ## `(asgn (at B IV) V)` / `(asgn (pat P IV) V)`
     srIncrement                      ## `(asgn IV (add T IV 1))`
     srExit                           ## `(jmp L)`, `L` the label after the loop
+    srRepeat                         ## `(continue .)`, a `(loop)`'s back-edge
 
 proc isOne(n: Cursor): bool =
   case n.kind
@@ -529,9 +530,19 @@ proc matchStmts(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
                 lm: var LoopMatch): bool
 
 proc matchIf(s: var MemScan; n: Cursor; lm: var LoopMatch): bool =
-  ## `(if (elif COND STORE INCREMENT) (else EXIT))`.
+  ## `(if (elif COND STORE INCREMENT) (else EXIT))` or
+  ## `(ite COND (stmts STORE INCREMENT) (stmts EXIT))`.
   result = false
-  if n.kind == TagLit and n.stmtKind == IfS:
+  if n.kind == TagLit and n.stmtKind == IteS:
+    var e = n.childCursor
+    if matchCond(s, e, lm):
+      skip e
+      let thenArm = e
+      skip e
+      if e.hasMore and e.kind != DotToken:
+        result = matchStmts(s, thenArm.childCursor, [srStore, srIncrement], lm) and
+          matchStmts(s, e.childCursor, [srExit], lm)
+  elif n.kind == TagLit and n.stmtKind == IfS:
     let elifNode = n.childCursor
     var arm = elifNode
     if arm.substructureKind == ElifU:
@@ -550,6 +561,8 @@ proc matchRole(s: var MemScan; n: Cursor; role: StmtRole; lm: var LoopMatch): bo
   of srIf: matchIf(s, n, lm)
   of srStore: matchStore(n, lm.iv, lm.lhs, lm.value)
   of srIncrement: matchIncrement(n, lm.iv, lm.incTyp, lm.one)
+  of srRepeat:
+    n.kind == TagLit and n.stmtKind == ContinueS and n.childCursor.kind == DotToken
   of srExit:
     n.kind == TagLit and n.stmtKind == JmpS and
       n.childCursor.kind == Symbol and n.childCursor.symId == lm.exitLab
@@ -580,10 +593,14 @@ proc matchLoop(s: var MemScan; w: Cursor; lm: var LoopMatch): bool =
   ## The loop grammar of the module comment, up to the store: everything a
   ## fill and a copy have in common.
   var c = w.childCursor
-  result = c.kind == TagLit and c.exprKind == TrueC
-  if result:
-    skip c
-    result = matchStmts(s, c, [srIf], lm)
+  if w.stmtKind == LoopS:
+    # `(loop (stmts (ite …) (continue .)))`
+    result = c.kind == TagLit and matchStmts(s, c.childCursor, [srIf, srRepeat], lm)
+  else:
+    result = c.kind == TagLit and c.exprKind == TrueC
+    if result:
+      skip c
+      result = matchStmts(s, c, [srIf], lm)
   if result:
     lm.elemType = getNominalType(s.m[], lm.lhs)
 
@@ -722,7 +739,7 @@ proc emitEndsBefore(b: var TokenBuf; lm: LoopMatch; first, second: Cursor) =
   b.closeTag()
 
 proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
-                     guardDisjoint: bool) =
+                     guardDisjoint, asIte: bool) =
   ## The `(if …)` that does the loop's work in one call to the intrinsic
   ## `name`:
   ##
@@ -733,8 +750,13 @@ proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
   ## finds `IV` already at its final value and exits at once, otherwise it
   ## runs as it always did. Leaving it in place rather than copying it into
   ## an `else` keeps every label in it defined exactly once.
-  b.openTag TagId(IfS)
-  b.openTag TagId(ElifU)
+  ##
+  ## `asIte` spells it `(ite COND (stmts …) .)`, the form a `(loop)` lives in.
+  if asIte:
+    b.openTag TagId(IteS)
+  else:
+    b.openTag TagId(IfS)
+    b.openTag TagId(ElifU)
   if guardDisjoint:
     b.openTag TagId(AndC)
     b.addSubtree lm.cond
@@ -749,7 +771,10 @@ proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
   emitMemStmt(b, lm, name, isCopy)
   emitFinalIv(b, lm)
   b.closeTag()
-  b.closeTag()
+  if asIte:
+    b.addDotToken()
+  else:
+    b.closeTag()
   b.closeTag()
 
 proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
@@ -772,7 +797,7 @@ proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
       s.used.incl op
       let start = s.scratch.len
       emitReplacement(s.scratch, lm, memIntrinsicName(op, s.suffix), isCopy,
-                      guarded)
+                      guarded, asIte = w.stmtKind == LoopS)
       s.sites.add MemSite(pos: s.posOf(w), start: start, insert: guarded)
 
 # ---- adjacent field stores ------------------------------------------------
@@ -1072,7 +1097,7 @@ proc scanList(s: var MemScan; list: Cursor) =
   if s.opts.mergeWordBytes > 0: scanStoreRuns(s, list)
   var it = list.childCursor
   while it.hasMore:
-    if it.kind == TagLit and it.stmtKind == WhileS:
+    if it.kind == TagLit and it.stmtKind in {WhileS, LoopS}:
       var lab = SymId(0)
       if s.opts.intrinsics and exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
     scan(s, it)
