@@ -49,6 +49,7 @@ import std/dirs
 import std/dns
 import std/editdistance
 import std/encodings
+import std/endians
 import std/envvars
 import std/fenv
 import std/files
@@ -77,6 +78,7 @@ import std/memfiles
 import std/monotimes
 import std/nativesocket
 import std/nifply
+import std/oids
 import std/opt
 import std/options
 import std/os
