@@ -7,7 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [hashes, os, tables, sets, assertions, syncio, envvars]
+import std / [hashes, os, tables, sets, assertions, syncio]
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
@@ -2015,17 +2015,12 @@ proc trStmtList(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   else:
     trStmt c, dest, n
 
-let loopIteMode = existsEnv("SHOGGOTH_LOOPITE")
-  ## Migration switch (nimony#2984): Leng keeps the multi-join IR's `ite` and
-  ## `loop` instead of spelling them `if` and `while true`. Removed once every
-  ## consumer reads them and it becomes the only form.
-
 proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(ite cond then else|.)`: Leng's own `ite`, or, without `loopIteMode`, an
-  ## `if` for the consumers that do not read `ite` yet.
+  ## `(ite cond then else|.)` stays Leng's `ite` (nimony#2984), except in an
+  ## `{.assembler.}` body: that is arkham's transliteration path, which reads
+  ## `if`.
   let info = n.info
-  # `{.assembler.}` bodies are arkham's transliteration path, which reads `if`.
-  let asIte = loopIteMode and not c.inAsmBody
+  let asIte = not c.inAsmBody
   n.into:
     if asIte:
       dest.addParLe(TagId(IteTagId), info)
@@ -2050,10 +2045,10 @@ proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
 proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ## `(loop (scope BODY (continue .)))` becomes Leng's `(loop (stmts BODY
-  ## (continue .)))`, or, without `loopIteMode`, `while true: BODY`. Falling
-  ## off the body is the back-edge; every exit is a `jmp` past the loop.
+  ## (continue .)))`, or `while true: BODY` in an `{.assembler.}` body (see
+  ## `trIte`). Every exit is a `jmp` past the loop.
   let info = n.info
-  let asLoop = loopIteMode and not c.inAsmBody   # see `trIte`
+  let asLoop = not c.inAsmBody                    # see `trIte`
   n.into:
     if asLoop:
       dest.addParLe(TagId(LoopTagId), info)

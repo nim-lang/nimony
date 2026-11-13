@@ -17,7 +17,7 @@
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
-import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm, envvars]
+import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
 import semos, nifconfig, nimony_model, semdata, langmodes
 from reporters import shortenDir
 import ".." / gear2 / modnames
@@ -2356,9 +2356,6 @@ proc stdCacheDir(config: NifConfig; moduleFlags: set[ModuleFlag]): string =
     if config.compat: b.addKeyw "compat"
     if SkipSystem in moduleFlags: b.addKeyw "nosystem"
     if config.keepSemTree: b.addKeyw "keepsemtree"
-    # Temporary (nimony#2984): shoggoth's lengcgen reads this switch, so its
-    # output differs with it, and the cache must not mix the two forms.
-    if existsEnv("SHOGGOTH_LOOPITE"): b.addKeyw "loopite"
   let (root, bin) = splitPath(normalizedPath(getAppDir()))
   result = root / "stdcache" / bin / uhashBase36(b.extract())
 

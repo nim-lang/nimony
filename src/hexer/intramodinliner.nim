@@ -148,6 +148,20 @@ proc tokenCountAux(n: var Cursor): int =
   case n.kind
   of TagLit:
     result = 1
+    # The bounds below were calibrated on Leng's `if`/`while true`: count an
+    # `ite` and a `loop` as the statement they replace, so the switch to them
+    # (nimony#2984) leaves the policy where it was. `(if (elif C T) (else E))`
+    # is two tokens more than `(ite C T E)`, one more without the else;
+    # `(while (true) B)` is one less than `(loop B (continue .))`.
+    let tag = n.cursorTagId
+    if tag == TagId(IteTagId):
+      var e = n
+      inc e
+      skip e                                  # the condition
+      skip e                                  # the then-branch
+      result += (if e.hasMore and e.kind != DotToken: 2 else: 1)
+    elif tag == TagId(LoopTagId):
+      result -= 1
     n.into:
       while n.hasMore:
         result += tokenCountAux(n)
