@@ -1056,8 +1056,12 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     var typ: LLType
     var val = LLValue()
     n.into:
+      let typCursor = n
       typ = genTypeLLVM(c, n)
+      let srcType = getType(c.m, n)
       genExprLLVM(c, n, val)
+      if not typeEq(val.typ, typ):
+        coerceInPlace(c, val, srcType, typCursor)
       while n.hasMore: skip n
     let t = c.nextTemp()
     let res = llReg(t, typ)
