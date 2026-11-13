@@ -618,6 +618,26 @@ proc isLengFloat(tk: LengType): bool {.inline.} =
 proc isLengPtr(tk: LengType): bool {.inline.} =
   tk in {PtrT, AptrT, ProctypeT}
 
+proc wrapInt(x: uint64; bits: int; unsigned: bool): uint64 =
+  ## `x` truncated to `bits`, then zero- or sign-extended back to 64 bits.
+  result = x
+  if bits < 64:
+    let mask = (1'u64 shl bits) - 1'u64
+    if unsigned or ((x shr (bits - 1)) and 1'u64) == 0'u64: result = x and mask
+    else: result = x or not mask
+
+proc foldIntConst(text: string; srcBits: int; srcUnsigned: bool;
+                  destTyp: LLType; destUnsigned: bool): LLValue =
+  ## The decimal integer constant `text` of a `srcBits` wide type, converted to
+  ## `destTyp` as `trunc`, `zext` or `sext` would convert it.
+  let neg = text.len > 0 and text[0] == '-'
+  var x = 0'u64
+  for i in (if neg: 1 else: 0) ..< text.len:
+    x = x * 10'u64 + uint64(ord(text[i]) - ord('0'))
+  if neg: x = 0'u64 - x
+  x = wrapInt(wrapInt(x, srcBits, srcUnsigned), destTyp.intBits, destUnsigned)
+  result = llIntTextC(if destUnsigned: $x else: $cast[int64](x), destTyp)
+
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
                      result: var LLValue) =
   let destTyp = genTypeLLVMReadOnly(c, destTypeCursor)
@@ -674,7 +694,8 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
   elif isLengInt(srcTK) and isLengInt(destTK):
     # Constant integer casts fold to the target type with no instruction.
     if val.kind == llvInt:
-      result = val.withType(destTyp)
+      result = foldIntConst(val.intText, val.typ.intBits, srcTK in {UT, CT, BoolT},
+                            destTyp, destTK in {UT, CT, BoolT})
       return
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
