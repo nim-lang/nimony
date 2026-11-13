@@ -1263,6 +1263,10 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       else: discard
       if typeEq(val.typ, targetTyp):
         result = val
+      elif val.kind == llvInt and not isFloatType(targetTyp):
+        # A suffixed integer literal is a constant of its suffix type.
+        result = foldIntConst(val.intText, 64, value.kind == UIntLit, targetTyp,
+                              suffixStr.startsWith("u"))
       else:
         let t = c.nextTemp()
         let res = llReg(t, targetTyp)
