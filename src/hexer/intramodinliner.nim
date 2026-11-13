@@ -841,28 +841,6 @@ proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
   if result in pSyms: return SymId(0)             # a param: bound to its arg
   if not pool.symIsLocal(result): return SymId(0)
 
-proc countSymUses(n: Cursor; sym: SymId): int =
-  ## Count `Symbol` (use, not `SymbolDef`) occurrences of `sym` within the
-  ## single subtree rooted at `n` (which may be a leaf token).
-  result = 0
-  if n.isSymbol:
-    if n.symId == sym: result = 1
-    return
-  if not n.isTagLit:
-    return
-  var it = n
-  it.into:
-    while it.hasMore:
-      case it.kind
-      of Symbol:
-        if it.symId == sym: inc result
-        inc it
-      of TagLit:
-        result += countSymUses(it, sym)
-        skip it
-      else:
-        inc it
-
 proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
   ## The local `L` in a body whose LAST two statements are
   ##
@@ -914,7 +892,7 @@ proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
   if src == resultSym or src in pSyms: return SymId(0)
   if not pool.symIsLocal(src): return SymId(0)
   # `resultSym` must be mentioned nowhere but those two statements.
-  if countSymUses(body, resultSym) != 2: return SymId(0)
+  if countUses(body, resultSym) != 2: return SymId(0)
   result = src
 
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
@@ -1620,7 +1598,7 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
     skip p                                 # past pragmas
     skip p                                 # past type
     if p.isDotToken: return false    # no initializer here
-    if countSymUses(p, R) != 0: return false
+    if countUses(p, R) != 0: return false
     outVal = p
     return true
   of 3:
@@ -1644,7 +1622,7 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
     inc a                                  # past `asgn`
     if not a.isSymbol or a.symId != R: return false
     skip a                                 # past LHS (R)
-    if countSymUses(a, R) != 0: return false
+    if countUses(a, R) != 0: return false
     outVal = a
     return true
   else:
@@ -1710,11 +1688,11 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   # `scope` with `into`), so "the `if` plus the siblings that follow it" is
   # the whole live range — no dataflow needed, and no guess from the name
   # about who minted the local either.
-  if countSymUses(nextCur, tmpSym) != 1: return 0
+  if countUses(nextCur, tmpSym) != 1: return 0
   var rest = nextCur
   skip rest                                # past the whole `if`
   while rest.hasMore:
-    if countSymUses(rest, tmpSym) != 0: return 0
+    if countUses(rest, tmpSym) != 0: return 0
     skip rest
 
   # --- heavier inline eligibility checks (only after the shape matched) ---

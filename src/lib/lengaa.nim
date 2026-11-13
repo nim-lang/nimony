@@ -41,7 +41,7 @@
 
 import std / sets
 import nifcore
-import ".." / models / [tags, leng_tags]
+import nifcdecl     # the tag decoders; not re-exported, so no clash with `leng_model`
 
 type
   LocalFacts* = object
@@ -51,17 +51,7 @@ type
 
 const NoSym = SymId(0)
 
-proc tagOf(n: Cursor): TagEnum {.inline.} = cast[TagEnum](uint32(cursorTagId(n)))
-
 proc isTag(n: Cursor): bool {.inline.} = n.hasMore and n.kind == TagLit
-
-proc stmtOf(n: Cursor): LengStmt =
-  if n.isTag and rawTagIsLengStmt(tagOf(n)): cast[LengStmt](tagOf(n))
-  else: NoStmt
-
-proc exprOf(n: Cursor): LengExpr =
-  if n.isTag and rawTagIsLengExpr(tagOf(n)): cast[LengExpr](tagOf(n))
-  else: NoExpr
 
 proc lvalueRoot*(n: Cursor): SymId =
   ## The variable whose storage the lvalue `n` is part of: `x` for `x`,
@@ -75,7 +65,7 @@ proc lvalueRoot*(n: Cursor): SymId =
     case n.kind
     of Symbol: return n.symId
     of TagLit:
-      case exprOf(n)
+      case n.exprKind
       of DotC, AtC, ParC:
         inc n                                   # the base is the first child
       of ConvC, CastC:
@@ -84,20 +74,42 @@ proc lvalueRoot*(n: Cursor): SymId =
       else: return NoSym
     else: return NoSym
 
-proc mentions*(n: Cursor; s: SymId): bool =
-  ## Does the subtree `n` name `s` anywhere?
-  if not n.hasMore: return false
+proc fieldSlot(n: Cursor): int =
+  ## The child index of `n` that names a FIELD, -1 when none. A field is a
+  ## symbol too, and it can be spelled exactly like a variable (`x.0` for a
+  ## field `x` and for the first local `x`), so a use count that walks into it
+  ## counts a variable that is not there.
+  if n.exprKind in {DotC, OffsetofC}: result = 1   # (dot obj fld depth), (offsetof T fld)
+  elif n.substructureKind == KvU: result = 0       # (kv fld value depth)
+  else: result = -1
+
+proc countUses(n: Cursor; s: SymId; limit: int; count: var int) =
+  if count >= limit or not n.hasMore: return
   case n.kind
-  of Symbol: result = n.symId == s
+  of Symbol:
+    if n.symId == s: inc count
   of TagLit:
-    result = false
+    let f = fieldSlot(n)
+    var i = 0
     var it = n
     it.into:
-      while it.hasMore and not result:
-        if mentions(it, s): result = true
+      while it.hasMore:
+        if i != f: countUses(it, s, limit, count)
         skip it
-      while it.hasMore: skip it
-  else: result = false
+        inc i
+  else: discard
+
+proc countUses*(n: Cursor; s: SymId): int =
+  ## How often the subtree `n` uses the variable `s`: reads and writes, not its
+  ## declaration (`SymbolDef`) and not a field that happens to share its name.
+  result = 0
+  countUses(n, s, high(int), result)
+
+proc mentions*(n: Cursor; s: SymId): bool =
+  ## Does the subtree `n` use the variable `s` at all? See `countUses`.
+  var count = 0
+  countUses(n, s, 1, count)
+  result = count > 0
 
 proc exposeAll(f: var LocalFacts; n: Cursor) =
   ## Every symbol under `n` (an `(emit …)`) is exposed.
@@ -113,7 +125,7 @@ proc exposeAll(f: var LocalFacts; n: Cursor) =
 
 proc walk(f: var LocalFacts; n: Cursor) =
   if not n.isTag: return
-  case stmtOf(n)
+  case n.stmtKind
   of ProcS, TypeS: return                       # a different routine / no code
   of VarS:
     let name = n.childCursor
@@ -122,7 +134,7 @@ proc walk(f: var LocalFacts; n: Cursor) =
     exposeAll(f, n)
     return
   else: discard
-  if exprOf(n) == AddrC:
+  if n.exprKind == AddrC:
     let r = lvalueRoot(n.childCursor)
     if r != NoSym: f.exposed.incl r
   var it = n
@@ -133,7 +145,7 @@ proc walk(f: var LocalFacts; n: Cursor) =
 proc analyseLocals*(procDecl: Cursor): LocalFacts =
   ## The owned-ness facts for one `(proc …)` (or any statement subtree).
   result = LocalFacts(locals: initHashSet[SymId](), exposed: initHashSet[SymId]())
-  if stmtOf(procDecl) == ProcS:
+  if procDecl.stmtKind == ProcS:
     var it = procDecl.childCursor
     skip it                                     # name
     if it.isTag:                                # (params (param :x …) …)
@@ -189,7 +201,7 @@ proc destMayBeObserved*(f: LocalFacts; dest, e: Cursor): bool =
 
 proc scanRets(n: Cursor; sym: var SymId; ok: var bool) =
   if not ok or not n.isTag: return
-  case stmtOf(n)
+  case n.stmtKind
   of ProcS: return
   of RetS:
     let v = n.childCursor
@@ -217,7 +229,7 @@ proc returnedLocal*(body: Cursor): SymId =
 
 proc hasRaise(n: Cursor): bool =
   if not n.isTag: return false
-  if stmtOf(n) in {RaiseS, TryS, OnerrS}: return true
+  if n.stmtKind in {RaiseS, TryS, OnerrS}: return true
   result = false
   var it = n
   it.into:
@@ -230,7 +242,7 @@ proc findUninitDecl(n: Cursor; s, typ: SymId; count: var int; ok: var bool) =
   ## Count the `(var :s …)` decls under `n`; `ok` stays true iff each has the
   ## named type `typ` and no initializer.
   if not n.isTag: return
-  if stmtOf(n) == VarS:
+  if n.stmtKind == VarS:
     var it = n.childCursor
     if it.hasMore and it.kind == SymbolDef and it.symId == s:
       inc count
@@ -254,7 +266,7 @@ proc nrvoLocal*(procDecl: Cursor): SymId =
   ##
   ## Sound only together with the caller half: a caller passes a buffer that
   ## nothing the callee reaches aliases (`destMayBeObserved`).
-  if stmtOf(procDecl) != ProcS: return NoSym
+  if procDecl.stmtKind != ProcS: return NoSym
   var it = procDecl.childCursor
   skip it                                       # name
   skip it                                       # params
@@ -262,7 +274,7 @@ proc nrvoLocal*(procDecl: Cursor): SymId =
   let retTyp = it.symId
   skip it                                       # return type
   skip it                                       # pragmas
-  if stmtOf(it) != StmtsS: return NoSym
+  if not it.isTag or it.stmtKind != StmtsS: return NoSym
   let body = it
   if hasRaise(body): return NoSym
   let r = returnedLocal(body)
