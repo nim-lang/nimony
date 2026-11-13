@@ -993,9 +993,6 @@ proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
 
 proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
                   declStart, beforeParams, beforeGenericParams: int; info: NifLineInfo) =
-  if c.currentScope.up.kind != ToplevelScope:
-    buildErr c, dest, info, "'method' is only allowed at top level"
-
   var params = cursorAt(dest, beforeParams)
   let paramsNode = params
   var root = SymId(0)
@@ -1272,6 +1269,7 @@ proc collectConceptBounds(c: var SemContext; routineSym: SymId) =
 
 proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind; pass: PassKind; newName = NoSymId) =
   let info = it.n.info
+  let atToplevel = c.currentScope.kind == ToplevelScope
   let declStart = dest.len
   dest.addParLe(it.n.cursorTagId, it.n.info)
   it.n.into:
@@ -1436,6 +1434,11 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         # caller's scope, as if the template body were a scope of its own.
         transformDefer dest, beforeBody
       dest.addParRi(it.n.endInfo)
+      if not atToplevel and status in {OkNew, OkExistingFresh} and
+          dest[declStart].kind == TagLit and dest[declStart].tagId == TagId(MethodS):
+        # A statement of its own after the routine: in the body slot it would
+        # give the routine one child too many.
+        c.buildErr dest, info, "'method' is only allowed at top level"
     finally:
       c.inGenericDefinition = outerGenericDefinition
       c.visOwner.setLen outerVisOwner
