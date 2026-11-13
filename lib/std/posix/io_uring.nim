@@ -557,7 +557,7 @@ const
 # `-errno`, which is the whole convention this file talks to the kernel in;
 # `posix.pcall` normalizes the libc wrapper's `-1`-plus-a-global back to it, so
 # the error is in the result and nowhere else. (Reading a global was not merely
-# uglier: `posix.errno` under the default `-d:nimNativeIo` is a variable that
+# uglier: `posix.errno` under the libc-free stdlib was a variable that
 # only posix.nim's own freestanding wrappers maintain, while `syscall`/`mmap`/
 # `munmap` here go through libc — so every failure reported `0`, which maps to
 # `Success`, `raiseOSError` raised nothing, `setup`'s `-1` fd travelled on into

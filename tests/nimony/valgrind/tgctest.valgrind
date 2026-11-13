@@ -1,9 +1,9 @@
-==76908== Memcheck, a memory error detector
-==76908== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
-==76908== Using Valgrind-3.25.1 and LibVEX; rerun with -h for copyright info
-==76908== Command: nimcache/tgc1yly3d1/tgctest
-==76908== 
-==76908== Warning: set address range perms: large range [0x20000000000, 0x20040000000) (defined)
+==210218== Memcheck, a memory error detector
+==210218== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==210218== Using Valgrind-3.26.0 and LibVEX; rerun with -h for copyright info
+==210218== Command: nimcache/c/tgc1yly3d1/tgctest
+==210218== 
+==210218== Warning: set address range perms: large range [0x20000000000, 0x20040000000) (defined)
 next iteration!
 next iteration!
 creating id: 10
@@ -460,12 +460,19 @@ printing
 now test sequences of strings:hohoho
 done!
 finished
-==76908== 
-==76908== HEAP SUMMARY:
-==76908==     in use at exit: 0 bytes in 0 blocks
-==76908==   total heap usage: 11,989 allocs, 11,989 frees, 764,942 bytes allocated
-==76908== 
-==76908== All heap blocks were freed -- no leaks are possible
-==76908== 
-==76908== For lists of detected and suppressed errors, rerun with: -s
-==76908== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+==210218== 
+==210218== HEAP SUMMARY:
+==210218==     in use at exit: 9,492 bytes in 4 blocks
+==210218==   total heap usage: 12,007 allocs, 12,003 frees, 788,941 bytes allocated
+==210218== 
+==210218== LEAK SUMMARY:
+==210218==    definitely lost: 0 bytes in 0 blocks
+==210218==    indirectly lost: 0 bytes in 0 blocks
+==210218==      possibly lost: 0 bytes in 0 blocks
+==210218==    still reachable: 9,492 bytes in 4 blocks
+==210218==         suppressed: 0 bytes in 0 blocks
+==210218== Reachable blocks (those to which a pointer was found) are not shown.
+==210218== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==210218== 
+==210218== For lists of detected and suppressed errors, rerun with: -s
+==210218== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

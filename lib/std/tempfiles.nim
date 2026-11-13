@@ -55,19 +55,6 @@ const
 when defined(windows):
   const ERROR_FILE_EXISTS = 80'i32  ## not mapped to `NameExists` by errorcodes
 
-  when not defined(nimNativeIo):
-    proc c_open_osfhandle(osh: Handle; flags: cint): cint {.
-      importc: "_open_osfhandle", header: "<io.h>".}
-    proc c_fdopen(fd: cint; mode: cstring): File {.
-      importc: "_fdopen", header: "<stdio.h>".}
-    proc c_close(fd: cint): cint {.importc: "_close", header: "<io.h>".}
-    const O_RDWR_WIN = cint(2)  ## `_O_RDWR`
-elif not defined(nimNativeIo):
-  # Declared to byte-match libc's `FILE *fdopen(int, const char *)`, see
-  # `std/osproc`: under useLibcIo `<stdio.h>` is in scope in this TU.
-  type ConstChar {.importc: "const char", nodecl.} = int8
-  proc c_fdopen(fd: cint; mode: nil ptr ConstChar): File {.importc: "fdopen".}
-
 var
   fallbackRand {.threadvar.}: Rand
   fallbackInit {.threadvar.}: bool
@@ -121,37 +108,15 @@ proc safeOpen(filename: Path; f: var File): ErrorCode =
     if h == INVALID_HANDLE_VALUE:
       let err = getLastError()
       return if err == ERROR_FILE_EXISTS: NameExists else: windowsToErrorCode(err)
-    when defined(nimNativeIo):
-      discard open(f, h, fmReadWrite)
-      result = Success
-    else:
-      let fd = c_open_osfhandle(h, O_RDWR_WIN)
-      if fd == -1'i32:
-        result = windowsToErrorCode(getLastError())
-        discard closeHandle(h)
-        return
-      f = c_fdopen(fd, cstring"w+b")
-      if f == nil:
-        result = Failure
-        discard c_close(fd)
-      else:
-        result = Success
+    discard open(f, h, fmReadWrite)
+    result = Success
   else:
     let r = pcall(createOpen(name.toCString, O_RDWR or O_CREAT or O_EXCL or O_CLOEXEC,
                              Mode(0o600)))
     if r < 0: return posixToErrorCode(cint(-r))
     let fd = cint(r)
-    when defined(nimNativeIo):
-      discard open(f, fd, fmReadWrite)
-      result = Success
-    else:
-      var mode = "w+b"
-      f = c_fdopen(fd, cast[ptr ConstChar](mode.toCString))
-      if f == nil:
-        result = Failure
-        discard close(fd)
-      else:
-        result = Success
+    discard open(f, fd, fmReadWrite)
+    result = Success
 
 proc createTempFile*(prefix, suffix: string;
                      dir = path("")): tuple[cfile: File, path: Path] {.raises.} =

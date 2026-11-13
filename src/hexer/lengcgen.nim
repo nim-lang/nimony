@@ -2555,7 +2555,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
     # Distinct from libc's `environ` ON PURPOSE: this same gvar is emitted for the C
     # backend too (codegen is shared), and an exportc `environ` would clash with
     # libc's. The libc-free backend has no `environ`, so std/envvars + std/posix read
-    # `nimEnviron` instead under `-d:nimNativeIo` (on the C backend it's dead — those
+    # `nimEnviron` instead under `nimNoLibc` (on the C backend it's dead — those
     # modules keep using libc's `environ`). The native nifasm entry passes the
     # kernel-provided env pointer as main's 3rd arg, mirroring argc/argv.
     dest.addParLe("gvar", rootInfo)
@@ -2679,7 +2679,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   else:
     # (call nimFlushStdStreams) — flush buffered std streams on normal exit, so
     # output is not lost when `main` returns without going through `quit`. A
-    # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo). The
+    # no-op unless `syncio` installed a flush (it always does). The
     # return goes to crt, whose `exit` flushes C stdio too — the C `main`, and a
     # native one linked with libc (`crtEntry`).
     dest.addParLe("call", rootInfo)

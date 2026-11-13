@@ -151,6 +151,9 @@ const
     # The libc extern `remove` names no import library on Windows (arkham:
     # "annotate the declaration with `dynlib`"); the native build fails on Linux too.
     "tests/nimony/stdlib/tsyncio_filemodes",
+    # Installs its SIGALRM handler through libc `sigaction` (a C header type);
+    # arkham's syscall table has no `rt_sigaction`.
+    "tests/nimony/stdlib/treadline_eintr",
     # A C-backend test (it makes C excess initializers fatal). On win_x64 a
     # proc taking a zero-sized array by value fails in nifasm: "unwind info:
     # unmodelled prologue step in f0 (cfa delta 0, 0 saves)", on d484b018 too;

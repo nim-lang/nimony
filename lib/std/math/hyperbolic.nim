@@ -7,7 +7,6 @@
 ## Copyright (c) 2018 Jorge Aparicio (Rust compiler-builtins/libm code).
 ## Permission to use, copy, modify, and distribute this software is freely
 ## granted, provided that this notice is preserved.
-## Selected instead of `math/cmath` by `std/math` when `nimNativeIo` is defined.
 import std/math/common
 import std/math/exponential
 import std/math/power
