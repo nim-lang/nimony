@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/taliasbarrier.nim(16, 18) Error: cannot prove 'gLen' is in range 0..9 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/taliasbarrier.nim(29, 18) Error: cannot prove 'v' is in range 0..9 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/taliasbarrier.nim(43, 18) Error: cannot prove 'x' is in range 0..9 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/taliasbarrier.nim(57, 29) Error: cannot prove 'v' is in range 0..9 [pass --verbose for the Final IR]

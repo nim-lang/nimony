@@ -125,6 +125,11 @@ proc nativeTestFile*(c: var TestCounters; file: string; overwrite: bool) =
       failure c, file, "test program exitcode 0",
         "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
       return
+  elif not output.fileExists() and file.changeFileExt(".exitcode").fileExists():
+    failure c, file, "test program fails with\n" &
+      readFile(file.changeFileExt(".exitcode")).strip,
+      "exitcode 0\n" & testProgramOutput
+    return
   if output.fileExists():
     let outputSpec = readFile(output).strip
     if outputSpec != testProgramOutput.strip:

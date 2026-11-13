@@ -59,7 +59,9 @@ import ".." / finalir / [finalir_model, finalir]
 import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-  renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof
+  renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof,
+  aliasing
+import ".." / hexer / lifter
 
 type
   BorrowableCheck = enum
@@ -165,6 +167,20 @@ type
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
+    aliased: HashSet[SymId]            # locals of the routine whose address is
+                                       # taken or that a nested routine names:
+                                       # shared (`collectAliased`)
+    aliasInits: Table[SymId, Cursor]   # the routine's inline temps, known
+                                       # before the traversal declares them
+    borrowedParams: HashSet[SymId]     # its `var`, `out` and `lent`
+                                       # parameters: shared
+    destroysAtExit: bool               # a local whose `=destroy` is a barrier
+                                       # was declared: `return` runs it
+    lifter: ref LiftingCtx             # asks a type for its `=destroy`
+    rereading: bool                    # a store reads facts off a value that
+                                       # was analysed already (`storeValue`):
+                                       # its barriers have run and its errors
+                                       # are reported
     obligationOpen: bool               # a range obligation is being judged;
                                        # cleared when it is not discharged
     root: Cursor                       # the lowered module, for token positions
@@ -259,6 +275,9 @@ proc dumpCurrentProc(c: var FirContext; info: NifLineInfo; msg: string) =
   stderr.writeLine "--- end Final IR dump ---"
 
 proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
+  # A value read again for its facts was judged when it was analysed, before
+  # the barriers it contains: judging it again after them is no news.
+  if c.rereading: return
   # This pass runs on the FINAL IR, where the node an error is pinned to is
   # often one the compiler synthesized -- the epilogue's `(ret result)` is what
   # an uninitialized `result` is reported at -- and those carry no line info.
@@ -1265,6 +1284,44 @@ proc invalidateAllDerived(c: var FirContext) =
   for i in 0 ..< c.derivedRoots.len:
     if c.derivedRoots[i] != NoSymId:
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+
+# --- Aliasing: barriers end what is known about shared variables ---
+#
+# See `aliasing.nim` for which variables are shared and what is a barrier.
+
+proc isShared(c: var FirContext; s: SymId): bool =
+  s in c.aliased or s in c.borrowedParams or
+    localInfoOf(c, s).kind in {GvarY, TvarY}
+
+proc forgetShared(c: var FirContext; spared: openArray[SymId] = []) =
+  ## A barrier: what is known about every shared variable, and about what is
+  ## derived from it, goes; what the facts connected through it stays
+  ## (`projectOut`). The `spared` variables are the ones the barrier writes by
+  ## name, which is accounted for where the write is made.
+  var vars = initHashSet[VarId]() # collected first: `projectOut` edits the facts
+  for i in 0 ..< c.facts.len:
+    for v in [c.facts[i].a, c.facts[i].b]:
+      if int(v) > 0 or int(v) <= FirstDerivedVarId: vars.incl v
+  for v in vars:
+    let root = if int(v) > 0: SymId(int(v))
+               else: c.derivedRoots[FirstDerivedVarId - int(v)]
+    if root != NoSymId and root notin spared and isShared(c, root):
+      projectOut(c.facts, v)
+
+proc destroyIsBarrier(c: var FirContext; kind: SymKind; typ: Cursor): bool {.inline.} =
+  kind in {VarY, LetY} and destroyHasSideEffect(c.lifter[], typ)
+
+proc killIsBarrier(c: var FirContext; kill: Cursor): bool =
+  ## Does a local the `(kill …)` ends die by a `=destroy` that is a barrier?
+  result = false
+  var r = kill
+  r.into:
+    while r.hasMore:
+      let s = extractSymId(r)
+      if s != NoSymId:
+        let li = getLocalInfo(c.typeCache, s)
+        if destroyIsBarrier(c, li.kind, li.typ): result = true
+      skip r
 
 proc isKeyableCall(fnSym: SymId): bool =
   ## May a call to `fnSym` stand for a location of its own?
@@ -4544,6 +4601,8 @@ proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext) =
   # a leave after noreturn calls). The init-set on this dead path contributes to
   # no exit, exactly as a `raise`/`return` would.
   var isNoReturn = false
+  var named: seq[SymId] = @[]
+  let barrier = isBarrierCall(c.typeCache, n, c.aliasInits, named)
   n.into: # call instruction
     block:
       var pragmas = skipProcTypeToParams(getType(c.typeCache, n))
@@ -4552,6 +4611,7 @@ proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext) =
         skip pragmas # return type
         isNoReturn = hasPragma(pragmas, NoreturnP)
     analyseCallArgs(c, n, call)
+  if barrier and not c.rereading: forgetShared(c, named)
   if isNoReturn:
     c.tr.live = false
 
@@ -4775,6 +4835,9 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
   if not c.features.contains(LenientAliasingFeature):
     checkDestAliasesValue(c, n, valueStart)
   checkEscapingBorrow(c, valueStart, locRootSym(c, n))
+  # A write to a shared variable or through a pointer is a barrier, once the
+  # destination itself is accounted for.
+  let written = writtenRootOf(c.typeCache, n, c.aliasInits)
 
   # Now handle the destination (a Symbol; the NJVL `(v symId version)` form
   # is no longer produced, see the `VV` branch of `traverseStmt`)
@@ -4825,7 +4888,10 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
 
     # Try to extract facts from the value
     var valueForFact = valueFacts
-    if rightHandSide(c, valueForFact, fact, call):
+    c.rereading = true
+    let hasRhs = rightHandSide(c, valueForFact, fact, call)
+    c.rereading = false
+    if hasRhs:
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
       else:
@@ -4849,6 +4915,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     seedRangeFacts c, symId, expected
     # ... and whatever the callee promised about what it just returned.
     assumeEnsures c, valueStart, getVarId(c, symId), call.olds, symId
+    if written.barrier: forgetShared(c, [written.sym])
 
     skip n
   else:
@@ -4876,9 +4943,13 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
       # `d.count = n` proves `d.count == n` for the guard that follows.
       var fact = query(destLoc, InvalidVarId, createXint(0'i32))
       var valueForFact = valueFacts
-      if rightHandSide(c, valueForFact, fact, call) and fact.a != fact.b:
+      c.rereading = true
+      let hasRhs = rightHandSide(c, valueForFact, fact, call)
+      c.rereading = false
+      if hasRhs and fact.a != fact.b:
         addAsgnFact c, fact
     traverseExpr c, n, call
+    if written.barrier: forgetShared(c, [written.sym])
 
 proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## Handle `(asgn dest value)`. The value is the second operand but the first
@@ -5022,6 +5093,9 @@ type
       ## `Positive`-returning call is exactly that — declared inside the body,
       ## so no fact about it exists yet when this scan runs.
     opaque: bool          ## a write we could not attribute to any location
+    barriers: int         ## how many barriers the body has (`forgetShared`) ...
+    namedBy: Table[SymId, int] ## ... and how many of them write each variable
+                          ## by name; one that all of them name keeps its facts
     preserved: seq[VarId] ## derived locations the call just scanned promises
                           ## to leave alone (`s.len == old(s.len)`); holds
                           ## for the `(unknown …)` that follows it too
@@ -5207,8 +5281,24 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
     # like are keyed on the root, so stay conservative there.
     noteWrite(w, getVarId(c, root), ivUnknown)
 
+proc noteBarrier(w: var LoopWrites; named: openArray[SymId]) =
+  inc w.barriers
+  var seen: seq[SymId] = @[]
+  for s in named:
+    if s != NoSymId and s notin seen:
+      seen.add s
+      w.namedBy.mgetOrPut(s, 0) += 1
+
+proc noteStoreBarrier(c: var FirContext; w: var LoopWrites; dest: Cursor) =
+  let written = writtenRootOf(c.typeCache, dest, c.aliasInits)
+  if written.barrier: noteBarrier(w, [written.sym])
+
 proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if not n.isTagLit:
+    skip n
+    return
+  if n.finalIrKind == KillV:
+    if killIsBarrier(c, n): noteBarrier(w, [])
     skip n
     return
   if n.stmtKind in {IncS, DecS}:
@@ -5228,6 +5318,7 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     else: buf.addIntLit(1, start.info)
     buf.addParRi()
     w.preserved.setLen 0
+    noteStoreBarrier(c, w, dest)
     noteWriteTo(c, w, dest, cursorAt(buf, 0))
     w.pendingStep = InvalidVarId
     n = start; skip n
@@ -5238,6 +5329,7 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     let dest = r
     skip r
     w.preserved.setLen 0
+    noteStoreBarrier(c, w, dest)
     noteWriteTo(c, w, dest, r)
     w.pendingStep = InvalidVarId
     skip n
@@ -5255,6 +5347,9 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     return
   if n.exprKind in CallKinds:
     w.preserved.setLen 0
+    block:
+      var named: seq[SymId] = @[]
+      if isBarrierCall(c.typeCache, n, c.aliasInits, named): noteBarrier(w, named)
     var stepLoc = InvalidVarId
     var delta = createNaN()
     var mayWrap = false
@@ -5382,9 +5477,12 @@ proc revokeProofs(c: var FirContext; mark: int) =
     of ProvenCall: c.provenCalls.excl pos
   c.proofLog.setLen mark
 
-proc analyseLoopBody(c: var FirContext; n: var Cursor) =
+proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
+                     iterNamed: seq[SymId] = @[]) =
   ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
-  ## via `(jmp loopExit)` and never falls through.
+  ## via `(jmp loopExit)` and never falls through. `iterBarrier`: the
+  ## iterator of a `for` is a barrier, which runs before every iteration;
+  ## `iterNamed` is what it writes by name.
   ##
   ## **Why the body may be analysed more than once.** Before the body is
   ## traversed, `scanLoopWrites` decides which facts survive the back-edge
@@ -5441,6 +5539,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     block:
       var w = LoopWrites(kinds: initTable[VarId, IvKind](),
                          nonNeg: initHashSet[VarId](), opaque: false,
+                         namedBy: initTable[SymId, int](),
                          assumed: initHashSet[VarId](),
                          pendingStep: InvalidVarId)
       var scan = n
@@ -5449,6 +5548,13 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
       c.prescanning = false
       for v in demoted:
         if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
+      # a barrier in the body is one before every iteration too
+      if iterBarrier: noteBarrier(w, iterNamed)
+      if w.barriers > 0:
+        var spared: seq[SymId] = @[]
+        for s, k in w.namedBy:
+          if k == w.barriers: spared.add s
+        forgetShared(c, spared)
       restrictFactsToLoopInvariants(c, w)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
@@ -5564,11 +5670,19 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
   var call = freshCall()
   n.into: # for tag
     let firstArg = forIterFirstArg(c, n)
+    # the iterator resumes before every iteration
+    var iterNamed: seq[SymId] = @[]
+    var iter = n
+    while iter.exprKind in {HderefX, HaddrX}: inc iter
+    if iter.isSymbol and c.aliasInits.hasKey(iter.symId):
+      iter = c.aliasInits.getOrQuit(iter.symId)
+    let iterBarrier = iter.exprKind notin CallKinds or
+      isBarrierCall(c.typeCache, iter, c.aliasInits, iterNamed)
     traverseExpr c, n, call
     var binders: seq[SymId] = @[]
     declareForVars c, n, firstArg, binders
     skip n # the loop variables
-    analyseLoopBody c, n
+    analyseLoopBody c, n, iterBarrier, iterNamed
     # The iterator running out is an exit no `jmp` stands for, so no `kill`
     # either: the loop variables die with the loop, and their borrows with them.
     for b in binders: endBorrow c, b
@@ -5599,6 +5713,8 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## with a non-`result` operand *provides* the result directly (the NJVL path
   ## rewrote this to `result = value`), so it initializes `result` on this exit.
   let info = n.info
+  # the locals still alive are destroyed on the way out, which no `kill` shows
+  if c.destroysAtExit: forgetShared(c)
   n.into:
     if n.isDotToken:
       verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), info, c.resultSym
@@ -5797,6 +5913,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip n # pragmas
   c.typeCache.registerLocal(name, kind, n)
   let localType = n
+  if destroyIsBarrier(c, kind, localType): c.destroysAtExit = true
   skip n # type
   let initStart = n
   if not n.isDotToken or skipInitCheck:
@@ -5989,6 +6106,16 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   let oldOwnEnsures = c.ownEnsures
   let oldOwnOlds = move c.ownOlds
   var outParams: seq[SymId] = @[]
+  # A nested routine keeps what the enclosing one shares: it reaches it too.
+  let oldAliased = c.aliased
+  let oldAliasInits = c.aliasInits
+  let oldBorrowed = move c.borrowedParams
+  let oldDestroysAtExit = c.destroysAtExit
+  if not nested:
+    c.aliased = initHashSet[SymId]()
+    c.aliasInits = initTable[SymId, Cursor]()
+  c.borrowedParams = initHashSet[SymId]()
+  c.destroysAtExit = false
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
       c.procCanRaise = hasPragma(n, RaisesP)
@@ -6011,6 +6138,12 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
           let r = takeLocal(p, SkipFinalParRi)
           if not isFirst: c.laterParams.incl r.name.symId
           isFirst = false
+          # a parameter that names the caller's storage is shared; a view
+          # (`var openArray`) is the routine's own value, whose length is all
+          # a fact can be about
+          if (r.typ.typeKind in {MutT, OutT} and not isVarOpenArray(c, r.typ)) or
+              r.typ.typeKind == LentT:
+            c.borrowedParams.incl r.name.symId
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
             outParams.add r.name.symId
@@ -6042,6 +6175,9 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   # the final init check. An `{.assembler.}` body is machine code, kept
   # verbatim by `finalir` for the backend; there is nothing to analyse.
   if not isGeneric and not isExternProc and not isAsm:
+    block:
+      var scan = n
+      collectAliased(c.typeCache, scan, c.aliasInits, c.aliased)
     traverseStmt c, n, call
     # Falling off the end is an exit too.
     verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info, c.resultSym
@@ -6079,6 +6215,10 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   c.ownEnsures = oldOwnEnsures
   c.ownOlds = oldOwnOlds
   c.inHook = oldInHook
+  c.aliased = oldAliased
+  c.aliasInits = oldAliasInits
+  c.borrowedParams = ensureMove oldBorrowed
+  c.destroysAtExit = oldDestroysAtExit
 
 proc traversePragmaBlock(c: var FirContext; n: var Cursor; call: var CallContext) =
   let oldAssumeSync = c.assumeSync
@@ -6123,6 +6263,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   of KillV:
     # Variables going out of scope. NJ emits one `kill` per scope, which is what
     # makes this the place to catch a borrow whose source dies under it.
+    let killStart = n
     n.into:
       # The whole list has to be read before judging any single entry: a
       # borrower dying alongside its source is precisely what should happen.
@@ -6139,6 +6280,8 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       for b in escaping:
         buildErr c, b.info, "borrow of " & borrowedName(c, locRootSym(c, b.loc)) &
           " escapes its scope; it does not live long enough"
+      # A dying local whose `=destroy` is no `func` dies by a barrier.
+      if killIsBarrier(c, killStart): forgetShared(c)
       # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
         let s = extractSymId(n)
@@ -6485,9 +6628,14 @@ proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int): Toke
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
+proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int;
+                     hooks: ref Table[SymId, HooksPerType]; verbose = false): TokenBuf =
   ## Analyze contracts on an already lowered module. When `verbose` is true,
   ## every contract/init failure dumps the enclosing proc's IR to stderr.
+  ## `hooks` are the module's own type-bound hooks, which tell whether a
+  ## local's `=destroy` is a barrier.
+  let lifter = createLiftingCtx(moduleSuffix, bits, hooks)
+  assert lifter != nil # `lifter` is a `lenientnils` module
   var c = FirContext(
     errors: initTokenBuf(),
     typeCache: createTypeCache(bits),
@@ -6503,7 +6651,8 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     brokenSteps: initHashSet[VarId](),
     verbose: verbose,
     features: features,
-    bits: bits
+    bits: bits,
+    lifter: lifter
   )
   c.typeCache.openScope()
   var ownSplits = initHashSet[SymId]()
@@ -6518,6 +6667,9 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     collectSplitRoutines(scan2, ownSplits)
     endRead(scan2)
     for s in ownSplits: c.splitRoutines.incl s
+    var scan3 = beginRead(finalBuf)
+    collectAliasedToplevel(c.typeCache, scan3, c.aliasInits, c.aliased)
+    endRead(scan3)
 
   block:
     var fin = beginRead(finalBuf)
@@ -6536,7 +6688,8 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
   ## Lower `input` and analyze it. nimsem lowers once and calls
   ## `analyzeFinalIr` directly.
   var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
-  result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits, verbose)
+  result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits,
+                          (ref Table[SymId, HooksPerType])(), verbose)
 
 when isMainModule:
   import std / [syncio, os]
