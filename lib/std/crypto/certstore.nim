@@ -258,6 +258,9 @@ when defined(windows):
     var ctx: nil pointer = nil
     if certGetCertificateChain(nil, leaf, nil, extra, addr para, 0'u32, nil,
                                addr ctx) != 0'i32 and ctx != nil:
+      # `ctx` had its address taken, so the calls below end what is known
+      # about it; the copy stays non-nil
+      let chainCtx = ctx
       var h = host
       var name = newWideCString(h.toCString)
       var ssl = SslExtraPolicyPara(cbSize: uint32(sizeof(SslExtraPolicyPara)),
@@ -268,10 +271,10 @@ when defined(windows):
       var status = CertChainPolicyStatus(cbSize: uint32(sizeof(CertChainPolicyStatus)),
         dwError: 0'u32, lChainIndex: 0'i32, lElementIndex: 0'i32,
         pvExtraPolicyStatus: nil)
-      if certVerifyCertificateChainPolicy(cast[pointer](CERT_CHAIN_POLICY_SSL), ctx,
+      if certVerifyCertificateChainPolicy(cast[pointer](CERT_CHAIN_POLICY_SSL), chainCtx,
                                           addr policy, addr status) != 0'i32:
         result = status.dwError
-      certFreeCertificateChain(ctx)
+      certFreeCertificateChain(chainCtx)
     if extra != nil: discard certCloseStore(extra, 0'u32)
     discard certFreeCertificateContext(leaf)
 

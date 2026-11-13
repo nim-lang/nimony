@@ -100,6 +100,12 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
         output = file.changeFileExt(".exitcode")
         if not output.fileExists():
           failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
+      elif not output.fileExists() and file.changeFileExt(".exitcode").fileExists():
+        # the test is there for the failure it expects: a program that runs
+        # through has lost the check, whatever it prints
+        failure c, file, "test program fails with\n" &
+          readFile(file.changeFileExt(".exitcode")).strip,
+          "exitcode 0\n" & testProgramOutput
       if output.fileExists():
         let outputSpec = readFile(output).strip
         let success = outputSpec == testProgramOutput.strip
