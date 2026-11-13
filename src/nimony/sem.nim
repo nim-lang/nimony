@@ -34,6 +34,13 @@ when not defined(nimony):
 
 proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
+
+proc semStmtBody(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) =
+  ## The body of a loop, `finally` or `defer`: a branch that produces nothing.
+  var it = Item(n: n, typ: c.types.voidType)
+  semStmtBranch c, dest, it, isNewScope
+  n = it.n
+
 proc semConv(c: var SemContext; dest: var TokenBuf; it: var Item)
 proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false): bool =
   template checkBranch(branch) =
@@ -1410,7 +1417,7 @@ proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
       inc c.routine.inLoop
       c.routine.breakTargets.add SymId(0)
       withNewScope c:
-        semStmt c, dest, it.n, true
+        semStmtBody c, dest, it.n, true
       discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
   producesVoid c, dest, info, it.typ
@@ -2375,6 +2382,9 @@ proc semDiscard(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool) =
   # handle statements that could be expressions
+  var list = createTokenBuf(0)
+  let orig = it.n
+  it.n = bodyAsList(orig, list)
   case classifyType(c, it.typ)
   of AutoT:
     let start = dest.len
@@ -2395,7 +2405,8 @@ proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewSco
     let start = dest.len
     semExpr c, dest, ex
     commonType(c, dest, ex, start, it.typ)
-    it.n = ex.n
+  it.n = orig
+  skip it.n
 
 proc semIf(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
@@ -2505,7 +2516,7 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
     if it.n.hasMore and it.n.substructureKind == FinU:
       takeInto dest, it.n:
         withNewScope c:
-          semStmt c, dest, it.n, true
+          semStmtBody c, dest, it.n, true
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
 
@@ -3230,8 +3241,10 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
             let objDecl = getTypeSection(stInfo.objTypeSym)
             typeBindings = bindInvokeArgs(objDecl, stInfo.invokeArgs)
           withNewScope c:
-            dest.addParLe(it.n.cursorTagId, it.n.info)
+            var list = createTokenBuf(0)
             let bodyStart = it.n
+            it.n = bodyAsList(bodyStart, list)
+            dest.addParLe(it.n.cursorTagId, it.n.info)
             it.n = sub(it.n)
             for b in bindings:
               var bindName = pool.strings[b.ident]
@@ -3536,7 +3549,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       skip it.n
     inc c.routine.inLoop
     c.routine.breakTargets.add SymId(0)
-    semStmt c, vb, it.n, true
+    semStmtBody c, vb, it.n, true
     discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   it.n = forStart; skip it.n # skip the for's closing ')'
@@ -3688,7 +3701,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     else:
       inc c.routine.inLoop
       c.routine.breakTargets.add SymId(0)
-      semStmt c, dest, it.n, true
+      semStmtBody c, dest, it.n, true
       discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
 
@@ -5781,7 +5794,7 @@ proc semDefer(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   takeInto dest, it.n:
     openScope c
-    semStmt c, dest, it.n, false
+    semStmtBody c, dest, it.n, false
     closeScope c
   c.routine.hasDefer = true
   it.typ = c.types.voidType

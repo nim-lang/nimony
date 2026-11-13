@@ -619,7 +619,17 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
   # (the `when` condition is folded at a temporarily-forced body phase).
   let savedPhase = c.phase
   c.phase = SemcheckSignatures
+  # The decl is a toplevel one, wherever the `when` condition looked it up:
+  # declare it in the toplevel scope, and keep it out of the rollback of a
+  # shadow scope open there (a call's argument scope).
+  let lookupScope = c.currentScope
+  var top = c.currentScope
+  while top.kind != ToplevelScope: top = top.up
+  c.currentScope = top
+  let undo = suspendShadows(top)
   semLocal(c, scratch, decl, kind)
+  resumeShadows(top, undo)
+  c.currentScope = lookupScope
   c.phase = savedPhase
   var scratchName = default(Cursor)
   if scratch.len > 1 and readonlyCursorAt(scratch, 0).kind == TagLit:
@@ -1401,6 +1411,9 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
                           isMagic = crucial.magic.len > 0)
       let beforeBody = dest.len
       if not it.n.isDotToken:
+        var list = createTokenBuf(0)
+        let body = it.n
+        it.n = bodyAsList(body, list)
         case pass
         of checkGenericInst:
           semBodyGenericInst(c, dest, it, crucial, symId, beforeParams, hk)
@@ -1428,6 +1441,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
           else:
             c.buildErr dest, it.n.info, "inside a `concept` a routine cannot have a body"
             skip it.n
+        it.n = body
+        skip it.n
       else:
         semEmptyBody(c, dest, it, kind, crucial, pass, symId, beforeParams, hookName, info)
       if c.routine.hasDefer and kind != TemplateY:
