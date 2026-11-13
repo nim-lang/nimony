@@ -313,6 +313,15 @@ proc toPair(c: DepContext; f: string): FilePair =
     FilePair(nimFile: f, modname: moduleSuffix(f, c.config),
              std: inStdcache(c.config, f))
 
+proc modulePair(c: DepContext; f: string): FilePair =
+  ## `toPair` for a module, not an include file: a module's name must not
+  ## start with a digit (doc/language.md, "Modules").
+  let name = moduleNameFromPath(f)
+  if name.len > 0 and name[0] in {'0'..'9'}:
+    quit "Error: invalid module name: '" & name & "' (" & shortenDir(f) &
+      "); a module name must not start with a digit"
+  result = c.toPair(f)
+
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node)
 
@@ -385,7 +394,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
                       current: Node; isSystem: bool) =
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
-  let p = c.toPair(f2)
+  let p = c.modulePair(f2)
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
   if existingNode == -1:
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: isSystem,
@@ -412,7 +421,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
 proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineInfo; current: Node) =
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f.path)
   if not semos.fileExists(f2): return
-  let p = c.toPair(f2)
+  let p = c.modulePair(f2)
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
   if existingNode == -1:
     var imported = Node(files: @[p], id: c.nodes.len,
@@ -429,7 +438,7 @@ proc importCyclicModule(c: var DepContext; f1: string; info: NifLineInfo;
   ## Add a cyclic import target to the current node's cycle group.
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
-  let p = c.toPair(f2)
+  let p = c.modulePair(f2)
   let existing = c.processedModules.getOrDefault(p.modname, -1)
   if existing == current.id:
     return # already a member of this group
@@ -2377,7 +2386,7 @@ proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebui
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
     cmd: cmd, isGeneratingFinal: isFinal)
-  var p = result.toPair(project)
+  var p = result.modulePair(project)
   # The root is compiled as the main module, which a stdlib module never is
   # in the cache all builds share.
   p.std = false

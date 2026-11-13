@@ -11,6 +11,7 @@ There is one important exception: **Nimony is case sensitive** like most other m
 
 A program consists of one or more modules. A module is a file that contains code. A module can `import` other modules. The `system` module is the only exception: It is always automatically imported. `system` contains all the "builtin" names like `int` or `string`.
 A module's name can be used to disambiguate names. For example if both the `system` and a `foreign` module contain a `delay` proc, `system.delay` can be used to clarify that it is the `system` module's `delay` proc.
+A module's name is its file name without the extension and must not start with a digit: `01_x.nim` can be neither compiled nor imported as a module (it can still be included).
 
 
 ## Order of evaluation
