@@ -20,7 +20,9 @@ import syncio, assertions, strutils
 ## procedures for ``seq[Rune]`` in this module because the generic variants
 ## of these procedures in the system module already work with it.
 ##
-## The current version is compatible with Unicode v12.0.0.
+## The case mappings and the letter and space tests follow Unicode v12.0.0;
+## the normalization forms (`toNFD`, `toNFKD`) and the mark tests
+## (`isCombining`, `isNonspacingMark`) follow Unicode v16.0.0.
 ##
 ## **See also:**
 ## * `strutils module <strutils.html>`_
@@ -566,6 +568,7 @@ func `==`*(a, b: Rune): bool =
 
 
 include "includes/unicode_ranges"
+include "includes/unicode_normdata"
 
 func binarySearch(c: RuneImpl, tab: openArray[int32], len, stride: int): int =
   var n = len
@@ -583,7 +586,9 @@ func binarySearch(c: RuneImpl, tab: openArray[int32], len, stride: int): int =
   return -1
 
 func toLower*(c: Rune): Rune =
-  ## Converts ``c`` into lower case. This works for any rune.
+  ## Converts ``c`` into lower case. This works for any rune: it is the
+  ## simple lowercase mapping of UnicodeData.txt, so symbols such as
+  ## Ⓞ and Ⅹ are mapped too. Runes without a mapping are returned unchanged.
   ##
   ## If possible, prefer ``toLower`` over ``toUpper``.
   ##
@@ -601,7 +606,9 @@ func toLower*(c: Rune): Rune =
   return Rune(c)
 
 func toUpper*(c: Rune): Rune =
-  ## Converts ``c`` into upper case. This works for any rune.
+  ## Converts ``c`` into upper case. This works for any rune: it is the
+  ## simple uppercase mapping of UnicodeData.txt. Runes without a mapping
+  ## are returned unchanged.
   ##
   ## If possible, prefer ``toLower`` over ``toUpper``.
   ##
@@ -619,7 +626,9 @@ func toUpper*(c: Rune): Rune =
   return Rune(c)
 
 func toTitle*(c: Rune): Rune =
-  ## Converts ``c`` to title case.
+  ## Converts ``c`` to title case: the simple titlecase mapping of
+  ## UnicodeData.txt, which is the uppercase mapping except for a few
+  ## digraphs and Georgian letters.
   ##
   ## See also:
   ## * `toLower func <#toLower,Rune>`_
@@ -629,10 +638,12 @@ func toTitle*(c: Rune): Rune =
   var p = binarySearch(c, toTitleSinglets, len(toTitleSinglets) div 2, 2)
   if p >= 0 and c == toTitleSinglets[p]:
     return Rune(c + toTitleSinglets[p+1] - 500)
-  return Rune(c)
+  return toUpper(Rune(c))
 
 func isLower*(c: Rune): bool =
-  ## Returns true if ``c`` is a lower case rune.
+  ## Returns true if ``c`` is a lower case rune, that is, a rune with an
+  ## uppercase mapping (see `toUpper`). Lower case letters without one,
+  ## such as ß, are not lower case here.
   ##
   ## If possible, prefer ``isLower`` over ``isUpper``.
   ##
@@ -652,7 +663,8 @@ func isLower*(c: Rune): bool =
     return false
 
 func isUpper*(c: Rune): bool =
-  ## Returns true if ``c`` is a upper case rune.
+  ## Returns true if ``c`` is an upper case rune, that is, a rune with a
+  ## lowercase mapping (see `toLower`).
   ##
   ## If possible, prefer ``isLower`` over ``isUpper``.
   ##
@@ -674,7 +686,8 @@ func isUpper*(c: Rune): bool =
     return false
 
 func isAlpha*(c: Rune): bool =
-  ## Returns true if ``c`` is an *alpha* rune (i.e., a letter).
+  ## Returns true if ``c`` is an *alpha* rune, i.e., a letter (general
+  ## category L).
   ##
   ## See also:
   ## * `isLower func <#isLower,Rune>`_
@@ -682,8 +695,6 @@ func isAlpha*(c: Rune): bool =
   ## * `isAlpha func <#isAlpha,Rune>`_
   ## * `isWhiteSpace func <#isWhiteSpace,Rune>`_
   ## * `isCombining func <#isCombining,Rune>`_
-  if isUpper(c) or isLower(c):
-    return true
   var c = RuneImpl(c)
   var p = binarySearch(c, alphaRanges, len(alphaRanges) div 2, 2)
   if p >= 0 and c >= alphaRanges[p] and c <= alphaRanges[p+1]:
@@ -695,7 +706,8 @@ func isAlpha*(c: Rune): bool =
     return false
 
 func isTitle*(c: Rune): bool =
-  ## Returns true if ``c`` is a Unicode titlecase code point.
+  ## Returns true if ``c`` is a Unicode titlecase code point, i.e., it has
+  ## both a lowercase and an uppercase mapping, such as ǅ.
   ##
   ## See also:
   ## * `toTitle func <#toTitle,Rune>`_
@@ -706,7 +718,8 @@ func isTitle*(c: Rune): bool =
   return isUpper(c) and isLower(c)
 
 func isWhiteSpace*(c: Rune): bool =
-  ## Returns true if ``c`` is a Unicode whitespace code point.
+  ## Returns true if ``c`` is a Unicode whitespace code point: general
+  ## category Z, plus the controls U+0009..U+000D and U+0085.
   ##
   ## See also:
   ## * `isLower func <#isLower,Rune>`_
@@ -720,23 +733,141 @@ func isWhiteSpace*(c: Rune): bool =
   else:
     return false
 
+func inRanges(c: RuneImpl; tab: openArray[int32]): bool {.inline.} =
+  ## `tab` holds sorted, disjoint `first, last` pairs.
+  let p = binarySearch(c, tab, len(tab) div 2, 2)
+  result = p >= 0 and c <= tab[p+1]
+
 func isCombining*(c: Rune): bool =
-  ## Returns true if ``c`` is a Unicode combining code unit.
+  ## Returns true if ``c`` is a combining mark: a code point of the Unicode
+  ## general category M (Mn, Mc or Me). `graphemeLen` and `reversed` keep
+  ## such marks with the character before them.
   ##
   ## See also:
+  ## * `isNonspacingMark func <#isNonspacingMark,Rune>`_
   ## * `isLower func <#isLower,Rune>`_
   ## * `isUpper func <#isUpper,Rune>`_
   ## * `isTitle func <#isTitle,Rune>`_
   ## * `isAlpha func <#isAlpha,Rune>`_
-  var c = RuneImpl(c)
-
+  let c = RuneImpl(c)
   # Optimized to return false immediately for ASCII
-  return c >= 0x0300 and (c <= 0x036f or
-    (c >= 0x1ab0 and c <= 0x1aff) or
-    (c >= 0x1dc0 and c <= 0x1dff) or
-    (c >= 0x20d0 and c <= 0x20ff) or
-    (c >= 0xfe20 and c <= 0xfe2f))
+  result = c >= 0x0300 and inRanges(c, markRanges)
 
+func isNonspacingMark*(c: Rune): bool =
+  ## Returns true if ``c`` is a nonspacing mark: a code point of the Unicode
+  ## general category Mn, the accents, Greek tonos and dialytika, Arabic
+  ## harakat and similar marks that `toNFD` splits from their letters.
+  ##
+  ## See also:
+  ## * `isCombining func <#isCombining,Rune>`_
+  ## * `toNFD func <#toNFD,openArray[char]>`_
+  let c = RuneImpl(c)
+  result = c >= 0x0300 and inRanges(c, nonspacingMarkRanges)
+
+func combiningClass(c: Rune): int32 =
+  ## The canonical combining class of ``c``; 0 for a starter.
+  let c = RuneImpl(c)
+  if c < 0x0300: return 0
+  let p = binarySearch(c, combiningClassRanges, len(combiningClassRanges) div 3, 3)
+  if p >= 0 and c <= combiningClassRanges[p+1]:
+    result = combiningClassRanges[p+2]
+  else:
+    result = 0
+
+const
+  # Hangul syllables decompose algorithmically (Unicode 16.0, section 3.12).
+  hangulSBase = 0xAC00'i32
+  hangulLBase = 0x1100'i32
+  hangulVBase = 0x1161'i32
+  hangulTBase = 0x11A7'i32
+  hangulTCount = 28'i32
+  hangulNCount = 21'i32 * hangulTCount
+  hangulSCount = 19'i32 * hangulNCount
+
+func addDecomposed(dest: var seq[Rune]; c: RuneImpl; compat: bool) =
+  ## Appends the full canonical (or, with `compat`, compatibility)
+  ## decomposition of ``c`` to `dest`.
+  if c >= hangulSBase and c < hangulSBase + hangulSCount:
+    let s = c - hangulSBase
+    dest.add Rune(hangulLBase + s div hangulNCount)
+    dest.add Rune(hangulVBase + (s mod hangulNCount) div hangulTCount)
+    if s mod hangulTCount != 0:
+      dest.add Rune(hangulTBase + s mod hangulTCount)
+    return
+  let p = binarySearch(c, decompositions, len(decompositions) div 2, 2)
+  if p >= 0 and c == decompositions[p]:
+    let packed = decompositions[p+1]
+    if compat or (packed and 1) == 0:
+      let first = int(packed shr 6)
+      for i in first ..< first + int((packed shr 1) and 31):
+        addDecomposed(dest, decompData[i], compat)
+      return
+  dest.add Rune(c)
+
+func sortMarks(runes: var seq[Rune]) =
+  ## Canonical ordering: sorts every run of non-starters by combining class.
+  ## Stable, so marks of one class keep their order.
+  for i in 1 ..< runes.len:
+    let cc = combiningClass(runes[i])
+    if cc != 0:
+      var j = i
+      while j > 0 and combiningClass(runes[j-1]) > cc:
+        swap(runes[j-1], runes[j])
+        dec j
+
+func decompose(s: openArray[char]; compat: bool): string =
+  var ascii = true
+  for c in s:
+    if c >= '\x80':
+      ascii = false
+      break
+  if ascii: return substr(s)
+  var runes: seq[Rune] = @[]
+  for r in s.runes:
+    addDecomposed(runes, RuneImpl(r), compat)
+  sortMarks(runes)
+  result = newStringOfCap(s.len + s.len div 2)
+  for r in runes:
+    result.add r
+
+func toNFD*(s: openArray[char]): string =
+  ## Returns ``s`` in Unicode Normalization Form D (canonical
+  ## decomposition): every precomposed character is split into its base
+  ## and its combining marks, and marks are put in canonical order. See
+  ## Unicode Standard Annex 15, Unicode Normalization Forms.
+  ##
+  ## Bytes that are not valid UTF-8 are decoded as `runes` decodes them.
+  ## For example, `toNFD("é")` is `"e\u0301"`; the ligature `"ﬁ"` stays.
+  ## To compare text without accents, decompose it and drop the nonspacing
+  ## marks:
+  ##
+  ## ```nim
+  ## var plain = ""
+  ## for r in runes(toNFD(toLower("Ἀθῆναι"))):
+  ##   if not isNonspacingMark(r): plain.add r
+  ## # plain == "αθηναι"
+  ## ```
+  ##
+  ## See also:
+  ## * `toNFKD func <#toNFKD,openArray[char]>`_
+  ## * `isNonspacingMark func <#isNonspacingMark,Rune>`_
+  result = decompose(s, compat = false)
+
+func toNFKD*(s: openArray[char]): string =
+  ## Returns ``s`` in Unicode Normalization Form KD (compatibility
+  ## decomposition): like `toNFD`, and compatibility characters
+  ## (ligatures, presentation forms, width and font variants, the
+  ## non-breaking hyphen) are replaced by their plain equivalents. See
+  ## Unicode Standard Annex 15, Unicode Normalization Forms.
+  ##
+  ## For example, `toNFKD("ﬁ")` is `"fi"` and `toNFKD("x²")` is `"x2"`.
+  ##
+  ## Bytes that are not valid UTF-8 are decoded as `runes` decodes them.
+  ##
+  ## See also:
+  ## * `toNFD func <#toNFD,openArray[char]>`_
+  ## * `isNonspacingMark func <#isNonspacingMark,Rune>`_
+  result = decompose(s, compat = true)
 
 func runeCheck(s: openArray[char], runeProc: proc (c: Rune): bool {.noSideEffect, nimcall.}): bool =
   ## Common code for isAlpha and isSpace.
@@ -1421,6 +1552,21 @@ func toLower*(s: string): string {.noSideEffect, inline.} =
   runnableExamples:
     assert toLower("ABΓ") == "abγ"
   toLower(toOa(s))
+
+func toNFD*(s: string): string {.inline.} =
+  ## Returns ``s`` in Unicode Normalization Form D (canonical decomposition).
+  ##
+  ## See also:
+  ## * `toNFD func <#toNFD,openArray[char]>`_
+  result = toNFD(s.toOa())
+
+func toNFKD*(s: string): string {.inline.} =
+  ## Returns ``s`` in Unicode Normalization Form KD (compatibility
+  ## decomposition).
+  ##
+  ## See also:
+  ## * `toNFKD func <#toNFKD,openArray[char]>`_
+  result = toNFKD(s.toOa())
 
 func swapCase*(s: string): string {.noSideEffect, inline.} =
   ## Swaps the case of runes in ``s``.
