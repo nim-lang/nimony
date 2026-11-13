@@ -34,6 +34,7 @@ import std/compress/checksums
 import std/compress/deflate
 import std/compress/gzip
 import std/cpuinfo
+import std/critbits
 import std/crypto/bignum
 import std/crypto/certstore
 import std/crypto/chacha20poly1305
