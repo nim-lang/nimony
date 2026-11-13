@@ -2520,19 +2520,23 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
 
-proc semUnresolvedWhenBranch(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode) =
+proc semUnresolvedWhenBranch(c: var SemContext; dest: var TokenBuf; it: var Item;
+                             mode: WhenMode; state: var SemObjectState) =
   ## A branch of a `when` whose condition depends on generic parameters. In a
   ## checked generic its body is type-checked at definition time like an `if`
   ## branch, so the `when` has the branches' common type and a tail `when` is
   ## classified as the result expression or as statements right here. Only
-  ## the fields of a generic object stay untyped until instantiation.
+  ## the fields of a generic object stay dependent until instantiation; their
+  ## declarations still need stable symbols so generic code can name them.
   case mode
   of NormalWhen:
     withNewScope c:
       semStmtBranch c, dest, it, true
   of ObjectWhen:
-    var ctx = createUntypedContext(addr c, UntypedGeneric)
-    semTemplBody ctx, dest, it.n
+    let bodyInfo = it.n.info
+    dest.addParLe(StmtsU, bodyInfo)
+    semObjectComponent c, dest, it.n, state
+    dest.addParRi(it.n.endInfo)
 
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
                  state: var SemObjectState) =
@@ -2570,7 +2574,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
           leaveUnresolved = true
       if leaveUnresolved:
         # might have been set above
-        semUnresolvedWhenBranch c, dest, it, mode
+        semUnresolvedWhenBranch c, dest, it, mode, state
       else:
         takeTree dest, it.n
       dest.addParRi(it.n.endInfo)
@@ -2593,7 +2597,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       it.n = whenStart; skip it.n
       return
     else:
-      semUnresolvedWhenBranch c, dest, it, mode
+      semUnresolvedWhenBranch c, dest, it, mode, state
     dest.addParRi(it.n.endInfo)
     it.n = elseStart; skip it.n
   dest.addParRi(it.n.endInfo)
