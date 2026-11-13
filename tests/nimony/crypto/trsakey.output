@@ -1,0 +1,85 @@
+-- good keys
+2048 PKCS#8: ok, 2048 bits, openssl signature verifies: true
+2048 PKCS#1: ok, 2048 bits, openssl signature verifies: true
+2048b PKCS#8: ok, 2048 bits, openssl signature verifies: true
+3072 PKCS#8: ok, 3072 bits, openssl signature verifies: true
+3072 PKCS#1: ok, 3072 bits, openssl signature verifies: true
+4096 PKCS#8: ok, 4096 bits, openssl signature verifies: true
+4096 PKCS#1: ok, 4096 bits, openssl signature verifies: true
+2048 vs 2048b signature: ok, 2048 bits, openssl signature verifies: false
+PKCS#8 DER: ok, verifies: true
+PKCS#1 DER: ok, verifies: true
+same modulus: true, same exponent: true
+reuse after failure: no PEM private key block, 0 bits
+-- refused keys
+1024 bits: modulus is not between 2048 and 4096 bits
+1024 bits PKCS#1: modulus is not between 2048 and 4096 bits
+encrypted PKCS#8: encrypted private keys are not supported
+encrypted PKCS#1: encrypted private keys are not supported
+EC key: not an RSA (rsaEncryption) key
+RSA-PSS key: not an RSA (rsaEncryption) key
+3 primes, PKCS#8: unsupported key version (multi-prime keys are not supported)
+3 primes, PKCS#1: unsupported key version (multi-prime keys are not supported)
+version1: unsupported key version (multi-prime keys are not supported)
+even-e: public exponent is even, below 3, or not below the modulus
+e-one: public exponent is even, below 3, or not below the modulus
+e-too-big: public exponent is even, below 3, or not below the modulus
+modulus-small: modulus is not between 2048 and 4096 bits
+modulus-large: modulus is not between 2048 and 4096 bits
+p-even: p or q is even or not half the width of the modulus
+p-wide: p or q is even or not half the width of the modulus
+q-narrow: p * q is not the modulus
+pq-not-n: p * q is not the modulus
+dp-wide: dP, dQ or qInv is wider than half the modulus
+qi-wide: dP, dQ or qInv is wider than half the modulus
+negative-dq: malformed DER
+nonminimal-e: malformed DER
+missing-qi: malformed DER
+extra-field: malformed DER
+trailing-byte: malformed DER
+long-length: malformed DER
+nonminimal-length: malformed DER
+dp-corrupt: ok
+-- PEM armour
+CRLF: ok
+certificate first: ok
+no line breaks: ok
+empty: no PEM private key block
+certificate only: no PEM private key block
+no END: no PEM private key block
+wrong END: no PEM private key block
+PKCS#8 body, PKCS#1 label: malformed DER
+PKCS#1 body, PKCS#8 label: malformed DER
+bad letter: invalid base64 in the PEM body
+letter after padding: invalid base64 in the PEM body
+truncated DER in PEM: malformed DER
+header in PKCS#8: invalid base64 in the PEM body
+-- DER mutations
+prefixes accepted: 0 of 1216
+  ok: 641
+  malformed DER: 47
+  not an RSA (rsaEncryption) key: 10
+  unsupported key version (multi-prime keys are not supported): 2
+  public exponent is even, below 3, or not below the modulus: 1
+  p or q is even or not half the width of the modulus: 4
+  p * q is not the modulus: 511
+-- branch-free base64
+round trips against std/base64, 0..300 bytes: 0 mismatches
+  "": true ""
+  "QQ==": true "A"
+  "QUI=": true "AB"
+  "QUJD": true "ABC"
+  " Q U\tJ D\r\n": true "ABC"
+  "QQ": false ""
+  "QQ=": false ""
+  "QUI": false ""
+  "Q===": false ""
+  "QR==": false ""
+  "QUJ=": false ""
+  "QQ==QQ==": false ""
+  "QQ==\n": true "A"
+  "Q": false ""
+  "QU*D": false ""
+  "QU-D": false ""
+  "QU_D": false ""
+  "=QUJ": false ""

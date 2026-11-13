@@ -40,6 +40,7 @@ import std/crypto/chacha20poly1305
 import std/crypto/ecdsa
 import std/crypto/hmac
 import std/crypto/rsa
+import std/crypto/rsasign
 import std/crypto/sha2
 import std/crypto/sysrand
 import std/crypto/x25519

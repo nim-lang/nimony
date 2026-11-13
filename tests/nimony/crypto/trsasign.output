@@ -1,0 +1,39 @@
+-- openssl dgst -sign
+test2048 PKCS#8 PEM: ok, 12 of 12 identical
+test2048 PKCS#8 DER: ok, 12 of 12 identical
+test2048 PKCS#1 PEM: ok, 12 of 12 identical
+test2048 PKCS#1 DER: ok, 12 of 12 identical
+test2048b PKCS#8 PEM: ok, 4 of 4 identical
+test2048b PKCS#8 DER: ok, 4 of 4 identical
+test3072 PKCS#8 PEM: ok, 12 of 12 identical
+test3072 PKCS#8 DER: ok, 12 of 12 identical
+test3072 PKCS#1 PEM: ok, 12 of 12 identical
+test3072 PKCS#1 DER: ok, 12 of 12 identical
+test4096 PKCS#8 PEM: ok, 12 of 12 identical
+test4096 PKCS#8 DER: ok, 12 of 12 identical
+test4096 PKCS#1 PEM: ok, 12 of 12 identical
+test4096 PKCS#1 DER: ok, 12 of 12 identical
+-- RS256 JWT (the doc comment's example)
+test2048: true, equals openssl's: true
+test2048b: true, equals openssl's: true
+test3072: true, equals openssl's: true
+test4096: true, equals openssl's: true
+refused key: false ""
+-- signature generation vectors
+Wycheproof rsa_pkcs1_*_sig_gen: 14 keys, 72 of 72 signatures identical, 5 skipped
+  refused: p or q is even or not half the width of the modulus
+  refused: p or q is even or not half the width of the modulus
+  refused: p or q is even or not half the width of the modulus
+  refused: p or q is even or not half the width of the modulus
+  refused: p or q is even or not half the width of the modulus
+NIST CAVP SigGen15_186-3: 2 keys, 60 of 60 signatures identical, 0 skipped
+-- Wycheproof messages, signed here, verified by std/crypto/rsa
+2048 bits: 9 of 9 verify, 0 altered ones verify
+3072 bits: 8 of 8 verify, 0 altered ones verify
+4096 bits: 7 of 7 verify, 0 altered ones verify
+-- the fault check
+dp-corrupt.der parses: ok
+and signs: the signature failed its check: a corrupt key or a hardware fault, signature bytes: 0
+CRT bit flips that parse: 30, refused to sign: 30
+never-parsed key: the key is empty (never parsed, or its parse failed), 0 bytes
+key whose parse failed: the key is empty (never parsed, or its parse failed), 0 bytes
