@@ -463,7 +463,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc n
         skip n # label or DotToken
         result = typeofBranchBody(c, n, flags)
-      of StmtsS, RetS, CommentS:
+      of StmtsS, RetS, RaiseS, BreakS, ContinueS, CommentS:
         result = c.builtins.voidType
       else:
         case finalIrKind(n)
