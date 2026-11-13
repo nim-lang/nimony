@@ -56,7 +56,7 @@ else:
   const useWinEnv = defined(windows) and not defined(nimscript)
     ## Read and write the environment through kernel32 alone. No libc is
     ## involved on that path, so it works unchanged on the freestanding
-    ## (`-d:nimNativeIo`) target, whose process has no C runtime at all.
+    ## (`nimony n`) target, whose process has no C runtime at all.
 
   when useWinEnv:
     import widestrs
@@ -66,7 +66,6 @@ else:
     # Real libc exports; bare importc, no <stdlib.h>. On the truly
     # freestanding (arkham) target these have no implementation, but that
     # target never mutates the process environment either.
-    proc c_getenv(env: cstring): cstring {.importc: "getenv".}
     proc c_setenv(envname: cstring, envval: cstring, overwrite: cint): cint {.importc: "setenv".}
     proc c_unsetenv(env: cstring): cint {.importc: "unsetenv".}
 
@@ -158,21 +157,11 @@ else:
     if i >= 0 and i < environment.len:
       result = substr(environment[i], find(environment[i], '=')+1)
     else:
-      when useWinEnv or defined(nimNativeIo):
-        # No libc `getenv`: on Windows because the environment is kernel32's
-        # alone, on the freestanding target because there is no libc at all.
-        # The `environment` scan above is the complete view either way, so a
-        # miss means "not set".
-        result = default
-      else:
-        var key = key
-        let kc = key.toCString()
-        if kc.isNil:
-          result = default
-        else:
-          var env = c_getenv(kc)
-          if env == nil: result = default
-          else: result = $env
+      # No libc `getenv`: on Windows the environment is kernel32's alone, and
+      # elsewhere the freestanding target has no libc at all. The
+      # `environment` scan above is the complete view either way, so a miss
+      # means "not set".
+      result = default
 
   proc existsEnv*(key: string): bool {.tags: [ReadEnvEffect].} =
     ## Checks whether the environment variable named `key` exists.
@@ -186,20 +175,9 @@ else:
     runnableExamples:
       assert not existsEnv("unknownEnv")
 
-    when useWinEnv or defined(nimNativeIo):
-      # No libc `getenv` here (see `getEnv`) — and this has to be an `else`, not
-      # an early return, or the reference below still reaches the linker. The
-      # `environment` scan is the complete view, so it answers alone.
-      result = findEnvVar(key) >= 0
-    else:
-      var key = key
-      let kc = key.toCString()
-      if kc.isNil:
-        result = false
-      elif c_getenv(kc) != nil:
-        result = true
-      else:
-        result = findEnvVar(key) >= 0
+    # No libc `getenv` here (see `getEnv`): the `environment` scan is the
+    # complete view, so it answers alone.
+    result = findEnvVar(key) >= 0
 
   proc putEnv*(key, val: string) {.tags: [WriteEnvEffect], raises.} =
     ## Sets the value of the `environment variable`:idx: named `key` to `val`.

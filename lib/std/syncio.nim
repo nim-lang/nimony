@@ -6,314 +6,298 @@ import std/formatfloat
 import std/commonio
 export commonio
 
-when defined(nimNativeIo):
-  # Freestanding IO: a `File` is a small heap object holding the raw OS file
-  # handle plus its own read/write buffers (`seq[char]`, so the allocator
-  # manages the memory for us).
-  #
-  # On POSIX all IO goes through the `read`/`write`/`open`/`close`/`lseek`
-  # syscalls, which arkham lowers to bare `syscall` instructions — so no libc
-  # `FILE*`/stdio is linked and the result is a self-contained static binary.
-  #
-  # On Windows there is no stable syscall ABI, so the same buffering sits on top
-  # of the kernel32 primitives (`ReadFile`/`WriteFile`/`CreateFileW`/
-  # `CloseHandle`/`SetFilePointer`) instead. `<windows.h>`/`kernel32` is the OS
-  # API, not the C runtime, so the build stays free of msvcrt's stdio — the
-  # direct counterpart of the Linux syscall path.
-  #
-  # Float formatting now goes through the native dtoa in `system` (`addFloat`),
-  # so it no longer needs libc either.
-  when defined(windows):
-    import std/windows/winlean
-    from std/widestrs import newWideCString, toWideCString
-    type OsFileHandle = Handle  ## Win32 `HANDLE` (pointer-sized).
-  else:
-    type OsFileHandle = cint    ## POSIX file descriptor.
-  type
-    FileFlag = enum
-      ffReadable, ffWritable, ffEof, ffError
-      ffUnbuf     ## flush after every write (stderr)
-    FileObj = object
-      fd: OsFileHandle
-      flags: set[FileFlag]
-      wbuf: seq[char]      ## write buffer (grows on demand; empty for read-only streams)
-      rbuf: seq[char]      ## read buffer
-      rpos: Natural        ## consume cursor into `rbuf`
-    File* = ref FileObj    ## The type representing a file handle.
+# Freestanding IO: a `File` is a small heap object holding the raw OS file
+# handle plus its own read/write buffers (`seq[char]`, so the allocator
+# manages the memory for us).
+#
+# On POSIX all IO goes through the `read`/`write`/`open`/`close`/`lseek`
+# syscalls, which arkham lowers to bare `syscall` instructions — so no libc
+# `FILE*`/stdio is linked and the result is a self-contained static binary.
+#
+# On Windows there is no stable syscall ABI, so the same buffering sits on top
+# of the kernel32 primitives (`ReadFile`/`WriteFile`/`CreateFileW`/
+# `CloseHandle`/`SetFilePointer`) instead. `<windows.h>`/`kernel32` is the OS
+# API, not the C runtime, so the build stays free of msvcrt's stdio — the
+# direct counterpart of the Linux syscall path.
+#
+# Float formatting now goes through the native dtoa in `system` (`addFloat`),
+# so it no longer needs libc either.
+when defined(windows):
+  import std/windows/winlean
+  from std/widestrs import newWideCString, toWideCString
+  type OsFileHandle = Handle  ## Win32 `HANDLE` (pointer-sized).
 else:
-  type
-    CFile {.importc: "FILE", header: "<stdio.h>".} = object
-    File* = ptr CFile ## The type representing a file handle.
+  type OsFileHandle = cint    ## POSIX file descriptor.
+type
+  FileFlag = enum
+    ffReadable, ffWritable, ffEof, ffError
+    ffUnbuf     ## flush after every write (stderr)
+  FileObj = object
+    fd: OsFileHandle
+    flags: set[FileFlag]
+    wbuf: seq[char]      ## write buffer (grows on demand; empty for read-only streams)
+    rbuf: seq[char]      ## read buffer
+    rpos: Natural        ## consume cursor into `rbuf`
+  File* = ref FileObj    ## The type representing a file handle.
 
-when defined(nimNativeIo):
-  const NativeBufSize = 8192   ## flush/refill granularity
+const NativeBufSize = 8192   ## flush/refill granularity
 
-  when defined(windows):
-    # --- kernel32-backed raw primitives, normalized to the POSIX convention
-    #     (bytes transferred; `0` read == EOF; negative == error) so the shared
-    #     buffering below is identical on both platforms. ---------------------
-    const ERROR_BROKEN_PIPE = 109'i32   ## writer end of a pipe was closed
+when defined(windows):
+  # --- kernel32-backed raw primitives, normalized to the POSIX convention
+  #     (bytes transferred; `0` read == EOF; negative == error) so the shared
+  #     buffering below is identical on both platforms. ---------------------
+  const ERROR_BROKEN_PIPE = 109'i32   ## writer end of a pipe was closed
 
-    proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int =
-      var written: int32 = 0
-      if isSuccess(writeFile(fd, buf, int32(n), addr written, nil)):
-        result = int(written)
-      else:
-        result = -1
-
-    proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int =
-      var got: int32 = 0
-      if isSuccess(readFile(fd, buf, int32(n), addr got, nil)):
-        result = int(got)               # 0 => end of file
-      elif getLastError() == ERROR_BROKEN_PIPE:
-        result = 0                       # writer closed the pipe: treat as EOF
-      else:
-        result = -1
-
-    proc sysClose(fd: OsFileHandle): cint =
-      if isSuccess(closeHandle(fd)): 0'i32 else: -1'i32
-
-    proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 =
-      # `whence` 0/1/2 already lines up with FILE_BEGIN/FILE_CURRENT/FILE_END.
-      # SetFilePointer treats the hi:lo pair as one signed 64-bit distance, so
-      # splitting the two's-complement bits is correct for negative offsets too.
-      var hi = cast[LONG](uint32(uint64(offset) shr 32))
-      let lo = setFilePointer(fd, cast[LONG](uint32(uint64(offset) and 0xFFFFFFFF'u64)),
-                              addr hi, DWORD(whence))
-      if lo == INVALID_SET_FILE_POINTER and getLastError() != NO_ERROR:
-        result = -1'i64
-      else:
-        result = (int64(uint32(hi)) shl 32) or int64(uint32(lo))
-
-    proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
-      File(fd: fd, flags: flags)
-
-    proc getFileHandle*(f: File): Handle {.inline.} =
-      ## The underlying Win32 handle (libc-free build). Used e.g. by
-      ## `std/terminal`'s `isatty`, which has no `_fileno`/`FILE*` to go through.
-      f.fd
-
-    let
-      stdin* = newFile(getStdHandle(STD_INPUT_HANDLE), {ffReadable})
-        ## Standard input file handle.
-      stdout* = newFile(getStdHandle(STD_OUTPUT_HANDLE), {ffWritable})
-        ## Standard output file handle. Fully buffered; flushed on exit via the
-        ## `system/exits` hook (and on `quit`/`abort`).
-      stderr* = newFile(getStdHandle(STD_ERROR_HANDLE), {ffWritable, ffUnbuf})
-        ## Standard error file handle. Unbuffered.
-  elif defined(embedded):
-    # --- bare metal: the console is the debug agent -------------------------
-    # Every one of these is the honest answer for a target with no filesystem
-    # and no OS, rather than a stub: semihosting has ONE console, so `fd` names
-    # nothing, and a program that opens a file on a part with no storage should
-    # be told so at the call rather than handed a handle that does nothing.
-    proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int =
-      semihostWrite(buf, int(n))
-    proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int = -1
-    proc sysOpen(path: cstring; flags: cint): cint = -1
-    proc sysClose(fd: OsFileHandle): cint = 0
-    proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 = -1
-  else:
-    # --- raw syscall wrappers (arkham lowers these to `syscall` instructions) -
-    proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "write".}
-    proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "read".}
-    when defined(linux) and defined(arm64) and defined(nimNoLibc):
-      # AArch64's asm-generic syscall table has no `open` — only `openat` (see
-      # `linuxA64Raw` in std/posix, whose `nimNoLibc` gate this mirrors). Same
-      # shuffle glibc's own `open` does; kept local so syncio stays independent
-      # of std/posix.
-      proc sysOpenat(dirfd: cint; path: cstring; flags: cint; mode: cint): cint {.
-        importc: "openat".}
-      proc sysOpen(path: cstring; flags: cint; mode: cint = 0o666'i32): cint {.inline.} =
-        const AT_FDCWD = cint(-100)
-        sysOpenat(AT_FDCWD, path, flags, mode)
+  proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int =
+    var written: int32 = 0
+    if isSuccess(writeFile(fd, buf, int32(n), addr written, nil)):
+      result = int(written)
     else:
-      proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
-    proc sysClose(fd: OsFileHandle): cint {.importc: "close".}
-    proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
+      result = -1
 
-    proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
-      File(fd: fd, flags: flags)
+  proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int =
+    var got: int32 = 0
+    if isSuccess(readFile(fd, buf, int32(n), addr got, nil)):
+      result = int(got)               # 0 => end of file
+    elif getLastError() == ERROR_BROKEN_PIPE:
+      result = 0                       # writer closed the pipe: treat as EOF
+    else:
+      result = -1
 
-    proc getFileHandle*(f: File): cint {.inline.} =
-      ## The underlying OS file descriptor (libc-free posix build). Used e.g. by
-      ## `std/terminal`'s `isatty`, which has no `fileno`/FILE* to go through.
-      cint(f.fd)
+  template interrupted(k: int): bool = false
+    ## kernel32 IO has no EINTR.
 
-    let
-      stdin* = newFile(0, {ffReadable})
-        ## Standard input file handle (fd 0).
-      stdout* = newFile(1, {ffWritable})
-        ## Standard output file handle (fd 1). Fully buffered; flushed on exit
-        ## via the `system/exits` hook (and on `quit`/`abort`).
-      stderr* = newFile(2, {ffWritable, ffUnbuf})
-        ## Standard error file handle (fd 2). Unbuffered.
+  proc sysClose(fd: OsFileHandle): cint =
+    if isSuccess(closeHandle(fd)): 0'i32 else: -1'i32
 
-  proc rawWriteAll(fd: OsFileHandle; p: pointer; n: int): bool =
-    ## Writes exactly `n` bytes, looping over short writes. Returns false on error.
-    var off = 0
-    while off < n:
-      let k = sysWrite(fd, cast[pointer](cast[int](p) + off), uint(n - off))
-      if k <= 0: return false
-      off += k
-    result = true
+  proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 =
+    # `whence` 0/1/2 already lines up with FILE_BEGIN/FILE_CURRENT/FILE_END.
+    # SetFilePointer treats the hi:lo pair as one signed 64-bit distance, so
+    # splitting the two's-complement bits is correct for negative offsets too.
+    var hi = cast[LONG](uint32(uint64(offset) shr 32))
+    let lo = setFilePointer(fd, cast[LONG](uint32(uint64(offset) and 0xFFFFFFFF'u64)),
+                            addr hi, DWORD(whence))
+    if lo == INVALID_SET_FILE_POINTER and getLastError() != NO_ERROR:
+      result = -1'i64
+    else:
+      result = (int64(uint32(hi)) shl 32) or int64(uint32(lo))
 
-  # The buffer work is done on the object behind the `ref`: a field reached
-  # through a `ref` can be written by any alias, so only a `var FileObj`
-  # parameter makes `wbuf`/`rbuf` locations whose length a check can bound.
+  proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
+    File(fd: fd, flags: flags)
 
-  proc flushImpl(fo: var FileObj) =
-    if fo.wbuf.len > 0:
-      if not rawWriteAll(fo.fd, addr fo.wbuf[0], fo.wbuf.len):
-        fo.flags.incl ffError
-      fo.wbuf.setLen 0
+  proc getFileHandle*(f: File): Handle {.inline.} =
+    ## The underlying Win32 handle (libc-free build). Used e.g. by
+    ## `std/terminal`'s `isatty`, which has no `_fileno`/`FILE*` to go through.
+    f.fd
 
-  proc flushImpl(f: File) {.inline.} = flushImpl(f[])
+  let
+    stdin* = newFile(getStdHandle(STD_INPUT_HANDLE), {ffReadable})
+      ## Standard input file handle.
+    stdout* = newFile(getStdHandle(STD_OUTPUT_HANDLE), {ffWritable})
+      ## Standard output file handle. Fully buffered; flushed on exit via the
+      ## `system/exits` hook (and on `quit`/`abort`).
+    stderr* = newFile(getStdHandle(STD_ERROR_HANDLE), {ffWritable, ffUnbuf})
+      ## Standard error file handle. Unbuffered.
+elif defined(embedded):
+  # --- bare metal: the console is the debug agent -------------------------
+  # Every one of these is the honest answer for a target with no filesystem
+  # and no OS, rather than a stub: semihosting has ONE console, so `fd` names
+  # nothing, and a program that opens a file on a part with no storage should
+  # be told so at the call rather than handed a handle that does nothing.
+  proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int =
+    semihostWrite(buf, int(n))
+  proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int = -1
+  proc sysOpen(path: cstring; flags: cint): cint = -1
+  proc sysClose(fd: OsFileHandle): cint = 0
+  proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 = -1
+  template interrupted(k: int): bool = false
+else:
+  # --- raw syscall wrappers (arkham lowers these to `syscall` instructions) -
+  proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "write".}
+  proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "read".}
+  when defined(linux) and defined(arm64) and defined(nimNoLibc):
+    # AArch64's asm-generic syscall table has no `open` — only `openat` (see
+    # `linuxA64Raw` in std/posix, whose `nimNoLibc` gate this mirrors). Same
+    # shuffle glibc's own `open` does; kept local so syncio stays independent
+    # of std/posix.
+    proc sysOpenat(dirfd: cint; path: cstring; flags: cint; mode: cint): cint {.
+      importc: "openat".}
+    proc sysOpen(path: cstring; flags: cint; mode: cint = 0o666'i32): cint {.inline.} =
+      const AT_FDCWD = cint(-100)
+      sysOpenat(AT_FDCWD, path, flags, mode)
+  else:
+    proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
+  proc sysClose(fd: OsFileHandle): cint {.importc: "close".}
+  proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
 
-  proc writeBytes(fo: var FileObj; p: pointer; n: int) =
-    if n <= 0: return
-    let oldLen = fo.wbuf.len
-    fo.wbuf.setLen(oldLen + n)
-    if oldLen >= fo.wbuf.len:
-      # Out of memory: `setLen` could not grow the buffer, so it kept its old
-      # length and contents. `n` is positive, so a `setLen` that worked is
-      # strictly longer than `oldLen` -- the length is the signal either way.
-      fo.flags.incl ffError
-      return
-    copyMem(addr fo.wbuf[oldLen], p, n)
-    if ffUnbuf in fo.flags or fo.wbuf.len >= NativeBufSize:
-      flushImpl fo
+  # `interrupted(k)`: the `read`/`write` that returned `k` was cut short by a
+  # signal handler installed without `SA_RESTART` (EINTR). That is no error and
+  # no end of file -- the call is simply retried (nim-lang/nimony#2912). A raw
+  # syscall reports it as `-EINTR`; with libc linked, `read`/`write` return -1
+  # and set libc's errno. Same split as `rawSyscalls` in std/posix.
+  const EINTR = 4'i32  ## the same on Linux, Darwin, FreeBSD and illumos
+  when defined(nimNoLibc) and (defined(linux) or defined(freebsd)):
+    template interrupted(k: int): bool = k == -EINTR
+  elif defined(linux) or defined(osx) or defined(freebsd) or defined(illumos):
+    when defined(android):
+      proc errnoLocation(): ptr cint {.importc: "__errno", sideEffect.}
+    elif defined(linux):
+      proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
+    elif defined(illumos):
+      proc errnoLocation(): ptr cint {.importc: "___errno", sideEffect.}
+    else:
+      proc errnoLocation(): ptr cint {.importc: "__error", sideEffect.}
+    template interrupted(k: int): bool = k == -1 and errnoLocation()[] == EINTR
+  else:
+    template interrupted(k: int): bool = false
 
-  proc writeBytes(f: File; p: pointer; n: int) {.inline.} = writeBytes(f[], p, n)
+  proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
+    File(fd: fd, flags: flags)
 
-  proc fillBuf(fo: var FileObj): bool =
-    ## Refills `rbuf` from the fd. Returns false on EOF/error (and records which).
-    fo.rbuf.setLen NativeBufSize
-    fo.rpos = 0
-    if fo.rbuf.len < NativeBufSize:
-      # out of memory: `setLen` could not grow the buffer, so it is still short
-      fo.flags.incl ffError
+  proc getFileHandle*(f: File): cint {.inline.} =
+    ## The underlying OS file descriptor (libc-free posix build). Used e.g. by
+    ## `std/terminal`'s `isatty`, which has no `fileno`/FILE* to go through.
+    cint(f.fd)
+
+  let
+    stdin* = newFile(0, {ffReadable})
+      ## Standard input file handle (fd 0).
+    stdout* = newFile(1, {ffWritable})
+      ## Standard output file handle (fd 1). Fully buffered; flushed on exit
+      ## via the `system/exits` hook (and on `quit`/`abort`).
+    stderr* = newFile(2, {ffWritable, ffUnbuf})
+      ## Standard error file handle (fd 2). Unbuffered.
+
+proc rawWriteAll(fd: OsFileHandle; p: pointer; n: int): bool =
+  ## Writes exactly `n` bytes, looping over short writes. Returns false on error.
+  var off = 0
+  while off < n:
+    let k = sysWrite(fd, cast[pointer](cast[int](p) + off), uint(n - off))
+    if k <= 0:
+      if interrupted(k): continue
       return false
-    let k = sysRead(fo.fd, addr fo.rbuf[0], uint(NativeBufSize))
-    if k > 0:
-      fo.rbuf.setLen k
-      result = true
-    else:
-      fo.rbuf.setLen 0
-      if k < 0: fo.flags.incl ffError
-      else: fo.flags.incl ffEof
-      result = false
+    off += k
+  result = true
 
-  proc fillBuf(f: File): bool {.inline.} = fillBuf(f[])
+# The buffer work is done on the object behind the `ref`: a field reached
+# through a `ref` can be written by any alias, so only a `var FileObj`
+# parameter makes `wbuf`/`rbuf` locations whose length a check can bound.
 
-  proc readByte(fo: var FileObj): int =
-    ## Returns the next byte as 0..255, or -1 at EOF/error.
-    result = -1
-    while true:
-      if fo.rpos < fo.rbuf.len:
-        result = int(fo.rbuf[fo.rpos])
-        inc fo.rpos
-        break
-      if not fillBuf(fo): break
+proc flushImpl(fo: var FileObj) =
+  if fo.wbuf.len > 0:
+    if not rawWriteAll(fo.fd, addr fo.wbuf[0], fo.wbuf.len):
+      fo.flags.incl ffError
+    fo.wbuf.setLen 0
 
-  proc readByte(f: File): int {.inline.} = readByte(f[])
+proc flushImpl(f: File) {.inline.} = flushImpl(f[])
 
-  proc readInto(fo: var FileObj; dest: ptr UncheckedArray[char]; size: int): int =
-    var off: Natural = 0
-    while off < size:
-      if fo.rpos >= fo.rbuf.len:
-        if not fillBuf(fo): break
-        continue
-      var take: Natural = fo.rbuf.len - fo.rpos
-      if take > size - off: take = size - off
-      copyMem(addr dest[off], addr fo.rbuf[fo.rpos], take)
-      let newPos = fo.rpos + take
-      let newOff = off + take
-      # `take` is at most what is left of `rbuf` and of `dest`: neither sum
-      # wraps
-      {.assume: 0 <= newPos and 0 <= newOff.}
-      fo.rpos = newPos
-      off = newOff
-    result = off
+proc writeBytes(fo: var FileObj; p: pointer; n: int) =
+  if n <= 0: return
+  let oldLen = fo.wbuf.len
+  fo.wbuf.setLen(oldLen + n)
+  if oldLen >= fo.wbuf.len:
+    # Out of memory: `setLen` could not grow the buffer, so it kept its old
+    # length and contents. `n` is positive, so a `setLen` that worked is
+    # strictly longer than `oldLen` -- the length is the signal either way.
+    fo.flags.incl ffError
+    return
+  copyMem(addr fo.wbuf[oldLen], p, n)
+  if ffUnbuf in fo.flags or fo.wbuf.len >= NativeBufSize:
+    flushImpl fo
 
-  proc flushStdStreams() {.nimcall.} =
-    ## Registered with `system/exits` so every process exit flushes the buffered
-    ## standard streams (the C `main` epilogue and `quit`/`abort` all run it).
-    flushImpl stdout
-    flushImpl stderr
+proc writeBytes(f: File; p: pointer; n: int) {.inline.} = writeBytes(f[], p, n)
 
-  setExitFlush flushStdStreams
-
-  proc open*(f: var File; fd: OsFileHandle; mode: FileMode = fmRead): bool =
-    ## Wraps an already-open OS file handle in a buffered `File` — the native
-    ## replacement for libc `fdopen`. Used by `osproc` to turn a pipe end into a
-    ## stream. Returns false for an invalid handle.
-    when defined(windows):
-      if fd == INVALID_HANDLE_VALUE or fd.isNil: return false
-    else:
-      if fd < 0'i32: return false
-    var fileFlags: set[FileFlag]
-    case mode
-    of fmRead: fileFlags = {ffReadable}
-    of fmWrite, fmAppend: fileFlags = {ffWritable}
-    of fmReadWrite, fmReadWriteExisting: fileFlags = {ffReadable, ffWritable}
-    f = newFile(fd, fileFlags)
+proc fillBuf(fo: var FileObj): bool =
+  ## Refills `rbuf` from the fd. Returns false on EOF/error (and records which).
+  fo.rbuf.setLen NativeBufSize
+  fo.rpos = 0
+  if fo.rbuf.len < NativeBufSize:
+    # out of memory: `setLen` could not grow the buffer, so it is still short
+    fo.flags.incl ffError
+    return false
+  var k = sysRead(fo.fd, addr fo.rbuf[0], uint(NativeBufSize))
+  while interrupted(k):
+    k = sysRead(fo.fd, addr fo.rbuf[0], uint(NativeBufSize))
+  if k > 0:
+    fo.rbuf.setLen k
     result = true
-else:
-  # Bindings to C's stdio objects, which lock internally: read-only here.
-  when defined(macos) or defined(macosx):
-    let
-      stdin* {.importc: "__stdinp", header: "<stdio.h>".}: File
-        ## Standard input file handle.
-      stdout* {.importc: "__stdoutp", header: "<stdio.h>".}: File
-        ## Standard output file handle.
-      stderr* {.importc: "__stderrp", header: "<stdio.h>".}: File
-        ## Standard error file handle.
   else:
-    let
-      stdin* {.importc: "stdin", header: "<stdio.h>".}: File
-        ## Standard input file handle.
-      stdout* {.importc: "stdout", header: "<stdio.h>".}: File
-        ## Standard output file handle.
-      stderr* {.importc: "stderr", header: "<stdio.h>".}: File
-        ## Standard error file handle.
+    fo.rbuf.setLen 0
+    if k < 0: fo.flags.incl ffError
+    else: fo.flags.incl ffEof
+    result = false
 
-  proc c_fputc(c: int32; f: File): int32 {.
-    importc: "fputc", header: "<stdio.h>".}
-  proc c_fwrite(buf: pointer; size, n: uint; f: File): uint {.
-    importc: "fwrite", header: "<stdio.h>".}
-  proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
-    importc: "fread", header: "<stdio.h>".}
-  proc c_fileno(f: File): cint {.importc: "fileno", header: "<stdio.h>".}
+proc fillBuf(f: File): bool {.inline.} = fillBuf(f[])
 
-  proc getFileHandle*(f: File): cint = c_fileno(f)
+proc readByte(fo: var FileObj): int =
+  ## Returns the next byte as 0..255, or -1 at EOF/error.
+  result = -1
+  while true:
+    if fo.rpos < fo.rbuf.len:
+      result = int(fo.rbuf[fo.rpos])
+      inc fo.rpos
+      break
+    if not fillBuf(fo): break
 
-  proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
+proc readByte(f: File): int {.inline.} = readByte(f[])
+
+proc readInto(fo: var FileObj; dest: ptr UncheckedArray[char]; size: int): int =
+  var off: Natural = 0
+  while off < size:
+    if fo.rpos >= fo.rbuf.len:
+      if not fillBuf(fo): break
+      continue
+    var take: Natural = fo.rbuf.len - fo.rpos
+    if take > size - off: take = size - off
+    copyMem(addr dest[off], addr fo.rbuf[fo.rpos], take)
+    let newPos = fo.rpos + take
+    let newOff = off + take
+    # `take` is at most what is left of `rbuf` and of `dest`: neither sum
+    # wraps
+    {.assume: 0 <= newPos and 0 <= newOff.}
+    fo.rpos = newPos
+    off = newOff
+  result = off
+
+proc flushStdStreams() {.nimcall.} =
+  ## Registered with `system/exits` so every process exit flushes the buffered
+  ## standard streams (the C `main` epilogue and `quit`/`abort` all run it).
+  flushImpl stdout
+  flushImpl stderr
+
+setExitFlush flushStdStreams
+
+proc open*(f: var File; fd: OsFileHandle; mode: FileMode = fmRead): bool =
+  ## Wraps an already-open OS file handle in a buffered `File` — the native
+  ## replacement for libc `fdopen`. Used by `osproc` to turn a pipe end into a
+  ## stream. Returns false for an invalid handle.
+  when defined(windows):
+    if fd == INVALID_HANDLE_VALUE or fd.isNil: return false
+  else:
+    if fd < 0'i32: return false
+  var fileFlags: set[FileFlag]
+  case mode
+  of fmRead: fileFlags = {ffReadable}
+  of fmWrite, fmAppend: fileFlags = {ffWritable}
+  of fmReadWrite, fmReadWriteExisting: fileFlags = {ffReadable, ffWritable}
+  f = newFile(fd, fileFlags)
+  result = true
 
 proc write*(f: File; s: string) =
-  when defined(nimNativeIo):
-    writeBytes(f, readRawData(s), s.len)
-  else:
-    discard c_fwrite(readRawData(s), 1'u, s.len.uint, f)
+  writeBytes(f, readRawData(s), s.len)
 
 proc write*(f: File; b: bool) =
   if b: write f, "true"
   else: write f, "false"
 
 proc write*(f: File; x: int64) =
-  when defined(nimNativeIo):
-    write f, $x
-  else:
-    fprintf(f, cstring"%lld", x)
+  write f, $x
 
 proc write*(f: File; x: int32) =
   write f, int64 x
 
 proc write*(f: File; x: uint64) =
-  when defined(nimNativeIo):
-    write f, $x
-  else:
-    fprintf(f, cstring"%llu", x)
+  write f, $x
 
 proc write*(f: File; x: uint32) =
   write f, uint64 x
@@ -322,11 +306,8 @@ proc write*[T: enum](f: File; x: T) =
   write f, $x
 
 proc write*(f: File; c: char) =
-  when defined(nimNativeIo):
-    var ch = c
-    writeBytes(f, addr ch, 1)
-  else:
-    discard c_fputc(int32(c), f)
+  var ch = c
+  writeBytes(f, addr ch, 1)
 
 proc write*(f: File; x: float) =
   ## Writes data to a file (overloaded for different types).
@@ -337,72 +318,43 @@ proc write*(f: File; x: float) =
   s.addFloat x
   write f, s
 
-when defined(nimNativeIo):
-  proc close*(f: File) =
-    ## Closes a file handle.
-    if f != nil:
-      flushImpl f
-      discard sysClose(f.fd)
+proc close*(f: File) =
+  ## Closes a file handle.
+  if f != nil:
+    flushImpl f
+    discard sysClose(f.fd)
 
-  proc fclose(f: File): int32 =
-    result = 0'i32
-    if f != nil:
-      flushImpl f
-      result = sysClose(f.fd)
-else:
-  proc fclose(f: File): int32 {.importc: "fclose", header: "<stdio.h>".}
-
-  proc close*(f: File) =
-    ## Closes a file handle.
-    discard fclose(f)
-
-  proc fopen(filename, mode: cstring): File {.importc: "fopen", header: "<stdio.h>".}
+proc fclose(f: File): int32 =
+  result = 0'i32
+  if f != nil:
+    flushImpl f
+    result = sysClose(f.fd)
 
 proc writeBuffer*(f: File; buffer: pointer; size: int): int =
   ## Writes raw bytes to a file.
-  when defined(nimNativeIo):
-    writeBytes(f, buffer, size)
-    result = size
-  else:
-    result = cast[int](c_fwrite(buffer, 1'u, cast[uint](size), f))
+  writeBytes(f, buffer, size)
+  result = size
 
 proc readBuffer*(f: File; buffer: pointer; size: int): int =
   ## Reads raw bytes from a file.
-  when defined(nimNativeIo):
-    result = readInto(f[], cast[ptr UncheckedArray[char]](buffer), size)
-  else:
-    result = cast[int](c_fread(buffer, 1'u, cast[uint](size), f))
+  result = readInto(f[], cast[ptr UncheckedArray[char]](buffer), size)
 
-when defined(nimNativeIo):
-  proc failed*(f: File): bool {.inline.} =
-    ## Checks if a file operation has failed.
-    ffError in f.flags
-else:
-  proc c_ferror(f: File): int32 {.
-    importc: "ferror", header: "<stdio.h>".}
+proc failed*(f: File): bool {.inline.} =
+  ## Checks if a file operation has failed.
+  ffError in f.flags
 
-  proc failed*(f: File): bool {.inline.} =
-    ## Checks if a file operation has failed.
-    c_ferror(f) != 0
-
-  proc c_setvbuf(f: File; buffer: pointer; mode: int32; size: uint): int32 {.
-    importc: "setvbuf", header: "<stdio.h>".}
-
-  const IOFBF = 0'i32  ## _IOFBF; 0 on glibc/musl, Darwin and Windows alike
-
-when defined(nimNativeIo):
-  proc nativeFileFlags(mode: FileMode): set[FileFlag] =
-    case mode
-    of fmRead: {ffReadable}
-    of fmWrite, fmAppend: {ffWritable}
-    of fmReadWrite, fmReadWriteExisting: {ffReadable, ffWritable}
+proc nativeFileFlags(mode: FileMode): set[FileFlag] =
+  case mode
+  of fmRead: {ffReadable}
+  of fmWrite, fmAppend: {ffWritable}
+  of fmReadWrite, fmReadWriteExisting: {ffReadable, ffWritable}
 
 proc open*(f: out File; filename: string;
            mode: FileMode = fmRead;
            bufSize: int = -1): bool =
   ## Opens a file with specified mode and buffer size (`bufSize`; use `-1` for default buffering).
   ## Returns whether the open succeeded.
-  when defined(nimNativeIo) and defined(windows):
+  when defined(windows):
     # `bufSize` is advisory only: the buffers are `seq[char]` and grow on demand.
     let (access, disposition) = win32OpenArgs(mode)
     let fileFlags = nativeFileFlags(mode)
@@ -417,7 +369,7 @@ proc open*(f: out File; filename: string;
     else:
       f = newFile(h, fileFlags)
       result = true
-  elif defined(nimNativeIo):
+  else:
     # `bufSize` is advisory only: the buffers are `seq[char]` and grow on demand.
     let flags = cint(posixOpenFlags(mode))
     let fileFlags = nativeFileFlags(mode)
@@ -429,25 +381,6 @@ proc open*(f: out File; filename: string;
       result = true
     else:
       f = nil
-      result = false
-  else:
-    let m =
-      case mode
-      of fmRead: cstring"rb"
-      of fmWrite: cstring"wb"
-      of fmReadWrite: cstring"w+b"
-      of fmReadWriteExisting: cstring"r+b"
-      of fmAppend: cstring"ab"
-
-    # XXX: avoid a possible double copy when the string is allocated
-    var tmpFilename = filename.terminatingZero()
-    let rawFilename = cast[cstring](readRawData(tmpFilename))
-    f = fopen(rawFilename, m)
-    if f != nil:
-      result = true
-      if bufSize >= 0:
-        discard c_setvbuf(f, nil, IOFBF, cast[uint](bufSize))
-    else:
       result = false
 
 proc open*(filename: string,
@@ -473,35 +406,15 @@ proc writeLine*(f: File; s: string) =
   write f, s
   write f, '\n'
 
-when defined(nimNativeIo):
-  proc addReadLine*(f: File; s: var string): bool =
-    ## Appends a line from a file to a string.
-    result = false
-    while true:
-      let c = readByte(f)
-      if c < 0: break
-      result = true
-      if char(c) == '\n': break
-      s.add char(c)
-else:
-  const bufsize = 80
-
-  proc fgets(str: out array[bufsize, char]; n: int32; f: File): cstring {.
-    importc: "fgets", header: "<stdio.h>".}
-
-  proc addReadLine*(f: File; s: var string): bool =
-    ## Appends a line from a file to a string.
-    result = false
-    var buf: array[bufsize, char]
-    while fgets(buf, bufsize.int32, f) != nil:
-      result = true
-      var done = false
-      for i in 0 ..< bufsize:
-        if buf[i] == '\n':
-          done = true
-          break
-        s.add buf[i]
-      if done: break
+proc addReadLine*(f: File; s: var string): bool =
+  ## Appends a line from a file to a string.
+  result = false
+  while true:
+    let c = readByte(f)
+    if c < 0: break
+    result = true
+    if char(c) == '\n': break
+    s.add char(c)
 
 proc readLine*(f: File; s: var string): bool =
   ## Reads a line from a file into a string.
@@ -624,78 +537,34 @@ proc tryWriteFile*(file, content: string): bool =
   else:
     result = false
 
-when defined(nimNativeIo):
-  proc flushFile*(f: File) =
-    ## Flushes file buffers to the underlying device.
-    flushImpl f
+proc flushFile*(f: File) =
+  ## Flushes file buffers to the underlying device.
+  flushImpl f
 
-  proc endOfFile*(f: File): bool =
-    ## Returns true if `f` is at the end.
-    if f.rpos < f.rbuf.len: return false
-    result = not fillBuf(f)
+proc endOfFile*(f: File): bool =
+  ## Returns true if `f` is at the end.
+  if f.rpos < f.rbuf.len: return false
+  result = not fillBuf(f)
 
-  proc getFilePos*(f: File): int64 {.raises.} =
-    ## Retrieves the current position of the file pointer that is used to
-    ## read from the file `f`. The file's first byte has the index zero.
-    flushImpl f
-    result = sysLseek(f.fd, 0'i64, 1'i32) - int64(f.rbuf.len - f.rpos)
-    if result < 0: raise IOError
+proc getFilePos*(f: File): int64 {.raises.} =
+  ## Retrieves the current position of the file pointer that is used to
+  ## read from the file `f`. The file's first byte has the index zero.
+  flushImpl f
+  result = sysLseek(f.fd, 0'i64, 1'i32) - int64(f.rbuf.len - f.rpos)
+  if result < 0: raise IOError
 
-  proc setFilePos*(f: File; pos: int64; relativeTo: FileSeekPos = fspSet) {.raises.} =
-    ## Sets the position of the file pointer that is used for read/write
-    ## operations. The file's first byte has the index zero.
-    flushImpl f
-    var p = pos
-    if relativeTo == fspCur:
-      # `lseek` sits at the post-read position; account for still-buffered bytes.
-      p -= int64(f.rbuf.len - f.rpos)
-    f.rbuf.setLen 0
-    f.rpos = 0
-    if sysLseek(f.fd, p, int32(relativeTo)) < 0'i64:
-      raise IOError
-else:
-  proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}
-    ## Flushes file buffers to the underlying device.
-
-  proc c_fgetc(stream: File): int32 {.
-    importc: "fgetc", header: "<stdio.h>".}
-  proc c_ungetc(c: int32; f: File): int32 {.
-    importc: "ungetc", header: "<stdio.h>".}
-
-  when defined(windows):
-    when not defined(amd64):
-      proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
-        importc: "fseek", header: "<stdio.h>".}
-      proc c_ftell(f: File): int64 {.
-        importc: "ftell", header: "<stdio.h>".}
-    else:
-      proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
-        importc: "_fseeki64", header: "<stdio.h>".}
-      proc c_ftell(f: File): int64 {.
-        importc: "_ftelli64", header: "<stdio.h>".}
-  else:
-    proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
-      importc: "fseeko", header: "<stdio.h>".}
-    proc c_ftell(f: File): int64 {.
-      importc: "ftello", header: "<stdio.h>".}
-
-  proc endOfFile*(f: File): bool =
-    ## Returns true if `f` is at the end.
-    var c = c_fgetc(f)
-    discard c_ungetc(c, f)
-    result = c < 0'i32
-
-  proc getFilePos*(f: File): int64 {.raises.} =
-    ## Retrieves the current position of the file pointer that is used to
-    ## read from the file `f`. The file's first byte has the index zero.
-    result = c_ftell(f)
-    if result < 0: raise IOError
-
-  proc setFilePos*(f: File; pos: int64; relativeTo: FileSeekPos = fspSet) {.raises.} =
-    ## Sets the position of the file pointer that is used for read/write
-    ## operations. The file's first byte has the index zero.
-    if c_fseek(f, pos, int32(relativeTo)) != 0'i32:
-      raise IOError
+proc setFilePos*(f: File; pos: int64; relativeTo: FileSeekPos = fspSet) {.raises.} =
+  ## Sets the position of the file pointer that is used for read/write
+  ## operations. The file's first byte has the index zero.
+  flushImpl f
+  var p = pos
+  if relativeTo == fspCur:
+    # `lseek` sits at the post-read position; account for still-buffered bytes.
+    p -= int64(f.rbuf.len - f.rpos)
+  f.rbuf.setLen 0
+  f.rpos = 0
+  if sysLseek(f.fd, p, int32(relativeTo)) < 0'i64:
+    raise IOError
 
 proc slurp*(path: string): string {.semantics: "slurp".} =
   ## Reads a file into a string. For compatibility with Nim 2.

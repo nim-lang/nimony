@@ -5,9 +5,8 @@
 ## coalescing big chunks, huge mmap; owner-stamped lock-free deferred free for
 ## cross-thread deallocations). The driver defines `nimNativeAlloc` for every
 ## backend, because the libc-free stdlib is the default (`nimony.nim`); the
-## mimalloc shim is the opt-OUT, reached with `-d:useMimalloc` (allocator only)
-## or `-d:useLibc` (allocator and IO together), and the native backend is always
-## libc-free regardless.
+## mimalloc shim is the opt-OUT, reached with `-d:useMimalloc` or `-d:useLibc`,
+## and the native backend always uses the native allocator regardless.
 ##
 ## The user-facing `alloc`/`dealloc`/`realloc`/`allocatedSize` wrappers are
 ## `func` (noSideEffect) so they remain usable inside the `func`s of pure data

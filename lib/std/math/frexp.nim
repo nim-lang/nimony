@@ -1,4 +1,4 @@
-## Freestanding (`nimNativeIo`, libc-free) implementations of `signbit`,
+## Freestanding (libc-free) implementations of `signbit`,
 ## `classify`, `isNaN` and `frexp`, operating directly on IEEE-754 bit patterns.
 ## The normal-value `frexp` bit manipulation follows Rust compiler-builtins/libm's
 ## `generic/frexp.rs` and FreeBSD/SunPro fdlibm's `s_frexp.c`; subnormals use a

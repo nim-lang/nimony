@@ -83,11 +83,10 @@ may otherwise default to ILP32.
 tests the ring's positioned I/O, errors, deadlines, cancellation/reuse, TCP,
 and shutdown. Existing readiness/timer tests also exercise this backend.
 
-Illumos always uses the native allocator (`nimNativeAlloc`). `-d:useLibc`
-selects libc stdio but retains that allocator; `-d:useLibcIo` does the same.
-Explicit `-d:useMimalloc` is rejected, including when combined with other
+Illumos always uses the native allocator (`nimNativeAlloc`); `-d:useLibc`
+does not change that. Explicit `-d:useMimalloc` is rejected, including when combined with other
 allocator flags. This policy is independent of libc linkage: all illumos
 builds link libc, and freestanding mode remains unsupported.
 
-`tests/illumosalloc/setup.nim` checks allocator/IO flag selection, mimalloc
+`tests/illumosalloc/setup.nim` checks allocator flag selection, mimalloc
 rejection, and allocation/reallocation at runtime.

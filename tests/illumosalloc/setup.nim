@@ -26,14 +26,13 @@ for flags in ["-d:useMimalloc", "-d:useLibc -d:useMimalloc",
 
 when (defined(sunos) or defined(solaris) or defined(illumos)) and defined(amd64):
   let exe = cache / "probe"
-  for flags in ["", "-d:useLibc -d:expectLibcIo", "-d:useLibcIo -d:expectLibcIo",
-                "-d:useLibc -d:nimNativeAlloc -d:expectLibcIo"]:
+  for flags in ["", "-d:useLibc", "-d:useLibc -d:nimNativeAlloc"]:
     let command = nimony & target & " --cc:gcc --out:" & exe.quoteShell &
                   " " & flags & " c " & probe
     if execShellCmd(command & " > " & log.quoteShell & " 2>&1") != 0:
       quit "FAILURE: " & command & "; see " & log
     if execShellCmd(exe.quoteShell & " >> " & log.quoteShell & " 2>&1") != 0:
       quit "FAILURE: allocator policy/runtime check; see " & log
-  echo "illumos allocator: native allocation and independent libc IO passed"
+  echo "illumos allocator: native allocation passed"
 else:
   echo "illumos allocator: mimalloc rejection passed (runtime checks require illumos/amd64)"
