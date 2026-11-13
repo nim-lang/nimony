@@ -209,6 +209,12 @@ type
                                    ## gets the same two answers intersected
                                    ## (`doc/cse.md`)
     callPos: seq[int]           ## `(call …)` nodes, for summary-based clobber
+    labels: HashSet[SymId]      ## the labels defined inside the loop: a `jmp`
+                                ## to one of them stays in the iteration
+    exited: bool                ## the walk has passed a way out of the loop (a
+                                ## `jmp` past it, `ret`, `raise`, a no-return
+                                ## call): from here on a statement of the body
+                                ## no longer runs on every iteration that began
 
   CachedEntry = object
     hasFirst: bool       # a first occurrence has been recorded
@@ -1197,6 +1203,9 @@ proc preScanLoop(c: Context; start: Cursor; frame: var LoopFrame) =
         frame.memStorePaths.add pathOfLvalue(lhs)
   if sk == CallS or ek == CallC:
     frame.callPos.add cursorToPosition(c.orig[], start)
+  if sk == LabS:
+    let l = child0(start)
+    if l.kind == SymbolDef: frame.labels.incl symId(l)
   var n = start
   n.loopInto:
     preScanLoop(c, n, frame)
@@ -1312,7 +1321,8 @@ proc licmHoistPos(c: var Context; expr: Cursor): int =
   # is borrowed by the loop; nothing it calls reads the stack, so lend it out.
   var stack = move c.loopStack
   for frame in stack:
-    if invariantIn(c, expr, frame) and not controlDependentIn(c, frame.pos):
+    if invariantIn(c, expr, frame) and not controlDependentIn(c, frame.pos) and
+       not frame.exited:
       if result < 0: result = frame.pos
     else:
       result = -1
@@ -1890,12 +1900,21 @@ proc trAsgn(c: var Context; n: var Cursor) =
     invalidateForStore(c, lhsStart)
   else: discard
 
+proc markExits(c: var Context; target: SymId) =
+  ## A way out of every enclosing loop that does not define `target` (every
+  ## loop, for `SymId(0)`: a `ret`, a `raise`, a no-return call).
+  for f in c.loopStack.mitems:
+    if target == SymId(0) or target notin f.labels: f.exited = true
+
+proc callIsNoReturn(c: var Context; call: Cursor): bool
+
 proc trCallStmt(c: var Context; n: var Cursor) =
   let call = n
   n.into:
     if n.hasMore: skip n
     while n.hasMore: trExpr(c, n)
   invalidateForCall(c, call)
+  if c.loopStack.len > 0 and callIsNoReturn(c, call): markExits(c, SymId(0))
 
 proc trIf(c: var Context; n: var Cursor) =
   openBranches c
@@ -1976,7 +1995,7 @@ proc trLoop(c: var Context; n: var Cursor) =
   var frame = LoopFrame(pos: loopPos,
                         writes: initHashSet[SymId](),
                         memStoreRoots: initHashSet[SymId](),
-                        callPos: @[])
+                        callPos: @[], labels: initHashSet[SymId]())
   preScanLoop(c, n, frame)
   var addrs = initHashSet[SymId]()
   preScanWrites(n, frame.writes, addrs)
@@ -1999,6 +2018,9 @@ proc trJmp(c: var Context; n: var Cursor) =
   let probe = child0(n)
   if probe.kind == Symbol:
     gotoLabel(c, LabelId(uint32(symId(probe))))
+    markExits(c, symId(probe))
+  else:
+    markExits(c, SymId(0))
   skip n
 
 proc trLab(c: var Context; n: var Cursor) =
@@ -2010,6 +2032,7 @@ proc trLab(c: var Context; n: var Cursor) =
 proc trBreakOrRet(c: var Context; n: var Cursor) =
   skip n
   clearCache c
+  markExits(c, SymId(0))
 
 proc callIsNoReturn(c: var Context; call: Cursor): bool =
   ## Reuses `callSummary`'s resolution — module table, then the callee's own
