@@ -65,27 +65,27 @@ proc changedBetween*(v: Versions; a, b: Mark): seq[SymId] =
   ## The variables whose version changed between the marks `a` and `b`, in
   ## the order they first did.
   result = @[]
-  var seen = initTable[SymId, bool]()
   for i in int32(a) ..< int32(b):
     let s = v.log[i].sym
-    if not seen.hasKey(s):
-      seen[s] = true
-      result.add s
+    if s notin result: result.add s
 
 proc changedSince*(v: Versions; m: Mark): seq[SymId] =
   changedBetween(v, m, mark(v))
+
+proc find(x: seq[Sources]; s: SymId): int =
+  result = -1
+  for i in 0 ..< x.len:
+    if x[i].sym == s: return i
 
 proc sourcesAt*(v: Versions; since: Mark; marks: openArray[Mark]): seq[Sources] =
   ## For every variable whose version changed since `since`, in the order it
   ## first did: the version it had at each of `marks`, none of which lies
   ## before `since`.
   result = @[]
-  var index = initTable[SymId, int]()
   var state: seq[int] = @[] # the versions at `pos`, walking the log backwards
   for i in int32(since) ..< int32(v.log.len):
     let s = v.log[i].sym
-    if not index.hasKey(s):
-      index[s] = result.len
+    if find(result, s) < 0:
       result.add Sources(sym: s, olds: newSeq[int](marks.len))
       state.add current(v, s)
   # the marks from the latest to the earliest:
@@ -102,7 +102,7 @@ proc sourcesAt*(v: Versions; since: Mark; marks: openArray[Mark]): seq[Sources] 
   for k in order:
     while pos > int(int32(marks[k])):
       dec pos
-      state[index.getOrDefault(v.log[pos].sym)] = int v.log[pos].before
+      state[find(result, v.log[pos].sym)] = int v.log[pos].before
     for i in 0 ..< result.len:
       result[i].olds[k] = state[i]
 
