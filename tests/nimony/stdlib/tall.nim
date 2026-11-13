@@ -84,6 +84,7 @@ import std/oserrors
 import std/osproc
 import std/packedsets
 import std/parfor
+import std/parsecsv
 import std/parsejson
 import std/parseopt
 import std/parseutils
