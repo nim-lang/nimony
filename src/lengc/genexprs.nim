@@ -110,6 +110,36 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
         genx c, n                           # the value
         c.add ParRi
       while n.hasMore: skip n
+    elif op.isMemOp:
+      # The operands are LOCATIONS: the written one spelled `(haddr L)` (rendered
+      # `&L`) like any intrinsic's `var` operand, the read ones bare lvalues, whose
+      # address is taken here. The byte count is optional: absent, it is the size
+      # of the first operand.
+      template genLocAddr(n: var Cursor) =
+        if n.exprKind == HaddrC:
+          genx c, n
+        else:
+          c.add "&("
+          genx c, n
+          c.add ")"
+      skip n                                # the callee symbol
+      c.add cBuiltinFor(op, bits)
+      c.add ParLe
+      let first = n
+      for i in 0 ..< memLocOperands(op):
+        if i > 0: c.add Comma
+        genLocAddr n
+        if i == 0 and op == ZeroMemOp: c.add ", 0"
+      c.add Comma
+      if n.hasMore:
+        genx c, n                           # the explicit byte count
+      else:
+        c.add "sizeof(*("
+        var f = first
+        genLocAddr f
+        c.add "))"
+      c.add ParRi
+      while n.hasMore: skip n
     else:
      var builtin = ""
      if op == NoIntrinsicOp:

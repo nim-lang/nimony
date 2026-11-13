@@ -148,3 +148,49 @@ func flipBit*[T: BitInteger](v: var T, bit: int) {.inline.} =
 func testBit*[T: BitInteger](v: T, bit: int): bool {.inline.} =
   ## Returns `true` when the bit at position `bit` of `v` is set.
   (v and (T(1) shl bit)) != T(0)
+
+# --- byteSwap ---
+
+const HardwareBswap = not defined(wasm32) and
+                      (defined(amd64) or defined(arm64) or not defined(nimNativeBackend))
+  ## Where the `Bswap` intrinsic has a lowering: every C/LLVM target (a GCC
+  ## builtin) and the native targets its row lists (`bswap`, `rev`). The web
+  ## back end and the 32-bit native targets swap with shifts instead.
+
+when HardwareBswap:
+  func bswapIns(x: uint16): uint16 {.intrinsic: "Bswap".}
+  func bswapIns(x: uint32): uint32 {.intrinsic: "Bswap".}
+  func bswapIns(x: uint64): uint64 {.intrinsic: "Bswap".}
+else:
+  func bswapIns(x: uint16): uint16 {.inline.} = (x shl 8) or (x shr 8)
+  func bswapIns(x: uint32): uint32 {.inline.} =
+    let y = ((x and 0x00FF00FF'u32) shl 8) or ((x shr 8) and 0x00FF00FF'u32)
+    result = (y shl 16) or (y shr 16)
+  func bswapIns(x: uint64): uint64 {.inline.} =
+    let lo = bswapIns(uint32(x and 0xFFFF_FFFF'u64))
+    let hi = bswapIns(uint32(x shr 32))
+    result = (uint64(lo) shl 32) or uint64(hi)
+
+func byteSwap*(x: uint8): uint8 {.inline.} =
+  ## Reverses the byte order of `x`; a single byte is its own swap.
+  x
+
+func byteSwap*(x: uint16): uint16 {.inline.} =
+  ## Reverses the byte order of `x` (`0x1122` becomes `0x2211`). One
+  ## instruction where the target has it (`bswap`/`rev`), shifts elsewhere.
+  bswapIns(x)
+
+func byteSwap*(x: uint32): uint32 {.inline.} =
+  ## Reverses the byte order of `x` (`0x11223344` becomes `0x44332211`).
+  bswapIns(x)
+
+func byteSwap*(x: uint64): uint64 {.inline.} =
+  ## Reverses the byte order of `x`.
+  bswapIns(x)
+
+func byteSwap*(x: int16): int16 {.inline.} = cast[int16](bswapIns(cast[uint16](x)))
+  ## Reverses the byte order of `x`.
+func byteSwap*(x: int32): int32 {.inline.} = cast[int32](bswapIns(cast[uint32](x)))
+  ## Reverses the byte order of `x`.
+func byteSwap*(x: int64): int64 {.inline.} = cast[int64](bswapIns(cast[uint64](x)))
+  ## Reverses the byte order of `x`.

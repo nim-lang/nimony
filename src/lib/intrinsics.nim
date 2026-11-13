@@ -255,17 +255,23 @@ type
     CsellsOp
     CselhiOp
     CselhsOp
-    # ── block memory operations (`{.intrinsic: "Memset".}` …). Portable: C has
-    #    them as builtins, LLVM as `llvm.mem*`, and arkham lowers each as an
-    #    inline loop over the argument registers — which is why arkham treats one
-    #    as a CALL POINT (the loop's scratch takes caller-saved registers). They
-    #    are rows rather than `importc` calls so a pass can emit one in any module
-    #    by declaring it there: shoggoth's `memidioms` turns recognized fill/copy
-    #    loops into them, and an intrinsic declaration has no body for DCE to
-    #    keep alive.
-    MemsetOp     # Memset(dest: pointer; byte: int; size: int)
-    MemcpyOp     # Memcpy(dest, src: pointer; size: int) — the regions must not overlap
-    MemcmpOp     # int32 = Memcmp(a, b: pointer; size: int)
+    # ── block memory operations (`{.intrinsic: "zeroMemIns".}` …). Portable.
+    #    The operands are LOCATIONS, not pointers: `zeroMemIns(x)` names `x`
+    #    itself. The written one is spelled `(haddr x)`, like every intrinsic's
+    #    `var` operand, and the read ones are the bare lvalues (see `ptLoc`), so
+    #    nothing forces a scalar local out of its register: on a scalar the op
+    #    is `x = 0`, a move or a compare, on an aggregate or a span straight-line
+    #    memory operations. Only a byte count that is not a literal makes it a
+    #    loop (in arkham a CALL POINT, like the C function). The byte count is
+    #    OPTIONAL (`ptOptSize`): absent, it is the size of the first operand's
+    #    type, which is what the back ends know best anyway; present, the op
+    #    covers that many bytes starting at the location (an array span — what
+    #    shoggoth's `memidioms` emits for a fill/copy loop). Rows rather than
+    #    `importc` calls so a pass can emit one in any module by declaring it
+    #    there, and an intrinsic declaration has no body for DCE to keep alive.
+    ZeroMemOp    # zeroMemIns(dest: var T [; size: int])
+    CopyMemOp    # copyMemIns(dest: var T; src: T [; size: int]) — no overlap
+    CmpMemOp     # int32 = cmpMemIns(a, b: T [; size: int]) — memcmp's sign
     # ── floating point. IEEE 754 requires `sqrt` to be correctly rounded, and
     #    every FPU this table targets implements exactly that operation in one
     #    instruction (`sqrtsd`/`sqrtss`, `fsqrt`) — a software root is the
@@ -273,6 +279,16 @@ type
     #    call it also made each float local live across it a spill on x86-64,
     #    where no xmm register is callee-saved.
     SqrtOp       # f = Sqrt(x: f)  — f32 or f64
+    # Rounding to an integral value, in the float's own format. Each is one
+    # instruction on AArch64 (`frintm`/`frintp`/`frintz`/`frinta`) and, apart
+    # from `Round`, on x86-64 with SSE4.1 (`roundsd` with a mode immediate) —
+    # the same baseline `Popcount`'s `popcnt` already assumes. `Round` rounds
+    # halfway cases AWAY from zero (C's `round`), which no SSE rounding mode
+    # does, so it has no x86-64 row: `std/math` builds it from `Trunc` there.
+    FloorOp      # f = Floor(x: f)
+    CeilOp       # f = Ceil(x: f)
+    TruncOp      # f = Trunc(x: f)
+    RoundOp      # f = Round(x: f) — halfway cases away from zero
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -363,6 +379,13 @@ type
                  ## `.4s`/`.2d` arrangement. Like `ptMemOrder` it is not evaluated —
                  ## see `evaluatedOperands` — but unlike it, the back end DOES read
                  ## its literal value.
+    ptLoc        ## a LOCATION of any type: the block-memory rows' operands. It
+                 ## arrives as `(haddr L)` — written (`roOut`, declared `var`) or
+                 ## only read (`roIn`, declared by value; hexer adds the `haddr`) —
+                 ## and names L itself, never a pointer value, so a back end may keep
+                 ## L in a register and treat the op as a move when L is a scalar.
+    ptOptSize    ## the block-memory rows' trailing byte count, which a declaration
+                 ## may OMIT: absent, the op covers `sizeof` the first operand.
     ptImmLit     ## an operand the INSTRUCTION encodes rather than reads from a
                  ## register: `bkpt #imm8`'s comment field. Like `ptLaneBits` it is
                  ## never evaluated (`evaluatedOperands`) and its literal value is
@@ -440,8 +463,8 @@ const
     "adds3", "adcs3", "subs3", "sbcs3", "mul3", "umulh", "umull", "umlal", "bic3",
     "cseleq", "cselne", "csellt", "cselle", "cselgt", "cselge", "csello",
     "csells", "cselhi", "cselhs",
-    "Memset", "Memcpy", "Memcmp",
-    "Sqrt"]
+    "zeroMemIns", "copyMemIns", "cmpMemIns",
+    "Sqrt", "Floor", "Ceil", "Trunc", "Round"]
 
   Imm8 = [ptImmLit, ptNone, ptNone, ptNone, ptNone, ptNone]
     ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -487,10 +510,11 @@ const
   VecDup = [ptFloatW, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
   VecHAdd = [ptVec128, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
 
-  MemFill = [ptAnyPtr, ptAnyInt, ptAnyInt, ptNone, ptNone, ptNone]
-    ## `(dest, byte, size)`: only the low 8 bits of `byte` count
-  MemBin = [ptAnyPtr, ptAnyPtr, ptAnyInt, ptNone, ptNone, ptNone]
-    ## `(dest, src, size)` / `(a, b, size)`
+  MemZero = [ptLoc, ptOptSize, ptNone, ptNone, ptNone, ptNone]
+    ## `(dest [, size])`
+  MemBin = [ptLoc, ptLoc, ptOptSize, ptNone, ptNone, ptNone]
+    ## `(dest, src [, size])` / `(a, b [, size])`
+  MemOut = [roOut, roIn, roIn, roIn, roIn, roIn]   ## the destination is only written
 
   MulShape = [ptAnyIntW, ptAnyIntW, ptAnyIntW, ptNone, ptNone, ptNone]
     ## `(lo, hi, s)`, all one width
@@ -1153,22 +1177,34 @@ const
                  params: Bin, roles: AllIn, ret: ptAnyIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
     # ── block memory operations ──
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # Memset
-                 params: MemFill, roles: AllIn, ret: ptVoid,
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,  # zeroMemIns
+                 params: MemZero, roles: MemOut, ret: ptVoid,
                  widths: {}, tie: -1, effects: {efWrites}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # Memcpy
-                 params: MemBin, roles: AllIn, ret: ptVoid,
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # copyMemIns
+                 params: MemBin, roles: MemOut, ret: ptVoid,
                  widths: {}, tie: -1, effects: {efReads, efWrites}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # Memcmp
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3,  # cmpMemIns
                  params: MemBin, roles: AllIn, ret: ptInt32,
                  widths: {}, tie: -1, effects: {efReads}, uses: {}, defs: {}),
     # ── floating point ──
     IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Sqrt
                  params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Floor
+                 params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Ceil
+                 params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,   # Trunc
+                 params: FUn, roles: AllIn, ret: ptFloatW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgA64}, arity: 1,   # Round
+                 params: FUn, roles: AllIn, ret: ptFloatW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = SqrtOp
+const LastIntrinsicOp* = RoundOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -1216,7 +1252,9 @@ proc isAssemblerOnly*(r: IntrinsicRow): bool =
   if r.uses != {} or r.isFlagValue: return true
   var written = 0
   for i in 0 ..< r.arity:
-    if r.roles[i] == roOut: return true
+    # A `ptLoc` destination (`zeroMemIns`, `copyMemIns`) is a LOCATION the op
+    # writes, not a second register result.
+    if r.roles[i] == roOut and r.params[i] != ptLoc: return true
     if r.roles[i] == roInout: inc written
   # two results (`umlal`'s register pair) are more than the allocator's
   # one-tied-operand model can place
@@ -1289,10 +1327,21 @@ proc hasInoutOperand*(r: IntrinsicRow): bool =
     if r.roles[i] == roInout: return true
 
 proc isMemOp*(op: IntrinsicOp): bool {.inline.} =
-  ## `Memset`/`Memcpy`/`Memcmp`. arkham lowers them as an inline loop that uses
-  ## the argument registers and caller-saved scratch, so its analyser treats one
-  ## as a call point; the other back ends call the C builtin of that name.
-  ord(op) >= ord(MemsetOp) and ord(op) <= ord(MemcmpOp)
+  ## `zeroMemIns`/`copyMemIns`/`cmpMemIns`. Their operands are locations
+  ## (`ptLoc`) and the byte count is optional (`ptOptSize`); the C back end
+  ## spells them `__builtin_memset(&d, 0, n)` & co.
+  ord(op) >= ord(ZeroMemOp) and ord(op) <= ord(CmpMemOp)
+
+proc memLocOperands*(op: IntrinsicOp): int {.inline.} =
+  ## How many LEADING operands of a block-memory row are locations: the size, if
+  ## any, follows them.
+  if op == ZeroMemOp: 1 else: 2
+
+proc isFloatUnary*(op: IntrinsicOp): bool {.inline.} =
+  ## A float-to-float row of one operand in the operand's own format: `Sqrt`
+  ## and the rounding rows. The back ends lower them alike — the operand is
+  ## produced into the result register and the instruction runs in place.
+  ord(op) >= ord(SqrtOp) and ord(op) <= ord(RoundOp)
 
 proc isVolatile*(op: IntrinsicOp): bool {.inline.} =
   ## A volatile access. Two of them may not be reordered against each other, may

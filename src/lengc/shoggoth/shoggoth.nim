@@ -184,7 +184,7 @@ proc optimizeMain(args: seq[string]) =
     elif a == "--stats": stats = true
     elif a == "--vectorize": vecMode = vecNeon
     elif a == "--vectorize:sse": vecMode = vecSse
-    elif a == "--no-mem-intrinsics": memOpts.intrinsics = false   # a back end without the Memset/Memcpy rows
+    elif a == "--no-mem-intrinsics": memOpts.intrinsics = false   # a back end without the zeroMemIns/copyMemIns rows
     elif a.startsWith("--merge-stores:"):
       # adjacent constant field stores -> one wider store; the value is the
       # target's word in bits. Little-endian and type-agnostic back ends only.

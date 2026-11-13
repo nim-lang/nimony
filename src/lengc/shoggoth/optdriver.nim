@@ -31,7 +31,7 @@ import vectorizer                             # runVectorizer (map loops -> (ins
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
 import tailcalls                              # runTailCalls (the tail-call encoding)
-import memidioms                              # runMemIdioms (fill loops -> Memset)
+import memidioms                              # runMemIdioms (zero-fill loops -> zeroMemIns)
 import ".." / ".." / "lib" / intrinsics       # IntrinsicOp (Stats.memOps)
 export MemOpts                                # the driver flags' type, for shoggoth.nim
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
@@ -145,7 +145,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # and no later pass needs to look at them; the scalar remainder loop it leaves
   # behind was already optimized by everything above. Only the encoding passes
   # below follow it, and they rewrite `ret`s, which it never emits.
-  # Fill loops become a `Memset` intrinsic after CSE, so the loop it inspects is
+  # Zero-fill loops become a `zeroMemIns` intrinsic after CSE, so the loop it inspects is
   # the cleaned-up one, and before the vectorizer, which would otherwise turn the
   # same loop into vector stores. `memOpts.intrinsics` is false for a back end
   # without a lowering for the rows (AVR); `memOpts.mergeWordBytes` enables
@@ -254,8 +254,8 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
         rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)
     if st.vectorized > 0:
       addVecIntrinsicDecls(result, "vec." & suffix)
-    if MemsetOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemsetOp)
-    if MemcpyOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, MemcpyOp)
+    if ZeroMemOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, ZeroMemOp)
+    if CopyMemOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, CopyMemOp)
     result.closeTag()
   else:
     rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)

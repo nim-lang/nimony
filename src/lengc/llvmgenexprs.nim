@@ -412,6 +412,14 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
       callCallee: llGlobalRef(iname, c.prim.ptrT),
       callRetType: rtype, callArgs: @[args[0], llIntTextC("0", c.prim.i1)])
     res
+  template callUnary(iname: string; rtype: LLType): LLValue =
+    # `llvm.bswap` takes the value alone: no `is_zero_poison` flag
+    let t = c.nextTemp()
+    let res = llReg(t, rtype)
+    c.emit LLInstr(kind: llCall, result: res,
+      callCallee: llGlobalRef(iname, c.prim.ptrT),
+      callRetType: rtype, callArgs: @[args[0]])
+    res
   case externName
   of "__builtin_ctzll":
     let r = callIntrinsic("llvm.cttz.i64", c.prim.i64)
@@ -444,19 +452,25 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
   of "__builtin_popcount":
     result = callIntrinsic("llvm.ctpop.i32", c.prim.i32)
   of "__builtin_bswap16":
-    result = callIntrinsic("llvm.bswap.i16", c.prim.i16)
+    result = callUnary("llvm.bswap.i16", c.prim.i16)
   of "__builtin_bswap32":
-    result = callIntrinsic("llvm.bswap.i32", c.prim.i32)
+    result = callUnary("llvm.bswap.i32", c.prim.i32)
   of "__builtin_bswap64":
-    result = callIntrinsic("llvm.bswap.i64", c.prim.i64)
+    result = callUnary("llvm.bswap.i64", c.prim.i64)
   of "__builtin_expect":
     result = args[0]
-  of "__builtin_sqrt", "__builtin_sqrtf":
+  of "__builtin_sqrt", "__builtin_sqrtf", "__builtin_floor", "__builtin_floorf",
+     "__builtin_ceil", "__builtin_ceilf", "__builtin_trunc", "__builtin_truncf",
+     "__builtin_round", "__builtin_roundf":
+    # `__builtin_floorf` → `llvm.floor.f32`: the one-operand float intrinsics.
+    let single = externName[^1] == 'f'
+    let stem = externName.substr(len("__builtin_"),
+                                 externName.len - 1 - ord(single))
     let t = c.nextTemp()
     let res = llReg(t, retType)
     c.emit LLInstr(kind: llCall, result: res,
-      callCallee: llGlobalRef(if externName == "__builtin_sqrtf": "llvm.sqrt.f32"
-                              else: "llvm.sqrt.f64", c.prim.ptrT),
+      callCallee: llGlobalRef("llvm." & stem & (if single: ".f32" else: ".f64"),
+                              c.prim.ptrT),
       callRetType: retType, callArgs: @[args[0]])
     result = res
   else:
@@ -480,22 +494,49 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
     var args: seq[LLValue] = @[]
     skip n                                  # the callee symbol
+    let firstArg = n
+    let nLocs = if op.isMemOp: memLocOperands(op) else: 0
     while n.hasMore:
       var a = LLValue()
-      genExprLLVM(c, n, a)
+      if args.len < nLocs and n.exprKind != HaddrC:
+        # a block-memory row's read location, a bare lvalue: pass its address
+        var lv = LLValue()
+        genLvalueLLVM(c, n, lv)
+        a = lv.withType(c.prim.ptrT)
+      else:
+        genExprLLVM(c, n, a)
       args.add a
 
     c.setLoc(start.info)
     if op.isAtomic:
       genAtomicCall(c, cBuiltinFor(op, bits), args, retType, result)
     elif op.isMemOp:
-      # the same lowering as a call to the importc'd C function of that name
-      args[2] = sizeToI64(c, args[2])
+      # The same lowering as a call to the importc'd C function of that name. The
+      # location operands are pointers here (`(haddr L)`, or a bare lvalue's
+      # address); an absent byte count is the size of the first location's type.
+      let nLoc = memLocOperands(op)
+      var size: LLValue
+      if args.len > nLoc:
+        size = sizeToI64(c, args[nLoc])
+      else:
+        var inner = firstArg
+        if inner.exprKind == HaddrC: inc inner
+        let typ = genTypeLLVMReadOnly(c, getType(c.m, inner))
+        let t1 = c.emitGEP(typ, llNull(c.prim.ptrT), [llIntTextC("1", c.prim.i32)],
+            inbounds = false)
+        let t2 = c.nextTemp()
+        let res = llReg(t2, c.llIntBits(c.bits))
+        c.emit LLInstr(kind: llPtrtoint, result: res, castOp: "ptrtoint", castSrc: t1,
+                       castDstType: c.llIntBits(c.bits))
+        size = sizeToI64(c, res)
+      let callArgs =
+        if op == ZeroMemOp: @[args[0], llIntTextC("0", c.prim.i32), size]
+        else: @[args[0], args[1], size]
       let name = case op
-                 of MemsetOp: "memset"
-                 of MemcpyOp: "memcpy"
+                 of ZeroMemOp: "memset"
+                 of CopyMemOp: "memcpy"
                  else: "memcmp"
-      genMemIntrinsicCall(c, name, args, retType, result)
+      genMemIntrinsicCall(c, name, callArgs, retType, result)
 
     else:
       let builtin = cBuiltinFor(op, bits)

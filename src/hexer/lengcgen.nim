@@ -161,6 +161,14 @@ proc applicationTag(n: Cursor): string =
         if hasPragma(pragmas, InstructionP) or hasPragma(pragmas, IntrinsicP):
           result = "instr"
 
+proc trApplication(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## `(call …)` / `(instr …)`.
+  dest.addParLe(applicationTag(n), n.info)
+  n.into:
+    while n.hasMore:
+      trExpr c, dest, n
+    dest.addParRi(n.endInfo)
+
 proc externKind(p: CollectedPragmas): string =
   if ImportcP in p.flags:
     result = "importc"
@@ -1737,11 +1745,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     of TupconstrX:
       trTupleConstr c, dest, n
     of CmdX, CallstrlitX, InfixX, PrefixX, HcallX, CallX:
-      dest.addParLe(applicationTag(n), n.info)
-      n.into:
-        while n.hasMore:
-          trExpr(c, dest, n)
-      dest.addParRi()
+      trApplication c, dest, n
     of ExprX:
       trStmtsExpr c, dest, n
     of ArratX:
@@ -2171,11 +2175,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       # always at module level: `finalir.toFinalIr` moves every const there
       trLocal c, dest, n, ConstY, mode, SymId(0)
     of CallKindsS:
-      dest.addParLe(applicationTag(n), n.info)
-      n.into:
-        while n.hasMore:
-          trExpr c, dest, n
-        dest.addParRi(n.endInfo)
+      trApplication c, dest, n
     of EmitS, AsmS:
       takeInto dest, n:
         while n.hasMore:

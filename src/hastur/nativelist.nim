@@ -207,6 +207,10 @@ const
     # `uint32 -> int32` cast that skipped sign-extension, a float fold computing
     # into the register its rhs still read, and bit-casts kept as `cast`.
     "tests/nimony/intrinsics/tfloatbits",
+    # The `Floor`/`Ceil`/`Trunc`/`Round` rows (`roundsd`, `frint*`) and the
+    # `Bswap` row behind `std/bitops.byteSwap`.
+    "tests/nimony/intrinsics/tfloatround",
+    "tests/nimony/intrinsics/tbyteswap",
     # A `let` in a toplevel `while` condition (#2794). Sem made it a global, which
     # the C backend tolerated inside the init proc but arkham asserted on.
     "tests/nimony/sysbasics/twhileinfor",
@@ -256,6 +260,9 @@ const
     # address of `p[i]` stages its index through a scratch register.
     "tests/nimony/opt/topt_memset_fill",
     "tests/nimony/opt/topt_memcpy_copy",
+    # `copyMem`/`zeroMem` on `addr` of a scalar local: arkham lowers the call as a
+    # register move (`core/scalarmem.nim`) — the address and the call both vanish.
+    "tests/nimony/opt/topt_scalar_memops",
     # adjacent constant field stores merged into one wider store: native only
     # (the C backend's strict aliasing forbids it), so only this run checks it
     "tests/nimony/opt/topt_store_merge",
