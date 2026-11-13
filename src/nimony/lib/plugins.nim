@@ -556,8 +556,8 @@ proc asDot*(c: NifCursor): Dot =
 
 type
   BinaryOp* = object
-    ## A typed built-in `(op type lhs rhs)`; excludes call-like and boolean nodes
-    typ*, lhs*, rhs*: NifCursor
+    ## A typed built-in `(op type operand1 operand2)`; excludes call-like and boolean nodes
+    typ*, operand1*, operand2*: NifCursor
 
   Conversion* = object
     ## The target type and operand of `conv`, `hconv`, or `dconv`
@@ -577,11 +577,11 @@ type
     cond*, body*: NifCursor
 
 proc asBinaryOp*(c: NifCursor): BinaryOp =
-  ## Read only built-ins whose grammar is exactly `(op type lhs rhs)`
+  ## Read only built-ins whose grammar is exactly `(op type operand1 operand2)`
   assert c.exprKind in {AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX,
     BitandX, BitorX, BitxorX, EqX, NeqX, LeX, LtX},
     "asBinaryOp needs a typed binary built-in"
-  BinaryOp(typ: slot(c, 0), lhs: slot(c, 1), rhs: slot(c, 2))
+  BinaryOp(typ: slot(c, 0), operand1: slot(c, 1), operand2: slot(c, 2))
 
 proc asConversion*(c: NifCursor): Conversion =
   ## Read a value conversion; `cast` and procedure calls are separate constructs

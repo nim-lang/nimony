@@ -574,7 +574,7 @@ if n.exprKind == CallX:
 
 | View | Accepted tags | Named parts |
 |------|---------------|-------------|
-| `asBinaryOp(n)` | `add sub mul div mod shr shl ashr bitand bitor bitxor eq neq le lt` | `typ lhs rhs` |
+| `asBinaryOp(n)` | `add sub mul div mod shr shl ashr bitand bitor bitxor eq neq le lt` | `typ operand1 operand2` |
 | `asConversion(n)` | `conv hconv dconv` | `typ operand` |
 | `asIfStmt(n)` | `if` | `branches(statement)` iterator |
 | `asWhileStmt(n)` | `while` | `cond body` |
