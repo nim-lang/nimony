@@ -264,9 +264,13 @@ proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(delay0)` — no-arg form: jump to the NEXT suspension point.
   c.awaitingSuspendPark = true
   let info = n.info
+  let callSite = n
   n.into: # delay0
     let state = getNextState(c.currentProc.cf, n)
-    assert state != -1, "delay() no-arg must precede suspension point"
+    if state == -1:
+      # The ordinary user mistake of calling `delay()` with no suspension
+      # point behind it, not an internal invariant: report it at the call site.
+      error "`delay()` with no arguments must be followed by a suspension point in the same state; add `suspend()` or a call to a `.passive` routine after it: ", callSite
     contNextState(c, dest, state, info)
 
 proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =

@@ -80,7 +80,7 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
       if overwrite:
         writeFile(msgs, strippedOutput)
       failure c, file, msgSpec, strippedOutput
-    expectedExitCode = if msgSpec.contains(ErrorKeyword): 1 else: 0
+    expectedExitCode = if msgSpec.containsError: 1 else: 0
   elif overwrite and cat == Tracked:
     writeFile(msgs, removeMakeErrors(compilerOutput))
   if compilerExitCode != expectedExitCode:
