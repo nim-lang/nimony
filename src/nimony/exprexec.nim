@@ -17,7 +17,10 @@ import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, ty
 import ".." / lib / symparser
 
 const
-  ParamSymName = "dest.0"
+  ParamSymName = "`dest.0" # unspellable: the program is re-checked from
+                           # idents beside the user's declarations
+  WriteNifAlias = "`writenif" # unspellable alias of `std/writenif`; the
+                              # program calls its routines through it
 
 when false:
   proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
@@ -54,6 +57,7 @@ type
     requests: seq[GenProcRequest]
     usedModules: HashSet[string]
     errorMsg: string
+    indexVars: int           # counter for `newIndexVar`
     semCtx: ptr SemContext   # used to resolve `InvokeT` types via sem's
                              # `instantiateType` (kept as a ptr so this
                              # struct stays trivially-copyable; the SemContext
@@ -127,9 +131,14 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
   ## `std/writenif`'s symbols are the program's own calls into its reporting
   ## routines, plain non-generic procs: they become idents without a look at
   ## their declarations, as the program's build is what builds that module
-  ## (it is an import, see `semos.runEval`) and it may not exist yet.
+  ## (it is an import, see `semos.runEval`) and it may not exist yet. They
+  ## are qualified with the module's unspellable alias, so a routine of the
+  ## user's with the same name cannot take the call.
   if pool.symModule(sym) == writeNifModuleSuffix:
+    buf.addParLe(DotX, info)
+    buf.addIdent(WriteNifAlias, info)
     buf.addIdent(pool.strings.getOrIncl(pool.symBasename(sym)), info)
+    buf.addParRi()
     return
   let typevars = instantiationTypevars(sym)
   if not cursorIsNil(typevars):
@@ -437,6 +446,14 @@ proc incIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
       copyIntoSymUse c.dest, indexVar, c.info
       c.dest.addIntLit(+1, c.info)
 
+proc newIndexVar(c: var SynthesizeSerializerCtx): SymId =
+  ## A fresh index variable for one serializer loop. The program is
+  ## re-checked from idents (`rewriteSymsToIdents`), so the loops of one
+  ## routine, nested (an array of arrays) or in sequence (a tuple of
+  ## arrays), must differ by basename, not only by symbol.
+  result = pool.symId("`idx" & $c.indexVars & ".0")
+  inc c.indexVars
+
 proc declareIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
   copyIntoKind c.dest, VarY, c.info:
     addSymDef c.dest, indexVar, c.info
@@ -452,7 +469,7 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
   inc n
   let baseType = n
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "aconstr")
@@ -485,7 +502,7 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
   inc ft # past uarray tag
   let baseType = ft
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "addr")
@@ -523,7 +540,7 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
   genStringCall(c, "writeNifParLe", "setconstr")
   genTypeCall(c, orig)
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
   # the element is our int indexVar, converted back to the set's base type
   var indexVarAsBuf = createTokenBuf(4)
@@ -789,10 +806,13 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
   c.dest.addParLe StmtsS, info
 
   c.dest.copyIntoKind ImportS, info:
-    c.dest.copyIntoKind InfixX, info:
-      c.dest.addIdent "/", info
-      c.dest.addIdent "std", info
-      c.dest.addIdent "writenif", info
+    c.dest.copyIntoKind InfixX, info: # std/writenif as `writenif
+      c.dest.addIdent "as", info
+      c.dest.copyIntoKind InfixX, info:
+        c.dest.addIdent "/", info
+        c.dest.addIdent "std", info
+        c.dest.addIdent "writenif", info
+      c.dest.addIdent WriteNifAlias, info
 
   if s.importSnippets.len > 0:
     # buffer-level `add` keeps the seals intact; a token-by-token `add`

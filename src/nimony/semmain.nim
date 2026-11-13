@@ -495,8 +495,10 @@ proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
     onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif")
   var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
   when true: #defined(enableContracts):
+    let hooks = c.typeHooks
+    assert hooks != nil # `semdata` is a `lenientnils` module
     var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
-                                    c.g.config.bits, c.g.config.verbose)
+                                    c.g.config.bits, hooks, c.g.config.verbose)
     if reporters.reportErrors(moreErrors) > 0:
       quit 1
   dest = stripAnalysisFacts(ensureMove fir)

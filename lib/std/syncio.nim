@@ -215,9 +215,11 @@ proc fillBuf(fo: var FileObj): bool =
     # out of memory: `setLen` could not grow the buffer, so it is still short
     fo.flags.incl ffError
     return false
-  var k = sysRead(fo.fd, addr fo.rbuf[0], uint(NativeBufSize))
+  # taken once: the read is a call that may write `fo` under another name
+  let buf = addr fo.rbuf[0]
+  var k = sysRead(fo.fd, buf, uint(NativeBufSize))
   while interrupted(k):
-    k = sysRead(fo.fd, addr fo.rbuf[0], uint(NativeBufSize))
+    k = sysRead(fo.fd, buf, uint(NativeBufSize))
   if k > 0:
     fo.rbuf.setLen k
     result = true

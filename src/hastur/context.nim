@@ -19,6 +19,9 @@ proc error*(msg: string) =
 
 const
   ErrorKeyword* = "Error:"
+  HexerErrorKeyword* = "[Error]"
+    ## Diagnostics from the lowering passes reach stdout in this shape, so a
+    ## `.msgs` spec can pin a hexer error the same way it pins a sem error.
 
   targetIs64bit* = sizeof(int) == 8
     ## The checked-in golden `.nim.c` and `.nif` outputs are generated for a
@@ -30,6 +33,11 @@ const
     ## which is the same machine that runs nimony for the tests.)
 
 # ---- toolchain resolution -------------------------------------------------
+
+proc containsError*(s: string): bool =
+  ## True when `s` holds a compiler diagnostic, so its test is a negative one.
+  ## Sem reports `Error:`, the lowering passes report `[Error]`.
+  s.contains(ErrorKeyword) or s.contains(HexerErrorKeyword)
 
 proc defaultToolchainDir(): string =
   ## Where hastur looks for its sibling toolchain binaries by default: the
