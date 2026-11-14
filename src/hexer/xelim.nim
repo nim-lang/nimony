@@ -497,11 +497,17 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 
+proc transparentExpr(n: Cursor): bool
+
 proc condNodeSafe(n: Cursor): bool =
   var n = n
   case n.kind
   of TagLit:
     if n.exprKind in CallKinds: return false
+    if n.exprKind in {AndX, OrX}:
+      # Below a leaf (`(a or b) != c`) a short-circuit is a value, and the
+      # consumers lower one only on a condition's spine.
+      return false
     if n.exprKind == CastX:
       # A passthrough copies the subtree VERBATIM, so it also skips whatever
       # else the current goal rewrites. `LowerCasts` binds a cast's source and
@@ -539,6 +545,18 @@ const
     ## inflated tiny accessors (`nifcore.load`, `kind`) past the inliner's
     ## 100-token bound, so they stayed real calls.
 
+proc condSpineSafe(n: Cursor): bool =
+  ## The spine (`and`/`or`/`not`/`(expr val)`) as `condSpineHasShortCircuit`
+  ## walks it; whatever hangs off it is a leaf for `condNodeSafe`.
+  if n.exprKind in {AndX, OrX, NotX} or transparentExpr(n):
+    var n = n
+    n.loopInto:
+      if not condSpineSafe(n): return false
+      skip n
+    result = true
+  else:
+    result = condNodeSafe(n)
+
 proc condPassthroughSafe(n: Cursor): bool =
   ## True if an `and`/`or` condition subtree contains only short-circuit nodes
   ## and *pure* leaves that finalir can emit inline — no calls and no
@@ -549,7 +567,7 @@ proc condPassthroughSafe(n: Cursor): bool =
   ## evaluation requires the call to be hoisted *into* the branch, which a
   ## consumer handed the bare tree cannot do.
   if n.kind != TagLit: return false
-  result = condNodeSafe(n)
+  result = condSpineSafe(n)
 
 proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
   ## Copy the condition subtree at `n` into `dest`, dropping the brackets of any

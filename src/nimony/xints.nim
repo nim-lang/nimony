@@ -152,15 +152,17 @@ proc `shl`*(a: xint, b: int): xint =
     result.nan = true
 
 proc `shr`*(a: xint, b: int): xint =
-  # keeps `neg` the same, so sign preserving (ashr)
+  ## Arithmetic shift: `a` divided by `2^b`, rounded toward negative infinity,
+  ## as a signed `shr` computes at run time: `(-1) shr 1` is `-1`.
   if a.nan or b < 0:
     return xint(nan: true)
 
-  result = xint(
-    nan: false,
-    neg: a.neg,
-    val: a.val shr b
-  )
+  if a.neg and a.val != 0'u64:
+    # `-v shr b` is `-ceil(v / 2^b)`; shifting the magnitude alone would
+    # round toward zero
+    result = xint(nan: false, neg: true, val: ((a.val - 1'u64) shr b) + 1'u64)
+  else:
+    result = xint(nan: false, neg: false, val: a.val shr b)
 
 proc toTwos(a: xint): uint64 {.inline.} =
   ## 64 bit two's complement bit pattern of `a`.
@@ -212,16 +214,14 @@ proc mask*(a: xint, bits: int, signed: bool = false): xint =
   if a.nan or bits < 0 or bits > 64:
     return xint(nan: true)
 
+  # the low `bits` bits of the two's complement pattern, not of the magnitude:
+  # `-128` masked to a signed 8 bits stays `-128`
   let mask = if bits == 64: high(uint64) else: ((1'u64 shl bits) - 1)
-  result = xint(
-    nan: false,
-    neg: a.neg,
-    val: a.val and mask
-  )
-  if signed and result.val shr (bits - 1) != 0:
-    # two's complement
-    result.val = (not result.val and mask) + 1
-    result.neg = not result.neg
+  let v = toTwos(a) and mask
+  if signed and bits > 0 and v shr (bits - 1) != 0:
+    result = xint(nan: false, neg: true, val: (not v and mask) + 1)
+  else:
+    result = xint(nan: false, neg: false, val: v)
 
 # Additional helper for bit manipulation
 proc getBit*(a: xint, pos: int): xint =

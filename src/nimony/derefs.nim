@@ -514,6 +514,11 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
       n.into:
         mightBeDangerous(c, n)
         recurse()
+    elif n.stmtKind in {IncS, DecS, InclS, ExclS}:
+      n.into:
+        skip n # the type
+        mightBeDangerous(c, n)
+        recurse()
     elif n.exprKind in CallKinds:
       n.into:
         let orig = n
@@ -1389,10 +1394,23 @@ proc trRaise(c: var Context; n: var Cursor) =
     while n.hasMore:
       tr c, n, WantT
 
+proc loopContainerIsReadonly(c: var Context; n: Cursor): bool =
+  ## True when a loop variable that views the container `n` must not write to
+  ## it: `n` is rooted in a `let` (any type but `var`/`out`), in a `lent`
+  ## binding (only `allowLet` answers that one), or in a binding that is a
+  ## read-only view itself, such as the variable of an enclosing loop over a
+  ## `let`. Both readings of `borrowsFromReadonly` are asked because neither
+  ## covers both kinds of `let`, and the helper cannot simply count a `lent`
+  ## binding as read-only: `trLocation` asks it too when a `lent` result
+  ## forwards a borrow (`yield k` in `sets.items`).
+  let root = skipToRoot(n)
+  result = borrowsFromReadonly(c, n) or borrowsFromReadonly(c, n, allowLet=true) or
+    (root.isSymbol and c.r.dangerousLocations.hasKey(root.symId))
+
 proc trForHelper(c: var Context; n: var Cursor; dangerous: seq[SymId]) =
   takeInto c.dest, n:
     if dangerous.len > 0:
-      if borrowsFromReadonly(c, n, allowLet=true):
+      if loopContainerIsReadonly(c, n):
         for s in dangerous:
           c.r.dangerousLocations[s] = n.info
     tr c, n, WantT # iterator call

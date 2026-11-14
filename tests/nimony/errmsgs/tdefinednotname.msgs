@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tdefinednotname.nim(2, 19) Error: invalid expression for defined: 1 + 2
+tests/nimony/errmsgs/tdefinednotname.nim(3, 24) Error: invalid expression for defined: (1 + 2).x
