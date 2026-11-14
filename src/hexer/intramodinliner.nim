@@ -737,6 +737,27 @@ proc isStableAddrArg(c: Cursor): bool =
   if not c.isTagLit or c.exprKind notin AddrKinds: return false
   result = c.childCursor.isSymbol
 
+proc isLocalOrIntLit(c: Cursor): bool =
+  result = (c.isSymbol and pool.symIsLocal(c.symId)) or c.kind in {IntLit, UIntLit}
+
+proc isLocalAffineArg(c: Cursor): bool =
+  ## `(add T x y)` / `(sub T x y)` whose operands are caller locals or integer
+  ## literals: `a[i + j]`'s index. Substituted, not bound to a temp, for the
+  ## reason a bare local is: the inlined body never assigns a caller local, so
+  ## the operands cannot change across the splice. Re-evaluating it at each use
+  ## is one `add`, which CSE folds back; binding it hid the affine index from
+  ## the induction-variable pass, and the second `c[i + j]` of `c[i + j] += x`
+  ## got a temp of its own. The plain `add`/`sub` wrap: they never trap.
+  result = false
+  if c.isTagLit and c.exprKind in {AddC, SubC}:
+    var n = c.childCursor                  # the type
+    skip n
+    if n.hasMore and isLocalOrIntLit(n):
+      skip n
+      if n.hasMore and isLocalOrIntLit(n):
+        skip n
+        result = not n.hasMore
+
 proc slotRootOf(c: Cursor): SymId =
   ## Like `rootOf`, but a spine that crosses a pointer dereference targets the
   ## *pointee*, not the named slot: `(*p).f = x` writes through `p`, leaving
@@ -1265,7 +1286,7 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
     if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
-       (arg.isSymbol and pool.symIsLocal(arg.symId)):
+       (arg.isSymbol and pool.symIsLocal(arg.symId)) or isLocalAffineArg(arg):
       result.subst[pSyms[i]] = arg
     elif callerReadOnly and isPurePathArg(arg) and
          uses.getOrDefault(pSyms[i]) <= MaxPathSubstUses:
