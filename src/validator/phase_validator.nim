@@ -204,7 +204,7 @@ proc isStmtContext(tagStr: string): bool =
   ## Rough heuristic: tags whose direct children are statements.
   tagStr in ["stmts", "scope", "block", "if", "elif", "else", "when",
              "while", "for", "try", "except", "fin", "of", "case",
-             "defer", "ite", "itec", "loop"]
+             "defer", "ite", "loop"]
 
 # ---------------------------------------------------------------------------
 # Context-sensitive grammar overlays

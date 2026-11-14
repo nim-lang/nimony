@@ -67,6 +67,7 @@ import ".." / lib / symparser
 import ".." / lib / foreignmodules
 import ".." / lengc / [leng_model]
 import ".." / lib / lengaa
+from ".." / models / tags import IteTagId, LoopTagId
 
 type
   InlineInfo* = object
@@ -147,6 +148,20 @@ proc tokenCountAux(n: var Cursor): int =
   case n.kind
   of TagLit:
     result = 1
+    # The bounds below were calibrated on Leng's `if`/`while true`: count an
+    # `ite` and a `loop` as the statement they replace, so the switch to them
+    # (nimony#2984) leaves the policy where it was. `(if (elif C T) (else E))`
+    # is two tokens more than `(ite C T E)`, one more without the else;
+    # `(while (true) B)` is one less than `(loop B (continue .))`.
+    let tag = n.cursorTagId
+    if tag == TagId(IteTagId):
+      var e = n
+      inc e
+      skip e                                  # the condition
+      skip e                                  # the then-branch
+      result += (if e.hasMore and e.kind != DotToken: 2 else: 1)
+    elif tag == TagId(LoopTagId):
+      result -= 1
     n.into:
       while n.hasMore:
         result += tokenCountAux(n)
@@ -1667,10 +1682,16 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   # --- peek the next sibling: must be `(if (elif tmp …) …)` guarding on tmp ---
   var nextCur = entry
   skip nextCur                             # past the whole var decl
-  if not nextCur.isTagLit or nextCur.stmtKind != IfS: return 0
-  let firstElif = nextCur.childCursor
-  if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
-  var condCur = firstElif.childCursor
+  if not nextCur.isTagLit: return 0
+  let isIte = nextCur.cursorTagId == TagId(IteTagId)   # `(ite tmp …)`: no elif level
+  var condCur = default(Cursor)
+  if isIte:
+    condCur = nextCur.childCursor
+  else:
+    if nextCur.stmtKind != IfS: return 0
+    let firstElif = nextCur.childCursor
+    if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
+    condCur = firstElif.childCursor
   # The guard may be the temp itself or its negation — xelim's two-target
   # condition compiler guards early exits with `(not tmp)`. `not` evaluates
   # its operand unconditionally, so splicing X under it is as sound as the
@@ -1716,23 +1737,34 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
 
   # --- emit the rewritten `if`, splicing X into the first elif's condition ---
   var ifOpener = nextCur
-  dest.addParLe(ifOpener.cursorTagId, ifOpener.info)  # copy `(if` opener
-  ifOpener.into:
-    var elifn = ifOpener
-    dest.addParLe(elifn.cursorTagId, elifn.info)   # copy `(elif` opener
-    elifn.into:
+  dest.addParLe(ifOpener.cursorTagId, ifOpener.info)  # copy `(if`/`(ite` opener
+  if isIte:
+    ifOpener.into:
       if negatedGuard:
-        dest.addParLe(TagId(NotC), elifn.info)
+        dest.addParLe(TagId(NotC), ifOpener.info)
       emitRenamed(dest, retVal, bnd)     # X' replaces the tmp condition
       if negatedGuard:
         dest.addParRi()
-      skip elifn                           # drop the original tmp/(not tmp) condition
-      while elifn.hasMore:
-        dest.takeTree elifn                # elif body verbatim
-    dest.addParRi()                        # close (elif …)
-    skip ifOpener                          # past the elif we just consumed
-    while ifOpener.hasMore:
-      dest.takeTree ifOpener               # else / further elifs verbatim
+      skip ifOpener                      # drop the original tmp/(not tmp) condition
+      while ifOpener.hasMore:
+        dest.takeTree ifOpener           # the arms verbatim
+  else:
+    ifOpener.into:
+      var elifn = ifOpener
+      dest.addParLe(elifn.cursorTagId, elifn.info)   # copy `(elif` opener
+      elifn.into:
+        if negatedGuard:
+          dest.addParLe(TagId(NotC), elifn.info)
+        emitRenamed(dest, retVal, bnd)     # X' replaces the tmp condition
+        if negatedGuard:
+          dest.addParRi()
+        skip elifn                           # drop the original tmp/(not tmp) condition
+        while elifn.hasMore:
+          dest.takeTree elifn                # elif body verbatim
+      dest.addParRi()                        # close (elif …)
+      skip ifOpener                          # past the elif we just consumed
+      while ifOpener.hasMore:
+        dest.takeTree ifOpener               # else / further elifs verbatim
   dest.addParRi()                          # close (if …)
 
   # Advance past BOTH the var decl and the if we folded into it.
@@ -1842,6 +1874,26 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
   ## the label and its jumps with it.
   case n.kind
   of TagLit:
+    if n.cursorTagId == TagId(IteTagId):
+      # `(ite C T E|.)`: a decided condition leaves the arm it picks (or
+      # nothing); an undecided one keeps the `ite` and recurses into the arms.
+      let v = condVal(n.childCursor)
+      if v == condUnknown:
+        dest.addParLe(n.cursorTagId, n.info)
+        n.into:
+          while n.hasMore:
+            emitPruned(dest, n)
+        dest.addParRi()
+        return
+      var b = n
+      b.into:
+        skip b                                    # the condition
+        if v == condFalse: skip b                 # the then-branch
+        if b.hasMore and b.kind != DotToken:
+          emitPruned(dest, b)
+        while b.hasMore: skip b
+      skip n
+      return
     if n.stmtKind == IfS:
       # Peek pass over the arms: what survives? The cursors index into the
       # buffer `n` reads, which outlives the re-emit below.

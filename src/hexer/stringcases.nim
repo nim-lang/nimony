@@ -40,26 +40,28 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
         dest.addIntLit(f.best[1], info)
         dest.addCharLit(f.best[0], info)
 
-    dest.copyIntoUnchecked "if", info:
-      dest.copyIntoUnchecked "elif", info:
-        dest.addSymUse(condTmp, info)
-        dest.copyIntoUnchecked "stmts", info:
-          decodeSolution c, dest, s, f.thenA, selector, info
-      dest.copyIntoUnchecked "else", info:
-        dest.copyIntoUnchecked "stmts", info:
-          decodeSolution c, dest, s, f.elseA, selector, info
+    dest.copyIntoUnchecked "ite", info:
+      dest.addSymUse(condTmp, info)
+      dest.copyIntoUnchecked "stmts", info:
+        decodeSolution c, dest, s, f.thenA, selector, info
+      dest.copyIntoUnchecked "stmts", info:
+        decodeSolution c, dest, s, f.elseA, selector, info
 
   of LinearSearch:
-    dest.copyIntoUnchecked "if", info:
-      for x in s[i].choices:
-        dest.copyIntoUnchecked "elif", info:
-          dest.copyIntoUnchecked "call", info:
-            dest.addSymUse(pool.symId(EqStringsOp), info)
-            dest.addSymUse(selector, info)
-            genStringLit c, dest, x[0], info
-          dest.copyIntoUnchecked "stmts", info:
-            dest.copyIntoUnchecked "jmp", info:
-              dest.addSymUse(pool.symId(x[1]), info)
+    # One `ite` per choice, each nested in the previous one's else-branch.
+    for x in s[i].choices:
+      dest.addParLe("ite", info)
+      dest.copyIntoUnchecked "call", info:
+        dest.addSymUse(pool.symId(EqStringsOp), info)
+        dest.addSymUse(selector, info)
+        genStringLit c, dest, x[0], info
+      dest.copyIntoUnchecked "stmts", info:
+        dest.copyIntoUnchecked "jmp", info:
+          dest.addSymUse(pool.symId(x[1]), info)
+      dest.addParLe("stmts", info)
+    for x in s[i].choices:
+      dest.addParRi()                    # the innermost else's `stmts`
+      dest.addParRi()                    # its `ite`
 
 proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
   if n.isStringLit:

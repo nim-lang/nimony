@@ -209,6 +209,12 @@ type
                                    ## gets the same two answers intersected
                                    ## (`doc/cse.md`)
     callPos: seq[int]           ## `(call …)` nodes, for summary-based clobber
+    labels: HashSet[SymId]      ## the labels defined inside the loop: a `jmp`
+                                ## to one of them stays in the iteration
+    exited: bool                ## the walk has passed a way out of the loop (a
+                                ## `jmp` past it, `ret`, `raise`, a no-return
+                                ## call): from here on a statement of the body
+                                ## no longer runs on every iteration that began
 
   CachedEntry = object
     hasFirst: bool       # a first occurrence has been recorded
@@ -465,38 +471,8 @@ proc matchShortCircuit(c: var Context; n: Cursor) =
   ## `x = A or B` to `(if (elif A (asgn x true)) (else (asgn x B)))`. Without
   ## recognizing this, a `.requires` written with `and`/`or` leaves its guard keyed
   ## on an opaque bool temp with two definitions and nothing ever matches.
-  if n.stmtKind != IfS: return
-  var arms = n
-  var count = 0
-  var condA = default(Cursor)
-  var thenBody = default(Cursor)
-  var elseBody = default(Cursor)
-  var haveElse = false
-  var bad = false
-  arms.loopInto:
-    case arms.substructureKind
-    of ElifU:
-      inc count
-      var b = arms
-      var i = 0
-      b.loopInto:
-        if i == 0: condA = b
-        elif i == 1: thenBody = b
-        inc i
-        skip b
-      if i != 2: bad = true
-    of ElseU:
-      haveElse = true
-      var b = arms
-      var i = 0
-      b.loopInto:
-        if i == 0: elseBody = b
-        inc i
-        skip b
-      if i != 1: bad = true
-    else: bad = true
-    skip arms
-  if bad or count != 1 or not haveElse: return
+  var condA, thenBody, elseBody = default(Cursor)
+  if not twoWayParts(n, condA, thenBody, elseBody) or not hasArm(elseBody): return
   var tStmt = default(Cursor)
   var eStmt = default(Cursor)
   if not soleStmt(thenBody, tStmt): return
@@ -553,7 +529,7 @@ proc preScanDefs(c: var Context; start: Cursor) =
         c.defExpr[root] = cursorToPosition(c.orig[], rhs)
       else:
         c.tainted.incl root
-  elif sk == IfS:
+  elif sk in {IfS, IteS}:
     matchShortCircuit(c, start)
   elif start.exprKind in AddrKinds:
     let a = rootOf(child0(start))
@@ -1227,6 +1203,9 @@ proc preScanLoop(c: Context; start: Cursor; frame: var LoopFrame) =
         frame.memStorePaths.add pathOfLvalue(lhs)
   if sk == CallS or ek == CallC:
     frame.callPos.add cursorToPosition(c.orig[], start)
+  if sk == LabS:
+    let l = child0(start)
+    if l.kind == SymbolDef: frame.labels.incl symId(l)
   var n = start
   n.loopInto:
     preScanLoop(c, n, frame)
@@ -1329,7 +1308,7 @@ proc controlDependentIn(c: Context; loopPos: int): bool =
       continue
     if not under: continue
     let sk = cursorAt(c.orig[], p).stmtKind
-    if sk in {IfS, CaseS, TryS, OnerrS, WhileS, LoopS}:
+    if sk in {IfS, IteS, CaseS, TryS, OnerrS, WhileS, LoopS}:
       return true
 
 proc licmHoistPos(c: var Context; expr: Cursor): int =
@@ -1342,7 +1321,8 @@ proc licmHoistPos(c: var Context; expr: Cursor): int =
   # is borrowed by the loop; nothing it calls reads the stack, so lend it out.
   var stack = move c.loopStack
   for frame in stack:
-    if invariantIn(c, expr, frame) and not controlDependentIn(c, frame.pos):
+    if invariantIn(c, expr, frame) and not controlDependentIn(c, frame.pos) and
+       not frame.exited:
       if result < 0: result = frame.pos
     else:
       result = -1
@@ -1920,12 +1900,21 @@ proc trAsgn(c: var Context; n: var Cursor) =
     invalidateForStore(c, lhsStart)
   else: discard
 
+proc markExits(c: var Context; target: SymId) =
+  ## A way out of every enclosing loop that does not define `target` (every
+  ## loop, for `SymId(0)`: a `ret`, a `raise`, a no-return call).
+  for f in c.loopStack.mitems:
+    if target == SymId(0) or target notin f.labels: f.exited = true
+
+proc callIsNoReturn(c: var Context; call: Cursor): bool
+
 proc trCallStmt(c: var Context; n: var Cursor) =
   let call = n
   n.into:
     if n.hasMore: skip n
     while n.hasMore: trExpr(c, n)
   invalidateForCall(c, call)
+  if c.loopStack.len > 0 and callIsNoReturn(c, call): markExits(c, SymId(0))
 
 proc trIf(c: var Context; n: var Cursor) =
   openBranches c
@@ -1946,6 +1935,22 @@ proc trIf(c: var Context; n: var Cursor) =
         closeBranch c
     else:
       skip n
+  closeBranches c
+
+proc trIte(c: var Context; n: var Cursor) =
+  ## `(ite C T E|.)`: `trIf`'s two-branch case.
+  openBranches c
+  n.into:
+    if n.hasMore: trExpr(c, n)           # condition
+    if n.hasMore:
+      openBranch c
+      tr(c, n)                           # then
+      closeBranch c
+    if n.hasMore and n.kind != DotToken:
+      openFinalBranch c
+      tr(c, n)                           # else
+      closeBranch c
+    while n.hasMore: skip n
   closeBranches c
 
 proc trCase(c: var Context; n: var Cursor) =
@@ -1980,7 +1985,7 @@ proc trLoopBody(c: var Context; n: var Cursor) =
       while n.hasMore: skip n
   of LoopS:
     n.into:
-      if n.hasMore: tr(c, n)             # body; the infinite loop has no cond
+      if n.hasMore: tr(c, n)             # body; a `(continue X)` ends it, read there
       while n.hasMore: skip n
   else:
     skip n
@@ -1990,7 +1995,7 @@ proc trLoop(c: var Context; n: var Cursor) =
   var frame = LoopFrame(pos: loopPos,
                         writes: initHashSet[SymId](),
                         memStoreRoots: initHashSet[SymId](),
-                        callPos: @[])
+                        callPos: @[], labels: initHashSet[SymId]())
   preScanLoop(c, n, frame)
   var addrs = initHashSet[SymId]()
   preScanWrites(n, frame.writes, addrs)
@@ -2013,6 +2018,9 @@ proc trJmp(c: var Context; n: var Cursor) =
   let probe = child0(n)
   if probe.kind == Symbol:
     gotoLabel(c, LabelId(uint32(symId(probe))))
+    markExits(c, symId(probe))
+  else:
+    markExits(c, SymId(0))
   skip n
 
 proc trLab(c: var Context; n: var Cursor) =
@@ -2024,6 +2032,7 @@ proc trLab(c: var Context; n: var Cursor) =
 proc trBreakOrRet(c: var Context; n: var Cursor) =
   skip n
   clearCache c
+  markExits(c, SymId(0))
 
 proc callIsNoReturn(c: var Context; call: Cursor): bool =
   ## Reuses `callSummary`'s resolution — module table, then the callee's own
@@ -2032,29 +2041,12 @@ proc callIsNoReturn(c: var Context; call: Cursor): bool =
   result = callSummary(c, call, s) and s.noReturn
 
 proc guardCondition(c: var Context; n: Cursor; cond: var Cursor): bool =
-  ## `n` is `(if (elif COND (stmts (call NORETURN …))))` — one branch, no `else`,
+  ## `n` is `(if (elif COND (stmts (call NORETURN …))))` or `(ite COND (stmts
+  ## (call NORETURN …)) .)` — one branch, no `else`,
   ## the arm a single call that never returns. Such a statement ASSERTS `not COND`
   ## for everything it dominates. Yields COND.
-  if n.stmtKind != IfS: return false
-  var arm = n
-  var count = 0
-  var body = default(Cursor)
-  var got = default(Cursor)
-  var bad = false
-  arm.loopInto:
-    inc count
-    if arm.substructureKind != ElifU: bad = true
-    else:
-      var b = arm
-      var i = 0
-      b.loopInto:
-        if i == 0: got = b
-        elif i == 1: body = b
-        inc i
-        skip b
-      if i != 2: bad = true
-    skip arm
-  if bad or count != 1: return false
+  var got, body, elseArm = default(Cursor)
+  if not twoWayParts(n, got, body, elseArm) or hasArm(elseArm): return false
   if not body.hasMore or body.stmtKind != StmtsS: return false
   var sc = body
   var stmts = 0
@@ -2082,7 +2074,8 @@ proc isHoistAnchor(sk: LengStmt): bool {.inline.} =
   # statements stay anchored (the safe, CSE-suppressing default).
   sk notin {NoStmt, StmtsS,
             AsgnS, CallS, VarS, GvarS, TvarS, ConstS, DiscardS,
-            RetS, BreakS, RaiseS, JmpS, LabS, EmitS, KeepovfS, MflagS, VflagS}
+            RetS, BreakS, RaiseS, JmpS, LabS, EmitS, KeepovfS, MflagS, VflagS,
+            ContinueS}
 
 proc tr(c: var Context; n: var Cursor) =
   if not n.hasMore: return
@@ -2097,7 +2090,7 @@ proc tr(c: var Context; n: var Cursor) =
     of GvarS, TvarS:               trVar(c, n, isBodyLocal = false)
     of AsgnS:                      trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
-    of IfS:
+    of IfS, IteS:
       var gcond = default(Cursor)
       if guardCondition(c, n, gcond):
         let key = provenKey(c, gcond)
@@ -2111,9 +2104,9 @@ proc tr(c: var Context; n: var Cursor) =
           collectResolvedRoots(c, gcond, roots)
           c.provenRoots.add ensureMove(roots)
           c.proven[key] = c.provenRoots.len     # 1-based: 0 means "not proven"
-          trIf(c, n)                            # still a normal `if` for the cache
+          if sk == IteS: trIte(c, n) else: trIf(c, n)  # still a branch for the cache
       else:
-        trIf(c, n)
+        if sk == IteS: trIte(c, n) else: trIf(c, n)
     of CaseS:                      trCase(c, n)
     of WhileS, LoopS:              trLoop(c, n)
     of JmpS:                       trJmp(c, n)

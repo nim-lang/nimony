@@ -7,7 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [hashes, os, tables, sets, assertions, syncio]
+import std / [hashes, os, tables, sets, assertions, syncio, envvars]
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
@@ -2016,39 +2016,340 @@ proc trStmtList(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     trStmt c, dest, n
 
 proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(ite cond then else|.)` becomes an `if`: Leng's back ends and optimizer
-  ## passes read `if`.
+  ## `(ite cond then else|.)` stays Leng's `ite` (nimony#2984), except in an
+  ## `{.assembler.}` body: that is arkham's transliteration path, which reads
+  ## `if`.
   let info = n.info
+  let asIte = not c.inAsmBody
   n.into:
-    dest.copyIntoKind IfS, info:
-      dest.copyIntoKind ElifU, info:
-        trExpr c, dest, n
-        trStmtList c, dest, n
+    if asIte:
+      dest.addParLe(TagId(IteTagId), info)
+      trExpr c, dest, n
+      trStmtList c, dest, n
       if n.isDotToken:
+        dest.addDotToken()
         inc n
       else:
-        dest.copyIntoKind ElseU, info:
+        trStmtList c, dest, n
+      dest.addParRi()
+    else:
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          trExpr c, dest, n
           trStmtList c, dest, n
+        if n.isDotToken:
+          inc n
+        else:
+          dest.copyIntoKind ElseU, info:
+            trStmtList c, dest, n
+
+let rotateEnabled = not existsEnv("SHOGGOTH_NO_ROTATE")
+  ## Bisection switch for `rotateLoop`.
+
+const
+  RotateMaxCondTokens = 24
+    ## A rotated loop evaluates its condition in two places; this is how big a
+    ## condition may be to be worth the copy.
+  RotateMaxPreTokens = 48
+    ## The same for the statements that compute it (`PRE` in `rotateLoop`).
+
+proc isTag(n: Cursor; t: TagEnum): bool {.inline.} =
+  n.hasMore and n.kind == TagLit and n.cursorTagId == TagId(t)
+
+proc peelSingle(n: Cursor): Cursor =
+  ## Through `(stmts X)`/`(scope X)` wrappers with exactly one child.
+  result = n
+  while result.isTag(StmtsTagId) or result.isTag(ScopeTagId):
+    var it = result.childCursor
+    if not it.hasMore: return
+    let only = it
+    skip it
+    if it.hasMore: return
+    result = only
+
+proc rotatableCond(n: Cursor; budget: var int): bool =
+  ## `(continue X)`'s condition: no call, no write, no flag read. A load is
+  ## fine: the rotated loop evaluates `X` exactly as often as before.
+  dec budget
+  if budget < 0: return false
+  if not n.hasMore: return true
+  if n.kind != TagLit: return true
+  let t = n.cursorTagId
+  if t == TagId(CallTagId) or t == TagId(OvfTagId) or t == TagId(ErrvTagId) or
+     t == TagId(InstrTagId): return false
+  result = true
+  var it = n.childCursor
+  while it.hasMore and result:
+    result = rotatableCond(it, budget)
+    skip it
+
+proc exitJmpTo(arm: Cursor; exitLab: SymId): bool =
+  ## Is `arm` just `(jmp exitLab)`, possibly in `(stmts)`/`(scope)` wrappers?
+  let j = peelSingle(arm)
+  result = j.isTag(JmpTagId) and j.childCursor.kind == Symbol and
+           j.childCursor.symId == exitLab
+
+proc collectDefs(n: Cursor; ren: var Table[SymId, SymId]; c: var EContext) =
+  ## A fresh name for every `SymbolDef` under `n`.
+  if not n.hasMore: return
+  if n.kind == SymbolDef:
+    if not ren.hasKey(n.symId):
+      ren[n.symId] = pool.symId("`rot." & $c.getTmpId)
+  elif n.kind == TagLit:
+    var it = n.childCursor
+    while it.hasMore:
+      collectDefs(it, ren, c)
+      skip it
+
+proc copyRenamed(dest: var TokenBuf; n: Cursor; ren: Table[SymId, SymId]) =
+  if not n.hasMore: return
+  case n.kind
+  of SymbolDef:
+    dest.addSymDef(ren.getOrDefault(n.symId, n.symId), n.info)
+  of Symbol:
+    dest.addSymUse(ren.getOrDefault(n.symId, n.symId), n.info)
+  of TagLit:
+    if n.isTag(DotTagId) or n.isTag(KvTagId):
+      # a field shares its symbol with a local of the same name, not its
+      # identity: only the object of a `dot` and the value of a `kv` are renamed
+      let fieldAt = if n.isTag(DotTagId): 1 else: 0
+      dest.addParLe(n.cursorTagId, n.info)
+      var it = n.childCursor
+      var i = 0
+      while it.hasMore:
+        if i == fieldAt: dest.addSubtree it
+        else: copyRenamed(dest, it, ren)
+        skip it
+        inc i
+      dest.addParRi()
+    else:
+      dest.addParLe(n.cursorTagId, n.info)
+      var it = n.childCursor
+      while it.hasMore:
+        copyRenamed(dest, it, ren)
+        skip it
+      dest.addParRi()
+  else:
+    dest.addSubtree n
+
+proc collectLabels(n: Cursor; labels: var HashSet[SymId]) =
+  if not n.hasMore or n.kind != TagLit: return
+  if n.isTag(LabTagId):
+    let l = n.childCursor
+    if l.kind == SymbolDef: labels.incl l.symId
+    return
+  var it = n.childCursor
+  while it.hasMore:
+    collectLabels(it, labels)
+    skip it
+
+proc jumpsInto(n: Cursor; labels: HashSet[SymId]): bool =
+  if not n.hasMore or n.kind != TagLit: return false
+  if n.isTag(JmpTagId):
+    let t = n.childCursor
+    return t.kind == Symbol and t.symId in labels
+  result = false
+  var it = n.childCursor
+  while it.hasMore and not result:
+    result = jumpsInto(it, labels)
+    skip it
+
+proc flattenStmts(n: Cursor; dest: var seq[Cursor]) =
+  ## `n`, or its children when it is a `(stmts …)`: a `stmts` wrapper is no
+  ## scope, so what it declares is as visible as its siblings' declarations.
+  if n.isTag(StmtsTagId):
+    var it = n.childCursor
+    while it.hasMore:
+      flattenStmts(it, dest)
+      skip it
+  else:
+    dest.add n
+
+proc subtreeTokens(n: Cursor): int =
+  result = 1
+  if n.hasMore and n.kind == TagLit:
+    var it = n.childCursor
+    while it.hasMore:
+      result += subtreeTokens(it)
+      skip it
+
+proc rotateLoop(c: var EContext; dest: var TokenBuf; start: int; exitLab: SymId): bool =
+  ## Rewrite the `(loop …)` just emitted at `dest[start..]` into a guarded
+  ## bottom-tested loop (nimony#2984). A `while` lowers to one of
+  ##
+  ##   (loop (stmts PRE* (ite C T (jmp Lx)) (lab L)* (continue .)))      (lab Lx)
+  ##   (loop (stmts PRE* (ite X (jmp Lx) .) REST* (continue .)))          (lab Lx)
+  ##
+  ## where `PRE` computes the condition (a call is bound to a temp there). The
+  ## rotated forms are
+  ##
+  ##   PRE (ite C (stmts (loop (stmts T (lab L)* PRE' (continue C)))) .)
+  ##   PRE (ite X (stmts (jmp Lx)) .) (loop (stmts REST* PRE' (continue (not X))))
+  ##
+  ## `PRE` and `C` run exactly as often and in the same order as before: once in
+  ## front of the loop, then once after every body. `PRE'` is `PRE` writing the
+  ## same variables — its top-level declarations (seen through `stmts`, which is
+  ## no scope) become assignments, so the body still reads them — with its
+  ## labels and its declarations inside a `scope` renamed. `Lx` must be what follows the loop:
+  ## leaving through the `continue` falls out to the next statement. The guard is
+  ## the loop's pre-header: whatever runs there runs only when the loop does.
+  result = false
+  var tmp = createTokenBuf(64)
+  block build:
+    let loop = cursorAt(dest, start)
+    let body = loop.childCursor                  # (stmts …)
+    if not body.isTag(StmtsTagId): break build
+    var stmts: seq[Cursor] = @[]
+    var it = body.childCursor
+    while it.hasMore:
+      stmts.add it
+      skip it
+    if stmts.len < 2: break build
+    let cont = stmts[^1]
+    if not cont.isTag(ContinueTagId) or cont.childCursor.kind != DotToken: break build
+    # the first statement that tests for the exit
+    var k = -1
+    var exitInThen = false
+    for i in 0 ..< stmts.len - 1:
+      let t = peelSingle(stmts[i])
+      if t.isTag(IteTagId):
+        var parts = t.childCursor
+        skip parts                               # the condition
+        let thenArm = parts
+        skip parts
+        let hasElse = parts.hasMore and parts.kind != DotToken
+        if hasElse and exitJmpTo(parts, exitLab):
+          k = i                                  # (ite C T (jmp Lx)): T is the body
+          for j in i + 1 ..< stmts.len - 1:
+            if not stmts[j].isTag(LabTagId): k = -1   # only labels may follow
+          break
+        if not hasElse and exitJmpTo(thenArm, exitLab):
+          k = i
+          exitInThen = true
+          break
+    if k < 0: break build
+    let test = peelSingle(stmts[k])
+    var parts = test.childCursor
+    let cond = parts
+    skip parts
+    let thenArm = parts
+    var budget = RotateMaxCondTokens
+    if not rotatableCond(cond, budget): break build
+    var preTokens = 0
+    for i in 0 ..< k: preTokens += subtreeTokens(stmts[i])
+    if preTokens > RotateMaxPreTokens: break build
+    # A jump from PRE into the rest of the body would become a backward jump
+    # (from PRE') and a jump into the loop (from the guard's copy).
+    var restLabels = initHashSet[SymId]()
+    for j in k ..< stmts.len - 1: collectLabels(stmts[j], restLabels)
+    for i in 0 ..< k:
+      if jumpsInto(stmts[i], restLabels): break build
+    # PRE': fresh names for everything PRE defines below its top level, and for
+    # its top-level labels; its top-level variables stay what they are.
+    var pre: seq[Cursor] = @[]
+    for i in 0 ..< k: flattenStmts(stmts[i], pre)
+    var ren = initTable[SymId, SymId]()
+    for s in pre:
+      if s.isTag(VarTagId):
+        var ch = s.childCursor
+        skip ch; skip ch; skip ch                 # name, pragmas, type
+        collectDefs(ch, ren, c)
+      else:
+        collectDefs(s, ren, c)
+    let info = test.info
+    # PRE, then the guard
+    for i in 0 ..< k: tmp.addSubtree stmts[i]
+    if exitInThen:
+      tmp.addSubtree stmts[k]                    # the exit test itself is the guard
+    else:
+      tmp.addParLe(TagId(IteTagId), info)
+      tmp.addSubtree cond
+      tmp.addParLe(TagId(StmtsTagId), info)
+    tmp.addParLe(TagId(LoopTagId), loop.info)
+    tmp.addParLe(TagId(StmtsTagId), body.info)
+    if exitInThen:
+      for j in k + 1 ..< stmts.len - 1: tmp.addSubtree stmts[j]
+    else:
+      tmp.addSubtree thenArm
+      for j in k + 1 ..< stmts.len - 1: tmp.addSubtree stmts[j]
+    for s in pre:                                # PRE'
+      if s.isTag(VarTagId):
+        var ch = s.childCursor
+        let name = ch
+        skip ch; skip ch; skip ch                 # name, pragmas, type
+        if ch.hasMore and ch.kind != DotToken:
+          tmp.addParLe(TagId(AsgnTagId), s.info)
+          tmp.addSymUse(name.symId, name.info)
+          copyRenamed(tmp, ch, ren)
+          tmp.addParRi()
+      else:
+        copyRenamed(tmp, s, ren)
+    tmp.addParLe(TagId(ContinueTagId), info)
+    if exitInThen:
+      tmp.addParLe(TagId(NotTagId), info)
+      copyRenamed(tmp, cond, ren)
+      tmp.addParRi()
+    else:
+      copyRenamed(tmp, cond, ren)
+    tmp.addParRi()                              # continue
+    tmp.addParRi()                              # stmts
+    tmp.addParRi()                              # loop
+    if not exitInThen:
+      tmp.addParRi()                            # the guard's stmts
+      tmp.addDotToken()
+      tmp.addParRi()                            # ite
+    result = true
+  if result:
+    dest.shrink start
+    dest.addBuffer tmp
 
 proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(loop (scope BODY (continue .)))` becomes `while true: BODY`. Falling
-  ## off the body is the back-edge; every exit is a `jmp` past the loop.
+  ## `(loop (scope BODY (continue .)))` becomes Leng's `(loop (stmts BODY
+  ## (continue .)))`, rotated when it is a `while` (`rotateLoop`), or
+  ## `while true: BODY` in an `{.assembler.}` body (see `trIte`). Every exit is
+  ## a `jmp` past the loop.
   let info = n.info
+  let asLoop = not c.inAsmBody                    # see `trIte`
+  let start = dest.len
+  var exitLab = SymId(0)                          # the `(lab Lx)` after the loop
+  block:
+    var after = n
+    skip after
+    if after.hasMore and after.isTagLit and after.stmtKind == LabS:
+      let l = after.childCursor
+      if l.isSymbolDef: exitLab = l.symId
   n.into:
-    dest.copyIntoKind WhileS, info:
+    if asLoop:
+      dest.addParLe(TagId(LoopTagId), info)
+    else:
+      dest.addParLe(WhileS, info)
       dest.addParPair TrueX, info
-      assert n.stmtKind in {StmtsS, ScopeS}, "loop body expected"
-      c.typeCache.openScope()
-      dest.addParLe(StmtsS, n.info)
-      n.into:
-        while n.hasMore:
-          if n.stmtKind == ContinueS:
-            skip n, ContinueS
-            assert not n.hasMore, "`continue` is only the loop's trailing back-edge"
-          else:
-            trStmt c, dest, n
+    assert n.stmtKind in {StmtsS, ScopeS}, "loop body expected"
+    c.typeCache.openScope()
+    dest.addParLe(StmtsS, n.info)
+    var sawContinue = false
+    n.into:
+      while n.hasMore:
+        if n.stmtKind == ContinueS:
+          let cinfo = n.info
+          skip n, ContinueS
+          assert not n.hasMore, "`continue` is only the loop's trailing back-edge"
+          sawContinue = true
+          if asLoop:
+            dest.addParLe(TagId(ContinueTagId), cinfo)
+            dest.addDotToken()
+            dest.addParRi()
+        else:
+          trStmt c, dest, n
+    if asLoop and not sawContinue:
+      dest.addParLe(TagId(ContinueTagId), info)
+      dest.addDotToken()
       dest.addParRi()
-      c.typeCache.closeScope()
+    dest.addParRi()
+    c.typeCache.closeScope()
+    dest.addParRi()
+  if asLoop and exitLab != SymId(0) and rotateEnabled:
+    discard rotateLoop(c, dest, start, exitLab)
 
 include stringcases
 

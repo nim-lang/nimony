@@ -41,6 +41,22 @@ include ".." / ".." / "lib" / compat2          # onRaiseQuit
 
 const ArithRules = slurp("rules/arith.rewrite.nif")
 
+type
+  Target* = object
+    ## What the passes may assume about the machine the module is built for.
+    ## `shoggoth opt` fills it from its command line (`--cpu:`, `--vectorize`, ...).
+    vecMode*: VecMode         ## the 128-bit loop vectorizer's rows, or `vecOff`
+    mem*: MemOpts             ## which memory idioms the back end lowers
+    scaledIndex*: bool        ## `base + index*size` is one addressing mode, so
+                              ## `a[i]` costs no more than `p[]` (see
+                              ## `induction_variables`)
+
+proc hasScaledIndex*(cpu: string): bool =
+  ## x86 and ARM address `[base + index*size]` in one operand (Thumb-2 as
+  ## `[rn, rm, lsl #n]`); RISC-V, MIPS, AVR and the rest add first.
+  cpu in ["i386", "amd64", "arm32", "arm64"]
+
+
 let disabledPasses = block:
   ## `SHOGGOTH_DISABLE=rewrite,cse,…` turns individual optimization passes off.
   ##
@@ -89,7 +105,7 @@ proc extractModuleSuffix(filename: string): string =
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                   params: Cursor = default(Cursor); eng: Engine = nil;
-                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true)) =
+                  target = Target(mem: MemOpts(intrinsics: true))) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported.
   ##
@@ -135,7 +151,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # and a miss is a no-op.
   if eng != nil and passOn("rewrite"):
     runRewritesFix(eng, buf)
-  if passOn("indvars"): runInductionVariables(buf, m)
+  if passOn("indvars"): runInductionVariables(buf, m, target.scaledIndex)
   # CSE also deletes index checks a dominating identical check already made:
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
   if passOn("cse"):
@@ -147,12 +163,12 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # below follow it, and they rewrite `ret`s, which it never emits.
   # Zero-fill loops become a `zeroMemIns` intrinsic after CSE, so the loop it inspects is
   # the cleaned-up one, and before the vectorizer, which would otherwise turn the
-  # same loop into vector stores. `memOpts.intrinsics` is false for a back end
-  # without a lowering for the rows (AVR); `memOpts.mergeWordBytes` enables
+  # same loop into vector stores. `target.mem.intrinsics` is false for a back end
+  # without a lowering for the rows (AVR); `target.mem.mergeWordBytes` enables
   # merging adjacent constant field stores, native back end only.
-  if (memOpts.intrinsics or memOpts.mergeWordBytes > 0) and passOn("memidioms"):
-    discard runMemIdioms(buf, m, params, memOpts, "mem." & suffix, st.memOps)
-  if vecMode != vecOff and passOn("vectorize"):
+  if (target.mem.intrinsics or target.mem.mergeWordBytes > 0) and passOn("memidioms"):
+    discard runMemIdioms(buf, m, params, target.mem, "mem." & suffix, st.memOps)
+  if target.vecMode != vecOff and passOn("vectorize"):
     if runVectorizer(buf, "vec." & suffix):
       inc st.vectorized
   # The tail-call encoding runs after EVERYTHING, the vectorizer included.
@@ -184,7 +200,7 @@ proc isAssemblerProc(pragmas: Cursor): bool =
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                 eng: Engine = nil; vecMode = vecOff; memOpts = MemOpts(intrinsics: true)) =
+                 eng: Engine = nil; target = Target(mem: MemOpts(intrinsics: true))) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
@@ -210,7 +226,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m, d.params, eng, vecMode, memOpts)
+        optimizeBody(body, suffix, st, summaries, m, d.params, eng, target)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb
@@ -224,7 +240,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st, summaries, m, eng, vecMode, memOpts)
+          rebuildTree(dest, n, suffix, st, summaries, m, eng, target)
       dest.closeTag()
   else:
     dest.addSubtree n
@@ -232,11 +248,11 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
 
 proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
                      m: ptr MainModule = nil; eng: Engine = nil;
-                     vecMode = vecOff; memOpts = MemOpts(intrinsics: true)): TokenBuf =
+                     target = Target(mem: MemOpts(intrinsics: true))): TokenBuf =
   ## Rebuild the single module-level root tree (`(stmts …)`), optimizing bodies.
   ## `m` is the module type context for the alias pass (nil ⇒ coarse aliasing);
   ## `eng` the structural rewrite engine (nil ⇒ the rewriter stage is skipped);
-  ## `vecMode` enables the 128-bit loop vectorizer: `vecNeon` on native
+  ## `target.vecMode` enables the 128-bit loop vectorizer: `vecNeon` on native
   ## AArch64, `vecSse` on native x86-64. Both emit the same target-neutral rows
   ## today; the mode names the back end that lowers them.
   var summaries = collectFunctionSummaries(src)   # once per module; cse runs per body
@@ -251,14 +267,14 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
     if li.isValid: result.appendLineInfo li
     n.into:
       while n.hasMore:
-        rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)
+        rebuildTree(result, n, suffix, st, addr summaries, m, eng, target)
     if st.vectorized > 0:
       addVecIntrinsicDecls(result, "vec." & suffix)
     if ZeroMemOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, ZeroMemOp)
     if CopyMemOp in st.memOps: addMemIntrinsicDecl(result, "mem." & suffix, CopyMemOp)
     result.closeTag()
   else:
-    rebuildTree(result, n, suffix, st, addr summaries, m, eng, vecMode, memOpts)
+    rebuildTree(result, n, suffix, st, addr summaries, m, eng, target)
 
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
@@ -267,7 +283,7 @@ proc checkWellFormed(buf: var TokenBuf) =
   while n.hasMore: skip n
 
 proc processFile*(input, output: string; verify = false;
-                  vecMode = vecOff; memOpts = MemOpts(intrinsics: true)): Stats =
+                  target = Target(mem: MemOpts(intrinsics: true))): Stats =
   ## Optimize one NIFC file. Seeds the tag pool so `cursorTagId` aligns with the
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
@@ -294,7 +310,7 @@ proc processFile*(input, output: string; verify = false;
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
-  var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode, memOpts)
+  var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, target)
   checkWellFormed(optimized)
   onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
   onRaiseQuit writeLengInterface(optimized, output)

@@ -52,6 +52,7 @@ type
     dbgLoc*: string          # current debug location for next instruction
     needsTerminator*: bool
     breakStack*: seq[string] # loop-end labels for `break`
+    loopHeads*: seq[string]  # loop-header labels for a `(continue …)` back-edge
     vflags*: HashSet[SymId]
     retType*: LLType
     retTypeCursor*: Cursor

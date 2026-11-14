@@ -1847,7 +1847,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trBranches c, n
       else:
         case n.finalIrKind
-        of IteV, ItecV:
+        of IteV:
           trBranches c, n
         of LoopV:
           forgetMentions c, n # the back-edge

@@ -163,7 +163,7 @@ type
     IfS = (ord(IfTagId), "if")  ## if statement header
     WhenS = (ord(WhenTagId), "when")  ## when statement header
     BreakS = (ord(BreakTagId), "break")  ## `break` statement
-    ContinueS = (ord(ContinueTagId), "continue")  ## `continue` statement
+    ContinueS = (ord(ContinueTagId), "continue")  ## `continue` statement. In Leng and the multi-join IR it is a `(loop)` body's last statement, its sole back-edge: `(continue .)` always repeats, `(continue X)` repeats while `X` holds and otherwise leaves the loop. `X` has no effect: no call, no write, no flag read (`ovf`); a load is fine
     ForS = (ord(ForTagId), "for")  ## for statement
     WhileS = (ord(WhileTagId), "while")  ## `while` statement
     CoroforS = (ord(CoroforTagId), "corofor")  ## closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value

@@ -1560,7 +1560,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trGotoScoped c, dest, n
       discard c.currentProc.loopHeads.pop()
       dest.addParRi()
-  of IteV, ItecV:
+  of IteV:
     if containsSuspensionPoint(c, n):
       n.into:
         var lthen = c.currentProc.labelCounter

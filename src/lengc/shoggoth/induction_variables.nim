@@ -32,6 +32,8 @@ type
     atCursor: Cursor   # cursor at the same position (for `addSubtree`)
 
   Context = object
+    scaledIndex: bool  ## the target addresses `a[i]` in one operand: keep the
+                       ## index (count to zero) instead of walking pointers
     orig: ptr TokenBuf
     patchset: Patchset
     synth: seq[TokenBuf]
@@ -41,19 +43,20 @@ type
                        ## isolation, still do)
 
 proc createContext(orig: ptr TokenBuf;
-                   m: ptr MainModule): Context =
-  Context(orig: orig,
+                   m: ptr MainModule; scaledIndex: bool): Context =
+  Context(orig: orig, scaledIndex: scaledIndex,
           patchset: initPatchset(orig),
           synth: @[],
           tempCounter: 0,
           m: m)
 
-proc freshTempName(c: var Context): string =
+proc freshTempName(c: var Context; role = "p"): string =
   inc c.tempCounter
   # A pointer induction variable is a LOCAL of this body, so its name is a
   # local's: `<ident>.<disamb>`. The backtick keeps it out of the source
-  # namespace, like every other minted name here.
-  result = "`iv.p." & $c.tempCounter
+  # namespace, like every other minted name here. `role` tells the temps of the
+  # count-to-zero form apart in dumps: `q` an end base, `j` the negative index.
+  result = "`iv." & role & "." & $c.tempCounter
 
 # ---- pattern detection ----------------------------------------------------
 
@@ -304,9 +307,211 @@ proc addDeref(c: var Context; p: string; info: NifLineInfo): int =
   buf.closeTag()
   c.synth.add ensureMove(buf)
 
+proc addEndBaseDecl(c: var Context; q, p: string; atCursor, bound, ivType: Cursor;
+                    ivSym: SymId): int =
+  ## Synthesize `(var :q . (ptr T) (addr (pat p (sub ivT bound iv))))`: the
+  ## element `bound - iv` past `p = addr arr[iv]`, i.e. `addr arr[bound]`.
+  ## `pat` on `p` rather than `(at arr bound)` so no (possibly checked)
+  ## one-past-the-end index is formed.
+  result = c.synth.len
+  let info = rawLineInfo(atCursor)
+  var buf = synthBuf(c, 24)
+  buf.openTag TagId(ord(VarTagId))
+  if info.isValid: buf.appendLineInfo info
+  buf.addSymDef q
+  buf.addDotToken()                          # pragmas
+  if c.m == nil:
+    buf.addDotToken()
+  else:
+    buf.openTag TagId(ord(PtrTagId))
+    buf.addSubtree getNominalType(c.m[], atCursor)
+    buf.closeTag()
+  buf.openTag TagId(ord(AddrTagId))
+  buf.openTag TagId(ord(PatTagId))
+  buf.addSymUse p
+  buf.openTag TagId(ord(SubTagId))
+  buf.addSubtree ivType
+  buf.addSubtree bound
+  buf.addSymUse ivSym
+  buf.closeTag()                             # close sub
+  buf.closeTag()                             # close pat
+  buf.closeTag()                             # close addr
+  buf.closeTag()                             # close var
+  c.synth.add ensureMove(buf)
+
+proc addIndexDecl(c: var Context; j: string; ivType, bound: Cursor; ivSym: SymId;
+                  info: NifLineInfo): int =
+  ## Synthesize `(var :j . T (sub T iv bound))`: the counter, offset so that it
+  ## reaches 0 exactly when `iv` reaches `bound`.
+  result = c.synth.len
+  var buf = synthBuf(c, 16)
+  buf.openTag TagId(ord(VarTagId))
+  if info.isValid: buf.appendLineInfo info
+  buf.addSymDef j
+  buf.addDotToken()                          # pragmas
+  buf.addSubtree ivType
+  buf.openTag TagId(ord(SubTagId))
+  buf.addSubtree ivType
+  buf.addSymUse ivSym
+  buf.addSubtree bound
+  buf.closeTag()                             # close sub
+  buf.closeTag()                             # close var
+  c.synth.add ensureMove(buf)
+
+proc addIndexInc(c: var Context; j: string; ivType: Cursor; info: NifLineInfo): int =
+  ## Synthesize `(asgn j (add T j 1))`.
+  result = c.synth.len
+  var buf = synthBuf(c, 10)
+  buf.openTag TagId(ord(AsgnTagId))
+  if info.isValid: buf.appendLineInfo info
+  buf.addSymUse j
+  buf.openTag TagId(ord(AddTagId))
+  buf.addSubtree ivType
+  buf.addSymUse j
+  buf.addIntLit 1
+  buf.closeTag()                             # close add
+  buf.closeTag()                             # close asgn
+  c.synth.add ensureMove(buf)
+
+proc addZeroCond(c: var Context; cond: Cursor; j: string): int =
+  ## The loop comparison `(op iv bound)` as `(op j 0)`, same `op`: `j` is
+  ## `iv - bound`, so `lt`/`le`/`eq`/`neq` all agree.
+  result = c.synth.len
+  var buf = synthBuf(c, 6)
+  buf.openTag cond.cursorTagId
+  let info = rawLineInfo(cond)
+  if info.isValid: buf.appendLineInfo info
+  buf.addSymUse j
+  buf.addIntLit 0
+  buf.closeTag()
+  c.synth.add ensureMove(buf)
+
+proc addPatAccess(c: var Context; q, j: string; info: NifLineInfo): int =
+  ## Synthesize `(pat q j)`: `arr[iv]` is `arr[bound + j]`.
+  result = c.synth.len
+  var buf = synthBuf(c, 6)
+  buf.openTag TagId(ord(PatTagId))
+  if info.isValid: buf.appendLineInfo info
+  buf.addSymUse q
+  buf.addSymUse j
+  buf.closeTag()
+  c.synth.add ensureMove(buf)
+
+proc countReads(n: Cursor; sym: SymId): int =
+  ## Occurrences of `sym` that READ it: everything but its declaration and the
+  ## target of a plain `(asgn sym …)`.
+  result = 0
+  case n.kind
+  of Symbol:
+    if symId(n) == sym: result = 1
+  of TagLit:
+    var m = n
+    var first = true
+    let isAsgn = n.stmtKind == AsgnS
+    m.loopInto:
+      if not (first and isAsgn and m.kind == Symbol):
+        result += countReads(m, sym)
+      first = false
+      skip m
+  else: discard
+
+proc loopCounterCond(body: Cursor; ivSym: SymId): Cursor =
+  ## The comparison in the body's trailing `(continue (lt|le|neq iv bound))`, or
+  ## nil. `!=` arrives as `(not (eq iv bound))`; then it is the inner `eq` — the
+  ## `not` stays where it is. Only a rotated `(loop …)` has a trailing test; its
+  ## guard ran the same test before the first iteration, so the decls hoisted in
+  ## front of the loop only execute when the loop does — which is also why
+  ## `iv - bound` cannot overflow there.
+  result = default(Cursor)
+  if body.kind == TagLit and body.stmtKind == StmtsS:
+    var last = default(Cursor)
+    var m = body
+    m.loopInto:
+      last = m
+      skip m
+    if not cursorIsNil(last) and last.kind == TagLit and last.stmtKind == ContinueS:
+      var cond = last.childCursor
+      if cond.kind == TagLit and cond.exprKind == NotC and
+         cond.childCursor.kind == TagLit and cond.childCursor.exprKind == EqC:
+        cond = cond.childCursor
+      if cond.kind == TagLit and cond.exprKind in {LtC, LeC, NeqC, EqC}:
+        let iv = cond.childCursor
+        var bound = iv
+        skip bound
+        # exactly `(op iv bound)`: no type child, nothing after the bound
+        if iv.kind == Symbol and symId(iv) == ivSym and bound.hasMore:
+          var after = bound
+          skip after
+          if not after.hasMore: result = cond
+
+proc boundIsInvariant(c: Context; bound: Cursor; f: LoopFacts): bool =
+  ## Is the loop bound `n` the same on every iteration? A literal (suffixed or
+  ## not) is; a symbol is
+  ## when the loop neither assigns it nor takes its address, and — unless it is a
+  ## local — calls nothing that could rebind it.
+  case bound.kind
+  of IntLit, UIntLit: result = true
+  of TagLit:
+    # `(suf 4096 "i64")` is a literal too
+    result = bound.exprKind == SufC and bound.childCursor.kind in {IntLit, UIntLit}
+  of Symbol:
+    let s = symId(bound)
+    result = s notin f.assigned and s notin f.addrTaken and
+             (c.orig[].pool.symIsLocal(s) or not f.hasCall)
+  else: result = false
+
 # ---- main traversal -------------------------------------------------------
 
 proc tr(c: var Context; n: var Cursor)   # forward
+
+proc rewriteToPointers(c: var Context; loopPos: int; incPos: int;
+                       stable: seq[AccessInfo]) =
+  ## One pointer per array, bumped next to the counter's increment:
+  ## `(at arr iv)` → `(deref p)`. The counter stays; it still has readers.
+  var arrToP = initTable[SymId, string]()
+  for acc in stable:
+    var p: string
+    if acc.arrSym in arrToP:
+      p = arrToP.getOrQuit(acc.arrSym)
+    else:
+      p = freshTempName(c)
+      arrToP[acc.arrSym] = p
+      let varIdx = addPtrVarDecl(c, p, acc.atCursor)
+      c.patchset.addInsert(loopPos, cursorAt(c.synth[varIdx], 0))
+      let incIdx = addPtrInc(c, p, rawLineInfo(acc.atCursor))
+      c.patchset.addInsert(incPos, cursorAt(c.synth[incIdx], 0))
+    let derefIdx = addDeref(c, p, rawLineInfo(acc.atCursor))
+    c.patchset.addSubst(acc.pos, cursorAt(c.synth[derefIdx], 0))
+
+proc rewriteToZero(c: var Context; loopPos: int; ivSym: SymId; incPos: int;
+                   stable: seq[AccessInfo]; cond, bound, ivType: Cursor) =
+  ## Count to zero: `j = iv - bound` runs up to 0, every array is addressed off
+  ## its END, `q = addr arr[bound]`, as `(pat q j)`, and the loop test is
+  ## `(op j 0)`. One increment serves every array, no bound stays live in the
+  ## loop, and `(pat q j)` is a single scaled-index address on x64 and AArch64.
+  let info = rawLineInfo(cond)
+  let j = freshTempName(c, "j")
+  let jIdx = addIndexDecl(c, j, ivType, bound, ivSym, info)
+  c.patchset.addInsert(loopPos, cursorAt(c.synth[jIdx], 0))
+  var arrToQ = initTable[SymId, string]()
+  for acc in stable:
+    var q: string
+    if acc.arrSym in arrToQ:
+      q = arrToQ.getOrQuit(acc.arrSym)
+    else:
+      let p = freshTempName(c)
+      q = freshTempName(c, "q")
+      arrToQ[acc.arrSym] = q
+      let pIdx = addPtrVarDecl(c, p, acc.atCursor)
+      c.patchset.addInsert(loopPos, cursorAt(c.synth[pIdx], 0))
+      let qIdx = addEndBaseDecl(c, q, p, acc.atCursor, bound, ivType, ivSym)
+      c.patchset.addInsert(loopPos, cursorAt(c.synth[qIdx], 0))
+    let patIdx = addPatAccess(c, q, j, rawLineInfo(acc.atCursor))
+    c.patchset.addSubst(acc.pos, cursorAt(c.synth[patIdx], 0))
+  let incIdx = addIndexInc(c, j, ivType, info)
+  c.patchset.addSubst(incPos, cursorAt(c.synth[incIdx], 0))
+  let condIdx = addZeroCond(c, cond, j)
+  c.patchset.addSubst(cursorToPosition(c.orig[], cond), cursorAt(c.synth[condIdx], 0))
 
 proc transformLoop(c: var Context; n: var Cursor) =
   let loopPos = cursorToPosition(c.orig[], n)
@@ -318,23 +523,36 @@ proc transformLoop(c: var Context; n: var Cursor) =
     var facts = LoopFacts(assigned: initHashSet[SymId](),
                           addrTaken: initHashSet[SymId](), m: c.m)
     collectLoopFacts(body, facts)
-    var arrToP = initTable[SymId, string]()
+    var stable: seq[AccessInfo] = @[]
     for acc in accesses:
       var base = acc.atCursor
       inc base                               # past `(at` → the base
-      if not baseIsStable(c, base, facts): continue
-      var p: string
-      if acc.arrSym in arrToP:
-        p = arrToP.getOrQuit(acc.arrSym)
+      if baseIsStable(c, base, facts): stable.add acc
+    if stable.len > 0:
+      if not c.scaledIndex:
+        # A RISC addresses `a[i]` with a shift and an add on every access; a
+        # pointer bumped once per iteration is cheaper there.
+        rewriteToPointers(c, loopPos, ivInfo.incPos, stable)
       else:
-        p = freshTempName(c)
-        arrToP[acc.arrSym] = p
-        let varIdx = addPtrVarDecl(c, p, acc.atCursor)
-        c.patchset.addInsert(loopPos, cursorAt(c.synth[varIdx], 0))
-        let incIdx = addPtrInc(c, p, rawLineInfo(acc.atCursor))
-        c.patchset.addInsert(ivInfo.incPos, cursorAt(c.synth[incIdx], 0))
-      let derefIdx = addDeref(c, p, rawLineInfo(acc.atCursor))
-      c.patchset.addSubst(acc.pos, cursorAt(c.synth[derefIdx], 0))
+        # x86/ARM fold `a[i]` into the operand, so a pointer walk only adds a
+        # bump per array per iteration (measured: +22 % on a two-array copy).
+        # What pays there is counting to zero, when the counter does nothing
+        # but index and test: every read of `iv` anywhere in the proc is a
+        # reducible access, the loop test or the increment ("anywhere" rather
+        # than "after the loop" keeps an enclosing loop's back edge from
+        # needing its own argument), the bound is loop-invariant, and `iv` is
+        # signed, so `iv - bound` goes negative. Otherwise the loop stays as is.
+        var add = cursorAt(c.orig[], ivInfo.incPos)
+        add = add.childCursor                # past `(asgn` → iv
+        skip add                             # → `(add T iv 1)`
+        let ivType = add.childCursor
+        let cond = loopCounterCond(body, ivInfo.ivSym)
+        if not cursorIsNil(cond) and ivType.kind == TagLit and ivType.typeKind == IT:
+          var bound = cond.childCursor
+          skip bound
+          if boundIsInvariant(c, bound, facts) and
+             countReads(beginRead(c.orig[]), ivInfo.ivSym) == stable.len + 2:
+            rewriteToZero(c, loopPos, ivInfo.ivSym, ivInfo.incPos, stable, cond, bound, ivType)
 
   # Recurse into the loop body so nested loops are transformed too.
   n.loopInto:
@@ -392,11 +610,13 @@ proc tr(c: var Context; n: var Cursor) =
 # ---- public entry --------------------------------------------------------
 
 proc runInductionVariables*(buf: var TokenBuf;
-                            m: ptr MainModule = nil) =
+                            m: ptr MainModule = nil; scaledIndex = false) =
   ## Two-phase IV strength reduction: record rewrite patches, then rebuild
-  ## `buf` with pointer decls hoisted before each loop, pointer bumps before
-  ## the iv-inc, and `(deref p)` substituted for each `(at arr iv)` access.
-  var ctx = createContext(addr buf, m)
+  ## `buf`. Without scaled-index addressing (`scaledIndex` false) every
+  ## `(at arr iv)` becomes `(deref p)` for a pointer bumped next to the iv-inc;
+  ## with it, a loop whose counter only indexes counts to zero instead
+  ## (`rewriteToZero`) and every other loop is left alone.
+  var ctx = createContext(addr buf, m, scaledIndex)
   var n = beginRead(buf)
   tr(ctx, n)
   if not ctx.patchset.isEmpty:
@@ -417,6 +637,12 @@ when isMainModule:
     let got = toString(buf)
     let want = canon(expected)
     doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
+
+  template assertUnchangedScaled(input: string) =
+    var buf = parse(input)
+    let before = toString(buf)
+    runInductionVariables(buf, scaledIndex = true)
+    doAssert toString(buf) == before, "expected unchanged (scaled index):\n  " & input
 
   template assertUnchanged(input: string) =
     var buf = parse(input)
@@ -499,5 +725,99 @@ when isMainModule:
       "(stmts (while c.0.M (stmts (var :`iv.p.1 . . (addr (at arr.0.M i.0.M))) " &
       "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p.1)) " &
       "(asgn `iv.p.1 (addr (pat `iv.p.1 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))))")
+
+  block count_to_zero:
+    # A rotated loop whose counter only indexes and tests: `j = i - n` counts up
+    # to 0, the array is addressed off `q = addr arr[n]`, and the test is
+    # `(lt j 0)` — no bound left in the loop.
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)) " &
+      "(continue (lt i.0.M n.0.M))))) .))")
+    runInductionVariables(buf, scaledIndex = true)
+    assertSame(buf,
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts " &
+      "(var :`iv.j.1 . (i 32) (sub (i 32) i.0.M n.0.M)) " &
+      "(var :`iv.p.2 . . (addr (at arr.0.M i.0.M))) " &
+      "(var :`iv.q.3 . . (addr (pat `iv.p.2 (sub (i 32) n.0.M i.0.M)))) " &
+      "(loop (stmts (asgn x.0.M (pat `iv.q.3 `iv.j.1)) " &
+      "(asgn `iv.j.1 (add (i 32) `iv.j.1 1)) " &
+      "(continue (lt `iv.j.1 0))))) .))")
+
+  block count_to_zero_two_arrays:
+    # One index serves both arrays: one increment per iteration, not one each.
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn (at b.0.M i.0.M) (at a.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)) " &
+      "(continue (lt i.0.M n.0.M))))) .))")
+    runInductionVariables(buf, scaledIndex = true)
+    assertSame(buf,
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts " &
+      "(var :`iv.j.1 . (i 32) (sub (i 32) i.0.M n.0.M)) " &
+      "(var :`iv.p.2 . . (addr (at b.0.M i.0.M))) " &
+      "(var :`iv.q.3 . . (addr (pat `iv.p.2 (sub (i 32) n.0.M i.0.M)))) " &
+      "(var :`iv.p.4 . . (addr (at a.0.M i.0.M))) " &
+      "(var :`iv.q.5 . . (addr (pat `iv.p.4 (sub (i 32) n.0.M i.0.M)))) " &
+      "(loop (stmts (asgn (pat `iv.q.3 `iv.j.1) (pat `iv.q.5 `iv.j.1)) " &
+      "(asgn `iv.j.1 (add (i 32) `iv.j.1 1)) " &
+      "(continue (lt `iv.j.1 0))))) .))")
+
+  block count_to_zero_not_eq:
+    # `while i != n` is `(not (eq i n))`: the inner `eq` becomes `(eq j 0)`.
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (ite (not (eq 0 n.0.M)) (stmts (loop (stmts " &
+      "(asgn x.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)) " &
+      "(continue (not (eq i.0.M n.0.M)))))) .))")
+    runInductionVariables(buf, scaledIndex = true)
+    assertSame(buf,
+      "(stmts (var :i.0.M . . 0) (ite (not (eq 0 n.0.M)) (stmts " &
+      "(var :`iv.j.1 . (i 32) (sub (i 32) i.0.M n.0.M)) " &
+      "(var :`iv.p.2 . . (addr (at arr.0.M i.0.M))) " &
+      "(var :`iv.q.3 . . (addr (pat `iv.p.2 (sub (i 32) n.0.M i.0.M)))) " &
+      "(loop (stmts (asgn x.0.M (pat `iv.q.3 `iv.j.1)) " &
+      "(asgn `iv.j.1 (add (i 32) `iv.j.1 1)) " &
+      "(continue (not (eq `iv.j.1 0)))))) .))")
+
+  block unsigned_counter_left_alone:
+    # `i - n` would wrap instead of going negative, and a scaled-index target
+    # gains nothing from a pointer walk: the loop is not touched.
+    assertUnchangedScaled(
+      "(stmts (var :i.0.M . . 0u) (ite (lt 0u n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (u 32) i.0.M 1)) " &
+      "(continue (lt i.0.M n.0.M))))) .))")
+
+  block counter_read_left_alone_scaled:
+    # The counter has another reader: on a scaled-index target, no pointer walk.
+    assertUnchangedScaled(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (at arr.0.M i.0.M)) (call use.0.M i.0.M) " &
+      "(asgn i.0.M (add (i 32) i.0.M 1)) (continue (lt i.0.M n.0.M))))) .))")
+
+  block counter_read_after_loop_stays:
+    # `use(i)` after the loop reads the counter: only the access is reduced.
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)) " &
+      "(continue (lt i.0.M n.0.M))))) .) (call use.0.M i.0.M))")
+    runInductionVariables buf
+    assertSame(buf,
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts " &
+      "(var :`iv.p.1 . . (addr (at arr.0.M i.0.M))) " &
+      "(loop (stmts (asgn x.0.M (deref `iv.p.1)) " &
+      "(asgn `iv.p.1 (addr (pat `iv.p.1 1))) (asgn i.0.M (add (i 32) i.0.M 1)) " &
+      "(continue (lt i.0.M n.0.M))))) .) (call use.0.M i.0.M))")
+
+  block bound_assigned_in_loop_stays:
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (at arr.0.M i.0.M)) (asgn n.0.M 5) (asgn i.0.M (add (i 32) i.0.M 1)) " &
+      "(continue (lt i.0.M n.0.M))))) .))")
+    runInductionVariables buf
+    assertSame(buf,
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts " &
+      "(var :`iv.p.1 . . (addr (at arr.0.M i.0.M))) " &
+      "(loop (stmts (asgn x.0.M (deref `iv.p.1)) (asgn n.0.M 5) " &
+      "(asgn `iv.p.1 (addr (pat `iv.p.1 1))) (asgn i.0.M (add (i 32) i.0.M 1)) " &
+      "(continue (lt i.0.M n.0.M))))) .))")
 
   echo "induction_variables.nim: all self-tests passed"

@@ -46,7 +46,7 @@ type
     ElseL = (ord(ElseTagId), "else")  ## `else` action, or the default branch of a Leng discriminated `union`
     TypevarsL = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)`
     BreakL = (ord(BreakTagId), "break")  ## `break` statement
-    ContinueL = (ord(ContinueTagId), "continue")  ## `continue` statement
+    ContinueL = (ord(ContinueTagId), "continue")  ## `continue` statement. In Leng and the multi-join IR it is a `(loop)` body's last statement, its sole back-edge: `(continue .)` always repeats, `(continue X)` repeats while `X` holds and otherwise leaves the loop. `X` has no effect: no call, no write, no flag read (`ovf`); a load is fine
     ForL = (ord(ForTagId), "for")  ## for statement
     WhileL = (ord(WhileTagId), "while")  ## `while` statement
     CaseL = (ord(CaseTagId), "case")  ## `case` statement

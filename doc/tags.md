@@ -92,7 +92,7 @@
 | `(else X)`; `(else .T)` | LengOther, NimonyOther, NiflerKind | `else` action, or the default branch of a Leng discriminated `union` |
 | `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)` |
 | `(break .Y)`; `(break)` | LengStmt, NimonyStmt, NiflerKind | `break` statement |
-| `(continue .Y)`; `(continue)` | NimonyStmt, NiflerKind, FinalIrKind | `continue` statement |
+| `(continue .Y)`; `(continue)`; `(continue .X)` | NimonyStmt, NiflerKind, FinalIrKind, LengStmt | `continue` statement. In Leng and the multi-join IR it is a `(loop)` body's last statement, its sole back-edge: `(continue .)` always repeats, `(continue X)` repeats while `X` holds and otherwise leaves the loop. `X` has no effect: no call, no write, no flag read (`ovf`); a load is fine |
 | `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
 | `(while X S)` | LengStmt, NimonyStmt, NiflerKind| `while` statement |
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
@@ -166,8 +166,7 @@
 | `(errs)` | LengPragma | proc annotation |
 | `(static T)`; `(static)`; `(static X)` | LengPragma, NimonyType, NimonyExpr, NiflerKind | `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time |
 | `(ite X S .S S? STR_LIT?)` | ControlFlowKind, FinalIrKind, LengStmt | if-then-else, optionally followed by `join` information and by a label. The multi-join IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's |
-| `(itec X S S)` | FinalIrKind, LengStmt | if-then-else (that was a `case`) |
-| `(loop S)` | FinalIrKind, LengStmt | infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)` |
+| `(loop S)` | FinalIrKind, LengStmt | loop; the body ends in `(continue .X)`, its sole back-edge, and every forward exit is a `(jmp …)` to a label after the loop |
 | `(v X INT_LIT)` | FinalIrKind | `versioned` locations |
 | `(etupat X INT_LIT)` | FinalIrKind | tupat expression for error handling |
 | `(unknown X)` | FinalIrKind | location's contents is unknown at this point |

@@ -667,6 +667,23 @@ proc trIf(c: var Context; n: var Cursor) =
       skip n
   closeBranches c
 
+proc trIte(c: var Context; n: var Cursor) =
+  ## `(ite C T E|.)`: `trIf`'s two-branch case. With no else-branch the
+  ## fall-through state is the implicit second branch `closeBranches` keeps.
+  openBranches c
+  n.into:
+    if n.hasMore: trExpr(c, n)           # condition
+    if n.hasMore:
+      openBranch c
+      tr(c, n)                           # then
+      closeBranch c
+    if n.hasMore and n.kind != DotToken:
+      openFinalBranch c
+      tr(c, n)                           # else
+      closeBranch c
+    while n.hasMore: skip n
+  closeBranches c
+
 proc trCase(c: var Context; n: var Cursor) =
   n.into:
     if n.hasMore: trExpr(c, n)           # selector
@@ -711,7 +728,7 @@ proc trLoopBody(c: var Context; n: var Cursor) =
       while n.hasMore: skip n
   of LoopS:
     n.into:
-      if n.hasMore: tr(c, n)             # body; the infinite loop has no cond
+      if n.hasMore: tr(c, n)             # body; a `(continue X)` ends it, read there
       while n.hasMore: skip n
   else:
     skip n
@@ -775,6 +792,7 @@ proc tr(c: var Context; n: var Cursor) =
     of AsgnS:                      trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
     of IfS:                        trIf(c, n)
+    of IteS:                       trIte(c, n)
     of CaseS:                      trCase(c, n)
     of WhileS, LoopS:              trLoop(c, n)
     of JmpS:                       trJmp(c, n)
@@ -1140,7 +1158,7 @@ proc scanStab(c: var Context; sc: var StabScan; n: var Cursor) =
       skip n
     of JmpS, LabS, BreakS:
       skip n
-    of IfS, CaseS, WhileS, LoopS, ScopeS, StmtsS:
+    of IfS, CaseS, WhileS, LoopS, IteS, ContinueS, ScopeS, StmtsS:
       n.loopInto:
         scanStab(c, sc, n)
     else:

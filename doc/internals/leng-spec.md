@@ -151,16 +151,16 @@ TryStmt ::= (try StmtList StmtList StmtList)
 RaiseStmt ::= (raise [Empty | Expr])
 AsgnStmt ::= (asgn Lvalue Expr)
 KeepOverflowStmt ::= (keepovf ArithExpr Lvalue)
-IfStmt ::= (if (elif Expr StmtList)+ (else StmtList)? )
-WhileStmt ::= (while Expr StmtList)
-LoopStmt ::= (loop StmtList Expr StmtList) # pre-condition stmts, condition, body
+IfStmt ::= (if (elif Expr StmtList)+ (else StmtList)? ) # legacy, see "Control flow"
+WhileStmt ::= (while Expr StmtList) # legacy, see "Control flow"
+LoopStmt ::= (loop (stmts Stmt* ContinueStmt))
+ContinueStmt ::= (continue [Empty | Expr]) # the back-edge; only as a loop's last statement
 CaseStmt ::= (case Expr (of BranchRanges StmtList)* (else StmtList)?)
 LabelStmt ::= (lab SymbolDef)
 JumpStmt ::= (jmp Symbol)
 ScopeStmt ::= (scope StmtList)
 DiscardStmt ::= (discard Expr)
 IteStmt ::= (ite Expr StmtList [Empty | StmtList]) # if-then-else
-ItecStmt ::= (itec Expr StmtList [Empty | StmtList]) # same as ite
 MflagDecl ::= (mflag SymbolDef) # materialized control flow flag (bool)
 VflagDecl ::= (vflag SymbolDef) # virtual control flow flag (bool)
 JtrueStmt ::= (jtrue Symbol+) # set flags to true; last flag becomes a goto target
@@ -176,7 +176,6 @@ Stmt ::= Call |
          KeepOverflowStmt |
          IfStmt |
          IteStmt |
-         ItecStmt |
          WhileStmt |
          LoopStmt |
          (break) |
@@ -410,19 +409,29 @@ NJ instructions
 Leng has grown support for NJ ("No Jumps") instructions. These are lower-level control flow
 primitives that can be more efficient than structured `if`/`while` statements.
 
-### ite and itec
+### Control flow: ite, loop, continue
 
-`(ite Expr StmtList [Empty | StmtList])` is a simplified if-then-else. Unlike `(if)` which
-supports multiple `elif` branches, `ite` has exactly one condition, one then-branch and an
-optional else-branch.
+Leng's control flow is `ite`, `loop`, `case`, `lab` and `jmp` (nimony#2984). `if`,
+`while` and `break` are being phased out: `{.assembler.}` bodies still use them, and
+the producers and consumers are being migrated.
 
-`(itec)` has the same structure and semantics as `(ite)`.
+`(ite Expr StmtList [Empty | StmtList])` is if-then-else: exactly one condition, one
+then-branch and an optional else-branch. An `elif` chain is a nest of `ite`s.
 
-### loop
+`(loop (stmts Stmt* (continue [Empty | Expr])))` is a loop. Its body's last statement is
+the `continue`, the loop's sole back-edge:
 
-`(loop StmtList Expr StmtList)` is a loop with a pre-condition block. The first `StmtList`
-runs before the condition is tested. If the condition is false, the loop breaks. Then the
-body `StmtList` runs.
+- `(continue .)` always repeats. Such a loop is left only by a `(jmp L)` to a label
+  after it.
+- `(continue X)` repeats while `X` holds; otherwise control falls out of the loop to the
+  statement after it. `X` has no effect: no call, no write, no flag read (`ovf`). A load
+  is fine. `X` may read locals the body declared, since it is part of the body.
+
+Because the condition sits at the END of the body, it is evaluated in the loop like any
+other expression, and "a subexpression may be evaluated in a new statement in front of its
+statement" holds for it too. A `while c: b` is therefore expressed as a guarded
+bottom-tested loop, `(ite c (stmts (loop (stmts b (continue c)))) .)`, which evaluates
+`c` exactly as often as the `while` did.
 
 ### mflag and vflag
 

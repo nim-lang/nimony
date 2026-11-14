@@ -1605,18 +1605,36 @@ proc collectConcatLeaves(n: var Cursor; leaves: var seq[Cursor]) =
         leaves.add n
         skip n
 
+proc literalLen(leaf: var TokenBuf): int =
+  ## The length of a string-literal leaf, or -1 for anything else.
+  var n = beginRead(leaf)
+  result = if n.kind == StrLit: pool.strings[n.strId].len else: -1
+  endRead(n)
+
 proc emitLenSum(dest: var TokenBuf; intType: Cursor; lenSym: SymId;
-                leaves: seq[TokenBuf]; hi: int; info: NifLineInfo) =
-  ## `len(leaves[0]) + … + len(leaves[hi])`, left-associated.
-  if hi > 0:
+                leaves: var seq[TokenBuf]; info: NifLineInfo) =
+  ## `len(a) + … + len(z)`, left-associated. The string literals among the
+  ## leaves add up to one constant at the end: `len("…")` on a literal would
+  ## otherwise stay a call, because the inliner refuses to splice a call
+  ## whose argument became a string constructor.
+  var lits = 0
+  var dyn: seq[int] = @[]
+  for i in 0 ..< leaves.len:
+    let k = literalLen(leaves[i])
+    if k >= 0: inc lits, k
+    else: dyn.add i
+  let terms = dyn.len + (if lits > 0 or dyn.len == 0: 1 else: 0)
+  for _ in 1 ..< terms:
     dest.addParLe AddX, info
     dest.addSubtree intType
-    emitLenSum(dest, intType, lenSym, leaves, hi-1, info)
-  dest.copyIntoKind CallX, info:
-    dest.addSymUse lenSym, info
-    dest.add leaves[hi]
-  if hi > 0:
-    dest.addParRi()
+  for j, i in dyn:
+    dest.copyIntoKind CallX, info:
+      dest.addSymUse lenSym, info
+      dest.add leaves[i]
+    if j > 0: dest.addParRi()
+  if terms > dyn.len:
+    dest.addIntLit lits, info
+    if dyn.len > 0: dest.addParRi()
 
 proc trStringConcatChain(c: var Context; n: var Cursor) =
   ## `a & b & c & d`, a chain of `string.&`, becomes one allocation:
@@ -1675,7 +1693,7 @@ proc trStringConcatChain(c: var Context; n: var Cursor) =
     c.dest.addSubtree stringType
     c.dest.copyIntoKind CallX, info:
       c.dest.addSymUse newStrSym, info
-      emitLenSum(c.dest, c.typeCache.builtins.intType, lenSym, uses, uses.len-1, info)
+      emitLenSum(c.dest, c.typeCache.builtins.intType, lenSym, uses, info)
   for u in uses:
     c.dest.copyIntoKind CallS, info:
       c.dest.addSymUse addSym, info
