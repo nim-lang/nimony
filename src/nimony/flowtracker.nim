@@ -271,6 +271,10 @@ proc snapshot*(fs: FlowState): FlowSnap =
 
 proc borrowsOf*(snap: FlowSnap): seq[BorrowInfo] {.inline.} = snap.borrows
 
+proc inclInits*(fs: var FlowState; snap: FlowSnap) =
+  ## Add `snap`'s inits to `fs` (journaled).
+  for s in snap.inits: fs.inits.incl s
+
 proc inclBorrows*(fs: var FlowState; bs: seq[BorrowInfo]) =
   ## Add `bs` to the borrows that may be active (journaled): the may-join of
   ## the current state with a state that reaches the same point.

@@ -5469,6 +5469,17 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for ch in bypasses:
     c.facts.add ch
 
+proc forgetWrites(c: var FirContext; w: LoopWrites) =
+  ## Drops the facts the writes and barriers `w` records may break: the
+  ## shared ones at a barrier, unless every barrier names the variable, and
+  ## those about a written location that its writes do not keep.
+  if w.barriers > 0:
+    var spared: seq[SymId] = @[]
+    for s, k in w.namedBy:
+      if k == w.barriers: spared.add s
+    forgetShared(c, spared)
+  restrictFactsToLoopInvariants(c, w)
+
 proc factsMention(c: FirContext; v: VarId): bool =
   result = false
   for i in 0 ..< c.facts.len:
@@ -5556,12 +5567,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
         if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
       # a barrier in the body is one before every iteration too
       if iterBarrier: noteBarrier(w, iterNamed)
-      if w.barriers > 0:
-        var spared: seq[SymId] = @[]
-        for s, k in w.namedBy:
-          if k == w.barriers: spared.add s
-        forgetShared(c, spared)
-      restrictFactsToLoopInvariants(c, w)
+      forgetWrites(c, w)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
             w.kinds.getOrDefault(v, ivUnknown) in {ivIncreasing, ivDecreasing} and
@@ -5846,16 +5852,50 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
     c.p.tr.live = false
     c.p.flow.rollbackTo cp
 
+proc scanWrites(c: var FirContext; n: Cursor; w: var LoopWrites) =
+  ## Adds what `n` may write to `w`, as `scanLoopWrites` finds it for a loop
+  ## body, but without a direction: a point in the middle of `n` has seen only
+  ## part of a step.
+  var scan = n
+  let wasPrescanning = c.prescanning
+  c.prescanning = true
+  scanLoopWrites(c, scan, w)
+  c.prescanning = wasPrescanning
+  var written: seq[VarId] = @[]
+  for v in w.kinds.keys: written.add v
+  for v in written: w.kinds[v] = ivUnknown
+
+proc enterAfterRaise(c: var FirContext; cp: FlowCp; live: bool; w: LoopWrites;
+                     borrows: seq[BorrowInfo]) =
+  ## The state a raise in a `try` hands its `except` or `fin`. A raise can
+  ## leave at any point of the code before the handler, at a call to a
+  ## `.raises` routine as much as at a `raise`, and no edge of the Final IR
+  ## stands for the call. So what is known there is the pre-`try` state
+  ## without what that code may change (`w`, its writes and barriers), the
+  ## pre-`try` inits (the code only adds to them), and the borrows it may hold.
+  c.p.flow.rollbackTo cp
+  c.p.tr.live = live
+  forgetWrites(c, w)
+  c.p.flow.inclBorrows borrows
+
 proc traverseTry(c: var FirContext; n: var Cursor) =
-  ## `(try body (except ...)* (fin ...)?)`. Conservative: an `except` handler
-  ## may run after *any* point of the body, so it can only assume the pre-try
-  ## state; a `fin` is analyzed on the merged fall-through (its inits are not
-  ## propagated onto exit paths — sound, since that only withholds knowledge).
+  ## `(try body (except ...)* (fin ...)?)`. A handler is entered as
+  ## `enterAfterRaise` says. A `fin` runs on every way out of the `try`, so it
+  ## is reached whenever the `try` is, and it is entered as a raise from the
+  ## body or a handler leaves it. Its inits are the fall-through's, and are
+  ## not propagated onto exit paths (sound, since that only withholds
+  ## knowledge).
   var call = freshCall()
   let tryStart = n # skip 'try'
   n = sub(n)
   let cp = c.p.flow.checkpoint()
   let baseLive = c.p.tr.live
+  var w = LoopWrites(kinds: initTable[VarId, IvKind](),
+                     nonNeg: initHashSet[VarId](), opaque: false,
+                     namedBy: initTable[SymId, int](),
+                     assumed: initHashSet[VarId](),
+                     pendingStep: InvalidVarId)
+  scanWrites(c, n, w)
 
   traverseStmt c, n, call # try body
   # A handler may run after any point of the body, so it starts with what was
@@ -5872,6 +5912,7 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
     # The excepts catch the body's raises.
     discard takeRaise(c.p.tr)
 
+  var wAll = w   # what the body and the handlers write, for the `fin`
   while n.substructureKind == ExceptU:
     n.into: # 'except'
       var boundExc = NoSymId
@@ -5881,30 +5922,32 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
           c.typeCache.registerLocal(local.name.symId, n.symKind, local.typ)
           boundExc = local.name.symId
         skip n
-      # handler entry = pre-try state (a raise may interrupt the body anywhere):
-      c.p.flow.rollbackTo cp
-      c.p.tr.live = baseLive
-      c.p.flow.inclBorrows bodyBorrows
+      enterAfterRaise(c, cp, baseLive, w, bodyBorrows)
       # The bound exception value is initialized *in the handler* — mark it after
       # resetting to the pre-try state, which would otherwise discard the init.
       if boundExc != NoSymId:
         markInit(c, boundExc)
       if n.stmtKind in {StmtsS, ScopeS}:
+        scanWrites(c, n, wAll)
         traverseStmt c, n, call
       if c.p.tr.live:
         merged = if haveMerged: joinSnap(merged, snapshot(c.p.flow)) else: snapshot(c.p.flow)
         haveMerged = true
 
-  if haveMerged:
+  if n.substructureKind == FinU:
+    enterAfterRaise(c, cp, baseLive, wAll, bodyBorrows)
+    if haveMerged:
+      c.p.flow.inclInits merged
+      c.p.flow.inclBorrows borrowsOf(merged)
+    n.into:
+      traverseStmt c, n, call # finally body
+    if not haveMerged: c.p.tr.live = false
+  elif haveMerged:
     c.p.tr.live = true
     setTo(c.p.flow, cp, merged)
   else:
     c.p.tr.live = false
     c.p.flow.rollbackTo cp
-
-  if n.substructureKind == FinU:
-    n.into:
-      traverseStmt c, n, call # finally body, on the merged fall-through
   n = tryStart; skip n # close 'try'
 
 proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
