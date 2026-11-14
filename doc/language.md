@@ -3231,6 +3231,23 @@ Two module pragmas move the default:
 * `{.feature: "runtimeContracts".}` — no call site in this module is judged at
   all, and the run-time guard is the only check. It wins if both are given.
 
+A postcondition, stated with `ensures`, is judged in the routine itself, at
+every exit, and a caller takes it without looking. No run-time check backs it,
+so an `ensures` the compiler cannot prove is an error in every mode, like an
+undecided `{.assert}`:
+
+```nim
+proc pick(i: int): Hit {.requires: i >= 0 and i < 3,
+    ensures: result.thing >= -1 and result.thing < 3.} =
+  if miss(i): return Hit(thing: -1)   # proven: the constructor states the field
+  result = Hit(thing: i)              # proven from the `requires`
+```
+
+A field of an object result is a location like any other: a constructor or a
+copy states what it holds. A bound on it survives a loop that overwrites the
+object when every iteration ends with the bound true again, as in a loop that
+keeps the nearest of several `pick` results.
+
 ### Assertions and assumptions
 
 Inside a body, two statements take part in the same reasoning:

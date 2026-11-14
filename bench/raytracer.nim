@@ -106,14 +106,15 @@ const
   ]
   camera = newCamera(vector(3.0, 2.0, 4.0), vector(-1.0, 0.5, 0.0))
 
-proc getNormal(thing: int, pos: Vec3): Vec3 =
+proc getNormal(thing: int, pos: Vec3): Vec3 {.requires: thing >= 0 and thing < 3.} =
   ## Computes the original sphere or plane normal.
   let obj = things[thing]
   if obj.kind == 1:
     return normalize(subtract(pos, obj.center))
   return obj.normal
 
-proc objectIntersect(thing: int, ray: Ray): Intersection =
+proc objectIntersect(thing: int, ray: Ray): Intersection {.requires: thing >= 0 and thing < 3,
+    ensures: result.thing >= -1 and result.thing < 3.} =
   ## Returns an object index or negative one for a miss.
   let obj = things[thing]
   if obj.kind == 1:
@@ -135,7 +136,7 @@ proc objectIntersect(thing: int, ray: Ray): Intersection =
         dist: (dot(obj.normal, ray.start) + obj.offset) / -denominator)
   return Intersection(thing: -1, dist: 0.0)
 
-proc getProperties(thing: int, pos: Vec3): Properties =
+proc getProperties(thing: int, pos: Vec3): Properties {.requires: thing >= 0 and thing < 3.} =
   ## Selects shiny or checkerboard material properties.
   if things[thing].surface == 1:
     return Properties(diffuse: White, specular: Grey,
@@ -147,7 +148,8 @@ proc getProperties(thing: int, pos: Vec3): Properties =
   return Properties(diffuse: Black, specular: White,
     reflect: 0.7, roughness: 150.0)
 
-proc intersections(ray: Ray): Intersection =
+proc intersections(ray: Ray): Intersection {.
+    ensures: result.thing >= -1 and result.thing < 3.} =
   ## Finds the nearest intersection before the original far plane.
   var
     closest = FarAway
@@ -159,7 +161,8 @@ proc intersections(ray: Ray): Intersection =
       closest = hit.dist
   return nearest
 
-proc shade(ray: Ray, hit: Intersection, depth: int): Vec3
+proc shade(ray: Ray, hit: Intersection, depth: int): Vec3 {.
+    requires: hit.thing >= 0 and hit.thing < 3.}
 
 proc traceRay(ray: Ray, depth: int): Vec3 =
   ## Traces primary or reflected rays using the original background.
@@ -169,7 +172,7 @@ proc traceRay(ray: Ray, depth: int): Vec3 =
   return Black
 
 proc getNaturalColor(thing: int, pos: Vec3, normal: Vec3,
-    reflectDir: Vec3): Vec3 =
+    reflectDir: Vec3): Vec3 {.requires: thing >= 0 and thing < 3.} =
   ## Accumulates unshadowed diffuse and specular light.
   var color = Black
   let
@@ -200,7 +203,8 @@ proc getNaturalColor(thing: int, pos: Vec3, normal: Vec3,
       color = add(add(color, lightColor), specularColor)
   return color
 
-proc shade(ray: Ray, hit: Intersection, depth: int): Vec3 =
+proc shade(ray: Ray, hit: Intersection, depth: int): Vec3 {.
+    requires: hit.thing >= 0 and hit.thing < 3.} =
   ## Combines natural illumination and recursive reflections.
   let
     direction = ray.dir
