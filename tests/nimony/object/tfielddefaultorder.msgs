@@ -1,0 +1,8 @@
+tests/nimony/object/tfielddefaultorder.nim(8, 22) Error: cannot construct 'Node' in a default value of its own fields
+tests/nimony/object/tfielddefaultorder.nim(12, 13) Error: cannot construct 'P' in a default value of its own fields
+tests/nimony/object/tfielddefaultorder.nim(14, 5) Error: field 'n' with a default value needs a type
+tests/nimony/object/tfielddefaultorder.nim(15, 5) Error: field 'k' with a default value needs a type
+tests/nimony/object/tfielddefaultorder.nim(16, 5) Error: field 's' with a default value needs a type
+tests/nimony/object/tfielddefaultorder.nim(18, 5) Error: field 'x' with a default value needs a type
+tests/nimony/object/tfielddefaultorder.nim(21, 13) Error: cannot construct 'B' before its type section is checked
+tests/nimony/object/tfielddefaultorder.nim(31, 5) Error: field 'v' with a default value needs a type
