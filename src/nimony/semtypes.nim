@@ -678,7 +678,11 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
       swap c.typesInProgress, typesInProgress
       dec c.inTypeInst
       c.currentScope = oldScope
-      publish targetSym, ensureMove instance
+      # an object instance's field defaults are typed on demand
+      # (`loadSymWithPhase`); any other instance is complete
+      let complete = asTypeDecl(readonlyCursorAt(instance, 0)).body.typeKind != ObjectT
+      publish targetSym, ensureMove instance,
+        (if complete: SemcheckBodies else: SemcheckSignatures)
       dest.shrink typeStart
       dest.addSymUse(targetSym, info)
       sym.name = targetSym

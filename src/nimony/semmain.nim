@@ -26,7 +26,7 @@ import ".." / models / nifindex_tags
 import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptcache,
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
-  contracts_fir, exprexec, semimport, module_plugins, sem
+  contracts_fir, exprexec, semimport, module_plugins, sem, templates
 import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
@@ -590,8 +590,13 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest.addParRi()
 
   instantiateGenerics c, dest
-  for i in 0 ..< c.typeInstDecls.len:
+  var i = 0
+  while i < c.typeInstDecls.len: # typing defaults can add instances
     let val = c.typeInstDecls[i]
+    inc i
+    # its field defaults, if no construction typed them yet; the generic
+    # routines they need are instantiated with the hooks below
+    discard loadSymWithPhase(c, val, SemcheckBodies)
     let s = fetchSym(c, val)
     let res = declToCursor(c, dest, s)
     if res.status == LacksNothing:
@@ -690,8 +695,13 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     dest.addParRi()
 
   instantiateGenerics c, dest
-  for i in 0 ..< c.typeInstDecls.len:
+  var i = 0
+  while i < c.typeInstDecls.len: # typing defaults can add instances
     let val = c.typeInstDecls[i]
+    inc i
+    # its field defaults, if no construction typed them yet; the generic
+    # routines they need are instantiated with the hooks below
+    discard loadSymWithPhase(c, val, SemcheckBodies)
     let s = fetchSym(c, val)
     let res = declToCursor(c, dest, s)
     if res.status == LacksNothing:
