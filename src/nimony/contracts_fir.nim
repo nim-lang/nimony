@@ -189,11 +189,6 @@ type
     features: set[Feature]
     moduleSuffix: string
     nestedProcs: int
-    loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
-                                       # Their post-join state keeps the pre-loop
-                                       # facts (break-site facts are dropped; only
-                                       # break-site inits are joined). See
-                                       # `bindLoopExit`.
     forBinders: HashSet[SymId]         # `for` loop variables: see `declareForVars`
     derivedIds: Table[string, VarId]   # canonical location key -> derived VarId
                                        # (see "Derived locations" below)
@@ -4027,8 +4022,8 @@ proc checkRequires(c: var FirContext; req: Cursor; rd: Reading;
   # An obligation on a path control cannot reach is vacuous, and the facts there
   # are not merely weak but meaningless — a join on a dead path keeps *both*
   # arms of the preceding `if`, so contradictory facts hold at once and anything
-  # at all can be "disproved". (`trFor` emits the exit label of every `for` so
-  # that a loop no longer makes its own continuation look dead; what is left
+  # at all can be "disproved". (A `for` falls through where its iterator runs
+  # out, so a loop does not make its own continuation look dead; what is left
   # here is genuinely unreachable code.)
   if not c.p.tr.live: return
   let res = proveCond(c, req, rd)
@@ -5599,9 +5594,12 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
   if c.assumedSteps.len == 0: c.proofLog.setLen proofMark
   let backEdge = backEdgeBorrows(c.p.tr)
   dropContinue(c.p.tr)       # the loop header consumes the back-edge
-  # The loop never falls through; reset the working state to the pre-loop base.
-  # A following `(lab loopExit)` installs the join of the states its exits
-  # jumped with (`bindLoopExit`).
+  # The body never falls through; reset the working state to the loop's head.
+  # A following `(lab loopExit)` joins the states its exits jumped with like
+  # any other label: the body was analysed only under the facts no iteration
+  # can break (`restrictFactsToLoopInvariants`), so what holds where a `break`
+  # or the guard jumps out holds on *every* iteration's exit, the guard's
+  # negation included.
   c.p.flow.rollbackTo cp
   # Borrows are the exception to the pre-loop base: what the body leaves
   # borrowed stays borrowed when the loop stops (see `backEdgeBorrows`).
@@ -5609,26 +5607,15 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
   # ends them before the back-edge.
   c.p.flow.inclBorrows backEdge
 
-proc recordLoopExitLabel(c: var FirContext; n: Cursor) =
-  ## The trailing `(lab loopExit)` is this loop's exit; record it so
-  ## `traverseLabel` uses `bindLoopExit`.
-  if n.isTagLit and n.finalIrKind == LabV:
-    var peek = n
-    inc peek
-    c.loopExitLabels.incl peek.symId
-
 proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
   ## forward via `(jmp loopExit)`. The while-condition is the leading guard
   ## `(ite (not cond) (jmp loopExit) .)` *inside* the body, so it needs no
   ## special handling here. Iteration-gained facts/inits flow only to the
   ## break sites (captured) and to the back-edge (discarded); the loop never
-  ## falls through. The `(lab loopExit)` that follows installs the merged
-  ## break state via `bindLoopExit`.
+  ## falls through. The `(lab loopExit)` that follows joins the break states.
   n.into: # loop tag
     analyseLoopBody c, n
-
-  recordLoopExitLabel c, n
 
 proc forIterFirstArg(c: var FirContext; iter: Cursor): Cursor =
   ## The container a borrowing `for` borrows from: the iterator call's first
@@ -5705,18 +5692,13 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
     # loop, and their borrows with them.
     for b in binders: endBorrow c, b
 
-  recordLoopExitLabel c, n
-
 proc traverseLabel(c: var FirContext; n: var Cursor) =
   ## `(lab L)` — the multi-join. Every forward `jmp L` has already been seen.
   var label = NoSymId
   n.into:
     label = n.symId
     inc n # symdef
-  if c.loopExitLabels.contains(label):
-    bindLoopExit(c.p.tr, c.p.flow, label)
-  else:
-    bindLabel(c.p.tr, c.p.flow, label)
+  bindLabel(c.p.tr, c.p.flow, label)
 
 proc traverseJmp(c: var FirContext; n: var Cursor) =
   ## `(jmp L)` — a forward structural transfer (loop-`break` included).
@@ -6663,7 +6645,6 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     moduleSuffix: moduleSuffix,
     p: ProcCon(tr: initFlowTracker(), flow: initFlowState(),
                ownOlds: initTable[string, VarId]()),
-    loopExitLabels: initHashSet[SymId](),
     forBinders: initHashSet[SymId](),
     declaredRange: initTable[VarId, RangeBounds](),
     typeRange: initTable[VarId, RangeBounds](),
