@@ -523,7 +523,9 @@ proc readLine*(s: var Socket; dl = never): string {.passive, raises.} =
       if view[i] == '\n':
         nl = i
         break
-    if nl >= 0:
+    # `nl < view.len` whenever it was found: stating it carries the bound past
+    # the loop
+    if nl >= 0 and nl < view.len:
       var last = nl
       if last > 0 and view[last - 1] == '\r':
         dec last

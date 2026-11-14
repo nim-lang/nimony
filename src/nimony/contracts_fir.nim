@@ -5688,9 +5688,15 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
     var binders: seq[SymId] = @[]
     declareForVars c, n, firstArg, binders
     skip n # the loop variables
+    let liveBefore = c.p.tr.live
     analyseLoopBody c, n, iterBarrier, iterNamed
-    # The iterator running out is an exit no `jmp` stands for, so no `kill`
-    # either: the loop variables die with the loop, and their borrows with them.
+    # The iterator running out is an exit no `jmp` stands for: it falls through
+    # with the state at the loop's head, which `analyseLoopBody` leaves in
+    # place, before the first iteration as after any other. The `(lab)` that
+    # follows joins it with every `break`.
+    c.p.tr.live = liveBefore
+    # No `kill` stands for that exit either: the loop variables die with the
+    # loop, and their borrows with them.
     for b in binders: endBorrow c, b
 
   recordLoopExitLabel c, n

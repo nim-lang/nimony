@@ -396,22 +396,15 @@ proc bindRaise*(tr: var FlowTracker; fs: var FlowState) {.inline.} =
   bindKey(tr, fs, ExitKey[SymId](kind: ekRaise))
 
 proc bindLoopExit*(tr: var FlowTracker; fs: var FlowState; label: SymId) =
-  ## The `(lab loopExit)` after a `(loop)`. The body is analyzed once, and only
-  ## under the facts no iteration can break (`restrictFactsToLoopInvariants`),
-  ## so what holds where a `break` or the guard jumps out holds on *every*
-  ## iteration's exit: the exit is joined exactly like any other label — the
-  ## guard's negation included, which is what `while k > Max: …` leaves behind
-  ## for the code after it.
-  let key = labelKey(label)
-  if key notin tr.exits:
-    # A `(lab)` with no `jmp` to it: `trFor` emits the exit of every `for` loop
-    # unconditionally, because the iterator's termination test is not generated
-    # until hexer. The label is the lowering's word that this point is reached,
-    # and `fs` already holds the conservative pre-loop state the driver rolled
-    # back to, so the only thing missing is liveness.
-    tr.live = true
-  else:
-    bindKey(tr, fs, key)
+  ## The `(lab loopExit)` after a `(loop)` or `(for)`. The body is analyzed
+  ## once, and only under the facts no iteration can break
+  ## (`restrictFactsToLoopInvariants`), so what holds where a `break` or the
+  ## guard jumps out holds on *every* iteration's exit: the exit is joined
+  ## exactly like any other label — the guard's negation included, which is
+  ## what `while k > Max: …` leaves behind for the code after it. A `for`
+  ## loop's own exit, the iterator running out, has no `jmp`: the driver
+  ## leaves it as the fall-through, in the state at the loop's head.
+  bindKey(tr, fs, labelKey(label))
 
 proc dropContinue*(tr: var FlowTracker) {.inline.} =
   ## The loop header consumes the back-edge; a one-pass forward analysis drops it.
