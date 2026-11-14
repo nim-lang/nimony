@@ -1,3 +1,0 @@
-tests/nimony/enums/tenum_descending.nim(4, 9) Error: enum field values must be in ascending order
-tests/nimony/enums/tenum_descending.nim(7, 10) Error: enum field values must be in ascending order
-tests/nimony/enums/tenum_descending.nim(9, 22) Error: enum field values must be in ascending order
