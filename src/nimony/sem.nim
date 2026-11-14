@@ -2947,38 +2947,39 @@ proc yieldsSumTypeConstr(c: var SemContext; n: Cursor): bool =
   ## a statement (`result = ...`) into a type error.
   if isSumTypeConstr(c, n): return true
   result = false
-  case n.stmtKind
-  of StmtsS:
+  # `if`s rather than a `case`: `stmtKind` and `substructureKind` are enums
+  # in which only a few values matter here, and nimony does not allow an
+  # `else` in a `case` over an enum.
+  let kind = n.stmtKind
+  if kind == StmtsS:
     var it = sub(n)
     var last = default(Cursor)
     while it.hasMore:
       last = it
       skip it
     result = not cursorIsNil(last) and yieldsSumTypeConstr(c, last)
-  of IfS, CaseS:
+  elif kind in {IfS, CaseS}:
     # Every branch must end in a constructor; an `if` also needs its `else`
     # (a `case` is exhaustive or does not compile).
     var it = sub(n)
-    if n.stmtKind == CaseS: skip it # the selector
+    if kind == CaseS: skip it # the selector
     var branches = 0
     var hasElse = false
     result = true
     while result and it.hasMore:
-      case it.substructureKind
-      of ElifU, OfU:
+      let branchKind = it.substructureKind
+      if branchKind in {ElifU, OfU}:
         var action = sub(it)
         skip action # the condition or the ranges
         result = yieldsSumTypeConstr(c, action)
-      of ElseU:
+      elif branchKind == ElseU:
         hasElse = true
         result = yieldsSumTypeConstr(c, sub(it))
       else:
         result = false
       inc branches
       skip it
-    result = result and branches > 0 and (n.stmtKind == CaseS or hasElse)
-  else:
-    discard
+    result = result and branches > 0 and (kind == CaseS or hasElse)
 
 proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
                             selectorType: TypeCursor; objTypeSym: SymId;
