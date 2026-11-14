@@ -115,7 +115,8 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string;
                      fcmpLhs: lhs, fcmpRhs: rhs)
       result = res
     else:
-      let pred = if unsignedPred != "" and lhsTK in {UT, CT, BoolT}:
+      # An address compares unsigned (`ult`), like `u`/`c`/`bool`.
+      let pred = if unsignedPred != "" and lhsTK in {UT, CT, BoolT, PtrT, AptrT, ProctypeT}:
                    unsignedPred
                  else:
                    signedPred
