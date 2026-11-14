@@ -1,0 +1,5 @@
+tests/nimony/methods/tmethod_sideeffect.nim(19, 1) Error: 'm' overrides a `noSideEffect` method and must be `noSideEffect` too
+tests/nimony/methods/tmethod_sideeffect.nim(21, 1) Error: 'early' overrides a `noSideEffect` method and must be `noSideEffect` too
+tests/nimony/methods/tmethod_sideeffect.nim(24, 1) Error: 'area' overrides a `noSideEffect` method and must be `noSideEffect` too
+tests/nimony/methods/tmethod_sideeffect.nim(27, 1) Error: 'g' overrides a `noSideEffect` method and must be `noSideEffect` too
+tests/nimony/methods/tmethod_sideeffect.nim(29, 1) Error: 'm' overrides a `noSideEffect` method and must be `noSideEffect` too

@@ -1,0 +1,1 @@
+Error: invalid module name: '2digitlib' (tests/nimony/errmsgs/deps/2digitlib.nim); a module name must not start with a digit

@@ -1011,7 +1011,9 @@ func multiReplace*(s: string; replacements: openArray[(string, string)]): string
             add result, repl[1]
             matched = repl[0].len
             break
-        if matched > 0:
+        # a match is never longer than `s`: stating it carries the bound
+        # past the loop
+        if matched > 0 and matched <= s.len:
           inc(i, matched)
           break sIteration
       # No matching replacement found
@@ -1363,16 +1365,16 @@ func stripTrailingZeros(s: string; decimalSep: char): string =
   ## `%g` without `#` drops the trailing zeros of the fraction, and the point
   ## with them when nothing is left behind it.
   var mantEnd = s.len
-  for i in 0 ..< s.len:
-    if s[i] == 'e':
-      mantEnd = i
-      break
+  let e = s.find('e')
+  if e >= 0: mantEnd = e
   var pointAt = -1
   for i in 0 ..< mantEnd:
     if s[i] == decimalSep:
       pointAt = i
       break
-  if pointAt < 0:
+  # `pointAt < mantEnd` whenever it was found: stating it carries the bound
+  # past the loop
+  if pointAt < 0 or pointAt >= mantEnd:
     result = s
   else:
     var last = mantEnd
@@ -1678,7 +1680,7 @@ func formatSize*(bytes: int64; decimalSep = '.'; prefix = bpIEC; includeSpace = 
   #let lg2 = if bytes == 0: 0 else: fastLog2(bytes)
   const Lg2MaxDiv10 = sizeof(int64) * 8 div 10
   var lg2 = Lg2MaxDiv10 * 10
-  var matchedIndex = Lg2MaxDiv10
+  var matchedIndex: range[0 .. Lg2MaxDiv10] = Lg2MaxDiv10
   for i in 1 .. Lg2MaxDiv10:
     if (bytes shr (i * 10)) == 0:
       lg2 = (i - 1) * 10

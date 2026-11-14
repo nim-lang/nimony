@@ -232,7 +232,9 @@ proc parseRfc850(buf: openArray[char]; t: var Time): bool =
     if buf[i] == ',':
       c = i
       break
-  if c < 0: return false
+  # `c < buf.len` whenever it was found: stating it carries the bound past
+  # the loop
+  if c < 0 or c >= buf.len: return false
   var ok = false
   for w in 0..6:
     if isWord(buf, c, LongDayNames[w]): ok = true
