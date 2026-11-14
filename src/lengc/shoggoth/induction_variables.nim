@@ -27,9 +27,12 @@ import ".." / typenav                         # getNominalType — the temp's de
 
 type
   AccessInfo = object
-    arrSym: SymId
-    pos: int           # position of the `(at arr iv)` subtree in orig
+    key: string        # base + invariant offset: accesses with the same key
+                       # share one pointer (`c[ai + j]` read and written)
+    pos: int           # position of the `(at|pat base idx)` subtree in orig
     atCursor: Cursor   # cursor at the same position (for `addSubtree`)
+    base: Cursor       # the array/pointer the access indexes
+    inv: Cursor        # `idx = iv + inv` (or `inv + iv`); nil for `idx = iv`
 
   Context = object
     scaledIndex: bool  ## the target addresses `a[i]` in one operand: keep the
@@ -139,22 +142,103 @@ proc scanBody(c: var Context; n: Cursor;
     scanBody(c, m, candidates, addrTaken)
     skip m
 
+proc slotRoot(n: Cursor): SymId =
+  ## The local whose own storage the lvalue `n` names — `x`, `x.f`, `x[i]` —
+  ## or nothing when the spine goes through a `deref`/`pat`: that storage is
+  ## someone else's, and `x` itself is only read.
+  result = SymId(0)
+  var c = n
+  var done = false
+  while not done:
+    case c.kind
+    of Symbol:
+      result = symId(c)
+      done = true
+    of TagLit:
+      case c.exprKind
+      of DotC, AtC:
+        c = c.childCursor
+      of ConvC, CastC:
+        c = c.childCursor                    # the type
+        skip c
+      else: done = true
+    else: done = true
+
 type
   LoopFacts = object
     ## What the loop does to the symbols an access is rooted at. Collected once
-    ## per loop; used to decide whether the hoisted `addr base[0]` stays valid
+    ## per loop; used to decide whether the hoisted `addr base[…]` stays valid
     ## for the whole loop (see `baseIsStable`).
     assigned: HashSet[SymId]   ## symbol-LHS writes anywhere in the loop
-    addrTaken: HashSet[SymId]  ## `(addr S)` / `(haddr S)` anywhere in the loop
+    written: HashSet[SymId]    ## locals whose storage a store names: `x = …`,
+                               ## `x.f = …`, `x[i] = …`
+    addrTaken: HashSet[SymId]  ## `(addr S)` / `(haddr S.f)` anywhere in the loop
+    declared: HashSet[SymId]   ## locals declared INSIDE the loop: a fresh value
+                               ## per iteration, and absent where the hoisted
+                               ## decls go
+    ptrStoreTargets: seq[string] ## per store through a pointer: the pointer it
+                                 ## writes through (`treeKey`), "" if unknown
     hasCall: bool              ## a callee can rebind a global or an escaped local
     m: ptr MainModule          ## to ask a row whether an `(instr …)` is pure;
                                ## nil ⇒ every intrinsic counts as a call
 
+proc treeKey(n: Cursor; key: var string) =
+  ## A structural fingerprint of a pure subtree: tags, symbols, literals.
+  case n.kind
+  of TagLit:
+    key.add '('
+    key.addInt int(n.cursorTagId)
+    var m = n
+    m.loopInto:
+      key.add ' '
+      treeKey(m, key)
+      skip m
+    key.add ')'
+  of Symbol:
+    key.add 's'
+    key.addInt int(symId(n))
+  of IntLit:
+    key.add 'i'
+    key.addInt intVal(n)
+  of UIntLit:
+    key.add 'u'
+    key.add $uintVal(n)
+  else:
+    key.add '?'
+
+proc pointerKey(lhs: Cursor): string =
+  ## The pointer a store through a pointer writes through: the operand of the
+  ## first `pat` or `deref` on the lvalue's spine, as a `treeKey`. `at` is
+  ## followed into its operand — it may index an array FIELD of the object
+  ## behind the pointer — and so is `dot`. "" when there is none to name.
+  result = ""
+  var c = lhs
+  var done = false
+  while not done:
+    if c.kind == TagLit:
+      case c.exprKind
+      of PatC, DerefC:
+        treeKey(c.childCursor, result)
+        done = true
+      of DotC, AtC:
+        c = c.childCursor
+      of ConvC, CastC:
+        c = c.childCursor                    # the type
+        skip c
+      else: done = true
+    else: done = true
+
 proc collectLoopFacts(n: Cursor; f: var LoopFacts) =
   if not n.hasMore or n.kind != TagLit: return
+  if n.stmtKind in {VarS, ConstS}:
+    let name = n.childCursor
+    if name.kind == SymbolDef: f.declared.incl symId(name)
   if n.stmtKind == AsgnS:
     let lhs = writeTargetOf(n)
     if lhs.kind == Symbol: f.assigned.incl symId(lhs)
+    let root = slotRoot(lhs)
+    if root != SymId(0): f.written.incl root
+    else: f.ptrStoreTargets.add pointerKey(lhs)
   # An `(instr …)` counts unless its row is `efPure`: the loop rewrites below
   # hoist an address and assume nothing in the body wrote the memory it names, and
   # a `volatileStore` in the loop is exactly something that did. `Ctz` and friends
@@ -163,23 +247,21 @@ proc collectLoopFacts(n: Cursor; f: var LoopFacts) =
   elif (n.stmtKind == InstrS or n.exprKind == InstrC) and
        not (f.m != nil and instrIsPure(f.m[], n)): f.hasCall = true
   if n.exprKind in AddrKinds:
-    var probe = n
-    inc probe
-    while probe.hasMore:
-      if probe.kind == Symbol:
-        f.addrTaken.incl symId(probe)
-        break
-      elif probe.kind == TagLit:
-        inc probe
-      else:
-        inc probe
+    let root = slotRoot(n.childCursor)
+    if root != SymId(0): f.addrTaken.incl root
   var m = n
   m.loopInto:
     collectLoopFacts(m, f)
     skip m
 
+proc symIsInvariant(c: Context; s: SymId; f: LoopFacts): bool =
+  ## Same value on every iteration: the loop neither writes the symbol nor takes
+  ## its address, and — unless it is a local — calls nothing that could.
+  s notin f.declared and s notin f.written and s notin f.addrTaken and
+    (c.orig[].pool.symIsLocal(s) or not f.hasCall)
+
 proc baseIsStable(c: var Context; base: Cursor; f: LoopFacts): bool =
-  ## Is `addr base[0]` — the address this rewrite hoists out of the loop — the
+  ## Is `addr base[…]` — the address this rewrite hoists out of the loop — the
   ## same on every iteration?
   ##
   ## For an ARRAY base it always is: the address is the variable's own storage,
@@ -191,12 +273,52 @@ proc baseIsStable(c: var Context; base: Cursor; f: LoopFacts): bool =
   ## that rebinds it — directly, through a taken address, or through a callee
   ## that can reach it — would leave the pointer walking the old buffer. The
   ## same holds when the type does not resolve at all: unproven is not proven.
-  if base.kind != Symbol: return false
-  if c.m != nil:
-    let t = navigateToObjectBody(c.m[], getType(c.m[], base))
-    if t.typeKind == ArrayT: return true
-  let s = symId(base)
-  result = s notin f.assigned and s notin f.addrTaken and not f.hasCall
+  ##
+  ## A seq's payload is a FIELD: `(dot S data)` of a local copy is stable like
+  ## the local. `(dot (deref P) data)` of a `var` parameter lives in memory, so
+  ## additionally no call (which could grow the seq and move its payload), and
+  ## every store through a pointer must go through this very base: a store into
+  ## `P`'s payload cannot overwrite `P`'s header, since no seq contains its own
+  ## header. A store through any other pointer — `P` itself included — could.
+  result = false
+  case base.kind
+  of Symbol:
+    if symId(base) in f.declared:
+      result = false                         # does not exist before the loop
+    elif c.m != nil and
+       navigateToObjectBody(c.m[], getType(c.m[], base)).typeKind == ArrayT:
+      result = true
+    else:
+      # only `base = …` rebinds it; an element store `base[i] = …` does not
+      let b = symId(base)
+      result = b notin f.assigned and b notin f.addrTaken and not f.hasCall
+  of TagLit:
+    if base.exprKind == DotC:
+      let obj = base.childCursor
+      if obj.kind == Symbol:
+        result = symIsInvariant(c, symId(obj), f)
+      elif obj.kind == TagLit and obj.exprKind == DerefC:
+        let p = obj.childCursor
+        if p.kind == Symbol and symIsInvariant(c, symId(p), f) and not f.hasCall:
+          var own = ""
+          treeKey(base, own)
+          result = true
+          for target in f.ptrStoreTargets:
+            if target != own: result = false
+  else: discard
+
+proc operandIsInvariant(c: Context; inv: Cursor; f: LoopFacts): bool =
+  ## The loop bound, or the `inv` of an `iv + inv` index: a literal (suffixed
+  ## or not), or an invariant symbol. Nil — the index is the bare counter — is
+  ## trivially invariant.
+  if cursorIsNil(inv): result = true
+  else:
+    case inv.kind
+    of IntLit, UIntLit: result = true
+    of Symbol: result = symIsInvariant(c, symId(inv), f)
+    of TagLit:
+      result = inv.exprKind == SufC and inv.childCursor.kind in {IntLit, UIntLit}
+    else: result = false
 
 proc findIV(c: var Context; body: Cursor): tuple[ivSym: SymId, incPos: int, found: bool] =
   ## Identifies the loop body's induction variable (exactly one
@@ -226,29 +348,64 @@ proc findIV(c: var Context; body: Cursor): tuple[ivSym: SymId, incPos: int, foun
 
 # ---- access collection ----------------------------------------------------
 
+proc isIv(n: Cursor; ivSym: SymId): bool {.inline.} =
+  n.kind == Symbol and symId(n) == ivSym
+
+proc splitIndex(idx: Cursor; ivSym: SymId; inv: var Cursor): bool =
+  ## Is `idx` the counter, or `(add T iv inv)` / `(add T inv iv)`? Sets `inv`
+  ## (nil for the bare counter). The invariance of `inv` is checked later.
+  inv = default(Cursor)
+  if isIv(idx, ivSym):
+    result = true
+  elif idx.kind == TagLit and idx.exprKind == AddC:
+    var x = idx.childCursor                  # the type
+    skip x
+    var y = x
+    if y.hasMore: skip y
+    result = false
+    if x.hasMore and y.hasMore:
+      var after = y
+      skip after
+      if not after.hasMore:
+        if isIv(x, ivSym) and not isIv(y, ivSym):
+          inv = y
+          result = true
+        elif isIv(y, ivSym) and not isIv(x, ivSym):
+          inv = x
+          result = true
+  else:
+    result = false
+
 proc collectAccesses(c: var Context; start: Cursor; ivSym: SymId;
                      accesses: var seq[AccessInfo]) =
-  ## Walks the subtree at `start` collecting `(at SYMBOL ivSym)` accesses;
-  ## does not descend into nested loops.
+  ## Walks the subtree at `start` collecting `(at|pat base idx)` accesses whose
+  ## index is the counter, or the counter plus something; does not descend into
+  ## nested loops. Whether the base and the offset are loop-invariant is the
+  ## caller's question.
   if not start.hasMore: return
   case start.kind
   of TagLit:
     if start.stmtKind in {WhileS, LoopS}:
       return
-    if start.exprKind == AtC:
-      var arr = start
-      inc arr                                # past `(at`
-      var idx = arr
-      skip idx                               # past arr
-      if arr.kind == Symbol and idx.kind == Symbol and symId(idx) == ivSym:
-        accesses.add AccessInfo(arrSym: symId(arr),
-                                pos: cursorToPosition(c.orig[], start),
-                                atCursor: start)
-        return                               # don't recurse into the matched at
-    var n = start
-    n.loopInto:
-      collectAccesses(c, n, ivSym, accesses)
-      skip n
+    var matched = false
+    if start.exprKind in {AtC, PatC}:
+      let base = start.childCursor
+      var idx = base
+      skip idx
+      var inv = default(Cursor)
+      if idx.hasMore and splitIndex(idx, ivSym, inv):
+        var key = ""
+        treeKey(base, key)
+        key.add '+'
+        if not cursorIsNil(inv): treeKey(inv, key)
+        accesses.add AccessInfo(key: key, pos: cursorToPosition(c.orig[], start),
+                                atCursor: start, base: base, inv: inv)
+        matched = true                       # don't recurse into the matched access
+    if not matched:
+      var n = start
+      n.loopInto:
+        collectAccesses(c, n, ivSym, accesses)
+        skip n
   else: discard
 
 # ---- synthesis -----------------------------------------------------------
@@ -444,22 +601,6 @@ proc loopCounterCond(body: Cursor; ivSym: SymId): Cursor =
           skip after
           if not after.hasMore: result = cond
 
-proc boundIsInvariant(c: Context; bound: Cursor; f: LoopFacts): bool =
-  ## Is the loop bound `n` the same on every iteration? A literal (suffixed or
-  ## not) is; a symbol is
-  ## when the loop neither assigns it nor takes its address, and — unless it is a
-  ## local — calls nothing that could rebind it.
-  case bound.kind
-  of IntLit, UIntLit: result = true
-  of TagLit:
-    # `(suf 4096 "i64")` is a literal too
-    result = bound.exprKind == SufC and bound.childCursor.kind in {IntLit, UIntLit}
-  of Symbol:
-    let s = symId(bound)
-    result = s notin f.assigned and s notin f.addrTaken and
-             (c.orig[].pool.symIsLocal(s) or not f.hasCall)
-  else: result = false
-
 # ---- main traversal -------------------------------------------------------
 
 proc tr(c: var Context; n: var Cursor)   # forward
@@ -468,14 +609,14 @@ proc rewriteToPointers(c: var Context; loopPos: int; incPos: int;
                        stable: seq[AccessInfo]) =
   ## One pointer per array, bumped next to the counter's increment:
   ## `(at arr iv)` → `(deref p)`. The counter stays; it still has readers.
-  var arrToP = initTable[SymId, string]()
+  var arrToP = initTable[string, string]()
   for acc in stable:
     var p: string
-    if acc.arrSym in arrToP:
-      p = arrToP.getOrQuit(acc.arrSym)
+    if acc.key in arrToP:
+      p = arrToP.getOrQuit(acc.key)
     else:
       p = freshTempName(c)
-      arrToP[acc.arrSym] = p
+      arrToP[acc.key] = p
       let varIdx = addPtrVarDecl(c, p, acc.atCursor)
       c.patchset.addInsert(loopPos, cursorAt(c.synth[varIdx], 0))
       let incIdx = addPtrInc(c, p, rawLineInfo(acc.atCursor))
@@ -493,15 +634,15 @@ proc rewriteToZero(c: var Context; loopPos: int; ivSym: SymId; incPos: int;
   let j = freshTempName(c, "j")
   let jIdx = addIndexDecl(c, j, ivType, bound, ivSym, info)
   c.patchset.addInsert(loopPos, cursorAt(c.synth[jIdx], 0))
-  var arrToQ = initTable[SymId, string]()
+  var arrToQ = initTable[string, string]()
   for acc in stable:
     var q: string
-    if acc.arrSym in arrToQ:
-      q = arrToQ.getOrQuit(acc.arrSym)
+    if acc.key in arrToQ:
+      q = arrToQ.getOrQuit(acc.key)
     else:
       let p = freshTempName(c)
       q = freshTempName(c, "q")
-      arrToQ[acc.arrSym] = q
+      arrToQ[acc.key] = q
       let pIdx = addPtrVarDecl(c, p, acc.atCursor)
       c.patchset.addInsert(loopPos, cursorAt(c.synth[pIdx], 0))
       let qIdx = addEndBaseDecl(c, q, p, acc.atCursor, bound, ivType, ivSym)
@@ -520,14 +661,14 @@ proc transformLoop(c: var Context; n: var Cursor) =
   if ivInfo.found:
     var accesses: seq[AccessInfo] = @[]
     collectAccesses(c, body, ivInfo.ivSym, accesses)
-    var facts = LoopFacts(assigned: initHashSet[SymId](),
+    var facts = LoopFacts(assigned: initHashSet[SymId](), written: initHashSet[SymId](),
+                          declared: initHashSet[SymId](),
                           addrTaken: initHashSet[SymId](), m: c.m)
     collectLoopFacts(body, facts)
     var stable: seq[AccessInfo] = @[]
     for acc in accesses:
-      var base = acc.atCursor
-      inc base                               # past `(at` → the base
-      if baseIsStable(c, base, facts): stable.add acc
+      if baseIsStable(c, acc.base, facts) and operandIsInvariant(c, acc.inv, facts):
+        stable.add acc
     if stable.len > 0:
       if not c.scaledIndex:
         # A RISC addresses `a[i]` with a shift and an add on every access; a
@@ -550,7 +691,7 @@ proc transformLoop(c: var Context; n: var Cursor) =
         if not cursorIsNil(cond) and ivType.kind == TagLit and ivType.typeKind == IT:
           var bound = cond.childCursor
           skip bound
-          if boundIsInvariant(c, bound, facts) and
+          if operandIsInvariant(c, bound, facts) and
              countReads(beginRead(c.orig[]), ivInfo.ivSym) == stable.len + 2:
             rewriteToZero(c, loopPos, ivInfo.ivSym, ivInfo.incPos, stable, cond, bound, ivType)
 
@@ -777,6 +918,87 @@ when isMainModule:
       "(loop (stmts (asgn x.0.M (pat `iv.q.3 `iv.j.1)) " &
       "(asgn `iv.j.1 (add (i 32) `iv.j.1 1)) " &
       "(continue (not (eq `iv.j.1 0)))))) .))")
+
+  block count_to_zero_affine_index:
+    # `a[i + k]` with an invariant `k`: the end base is `addr a[n + k]`.
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (at arr.0.M (add (i 32) i.0.M k.0.M))) " &
+      "(asgn i.0.M (add (i 32) i.0.M 1)) (continue (lt i.0.M n.0.M))))) .))")
+    runInductionVariables(buf, scaledIndex = true)
+    assertSame(buf,
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts " &
+      "(var :`iv.j.1 . (i 32) (sub (i 32) i.0.M n.0.M)) " &
+      "(var :`iv.p.2 . . (addr (at arr.0.M (add (i 32) i.0.M k.0.M)))) " &
+      "(var :`iv.q.3 . . (addr (pat `iv.p.2 (sub (i 32) n.0.M i.0.M)))) " &
+      "(loop (stmts (asgn x.0.M (pat `iv.q.3 `iv.j.1)) " &
+      "(asgn `iv.j.1 (add (i 32) `iv.j.1 1)) " &
+      "(continue (lt `iv.j.1 0))))) .))")
+
+  block count_to_zero_field_base:
+    # A seq's payload, `(pat (dot b data) i)` of a local copy `b`.
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (pat (dot b.0.M data.0.M 0) i.0.M)) " &
+      "(asgn i.0.M (add (i 32) i.0.M 1)) (continue (lt i.0.M n.0.M))))) .))")
+    runInductionVariables(buf, scaledIndex = true)
+    assertSame(buf,
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts " &
+      "(var :`iv.j.1 . (i 32) (sub (i 32) i.0.M n.0.M)) " &
+      "(var :`iv.p.2 . . (addr (pat (dot b.0.M data.0.M 0) i.0.M))) " &
+      "(var :`iv.q.3 . . (addr (pat `iv.p.2 (sub (i 32) n.0.M i.0.M)))) " &
+      "(loop (stmts (asgn x.0.M (pat `iv.q.3 `iv.j.1)) " &
+      "(asgn `iv.j.1 (add (i 32) `iv.j.1 1)) " &
+      "(continue (lt `iv.j.1 0))))) .))")
+
+  block deref_base_own_payload_store:
+    # The only store goes into `(*c).data`'s own payload: it cannot rebind
+    # `(*c).data`, so the base is hoisted.
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn (pat (dot (deref c.0.M) data.0.M 0) i.0.M) x.0.M) " &
+      "(asgn i.0.M (add (i 32) i.0.M 1)) (continue (lt i.0.M n.0.M))))) .))")
+    runInductionVariables(buf, scaledIndex = true)
+    assertSame(buf,
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts " &
+      "(var :`iv.j.1 . (i 32) (sub (i 32) i.0.M n.0.M)) " &
+      "(var :`iv.p.2 . . (addr (pat (dot (deref c.0.M) data.0.M 0) i.0.M))) " &
+      "(var :`iv.q.3 . . (addr (pat `iv.p.2 (sub (i 32) n.0.M i.0.M)))) " &
+      "(loop (stmts (asgn (pat `iv.q.3 `iv.j.1) x.0.M) " &
+      "(asgn `iv.j.1 (add (i 32) `iv.j.1 1)) " &
+      "(continue (lt `iv.j.1 0))))) .))")
+
+  block deref_base_foreign_store_left_alone:
+    # A store through another pointer could hit `(*c).data`: not hoisted.
+    assertUnchangedScaled(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (pat (dot (deref c.0.M) data.0.M 0) i.0.M)) " &
+      "(asgn (deref q.0.M) y.0.M) " &
+      "(asgn i.0.M (add (i 32) i.0.M 1)) (continue (lt i.0.M n.0.M))))) .))")
+
+  block deref_base_header_store_left_alone:
+    # `(*c).len = …` writes the header itself, through `c`.
+    assertUnchangedScaled(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(asgn x.0.M (pat (dot (deref c.0.M) data.0.M 0) i.0.M)) " &
+      "(asgn (dot (deref c.0.M) len.0.M 0) y.0.M) " &
+      "(asgn i.0.M (add (i 32) i.0.M 1)) (continue (lt i.0.M n.0.M))))) .))")
+
+  block base_declared_in_loop_left_alone:
+    # SROA re-derives a seq's payload into a fresh local per iteration: the
+    # base does not exist where the hoisted decls would go.
+    assertUnchangedScaled(
+      "(stmts (var :i.0.M . . 0) (ite (lt 0 n.0.M) (stmts (loop (stmts " &
+      "(var :d.1 . (aptr (i 64)) (dot s.0.M data.0.M 0)) " &
+      "(asgn x.0.M (pat d.1 i.0.M)) " &
+      "(asgn i.0.M (add (i 32) i.0.M 1)) (continue (lt i.0.M n.0.M))))) .))")
+    var buf = parse(
+      "(stmts (var :i.0.M . . 0) (while (lt (i 32) i.0.M 10) (stmts " &
+      "(var :d.1 . (aptr (i 64)) (dot s.0.M data.0.M 0)) " &
+      "(asgn x.0.M (pat d.1 i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))")
+    let before = toString(buf)
+    runInductionVariables buf
+    doAssert toString(buf) == before, "pointer walk hoisted a loop-local base"
 
   block unsigned_counter_left_alone:
     # `i - n` would wrap instead of going negative, and a scaled-index target
