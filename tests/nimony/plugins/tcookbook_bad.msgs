@@ -1,0 +1,1 @@
+tests/nimony/plugins/tcookbook_bad.nim(6, 10) Error: checked block may not call blocked
