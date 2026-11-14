@@ -50,3 +50,15 @@ echo tup((a: 1, b: 2)), " ", ctor(5), " ", ctor(x.b)
 echo req(Big(a: 1, b: 9), 3), " ", req(x, 1), " ", ens(Big(a: 1, b: 8))
 echo gen(G[float](a: 1, b: 2, c: 0.5)), " ", caller(Outer(b: Big(a: 4, b: 5)))
 echo tsum(Big(a: 1, b: 2)), " ", total(Pair(a: 10, b: 20))
+
+# issue #2994: two calls of an imported accessor with a `.requires`, one
+# applied to a field named like its parameter
+type Selection = object
+  cursor: Cur
+func reselect(before: Selection; cursor: Cur): bool =
+  if not before.cursor.initialized or not cursor.initialized:
+    return false
+  before.cursor.lastStamp != cursor.lastStamp
+echo reselect(Selection(cursor: initCur(1)), initCur(2)), " ",
+  reselect(Selection(cursor: initCur(3)), initCur(3)), " ",
+  reselect(Selection(), initCur(3))
