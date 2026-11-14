@@ -5411,6 +5411,9 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     # A local declared inside the body is rebound every iteration.
     w.preserved.setLen 0
     let local = asLocal(n)
+    # Its `kill` is in the body too, but the scan does not know the local's
+    # type there: the declaration says whether it dies by a barrier.
+    if destroyIsBarrier(c, n.symKind, local.typ): noteBarrier(w, [])
     if local.name.kind == SymbolDef:
       var lo = zero()
       var hi = zero()
