@@ -646,6 +646,31 @@ proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
+proc expectedArgType(c: var SemContext; cs: CallState; pos: int; name: StrId): TypeCursor =
+  ## The type a single routine (not an overload set: its type is known
+  ## before its arguments are checked) gives the argument at `pos`, or the one
+  ## named `name`. `auto` when there is no such routine or parameter, or when
+  ## the parameter's type still mentions the routine's generic parameters:
+  ## those are only known once the arguments have been matched.
+  result = c.types.autoType
+  let fnType = cs.fn.typ.skipModifierAndOwned
+  if fnType.typeKind notin RoutineTypes: return
+  let params = skipProcTypeToParams(fnType)
+  if not params.isParamsTag: return
+  var f = sub(params)
+  var i = 0
+  while f.hasMore:
+    let param = takeLocal(f, SkipFinalParRi)
+    if (name != StrId(0) and getIdent(param.name) == name) or (name == StrId(0) and i == pos):
+      if param.typ.typeKind notin {VarargsT, MutT, OutT} and not containsGenericParams(param.typ):
+        result = param.typ.skipModifier
+      return
+    inc i
+
+proc mayBeSumTypeConstr(n: Cursor): bool =
+  ## The syntactic shapes `yieldsSumTypeConstr` accepts.
+  n.exprKind in {CallX, CmdX, OconstrX} or n.stmtKind in {StmtsS, IfS, CaseS}
+
 proc anyArgTypeIsError(cs: CallState): bool =
   ## True when an argument already carries an `(err)` type, i.e. semchecking it
   ## failed and reported a diagnostic of its own.
@@ -1622,12 +1647,25 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     argIndexes.add dest.len
     let named = arg.n.substructureKind == VvU
     var namedStart = default(Cursor)
+    var argName = StrId(0)
+    # A positional argument after a named one is placed by the matcher.
+    let placed = named or not cs.hasNamedArgs
     if named:
       cs.hasNamedArgs = true
       dest.addParLe(arg.n.cursorTagId, arg.n.info)
       namedStart = arg.n
       arg.n = sub(arg.n)
+      argName = getIdent(arg.n)
       takeTree dest, arg.n
+    # A sum type constructor takes its parameter's type as the expected type,
+    # as it takes the declared type in `let x: T = ...` (see `yieldsSumTypeConstr`).
+    if placed and arg.n.mayBeSumTypeConstr:
+      # Cheapest test first: only a call, a constructor or a statement
+      # expression can be a constructor. Then the routine's parameter, and
+      # only then the name lookup in `yieldsSumTypeConstr`.
+      let expected = expectedArgType(c, cs, cs.args.len, argName)
+      if expected.typeKind != AutoT and yieldsSumTypeConstr(c, arg.n):
+        arg.typ = expected
     # `KeepChoices`: an argument that is a symbol choice stays one — the formal
     # parameter it ends up matching is what picks the candidate, so lookup must
     # not collapse it by scope distance nor declare it ambiguous here.
