@@ -297,6 +297,24 @@ type
       # Module suffixes with no `.c.nif` to open (asked once, not per call).
     foreignInfo: Table[SymId, InlineInfo]
       # Cross-module policy verdicts, computed on first ask per callee.
+    unroll*: bool
+      # Unroll counted loops whose counter selects a `const` table entry and
+      # specialize calls on literal selectors (`tryUnroll`, `specializable`).
+      # Set by shoggoth's inter-module pass only: hexer's same-module pass
+      # flattens bodies that importers measure, and an unrolled body would be
+      # demoted everywhere for growth the importer never asked for.
+    consts: Table[SymId, Cursor]
+      # The module's own `(const :C . T VALUE)`s: C → VALUE, into `src`.
+    litLocals: Table[SymId, int64]
+      # Locals of the proc being walked that are declared with an integer
+      # literal and never written or address-taken: a `for` loop's bounds.
+    selectors: Table[SymId, seq[bool]]
+      # Per callee: which parameters index one of `consts` (`(at C p)`).
+    noSpecialize: bool
+      # Set while a refused speculative splice is re-emitted as the call.
+    lastSpeculative: bool
+      # The splice `prepareSplice` just admitted is speculative: kept only if
+      # pruning decides something (`commitSplice`).
     inProgress*: HashSet[SymId]
       # Currently-being-spliced procs. Recursive `.inline` (direct or
       # mutual) would otherwise cause the splice + re-tr loop in dce2 to
@@ -326,6 +344,9 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
              foreign: initTable[string, ForeignModule](),
              noForeign: initHashSet[string](),
              foreignInfo: initTable[SymId, InlineInfo](),
+             consts: initTable[SymId, Cursor](),
+             litLocals: initTable[SymId, int64](),
+             selectors: initTable[SymId, seq[bool]](),
              inProgress: initHashSet[SymId]())
 
 proc growthBudget*(bodySize: int): int =
@@ -391,8 +412,25 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
   for (sym, info) in found:
     if info.inlinable: infos[sym] = info
 
+proc indexConsts(buf: var TokenBuf; consts: var Table[SymId, Cursor]) =
+  ## `(const :C <pragmas> <type> VALUE)` at the module's top level.
+  var n = beginRead(buf)
+  if n.stmtKind == StmtsS:
+    n.into:
+      while n.hasMore:
+        if n.isTagLit and n.stmtKind == ConstS:
+          var c = n.childCursor
+          if c.isSymbolDef:
+            let sym = c.symId
+            skip c                       # name
+            skip c                       # pragmas
+            skip c                       # type
+            if c.hasMore: consts[sym] = c
+        skip n
+
 proc collectProcBodies*(c: var InlinerCtx) =
   indexProcBodies(c.src[], c.bodies, c.ownInfo)
+  if c.unroll: indexConsts(c.src[], c.consts)
 
 proc findForeignFile(c: InlinerCtx; modul, ext: string): string =
   ## Search the caller's dir first, then the parent — system modules
@@ -531,6 +569,95 @@ proc argContainsConstructor(callNode: Cursor): bool =
     while a.hasMore:
       if walk(a): result = true
 
+const
+  SpecializeBound* = 4 * InlineTinyBound
+    ## The largest body a literal selector argument may splice speculatively
+    ## (`specializable`). What is charged is the PRUNED splice, so this bounds
+    ## the work of trying, not the growth.
+
+proc collectParams(params: Cursor; outSyms: var seq[SymId];
+
+                   outTypes: var seq[Cursor]) =
+  outSyms.setLen 0
+  outTypes.setLen 0
+  if not params.isTagLit: return
+  var p = params
+  p.into:
+    while p.hasMore:
+      if p.substructureKind == ParamU:
+        var inner = p
+        inc inner                      # past `param` tag
+        if not inner.isSymbolDef:
+          skip p
+          continue
+        outSyms.add inner.symId
+        inc inner                      # past symdef
+        skip inner                     # pragmas
+        outTypes.add inner             # NIFC (param :name <pragmas> <type>)
+      skip p
+
+proc mentionsConstAt(n: Cursor; consts: Table[SymId, Cursor]; s: SymId): bool =
+  ## Is there an `(at C s)` in `n`, `C` one of the module's constants?
+  if not n.isTagLit: return false
+  if n.exprKind == AtC:
+    var c = n.childCursor
+    if c.isSymbol and consts.hasKey(c.symId):
+      skip c
+      if c.isSymbol and c.symId == s: return true
+  var it = n
+  it.into:
+    while it.hasMore:
+      if mentionsConstAt(it, consts, s): return true
+      skip it
+  result = false
+
+proc selectorParams(c: var InlinerCtx; calleeSym: SymId): seq[bool] =
+  ## Per parameter of `calleeSym`: does its body index a `const` table with it?
+  ## Such a parameter SELECTS an entry, and a literal argument for it makes the
+  ## entry, and every branch on its fields, a constant. Own-module callees
+  ## only: a foreign body's tables are not in `consts`.
+  if calleeSym in c.selectors: return c.selectors.getOrQuit(calleeSym)
+  result = @[]
+  var decl = default(Cursor)
+  if c.consts.len > 0 and pool.symModule(calleeSym) == c.moduleSuffix and
+      lookupBody(c, calleeSym, decl):
+    var p = decl
+    let pd = takeProcDecl(p)
+    var pSyms: seq[SymId] = @[]
+    var pTypes: seq[Cursor] = @[]
+    collectParams(pd.params, pSyms, pTypes)
+    for ps in pSyms:
+      result.add mentionsConstAt(pd.body, c.consts, ps)
+  c.selectors[calleeSym] = result
+
+proc isIntLitArg(n: Cursor): bool =
+  ## An integer literal, possibly under its type suffix or a conversion.
+  var a = n
+  while a.isTagLit and a.exprKind in {SufC, ConvC}:
+    a = a.childCursor
+    if a.isTagLit and a.exprKind notin {SufC, ConvC}: skip a  # a conv's type
+  result = a.kind == IntLit
+
+proc specializable(c: var InlinerCtx; calleeSym: SymId; callNode: Cursor): bool =
+  ## A call the size policy refused may still be worth splicing when an
+  ## integer literal is passed for a selector parameter (`selectorParams`):
+  ## the splice is then tried, pruned under the constant entry, and kept only
+  ## if the pruning decided something (`commitSplice`).
+  result = false
+  let sel = selectorParams(c, calleeSym)
+  if sel.len == 0: return
+  var decl = default(Cursor)
+  if not lookupBody(c, calleeSym, decl): return
+  let info = computeInlineInfo(decl)
+  if info.banned or info.size > SpecializeBound: return
+  var a = callNode.childCursor
+  skip a                                   # the callee
+  var i = 0
+  while a.hasMore and i < sel.len:
+    if sel[i] and isIntLitArg(a): return true
+    skip a
+    inc i
+
 proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
                       callNode: Cursor): bool =
   ## Decides whether to splice a call to `calleeSym` at this call site. The
@@ -543,7 +670,11 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
       stderr.writeLine "[inliner] ", pool.syms[calleeSym], " -> ", v, " (", why,
         "; size=", info.size, " growthLeft=", c.growthLeft, ")"
     return v
-  if not info.inlinable: decide(false, "policy")
+  if not info.inlinable:
+    if c.unroll and not c.noSpecialize and specializable(c, calleeSym, callNode):
+      c.lastSpeculative = true
+      decide(true, "specialize")
+    decide(false, "policy")
   when defined(inlinerTrace) or defined(inlinerDeny):
     # bisect aid: INLINER_DENY="name1,name2," refuses those callees outright
     let denyList = getEnv("INLINER_DENY")
@@ -590,27 +721,6 @@ proc analyzeModule(buf: var TokenBuf): ModuleAnalysis =
   for (sym, info) in found:
     if info.inlinable:
       result.inlineInfo[sym] = info
-
-proc collectParams(params: Cursor; outSyms: var seq[SymId];
-
-                   outTypes: var seq[Cursor]) =
-  outSyms.setLen 0
-  outTypes.setLen 0
-  if not params.isTagLit: return
-  var p = params
-  p.into:
-    while p.hasMore:
-      if p.substructureKind == ParamU:
-        var inner = p
-        inc inner                      # past `param` tag
-        if not inner.isSymbolDef:
-          skip p
-          continue
-        outSyms.add inner.symId
-        inc inner                      # past symdef
-        skip inner                     # pragmas
-        outTypes.add inner             # NIFC (param :name <pragmas> <type>)
-      skip p
 
 type
   Bindings = object
@@ -1362,6 +1472,7 @@ proc prepareSplice(c: var InlinerCtx; call: Cursor; site: var SpliceSite): bool 
   ## the policy decision, the callee's body, its parameters, and an arity check
   ## against the arguments actually passed. Emits nothing and charges nothing;
   ## `false` leaves `site` unusable and the call alone.
+  c.lastSpeculative = false
   if not call.isTagLit or call.stmtKind != CallS: return false
   var probe = call
   inc probe                                # past `call` tag
@@ -1802,6 +1913,133 @@ type
   CondVal = enum
     condUnknown, condFalse, condTrue
 
+  PruneEnv = object
+    ## What the pruner may evaluate beyond literals: the module's `const`
+    ## tables and the locals initialized from one and never written again —
+    ## `let obj = things[0]` of a splice whose selector argument was `0`.
+    consts: ptr Table[SymId, Cursor]
+    locals: Table[SymId, Cursor]     ## local → its initializer
+    decided: int                     ## how many arms the walk deleted
+
+const MaxConstEvalDepth = 8
+
+proc peelSuf(n: Cursor): Cursor =
+  ## `(suf 7 "i64")` → `7`.
+  result = n
+  if n.isTagLit and n.exprKind == SufC: result = n.childCursor
+
+proc constValue(env: PruneEnv; n: Cursor; res: var Cursor; depth = 0): bool =
+  ## The constant `n` stands for, as a subtree of a `const`'s value or a
+  ## literal, in `res`. Follows locals of `env`, `C[k]` of an array
+  ## constructor and `x.f` of an object constructor.
+  result = false
+  if depth > MaxConstEvalDepth: return
+  case n.kind
+  of IntLit, UIntLit, CharLit, FloatLit:
+    res = n
+    result = true
+  of Symbol:
+    if env.locals.hasKey(n.symId):
+      result = constValue(env, env.locals.getOrQuit(n.symId), res, depth+1)
+    elif env.consts != nil and env.consts[].hasKey(n.symId):
+      result = constValue(env, env.consts[].getOrQuit(n.symId), res, depth+1)
+  of TagLit:
+    case n.exprKind
+    of TrueC, FalseC, NilC, AconstrC, OconstrC:
+      res = n
+      result = true
+    of SufC:
+      res = n                              # a typed literal: kept whole
+      result = true
+    of AtC:
+      var c = n.childCursor
+      var base = default(Cursor)
+      if constValue(env, c, base, depth+1) and base.isTagLit and
+          base.exprKind == AconstrC:
+        skip c
+        var idx = default(Cursor)
+        if c.hasMore and constValue(env, c, idx, depth+1) and
+            peelSuf(idx).kind == IntLit and peelSuf(idx).intVal >= 0:
+          idx = peelSuf(idx)
+          var e = base.childCursor
+          skip e                           # the array type
+          var k = idx.intVal
+          while k > 0 and e.hasMore:
+            skip e
+            dec k
+          if e.hasMore: result = constValue(env, e, res, depth+1)
+    of DotC:
+      var c = n.childCursor
+      var base = default(Cursor)
+      if constValue(env, c, base, depth+1) and base.isTagLit and
+          base.exprKind == OconstrC:
+        skip c
+        if c.isSymbol:
+          let field = c.symId
+          var kv = base.childCursor
+          skip kv                          # the object type
+          while kv.hasMore:
+            if kv.substructureKind == KvU:
+              var f = kv.childCursor
+              if f.isSymbol and f.symId == field:
+                skip f
+                return constValue(env, f, res, depth+1)
+            skip kv
+    else: discard
+  else: discard
+
+proc isLeafValue(v: Cursor): bool =
+  ## A scalar constant: a literal, a typed literal, `true`/`false`/`nil`.
+  let p = peelSuf(v)
+  result = p.kind in {IntLit, UIntLit, CharLit, FloatLit} or
+    (p.isTagLit and p.exprKind in {TrueC, FalseC, NilC})
+
+proc evalLit(env: PruneEnv; n: Cursor): Cursor =
+  ## `n` itself, or the literal it evaluates to.
+  var v = default(Cursor)
+  result = n
+  if constValue(env, n, v) and isLeafValue(v):
+    result = peelSuf(v)
+
+proc emitFolded(dest: var TokenBuf; n: var Cursor; env: PruneEnv) =
+  ## Copy the expression `n`, replacing every path that evaluates to a scalar
+  ## constant — `things[0].radius2`, `obj.center.x` for an `obj` the splice
+  ## initialized from `things[0]` and never wrote — with that constant. This
+  ## is the compile-time evaluation a literal selector enables; the field and
+  ## constructor-key slots name fields, not locals, and an operand of `addr`
+  ## is a location, so those are copied as they are.
+  ##
+  ## `nil` is never substituted: the branch that dereferences a pointer field
+  ## the constructor left `nil` is one nobody takes, but `(deref (nil))` there
+  ## is no longer typeable by a backend (see `isSubstitutableArg`). The guard
+  ## on it still decides (`condVal`), which deletes such a branch outright.
+  if n.kind == Symbol or (n.isTagLit and n.exprKind in {DotC, AtC}):
+    var v = default(Cursor)
+    if constValue(env, n, v) and isLeafValue(v) and
+        not (v.isTagLit and v.exprKind == NilC):
+      dest.addSubtree v
+      skip n
+      return
+  if not n.isTagLit:
+    dest.takeTree n
+    return
+  if n.exprKind in AddrKinds:
+    dest.takeTree n
+    return
+  dest.addParLe(n.cursorTagId, n.info)
+  if n.exprKind == DotC:
+    n.into:
+      if n.hasMore: emitFolded(dest, n, env)   # the object
+      while n.hasMore: dest.takeTree n          # the field, the depth
+  elif n.substructureKind == KvU:
+    n.into:
+      if n.hasMore: dest.takeTree n             # the field
+      while n.hasMore: emitFolded(dest, n, env)
+  else:
+    n.into:
+      while n.hasMore: emitFolded(dest, n, env)
+  dest.addParRi()
+
 proc negated(v: CondVal): CondVal =
   case v
   of condTrue: condFalse
@@ -1824,7 +2062,7 @@ proc litSame(a, b: Cursor): CondVal =
   else:
     condUnknown
 
-proc condVal(n: Cursor): CondVal =
+proc condVal(n: Cursor; env: PruneEnv): CondVal =
   ## What a guard evaluates to once argument substitution made it literal:
   ## `(neq (nil) (nil))` from a spliced `if c != nil` with `c := nil`, or the
   ## `(not (eq …))` a nested `!=` forwarder splice leaves behind. `and`/`or`
@@ -1838,23 +2076,36 @@ proc condVal(n: Cursor): CondVal =
   of NotC:
     let arg = n.childCursor
     if arg.hasMore:
-      result = negated(condVal(arg))
+      result = negated(condVal(arg, env))
   of EqC, NeqC:
     let a = n.childCursor
     if a.hasMore:
       var b = a
       skip b
       if b.hasMore:
-        let same = litSame(a, b)
+        let same = litSame(evalLit(env, a), evalLit(env, b))
         result = (if n.exprKind == EqC: same else: negated(same))
+  of LtC, LeC:
+    # integer comparisons only: a float operand stays undecided
+    let a = n.childCursor
+    if a.hasMore:
+      var b = a
+      skip b
+      if b.hasMore:
+        let x = evalLit(env, a)
+        let y = evalLit(env, b)
+        if x.kind == IntLit and y.kind == IntLit:
+          let holds = if n.exprKind == LtC: x.intVal < y.intVal
+                      else: x.intVal <= y.intVal
+          result = if holds: condTrue else: condFalse
   of AndC, OrC:
     let a = n.childCursor
     if a.hasMore:
       var b = a
       skip b
       if b.hasMore:
-        let l = condVal(a)
-        let r = condVal(b)
+        let l = condVal(a, env)
+        let r = condVal(b, env)
         if l != condUnknown and r != condUnknown:
           if n.exprKind == AndC:
             result = (if l == condTrue and r == condTrue: condTrue else: condFalse)
@@ -1878,7 +2129,7 @@ proc hasAnyDef(n: Cursor): bool =
   else:
     result = false
 
-proc emitPruned(dest: var TokenBuf; n: var Cursor) =
+proc emitPruned(dest: var TokenBuf; n: var Cursor; env: var PruneEnv) =
   ## Copy one subtree, deleting every `(elif …)` arm whose guard `condVal`
   ## decided. This is a CORRECTNESS duty, not an optimization: the false arm
   ## of a spliced body may no longer type-check at all — `if c != nil: …c.f…`
@@ -1898,12 +2149,13 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
     if n.cursorTagId == TagId(IteTagId):
       # `(ite C T E|.)`: a decided condition leaves the arm it picks (or
       # nothing); an undecided one keeps the `ite` and recurses into the arms.
-      let v = condVal(n.childCursor)
+      let v = condVal(n.childCursor, env)
+      if v != condUnknown: inc env.decided
       if v == condUnknown:
         dest.addParLe(n.cursorTagId, n.info)
         n.into:
           while n.hasMore:
-            emitPruned(dest, n)
+            emitPruned(dest, n, env)
         dest.addParRi()
         return
       var b = n
@@ -1911,7 +2163,7 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
         skip b                                    # the condition
         if v == condFalse: skip b                 # the then-branch
         if b.hasMore and b.kind != DotToken:
-          emitPruned(dest, b)
+          emitPruned(dest, b, env)
         while b.hasMore: skip b
       skip n
       return
@@ -1930,7 +2182,7 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
           if haveTaken:
             dropped = true                # dead branch after a taken one
           elif sk == ElifU:
-            case condVal(probe.childCursor)
+            case condVal(probe.childCursor, env)
             of condTrue:
               taken = probe; takenIsElif = true; haveTaken = true; dropped = true
             of condFalse:
@@ -1942,13 +2194,14 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
           else:
             kept.add probe                # unexpected shape: keep verbatim
           skip probe
+      if dropped: inc env.decided
       if not dropped:
         # Nothing decided at this level: keep the `if`, but still recurse
         # into the branch bodies (they may contain prunable ifs).
         dest.addParLe(n.cursorTagId, n.info)
         n.into:
           while n.hasMore:
-            emitPruned(dest, n)
+            emitPruned(dest, n, env)
         dest.addParRi()
         return
       if kept.len == 0:
@@ -1959,7 +2212,7 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
           b.into:
             if takenIsElif and b.hasMore: skip b    # past the guard
             while b.hasMore:
-              emitPruned(dest, b)
+              emitPruned(dest, b, env)
         skip n
         return
       # Some undecided elifs survive: rebuild the `if` from them, a taken
@@ -1970,7 +2223,7 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
         dest.addParLe(a.cursorTagId, a.info)
         a.into:
           while a.hasMore:
-            emitPruned(dest, a)
+            emitPruned(dest, a, env)
         dest.addParRi()
       if haveTaken:
         let btag = (if takenIsElif: TagId(ElseU) else: taken.cursorTagId)
@@ -1979,7 +2232,7 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
         b.into:
           if takenIsElif and b.hasMore: skip b      # past the guard
           while b.hasMore:
-            emitPruned(dest, b)
+            emitPruned(dest, b, env)
         dest.addParRi()
       dest.addParRi()
       skip n
@@ -2004,28 +2257,379 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
             skip n                          # dead: drop
           else:
             if unreachable: unreachable = false
-            emitPruned(dest, n)
+            emitPruned(dest, n, env)
             if sk in {JmpS, RetS}: unreachable = true
       dest.addParRi()
     elif n.stmtKind == NoStmt and n.substructureKind == NoSub:
-      # An expression subtree cannot contain statements, hence no `if` arms.
-      dest.takeTree n
+      # An expression subtree cannot contain statements, hence no `if` arms;
+      # what it can contain are constants to evaluate.
+      emitFolded(dest, n, env)
+    elif n.stmtKind == AsgnS:
+      # the destination is a location, the value an expression
+      dest.addParLe(n.cursorTagId, n.info)
+      n.into:
+        if n.hasMore: dest.takeTree n
+        while n.hasMore: emitFolded(dest, n, env)
+      dest.addParRi()
     else:
       dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
-          emitPruned(dest, n)
+          emitPruned(dest, n, env)
       dest.addParRi()
+  else:
+    emitFolded(dest, n, env)
+
+proc collectConstLocals(n: Cursor; env: var PruneEnv; written: var HashSet[SymId];
+                        inScope: bool) =
+  ## `(var :x . T INIT)` inside a `(scope …)` of the expanded splice, and every
+  ## local the splice writes or takes the address of. A declaration outside
+  ## every scope is visible to the caller's next statements, which this walk
+  ## does not see; one inside a scope is not.
+  if not n.isTagLit: return
+  if n.stmtKind == VarS and inScope:
+    var c = n.childCursor
+    if c.isSymbolDef:
+      let x = c.symId
+      skip c                               # name
+      skip c                               # pragmas
+      skip c                               # type
+      if c.hasMore and c.kind != DotToken: env.locals[x] = c
+  elif n.stmtKind == AsgnS:
+    let r = lvalueRoot(n.childCursor)
+    if r != SymId(0): written.incl r
+  elif n.exprKind in AddrKinds:
+    let r = lvalueRoot(n.childCursor)
+    if r != SymId(0): written.incl r
+  let nested = inScope or n.stmtKind == ScopeS
+  var it = n
+  it.into:
+    while it.hasMore:
+      collectConstLocals(it, env, written, nested)
+      skip it
+
+proc prunedInto(c: var InlinerCtx; dest: var TokenBuf; expanded: var TokenBuf): int =
+  ## Emit every top-level subtree of `expanded` into `dest` with the decided
+  ## `if` arms deleted (`emitPruned`); returns how many were decided.
+  var env = PruneEnv(consts: addr c.consts, locals: initTable[SymId, Cursor]())
+  if c.consts.len > 0:
+    var written = initHashSet[SymId]()
+    var scan = beginRead(expanded)
+    while scan.hasMore:
+      collectConstLocals(scan, env, written, false)
+      skip scan
+    endRead(scan)
+    for x in written: env.locals.del x
+  var pruner = beginRead(expanded)
+  while pruner.hasMore:
+    emitPruned(dest, pruner, env)
+  endRead(pruner)
+  result = env.decided
+
+# ---- Specialization and unrolling (shoggoth's inter-module pass only) ----
+
+proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor)
+
+proc bufTokens(b: var TokenBuf): int =
+  ## `tokenCount` over every top-level subtree of `b`: the measure the growth
+  ## budget is kept in (a buffer's raw length also counts line information).
+  result = 0
+  var r = beginRead(b)
+  while r.hasMore:
+    result += tokenCount(r)
+    skip r
+  endRead(r)
+
+proc expandSplice(c: var InlinerCtx; spliced: var TokenBuf; nEmitted: int;
+                  callee: SymId; expanded: var TokenBuf) =
+  ## The nested splices of what was just spliced, into `expanded`.
+  if callee != SymId(0): c.inProgress.incl callee
+  var inner = beginRead(spliced)
+  for _ in 0 ..< nEmitted:
+    trIntra(c, expanded, inner)
+  endRead(inner)
+  if callee != SymId(0): c.inProgress.excl callee
+
+proc commitSplice(c: var InlinerCtx; dest: var TokenBuf; spliced: var TokenBuf;
+                  nEmitted: int; callee: SymId; speculative: bool;
+                  growthBefore: int): bool =
+  ## Expand and prune a committed splice into `dest`. A SPECULATIVE one
+  ## (`specializable`) is kept only when the pruning decided at least one
+  ## branch and the pruned result fits the growth budget, which is then
+  ## charged with exactly that; otherwise nothing is emitted, the budget is
+  ## restored, and the caller re-emits the call.
+  var expanded = createTokenBuf(spliced.len)
+  expandSplice(c, spliced, nEmitted, callee, expanded)
+  if not speculative:
+    discard prunedInto(c, dest, expanded)
+    return true
+  var pruned = createTokenBuf(expanded.len)
+  let decided = prunedInto(c, pruned, expanded)
+  let size = bufTokens(pruned)
+  when defined(inlinerTrace):
+    stderr.writeLine "[inliner] specialize ", pool.syms[callee], " decided=", decided,
+      " size=", size, " growthLeft=", growthBefore
+  if decided > 0 and size <= growthBefore:
+    c.growthLeft = growthBefore - size
+    var r = beginRead(pruned)
+    while r.hasMore: dest.takeTree r
+    endRead(r)
+    result = true
+  else:
+    c.growthLeft = growthBefore
+    result = false
+
+proc reemitRefused(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
+                   entry: Cursor) =
+  ## A speculative splice did not pay: the statement at `entry` as it was.
+  n = entry
+  c.noSpecialize = true
+  trIntra(c, dest, n)
+  c.noSpecialize = false
+
+const
+  MaxUnrollTrips* = 8
+    ## Loops of at most this many iterations are unrolled (`tryUnroll`).
+  UnrollBound* = 2 * InlineHintBound
+    ## ... and only while the copies, all together, stay below this.
+
+proc collectLitLocals(n: Cursor; lits: var Table[SymId, int64];
+                      bad: var HashSet[SymId]) =
+  ## Locals declared `(var :x . T <int literal>)` and, in `bad`, every local
+  ## that is written or whose address is taken.
+  if not n.isTagLit: return
+  if n.stmtKind == VarS:
+    var c = n.childCursor
+    if c.isSymbolDef:
+      let x = c.symId
+      skip c
+      skip c
+      skip c
+      if c.kind == IntLit: lits[x] = c.intVal
+      else: bad.incl x
+  elif n.stmtKind == AsgnS or n.exprKind in AddrKinds:
+    let r = lvalueRoot(n.childCursor)
+    if r != SymId(0): bad.incl r
+  var it = n
+  it.into:
+    while it.hasMore:
+      collectLitLocals(it, lits, bad)
+      skip it
+
+proc litLocalsOf(body: Cursor): Table[SymId, int64] =
+  result = initTable[SymId, int64]()
+  var bad = initHashSet[SymId]()
+  collectLitLocals(body, result, bad)
+  for x in bad: result.del x
+
+proc intValueOf(c: InlinerCtx; n: Cursor; v: var int64): bool =
+  ## An integer literal, or a local `litLocals` knows the value of.
+  if n.kind == IntLit:
+    v = n.intVal
+    result = true
+  elif n.isSymbol and c.litLocals.hasKey(n.symId):
+    v = c.litLocals.getOrQuit(n.symId)
+    result = true
+  else:
+    result = false
+
+proc isIvIncrement(n: Cursor; iv: SymId): bool =
+  ## `(asgn IV (add T IV 1))`.
+  result = false
+  if n.isTagLit and n.stmtKind == AsgnS:
+    var c = n.childCursor
+    if c.isSymbol and c.symId == iv:
+      skip c
+      if c.isTagLit and c.exprKind == AddC:
+        var a = c.childCursor
+        skip a                             # the type
+        if a.isSymbol and a.symId == iv:
+          skip a
+          result = a.kind == IntLit and a.intVal == 1
+
+type
+  IvUse = object
+    increments, otherWrites, continues: int
+    selects: bool                      ## the counter picks a `const` entry
+
+proc scanIvUses(c: var InlinerCtx; n: Cursor; iv: SymId; u: var IvUse;
+                inNestedLoop: bool) =
+  if not n.isTagLit: return
+  if n.stmtKind == AsgnS:
+    if isIvIncrement(n, iv): inc u.increments
+    elif lvalueRoot(n.childCursor) == iv: inc u.otherWrites
+  elif n.exprKind in AddrKinds:
+    if lvalueRoot(n.childCursor) == iv: inc u.otherWrites
+  elif n.stmtKind == ContinueS and not inNestedLoop:
+    inc u.continues
+  elif n.exprKind == AtC:
+    var a = n.childCursor
+    if a.isSymbol and c.consts.hasKey(a.symId):
+      skip a
+      if a.isSymbol and a.symId == iv: u.selects = true
+  elif n.stmtKind == CallS or n.exprKind == CallC:
+    var a = n.childCursor
+    if a.isSymbol:
+      let sel = selectorParams(c, a.symId)
+      skip a
+      var i = 0
+      while a.hasMore:
+        if i < sel.len and sel[i] and a.isSymbol and a.symId == iv:
+          u.selects = true
+        skip a
+        inc i
+  let nested = inNestedLoop or n.stmtKind == LoopS
+  var it = n
+  it.into:
+    while it.hasMore:
+      scanIvUses(c, it, iv, u, nested)
+      skip it
+
+proc dropIncrements(dest: var TokenBuf; n: var Cursor; iv: SymId) =
+  ## Copy `n` without the counter's `(asgn IV (add T IV 1))`.
+  if isIvIncrement(n, iv):
+    skip n
+  elif n.isTagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        dropIncrements(dest, n, iv)
+    dest.addParRi()
   else:
     dest.takeTree n
 
-proc prunedInto(dest: var TokenBuf; expanded: var TokenBuf) =
-  ## Emit every top-level subtree of `expanded` into `dest` with the decided
-  ## `if` arms deleted (`emitPruned`).
-  var pruner = beginRead(expanded)
-  while pruner.hasMore:
-    emitPruned(dest, pruner)
-  endRead(pruner)
+proc unrollShape(c: InlinerCtx; decl, ite: Cursor; iv: var SymId;
+                 lo, hi: var int64; body: var Cursor): bool =
+  ## `(var :IV . T LO)` followed by the rotated counted loop
+  ##
+  ##   (ite (lt IV HI) (stmts (loop (stmts BODY… (continue (lt IV HI))))) .)
+  ##
+  ## with `LO`, `HI` integer constants (`intValueOf`). `body` is the loop's
+  ## `(stmts …)`, whose last statement is the `continue`.
+  result = false
+  if not decl.isTagLit or decl.stmtKind != VarS: return
+  var d = decl.childCursor
+  if not d.isSymbolDef: return
+  iv = d.symId
+  skip d
+  skip d                                   # pragmas
+  skip d                                   # type
+  if not intValueOf(c, d, lo): return
+  if not ite.isTagLit or ite.cursorTagId != TagId(IteTagId): return
+  var e = ite.childCursor
+  let cond = e
+  if not cond.isTagLit or cond.exprKind != LtC: return
+  var cc = cond.childCursor
+  if not cc.isSymbol or cc.symId != iv: return
+  skip cc
+  if not intValueOf(c, cc, hi): return
+  skip e                                   # the condition
+  let thenArm = e
+  skip e
+  if e.hasMore and e.kind != DotToken: return  # an `else` arm: not the shape
+  if not thenArm.isTagLit or thenArm.stmtKind != StmtsS: return
+  var t = thenArm.childCursor
+  if not t.isTagLit or t.cursorTagId != TagId(LoopTagId): return
+  var after = t
+  skip after
+  if after.hasMore: return                 # more than the loop in the arm
+  let loopBody = t.childCursor
+  if not loopBody.isTagLit or loopBody.stmtKind != StmtsS: return
+  # the last statement repeats the entry test
+  var last = default(Cursor)
+  var it = loopBody.childCursor
+  while it.hasMore:
+    last = it
+    skip it
+  if not last.isTagLit or last.stmtKind != ContinueS: return
+  var lc = last.childCursor
+  if not lc.isTagLit or lc.exprKind != LtC: return
+  var l1 = lc.childCursor
+  if not l1.isSymbol or l1.symId != iv: return
+  skip l1
+  var hi2 = 0'i64
+  if not intValueOf(c, l1, hi2) or hi2 != hi: return
+  body = loopBody
+  result = true
+
+proc tryUnroll(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): bool =
+  ## Unroll a counted loop whose counter SELECTS: it indexes a `const` table,
+  ## or is passed to a callee as a selector argument (`selectorParams`). The
+  ## point is not the loop overhead but what the literal counter does to the
+  ## copies: `things[0].kind == 1` decides in the pruner, and a call on a
+  ## literal selector is specialized (`specializable`). A loop over a table
+  ## whose entries the body does not look at is left as it is, as are loops
+  ## the memory-idiom pass already turned into an intrinsic (it runs first).
+  ##
+  ## Each iteration is spliced like an inlined body: its locals and labels
+  ## renamed, the counter bound to the iteration's literal, the increment
+  ## dropped, all of it in its own `(scope …)`. A `break` still jumps to the
+  ## label after the loop; the copies are charged to the growth budget.
+  result = false
+  let entry = n
+  var next = n
+  skip next
+  if not next.hasMore: return
+  var iv = SymId(0)
+  var lo, hi = 0'i64
+  var body = default(Cursor)
+  if not unrollShape(c, entry, next, iv, lo, hi, body): return
+  let trips = hi - lo
+  if trips < 1 or trips > MaxUnrollTrips: return
+  var u = IvUse()
+  scanIvUses(c, body, iv, u, false)
+  if u.increments != 1 or u.otherWrites != 0 or u.continues != 1 or not u.selects:
+    return
+  # the counter must be dead after the loop: nothing after it mentions it
+  var later = next
+  skip later
+  while later.hasMore:
+    if mentions(later, iv): return
+    skip later
+  # the copies, without the increment and the back-edge's `continue`
+  var plain = createTokenBuf(64)
+  var b = body.childCursor
+  while b.hasMore:
+    var nx = b
+    skip nx
+    if not nx.hasMore: break               # the `continue`
+    dropIncrements(plain, b, iv)
+  let size = bufTokens(plain)
+  if size * int(trips) > UnrollBound or size * int(trips - 1) > c.growthLeft:
+    return
+  when defined(inlinerTrace):
+    stderr.writeLine "[inliner] unroll ", pool.syms[iv], " x", trips, " size=", size
+  var copies = createTokenBuf(size * int(trips) + 16)
+  var lit = createTokenBuf(2)
+  for k in lo ..< hi:
+    lit.shrink 0
+    lit.addIntLit k
+    var rename = initTable[SymId, SymId]()
+    var bnd = Bindings(rename: rename, subst: initTable[SymId, Cursor]())
+    bnd.subst[iv] = cursorAt(lit, 0)
+    copies.addParLe TagId(ScopeS), entry.info
+    var p = beginRead(plain)
+    while p.hasMore:
+      seedRenameWalk(c, p, bnd.rename)     # mint fresh names for this copy
+    endRead(p)
+    p = beginRead(plain)
+    while p.hasMore:
+      emitRenamed(copies, p, bnd)
+    endRead(p)
+    copies.addParRi()
+  c.growthLeft = max(0, c.growthLeft - size * int(trips - 1))
+  # keep the counter's declaration (now dead) for anything typed off it
+  var decl = entry
+  dest.takeTree decl
+  var expanded = createTokenBuf(copies.len)
+  var r = beginRead(copies)
+  while r.hasMore:
+    trIntra(c, expanded, r)
+  endRead(r)
+  discard prunedInto(c, dest, expanded)
+  n = next
+  skip n                                   # past the `ite`
+  result = true
 
 # ---- Same-module inliner pass (called from hexer.nim) ----
 
@@ -2051,45 +2655,37 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
       dest.addParLe(n.cursorTagId, n.info)
       into n:
         while n.hasMore:
+          let entry = n
           if n.isTagLit and n.stmtKind == CallS:
             var probe = n
             inc probe
             let calleeSym =
               if probe.isSymbol: probe.symId else: SymId(0)
             var spliced = createTokenBuf(32)
+            let growthBefore = c.growthLeft
             let nEmitted = trySplice(c, spliced, n)
             if nEmitted > 0:
-              if calleeSym != SymId(0):
-                c.inProgress.incl calleeSym
               # Nested splices first, into a scratch buffer; THEN prune the
               # branches the substituted arguments decided — only after the
               # nested walk are inlined guards (`!=` forwarders) reduced to
               # the literal comparisons `condVal` can judge.
-              var expanded = createTokenBuf(spliced.len)
-              var inner = beginRead(spliced)
-              for _ in 0 ..< nEmitted:
-                trIntra(c, expanded, inner)
-              endRead(inner)
-              if calleeSym != SymId(0):
-                c.inProgress.excl calleeSym
-              prunedInto(dest, expanded)
+              if not commitSplice(c, dest, spliced, nEmitted, calleeSym,
+                                  c.lastSpeculative, growthBefore):
+                reemitRefused(c, dest, n, entry)
               continue
           if n.isTagLit and n.stmtKind == VarS:
+            if c.unroll and tryUnroll(c, dest, n): continue
             # `(var :tmp T (call …))` immediately guarding an `if` — fold the
             # inlined condition straight into the guard so no boolean temp is
             # materialised (see `trySpliceCond`). Peeks the following sibling.
             var condCallee = SymId(0)
             var spliced = createTokenBuf(32)
+            let growthBefore = c.growthLeft
             let nEmitted = trySpliceCond(c, spliced, n, condCallee)
             if nEmitted > 0:
-              c.inProgress.incl condCallee
-              var expanded = createTokenBuf(spliced.len)
-              var inner = beginRead(spliced)
-              for _ in 0 ..< nEmitted:
-                trIntra(c, expanded, inner)
-              endRead(inner)
-              c.inProgress.excl condCallee
-              prunedInto(dest, expanded)
+              if not commitSplice(c, dest, spliced, nEmitted, condCallee,
+                                  c.lastSpeculative, growthBefore):
+                reemitRefused(c, dest, n, entry)
               continue
           if n.isTagLit and n.stmtKind == AsgnS:
             # `(asgn lhs (call …))` — the destination-bound call form.
@@ -2104,16 +2700,12 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
                   asgnCallee = probe.symId
             if asgnCallee != SymId(0):
               var spliced = createTokenBuf(32)
+              let growthBefore = c.growthLeft
               let nEmitted = trySpliceAsgn(c, spliced, n)
               if nEmitted > 0:
-                c.inProgress.incl asgnCallee
-                var expanded = createTokenBuf(spliced.len)
-                var inner = beginRead(spliced)
-                for _ in 0 ..< nEmitted:
-                  trIntra(c, expanded, inner)
-                endRead(inner)
-                c.inProgress.excl asgnCallee
-                prunedInto(dest, expanded)
+                if not commitSplice(c, dest, spliced, nEmitted, asgnCallee,
+                                    c.lastSpeculative, growthBefore):
+                  reemitRefused(c, dest, n, entry)
                 continue
           trIntra(c, dest, n)
       dest.addParRi()
@@ -2132,6 +2724,9 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
         c.growthLeft = growthBudget(bodySize)
         var savedFacts = analyseLocals(n)
         swap savedFacts, c.callerFacts
+        var savedLits = if c.unroll and pd.body.isTagLit: litLocalsOf(pd.body)
+                        else: initTable[SymId, int64]()
+        swap savedLits, c.litLocals
         dest.addParLe(n.cursorTagId, n.info)
         into n:
           while n.hasMore:
@@ -2139,6 +2734,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
         dest.addParRi()
         c.growthLeft = savedGrowth
         swap savedFacts, c.callerFacts
+        swap savedLits, c.litLocals
         return
       if sk == VarS:
         var probe = n
@@ -2153,17 +2749,23 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             if probe.isSymbol:
               calleeSym = probe.symId
         if calleeSym != SymId(0):
+          let entry = n
           var spliced = createTokenBuf(32)
+          let growthBefore = c.growthLeft
           let nEmitted = trySpliceVarInit(c, spliced, n)
           if nEmitted > 0:
-            c.inProgress.incl calleeSym
-            var expanded = createTokenBuf(spliced.len)
-            var inner = beginRead(spliced)
-            for _ in 0 ..< nEmitted:
-              trIntra(c, expanded, inner)
-            endRead(inner)
-            c.inProgress.excl calleeSym
-            prunedInto(dest, expanded)
+            if commitSplice(c, dest, spliced, nEmitted, calleeSym,
+                            c.lastSpeculative, growthBefore):
+              return
+            # refused: fall through and copy the `(var …)` as it is
+            n = entry
+            c.noSpecialize = true
+            dest.addParLe(n.cursorTagId, n.info)
+            into n:
+              while n.hasMore:
+                trIntra(c, dest, n)
+            dest.addParRi()
+            c.noSpecialize = false
             return
       dest.addParLe(n.cursorTagId, n.info)
       into n:

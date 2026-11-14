@@ -69,7 +69,8 @@ let disabledPasses = block:
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## memidioms, vectorize, sinkret, tailcall.
+  ## memidioms (both stages), memloops (only the loop idioms before the
+  ## inliner), vectorize, sinkret, tailcall.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -166,8 +167,13 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # same loop into vector stores. `target.mem.intrinsics` is false for a back end
   # without a lowering for the rows (AVR); `target.mem.mergeWordBytes` enables
   # merging adjacent constant field stores, native back end only.
-  if (target.mem.intrinsics or target.mem.mergeWordBytes > 0) and passOn("memidioms"):
-    discard runMemIdioms(buf, m, params, target.mem, "mem." & suffix, st.memOps)
+  # The loop idioms ran before the inliner (`recognizeMemLoops`); what is left
+  # to do here is merging adjacent constant field stores, which wants the
+  # inlined, scalarized code.
+  if target.mem.mergeWordBytes > 0 and passOn("memidioms"):
+    var late = target.mem
+    late.intrinsics = false
+    discard runMemIdioms(buf, m, params, late, "mem." & suffix, st.memOps)
   if target.vecMode != vecOff and passOn("vectorize"):
     if runVectorizer(buf, "vec." & suffix):
       inc st.vectorized
@@ -198,15 +204,35 @@ proc isAssemblerProc(pragmas: Cursor): bool =
       result = true
     skip p
 
+type
+  Stage = enum
+    stLoopIdioms   ## before the inliner: only the memory-loop idioms
+    stOptimize     ## after it: the whole per-body pipeline
+
+proc recognizeMemLoopsInBody(buf: var TokenBuf; suffix: string; st: var Stats;
+                             m: ptr MainModule; params: Cursor; target: Target) =
+  ## Zero-fill and copy loops become `zeroMemIns`/`copyMemIns` BEFORE the
+  ## inliner gets to the module. It runs first so that no later pass can hide a
+  ## loop from it: unrolling (`intramodinliner`) turns `for i in 0..<3: a[i] =
+  ## 0` into three stores, and the induction-variable pass rewrites a counted
+  ## loop into the pointer walk the matcher does not know. The price is the
+  ## loops that only appear by inlining a callee, which stay loops; a fill or a
+  ## copy is written where the data lives, rarely in a helper small enough to
+  ## be spliced.
+  var early = target.mem
+  early.mergeWordBytes = 0
+  discard runMemIdioms(buf, m, params, early, "mem." & suffix, st.memOps)
+
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                 eng: Engine = nil; target = Target(mem: MemOpts(intrinsics: true))) =
+                 eng: Engine = nil; target = Target(mem: MemOpts(intrinsics: true));
+                 stage = stOptimize) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
   if n.kind == TagLit:
     if n.stmtKind == ProcS:
-      inc st.procs
+      if stage == stOptimize: inc st.procs
       let tag = n.cursorTagId
       let li = rawLineInfo(n)
       let d = takeProcDecl(n)            # advances n past the whole proc
@@ -217,7 +243,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       dest.addSubtree d.returnType
       dest.addSubtree d.pragmas
       if d.body.kind == TagLit and not isAssemblerProc(d.pragmas):
-        inc st.bodies
+        if stage == stOptimize: inc st.bodies
         # Open a typenav scope for this proc and register its params, so the
         # alias pass's `getType` can resolve param/local types (mirrors how the C
         # backend's `genProcDecl` drives the scopes).
@@ -226,7 +252,11 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m, d.params, eng, target)
+        case stage
+        of stOptimize:
+          optimizeBody(body, suffix, st, summaries, m, d.params, eng, target)
+        of stLoopIdioms:
+          recognizeMemLoopsInBody(body, suffix, st, m, d.params, target)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb
@@ -240,7 +270,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st, summaries, m, eng, target)
+          rebuildTree(dest, n, suffix, st, summaries, m, eng, target, stage)
       dest.closeTag()
   else:
     dest.addSubtree n
@@ -276,6 +306,18 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
   else:
     rebuildTree(result, n, suffix, st, addr summaries, m, eng, target)
 
+proc recognizeMemLoops(src: var TokenBuf; suffix: string; st: var Stats;
+                       m: ptr MainModule; target: Target) =
+  ## `recognizeMemLoopsInBody` over every proc of the module. The intrinsic
+  ## declarations the rows need are added by `optimizeModule`, from `st.memOps`.
+  var dest = createTokenBuf(src.len + src.len div 32, src.pool, src.tags)
+  var noSummaries = default(FunctionSummaryTable)  # the stage reads none
+  var n = src.beginRead()
+  while n.hasMore:
+    rebuildTree(dest, n, suffix, st, addr noSummaries, m, nil, target, stLoopIdioms)
+  endRead n
+  src = ensureMove(dest)
+
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
   ## malformed (jump-inconsistent) buffer.
@@ -288,25 +330,26 @@ proc processFile*(input, output: string; verify = false;
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
   var st = Stats()
-  # 1. Whole-module inter-module inlining runs first (via the bridge, which
-  #    owns the nifpools surface the inliner is written against).
-  var imiChanged = false
-  var src = block:
-    var inlined =
-      if passOn("imi"): runImi(input, suffix, splitFile(input).dir, imiChanged)
-      else: parseModule(input)
-    # The inliner works on dense line info; the per-body passes were calibrated
-    # on the sparse form a plain parse stores (unswitch bounds loops in raw
-    # tokens, suffixes included), and CSE's temp order follows token positions.
-    # An in-memory copy keeps them seeing exactly the tokens they always saw.
-    withSparseLineInfo(inlined)
-  if imiChanged: inc st.intermodChanged
-  # 2. Load the module as a typenav context (for type-precise aliasing), in the
+  # 1. Load the module as a typenav context (for type-precise aliasing), in the
   #    SAME pools as `src`, so symbol ids line up between the type context and
   #    the optimization buffer. This used to serialize the inliner's result to
   #    NIF text and re-parse it into the context's pools: on `sem.nim` that
   #    round trip was 9.7 % of the whole run.
+  var src = parseModule(input)
   var typeCtx = load(input, src.pool, src.tags)
+  # 2. Memory-loop idioms, before anything can reshape the loops they match
+  #    (see `recognizeMemLoopsInBody`).
+  if target.mem.intrinsics and passOn("memidioms") and passOn("memloops"):
+    recognizeMemLoops(src, suffix, st, addr typeCtx, target)
+  # 3. Whole-module inter-module inlining (via the bridge, which owns the
+  #    nifpools surface the inliner is written against).
+  if passOn("imi") and runImiOn(src, suffix, splitFile(input).dir):
+    inc st.intermodChanged
+  # The inliner works on dense line info; the per-body passes were calibrated
+  # on the sparse form a plain parse stores (unswitch bounds loops in raw
+  # tokens, suffixes included), and CSE's temp order follows token positions.
+  # An in-memory copy keeps them seeing exactly the tokens they always saw.
+  src = withSparseLineInfo(src)
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)

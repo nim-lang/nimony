@@ -106,6 +106,7 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
                            xnifDir = xnifDir,
                            maxDepth = 4,
                            counterPrefix = "x")
+  ctx.unroll = true
   collectProcBodies(ctx)
 
   let originalLen = buf.len
