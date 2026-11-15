@@ -168,7 +168,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
      ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
      AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, AlwaysS, PragmasS,
      PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
-     ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, StaticstmtS,
+     ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, InvariantS, StaticstmtS,
      BindS, MixinS, UsingS, AsmS, DeferS:
     result = false
 
@@ -1417,6 +1417,7 @@ proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
       inc c.routine.inLoop
       c.routine.breakTargets.add SymId(0)
       withNewScope c:
+        markLeadingInvariants c, it.n
         semStmtBody c, dest, it.n, true
       discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
@@ -3553,6 +3554,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       skip it.n
     inc c.routine.inLoop
     c.routine.breakTargets.add SymId(0)
+    markLeadingInvariants c, it.n
     semStmtBody c, vb, it.n, true
     discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
@@ -3705,6 +3707,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     else:
       inc c.routine.inLoop
       c.routine.breakTargets.add SymId(0)
+      markLeadingInvariants c, it.n
       semStmtBody c, dest, it.n, true
       discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
@@ -6017,7 +6020,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of IncS, DecS:
         toplevelGuard c:
           semIncDec c, dest, it
-      of AssumeS, AssertS:
+      of AssumeS, AssertS, InvariantS:
         pragmaGuard c:
           semAssumeAssert c, dest, it, it.n.stmtKind
       of UsingS:

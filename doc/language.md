@@ -3289,6 +3289,43 @@ other, but an obligation that only it discharges stops being provable once it
 is switched off — the build then fails rather than losing a check. State such a
 claim with `{.assert.}`.
 
+### Loop invariants
+
+A location the body of a loop writes is not known to keep any bound at the
+head of the loop, except for a counter the body only moves one way. So an
+`{.assert.}` at the top of the body cannot be proven from what the loop
+does: it asks about what the head has already forgotten.
+
+`{.invariant: cond.}` states that `cond` holds at the head of **every**
+iteration. It is proven by induction:
+
+* on entry to the loop, from what is known before it;
+* at the end of every iteration, the end of the body and every `continue`,
+  from what the body did.
+
+Then `cond` is known at the head: at the start of the body, and after the
+loop, which is left from the head. Like an assertion, an invariant is a
+compile-time claim only, and one that is not proven is an error, whatever the
+module's contract features say.
+
+```nim
+proc nearest(n: int): Hit {.ensures: result.thing >= -1 and result.thing < 3.} =
+  var best = Hit(thing: -1)
+  for i in 0 ..< n:
+    {.invariant: best.thing >= -1 and best.thing < 3.}
+    let h = probe(i)          # ensures: -1 <= result.thing < 3
+    if h.thing != -1: best = h
+  result = best               # proven: the invariant holds after the loop
+```
+
+An invariant is written as the first statement of a `while` or `for` body,
+comments aside, and nowhere else: anywhere else it would read as a claim about
+that point, which is what `{.assert.}` is for. Several may follow each other.
+It is a claim about the head, before the iteration starts, so it cannot depend
+on the variable of a `for` loop: that variable is bound by the iteration, and
+what it holds is stated by the iterator's own `ensures`. A nested loop has its
+own invariants, and the `continue` of the nested loop judges only those.
+
 ### Aliasing
 
 The prover reasons about values. A variable stands for a value only while

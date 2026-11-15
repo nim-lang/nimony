@@ -1582,7 +1582,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         if c.inPassiveIter: emitCancelCheck(c, dest, info)
       of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CoroforS, RetS,
           PragmaxS, ImportasS, ExportexceptS, DiscardS,
-          TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+          TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS,
           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
           BindS, MixinS, UsingS, AsmS, DeferS:
         trSons(c, dest, n)

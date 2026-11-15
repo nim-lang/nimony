@@ -941,7 +941,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
           FromimportS, ImportexceptS, ExportS, ExportexceptS,
           CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
-          AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+          AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
           StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
           LabS, JmpS, NoStmt:
         # generic statement: copy the head and recurse into the children

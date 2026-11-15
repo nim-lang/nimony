@@ -291,7 +291,7 @@ proc classify(n: Cursor): NodeClass =
      CursorS, PatternvarS, TypeS, EmitS, AsgnS, ContinueS, LabS, JmpS, YldS,
      PragmasS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS,
      ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, AssumeS,
-     AssertS, CallstrlitS, InfixS, PrefixS, HcallS, BindS, MixinS, UsingS:
+     AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS, BindS, MixinS, UsingS:
     # Nothing here forks or joins: whatever follows the node follows the
     # statement. `jmp`/`lab`/`continue` are transfers `execStmt` resolves by
     # name, not by where they sit, so they need no class of their own.
@@ -606,7 +606,7 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
     else:
       result = afterNode(m, base, pc, x, pcs, otherUsage)
   of RoutineKinds + {TypeS,
-     AssumeS, AssertS, CommentS, PragmasS, IncludeS, ImportS,
+     AssumeS, AssertS, InvariantS, CommentS, PragmasS, IncludeS, ImportS,
      ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS, BindS,
      MixinS, UsingS}:
     # declarative junk we don't care about: it evaluates nothing

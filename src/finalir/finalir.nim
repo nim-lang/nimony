@@ -830,7 +830,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trTry c, dest, n
   of CallKindsS:
     trStmtCall c, dest, n
-  of AssumeS, AssertS:
+  of AssumeS, AssertS, InvariantS:
     # A proposition, not code: `{.assume.}` and `{.assert.}` are never evaluated
     # at run time, so there is nothing to lower. A call in one (`s.len`) names a
     # location the prover resolves itself, and an `and` is logic rather than

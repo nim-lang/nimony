@@ -19,7 +19,8 @@ type
     KillV = (ord(KillTagId), "kill")  ## some.var is about to disappear (scope exit)
     AssumeV = (ord(AssumeTagId), "assume")  ## `assume` pragma/annotation
     AssertV = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
+    InvariantV = (ord(InvariantTagId), "invariant")  ## `invariant` pragma: a loop invariant, the first statement of a loop body
 
 proc rawTagIsFinalIrKind*(raw: TagEnum): bool {.inline.} =
-  raw in {ContinueTagId, LabTagId, JmpTagId, IteTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, MflagTagId, VflagTagId, KillTagId, AssumeTagId, AssertTagId}
+  raw in {ContinueTagId, LabTagId, JmpTagId, IteTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, MflagTagId, VflagTagId, KillTagId, AssumeTagId, AssertTagId, InvariantTagId}
 

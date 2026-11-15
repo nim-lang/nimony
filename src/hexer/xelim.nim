@@ -1373,7 +1373,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trBlock c, dest, n, tar
   of MacroS, TemplateS, TypeS, BreakS, ContinueS,
      IncludeS, ImportS, FromimportS, ImportexceptS,
-     ExportS, CommentS, AssumeS, AssertS,
+     ExportS, CommentS, AssumeS, AssertS, InvariantS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      LabS, JmpS:
     # `lab`/`jmp` are atoms for xelim: it PRODUCES them (`trCondJmp`) and never
@@ -1568,7 +1568,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
-         AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+         AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
          StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
          LabS, JmpS, NoStmt:
         trExprLoop c, dest, n, tar

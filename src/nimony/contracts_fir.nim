@@ -229,6 +229,10 @@ type
     brokenSteps: HashSet[VarId]
       ## The `assumedSteps` whose step the traversal could not keep inside
       ## their type: the assumption was wrong.
+    loopInvariants: seq[Cursor]
+      ## The `(invariant cond)` statements of the innermost loop being
+      ## analysed: assumed at its head, proven at every `(continue)`.
+    loopDepth: int
     proofLog: seq[(ProofKind, int)]
       ## The positions added to `dischargedIndexes` or `provenCalls` while an
       ## assumption was in force, so that a second analysis of the loop can
@@ -1462,7 +1466,8 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
         return false
       temps.add (l.name.symId, l.val)
       skip b
-    elif b.stmtKind in {RetS, AssumeS, AssertS} or b.finalIrKind in {AssumeV, AssertV}:
+    elif b.stmtKind in {RetS, AssumeS, AssertS, InvariantS} or
+        b.finalIrKind in {AssumeV, AssertV, InvariantV}:
       # a proposition changes nothing at run time: `len` states its own
       # non-negativity next to the path it returns
       skip b
@@ -5113,10 +5118,53 @@ proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
 # fall-through, and an `ite`/`case`/`try` checkpoints once and rolls back rather
 # than copying the state per branch.
 
+proc collectLoopInvariants(n: Cursor; dest: var seq[Cursor]) =
+  ## The `(invariant cond)` statements of the loop whose body is `n`, not those
+  ## of a loop nested in it. Sem allows them only at the start of a loop body.
+  if n.finalIrKind == InvariantV:
+    dest.add n
+  elif n.isTagLit and n.finalIrKind != LoopV and n.stmtKind != ForS and
+      not isRoutine(n.symKind):
+    var it = n
+    it.into:
+      while it.hasMore:
+        collectLoopInvariants(it, dest)
+        skip it
+
+proc judgeInvariant(c: var FirContext; inv: Cursor; where: string) =
+  ## Proves the condition of `(invariant cond)` here: on entry to its loop or
+  ## at a back-edge. On a path control cannot reach the claim is vacuous.
+  if c.p.tr.live:
+    var cond = inv
+    cond = sub(cond)
+    let res = proveCond(c, cond, ownReading(c))
+    case res
+    of Proven: discard
+    of Disproven:
+      buildErr c, inv.info, "loop invariant violated " & where & ": " & asNimCode(cond)
+    of Unprovable:
+      buildErr c, inv.info, "cannot prove loop invariant " & where & ": " & asNimCode(cond)
+
+proc assumeInvariants(c: var FirContext) =
+  ## The induction hypothesis: at the head of the loop every invariant holds,
+  ## because it held on entry and every back-edge re-established it.
+  # moved out for the loop: `assumeCond` takes all of `c`
+  var invariants = move c.loopInvariants
+  for inv in invariants:
+    var cond = inv
+    cond = sub(cond)
+    assumeCond(c, cond, ownReading(c))
+  c.loopInvariants = move invariants
+
 proc leaveToLabel(c: var FirContext; label: SymId) = gotoLabel(c.p.tr, c.p.flow, label)
 proc leaveToReturn(c: var FirContext) = gotoReturn(c.p.tr, c.p.flow)
 proc leaveToRaise(c: var FirContext) = gotoRaise(c.p.tr, c.p.flow)
-proc leaveToContinue(c: var FirContext) = gotoContinue(c.p.tr, c.p.flow)
+proc leaveToContinue(c: var FirContext) =
+  # the back-edge: every invariant of the loop has to hold again here
+  var invariants = move c.loopInvariants # `judgeInvariant` takes all of `c`
+  for inv in invariants: judgeInvariant(c, inv, "at the end of an iteration")
+  c.loopInvariants = move invariants
+  gotoContinue(c.p.tr, c.p.flow)
 
 proc traverseIte(c: var FirContext; n: var Cursor) =
   ## `(ite cond then else)`. Each arm is analyzed under the condition's polarity;
@@ -5642,6 +5690,15 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
   ## location changes nothing and its step need not be judged.
   var call = freshCall()
   let bodyStart = n
+  # `{.invariant.}`: proven here, on entry, and judged again at every
+  # back-edge; in between it is assumed at the head. Proven before `errMark`:
+  # a round that is analysed again keeps what was said about the entry.
+  var invariants: seq[Cursor] = @[]
+  collectLoopInvariants(n, invariants)
+  for inv in invariants: judgeInvariant(c, inv, "on entry")
+  var outerInvariants = move c.loopInvariants
+  c.loopInvariants = invariants
+  inc c.loopDepth
   let errMark = c.errors.len
   let proofMark = c.proofLog.len
   let exitsMark = exitsCheckpoint(c.p.tr)
@@ -5675,6 +5732,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
       # a barrier in the body is one before every iteration too
       if iterBarrier: noteBarrier(w, iterNamed)
       forgetWrites(c, w)
+      assumeInvariants(c)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
             w.kinds.getOrDefault(v, ivUnknown) in {ivIncreasing, ivDecreasing} and
@@ -5702,6 +5760,8 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
     n = bodyStart
   # What this body broke of the enclosing loops' assumptions is theirs to judge.
   for v in outerBroken: c.brokenSteps.incl v
+  c.loopInvariants = move outerInvariants
+  dec c.loopDepth
   # Outside every loop no assumption can be taken back any more.
   if c.assumedSteps.len == 0: c.proofLog.setLen proofMark
   let backEdge = backEdgeBorrows(c.p.tr)
@@ -6374,6 +6434,16 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     traverseAssume c, n
   of AssertV:
     traverseAssert c, n
+  of InvariantV:
+    if c.loopDepth > 0:
+      skip n # the loop's head assumed it, its entry and back-edges prove it
+    else:
+      # no loop is left around it: a claim about this point, like `assert`
+      judgeInvariant(c, n, "here")
+      var cond = n
+      cond = sub(cond)
+      assumeCond(c, cond, ownReading(c))
+      skip n
   of LabV:
     traverseLabel c, n
   of JmpV:
