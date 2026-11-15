@@ -250,10 +250,17 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
     if getCallInfo(n, op, callArg):
       case op
       of attachedWasMoved:
-        b.wasMovedLocs.add WasMovedLoc(
-          callPos: cursorToPosition(c.source[], n),
-          target: peelComparableArg(callArg)
-        )
+        # Only a whole local is tracked: the duplifier's pairs move and
+        # destroy full variables, and a mention of the symbol in between is
+        # what the `Symbol` case sees as a use. A path (a field, an element,
+        # a coroutine frame slot) can be reached in between without naming
+        # it, and a global by any call.
+        let target = peelComparableArg(callArg)
+        if target.kind == Symbol and isLocalName(pool.syms[target.symId]):
+          b.wasMovedLocs.add WasMovedLoc(
+            callPos: cursorToPosition(c.source[], n),
+            target: target
+          )
         # Do not descend into the children of `=wasMoved`/`=destroy`. Their
         # argument *is* the location being tracked, and the `Symbol` case
         # counts every occurrence as a use and calls `invalidateWasMoved` —
@@ -286,6 +293,35 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
       if c.jmpTargets.contains(int(labelOf(n))):
         joinStmt(b)
       skip n
+      return
+    if tag == TagId(leng_tags.IteS):
+      # `(ite C T E|.)`: `IfS` below with one condition. The condition is not a
+      # branch of its own; with a real else-branch the two arms are exhaustive.
+      var wasMovedSet: seq[WasMovedLoc] = @[]
+      n.into:
+        if n.hasMore: analyse(c, b, n)        # the condition
+        var thenB = nestedBlock(b)
+        if n.hasMore: analyse(c, thenB, n)
+        mergeBasicBlockInfo(b, thenB)
+        if n.hasMore and n.kind != DotToken:
+          var elseB = nestedBlock(b)
+          analyse(c, elseB, n)
+          mergeBasicBlockInfo(b, elseB)
+          wasMovedSet = move(thenB.wasMovedLocs)
+          wasMovedSet.intersect(elseB.wasMovedLocs)
+        while n.hasMore: skip n
+      for x in wasMovedSet:
+        b.wasMovedLocs.add x
+      return
+    if tag == TagId(leng_tags.LoopS):
+      # `(loop (stmts … (continue .X)))`: `WhileS` below; the `continue`'s
+      # condition is read inside the body.
+      n.into:
+        if n.hasMore:
+          var loopBody = nestedBlock(b, BbWhileStmt)
+          analyse(c, loopBody, n)
+          mergeBasicBlockInfo(b, loopBody)
+        while n.hasMore: skip n
       return
 
     case n.stmtKind

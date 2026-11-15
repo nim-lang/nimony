@@ -5,12 +5,11 @@ import tags
 type
   FinalIrKind* = enum
     NoVTag
-    ContinueV = (ord(ContinueTagId), "continue")  ## `continue` statement
+    ContinueV = (ord(ContinueTagId), "continue")  ## `continue` statement. In Leng and the multi-join IR it is a `(loop)` body's last statement, its sole back-edge: `(continue .)` always repeats, `(continue X)` repeats while `X` holds and otherwise leaves the loop. `X` has no effect: no call, no write, no flag read (`ovf`); a load is fine
     LabV = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/internals/multi_join_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
     JmpV = (ord(JmpTagId), "jmp")  ## jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals
     IteV = (ord(IteTagId), "ite")  ## if-then-else, optionally followed by `join` information and by a label. The multi-join IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's
-    ItecV = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
-    LoopV = (ord(LoopTagId), "loop")  ## infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)`
+    LoopV = (ord(LoopTagId), "loop")  ## loop; the body ends in `(continue .X)`, its sole back-edge, and every forward exit is a `(jmp …)` to a label after the loop
     VV = (ord(VTagId), "v")  ## `versioned` locations
     EtupatV = (ord(EtupatTagId), "etupat")  ## tupat expression for error handling
     UnknownV = (ord(UnknownTagId), "unknown")  ## location's contents is unknown at this point
@@ -22,5 +21,5 @@ type
     AssertV = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
 
 proc rawTagIsFinalIrKind*(raw: TagEnum): bool {.inline.} =
-  raw in {ContinueTagId, LabTagId, JmpTagId, IteTagId, ItecTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, MflagTagId, VflagTagId, KillTagId, AssumeTagId, AssertTagId}
+  raw in {ContinueTagId, LabTagId, JmpTagId, IteTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, MflagTagId, VflagTagId, KillTagId, AssumeTagId, AssertTagId}
 

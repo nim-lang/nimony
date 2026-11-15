@@ -5,8 +5,8 @@
 ##
 ## Every binding is header-free: types and constants are ABI transcriptions
 ## (see linux/, macos/, freebsd/, and illumos/) and procs bind real libc/kernel symbols.
-## `-d:useLibc` changes which allocator and stdio implementation the
-## stdlib uses, never which declarations exist.
+## `-d:useLibc` changes which allocator the stdlib uses, never which
+## declarations exist.
 ## ABI declarations are checked by tests/nimony/stdlib/tposixabi.nim.
 
 # Workaround https://github.com/nim-lang/nimony/issues/985
@@ -61,9 +61,9 @@ when defined(posix):
     ## operations such as open/stat/fork; linux/arm64/raw implements them
     ## using the available *at/*2/clone calls.
     ##
-    ## `nimNoLibc`, NOT `nimNativeIo`: the C backend still LINKS libc, so
-    ## there open/stat are real symbols. Using nimNativeIo here would emit
-    ## newfstatat calls, which glibc does not export under that name.
+    ## `nimNoLibc`: the C backend still LINKS libc, so there open/stat are
+    ## real symbols. Raw bindings there would emit newfstatat calls, which
+    ## glibc does not export under that name.
 
   const freebsdRaw* = defined(freebsd) and defined(nimNoLibc)
     ## FreeBSD freestanding bindings use raw syscalls; nifasm normalizes
@@ -104,8 +104,8 @@ when defined(posix):
   proc munmap*(a1: nil pointer, a2: csize_t): cint {.importc: "munmap".}
 
   # errno is libc's: a freestanding build has none, and every raw call returns
-  # its error as -errno instead (`pcall`). The C backend still links libc even
-  # with nimNativeIo, and libc writes its own errno slot.
+  # its error as -errno instead (`pcall`). The C backend still links libc, and
+  # libc writes its own errno slot.
   when not rawSyscalls:
     when defined(osx):
       include "macos/errno"

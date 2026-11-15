@@ -1,0 +1,17 @@
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(19, 29) Error: cannot mutate n.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(20, 41) Error: cannot mutate h.r.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(21, 31) Error: cannot mutate n.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(21, 39) Error: cannot mutate n.s[1] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(22, 44) Error: cannot return n.s[0] as `var` through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(24, 13) Error: cannot return n.s[0] as `var` through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(25, 28) Error: cannot mutate n.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(26, 32) Error: cannot mutate p.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(27, 33) Error: cannot mutate n.es[0].x through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(28, 45) Error: cannot mutate toOpenArray(n.s, 0, 1)[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(29, 39) Error: cannot mutate at(n.s, 0) through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(31, 47) Error: cannot mutate n.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(45, 35) Error: cannot mutate n.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(46, 38) Error: cannot mutate h.r.s through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(50, 8) Error: cannot mutate n.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(30, 41) Error: cannot mutate n.s[0] through a ref/ptr in a `.noSideEffect` context
+tests/nimony/errmsgs/tfunc_seq_elem_ptr_mutation.nim(30, 49) Error: cannot mutate n.s[1] through a ref/ptr in a `.noSideEffect` context

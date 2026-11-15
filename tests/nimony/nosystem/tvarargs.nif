@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3622             )
+(.indexat 3623             )
 (stmts@,2,tests/nimony/nosystem/tvarargs.nim
  (type@2,1 :int.0.
   (i 64).
@@ -125,7 +125,7 @@
     (unpackflat
      (let :x.4 . .
       (untyped@9,~N).))
-    (expr~2,1
+    (stmts~2,1
      (cmd
       (ochoice write.0. write.1.)stdout.0.@6 x.4@E)))
    (cmd@,2 write.0. stdout.0.@6 '\0A'@E)))
@@ -182,4 +182,4 @@
  (h write.1. 154)
  (x unpack.0. 210)
  (x echo.0. 108)
- (h someVar.0. 334))
+ (h someVar.0. 335))

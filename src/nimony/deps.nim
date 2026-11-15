@@ -313,6 +313,15 @@ proc toPair(c: DepContext; f: string): FilePair =
     FilePair(nimFile: f, modname: moduleSuffix(f, c.config),
              std: inStdcache(c.config, f))
 
+proc modulePair(c: DepContext; f: string): FilePair =
+  ## `toPair` for a module, not an include file: a module's name must not
+  ## start with a digit (doc/language.md, "Modules").
+  let name = moduleNameFromPath(f)
+  if name.len > 0 and name[0] in {'0'..'9'}:
+    quit "Error: invalid module name: '" & name & "' (" & shortenDir(f) &
+      "); a module name must not start with a digit"
+  result = c.toPair(f)
+
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node)
 
@@ -385,7 +394,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
                       current: Node; isSystem: bool) =
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
-  let p = c.toPair(f2)
+  let p = c.modulePair(f2)
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
   if existingNode == -1:
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: isSystem,
@@ -412,7 +421,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
 proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineInfo; current: Node) =
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f.path)
   if not semos.fileExists(f2): return
-  let p = c.toPair(f2)
+  let p = c.modulePair(f2)
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
   if existingNode == -1:
     var imported = Node(files: @[p], id: c.nodes.len,
@@ -429,7 +438,7 @@ proc importCyclicModule(c: var DepContext; f1: string; info: NifLineInfo;
   ## Add a cyclic import target to the current node's cycle group.
   let f2 = resolveImport(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
-  let p = c.toPair(f2)
+  let p = c.modulePair(f2)
   let existing = c.processedModules.getOrDefault(p.modname, -1)
   if existing == current.id:
     return # already a member of this group
@@ -1428,6 +1437,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addStrLit shoggoth
         b.addStrLit "opt"
         let cpuName = platform.CPU[c.config.targetCPU].name
+        # what the passes may assume about addressing (`Target.scaledIndex`)
+        b.addStrLit "--cpu:" & cpuName
         if native and cpuName in ["arm64", "amd64"]:
           # the 128-bit loop vectorizer: emits (instr ...) rows only the native
           # back ends lower — AArch64 via AdvSIMD, x86-64 via SSE2 — so it stays
@@ -1440,7 +1451,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           if cpuName == "amd64": vecFlag = "--vectorize:sse"
           b.addStrLit vecFlag
         if cpuName == "avr":
-          # arkham's AVR emitter has no lowering for the `Memset` row (nor for a
+          # arkham's AVR emitter has no lowering for the `zeroMemIns` row (nor for a
           # call to C's `memset`), so the fill-loop recognizer stays off there.
           b.addStrLit "--no-mem-intrinsics"
         elif native:
@@ -1490,9 +1501,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       # GCC's overreach instead of contorting the codegen. Real GCC only:
       # clang has no such warning name and would spam
       # `-Wunknown-warning-option` into every tracked test output — and on
-      # macOS `gcc` IS clang, so gate on the target OS as well.
+      # macOS and Android `gcc` is commonly clang, so gate on the target OS
+      # as well.
       if extractCCKey(ccProgram) != "clang" and
-          c.config.targetOS notin {osMacosx, osIos}:
+          c.config.targetOS notin {osMacosx, osIos, osAndroid}:
         ccArgs.add "-Wno-stringop-overflow"
       # Note on TLS for clang/Windows: clang emits native PE TLS by default,
       # which is what we want — `__thread` access compiles to a single
@@ -2376,7 +2388,7 @@ proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebui
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
     cmd: cmd, isGeneratingFinal: isFinal)
-  var p = result.toPair(project)
+  var p = result.modulePair(project)
   # The root is compiled as the main module, which a stdlib module never is
   # in the cache all builds share.
   p.std = false
@@ -2450,9 +2462,10 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addStrLit "-Wno-attributes"
       b.addStrLit "-fwrapv"
       # See the sibling cc cmd above: real-GCC-only workaround for the gcc-14
-      # arm64 stringop-overflow false positive.
+      # arm64 stringop-overflow false positive. macOS and Android commonly
+      # spell clang as `gcc`.
       if extractCCKey(config.cc) != "clang" and
-          config.targetOS notin {osMacosx, osIos}:
+          config.targetOS notin {osMacosx, osIos, osAndroid}:
         b.addStrLit "-Wno-stringop-overflow"
       b.addKeyw "args"
       b.addKeyw "input"

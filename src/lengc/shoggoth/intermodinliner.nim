@@ -34,6 +34,7 @@
 import std / [tables, assertions]
 include "../../lib" / nifprelude
 import ".." / leng_model
+from ".." / ".." / lib / nifcdecl import twoWayParts, hasArm
 import ".." / ".." / hexer / intramodinliner
 import ".." / ".." / lib / symparser
 
@@ -48,7 +49,8 @@ type
 proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
   ## Recognise the partial-inline shape at the *head* of a proc body:
   ##
-  ##   (stmts (if (elif COND (stmts (ret X)))) …)
+  ##   (stmts (if (elif COND (stmts (ret X)))) …)   or
+  ##   (stmts (ite COND (stmts (ret X)) .) …)
   ##
   ## The elif's body must be a single `(ret …)` (optionally wrapped in a
   ## length-1 `(stmts …)`); there must be exactly one `elif` (no further
@@ -58,29 +60,11 @@ proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
   ## so the bounded child loop terminates correctly.
   if not body.isTagLit or body.stmtKind != StmtsS: return false
   let firstStmt = childCursor(body)
-  if not firstStmt.isTagLit or firstStmt.stmtKind != IfS: return false
-
-  # The if must contain exactly one branch, and it must be an elif.
-  var theElif = default(Cursor)
-  var branchCount = 0
-  var rejected = false
-  var ifn = firstStmt
-  ifn.into:
-    while ifn.hasMore:
-      inc branchCount
-      if branchCount == 1 and ifn.isTagLit and
-         ifn.substructureKind == ElifU:
-        theElif = ifn
-      else:
-        rejected = true
-      skip ifn
-  if rejected or branchCount != 1: return false
-
-  # Inside (elif COND BODY): grab COND and BODY.
-  let condCur = childCursor(theElif)
+  # One branch and no else: `(if (elif COND BODY))` or `(ite COND BODY .)`.
+  var condCur, elifBody, elseArm = default(Cursor)
+  if not twoWayParts(firstStmt, condCur, elifBody, elseArm) or hasArm(elseArm):
+    return false
   shape.cond = condCur
-  var elifBody = condCur
-  skip elifBody                                # past condition, on body
 
   # Optionally unwrap a single-statement `(stmts (ret …))`.
   var retCur = elifBody

@@ -356,6 +356,18 @@ proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineI
     # every call site there is.
     buildErrAt c, dest, pos, msg
 
+proc bodyAsList*(n: Cursor; list: var TokenBuf): Cursor =
+  ## A statement body is a statement list. Inside parentheses the parser
+  ## returns a one-line body bare (`(while c: inc t)`), and a macro or plugin
+  ## can too: such a body is read as the `(stmts X)` the indented form gives.
+  if n.stmtKind in {StmtsS, ScopeS}:
+    result = n
+  else:
+    list.addParLe(StmtsS, n.info)
+    list.addSubtree n
+    list.addParRi()
+    result = beginRead(list)
+
 proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string) =
   var orig = createTokenBuf(1)
   orig.addDotToken()

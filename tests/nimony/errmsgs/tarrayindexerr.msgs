@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tarrayindexerr.nim(3, 14) Error: undeclared identifier: zzz
+tests/nimony/errmsgs/tarrayindexerr.nim(4, 21) Error: undeclared identifier: yyy
+tests/nimony/errmsgs/tarrayindexerr.nim(5, 18) Error: undeclared identifier: xxx
+tests/nimony/errmsgs/tarrayindexerr.nim(12, 14) Error: invalid array index type: Holey

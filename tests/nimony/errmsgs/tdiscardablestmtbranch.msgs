@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tdiscardablestmtbranch.nim(8, 24) Error: expression of type `int64` must be discarded
+tests/nimony/errmsgs/tdiscardablestmtbranch.nim(9, 6) Error: expression of type `int64` must be discarded
+tests/nimony/errmsgs/tdiscardablestmtbranch.nim(13, 7) Error: expression of type `string` must be discarded
+tests/nimony/errmsgs/tdiscardablestmtbranch.nim(15, 21) Error: expression of type `int64` must be discarded
+tests/nimony/errmsgs/tdiscardablestmtbranch.nim(18, 9) Error: expression of type `int64` must be discarded
+tests/nimony/errmsgs/tdiscardablestmtbranch.nim(18, 18) Error: expression of type `int64` must be discarded

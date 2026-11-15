@@ -19,9 +19,8 @@
 ## LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 ## OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 ## THE SOFTWARE.
-## Nothing here depends on `cmath` or the per-category primitive modules
-## (`sin`, `exp`, ...), so this module remains importable with or without
-## `nimNativeIo`.
+## Nothing here depends on the per-category primitive modules (`sin`, `exp`,
+## ...), so they can all import this module.
 
 type
   Arithmetic* = concept ## Types that supply the arithmetic and comparison

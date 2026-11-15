@@ -115,7 +115,8 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string;
                      fcmpLhs: lhs, fcmpRhs: rhs)
       result = res
     else:
-      let pred = if unsignedPred != "" and lhsTK in {UT, CT, BoolT}:
+      # An address compares unsigned (`ult`), like `u`/`c`/`bool`.
+      let pred = if unsignedPred != "" and lhsTK in {UT, CT, BoolT, PtrT, AptrT, ProctypeT}:
                    unsignedPred
                  else:
                    signedPred
@@ -412,6 +413,14 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
       callCallee: llGlobalRef(iname, c.prim.ptrT),
       callRetType: rtype, callArgs: @[args[0], llIntTextC("0", c.prim.i1)])
     res
+  template callUnary(iname: string; rtype: LLType): LLValue =
+    # `llvm.bswap` takes the value alone: no `is_zero_poison` flag
+    let t = c.nextTemp()
+    let res = llReg(t, rtype)
+    c.emit LLInstr(kind: llCall, result: res,
+      callCallee: llGlobalRef(iname, c.prim.ptrT),
+      callRetType: rtype, callArgs: @[args[0]])
+    res
   case externName
   of "__builtin_ctzll":
     let r = callIntrinsic("llvm.cttz.i64", c.prim.i64)
@@ -444,19 +453,25 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
   of "__builtin_popcount":
     result = callIntrinsic("llvm.ctpop.i32", c.prim.i32)
   of "__builtin_bswap16":
-    result = callIntrinsic("llvm.bswap.i16", c.prim.i16)
+    result = callUnary("llvm.bswap.i16", c.prim.i16)
   of "__builtin_bswap32":
-    result = callIntrinsic("llvm.bswap.i32", c.prim.i32)
+    result = callUnary("llvm.bswap.i32", c.prim.i32)
   of "__builtin_bswap64":
-    result = callIntrinsic("llvm.bswap.i64", c.prim.i64)
+    result = callUnary("llvm.bswap.i64", c.prim.i64)
   of "__builtin_expect":
     result = args[0]
-  of "__builtin_sqrt", "__builtin_sqrtf":
+  of "__builtin_sqrt", "__builtin_sqrtf", "__builtin_floor", "__builtin_floorf",
+     "__builtin_ceil", "__builtin_ceilf", "__builtin_trunc", "__builtin_truncf",
+     "__builtin_round", "__builtin_roundf":
+    # `__builtin_floorf` → `llvm.floor.f32`: the one-operand float intrinsics.
+    let single = externName[^1] == 'f'
+    let stem = externName.substr(len("__builtin_"),
+                                 externName.len - 1 - ord(single))
     let t = c.nextTemp()
     let res = llReg(t, retType)
     c.emit LLInstr(kind: llCall, result: res,
-      callCallee: llGlobalRef(if externName == "__builtin_sqrtf": "llvm.sqrt.f32"
-                              else: "llvm.sqrt.f64", c.prim.ptrT),
+      callCallee: llGlobalRef("llvm." & stem & (if single: ".f32" else: ".f64"),
+                              c.prim.ptrT),
       callRetType: retType, callArgs: @[args[0]])
     result = res
   else:
@@ -480,22 +495,49 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
     var args: seq[LLValue] = @[]
     skip n                                  # the callee symbol
+    let firstArg = n
+    let nLocs = if op.isMemOp: memLocOperands(op) else: 0
     while n.hasMore:
       var a = LLValue()
-      genExprLLVM(c, n, a)
+      if args.len < nLocs and n.exprKind != HaddrC:
+        # a block-memory row's read location, a bare lvalue: pass its address
+        var lv = LLValue()
+        genLvalueLLVM(c, n, lv)
+        a = lv.withType(c.prim.ptrT)
+      else:
+        genExprLLVM(c, n, a)
       args.add a
 
     c.setLoc(start.info)
     if op.isAtomic:
       genAtomicCall(c, cBuiltinFor(op, bits), args, retType, result)
     elif op.isMemOp:
-      # the same lowering as a call to the importc'd C function of that name
-      args[2] = sizeToI64(c, args[2])
+      # The same lowering as a call to the importc'd C function of that name. The
+      # location operands are pointers here (`(haddr L)`, or a bare lvalue's
+      # address); an absent byte count is the size of the first location's type.
+      let nLoc = memLocOperands(op)
+      var size: LLValue
+      if args.len > nLoc:
+        size = sizeToI64(c, args[nLoc])
+      else:
+        var inner = firstArg
+        if inner.exprKind == HaddrC: inc inner
+        let typ = genTypeLLVMReadOnly(c, getType(c.m, inner))
+        let t1 = c.emitGEP(typ, llNull(c.prim.ptrT), [llIntTextC("1", c.prim.i32)],
+            inbounds = false)
+        let t2 = c.nextTemp()
+        let res = llReg(t2, c.llIntBits(c.bits))
+        c.emit LLInstr(kind: llPtrtoint, result: res, castOp: "ptrtoint", castSrc: t1,
+                       castDstType: c.llIntBits(c.bits))
+        size = sizeToI64(c, res)
+      let callArgs =
+        if op == ZeroMemOp: @[args[0], llIntTextC("0", c.prim.i32), size]
+        else: @[args[0], args[1], size]
       let name = case op
-                 of MemsetOp: "memset"
-                 of MemcpyOp: "memcpy"
+                 of ZeroMemOp: "memset"
+                 of CopyMemOp: "memcpy"
                  else: "memcmp"
-      genMemIntrinsicCall(c, name, args, retType, result)
+      genMemIntrinsicCall(c, name, callArgs, retType, result)
 
     else:
       let builtin = cBuiltinFor(op, bits)
@@ -576,6 +618,26 @@ proc isLengFloat(tk: LengType): bool {.inline.} =
 proc isLengPtr(tk: LengType): bool {.inline.} =
   tk in {PtrT, AptrT, ProctypeT}
 
+proc wrapInt(x: uint64; bits: int; unsigned: bool): uint64 =
+  ## `x` truncated to `bits`, then zero- or sign-extended back to 64 bits.
+  result = x
+  if bits < 64:
+    let mask = (1'u64 shl bits) - 1'u64
+    if unsigned or ((x shr (bits - 1)) and 1'u64) == 0'u64: result = x and mask
+    else: result = x or not mask
+
+proc foldIntConst(text: string; srcBits: int; srcUnsigned: bool;
+                  destTyp: LLType; destUnsigned: bool): LLValue =
+  ## The decimal integer constant `text` of a `srcBits` wide type, converted to
+  ## `destTyp` as `trunc`, `zext` or `sext` would convert it.
+  let neg = text.len > 0 and text[0] == '-'
+  var x = 0'u64
+  for i in (if neg: 1 else: 0) ..< text.len:
+    x = x * 10'u64 + uint64(ord(text[i]) - ord('0'))
+  if neg: x = 0'u64 - x
+  x = wrapInt(wrapInt(x, srcBits, srcUnsigned), destTyp.intBits, destUnsigned)
+  result = llIntTextC(if destUnsigned: $x else: $cast[int64](x), destTyp)
+
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
                      result: var LLValue) =
   let destTyp = genTypeLLVMReadOnly(c, destTypeCursor)
@@ -632,7 +694,8 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
   elif isLengInt(srcTK) and isLengInt(destTK):
     # Constant integer casts fold to the target type with no instruction.
     if val.kind == llvInt:
-      result = val.withType(destTyp)
+      result = foldIntConst(val.intText, val.typ.intBits, srcTK in {UT, CT, BoolT},
+                            destTyp, destTK in {UT, CT, BoolT})
       return
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
@@ -993,8 +1056,12 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     var typ: LLType
     var val = LLValue()
     n.into:
+      let typCursor = n
       typ = genTypeLLVM(c, n)
+      let srcType = getType(c.m, n)
       genExprLLVM(c, n, val)
+      if not typeEq(val.typ, typ):
+        coerceInPlace(c, val, srcType, typCursor)
       while n.hasMore: skip n
     let t = c.nextTemp()
     let res = llReg(t, typ)
@@ -1200,6 +1267,10 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       else: discard
       if typeEq(val.typ, targetTyp):
         result = val
+      elif val.kind == llvInt and not isFloatType(targetTyp):
+        # A suffixed integer literal is a constant of its suffix type.
+        result = foldIntConst(val.intText, 64, value.kind == UIntLit, targetTyp,
+                              suffixStr.startsWith("u"))
       else:
         let t = c.nextTemp()
         let res = llReg(t, targetTyp)
@@ -1281,7 +1352,7 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     n.into:
       arrayTypeCursor = n
       typ = genTypeLLVM(c, n)
-      expectedLen = fixedArrayLen(c, arrayTypeCursor)
+      expectedLen = fixedArrayLen(c.m, arrayTypeCursor)
       var elemBody = navigateToObjectBody(c.m, arrayTypeCursor)
       inc elemBody
       let elemTyp = genTypeLLVMReadOnly(c, elemBody)
@@ -1297,9 +1368,13 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
                        ivElement: elemVal, ivAggType: typ, ivIndex: idx)
         current = res
         inc idx
-      if expectedLen >= 0 and idx != expectedLen:
-        error c.m, "array literal element count does not match its declared length: ", arrayTypeCursor
-      result = current
+      if idx == 0:
+        # `(aconstr T)`: the all-zero array, whatever `T`'s length
+        result = llZeroInit(typ)
+      else:
+        if expectedLen >= 0 and idx != expectedLen:
+          error c.m, "array literal element count does not match its declared length: ", arrayTypeCursor
+        result = current
   of BaseobjC:
     let loadType = genTypeLLVMReadOnly(c, getType(c.m, n))
     var lval = LLValue(); genLvalueLLVM(c, n, lval)

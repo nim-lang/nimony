@@ -669,9 +669,9 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   # the same stdlib variant as the module that uses it (nim-lang/nimony#2155's
   # follow-up: `-d:useLibc` did not reach plugins). An explicit allow-list, not
   # raw command-line forwarding, for the same reason `--base` is not forwarded
-  # above. The derived defines (`nimNativeAlloc`/`nimNativeIo`) are NOT
-  # forwarded: the child re-derives them from these opt-outs.
-  for d in ["useLibc", "useLibcIo", "useMimalloc"]:
+  # above. The derived define (`nimNativeAlloc`) is NOT forwarded: the child
+  # re-derives it from these opt-outs.
+  for d in ["useLibc", "useMimalloc"]:
     if config.isDefined(d):
       result.add " -d:"
       result.add d

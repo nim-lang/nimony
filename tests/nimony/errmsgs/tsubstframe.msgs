@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tsubstframe.nim(25, 7) Error: cannot prove assertion: t < nxt(t) [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsubstframe.nim(29, 7) Error: cannot prove assertion: t < nxt2(t) [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsubstframe.nim(34, 5) Error: cannot prove contract: a.x < 10 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsubstframe.nim(39, 5) Error: cannot prove contract: lo(b.h) < 10'u8 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tsubstframe.nim(44, 5) Error: cannot prove contract: i < pred(a.h) [pass --verbose for the Final IR]

@@ -1,0 +1,20 @@
+deque reordered layout: true
+deque wrapped: true
+deque grown vs small: true
+deque other order: false
+deque prefix: false
+deque empty: true
+deque strings: true false
+deque !=: false true
+set reordered: true
+set after excl: true true
+set subset: false false
+set same size other member: false
+set hashed strings: true
+set hashed strings minus one: false
+generic: true true
+template: true true
+local generic: true true
+object field: true
+tuple field: true
+seq of sets: true

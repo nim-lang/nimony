@@ -1,0 +1,12 @@
+tests/nimony/errmsgs/tnongenericinvoke.nim(9, 9) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(14, 18) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(17, 10) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(18, 10) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(19, 9) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(20, 14) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(21, 10) Error: wrong amount of generic parameters for type G.0.tno6xrpud1, expected 1 but got 2
+tests/nimony/errmsgs/tnongenericinvoke.nim(22, 9) Error: undeclared identifier: Undeclared
+tests/nimony/errmsgs/tnongenericinvoke.nim(24, 26) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(28, 12) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(38, 23) Error: cannot attempt to instantiate a concrete type
+tests/nimony/errmsgs/tnongenericinvoke.nim(41, 9) Error: cannot attempt to instantiate a concrete type

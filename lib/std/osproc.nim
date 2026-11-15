@@ -496,25 +496,9 @@ when not defined(windows):
       {.raises.} =
     # Turn a pipe fd into a buffered File for use with FileStream.
     var f: File = default(File)
-    when defined(nimNativeIo):
-      # Freestanding: build a native File around the raw fd (no libc fdopen).
-      if not open(f, handle, mode):
-        raiseOSError(osLastError())
-    else:
-      let modeC =
-        case mode
-        of fmRead: cstring"rb"
-        of fmWrite: cstring"wb"
-        else: cstring"rb"
-      # Declared to byte-match libc's `FILE *fdopen(int, const char *)`:
-      # under useLibc, syncio's `File` still carries <stdio.h>, so the real
-      # prototype is in scope in this TU and any deviation (even Nimony's
-      # unsigned-char `cstring`) is a conflicting redeclaration.
-      type ConstChar {.importc: "const char", nodecl.} = int8
-      proc c_fdopen(fd: cint; mode: nil ptr ConstChar): File {.importc: "fdopen".}
-      f = c_fdopen(handle, cast[ptr ConstChar](modeC))
-      if f == nil:
-        raiseOSError(osLastError())
+    # Freestanding: build a native File around the raw fd (no libc fdopen).
+    if not open(f, handle, mode):
+      raiseOSError(osLastError())
     result = newFileStream(f)
 
   proc inputStream*(p: Process): Stream {.raises, tags: [].} =

@@ -1,11 +1,27 @@
 ## Native (libc-free) implementations of `sin`, `cos`, `tan`, `arcsin`, `arccos`,
 ## `arctan` and `arctan2`. The polynomial kernels and inverse-trig approximations
-## follow fdlibm as carried by Rust compiler-builtins/libm; the medium reducer
-## follows `e_rem_pio2.c`. Large-argument reduction is based on the Payne-Hanek
-## algorithm in fdlibm's `k_rem_pio2.c`; the fixed-point Nim reducer is a new
-## implementation, not a direct code port. Both reducers return the remainder
-## as a head + tail pair, which the kernels consume (`k_sin.c`, `k_cos.c`,
-## `k_tan.c`) — collapsing it to one double costs over a ulp.
+## follow fdlibm as carried by Rust compiler-builtins/libm. Large-argument
+## reduction is based on the Payne-Hanek algorithm in fdlibm's `k_rem_pio2.c`;
+## the fixed-point Nim reducer is a new implementation, not a direct code port.
+## Both reducers return the remainder as a head + tail pair, which the kernels
+## consume (`k_sin.c`, `k_cos.c`, `k_tan.c`) — collapsing it to one double costs
+## over a ulp.
+##
+## The medium reducer covers `|x| < pi/2 * 2^26` with a Cody-Waite split of
+## `pi/2` into four pieces of at most 26 significant bits, so every
+## `n * piece` product is exact for `n < 2^27` and the whole reduction is a
+## straight-line sequence (no data-dependent branches). The nearest integer is
+## obtained without a `round` call via the `1.5 * 2^52` magic-number trick,
+## exact for these bounded quotients and valid with or without FMA contraction.
+##
+## The large reducer multiplies only the table limbs that can influence the
+## extracted bits (quadrant + 106 fraction bits, anchored at the quadrant so
+## the extraction uses fixed exponents): the dropped terms provably stay below
+## 2^-140 of the fraction. Arguments whose dropped terms could alias a carry
+## into the quadrant (an unbroken run of ones up to the quadrant bits),
+## arguments within ~2^-47 of a multiple of `pi/2`, and `|x| >= 2^964` take
+## the full-precision `largeReduceExact` path instead.
+##
 ## Sources: [FreeBSD fdlibm k_rem_pio2.c](https://github.com/freebsd/freebsd-src/blob/main/lib/msun/src/k_rem_pio2.c),
 ## [Rust compiler-builtins rem_pio2_large.rs](https://github.com/rust-lang/rust/blob/main/library/compiler-builtins/libm/src/math/rem_pio2_large.rs).
 ## Other original C sources are FreeBSD `/usr/src/lib/msun/src/{s_sin,s_cos,k_sin,k_cos,e_asin,e_acos,s_atan,e_atan2,e_rem_pio2}.c`.
@@ -18,7 +34,6 @@
 
 import std/math/common
 import std/math/power
-import std/math/rounding
 
 const
   PIO2_HI = 1.57079632679489655800e+00
@@ -26,12 +41,33 @@ const
   PI_HI = 3.14159265358979311600e+00
   PI_LO = 1.22464679914735317720e-16
   TWO_OVER_PI = 0.63661977236758134308
-  PIO2_1 = 1.57079632673412561417e+00
-  PIO2_1T = 6.07710050650619224932e-11
-  PIO2_2 = 6.07710050630396597660e-11
-  PIO2_2T = 2.02226624879595063154e-21
-  PIO2_3 = 2.02226624871116645580e-21
-  PIO2_3T = 8.47842766036889956997e-32
+  # pi/2 split into Cody-Waite pieces: A, B, C with at most 26 significant
+  # bits (so every n*piece product is exact for |n| < 2^27, as 27+26-1 <= 53
+  # significant bits) and a full-precision tail piece D. The residual after
+  # D is below 2^-130, so the dropped part stays under n * 2^-130 <= 2^-103
+  # even for the largest n that reaches this path; the rounding of the
+  # n*D product itself is at most ulp(n*D)/2 <= 2^-103 as well. This keeps
+  # the absolute error of the reduced argument far below the point where it
+  # could matter even when the reduced argument is nearly zero (x close to
+  # a multiple of pi/2, where a relative error would blow up).
+  PIO2_A = 1.570796310901641845703125
+  PIO2_B = 1.58932547122958567342720925807952880859375e-08
+  PIO2_C = 6.12323393205359425102082826519733771419851109385490417480469e-17
+  PIO2_D = 6.36831716351094990796199425288059588978250343317061887662036e-25
+  # 1.5 * 2^52: adding the scaled quotient puts the nearest integer in the
+  # low bits of the sum's mantissa, for quotients bounded well below 2^51.
+  # Works with and without FMA contraction: both round the scaled quotient
+  # to a nearest integer; exact ties (which cannot make the reduced argument
+  # leave [-pi/4, pi/4]) may pick the even neighbour instead of away from
+  # zero like `round`.
+  ROUND_MAGIC = 6755399441055744.0
+  # Largest |x| taking the medium path: pi/2 * 2^26 rounded as a bit pattern;
+  # x below it keeps |n| <= 2^26 and n*piece products exact.
+  MEDIUM_MAX_BITS = 0x419921fb54442d18'u64
+  # Bit pattern of pi/4 rounded to double. |x| below it always yields n = 0
+  # (x*(2/pi) stays safely under 0.5), so the whole Cody-Waite sequence in
+  # `reduceQuarter` multiplies by zero and returns (0, x, 0) unchanged.
+  PIO4_MAX_BITS = 0x3fe921fb54442d18'u64
   LIMB_MASK = 0xffffff'u64
   # 2/pi in base 2^24, from fdlibm's rem_pio2_large table. Fifty limbs
   # cover the full binary64 exponent range with over 170 fractional bits left
@@ -50,6 +86,8 @@ const
     0x7527BA'u64, 0xC7EBE5'u64, 0xF17B3D'u64, 0x0739F7'u64,
     0x8A5292'u64, 0xEA6BFB'u64, 0x5FB11F'u64, 0x8D5D08'u64,
     0x560330'u64, 0x46FC7B'u64]
+  TWO_POW_M53 = 1.1102230246251565404236316680908203125e-16   # 2^-53
+  TWO_POW_M106 = 1.2325951644078309452578161362459e-32        # 2^-106
 
 func isNan64(x: float64): bool {.inline.} =
   let bits = cast[uint64](x)
@@ -180,7 +218,16 @@ func twoProd(a, b: float64): tuple[p, e: float64] {.inline.} =
   let (bh, bl) = split27(b)
   (p: p, e: ((ah * bh - p) + ah * bl + al * bh) + al * bl)
 
-func largeReduce(x: float64): tuple[n: int, y0, y1: float64] =
+func fracTimesPio2(fh, fl: float64): tuple[y0, y1: float64] {.inline.} =
+  ## (fh + fl) * pi/2 as a double-double: exact head product plus the cross
+  ## terms (fl*PIO2_LO is below 2^-160 and dropped).
+  let (hp, he) = twoProd(fh, PIO2_HI)
+  let t = he + (fh * PIO2_LO + fl * PIO2_HI)
+  let h = hp + t
+  let l = t - (h - hp)
+  (y0: h, y1: l)
+
+func largeReduceExact(x: float64): tuple[n: int, y0, y1: float64] =
   ## Multiply the significand by a fixed-point 2/pi expansion, then take the
   ## low quadrant bits and the signed fractional part. No huge floating-point
   ## quotient is formed or converted to an integer.
@@ -225,43 +272,180 @@ func largeReduce(x: float64): tuple[n: int, y0, y1: float64] =
       fracLimbs[whole] = (fracLimbs[whole] + carry) and topMask
     floorMod8 = (floorMod8 + 1) and 7
   let (fh, fl) = fractionValue(fracLimbs, fractionBits)
+  let (y0, y1) = fracTimesPio2(fh, fl)
   let n = if signBit64(x): -floorMod8 else: floorMod8
-  # r = frac * pi/2 as a double-double: the exact head product plus the
-  # cross terms (fl*PIO2_LO is below 2^-160 and dropped).
-  let (hp, he) = twoProd(fh, PIO2_HI)
-  let t = he + (fh * PIO2_LO + fl * PIO2_HI)
-  let h = hp + t
-  let l = t - (h - hp)
-  if signBit64(x) xor roundUp: (n: n, y0: -h, y1: -l)
-  else: (n: n, y0: h, y1: l)
+  if signBit64(x) xor roundUp: (n: n, y0: -y0, y1: -y1)
+  else: (n: n, y0: y0, y1: y1)
 
-func reduceQuarter(x: float64): tuple[n: int, y0, y1: float64] =
-  ## Cody-Waite for medium arguments and fixed-point Payne-Hanek reduction for
-  ## the rest of finite binary64. The medium path's quotient is bounded.
-  if (cast[uint64](x) and 0x7fffffffffffffff'u64) >= 0x413921fb00000000'u64:
+func largeReduce(x: float64): tuple[n: int, y0, y1: float64] =
+  ## Payne-Hanek reduction over only the limbs that can influence the
+  ## quadrant bits and the top 106 fraction bits; `largeReduceExact` handles
+  ## the cases where the short window would not be provably sufficient.
+  ## Local limb k holds product limb qLimb - 7 + k; the window [0, 9]
+  ## covers product limbs [qLimb-7, qLimb+2]. The dropped terms stay below
+  ## 2^(24*qLimb-118), twelve bits under the extraction floor.
+  let raw = cast[uint64](x) and 0x7fffffffffffffff'u64
+  let exponent = int((raw shr 52) and 0x7ff'u64) - 1023
+  let significand = (raw and 0x000fffffffffffff'u64) or (1'u64 shl 52)
+  let m0 = significand and LIMB_MASK
+  let m1 = (significand shr 24) and LIMB_MASK
+  let m2 = significand shr 48
+  # x*(2/pi) = p / 2^fractionBits with 24-bit limbs.
+  let fractionBits = 1200 + 52 - exponent
+  let qLimb = fractionBits div 24          # limb holding quadrant bit 0
+  let qRem = fractionBits mod 24
+  if qLimb < 12:
+    # |x| >= 2^964: the fraction starts in the low table limbs; the exact
+    # path costs the same there.
+    return largeReduceExact(x)
+
+  var p = default(array[12, uint64])
+  # Terms whose product limb 49-i+j lands in [qLimb-7, qLimb+1]:
+  #   i >= 48+j-qLimb and i <= 56+j-qLimb. Local index = 56+j-qLimb-i.
+  block:
+    var iLo = 48 - qLimb
+    if iLo < 0: iLo = 0
+    var iHi = 56 - qLimb
+    if iHi > 49: iHi = 49
+    for i in iLo .. iHi:
+      p[56 - qLimb - i] += IPIO2[i] * m0
+    iLo = 49 - qLimb
+    if iLo < 0: iLo = 0
+    iHi = 57 - qLimb
+    if iHi > 49: iHi = 49
+    for i in iLo .. iHi:
+      p[57 - qLimb - i] += IPIO2[i] * m1
+    iLo = 50 - qLimb
+    if iLo < 0: iLo = 0
+    iHi = 58 - qLimb
+    if iHi > 49: iHi = 49
+    # m2 has at most 5 bits: multiplying it by a packed pair of table limbs
+    # stays below 2^53, halving the multiply count of this group. The more
+    # significant table limb IPIO2[i] sits in the high half, so the low half
+    # of the product lands on limb 50-i and the high half on limb 51-i.
+    var i = iLo
+    while i + 1 <= iHi:
+      let pair = ((IPIO2[i] shl 24) or IPIO2[i+1]) * m2
+      p[57 - qLimb - i] += pair and LIMB_MASK
+      p[58 - qLimb - i] += pair shr 24
+      inc i
+      inc i
+    if i == iHi:
+      p[58 - qLimb - i] += IPIO2[i] * m2
+  for k in 0 ..< 9:
+    let carry = p[k] shr 24
+    p[k] = p[k] and LIMB_MASK
+    p[k + 1] += carry
+
+  # Quadrant bits [fractionBits, fractionBits+3); they can straddle a limb.
+  # p[7] = limb qLimb, p[8] = limb qLimb+1.
+  let quad = int(((p[7] shr qRem) or (p[8] shl (24 - qRem))) and 7'u64)
+  # Round-up bit: bit fractionBits-1 (the fraction's MSB). It is bit 23 of
+  # the aligned limb (p[7] shl (24-qRem)) or (p[6] shr qRem) for every qRem:
+  # p[7] bit qRem-1 maps to bit 23 for qRem > 0, p[6] bit 23 for qRem = 0
+  # (bits of p[7] above qRem land above 23 and are masked off).
+  let roundBit =
+    (((p[7] shl (24 - qRem)) or (p[6] shr qRem)) shr 23) and 1'u64
+
+  # Exactness guard: the dropped terms (total < 2^dBit, dBit = 24*qLimb-142)
+  # are added to this partial sum; their carry can reach the quadrant only
+  # through an unbroken run of ones from dBit up to fractionBits+2. Detect
+  # that run and take the exact path when it occurs. The run starts at bit 2
+  # of local limb 2 and ends at bit fractionBits+2 (local 7, spilling into
+  # local 8 when qRem > 21).
+  block exactness:
+    if (p[2] shr 2) != 0x3fffff'u64: break exactness
+    if p[3] != LIMB_MASK: break exactness
+    if p[4] != LIMB_MASK: break exactness
+    if p[5] != LIMB_MASK: break exactness
+    if p[6] != LIMB_MASK: break exactness
+    if qRem <= 21:
+      let m = (1'u64 shl (qRem + 3)) - 1'u64
+      if (p[7] and m) != m: break exactness
+    else:
+      if p[7] != LIMB_MASK: break exactness
+      let m = (1'u64 shl (qRem - 21)) - 1'u64
+      if (p[8] and m) != m: break exactness
+    return largeReduceExact(x)
+
+  # Keep only the fraction bits of limb qLimb (those below bit qRem).
+  let lowMask = (1'u64 shl qRem) - 1'u64    # 0 when qRem == 0
+  p[7] = p[7] and lowMask
+
+  # Aligned fraction limbs: a_k holds F's bits [24k, 24k+24) most
+  # significant first. The upper source limb p[7-k] contributes only its low
+  # qRem bits (they are F's bits [24k, 24k+qRem); its high bits belong to
+  # a_{k-1}), the lower source p[6-k] contributes its top 24-qRem bits.
+  # p[7] itself is already masked to its low qRem bits above. h = F[0,53)
+  # and l = F[53,106) then assemble with constant shifts only - no
+  # qRem-dependent branch.
+  let a0 = (p[7] shl (24 - qRem)) or (p[6] shr qRem)
+  let a1 = ((p[6] and lowMask) shl (24 - qRem)) or (p[5] shr qRem)
+  let a2 = ((p[5] and lowMask) shl (24 - qRem)) or (p[4] shr qRem)
+  let a3 = ((p[4] and lowMask) shl (24 - qRem)) or (p[3] shr qRem)
+  let a4 = ((p[3] and lowMask) shl (24 - qRem)) or (p[2] shr qRem)
+  # When the fraction rounds up (roundBit), the reduced argument is built
+  # from 1-f instead of f, and the quadrant gains one. Over the 106-bit
+  # window, 1-f is the two's complement of (h, l): complementing both words
+  # inside 53 bits via a mask is branch-free, and the possible missing +1
+  # borrow from fraction bits below the window changes the result by one ulp
+  # of l = 2^-106 of the fraction - far below the extraction floor, since
+  # the fraction is at least 2^-47 whenever the h < 64 check below does not
+  # divert to the exact path.
+  let ruMask = (0'u64 - roundBit) and ((1'u64 shl 53) - 1'u64)
+  let h = ((a0 shl 29) or (a1 shl 5) or (a2 shr 19)) xor ruMask
+  let l = (((a2 and 0x7ffff'u64) shl 34) or (a3 shl 10) or (a4 shr 14)) xor ruMask
+  let floorMod8 = (quad + int(roundBit)) and 7
+  # h < 64 means the fraction's first 47 bits are zero: x is within ~2^-47
+  # of a multiple of pi/2 and the fixed 106-bit window loses relative
+  # accuracy. Exact path. (For rounded-up fractions this sees 1-f, exactly
+  # like the limb complement it replaces.)
+  if h < 64'u64:
+    return largeReduceExact(x)
+  let fh = float64(h) * TWO_POW_M53
+  let fl = float64(l) * TWO_POW_M106
+  let (y0, y1) = fracTimesPio2(fh, fl)
+  let n = if signBit64(x): -floorMod8 else: floorMod8
+  # Negate y exactly when x is negative xor the rounding went up: XOR with
+  # the sign-bit mask is IEEE negation, down to +-0.0.
+  let flip = ((cast[uint64](x) shr 63) xor roundBit) shl 63
+  (n: n,
+    y0: cast[float64](cast[uint64](y0) xor flip),
+    y1: cast[float64](cast[uint64](y1) xor flip))
+
+func reduceQuarter(x: float64): tuple[n: int, y0, y1: float64] {.inline.} =
+  ## Four-piece Cody-Waite for |x| < pi/2*2^26 (every n*piece product exact),
+  ## fixed-point Payne-Hanek reduction above that. The quotient is bounded
+  ## (|n| <= 2^26), which the magic-number rounding relies on.
+  let ax = cast[uint64](x) and 0x7fffffffffffffff'u64
+  if ax >= MEDIUM_MAX_BITS:
     return largeReduce(x)
-  let n = int(round(x * TWO_OVER_PI))
-  let nf = float64(n)
-  var r = x - nf * PIO2_1
-  var w = nf * PIO2_1T
-  var y = r - w
-  let ix = cast[uint32]((cast[uint64](x) shr 32) and 0x7fffffff'u64)
-  let ey = int((cast[uint64](y) shr 52) and 0x7ff'u64)
-  let ex = int(ix shr 20)
-  if ex - ey > 16:
-    let t = r
-    w = nf * PIO2_2
-    r = t - w
-    w = nf * PIO2_2T - ((t - r) - w)
-    y = r - w
-    let ey2 = int((cast[uint64](y) shr 52) and 0x7ff'u64)
-    if ex - ey2 > 49:
-      let t2 = r
-      w = nf * PIO2_3
-      r = t2 - nf * PIO2_3
-      w = nf * PIO2_3T - ((t2 - r) - w)
-      y = r - w
-  (n: n, y0: y, y1: (r - y) - w)
+  if ax < PIO4_MAX_BITS:
+    # |x| < pi/4: the quotient is 0, every product below is a multiplication
+    # by zero and the sequence would return (0, x, 0) exactly. Skip it.
+    return (n: 0, y0: x, y1: 0.0)
+  # Nearest integer of x*(2/pi) without a call: the low 32 mantissa bits of
+  # the biased sum hold n (two's complement), the unbiased sum holds it as a
+  # float. Exact for |n| < 2^31.
+  let t = x * TWO_OVER_PI + ROUND_MAGIC
+  let nf = t - ROUND_MAGIC
+  let n = int(cast[int32](cast[uint32](cast[uint64](t))))
+  # r = x - nf*PIO2_A exactly (both products and the subtraction, since the
+  # pieces carry <= 26 significant bits and the result stays within 2.1).
+  var y = x - nf * PIO2_A
+  var w = nf * PIO2_B
+  var r = y - w
+  # (y, y1) below tracks x - nf*(A+B+C+D) as a head + tail pair.
+  var y1 = (y - r) - w
+  y = r
+  w = nf * PIO2_C
+  r = y - w
+  y1 = y1 + ((y - r) - w)
+  y = r
+  w = nf * PIO2_D
+  r = y - w
+  y1 = y1 + ((y - r) - w)
+  (n: n, y0: r, y1: y1)
 
 func sin64(x: float64): float64 =
   if isNan64(x): return x
@@ -351,44 +535,46 @@ func acos64(x: float64): float64 =
 
 func atan64(x: float64): float64 =
   const
-    ATANHI: array[4, float64] = [4.63647609000806093515e-01, 7.85398163397448278999e-01,
-      9.82793723247329054082e-01, 1.57079632679489655800e+00]
-    ATANLO: array[4, float64] = [2.26987774529616870924e-17, 3.06161699786838301793e-17,
-      1.39033110312309984516e-17, 6.12323399573676603587e-17]
+    # fdlibm's tables, extended with a leading identity entry so no region
+    # needs a special case: table index i = id + 1, with id = -1 for
+    # |x| < 7/16 (no argument transform). The Mobius tables implement
+    # a' = (P*a + Q) / (R*a + S) on |x| and reproduce fdlibm's transforms
+    # operation for operation (x - 1.0 is x + (-1.0), addition commutes),
+    # so every result is bit-identical to the branch tree it replaces.
+    ATANHI: array[5, float64] = [0.0, 4.63647609000806093515e-01,
+      7.85398163397448278999e-01, 9.82793723247329054082e-01,
+      1.57079632679489655800e+00]
+    ATANLO: array[5, float64] = [0.0, 2.26987774529616870924e-17,
+      3.06161699786838301793e-17, 1.39033110312309984516e-17,
+      6.12323399573676603587e-17]
+    MP: array[5, float64] = [1.0, 2.0, 1.0, 1.0, 0.0]
+    MQ: array[5, float64] = [0.0, -1.0, -1.0, -1.5, -1.0]
+    MR: array[5, float64] = [0.0, 1.0, 1.0, 1.5, 1.0]
+    MS: array[5, float64] = [1.0, 2.0, 1.0, 1.0, 0.0]
     AT: array[11, float64] = [3.33333333333329318027e-01, -1.99999999998764832476e-01,
       1.42857142725034663711e-01, -1.11111104054623557880e-01, 9.09088713343650656196e-02,
       -7.69187620504482999495e-02, 6.66107313738753120669e-02, -5.83357013379057348645e-02,
       4.97687799461593236017e-02, -3.65315727442169155270e-02, 1.62858201153657823623e-02]
   if isNan64(x): return x
-  if isInf64(x): return (if signBit64(x): -ATANHI[3] else: ATANHI[3])
-  var a = x
+  if isInf64(x): return (if signBit64(x): -ATANHI[4] else: ATANHI[4])
   let ix = cast[uint32]((cast[uint64](x) shr 32) and 0x7fffffff'u64)
-  let sign = signBit64(x)
-  var id = -1
-  if ix < 0x3fdc0000'u32:
-    if ix < 0x3e400000'u32: return x
-  else:
-    if a < 0.0: a = -a
-    if ix < 0x3ff30000'u32:
-      if ix < 0x3fe60000'u32:
-        a = (2.0 * a - 1.0) / (2.0 + a)
-        id = 0
-      else:
-        a = (a - 1.0) / (a + 1.0)
-        id = 1
-    elif ix < 0x40038000'u32:
-      a = (a - 1.5) / (1.0 + 1.5 * a)
-      id = 2
-    else:
-      a = -1.0 / a
-      id = 3
+  if ix < 0x3e400000'u32: return x  # |x| < 2^-27 (covers +-0.0)
+  let ax = cast[float64](cast[uint64](x) and 0x7fffffffffffffff'u64)
+  # Region id, branch-free: the thresholds are ordered, so a sum of
+  # comparisons selects -1 (|x| < 7/16), 0, 1, 2 or 3 without the
+  # mispredictable branch tree of the original fdlibm structure.
+  let id = int(ix >= 0x3fdc0000'u32) + int(ix >= 0x3fe60000'u32) +
+    int(ix >= 0x3ff30000'u32) + int(ix >= 0x40038000'u32) - 1
+  let i = id + 1
+  let a = (MP[i] * ax + MQ[i]) / (MR[i] * ax + MS[i])
   let z = a * a
   let w = z * z
   let s1 = z * (AT[0] + w * (AT[2] + w * (AT[4] + w * (AT[6] + w * (AT[8] + w * AT[10])))))
-  let s2 = w * (AT[1] + w * (AT[3] + w * (AT[5] + w * (AT[7] + w * AT[9]))))
-  if id < 0: return a - a * (s1 + s2)
-  let r = ATANHI[id] - (a * (s1 + s2) - ATANLO[id] - a)
-  if sign: -r else: r
+  let s2 = w * (AT[1] + w * (AT[3] + w * (AT[5] + w * (AT[7] + w * (AT[9])))))
+  let r = ATANHI[i] - (a * (s1 + s2) - ATANLO[i] - a)
+  # copysign(r, x) without a branch; r is never zero here and +-0.0
+  # returned early above.
+  cast[float64](cast[uint64](r) or (cast[uint64](x) and 0x8000000000000000'u64))
 
 func atan2_64(y, x: float64): float64 =
   if isNan64(x) or isNan64(y): return x + y

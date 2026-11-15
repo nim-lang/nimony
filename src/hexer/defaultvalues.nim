@@ -114,8 +114,7 @@ proc addDefaultFields(dest: var TokenBuf; n: var Cursor; info: NifLineInfo;
       body = sub(body) # bound the branch walk; `body` is a copy
       addDefaultField(dest, body, info, ptrSize, depth, isUnion = false)
       # With no discriminator supplied there is no branch to select, so
-      # take the first one, as nimsem's `fieldsPresentInBranch` does for
-      # its `bestBranch`. The branches overlap in storage; filling more
+      # take the first one. The branches overlap in storage; filling more
       # than one would have them overwrite each other.
       var branch = default(Cursor)
       while body.hasMore:

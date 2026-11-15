@@ -28,7 +28,7 @@ type
     AlignofX = (ord(AlignofTagId), "alignof")  ## `alignof` operation
     OffsetofX = (ord(OffsetofTagId), "offsetof")  ## `offsetof` operation
     OconstrX = (ord(OconstrTagId), "oconstr")  ## object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named
-    AconstrX = (ord(AconstrTagId), "aconstr")  ## array constructor
+    AconstrX = (ord(AconstrTagId), "aconstr")  ## array constructor. With no `X` it is the all-zero array of type `T`, whatever its length: desugar emits it for a zero `default(array)` (nimony#2846) so a huge array stays one node, and a back end fills `sizeof(T)` zero bytes in place
     BracketX = (ord(BracketTagId), "bracket")  ## untyped array constructor
     CurlyX = (ord(CurlyTagId), "curly")  ## untyped set constructor
     CurlyatX = (ord(CurlyatTagId), "curlyat")  ## curly expression `a{i}`
@@ -163,7 +163,7 @@ type
     IfS = (ord(IfTagId), "if")  ## if statement header
     WhenS = (ord(WhenTagId), "when")  ## when statement header
     BreakS = (ord(BreakTagId), "break")  ## `break` statement
-    ContinueS = (ord(ContinueTagId), "continue")  ## `continue` statement
+    ContinueS = (ord(ContinueTagId), "continue")  ## `continue` statement. In Leng and the multi-join IR it is a `(loop)` body's last statement, its sole back-edge: `(continue .)` always repeats, `(continue X)` repeats while `X` holds and otherwise leaves the loop. `X` has no effect: no call, no write, no flag read (`ovf`); a load is fine
     ForS = (ord(ForTagId), "for")  ## for statement
     WhileS = (ord(WhileTagId), "while")  ## `while` statement
     CoroforS = (ord(CoroforTagId), "corofor")  ## closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value
@@ -388,7 +388,7 @@ type
     SyncP = (ord(SyncTagId), "sync")  ## `sync` routine pragma: the routine may operate on a shared global (or a field of one) passed to one of its `var`/`ptr` parameters; inside its body those parameters are themselves only usable as such arguments to other `.sync` routines
     AssumeSyncP = (ord(AssumeSyncTagId), "assumeSync")  ## `assumeSync` marker; only valid inside `{.cast(assumeSync).}:` pragma blocks (the block may access shared globals freely)
     InstructionP = (ord(InstructionTagId), "instruction")  ## target-pinned instruction annotation; the argument is an opcode NAME from `lib/intrinsics`'s `IntrinsicOp`, spelled as a string literal (`{.instruction: "bsf".}`). A string, not an ident: the name is data resolved by table lookup, it is never subject to scope or overload resolution, and an ident would additionally have to dodge Nim's keywords. The proc is a *declaration* of one machine instruction: calls to it become `(instr …)`, never an ABI call. Its signature spelling is dictated by the row's operand roles and checked at the declaration
-    IntrinsicP = (ord(IntrinsicTagId), "intrinsic")  ## portable-intrinsic annotation; like `instruction` (same string-literal argument) but the opcode is target-neutral and may expand to any number of instructions (`Memcpy`, `AtomicFetchAdd`, …). Its signature is unified against the row's shape at the declaration
+    IntrinsicP = (ord(IntrinsicTagId), "intrinsic")  ## portable-intrinsic annotation; like `instruction` (same string-literal argument) but the opcode is target-neutral and may expand to any number of instructions (`copyMemIns`, `AtomicFetchAdd`, …). Its signature is unified against the row's shape at the declaration
     RegisterP = (ord(RegisterTagId), "register")  ## pins a parameter, result or local to a named machine register (`{.register: "rdi".}`). In an `{.assembler.}` proc this is an *assertion* the back end verifies; in an ordinary proc it is a hard pin the register allocator honours
     StackP = (ord(StackTagId), "stack")  ## pins a local to a stack slot rather than a register (`{.stack.}`) — the memory counterpart of `(register …)`
     AssemblerP = (ord(AssemblerTagId), "assembler")  ## the `{.assembler.}` **proc pragma** (no children): every construct in the body maps one-to-one to assembler, in source order, with no temporaries invented and no operand materialised. The back end (arkham) owns that checking — see `nativenif/doc/intrinsics.md` §8. Spelled `assembler` rather than `asm` because Nim's parser reads a pragma entry as an expression and so cannot accept a keyword there; it is unrelated to the `(asm X+)` statement

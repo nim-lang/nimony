@@ -106,7 +106,8 @@ proc determineBaseDir*(mainFileAt = 1): string =
     case kind
     of cmdArgument:
       if cmd == 0:
-        return key.splitFile.dir
+        let dir = key.splitFile.dir
+        return (if dir.len > 0: dir else: ".")
       dec cmd
     else: discard
   return ""

@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/twrappedoperand.nim(8, 17) Error: cannot prove value is in range 0..255 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/twrappedoperand.nim(12, 17) Error: cannot prove value is in range 0..255 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/twrappedoperand.nim(16, 22) Error: cannot prove 'ashr(x * 3, 56)' is in range 0..255 [pass --verbose for the Final IR]

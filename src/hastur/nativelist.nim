@@ -151,6 +151,14 @@ const
     # The libc extern `remove` names no import library on Windows (arkham:
     # "annotate the declaration with `dynlib`"); the native build fails on Linux too.
     "tests/nimony/stdlib/tsyncio_filemodes",
+    # Installs its SIGALRM handler through libc `sigaction` (a C header type);
+    # arkham's syscall table has no `rt_sigaction`.
+    "tests/nimony/stdlib/treadline_eintr",
+    # A C-backend test (it makes C excess initializers fatal). On win_x64 a
+    # proc taking a zero-sized array by value fails in nifasm: "unwind info:
+    # unmodelled prologue step in f0 (cfa delta 0, 0 saves)", on d484b018 too;
+    # `nimony n --os:windows` reproduces it on Linux.
+    "tests/nimony/types/tzero_sized_array_default",
     # The one test on Windows that drives the ring on real sockets — every other
     # test in `tests/nimony/threads` either stubs itself out here or never
     # reaches `rawthreads.create`. Three native gaps have been found through it;
@@ -202,6 +210,10 @@ const
     # `uint32 -> int32` cast that skipped sign-extension, a float fold computing
     # into the register its rhs still read, and bit-casts kept as `cast`.
     "tests/nimony/intrinsics/tfloatbits",
+    # The `Floor`/`Ceil`/`Trunc`/`Round` rows (`roundsd`, `frint*`) and the
+    # `Bswap` row behind `std/bitops.byteSwap`.
+    "tests/nimony/intrinsics/tfloatround",
+    "tests/nimony/intrinsics/tbyteswap",
     # A `let` in a toplevel `while` condition (#2794). Sem made it a global, which
     # the C backend tolerated inside the init proc but arkham asserted on.
     "tests/nimony/sysbasics/twhileinfor",
@@ -240,11 +252,20 @@ const
     # the reciprocal: the magic constants, the 65-bit "add" fixup and the signed
     # high half all go wrong quietly. Also two divisions in one expression.
     "tests/nimony/basicarith/tdivmodconst",
+    # Nested checked arithmetic in a `{.keepOverflowFlag.}` block: one `keepovf`
+    # per operation, the flag read right after the last one.
+    "tests/nimony/basicarith/toverflowflag_nested",
+    # `div`/`mod` in a `{.keepOverflowFlag.}` block are plain operations, so
+    # a sub-64-bit one needs no narrow `keepovf`.
+    "tests/nimony/basicarith/toverflowflag_divmod",
     # shoggoth's `(memset …)`/`(memcpy …)` nodes (#2350): arkham lowers them
     # with the inline `mem*` loops, whose operands are no longer leaves — the
     # address of `p[i]` stages its index through a scratch register.
     "tests/nimony/opt/topt_memset_fill",
     "tests/nimony/opt/topt_memcpy_copy",
+    # `copyMem`/`zeroMem` on `addr` of a scalar local: arkham lowers the call as a
+    # register move (`core/scalarmem.nim`) — the address and the call both vanish.
+    "tests/nimony/opt/topt_scalar_memops",
     # adjacent constant field stores merged into one wider store: native only
     # (the C backend's strict aliasing forbids it), so only this run checks it
     "tests/nimony/opt/topt_store_merge",

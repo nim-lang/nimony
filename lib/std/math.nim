@@ -2,18 +2,14 @@ import std/[assertions, fenv]
 import std/math/common
 export common
 
-when defined(nimNativeIo):
-  import std/math/frexp
-  import std/math/rounding
-  import std/math/power
-  import std/math/exponential
-  import std/math/trig
-  import std/math/hyperbolic
-  import std/math/special
-  export frexp, rounding, power, exponential, trig, hyperbolic, special
-else:
-  import std/math/cmath
-  export cmath
+import std/math/frexp
+import std/math/rounding
+import std/math/power
+import std/math/exponential
+import std/math/trig
+import std/math/hyperbolic
+import std/math/special
+export frexp, rounding, power, exponential, trig, hyperbolic, special
 
 func almostEqual*[T: SomeFloat](x, y: T; unitsInLastPlace: int = 4): bool {.
     untyped.} =

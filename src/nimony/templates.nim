@@ -293,7 +293,7 @@ proc readRequestedSyms(dest: var TokenBuf; outputStart: int; syms: var seq[SymId
   endRead o
 
 proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor;
-                  errMsg: var string): PluginOutcome =
+                  callInfo: NifLineInfo; errMsg: var string): PluginOutcome =
   result = NoPluginRan
   var p = temp.pragmas
   if not p.isTagLit:
@@ -321,21 +321,24 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
   var provided = initHashSet[SymId]()
   var rounds = 0
 
+  # A zero-argument call's `args` sits at a scope's end and has no valid info
+  # of its own: anchor the plugin's input at the call site instead.
+  let inputInfo = if args.endInfo.isValid: args.endInfo else: callInfo
   while true:
     inc rounds
     var b = createTokenBuf(30)
-    b.addParLe StmtsS, args.endInfo # zero-arg calls: args sits at a scope's end
+    b.addParLe StmtsS, inputInfo
     # Pass the invoked template's name as the first child of the input
     # so a single shared plugin can dispatch on which template was
     # called. The plugin reads it with `pluginName` and skips to
     # the real call-site arguments with `callArgs`.
-    b.addIdent(symToIdent(temp.name.symId), args.endInfo)
+    b.addIdent(symToIdent(temp.name.symId), inputInfo)
     var a = args
     while a.hasMore:
       b.takeTree a
     b.addParRi()
 
-    var types = buildTypeDefsInput(decls, args.endInfo)
+    var types = buildTypeDefsInput(decls, inputInfo)
     let outputStart = dest.len
     runPlugin(c, dest, pathInfo, pool.strings[path], b, types)
 
@@ -521,15 +524,56 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   prog.mem[sym].phase = SemcheckBodies
   result = true
 
+proc tryTypeFieldDefaults(c: var SemContext; sym: SymId): bool =
+  ## The field defaults of an object type of this module are typed when the
+  ## body phase reaches its declaration (`semFieldDefaults`). A construction
+  ## before that point -- in a `const`, a parameter default, a proc body
+  ## earlier in the module, a generic instance -- needs them now: run that
+  ## body-phase visit of the declaration early, at the module's top scope.
+  ## The in-order visit later types the same defaults to the same tree.
+  result = false
+  if prog.mem.hasKey(sym) and prog.mem[sym].phase == SemcheckSignatures and
+      pool.symModule(sym) == c.thisModuleSuffix and
+      readonlyCursorAt(prog.mem[sym].buffer, 0).stmtKind == TypeS and
+      asTypeDecl(readonlyCursorAt(prog.mem[sym].buffer, 0)).body.typeKind == ObjectT:
+    # copied: publishing the typed declaration replaces this buffer
+    var decl = createTokenBuf(prog.mem[sym].buffer.len)
+    decl.add prog.mem[sym].buffer
+    let oldScope = c.currentScope
+    var routine = createSemRoutine(NoSym, nil)
+    var inGenericDefinition = 0
+    var typesInProgress: seq[SymId] = @[]
+    var phase = SemcheckBodies
+    while c.currentScope.up != nil:
+      c.currentScope = c.currentScope.up
+    swap c.routine, routine
+    swap c.inGenericDefinition, inGenericDefinition
+    swap c.typesInProgress, typesInProgress
+    swap c.phase, phase
+    try:
+      var typed = createTokenBuf(decl.len)
+      var n = beginRead(decl)
+      c.semStmtCB(c, typed, n, false)
+      result = true
+    finally:
+      swap c.phase, phase
+      swap c.typesInProgress, typesInProgress
+      swap c.inGenericDefinition, inGenericDefinition
+      swap c.routine, routine
+      c.currentScope = oldScope
+
 proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): LoadResult =
   ## Drive `symId` toward `targetPhase` on demand, then load it. This is the
-  ## single entry point for cross-phase symbol resolution: today the only
-  ## registered driver is template-body promotion (Signatures -> Bodies, see
-  ## `tryPromoteTemplateBody`); as more of the phased passes become on-demand,
-  ## additional drivers hang off here rather than being invoked ad hoc at each
-  ## consumption site (toward nim-lang/nimony#2064's phase de-rigidification).
+  ## single entry point for cross-phase symbol resolution: today the
+  ## registered drivers are template-body promotion (Signatures -> Bodies, see
+  ## `tryPromoteTemplateBody`) and the typing of an object type's field
+  ## defaults (Signatures -> Bodies, `tryTypeFieldDefaults`); as more of the
+  ## phased passes become on-demand, additional drivers hang off here rather
+  ## than being invoked ad hoc at each consumption site (toward
+  ## nim-lang/nimony#2064's phase de-rigidification).
   if targetPhase >= SemcheckBodies:
     discard tryPromoteTemplateBody(c, symId)
+    discard tryTypeFieldDefaults(c, symId)
   if ensurePhase(symId, targetPhase) == PhaseCycle:
     return LoadResult(status: LacksOffset)  # cycle detected
   result = tryLoadSym(symId)
@@ -540,7 +584,7 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      info: NifLineInfo; errMsg: var string): PluginOutcome =
   var templ = asRoutine(templateDecl, SkipInclBody)
 
-  result = expandPlugin(c, dest, templ, args, errMsg)
+  result = expandPlugin(c, dest, templ, args, info, errMsg)
   if result != NoPluginRan:
     return
 

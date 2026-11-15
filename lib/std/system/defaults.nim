@@ -33,7 +33,7 @@ func default*[T: distinct](x: typedesc[T]): T {.magic: DefaultDistinct.}
 func default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 func default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
-func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
+func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy, semantics: "arrayDefault".} =
   # Not `for i in low(I)..high(I)`: `I` may be a `distinct` ordinal, which has
   # no `<=` for `..` unless it borrows one.
   for x in mitems(result):

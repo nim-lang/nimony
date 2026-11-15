@@ -7,8 +7,8 @@
 #    distribution, for details about the copyright.
 #
 
-## Replaces element-wise FILL loops with one `Memset` intrinsic and puts a
-## `Memcpy` in front of element-wise COPY loops (nimony#2350). Both are
+## Replaces element-wise ZERO-fill loops with one `zeroMemIns` intrinsic and puts
+## a `copyMemIns` in front of element-wise COPY loops (nimony#2350). Both are
 ## `(instr …)` applications of declarations this pass adds to the module
 ## (`addMemIntrinsicDecl`): an intrinsic has no body, so unlike a call to
 ## `c_memset` there is no definition DCE (which ran before us) could have
@@ -36,14 +36,14 @@
 ## to that inlining leaves behind. It becomes
 ##
 ##   (if (elif (lt IV HI)
-##     (stmts (instr memset (addr (at B IV)) BYTE (mul (i -1) COUNT (sizeof E)))
+##     (stmts (instr zeroMemIns (haddr (at B IV)) (mul (i -1) COUNT (sizeof E)))
 ##            (asgn IV HI))))             ; the value the loop left behind
 ##
 ## so nothing after the loop can tell the difference, the induction variable
 ## included.
 ##
 ## **What makes it sound.** The loop evaluates `B`/`P` and `HI` once per
-## iteration and `memset` evaluates them once, so the rewrite is valid only
+## iteration and `zeroMemIns` evaluates them once, so the rewrite is valid only
 ## when no element store can change them. A value rooted at a local whose
 ## address is never taken cannot be reached by a store through a pointer. A
 ## LOAD in them (a field behind a `deref`, a global) is protected by type-based
@@ -54,14 +54,18 @@
 ## `le` bound must be a constant below the induction variable's maximum, or
 ## the original loop would never have terminated.
 ##
-## The value stored must be the same in every byte of the element: any
-## constant for a one-byte element, all-zero bits for a wider one — an all-zero
-## object constructor included, which is what makes the `setLen` tails match.
+## The value stored must be all-zero bits — an all-zero object constructor
+## included, which is what makes the `setLen` tails match. The row is a ZERO fill
+## (it takes no byte), so a loop storing any other constant stays a loop.
+##
+## The row's operands are LOCATIONS — the written one spelled `(haddr L)`, the
+## read one the bare element — where the span starts, plus the span's byte count
+## (the optional size operand).
 ##
 ## **Where it runs.** After CSE and before the vectorizer, which would
 ## otherwise turn the same loops into vector stores. The backends lower the
 ## rows with the inline loop or builtin they already used for a call to C's
-## `memset` — except AVR, which has none, so the driver turns the pass off
+## `memset`/`memcpy` — except AVR, which has none, so the driver turns the pass off
 ## there.
 ##
 ## **Copies.** `D[IV] = S[IV]` needs the same invariance argument for both
@@ -72,7 +76,7 @@
 ## untouched loop, guarded by a runtime test that the byte ranges are disjoint:
 ##
 ##   (if (elif (and (lt IV HI) DISJOINT)
-##     (stmts (instr memcpy (addr D[IV]) (addr S[IV]) N) (asgn IV HI))))
+##     (stmts (instr copyMemIns (haddr D[IV]) S[IV] N) (asgn IV HI))))
 ##   (while (true) …)                     ; finds IV == HI and exits at once
 ##
 ## so an overlapping copy still runs the loop it always ran, and no label in
@@ -85,7 +89,7 @@ import ".." / nifmodules                      # MainModule
 import ".." / typenav                         # getType / registerLocal / scopes
 import patchsets
 import vmrewriter                             # subtreeEqual
-import ".." / ".." / "lib" / intrinsics       # MemsetOp / MemcpyOp
+import ".." / ".." / "lib" / intrinsics       # ZeroMemOp / CopyMemOp
 
 type
   LeafKind = enum
@@ -110,7 +114,7 @@ type
 
   MemOpts* = object
     ## What the target allows. The driver fills it from the command line.
-    intrinsics*: bool                ## the back end lowers the `Memset`/`Memcpy` rows
+    intrinsics*: bool                ## the back end lowers the `zeroMemIns`/`copyMemIns` rows
     mergeWordBytes*: int             ## > 0: merge adjacent constant field stores
                                      ## into stores up to this many bytes (a
                                      ## little-endian target that does not
@@ -445,6 +449,7 @@ type
     srStore                          ## `(asgn (at B IV) V)` / `(asgn (pat P IV) V)`
     srIncrement                      ## `(asgn IV (add T IV 1))`
     srExit                           ## `(jmp L)`, `L` the label after the loop
+    srRepeat                         ## `(continue .)`, a `(loop)`'s back-edge
 
 proc isOne(n: Cursor): bool =
   case n.kind
@@ -525,9 +530,19 @@ proc matchStmts(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
                 lm: var LoopMatch): bool
 
 proc matchIf(s: var MemScan; n: Cursor; lm: var LoopMatch): bool =
-  ## `(if (elif COND STORE INCREMENT) (else EXIT))`.
+  ## `(if (elif COND STORE INCREMENT) (else EXIT))` or
+  ## `(ite COND (stmts STORE INCREMENT) (stmts EXIT))`.
   result = false
-  if n.kind == TagLit and n.stmtKind == IfS:
+  if n.kind == TagLit and n.stmtKind == IteS:
+    var e = n.childCursor
+    if matchCond(s, e, lm):
+      skip e
+      let thenArm = e
+      skip e
+      if e.hasMore and e.kind != DotToken:
+        result = matchStmts(s, thenArm.childCursor, [srStore, srIncrement], lm) and
+          matchStmts(s, e.childCursor, [srExit], lm)
+  elif n.kind == TagLit and n.stmtKind == IfS:
     let elifNode = n.childCursor
     var arm = elifNode
     if arm.substructureKind == ElifU:
@@ -546,6 +561,8 @@ proc matchRole(s: var MemScan; n: Cursor; role: StmtRole; lm: var LoopMatch): bo
   of srIf: matchIf(s, n, lm)
   of srStore: matchStore(n, lm.iv, lm.lhs, lm.value)
   of srIncrement: matchIncrement(n, lm.iv, lm.incTyp, lm.one)
+  of srRepeat:
+    n.kind == TagLit and n.stmtKind == ContinueS and n.childCursor.kind == DotToken
   of srExit:
     n.kind == TagLit and n.stmtKind == JmpS and
       n.childCursor.kind == Symbol and n.childCursor.symId == lm.exitLab
@@ -576,10 +593,14 @@ proc matchLoop(s: var MemScan; w: Cursor; lm: var LoopMatch): bool =
   ## The loop grammar of the module comment, up to the store: everything a
   ## fill and a copy have in common.
   var c = w.childCursor
-  result = c.kind == TagLit and c.exprKind == TrueC
-  if result:
-    skip c
-    result = matchStmts(s, c, [srIf], lm)
+  if w.stmtKind == LoopS:
+    # `(loop (stmts (ite …) (continue .)))`
+    result = c.kind == TagLit and matchStmts(s, c.childCursor, [srIf, srRepeat], lm)
+  else:
+    result = c.kind == TagLit and c.exprKind == TrueC
+    if result:
+      skip c
+      result = matchStmts(s, c, [srIf], lm)
   if result:
     lm.elemType = getNominalType(s.m[], lm.lhs)
 
@@ -659,6 +680,14 @@ proc emitAddr(b: var TokenBuf; elem: Cursor) =
   b.addSubtree elem
   b.closeTag()
 
+proc emitLoc(b: var TokenBuf; elem: Cursor) =
+  ## A block-memory row's WRITTEN location operand: `(haddr ELEM)`, the spelling
+  ## of every intrinsic's `var` operand — the element itself, not a pointer value
+  ## (`intrinsics.ptLoc`). A read location is the bare element.
+  b.openTag TagId(HaddrC)
+  b.addSubtree elem
+  b.closeTag()
+
 proc emitFinalIv(b: var TokenBuf; lm: LoopMatch) =
   ## `(asgn IV <the value the loop leaves in it>)`.
   b.openTag TagId(AsgnS)
@@ -676,16 +705,14 @@ proc emitFinalIv(b: var TokenBuf; lm: LoopMatch) =
 proc memIntrinsicName(op: IntrinsicOp; suffix: string): string =
   ## The module-local declaration an `(instr …)` this pass emits names; see
   ## `addMemIntrinsicDecl`.
-  (if op == MemcpyOp: "memcpy." else: "memset.") & suffix
+  (if op == CopyMemOp: "copyMemIns." else: "zeroMemIns.") & suffix
 
-proc emitMemStmt(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
-                 byteVal: int64) =
-  ## `(instr memset (addr DST) BYTE N)` / `(instr memcpy (addr DST) (addr SRC) N)`.
+proc emitMemStmt(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool) =
+  ## `(instr zeroMemIns (haddr DST) N)` / `(instr copyMemIns (haddr DST) SRC N)`.
   b.openTag TagId(InstrS)
   b.addSymUse name
-  emitAddr(b, lm.lhs)
-  if isCopy: emitAddr(b, lm.value)
-  else: b.addIntLit byteVal
+  emitLoc(b, lm.lhs)
+  if isCopy: b.addSubtree lm.value
   emitBytes(b, lm)
   b.closeTag()
 
@@ -712,7 +739,7 @@ proc emitEndsBefore(b: var TokenBuf; lm: LoopMatch; first, second: Cursor) =
   b.closeTag()
 
 proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
-                     byteVal: int64; guardDisjoint: bool) =
+                     guardDisjoint, asIte: bool) =
   ## The `(if …)` that does the loop's work in one call to the intrinsic
   ## `name`:
   ##
@@ -723,8 +750,13 @@ proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
   ## finds `IV` already at its final value and exits at once, otherwise it
   ## runs as it always did. Leaving it in place rather than copying it into
   ## an `else` keeps every label in it defined exactly once.
-  b.openTag TagId(IfS)
-  b.openTag TagId(ElifU)
+  ##
+  ## `asIte` spells it `(ite COND (stmts …) .)`, the form a `(loop)` lives in.
+  if asIte:
+    b.openTag TagId(IteS)
+  else:
+    b.openTag TagId(IfS)
+    b.openTag TagId(ElifU)
   if guardDisjoint:
     b.openTag TagId(AndC)
     b.addSubtree lm.cond
@@ -736,10 +768,13 @@ proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
   else:
     b.addSubtree lm.cond
   b.openTag TagId(StmtsS)
-  emitMemStmt(b, lm, name, isCopy, byteVal)
+  emitMemStmt(b, lm, name, isCopy)
   emitFinalIv(b, lm)
   b.closeTag()
-  b.closeTag()
+  if asIte:
+    b.addDotToken()
+  else:
+    b.closeTag()
   b.closeTag()
 
 proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
@@ -755,14 +790,14 @@ proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
     var byteVal = 0'i64
     let valueOk =
       if isCopy: baseInvariant(s, lm.value, lm.iv, stored)
-      else: byteValue(s, lm.value, lm.elemType, byteVal)
+      else: byteValue(s, lm.value, lm.elemType, byteVal) and byteVal == 0
     if valueOk and baseInvariant(s, lm.lhs, lm.iv, stored) and boundOk(s, lm, stored):
       let guarded = isCopy and not staticallyDisjoint(s, lm.lhs, lm.value)
-      let op = if isCopy: MemcpyOp else: MemsetOp
+      let op = if isCopy: CopyMemOp else: ZeroMemOp
       s.used.incl op
       let start = s.scratch.len
       emitReplacement(s.scratch, lm, memIntrinsicName(op, s.suffix), isCopy,
-                      byteVal, guarded)
+                      guarded, asIte = w.stmtKind == LoopS)
       s.sites.add MemSite(pos: s.posOf(w), start: start, insert: guarded)
 
 # ---- adjacent field stores ------------------------------------------------
@@ -1062,7 +1097,7 @@ proc scanList(s: var MemScan; list: Cursor) =
   if s.opts.mergeWordBytes > 0: scanStoreRuns(s, list)
   var it = list.childCursor
   while it.hasMore:
-    if it.kind == TagLit and it.stmtKind == WhileS:
+    if it.kind == TagLit and it.stmtKind in {WhileS, LoopS}:
       var lab = SymId(0)
       if s.opts.intrinsics and exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
     scan(s, it)
@@ -1103,16 +1138,19 @@ proc addMemIntrinsicDecl*(dest: var TokenBuf; suffix: string; op: IntrinsicOp) =
   dest.openTag TagId(ProcS)
   dest.addSymDef name
   dest.openTag TagId(ParamsT)
-  for i in 0 ..< 3:
+  let nLoc = memLocOperands(op)
+  for i in 0 .. nLoc:                         # the locations, then the byte count
     dest.openTag TagId(ParamU)
     dest.addSymDef "a" & $i & "." & name
     dest.addDotToken()
-    if i == 0 or (i == 1 and op == MemcpyOp):
-      dest.openTag TagId(PtrT)                # dest / src
+    if i == 0:
+      dest.openTag TagId(PtrT)                # the written location: a `var` param
       emitIntType(dest, UT)
       dest.closeTag()
+    elif i < nLoc:
+      emitIntType(dest, UT)                   # the read location (by value)
     else:
-      emitIntType(dest, IT)                   # the byte / the size
+      emitIntType(dest, IT)                   # the byte count
     dest.closeTag()                           # param
   dest.closeTag()                             # params
   dest.addDotToken()                          # void result
@@ -1127,7 +1165,7 @@ proc addMemIntrinsicDecl*(dest: var TokenBuf; suffix: string; op: IntrinsicOp) =
 proc runMemIdioms*(buf: var TokenBuf; m: ptr MainModule; params: Cursor;
                    opts: MemOpts; suffix: string;
                    used: var set[IntrinsicOp]): int =
-  ## Replace every fill loop in the body with a `Memset` and put a `Memcpy` in
+  ## Replace every zero-fill loop in the body with a `zeroMemIns` and put a `copyMemIns` in
   ## front of every copy loop; returns how many. `used` collects the rows the
   ## module then needs declarations for (`addMemIntrinsicDecl`).
   ## `m` must have the proc's scope open with its params registered.

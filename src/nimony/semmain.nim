@@ -26,7 +26,7 @@ import ".." / models / nifindex_tags
 import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptcache,
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
-  contracts_fir, exprexec, semimport, module_plugins, sem
+  contracts_fir, exprexec, semimport, module_plugins, sem, templates
 import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
@@ -495,8 +495,10 @@ proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
     onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif")
   var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
   when true: #defined(enableContracts):
+    let hooks = c.typeHooks
+    assert hooks != nil # `semdata` is a `lenientnils` module
     var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
-                                    c.g.config.bits, c.g.config.verbose)
+                                    c.g.config.bits, hooks, c.g.config.verbose)
     if reporters.reportErrors(moreErrors) > 0:
       quit 1
   dest = stripAnalysisFacts(ensureMove fir)
@@ -588,8 +590,13 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest.addParRi()
 
   instantiateGenerics c, dest
-  for i in 0 ..< c.typeInstDecls.len:
+  var i = 0
+  while i < c.typeInstDecls.len: # typing defaults can add instances
     let val = c.typeInstDecls[i]
+    inc i
+    # its field defaults, if no construction typed them yet; the generic
+    # routines they need are instantiated with the hooks below
+    discard loadSymWithPhase(c, val, SemcheckBodies)
     let s = fetchSym(c, val)
     let res = declToCursor(c, dest, s)
     if res.status == LacksNothing:
@@ -688,8 +695,13 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     dest.addParRi()
 
   instantiateGenerics c, dest
-  for i in 0 ..< c.typeInstDecls.len:
+  var i = 0
+  while i < c.typeInstDecls.len: # typing defaults can add instances
     let val = c.typeInstDecls[i]
+    inc i
+    # its field defaults, if no construction typed them yet; the generic
+    # routines they need are instantiated with the hooks below
+    discard loadSymWithPhase(c, val, SemcheckBodies)
     let s = fetchSym(c, val)
     let res = declToCursor(c, dest, s)
     if res.status == LacksNothing:

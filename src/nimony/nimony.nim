@@ -157,7 +157,6 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     # native-allocator + libc-free configuration.
     config.backend = backendNative
     config.addDefine "nimNativeAlloc"
-    config.addDefine "nimNativeIo"
     FullProject
   of "w":
     # Wasm backend: Leng -> `jorogumo w`, producing one whole-program `.wasm`
@@ -317,7 +316,6 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             # branch), so this flag itself need not propagate.
             c.config.backend = backendNative
             c.config.addDefine "nimNativeAlloc"
-            c.config.addDefine "nimNativeIo"
             forwardArg = false
           of "browser":
             # JS backend: emit for a browser host instead of node. Consumed here
@@ -387,14 +385,14 @@ proc compileProgram(c: var CmdOptions) =
   # injects bound/range-check calls); without this it always used DefaultSettings.
   c.config.checkFlags = genFlags(c.checkModes)
 
-  # The libc-free stdlib is the DEFAULT for every backend now: the native
-  # allocator (`nimNativeAlloc`, a ported region allocator over mmap) and
-  # raw-syscall IO (`nimNativeIo`). Opt back into the libc-backed versions with
-  # `-d:useLibc` (both), `-d:useMimalloc` (allocator only) or `-d:useLibcIo` (IO
-  # only). On illumos the native allocator is mandatory; `useLibc` only
-  # selects libc IO and explicit `useMimalloc` is rejected.
-  # The native backend links no libc at all, so it is ALWAYS libc-free
-  # regardless of those opt-outs. The `when defined(...)` gates live in nimsem,
+  # The libc-free stdlib is the DEFAULT for every backend: the native allocator
+  # (`nimNativeAlloc`, a ported region allocator over mmap) and the stdlib's own
+  # IO layer over `read`/`write`/`open` (the only IO layer there is; libc stdio
+  # is not supported). Opt back into mimalloc with `-d:useLibc` or
+  # `-d:useMimalloc`. On illumos the native allocator is mandatory and explicit
+  # `useMimalloc` is rejected.
+  # The native backend links no libc at all, so it ALWAYS uses the native
+  # allocator regardless of those opt-outs. The `when defined(...)` gates live in nimsem,
   # which only sees defines forwarded on its command line (config.defines is the
   # cache key but not enough on its own) — so inject them the same way a user's
   # `-d:` does, and record them in config.defines so the cache key tracks them.
@@ -432,15 +430,10 @@ proc compileProgram(c: var CmdOptions) =
     c.config.addDefine "nimNativeAlloc"
     c.commandLineArgs.add " --define:nimNativeAlloc"
     c.hostCommandLineArgs.add " --define:nimNativeAlloc"
-  if nativeBackend or not (optOutAll or c.config.isDefined("useLibcIo")):
-    c.config.addDefine "nimNativeIo"
-    c.commandLineArgs.add " --define:nimNativeIo"
-    c.hostCommandLineArgs.add " --define:nimNativeIo"
   # `nimNoLibc` marks the TRULY freestanding target — the native (arkham+nifasm)
-  # backend, which links no libc at all. It is a stricter condition than
-  # `nimNativeIo`: the C backend uses the raw-syscall stdlib too, but libc is still
-  # linked, so stdlib code can fall back to a libc symbol where the freestanding
-  # implementation is impossible (`futex` — no libc symbol of that name) or merely
+  # backend, which links no libc at all. The C backend uses the libc-free
+  # stdlib too, but libc is still linked, so stdlib code can fall back to a
+  # libc symbol where the freestanding implementation is impossible (`futex` — no libc symbol of that name) or merely
   # approximate (`strtod`). Only the native backend sets it.
   #
   # On Linux `-d:useLibc` is the exception: libc IS linked then — the system

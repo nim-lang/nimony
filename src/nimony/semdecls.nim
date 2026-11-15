@@ -58,8 +58,9 @@ proc isTrailingRetOf(n: Cursor; res: SymId): bool =
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
                            lastSonInfo: var NifLineInfo; beforeLastSon: var int) =
   ## Process all statements in the proc body, treating the last one as an
-  ## expression. Stops in front of the trailing `(ret result)` of a body that
-  ## was sem-checked once already; the caller processes it.
+  ## expression unless it cannot be the routine's value. Stops in front of
+  ## the trailing `(ret result)` of a body that was sem-checked once already;
+  ## the caller processes it.
   ##
   ## Such a body (a routine declared in a template, which is checked when the
   ## template is defined and again where it is expanded) starts with its
@@ -67,6 +68,10 @@ proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
   ## statement before that `ret`: `proc g(): string = $v` with an untyped `v`
   ## could not be turned into `result = $v` the first time (nimony#2906).
   var oldRes = SymId(0)
+  # The tail of a routine that returns nothing, or of an iterator (which
+  # produces its values with `yield`), is not the routine's value.
+  let returnType = c.routine.returnType
+  let tailIsStmt = c.routine.kind == IteratorY or classifyType(c, returnType) == VoidT
   while it.n.hasMore:
     if it.n.stmtKind == ResultS and c.routine.resId == SymId(0) and oldRes == SymId(0):
       var d = it.n
@@ -79,6 +84,13 @@ proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
         inc decl
         if decl.kind == SymbolDef: c.routine.resId = decl.symId
       endRead decl
+    elif isLastSon(it.n) and tailIsStmt:
+      # Then the body is a statement list, its last son included: it gets
+      # the discard rule like every other statement.
+      beforeLastSon = dest.len
+      lastSonInfo = it.n.info
+      semStmt c, dest, it.n, false
+      it.typ = c.types.voidType
     elif isLastSon(it.n):
       beforeLastSon = dest.len
       lastSonInfo = it.n.info
@@ -134,33 +146,6 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
     dest.addUnstructured reemit
     endRead reemit
     dest.addParRi()
-  elif classifyType(c, returnType) == VoidT and
-       (it.typ.kind == Symbol or classifyType(c, it.typ) notin {AutoT, NoType}):
-    # A VOID routine whose body's TAIL is an expression of a CONCRETE non-void
-    # type. This used to fall through to `commonType` against `void`, reporting
-    #   type mismatch: got: bool but wanted: void
-    # without ever consulting `{.discardable.}` — so a discardable call written
-    # as the LAST statement of a void proc was rejected, while the SAME call
-    # followed by any other statement compiled, because `semStmt` applies the
-    # discard rule and this path did not. A one-line `register*Routes` proc is
-    # exactly that shape (15 of 21 `addAsyncHandler` call sites in the kaitake
-    # estate). Apply the rule `semStmt` applies, which also yields the correct
-    # diagnostic for the non-discardable case.
-    #
-    # `AutoT`/`NoType` are EXCLUDED deliberately: a `defer` as the tail of a
-    # void proc classifies as `auto`, and treating it as a discardable-eligible
-    # expression breaks tests/nimony/exceptions/tdefer.nim. Those keep the old
-    # `commonType` path. A named type (`string`, an object) is a `Symbol`, which
-    # `classifyType` also reports as `NoType`, so it is let through explicitly,
-    # as `semStmt` does.
-    var ex = cursorAt(dest, beforeLastSon)
-    let isDiscardable = implicitlyDiscardable(ex, dest)
-    endRead ex
-    if not isDiscardable:
-      buildErr c, dest, lastSonInfo,
-        "expression of type `" & typeToString(it.typ) & "` must be discarded"
-    else:
-      discardCallExplicitly dest, beforeLastSon, lastSonInfo
   else:
     commonType c, dest, it, beforeLastSon, returnType
 
@@ -433,13 +418,30 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
             c.buildErr errBuf, it.n.info, "type or init value expected"
             it.typ = typeToCursor(c, errBuf, 0)
             dest.takeTree it.n # empty value slot
+        elif kind in {FldY, GfldY}:
+          # A field with a default value always has a written type. The
+          # default is dropped: a construction must not evaluate it against
+          # the error type.
+          skip it.n
+          dest.addDotToken(delayed.info)
+          var errBuf = createTokenBuf(4)
+          c.buildErr errBuf, delayed.info, "field '" & pool.strings[delayed.lit] &
+            "' with a default value needs a type"
+          it.typ = typeToCursor(c, errBuf, 0)
         else:
           semLocalValue c, dest, it, crucial # 4
         n = it.n
         let typ = skipModifier(it.typ)
         if classifyType(c, typ) == VoidT:
-          # point at the declared name (the decl's close info is elided under vpr):
-          c.buildErr dest, delayed.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)"
+          # This error replaces the value, so the decl keeps its arity (an
+          # extra child crashes the phase that reads the decl again). An
+          # error inside the value is the one `buildErr` reports.
+          # Point at the declared name (the decl's close info is elided under vpr):
+          var errBuf = createTokenBuf()
+          c.buildErr errBuf, delayed.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)",
+            readonlyCursorAt(dest, beforeType)
+          dest.shrink beforeType
+          dest.add errBuf
         insertType c, dest, typ, beforeType
       else:
         let typeStart = dest.len
@@ -481,6 +483,12 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
           # here avoids phase-2 macro expansion and forward references to
           # not-yet-signatured procs (the reasons toplevel let/var were
           # body-only). Phase 3 re-sems this decl fully. See `localSigGuard`.
+          takeTree dest, n
+        elif c.phase == SemcheckSignatures and kind in {FldY, GfldY}:
+          # A field default is an expression evaluated at each construction,
+          # like a parameter default. It is carried as written here and
+          # checked once in the body phase (`semFieldDefaults`), after every
+          # type and layout of the section is known.
           takeTree dest, n
         else:
           var it = Item(n: n, typ: typ)
@@ -627,7 +635,17 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
   # (the `when` condition is folded at a temporarily-forced body phase).
   let savedPhase = c.phase
   c.phase = SemcheckSignatures
+  # The decl is a toplevel one, wherever the `when` condition looked it up:
+  # declare it in the toplevel scope, and keep it out of the rollback of a
+  # shadow scope open there (a call's argument scope).
+  let lookupScope = c.currentScope
+  var top = c.currentScope
+  while top.kind != ToplevelScope: top = top.up
+  c.currentScope = top
+  let undo = suspendShadows(top)
   semLocal(c, scratch, decl, kind)
+  resumeShadows(top, undo)
+  c.currentScope = lookupScope
   c.phase = savedPhase
   var scratchName = default(Cursor)
   if scratch.len > 1 and readonlyCursorAt(scratch, 0).kind == TagLit:
@@ -659,6 +677,19 @@ proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): 
         dest.shrink before
         dest.addUIntLit(valU, info)
   c.phase = oldPhase
+
+proc takeExplicitValue(c: var SemContext; dest: var TokenBuf; state: var EnumTypeState;
+                       value: xint; valueStart: int; info: NifLineInfo) =
+  # `state.thisValue` is the previous field's value + 1. The spec requires the
+  # ordinal values in ascending order; an equal value is "value already handled".
+  if state.hasPrevField and value < state.thisValue - createXint(1'i64):
+    dest.shrink valueStart
+    c.buildErr dest, info, "enum field values must be in ascending order"
+  # A hole is a gap between a field and the field before it. The first field
+  # has no predecessor, so its explicit value, `1` or any other, is no hole.
+  if state.hasPrevField and value != state.thisValue:
+    state.hasHole = true
+  state.thisValue = value
 
 proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: var EnumTypeState) =
   let declStart = dest.len
@@ -718,10 +749,10 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
     else:
       if n.isTagLit and n.exprKind == TupX:
         takeInto dest, n:
+          let valueStart = dest.len
+          let info = n.info
           let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
-          if explicitValue != state.thisValue:
-            state.hasHole = true
-            state.thisValue = explicitValue
+          takeExplicitValue c, dest, state, explicitValue, valueStart, info
           dest.add evalExpr(c, n)
       else:
         var ec = initEvalContext(addr c)
@@ -735,10 +766,10 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
           n = valueCursor
         else:
           dest.addParLe(TupX, n.info)
+          let valueStart = dest.len
+          let info = n.info
           let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
-          if explicitValue != state.thisValue:
-            state.hasHole = true
-            state.thisValue = explicitValue
+          takeExplicitValue c, dest, state, explicitValue, valueStart, info
           dest.addStrLit(delayed.lit, n.endInfo)
           dest.addParRi()
     dest.addParRi(n.endInfo)
@@ -996,11 +1027,53 @@ proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
         # don't register instances
         c.converterIndexMap.add((root, symId))
 
+proc classHead(cls: SymId): SymId =
+  ## The generic type `cls` is an instance of, or `cls` itself: a generic
+  ## method is attached to the head.
+  result = cls
+  let res = tryLoadSym(cls)
+  if res.status == LacksNothing:
+    var inv = asTypeDecl(res.decl).typevars
+    if inv.typeKind == InvokeT:
+      inc inv
+      if inv.isSymbol: result = inv.symId
+
+proc overriddenMethod(c: var SemContext; root: SymId; signature: StrId): SymId =
+  ## The method that a method of `root` with `signature` overrides: the one
+  ## with that signature on the nearest ancestor, or `NoSymId`.
+  result = NoSymId
+  for inh in inheritanceChain(root):
+    for m in loadVTable(inh):
+      if m.signature == signature: return m.fn
+    for cls in [inh, classHead(inh)]:
+      if c.classes.hasKey(cls):
+        for m in c.classes.getOrQuit(cls).methods:
+          if m.signature == signature: return m.fn
+
+proc overrideEffectError(c: var SemContext; symId: SymId; pragmas: Cursor): string =
+  ## A call is judged by the method it resolves to statically, so an override
+  ## may have fewer side effects than the method it overrides, never more.
+  ## Asked once every signature of the module is known, so the order of the
+  ## declarations does not matter.
+  result = ""
+  var root = SymId(0)
+  var signature = StrId(0)
+  if whichEffect(MethodS, pragmas) == HasSideEffect:
+    for cls, entry in c.classes:
+      for m in entry.methods:
+        if m.fn == symId:
+          root = cls
+          signature = m.signature
+  let overridden = if root != SymId(0): overriddenMethod(c, root, signature) else: NoSymId
+  if overridden != NoSymId:
+    let res = tryLoadSym(overridden)
+    if res.status == LacksNothing and
+        whichEffect(res.decl.stmtKind, asRoutine(res.decl).pragmas) == HasNoSideEffect:
+      result = "'" & pool.symBasename(symId) &
+        "' overrides a `noSideEffect` method and must be `noSideEffect` too"
+
 proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
                   declStart, beforeParams, beforeGenericParams: int; info: NifLineInfo) =
-  if c.currentScope.up.kind != ToplevelScope:
-    buildErr c, dest, info, "'method' is only allowed at top level"
-
   var params = cursorAt(dest, beforeParams)
   let paramsNode = params
   var root = SymId(0)
@@ -1277,6 +1350,7 @@ proc collectConceptBounds(c: var SemContext; routineSym: SymId) =
 
 proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind; pass: PassKind; newName = NoSymId) =
   let info = it.n.info
+  let atToplevel = c.currentScope.kind == ToplevelScope
   let declStart = dest.len
   dest.addParLe(it.n.cursorTagId, it.n.info)
   it.n.into:
@@ -1368,12 +1442,15 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       # `(err …)`, so the tree stays positionally intact.
       # `{.interrupt.}` is checked in the same place and lands in the same slot:
       # its rule is also about the params and the return type, and also cannot be
-      # stated until they are in `dest`.
+      # stated until they are in `dest`. So is an override with more side
+      # effects than the method it overrides, asked in the body pass.
       let intrinsicErr =
         if crucial.intrinsic != NoIntrinsicOp:
           intrinsicSignatureError(c, dest, beforeParams, crucial.intrinsic)
         elif InterruptP in crucial.flags:
           interruptSignatureError(dest, beforeParams)
+        elif kind == MethodY and pass == checkBody:
+          overrideEffectError(c, symId, cursorAt(dest, beforePragmas))
         else:
           ""
       if it.n.isDotToken:
@@ -1406,6 +1483,9 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
                           isMagic = crucial.magic.len > 0)
       let beforeBody = dest.len
       if not it.n.isDotToken:
+        var list = createTokenBuf(0)
+        let body = it.n
+        it.n = bodyAsList(body, list)
         case pass
         of checkGenericInst:
           semBodyGenericInst(c, dest, it, crucial, symId, beforeParams, hk)
@@ -1433,6 +1513,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
           else:
             c.buildErr dest, it.n.info, "inside a `concept` a routine cannot have a body"
             skip it.n
+        it.n = body
+        skip it.n
       else:
         semEmptyBody(c, dest, it, kind, crucial, pass, symId, beforeParams, hookName, info)
       if c.routine.hasDefer and kind != TemplateY:
@@ -1441,6 +1523,11 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         # caller's scope, as if the template body were a scope of its own.
         transformDefer dest, beforeBody
       dest.addParRi(it.n.endInfo)
+      if not atToplevel and status in {OkNew, OkExistingFresh} and
+          dest[declStart].kind == TagLit and dest[declStart].tagId == TagId(MethodS):
+        # A statement of its own after the routine: in the body slot it would
+        # give the routine one child too many.
+        c.buildErr dest, info, "'method' is only allowed at top level"
     finally:
       c.inGenericDefinition = outerGenericDefinition
       c.visOwner.setLen outerVisOwner
@@ -1764,6 +1851,33 @@ proc holdsByValue(t: Cursor; target: SymId; visited: var HashSet[SymId]): bool =
     skip n
     result = result or componentsHoldByValue(n, target, visited)
 
+proc semFieldDefaults(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## Copies a checked object body and types each field's default, which the
+  ## signature phase carried as written (`semLocal`). Runs in the body phase
+  ## when it reaches the declaration, or earlier on demand
+  ## (`loadSymWithPhase`), in the declaration's scope: a default may use any
+  ## routine, constant or type of the module, and every layout is known.
+  if n.isTagLit:
+    let isField = n.substructureKind in {FldU, GfldU}
+    dest.takeInto n:
+      if isField:
+        takeTree dest, n # name
+        takeTree dest, n # export marker
+        takeTree dest, n # pragmas
+        let typeStart = dest.len
+        semFieldDefaults c, dest, n # type: may be an object with fields itself
+        if n.isDotToken or readonlyCursorAt(dest, typeStart).typeKind == ErrT:
+          # no default, or the field's type is the error already reported
+          takeTree dest, n
+        else:
+          var it = Item(n: n, typ: typeToCursor(c, dest, typeStart))
+          semExpr c, dest, it
+          n = it.n
+      while n.hasMore:
+        semFieldDefaults c, dest, n
+  else:
+    takeTree dest, n
+
 proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let startCursor = n
   let declStart = dest.len
@@ -1864,7 +1978,11 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
             skip n
             dest.addParRi(n.endInfo)
       if not isRefPtrObj: # body not already handled
-        if isGeneric:
+        if c.phase == SemcheckBodies and n.typeKind == ObjectT:
+          # the declaration was checked in the signature phase: its field
+          # defaults are now
+          semFieldDefaults c, dest, n # body
+        elif isGeneric:
           # capture typevars for instantiation of forward declared types to work
           var ctx = createUntypedContext(addr c, UntypedForwardGeneric)
           addParams(ctx, dest, beforeGenerics)

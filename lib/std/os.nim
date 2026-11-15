@@ -18,98 +18,84 @@ when not defined(posix):
       importc: "system", header: "<stdlib.h>", dynlib: "msvcrt".}
 
 when defined(posix):
-  when defined(nimNativeIo):
-    const maxSymlinkFollows = 40
-      ## Link expansions allowed per call before failing with `ELOOP`; the
-      ## `MAXSYMLINKS` value of Linux and of musl's `realpath`.
+  const maxSymlinkFollows = 40
+    ## Link expansions allowed per call before failing with `ELOOP`; the
+    ## `MAXSYMLINKS` value of Linux and of musl's `realpath`.
 
-    proc readLinkTarget(path: var string; info: string): string {.raises.} =
-      ## The target of the symlink `path`. `pcall`, not `osLastError`: a
-      ## freestanding build has no libc errno to read the failure from.
-      var bufLen = 256
-      while true:
-        result = newString(bufLen)
-        let r = pcall(readlink(path.toCString, result.toCString, bufLen))
+  proc readLinkTarget(path: var string; info: string): string {.raises.} =
+    ## The target of the symlink `path`. `pcall`, not `osLastError`: a
+    ## freestanding build has no libc errno to read the failure from.
+    var bufLen = 256
+    while true:
+      result = newString(bufLen)
+      let r = pcall(readlink(path.toCString, result.toCString, bufLen))
+      if r < 0:
+        raiseOSError(OSErrorCode(-r), info)
+      if r < bufLen:
+        result.setLen(int(r))
+        break
+      bufLen = bufLen shl 1
+
+  proc nativeRealpath(filename: string): string {.raises.} =
+    ## Libc-free `realpath`: walks `filename` one component at a time from
+    ## the root (absolute input) or the cwd, `lstat`ing each new component
+    ## and splicing in the target of every symlink met, so the result names
+    ## the file itself rather than a path to it. `..` pops the resolved
+    ## prefix, which is right because that prefix holds no symlinks: as in
+    ## `realpath`, `link/..` is the parent of the link's TARGET. Errors are
+    ## `realpath`'s: ENOENT for a missing component, ENOTDIR for a
+    ## non-directory followed by more path, ELOOP after too many links.
+    if filename.len == 0:
+      raiseOSError(OSErrorCode(ENOENT), filename)
+    # `rest` is what is still to be walked; `pos` the walk's place in it.
+    var rest = filename
+    var pos = 0
+    # getcwd yields the physical path: it needs no resolving of its own.
+    result = if filename[0] == '/': "/" else: getCurrentDir()
+    var follows = 0
+    while pos < rest.len:
+      if rest[pos] == '/':
+        inc pos
+        continue
+      var e = pos
+      while e < rest.len and rest[e] != '/': inc e
+      let comp = substr(rest, pos, e - 1)
+      pos = e
+      if comp == ".":
+        discard
+      elif comp == "..":
+        let slash = rfind(result, '/')
+        result.setLen(max(slash, 1))
+      else:
+        var candidate = if result == "/": "/" & comp else: result & "/" & comp
+        var s = default(Stat)
+        let r = pcall(lstat(candidate.toCString, s))
         if r < 0:
-          raiseOSError(OSErrorCode(-r), info)
-        if r < bufLen:
-          result.setLen(int(r))
-          break
-        bufLen = bufLen shl 1
-
-    proc nativeRealpath(filename: string): string {.raises.} =
-      ## Libc-free `realpath`: walks `filename` one component at a time from
-      ## the root (absolute input) or the cwd, `lstat`ing each new component
-      ## and splicing in the target of every symlink met, so the result names
-      ## the file itself rather than a path to it. `..` pops the resolved
-      ## prefix, which is right because that prefix holds no symlinks: as in
-      ## `realpath`, `link/..` is the parent of the link's TARGET. Errors are
-      ## `realpath`'s: ENOENT for a missing component, ENOTDIR for a
-      ## non-directory followed by more path, ELOOP after too many links.
-      if filename.len == 0:
-        raiseOSError(OSErrorCode(ENOENT), filename)
-      # `rest` is what is still to be walked; `pos` the walk's place in it.
-      var rest = filename
-      var pos = 0
-      # getcwd yields the physical path: it needs no resolving of its own.
-      result = if filename[0] == '/': "/" else: getCurrentDir()
-      var follows = 0
-      while pos < rest.len:
-        if rest[pos] == '/':
-          inc pos
-          continue
-        var e = pos
-        while e < rest.len and rest[e] != '/': inc e
-        let comp = substr(rest, pos, e - 1)
-        pos = e
-        if comp == ".":
-          discard
-        elif comp == "..":
-          let slash = rfind(result, '/')
-          result.setLen(max(slash, 1))
+          raiseOSError(OSErrorCode(-r), filename)
+        if S_ISLNK(s.st_mode):
+          inc follows
+          if follows > maxSymlinkFollows:
+            raiseOSError(OSErrorCode(ELOOP), filename)
+          let target = readLinkTarget(candidate, filename)
+          if target.len == 0:
+            raiseOSError(OSErrorCode(ENOENT), filename)
+          # The target replaces the link in the path still to walk; an
+          # absolute one restarts the walk from the root.
+          rest = target & substr(rest, pos)
+          pos = 0
+          if target[0] == '/':
+            result = "/"
+        elif not S_ISDIR(s.st_mode) and pos < rest.len:
+          # Even a bare trailing `/` asks for a directory.
+          raiseOSError(OSErrorCode(ENOTDIR), filename)
         else:
-          var candidate = if result == "/": "/" & comp else: result & "/" & comp
-          var s = default(Stat)
-          let r = pcall(lstat(candidate.toCString, s))
-          if r < 0:
-            raiseOSError(OSErrorCode(-r), filename)
-          if S_ISLNK(s.st_mode):
-            inc follows
-            if follows > maxSymlinkFollows:
-              raiseOSError(OSErrorCode(ELOOP), filename)
-            let target = readLinkTarget(candidate, filename)
-            if target.len == 0:
-              raiseOSError(OSErrorCode(ENOENT), filename)
-            # The target replaces the link in the path still to walk; an
-            # absolute one restarts the walk from the root.
-            rest = target & substr(rest, pos)
-            pos = 0
-            if target[0] == '/':
-              result = "/"
-          elif not S_ISDIR(s.st_mode) and pos < rest.len:
-            # Even a bare trailing `/` asks for a directory.
-            raiseOSError(OSErrorCode(ENOTDIR), filename)
-          else:
-            result = candidate
+          result = candidate
 
   proc expandFilename*(filename: string): string {.raises.} =
     ## Returns the full (`absolute`) path of an existing file `filename`,
     ## resolving symlinks. Raises `OSError` if `filename` does not exist.
-    when defined(nimNativeIo):
-      # Libc-free: `realpath` is a libc routine, not a syscall.
-      result = nativeRealpath(filename)
-    else:
-      const PATH_MAX = 4096
-      result = newString(PATH_MAX)
-      var filename = filename
-      let r = realpath(filename.toCString, result.toCString)
-      if r.isNil:
-        raiseOSError(osLastError(), filename)
-      else:
-        var L = 0
-        while L < PATH_MAX and result[L] != '\0':
-          inc L
-        setLen(result, L)
+    # Libc-free: `realpath` is a libc routine, not a syscall.
+    result = nativeRealpath(filename)
 elif not defined(windows):
   proc expandFilename*(filename: string): string {.raises.} =
     result = absolutePath(filename)

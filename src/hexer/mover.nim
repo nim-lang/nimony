@@ -282,7 +282,7 @@ proc classify(n: Cursor): NodeClass =
   of RetS, RaiseS: result = ncExit
   of NoStmt:
     case n.finalIrKind
-    of IteV, ItecV: result = ncIte
+    of IteV: result = ncIte
     of LoopV: result = ncLoop
     else:
       if n.substructureKind in BranchKinds: result = ncBranch
@@ -578,7 +578,7 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
     result = true
   of NoStmt:
     case n.finalIrKind
-    of IteV, ItecV:
+    of IteV:
       let condPos = firstChild(base, pc)
       if scanAt(base, condPos, x, otherUsage):
         result = false

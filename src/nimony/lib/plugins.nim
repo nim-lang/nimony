@@ -554,6 +554,62 @@ proc asDot*(c: NifCursor): Dot =
   assert c.exprKind == DotX, "asDot needs a dot node"
   Dot(obj: slot(c, 0), field: slot(c, 1))
 
+type
+  BinaryOp* = object
+    ## A typed built-in `(op type operand1 operand2)`; excludes call-like and boolean nodes
+    typ*, operand1*, operand2*: NifCursor
+
+  Conversion* = object
+    ## The target type and operand of `conv`, `hconv`, or `dconv`
+    typ*, operand*: NifCursor
+
+  IfStmt* = object
+    ## An `if` statement; read its ordered arms with `branches`
+    node: NifCursor
+
+  IfBranch* = object
+    ## A conditional arm or the final else arm; `cond` is exhausted for else
+    isElse*: bool
+    cond*, body*: NifCursor
+
+  WhileStmt* = object
+    ## The condition and body of `(while condition body)`
+    cond*, body*: NifCursor
+
+proc asBinaryOp*(c: NifCursor): BinaryOp =
+  ## Read only built-ins whose grammar is exactly `(op type operand1 operand2)`
+  assert c.exprKind in {AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX,
+    BitandX, BitorX, BitxorX, EqX, NeqX, LeX, LtX},
+    "asBinaryOp needs a typed binary built-in"
+  BinaryOp(typ: slot(c, 0), operand1: slot(c, 1), operand2: slot(c, 2))
+
+proc asConversion*(c: NifCursor): Conversion =
+  ## Read a value conversion; `cast` and procedure calls are separate constructs
+  assert c.exprKind in {ConvX, HconvX, DconvX},
+    "asConversion needs conv, hconv or dconv"
+  Conversion(typ: slot(c, 0), operand: slot(c, 1))
+
+proc asIfStmt*(c: NifCursor): IfStmt =
+  ## Read an `if` statement without advancing the input cursor
+  assert c.stmtKind == IfS, "asIfStmt needs an if statement"
+  IfStmt(node: c)
+
+iterator branches*(statement: IfStmt): IfBranch {.sideEffect.} =
+  ## Yield conditional arms and optional else in source order, without moving input
+  for arm in statement.node.children:
+    case arm.otherKind
+    of ElifU:
+      yield IfBranch(isElse: false, cond: slot(arm, 0), body: slot(arm, 1))
+    of ElseU:
+      yield IfBranch(isElse: true, cond: default(NifCursor), body: slot(arm, 0))
+    else:
+      assert false, "an if statement needs elif or else arms"
+
+proc asWhileStmt*(c: NifCursor): WhileStmt =
+  ## Read a while statement without advancing the input cursor
+  assert c.stmtKind == WhileS, "asWhileStmt needs a while statement"
+  WhileStmt(cond: slot(c, 0), body: slot(c, 1))
+
 proc asLocal*(c: NifCursor): Local =
   ## The named parts of a `let`, `var`, `const`, `param` or `fld` node.
   Local(name: slot(c, 0), exported: slot(c, 1), pragmas: slot(c, 2),

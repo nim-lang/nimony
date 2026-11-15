@@ -9,3 +9,4 @@ runtime patterns ok
 literal search ok
 determinism ok
 literal colon ok
+assertions next to repetitions ok

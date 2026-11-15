@@ -171,7 +171,8 @@ proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
     while n.hasMore: skip n
 
 proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
-  ## `(loop body)`: infinite, left only by a `break`/`jmp` inside the body.
+  ## `(loop (stmts … (continue .X)))`: the trailing `continue` is the back-edge
+  ## (see `ContinueS`); a body without one falls back to the header.
   let loopInfo = n.info
   n.into:
     let headerLabel = c.nextLabel()
@@ -182,7 +183,9 @@ proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
     discard c.startBlock(headerLabel)
 
     c.currentProc.breakStack.add endLabel
+    c.currentProc.loopHeads.add headerLabel
     genStmtLLVM c, n
+    discard c.currentProc.loopHeads.pop()
     discard c.currentProc.breakStack.pop()
 
     if not c.currentProc.needsTerminator:
@@ -549,12 +552,29 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
       while n.hasMore: skip n
   of IfS:
     genIfLLVM c, n
-  of IteS, ItecS:
+  of IteS:
     genIteLLVM c, n
   of WhileS:
     genWhileLLVM c, n
   of LoopS:
     genLoopLLVM c, n
+  of ContinueS:
+    # A `(loop)`'s trailing back-edge: `(continue .)` repeats, `(continue X)`
+    # repeats while `X` and otherwise leaves to the loop's end label.
+    let contInfo = n.info
+    n.into:
+      let head = c.currentProc.loopHeads[^1]
+      if n.kind == DotToken:
+        inc n
+        c.setLoc(contInfo)
+        c.emit LLInstr(kind: llBr, brTarget: head)
+      else:
+        var cond = LLValue(); genCondLLVM(c, n, cond)
+        c.setLoc(contInfo)
+        c.emit LLInstr(kind: llCondBr, condBrCond: cond,
+                       condBrTrue: head, condBrFalse: c.currentProc.breakStack[^1])
+      c.currentProc.needsTerminator = true
+      while n.hasMore: skip n
   of BreakS:
     let breakInfo = n.info
     n.into:

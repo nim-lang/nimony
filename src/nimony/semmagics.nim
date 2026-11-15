@@ -58,8 +58,9 @@ proc getDottedIdentAux(n: var Cursor): string =
         result.add(".")
         result.add(pool.strings[s])
   else:
-    # treat as atom
-    let s = takeIdent(n)
+    # treat as atom; consume the operand even when it is not a name
+    let s = getIdent(n)
+    skip n
     if s == StrId(0):
       result = ""
     else:

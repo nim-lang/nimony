@@ -339,9 +339,12 @@ proc skipToRoot(n: Cursor): Cursor =
   result = n
 
 proc mutatesThroughPointer(c: var Context; n: Cursor): bool =
-  ## Is the location `n` reached through a `ref`/`ptr` dereference? Allowed
-  ## nonetheless when the head of the access path is of type `var T`
-  ## (a `var` parameter or a call returning `var T`).
+  ## Is the location `n` reached through a `ref`/`ptr` dereference? A `var`
+  ## parameter at the head of the path does not change that: a `func` may write
+  ## the own storage of its `var` parameter, not what the parameter points to.
+  ## A call that returns `var T` or a view borrows from its first argument
+  ## (`s[i]` for a `seq`, `toOpenArray(s, a, b)`), so the walk continues there,
+  ## as it does into the last expression of a template's `(expr ...)`.
   result = false
   var n = n
   while true:
@@ -351,6 +354,15 @@ proc mutatesThroughPointer(c: var Context; n: Cursor): bool =
       inc n
     of DotX, AtX, ArratX, TupatX, ParX, HderefX:
       inc n
+    of ExprX:
+      n = sub(n)
+      while not isLastSon(n): skip n
+    of CallKinds:
+      let t = getType(c.typeCache, n)
+      if t.typeKind != MutT and not isViewType(t): break
+      n = sub(n)
+      skip n # skip the `fn`
+      if not n.hasMore: break
     of DconvX:
       inc n
       skip n # skip the type
@@ -359,8 +371,6 @@ proc mutatesThroughPointer(c: var Context; n: Cursor): bool =
       skip n # skip intlit
       skip n # skip type
     else: break
-  if result and getType(c.typeCache, n).typeKind in {MutT, OutT}:
-    result = false
 
 proc checkPointerMutation(c: var Context; n: Cursor): bool =
   ## A `.noSideEffect` routine must not mutate state behind a `ref`/`ptr`;
@@ -369,6 +379,16 @@ proc checkPointerMutation(c: var Context; n: Cursor): bool =
   if result:
     buildLocalErr c.dest, n.info, "cannot mutate " & asNimCode(n) &
       " through a ref/ptr in a `.noSideEffect` context", n
+
+proc varResultThroughPointer(c: var Context; n: Cursor): bool =
+  ## A `.noSideEffect` routine must not hand out a `var T` view of a location
+  ## behind a `ref`/`ptr` either: its caller would write there.
+  result = IsNoSideEffect in c.r.props and c.r.returnType.typeKind == MutT and
+    mutatesThroughPointer(c, n)
+
+proc varResultErr(c: var Context; n: Cursor) =
+  buildLocalErr c.dest, n.info, "cannot return " & asNimCode(n) &
+    " as `var` through a ref/ptr in a `.noSideEffect` context"
 
 proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   result = false
@@ -458,6 +478,9 @@ proc trReturn(c: var Context; n: var Cursor) =
       if err:
         buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
         skip n
+      elif c.r.returnExpects == WantVarTResult and varResultThroughPointer(c, n):
+        varResultErr(c, n)
+        skip n
       else:
         if n.exprKind == TupconstrX:
           if checkTupleConstrBorrowing(c, n) != Valid:
@@ -500,6 +523,11 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
       skip n
     elif n.stmtKind == AsgnS:
       n.into:
+        mightBeDangerous(c, n)
+        recurse()
+    elif n.stmtKind in {IncS, DecS, InclS, ExclS}:
+      n.into:
+        skip n # the type
         mightBeDangerous(c, n)
         recurse()
     elif n.exprKind in CallKinds:
@@ -880,6 +908,10 @@ proc trAsgn(c: var Context; n: var Cursor) =
         tr c, n, e
         if not validBorrowsFrom(c, n):
           err = InvalidBorrow
+        elif varResultThroughPointer(c, n):
+          errAlreadyEmitted = true
+          varResultErr(c, n)
+          skip n
       else:
         tr c, n, e
         if n.exprKind == TupconstrX:
@@ -1373,10 +1405,23 @@ proc trRaise(c: var Context; n: var Cursor) =
     while n.hasMore:
       tr c, n, WantT
 
+proc loopContainerIsReadonly(c: var Context; n: Cursor): bool =
+  ## True when a loop variable that views the container `n` must not write to
+  ## it: `n` is rooted in a `let` (any type but `var`/`out`), in a `lent`
+  ## binding (only `allowLet` answers that one), or in a binding that is a
+  ## read-only view itself, such as the variable of an enclosing loop over a
+  ## `let`. Both readings of `borrowsFromReadonly` are asked because neither
+  ## covers both kinds of `let`, and the helper cannot simply count a `lent`
+  ## binding as read-only: `trLocation` asks it too when a `lent` result
+  ## forwards a borrow (`yield k` in `sets.items`).
+  let root = skipToRoot(n)
+  result = borrowsFromReadonly(c, n) or borrowsFromReadonly(c, n, allowLet=true) or
+    (root.isSymbol and c.r.dangerousLocations.hasKey(root.symId))
+
 proc trForHelper(c: var Context; n: var Cursor; dangerous: seq[SymId]) =
   takeInto c.dest, n:
     if dangerous.len > 0:
-      if borrowsFromReadonly(c, n, allowLet=true):
+      if loopContainerIsReadonly(c, n):
         for s in dangerous:
           c.r.dangerousLocations[s] = n.info
     tr c, n, WantT # iterator call
@@ -1589,18 +1634,36 @@ proc collectConcatLeaves(n: var Cursor; leaves: var seq[Cursor]) =
         leaves.add n
         skip n
 
+proc literalLen(leaf: var TokenBuf): int =
+  ## The length of a string-literal leaf, or -1 for anything else.
+  var n = beginRead(leaf)
+  result = if n.kind == StrLit: pool.strings[n.strId].len else: -1
+  endRead(n)
+
 proc emitLenSum(dest: var TokenBuf; intType: Cursor; lenSym: SymId;
-                leaves: seq[TokenBuf]; hi: int; info: NifLineInfo) =
-  ## `len(leaves[0]) + … + len(leaves[hi])`, left-associated.
-  if hi > 0:
+                leaves: var seq[TokenBuf]; info: NifLineInfo) =
+  ## `len(a) + … + len(z)`, left-associated. The string literals among the
+  ## leaves add up to one constant at the end: `len("…")` on a literal would
+  ## otherwise stay a call, because the inliner refuses to splice a call
+  ## whose argument became a string constructor.
+  var lits = 0
+  var dyn: seq[int] = @[]
+  for i in 0 ..< leaves.len:
+    let k = literalLen(leaves[i])
+    if k >= 0: inc lits, k
+    else: dyn.add i
+  let terms = dyn.len + (if lits > 0 or dyn.len == 0: 1 else: 0)
+  for _ in 1 ..< terms:
     dest.addParLe AddX, info
     dest.addSubtree intType
-    emitLenSum(dest, intType, lenSym, leaves, hi-1, info)
-  dest.copyIntoKind CallX, info:
-    dest.addSymUse lenSym, info
-    dest.add leaves[hi]
-  if hi > 0:
-    dest.addParRi()
+  for j, i in dyn:
+    dest.copyIntoKind CallX, info:
+      dest.addSymUse lenSym, info
+      dest.add leaves[i]
+    if j > 0: dest.addParRi()
+  if terms > dyn.len:
+    dest.addIntLit lits, info
+    if dyn.len > 0: dest.addParRi()
 
 proc trStringConcatChain(c: var Context; n: var Cursor) =
   ## `a & b & c & d`, a chain of `string.&`, becomes one allocation:
@@ -1659,7 +1722,7 @@ proc trStringConcatChain(c: var Context; n: var Cursor) =
     c.dest.addSubtree stringType
     c.dest.copyIntoKind CallX, info:
       c.dest.addSymUse newStrSym, info
-      emitLenSum(c.dest, c.typeCache.builtins.intType, lenSym, uses, uses.len-1, info)
+      emitLenSum(c.dest, c.typeCache.builtins.intType, lenSym, uses, info)
   for u in uses:
     c.dest.copyIntoKind CallS, info:
       c.dest.addSymUse addSym, info
