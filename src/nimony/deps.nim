@@ -2609,10 +2609,13 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   exec(nifmakeCmd)
   exec(exeFile)
 
-proc progArg(flags: set[BuildFlag]; lo, hi: int): string =
+proc progArg(flags: set[BuildFlag]; lo, hi: int; closes = true): string =
   # nifmake itself routes the bar (terminal-only); we only suppress it where
-  # nimony asked for silence or machine-readable output.
+  # nimony asked for silence or machine-readable output. `closes` picks
+  # `--done`, the project's own run that ends the line with `[100%] done`;
+  # the stdlib's runs only draw into the same range.
   if SilentMake in flags or Report in flags: ""
+  elif closes: "--done:" & $lo & "," & $hi & " "
   else: "--progress:" & $lo & ":" & $hi & " "
 
 proc buildGraph*(config: sink NifConfig; project: string;
@@ -2669,16 +2672,16 @@ proc buildGraph*(config: sink NifConfig; project: string;
     (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "") &
     " --lock:" & quoteShell(config.stdcachePath / "lock") & jobsArg(config) & " run "
 
-  # `nimony c` drives nifmake once for the frontend and once more for the
-  # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
-  # a slice of the 0..100% range so nifmake's live bar reads as one continuous
-  # indicator across the separate processes instead of restarting per phase.
-  let twoPhase = cmd != DoCheck
+  # `nimony c` drives nifmake for the frontend (0..50%) and the backend or
+  # docs (51..100%); `DoCheck` stops after the frontend (0..100%). Within a
+  # phase the stdlib's run and the project's run share the range, and only
+  # the project's run (`--done`) closes the line.
+  let frontHi = if cmd != DoCheck: 50 else: 100
 
   if c.hasStdNodes:
-    exec stdCommand & progArg(flags, 0, if twoPhase: 50 else: 100) &
+    exec stdCommand & progArg(flags, 0, frontHi, closes = false) &
       quoteShell(generateFrontendBuildFile(c, commandLineArgs, cmd, std = true))
-  exec nifmakeCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
+  exec nifmakeCommand & progArg(flags, 0, frontHi) & quoteShell(buildFilename)
 
   if cmd == DoDoc:
     c = initDepContext(config, project, true, forceRebuild, moduleFlags, cmd)
@@ -2697,7 +2700,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
       if parent.len > 0 and parent != docOut:
         onRaiseQuit createDir(path(parent))
     let buildDocFilename = generateDocBuildFile(c)
-    exec nifmakeCommand & progArg(flags, 50, 100) & quoteShell(buildDocFilename)
+    exec nifmakeCommand & progArg(flags, 51, 100) & quoteShell(buildDocFilename)
     return
 
   if cmd != DoCheck:
@@ -2710,10 +2713,9 @@ proc buildGraph*(config: sink NifConfig; project: string;
     onRaiseQuit createDir(path(sharedObjDir()))
     if c.hasStdNodes:
       onRaiseQuit createDir(path(c.config.stdBackendDir))
-      exec stdCommand & progArg(flags, 50, 100) &
+      exec stdCommand & progArg(flags, 51, 100, closes = false) &
         quoteShell(generateStdBackendBuildFile(c))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsLengc, passC, passL)
-    # second (backend) phase: 50..100%
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
     # `bin/` here. Nim does the same in `prepareToWriteOutput`.
@@ -2729,7 +2731,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let beMemo = backendMemo(c, passC, passL)
     let backendChanged = memoDiffers(c, beMemoFile, beMemo)
     execBackend nifmakeBase & (if backendChanged: " --rerun" else: "") &
-        jobsArg(config) & " run " & progArg(flags, 50, 100) & quoteShell(buildFinalFilename),
+        jobsArg(config) & " run " & progArg(flags, 51, 100) & quoteShell(buildFinalFilename),
       beMemoFile, beMemo, backendChanged
 
   if Stats in flags:

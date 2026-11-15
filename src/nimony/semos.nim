@@ -648,6 +648,9 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   # Do not forward the raw command line: it can contain `--base`, which would
   # make plugin child compiles read caller-local nimony.paths files.
   #
+  # `--silentmake`: the sub-compile shares the outer build's terminal, and its
+  # own progress bar would be drawn over the outer one.
+  #
   # `-d:nimonyPlugin` marks the sub-compile as the build of a plugin. The
   # dependency scanner then schedules no plugin builds of its own: a plugin is
   # a leaf of the build graph. Without this, a plugin whose source imports the
@@ -658,6 +661,7 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   let srcLibPath = nimonyDir() / "src" / "lib"
   result = quoteShell(nimonyExe) &
     " --nimcache:" & quoteShell(cacheDir) &
+    " --silentmake" &
     " -d:nimonyPlugin" &
     " --path:" & quoteShell(srcLibPath) &
     " --path:" & quoteShell(pluginDir)

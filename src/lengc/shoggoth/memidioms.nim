@@ -22,22 +22,26 @@
 ## The C compiler finds some of them on its own; arkham finds none, and on the
 ## native backend each stays a loop of one store per element.
 ##
-## The shape matched is the one hexer's `for` lowering produces, after the rest
-## of the pipeline has cleaned it up:
+## The shape matched is the one hexer's `for` lowering produces once loop
+## rotation (#2995) has moved the test to the back-edge:
 ##
-##   (while (true)
-##     (if (elif (lt IV HI)               ; or `le`
-##            STORE                       ; (asgn (at B IV) V) / (asgn (pat P IV) V)
-##            (asgn IV (add T IV 1)))
-##         (else (jmp L))))
-##   (lab L)
+##   (ite (lt IV HI)                      ; or `le`
+##     (stmts (loop (stmts
+##       STORE                            ; (asgn (at B IV) V) / (asgn (pat P IV) V)
+##       (asgn IV (add T IV 1))
+##       (continue (lt IV HI)))))         ; the same test again
+##     .)
 ##
 ## seen through the `(scope …)`/`(stmts …)` wrappers and the labels nobody jumps
-## to that inlining leaves behind. It becomes
+## to that inlining leaves behind. The unrotated forms — `(while (true) (if
+## (elif COND …) (else (jmp L))))` and `(loop (stmts (ite COND … (stmts (jmp
+## L))) (continue .)))`, each followed by `(lab L)` — are matched too. It
+## becomes
 ##
-##   (if (elif (lt IV HI)
+##   (ite (lt IV HI)
 ##     (stmts (instr zeroMemIns (haddr (at B IV)) (mul (i -1) COUNT (sizeof E)))
-##            (asgn IV HI))))             ; the value the loop left behind
+##            (asgn IV HI))              ; the value the loop left behind
+##     .)
 ##
 ## so nothing after the loop can tell the difference, the induction variable
 ## included.
@@ -450,6 +454,10 @@ type
     srIncrement                      ## `(asgn IV (add T IV 1))`
     srExit                           ## `(jmp L)`, `L` the label after the loop
     srRepeat                         ## `(continue .)`, a `(loop)`'s back-edge
+    srRepeatCond                     ## `(continue COND)`, a rotated loop's
+                                     ## back-edge testing the entry's COND
+    srRotatedLoop                    ## `(loop (stmts STORE INCREMENT
+                                     ## (continue COND)))`
 
 proc isOne(n: Cursor): bool =
   case n.kind
@@ -563,6 +571,13 @@ proc matchRole(s: var MemScan; n: Cursor; role: StmtRole; lm: var LoopMatch): bo
   of srIncrement: matchIncrement(n, lm.iv, lm.incTyp, lm.one)
   of srRepeat:
     n.kind == TagLit and n.stmtKind == ContinueS and n.childCursor.kind == DotToken
+  of srRepeatCond:
+    n.kind == TagLit and n.stmtKind == ContinueS and
+      subtreeEqual(n.childCursor, lm.cond)
+  of srRotatedLoop:
+    n.kind == TagLit and n.stmtKind == LoopS and n.childCursor.kind == TagLit and
+      matchStmts(s, n.childCursor.childCursor,
+                 [srStore, srIncrement, srRepeatCond], lm)
   of srExit:
     n.kind == TagLit and n.stmtKind == JmpS and
       n.childCursor.kind == Symbol and n.childCursor.symId == lm.exitLab
@@ -593,7 +608,19 @@ proc matchLoop(s: var MemScan; w: Cursor; lm: var LoopMatch): bool =
   ## The loop grammar of the module comment, up to the store: everything a
   ## fill and a copy have in common.
   var c = w.childCursor
-  if w.stmtKind == LoopS:
+  if w.stmtKind == IteS:
+    # The rotated form loop rotation leaves (`leng`'s `for` lowering since
+    # #2995): the entry test guards a `(loop)` whose back-edge repeats it,
+    #   (ite COND (stmts (loop (stmts STORE INCREMENT (continue COND)))) .)
+    # The exit is falling out of the `ite`, so no label is involved.
+    result = matchCond(s, c, lm)
+    if result:
+      skip c
+      let thenArm = c
+      skip c
+      result = thenArm.kind == TagLit and (not c.hasMore or c.kind == DotToken) and
+        matchStmts(s, thenArm.childCursor, [srRotatedLoop], lm)
+  elif w.stmtKind == LoopS:
     # `(loop (stmts (ite …) (continue .)))`
     result = c.kind == TagLit and matchStmts(s, c.childCursor, [srIf, srRepeat], lm)
   else:
@@ -778,7 +805,8 @@ proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
   b.closeTag()
 
 proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
-  ## Match the loop `w` (its exit label `exitLab` follows it) and, when it is a
+  ## Match the loop `w` (its exit label `exitLab` follows it; none for the
+  ## rotated `(ite COND (stmts (loop …)) .)`) and, when it is a
   ## fill or a copy, build its replacement. A copy is `D[IV] = S[IV]` (the
   ## assignment says the element types agree); unless its two ranges are
   ## disjoint by construction, it becomes a guarded fast path in front of the
@@ -797,7 +825,7 @@ proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
       s.used.incl op
       let start = s.scratch.len
       emitReplacement(s.scratch, lm, memIntrinsicName(op, s.suffix), isCopy,
-                      guarded, asIte = w.stmtKind == LoopS)
+                      guarded, asIte = w.stmtKind in {LoopS, IteS})
       s.sites.add MemSite(pos: s.posOf(w), start: start, insert: guarded)
 
 # ---- adjacent field stores ------------------------------------------------
@@ -1100,6 +1128,8 @@ proc scanList(s: var MemScan; list: Cursor) =
     if it.kind == TagLit and it.stmtKind in {WhileS, LoopS}:
       var lab = SymId(0)
       if s.opts.intrinsics and exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
+    elif it.kind == TagLit and it.stmtKind == IteS and s.opts.intrinsics:
+      tryLoop(s, it, SymId(0))
     scan(s, it)
     skip it
 
