@@ -12,7 +12,7 @@
 #   instead of `arcDec`, handing it the cell and `T`'s *cell operation*, a
 #   compiler-generated `proc (cell, env: pointer)` that traces `T`'s payload
 #   (`env != nil`) or destroys the payload and frees the cell (`env == nil`).
-#   The cell operation IS the type descriptor (`PNimTypeV2` to Nim's code):
+#   The cell operation is the type descriptor (`PNimTypeV2` to Nim's code):
 #   it is all the collector ever needs to know about a type. A class that
 #   cannot form a cycle passes `nil`.
 # * `=trace` of a `ref T` field calls `nimTraceRef` with the field's address

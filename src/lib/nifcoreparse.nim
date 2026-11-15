@@ -59,7 +59,7 @@ proc peekRootInfo*(r: var rd.Reader; pool: Pool): NifLineInfo =
   ## `(stmts)` head, which carries the file explicitly — without consuming it.
   ## Index-jumped decl reads pass this as `parse`'s `parentSeed` so their
   ## file-less child position deltas resolve against the module root (a decl's
-  ## parent in the original tree IS the toplevel `(stmts)` node).
+  ## parent in the original tree is the toplevel `(stmts)` node).
   let start = rd.offset(r)
   var tok = default(rd.ExpandedToken)
   rd.next(r, tok)
@@ -71,7 +71,7 @@ proc peekRootInfo*(r: var rd.Reader; pool: Pool): NifLineInfo =
   rd.jumpTo(r, start)
 
 proc internPart(b: var TokenBuf; r: rd.Reader; t: rd.ExpandedToken): StrId =
-  ## One component of a split symbol, interned. When the bytes ARE the value --
+  ## One component of a split symbol, interned. When the bytes are the value --
   ## no escape, no module suffix to append, which is the overwhelming case --
   ## they go into the string pool straight from the reader's mapped file.
   if rd.needsDecoding(t):
@@ -178,7 +178,7 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
     case tok.tk
     of rd.EofToken, rd.UnknownToken, TagLit, ExtendedSuffix, LineInfoLit:
       # `TagLit`/`LineInfoLit` are binary-only kinds the textual reader never
-      # yields. An `ExtendedSuffix` never reaches HERE either: `readSymbol`
+      # yields. An `ExtendedSuffix` never reaches here either: `readSymbol`
       # consumes a split symbol's components as part of the symbol.
       break
     of rd.ParLe:
@@ -324,7 +324,7 @@ proc emitValueWithLineInfo(bld: var Builder; c: var Cursor;
     emitRelLineInfo(bld, abs, parents[^1], pool)
     parents.add abs
     c.into:
-      if escaped: c.inc               # the escaped id IS the tag name above
+      if escaped: c.inc               # the escaped id is the tag name above
       while c.hasMore:
         emitValueWithLineInfo(bld, c, cur, parents, tags, pool)
     discard parents.pop()
@@ -475,7 +475,7 @@ proc emitValueIndexed(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
       # Hidden if the next sibling is the empty export marker (`.`), else exported.
       if c.kind == DotToken: index.addTree "h"
       else: index.addTree "x"
-      # Record the indexed compound's PARENT info (parents[^2]); on lookup `parse`
+      # Record the indexed compound's parent info (parents[^2]); on lookup `parse`
       # seeds its parent stack with this and the first token it reads — the
       # compound's `(` — carries the diff. (See nifstreams.toModuleString.)
       let parentInfo = if parents.len >= 2: parents[^2] else: rootInfo
@@ -585,7 +585,7 @@ when isMainModule:
   block escape_space:
     # An adapter whose vocabulary outgrew the 9-bit tag field. `registerTag`
     # just keeps counting; the ids past `TagMask` cost a second token and
-    # nothing else. The escape must be invisible in BOTH directions — the text
+    # nothing else. The escape must be invisible in both directions — the text
     # never says `other`, and parsing that text back yields the same tokens.
     proc escTags(): TagPool =
       result = newTagPool()
@@ -600,7 +600,7 @@ when isMainModule:
 
     let src = "(stmts (mov (rax) +1) (movzx (rax) (rbx) +8) (syscall))"
     var b1 = parseFromBuffer(src, "t", sharedTags = escTags())
-    # In the BUFFER the two overflowing tags are escape headers carrying their
+    # In the buffer the two overflowing tags are escape headers carrying their
     # id inline; `mov` is untouched, so a tag that fits still costs one token.
     var c = b1.beginRead()
     var seen = 0

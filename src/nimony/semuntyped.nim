@@ -81,7 +81,7 @@ type
   WhenFrame = object
     ## A `when` inside the body. Its branches share the enclosing scope (only
     ## one survives instantiation), so a name declared in several of them is
-    ## ONE symbol: whichever branch survives declares it, and code after the
+    ## a single symbol: whichever branch survives declares it, and code after the
     ## `when` refers to it.
     scope: Scope                   ## the scope the `when` sits in
     decls: Table[StrId, SymId]     ## declared by any branch so far

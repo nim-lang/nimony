@@ -106,7 +106,7 @@ proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil;
   ## symbol's byte offset and parses just that one tree into its own buffer
   ## (kept alive in `declBufs`). Cached.
   ##
-  ## `withLineInfo`: for consumers that COPY the decl's line info into their own
+  ## `withLineInfo`: for consumers that copy the decl's line info into their own
   ## output (the inter-module inliner splices foreign bodies). A decl's first
   ## token holds only a position delta against its parent, the module's
   ## toplevel `(stmts)`, so the parse is seeded with that root's absolute info
@@ -137,7 +137,7 @@ proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil;
     else:
       m.r.jumpTo(pos)
       parse(m.r, buf)                         # exactly one balanced decl tree
-  # Take the cursor on the LOCAL buffer *before* moving it into `declBufs`
+  # Take the cursor on the local buffer *before* moving it into `declBufs`
   # (the leng/nimony pattern, see nifmodules.getDeclOrNil): `beginRead` installs
   # the buffer's ref-counted cursor owner, which then travels with the buffer
   # when `declBufs` later grows and relocates its elements. Doing `beginRead` on

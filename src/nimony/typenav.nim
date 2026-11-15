@@ -24,7 +24,7 @@ import ".." / finalir / finalir_model
 import nimony_model, builtintypes, decls, programs, typeprops
 
 const
-  # `.00`, not `.0`: a disambiguator is a NUMBER and a number has no leading
+  # `.00`, not `.0`: a disambiguator is a number and a number has no leading
   # zero, so `r.00` is a name no user symbol can collide with -- which is the
   # point, since these three are injected into types the user also writes
   # fields into. The pool keeps such a name whole rather than reading `00` as a
@@ -377,7 +377,7 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
 proc typeofBranchBody(c: var TypeCache; br: Cursor; flags: set[GetTypeFlag]): Cursor =
   ## The type of an if/case/try/block branch body. Sem wraps expression
   ## branches in `(stmts …)` in some shapes (template-expanded bodies), so a
-  ## stmts-wrapped branch takes the type of its TRAILING item; an empty
+  ## stmts-wrapped branch takes the type of its trailing item; an empty
   ## `(stmts)` is void.
   var br = br
   while br.isTagLit and stmtKind(br) == StmtsS:
@@ -415,8 +415,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       of IfS:
         # Walk all branches and pick the first non-void branch's type. A
         # branch body may be `(stmts ...)` — sem emits that shape for
-        # template-expanded if-EXPRESSIONS too, so the branch's value is its
-        # TRAILING item, not blanket void (typing it void made xelim declare
+        # template-expanded if-expressions too, so the branch's value is its
+        # trailing item, not blanket void (typing it void made xelim declare
         # a typeless temp and drop the branch values — deps.nim's wasmInput).
         # A branch that genuinely yields nothing (trailing `return`/call of a
         # void proc) still types void through the recursion.

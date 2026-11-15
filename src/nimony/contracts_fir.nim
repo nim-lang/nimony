@@ -178,7 +178,7 @@ type
                                        ## to the same file as its enclosing
                                        ## routine (the whole module, at top
                                        ## level). Expanded code fails that test
-                                       ## and leaves the last statement WRITTEN
+                                       ## and leaves the last statement written
                                        ## here standing -- which is the place an
                                        ## error inside the expansion is about.
 
@@ -242,7 +242,7 @@ type
       ## The body's own locals are not registered with the type cache yet, so
       ## nothing may ask for a type during it.
     declaredRange: Table[VarId, RangeBounds]
-      ## The bounds a location's `range` TYPE states. Unlike a flow fact this
+      ## The bounds a location's `range` type states. Unlike a flow fact this
       ## can never go stale — every write to the location owes the range in
       ## turn — so it answers questions the flow facts have been widened away
       ## from, which is what a `Natural` field advanced inside a loop needs.
@@ -283,7 +283,7 @@ proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
   # A value read again for its facts was judged when it was analysed, before
   # the barriers it contains: judging it again after them is no news.
   if c.rereading: return
-  # This pass runs on the FINAL IR, where the node an error is pinned to is
+  # This pass runs on the final IR, where the node an error is pinned to is
   # often one the compiler synthesized -- the epilogue's `(ret result)` is what
   # an uninitialized `result` is reported at -- and those carry no line info.
   # Printed, such an error is a bare `???`; worse, `reporters` deduplicates by
@@ -291,15 +291,15 @@ proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
   # the user fixes them one recompile at a time. Fall back to the enclosing
   # proc's declaration, which is where the reader has to look anyway.
   #
-  # The node may also come from code EXPANDED here rather than written here: a
+  # The node may also come from code expanded here rather than written here: a
   # template body carries its own file's line info, and `subsGenericProc` gives
   # an instantiated routine the call site as its head info while its body keeps
   # the generic's. Reporting `lib/std/system/defaults.nim` at a user who wrote
   # `default(array[8, Foo])` names the wrong file entirely, so an error whose
   # file differs from its enclosing context's is moved to that context -- the
   # instantiating call, or the module-level statement -- and states where the
-  # code it is about actually sits. A different FILE is the whole test, which
-  # is why the comparison is against the CONTEXT and not against the module:
+  # code it is about actually sits. A different file is the whole test, which
+  # is why the comparison is against the context and not against the module:
   # an `include`d file is the module's own source and reports in its own name.
   let procCtx = if not cursorIsNil(c.p.currentProcStart): c.p.currentProcStart.info
                 else: c.p.stmtContext
@@ -2527,7 +2527,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   of IntLit: off = createXint(value.intVal); isLit = true
   of UIntLit: off = createXint(value.uintVal); isLit = true
   else:
-    # Folding is tried BEFORE the symbol path: a `const` is a `Symbol` here
+    # Folding is tried before the symbol path: a `const` is a `Symbol` here
     # like any local, and treating it as an opaque variable left `Label(High)`
     # with `const High = 255` unprovable — the literal spelling of the same
     # value proved instantly. `tryEvalOrdinal` returns NaN for anything that is
@@ -2911,7 +2911,7 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind;
     skip r # skip type
   elif xk == EqX:
     # An odd number of `not`s turns the equality into a disequality; the fact
-    # built below is then the *equality*, which holds on the FALSE path.
+    # built below is then the *equality*, which holds on the false path.
     kind = if (negations and 1) == 0: ckEquality else: ckDisequality
     cmpStart = r; r = sub(r)
     skip r # skip type
@@ -3039,7 +3039,7 @@ proc analyseCondition(c: var FirContext; pc: var Cursor;
                       elseFacts: var seq[LeXplusC]; call: var CallContext): int =
   ## Returns number of facts added
   if pc.exprKind == AndX:
-    # `a and b`: on the true path BOTH conjuncts hold, so both are facts.
+    # `a and b`: on the true path both conjuncts hold, so both are facts.
     # `translateCond` only understands a single comparison, so a conjunction
     # used to contribute none at all and the everyday guard
     # `if i >= 0 and i <= High: …` proved nothing inside its own branch.
@@ -3120,7 +3120,7 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   of ProctypeT, ItertypeT:
     # `(proctype <NilTag> (params) RetType <Pragmas>)`. The nilability marker is
     # at slot 0, and `(itertype ...)` mirrors that shape exactly (doc/tags.md):
-    # a first-class closure-iterator VALUE is a pointer pair like any other
+    # a first-class closure-iterator value is a pointer pair like any other
     # closure, so it is not-nil by default the same way.
     let e = t.childCursor
     if e.substructureKind == mark:
@@ -3193,7 +3193,7 @@ proc zeroedStorage(c: var FirContext; typ: Cursor; depth = 0): ZeroedStorage =
   ## non-nil refs and zeroed storage gives eight nils.
   ##
   ## Unreachable and over-deep types answer `IsAValue`: the question is asked
-  ## to REPORT a violation, and a type we could not read is not evidence of one.
+  ## to report a violation, and a type we could not read is not evidence of one.
   result = IsAValue
   if depth > 20: return
   var t = typ
@@ -3328,19 +3328,19 @@ proc isNonNilExpr(c: var FirContext; n: Cursor): bool =
 
 const
   NilLaunderingConvs = ConvKinds - {CastX}
-    ## `ConvKinds` minus `cast`: a CONVERSION claims the target type honestly
+    ## `ConvKinds` minus `cast`: a conversion claims the target type honestly
     ## and must not launder a `nil` into it, while a `cast` is the programmer
     ## saying "this representation, on my head" -- the same standing `addr` has
     ## in `wantNotNil`. `cast[pointer](nil)` is how a NULL is handed to C
     ## (`io_uring.prep_rw`), and taking that away would leave no way to write it.
 
 proc isConvertedNil(n: Cursor): bool =
-  ## `T(nil)` -- a conversion whose operand is the nil literal. Its TYPE is the
+  ## `T(nil)` -- a conversion whose operand is the nil literal. Its type is the
   ## not-nil `T`, so the `markedAs` shortcut below would take the conversion's
   ## word for it and wave through the one value `T` forbids. This is how
   ## `system/defaults` spells the default of a pointer (`template default[T: nil
   ## (ref)](x: typedesc[T]): T = T(nil)`), so without this check `default(T)`
-  ## for a NOT-NIL `T` produced a nil silently -- and so did everything built
+  ## for a not-nil `T` produced a nil silently -- and so did everything built
   ## on it, `default(array[8, T])` included.
   var n = n
   while n.exprKind in NilLaunderingConvs:
@@ -3744,7 +3744,7 @@ proc isLocation(v: VarId): bool {.inline.} =
   v != VarId(0) and v != InvalidVarId
 
 proc proveIntervalVsLocation(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
-  ## A comparison with a BOUNDED shape on one side and a LOCATION on the other:
+  ## A comparison with a bounded shape on one side and a location on the other:
   ## `i * 4 + 3 < len(b)` for `i` in `0 ..< 8` and `len(b) == 32`. Neither half
   ## of the engine sees it alone — `pureCompare` cannot state a product, and
   ## `proveByIntervals` gives a location no interval, since what bounds it is a
@@ -3881,7 +3881,7 @@ proc assumeCond(c: var FirContext; n: Cursor; rd: Reading) =
 
 proc bindResultPaths(c: var FirContext; rd: var Reading;
                      resultSyms: openArray[SymId]; dest: SymId) =
-  ## `len(result)` and `result.f` in an `.ensures` are paths UNDER `result`,
+  ## `len(result)` and `result.f` in an `.ensures` are paths under `result`,
   ## so they name locations under whatever `result` is bound to: the local a
   ## call's value lands in, or the routine's own `result` when its body is
   ## judged. `rd.results` maps only the bare symbol — a path keyed from the
@@ -4149,7 +4149,7 @@ proc checkIndexInBounds(c: var FirContext; idx, bounds: Cursor) =
                reportUnprovable = StaticContractsFeature in c.features
 
 proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
-  ## `(arrat arr idx [hi [lo]])`. The bounds sem attached ARE the obligation:
+  ## `(arrat arr idx [hi [lo]])`. The bounds sem attached are the obligation:
   ## they are exactly what `hexer/desugar.trArrAt` turns into the
   ## `nimIcheckAB(i, lo, hi)` call, so discharging one here is discharging that
   ## call. A node carrying none indexes something unchecked (an
@@ -4219,7 +4219,7 @@ proc checkSharedAccess(c: var FirContext; pc: Cursor) =
 
 proc sharedRootPos(c: var FirContext; arg: Cursor): int =
   ## The position of the global symbol `arg` designates as a location (`g`,
-  ## `g.f`, `g[i]`, `addr g`), or -1. A deref leaves the global: `p[]` READS
+  ## `g.f`, `g[i]`, `addr g`), or -1. A deref leaves the global: `p[]` reads
   ## the pointer `p` before it reaches the shared storage.
   result = -1
   var n = arg
@@ -5020,7 +5020,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     else:
       # Also check: the destination type might have notnil (e.g. proctype)
       if markedAs(expected, NotnilU):
-        # The nil-match check already passed, so the value IS non-nil
+        # The nil-match check already passed, so the value is non-nil
         c.facts.add isNotNil(fact.a)
 
     # The (re)assigned location again holds an in-range value; the fact
@@ -5175,7 +5175,7 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   let iteStart = n # skip ite/itec tag
   n = sub(n)
 
-  # Split BEFORE the condition facts so they belong to the then-branch's delta
+  # Split before the condition facts so they belong to the then-branch's delta
   # (the then-branch runs under `assume(cond)`); `commitThen` rolls them back.
   # `assert false` and `when`-style constants reach here as a literal condition.
   # Without judging it, the arm that cannot run is analysed as reachable, and
@@ -6119,7 +6119,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip n # name
   skip n # export marker
   let skipInitCheck = hasPragma(n, NoinitP)
-  # An `importc`'d global is a BINDING to storage C already defines and
+  # An `importc`'d global is a binding to storage C already defines and
   # initializes (`posix_environ` names the `nimEnviron` the generated `main`
   # fills in); Nimony neither zeroes it nor owes it a value, so the
   # default-value question below is not its to answer.
@@ -6138,7 +6138,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     # for locals only, because a global is readable from another module and
     # (per `analysableRoot`) from another thread, so its storage is simply
     # zeroed. When zeroed storage is not a value of the type, such a global
-    # owes an explicit initial value. A LOCAL owes nothing here: the flow
+    # owes an explicit initial value. A local owes nothing here: the flow
     # analysis lets `var r: NotNilRef` stand as long as a write reaches it
     # before any read, which is strictly more permissive and strictly as safe.
     let zeroed = zeroedStorage(c, localType)
@@ -6291,9 +6291,9 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   var p = ProcCon(flow: initFlowState(), tr: initFlowTracker(),
                   currentProcStart: decl, stmtContext: decl.info,
                   ownOlds: initTable[string, VarId]())
-  # Seed with the enclosing init-set ONLY for genuinely nested procs (closures),
+  # Seed with the enclosing init-set only for genuinely nested procs (closures),
   # so a captured outer local stays initialized inside the closure body. A
-  # top-level proc must NOT inherit the whole module-level init-set: those syms
+  # top-level proc must not inherit the whole module-level init-set: those syms
   # are globals/consts that are never init-checked. `nested` means "inside a
   # statement": another proc's body, or a top-level statement such as a
   # `block` whose locals an inline iterator may use (#2555). A nested routine
@@ -6746,7 +6746,7 @@ proc emitRequiresWrapper(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
   let info = n.info
   n = sub(n)
   dest.addParLe(decl.cursorTagId, info)
-  dest.takeTree n            # the name, a def: the wrapper IS the routine
+  dest.takeTree n            # the name, a def: the wrapper is the routine
   for i in 1 ..< BodyPos:
     copyWithVerdicts dest, n, v, noRen
   # the forwarding body; its `result` is named apart from the routine's own

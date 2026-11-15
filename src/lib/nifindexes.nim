@@ -252,13 +252,13 @@ proc readIndex*(indexName: string): NifIndex =
 
 proc readEmbeddedIndex*(r: var Reader): OrderedTable[string, NifIndexEntry] =
   ## Reader-based twin of the classic streaming version (mirrors
-  ## `foreignmodules.readEmbeddedIndex`, but keeps visibility). ORDERED because
+  ## `foreignmodules.readEmbeddedIndex`, but keeps visibility). Ordered because
   ## the overload sets built from it are iterated in table order, and a plain
   ## `Table` does not agree with itself across builds of the compiler: nimony's
   ## `Table` keeps its payload in a `seq` and iterates it in insertion order,
   ## Nim's walks the bucket array. So a host-Nim built compiler and a
   ## self-hosted one would list overloads differently. Each entry's
-  ## line-info suffix records the indexed decl's PARENT absolute info (written
+  ## line-info suffix records the indexed decl's parent absolute info (written
   ## relative to the `.index` head's root anchor when the file matches, see
   ## `emitValueIndexed`); resolve it here so an index-jumped `parse` can seed
   ## its parent stack with it — a decl whose file switch sits on an ancestor

@@ -101,7 +101,7 @@ when defined(windows):
 elif defined(embedded):
   # --- bare metal: the console is the debug agent -------------------------
   # Every one of these is the honest answer for a target with no filesystem
-  # and no OS, rather than a stub: semihosting has ONE console, so `fd` names
+  # and no OS, rather than a stub: semihosting has a single console, so `fd` names
   # nothing, and a program that opens a file on a part with no storage should
   # be told so at the call rather than handed a handle that does nothing.
   proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int =

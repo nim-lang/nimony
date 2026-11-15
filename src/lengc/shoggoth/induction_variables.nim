@@ -55,7 +55,7 @@ proc createContext(orig: ptr TokenBuf;
 
 proc freshTempName(c: var Context; role = "p"): string =
   inc c.tempCounter
-  # A pointer induction variable is a LOCAL of this body, so its name is a
+  # A pointer induction variable is a local of this body, so its name is a
   # local's: `<ident>.<disamb>`. The backtick keeps it out of the source
   # namespace, like every other minted name here. `role` tells the temps of the
   # count-to-zero form apart in dumps: `q` an end base, `j` the negative index.
@@ -118,7 +118,7 @@ proc countWritesOf(start: Cursor; sym: SymId; counter: var int) =
 proc scanBody(c: var Context; n: Cursor;
               candidates: var seq[tuple[ivSym: SymId, incPos: int]];
               addrTaken: var HashSet[SymId]) =
-  ## Single pre-scan: collects iv-inc candidates AND every symbol whose address
+  ## Single pre-scan: collects iv-inc candidates and every symbol whose address
   ## is taken anywhere in the body.
   if not n.hasMore or n.kind != TagLit: return
   var ivSym = SymId(0)
@@ -173,7 +173,7 @@ type
     written: HashSet[SymId]    ## locals whose storage a store names: `x = …`,
                                ## `x.f = …`, `x[i] = …`
     addrTaken: HashSet[SymId]  ## `(addr S)` / `(haddr S.f)` anywhere in the loop
-    declared: HashSet[SymId]   ## locals declared INSIDE the loop: a fresh value
+    declared: HashSet[SymId]   ## locals declared inside the loop: a fresh value
                                ## per iteration, and absent where the hoisted
                                ## decls go
     ptrStoreTargets: seq[string] ## per store through a pointer: the pointer it
@@ -209,7 +209,7 @@ proc treeKey(n: Cursor; key: var string) =
 proc pointerKey(lhs: Cursor): string =
   ## The pointer a store through a pointer writes through: the operand of the
   ## first `pat` or `deref` on the lvalue's spine, as a `treeKey`. `at` is
-  ## followed into its operand — it may index an array FIELD of the object
+  ## followed into its operand — it may index an array field of the object
   ## behind the pointer — and so is `dot`. "" when there is none to name.
   result = ""
   var c = lhs
@@ -264,17 +264,17 @@ proc baseIsStable(c: var Context; base: Cursor; f: LoopFacts): bool =
   ## Is `addr base[…]` — the address this rewrite hoists out of the loop — the
   ## same on every iteration?
   ##
-  ## For an ARRAY base it always is: the address is the variable's own storage,
+  ## For an array base it always is: the address is the variable's own storage,
   ## which no assignment moves (`arr = other` copies *into* it) and no callee can
   ## relocate. That is the case this pass was written for.
   ##
-  ## For a POINTER-like base (`ptr`/`aptr`/`flexarray`, all of which `typenav`
-  ## admits under `(at …)`) the hoisted address IS the base's value, so a loop
+  ## For a pointer-like base (`ptr`/`aptr`/`flexarray`, all of which `typenav`
+  ## admits under `(at …)`) the hoisted address is the base's value, so a loop
   ## that rebinds it — directly, through a taken address, or through a callee
   ## that can reach it — would leave the pointer walking the old buffer. The
   ## same holds when the type does not resolve at all: unproven is not proven.
   ##
-  ## A seq's payload is a FIELD: `(dot S data)` of a local copy is stable like
+  ## A seq's payload is a field: `(dot S data)` of a local copy is stable like
   ## the local. `(dot (deref P) data)` of a `var` parameter lives in memory, so
   ## additionally no call (which could grow the seq and move its payload), and
   ## every store through a pointer must go through this very base: a store into
@@ -555,7 +555,7 @@ proc addPatAccess(c: var Context; q, j: string; info: NifLineInfo): int =
   c.synth.add ensureMove(buf)
 
 proc countReads(n: Cursor; sym: SymId): int =
-  ## Occurrences of `sym` that READ it: everything but its declaration and the
+  ## Occurrences of `sym` that read it: everything but its declaration and the
   ## target of a plain `(asgn sym …)`.
   result = 0
   case n.kind
@@ -627,7 +627,7 @@ proc rewriteToPointers(c: var Context; loopPos: int; incPos: int;
 proc rewriteToZero(c: var Context; loopPos: int; ivSym: SymId; incPos: int;
                    stable: seq[AccessInfo]; cond, bound, ivType: Cursor) =
   ## Count to zero: `j = iv - bound` runs up to 0, every array is addressed off
-  ## its END, `q = addr arr[bound]`, as `(pat q j)`, and the loop test is
+  ## its end, `q = addr arr[bound]`, as `(pat q j)`, and the loop test is
   ## `(op j 0)`. One increment serves every array, no bound stays live in the
   ## loop, and `(pat q j)` is a single scaled-index address on x64 and AArch64.
   let info = rawLineInfo(cond)
@@ -839,7 +839,7 @@ when isMainModule:
 
   block call_in_loop_with_unresolved_base:
     # Same reasoning one step removed: a callee can rebind a global or an escaped
-    # local. With a resolved ARRAY type this transforms as before — the address
+    # local. With a resolved array type this transforms as before — the address
     # of an array variable is not something a callee can move.
     assertUnchanged(
       "(stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) " &

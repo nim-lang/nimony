@@ -93,7 +93,7 @@ elif nativeThreads and defined(freebsd):
     NativeStackBytes = 8 * 1024 * 1024
       ## The default stack, matching the Linux path (see there).
     UmtxOpWait = cint(2)
-      ## The SHARED `UMTX_OP_WAIT` on a `long`: `thr_exit`'s wake is not the
+      ## The shared `UMTX_OP_WAIT` on a `long`: `thr_exit`'s wake is not the
       ## private kind, and private and shared waiters do not meet.
     CpuLevelWhich = cint(3)
     CpuWhichTid = cint(1)
@@ -142,12 +142,12 @@ elif nativeThreads:
     ThreadCloneFlags = CloneVm or CloneFs or CloneFiles or CloneSighand or
                        CloneThread or CloneSysvsem or CloneSettls or
                        CloneParentSettid or CloneChildCleartid
-      ## `PARENT_SETTID` and `CHILD_CLEARTID` name the SAME word, which is what
+      ## `PARENT_SETTID` and `CHILD_CLEARTID` name the same word, which is what
       ## makes `join` race-free: the kernel writes the tid there before the child
       ## runs, so a child that exits immediately cannot have its 0 overwritten by
       ## a parent still storing the return value of `clone`.
     FutexWait = clong(0)
-      ## Deliberately NOT `FUTEX_WAIT_PRIVATE`. The kernel's `CLONE_CHILD_CLEARTID`
+      ## Deliberately not `FUTEX_WAIT_PRIVATE`. The kernel's `CLONE_CHILD_CLEARTID`
       ## wake in `mm_release` is a plain `FUTEX_WAKE` — no private flag — and
       ## private and shared futexes hash into different queues, so a private
       ## waiter on this word is never woken. (glibc's `lll_wait_tid` passes
@@ -161,12 +161,12 @@ elif nativeThreads:
     ## it to the raw syscall — the same declaration `std/private/syslocks` makes,
     ## and for the same reason (there is no libc symbol called `futex`).
   proc threadExitSyscall(code: cint) {.importc: "exit".}
-    ## `exit`, NOT `exit_group`: it ends this thread and leaves the process alone.
+    ## `exit`, not `exit_group`: it ends this thread and leaves the process alone.
   proc gettidSyscall(): cint {.importc: "gettid".}
   proc schedSetaffinity(pid: cint; setsize: csize_t; mask: pointer): cint {.
     importc: "sched_setaffinity".}
     ## glibc's `pthread_setaffinity_np` is this syscall plus a handle lookup; a
-    ## thread that pins ITSELF (pid 0) has no lookup to do.
+    ## thread that pins itself (pid 0) has no lookup to do.
 
   proc syscallInstr() {.instruction: "syscall".}
   proc testq(a, b: int) {.instruction: "test".}
@@ -180,7 +180,7 @@ elif nativeThreads:
                 tls {.register: "r8".}: nil pointer;
                 childArg {.register: "r9".}: nil pointer): int {.
                 assembler, naked.} =
-    ## `clone`, written out because it cannot be CALLED.
+    ## `clone`, written out because it cannot be called.
     ##
     ## The child returns from the syscall at the very next instruction but with a
     ## different stack pointer — the one handed to the kernel. Every local of the
@@ -199,7 +199,7 @@ elif nativeThreads:
     ## syscall needed. Registers are the only channel a child has: the kernel
     ## copies the whole register file and replaces exactly rax and rsp.
     ##
-    ## The parameter ORDER is the kernel's own, which x86-64 spells
+    ## The parameter order is the kernel's own, which x86-64 spells
     ## `(flags, newsp, parent_tidptr, child_tidptr, tls)` — the generic one.
     ## (`CONFIG_CLONE_BACKWARDS`, which swaps the last two, is 32-bit x86 and
     ## Arm; getting them the wrong way round here still "works" — the child runs
@@ -344,7 +344,7 @@ elif nativeThreads:
   proc procBits(p: proc (arg: pointer) {.nimcall.}): uint =
     ## The code address of a `nimcall` proc, as a plain word. `cast` refuses to go
     ## from a proc type to an integer; reading the variable's own bytes is how it
-    ## is said, and for a `nimcall` those bytes ARE the entry point.
+    ## is said, and for a `nimcall` those bytes are the entry point.
     var tmp = p
     result = cast[ptr uint](addr tmp)[]
 
@@ -391,7 +391,7 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
     # The block's self-pointer (see the Linux path): `&threadvar` is `FS:[0] + off`.
     let tlsBase = base + uint(stackBytes)
     cast[ptr uint](tlsBase)[] = tlsBase
-    # The kernel stores the id through BOTH pointers before the child runs. The
+    # The kernel stores the id through both pointers before the child runs. The
     # child's copy (`t.sys`) becomes 1 when it exits, so the affinity call below
     # reads the parent's own copy, which nothing else touches.
     var tid = 0
@@ -412,12 +412,12 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
       discard cpusetSetaffinity(CpuLevelWhich, CpuWhichTid, tid,
                                 csize_t(sizeof(s)), addr s)
   elif nativeThreads:
-    # One mapping holds both regions, with the stack BELOW the thread-local
+    # One mapping holds both regions, with the stack below the thread-local
     # block, so a stack overflow runs off the low end into unmapped memory and
     # faults — rather than quietly rewriting this thread's own thread-locals.
     let stackBytes = if stackSize > 0: (stackSize + 4095) and not 4095
                      else: NativeStackBytes
-    # How big one thread's `{.threadvar.}`s are is a LINK-time fact: nifasm lays
+    # How big one thread's `{.threadvar.}`s are is a link-time fact: nifasm lays
     # every module's into one block and writes the total into the cell this
     # points at (`TlsSize` in `src/lib/intrinsics.nim`). The main thread's block
     # is `.bss`, i.e. zeroed, and a fresh anonymous mapping is zeroed too — so

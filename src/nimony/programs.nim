@@ -28,7 +28,7 @@ type
   NifModule* = ref object
     reader: Reader
     index*: NifIndex
-    public*: OrderedTable[string, NifIndexEntry]  ## ORDERED: `loadInterface`
+    public*: OrderedTable[string, NifIndexEntry]  ## Ordered: `loadInterface`
                                                  ## turns this into the
                                                  ## overload sets, so its
                                                  ## order is observable in

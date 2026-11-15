@@ -72,7 +72,7 @@ proc setFileSize(fh: OsFileHandle, newFileSize = -1, oldSize = -1): OSErrorCode 
         while (e = posix_fallocate(fh, 0, newFileSize); e == EINTR):
           discard
       if e == EINVAL or e == EOPNOTSUPP:
-        # fallback arguable; Most portable BUT allows SEGV
+        # fallback arguable; Most portable but allows SEGV
         let r = pcall(ftruncate(fh, newFileSize))
         if r < 0: result = OSErrorCode(int32(0 - r))
       elif e != 0:
@@ -92,7 +92,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
   ##`mappedSize` and `offset`
   ## can be used to map only a slice of the file.
   ##
-  ## `offset` must be multiples of the PAGE SIZE of your OS
+  ## `offset` must be multiples of the page size of your OS
   ## (usually 4K or 8K but is unique to your OS)
   ##
   ## `allowRemap` only needs to be true if you want to call `mapMem` on
@@ -231,7 +231,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
     if mappedSize != -1: # XXX Logic here differs from `when windows` branch ..
       result.size = mappedSize # .. which always fstats&Uses min(mappedSize, st).
     else: # if newFileSize!=-1: result.size=newFileSize # if trust setFileSize
-      var stat: Stat = default(Stat) # ^^.. BUT some FSes (eg. Linux HugeTLBfs) round to 2MiB.
+      var stat: Stat = default(Stat) # ^^.. but some FSes (eg. Linux HugeTLBfs) round to 2MiB.
       let sr = pcall(fstat(result.handle, stat))
       if sr >= 0:
         result.size = stat.st_size.int # int may be 32-bit-unsafe for 2..<4 GiB

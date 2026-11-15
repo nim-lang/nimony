@@ -114,7 +114,7 @@ type
       ## coroutine's slot is a bare `ErrorCode` and is written whole.
     resultSlotType*: TokenBuf
       ## The return type `patchParamList` built the result param from. Needed
-      ## again by `generateCoroutineType` for a routine that HAS a result slot
+      ## again by `generateCoroutineType` for a routine that does have a result slot
       ## but no `result` local to lift into it — which is what a `void`
       ## `.raises` routine is once its signature returns an `ErrorCode`.
     kind*: RoutineKind
@@ -124,10 +124,10 @@ type
       ## `.passive` iters use the factory model and don't set this.
     capturedEnvField*: SymId
       ## Set for a `.closure` iter whose body captures locals of the
-      ## ENCLOSING proc: the coro frame grows one extra field holding the
+      ## enclosing proc: the coro frame grows one extra field holding the
       ## erased `(ref RootObj)` pointer to that proc's lambdalifting
       ## environment. Whoever creates the frame (lambdalifting, at the
-      ## point where the iter VALUE is built) fills it in; every
+      ## point where the iter value is built) fills it in; every
       ## `(envp EnvType field)` in the body reads the capture back
       ## through it. `SymId(0)` = this iter captures nothing.
 
@@ -186,7 +186,7 @@ type
       ## Set by `(delay0)`; consumed by the following `(suspend)` to
       ## decide between real parking and a synchronous state transition.
     pendingCapturedEnvField*: SymId
-      ## Inbox for the NEXT `transformCoroutineDecl` call: the consumer
+      ## Inbox for the next `transformCoroutineDecl` call: the consumer
       ## (lambdalifting) knows whether the iter it is about to hand us
       ## captures, we don't. Moved into `currentProc` on entry and
       ## cleared, so a following non-capturing iter can't inherit it.
@@ -267,21 +267,21 @@ proc coroTypeForExternIter*(iterSym: SymId): SymId =
 proc coroEnvFieldForIter*(iterSym: SymId): SymId =
   ## The frame field holding a capturing `.closure` iter's env pointer.
   ## Derived from the iter sym exactly like the frame type and the
-  ## wrapper, so the frame-CREATION site (lambdalifting) and the
-  ## frame-READING sites (the state machine, generated here) arrive at
+  ## wrapper, so the frame-creation site (lambdalifting) and the
+  ## frame-reading sites (the state machine, generated here) arrive at
   ## the same name without having to agree on an order.
   coroHelperName(iterSym, "cenv", "")
 
 proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
   ## Publish a placeholder signature for a coroutine's `init` wrapper so
   ## downstream passes (eraiser / duplifier / destroyer / constparams) can
-  ## resolve its type via `tryLoadSym` even though no wrapper DECL exists in
+  ## resolve its type via `tryLoadSym` even though no wrapper decl exists in
   ## this process. Hexer-generated symbols never enter a module's sem index,
   ## which is the one thing both callers are up against:
   ##
   ##  * lambdalifting expands a same-module `.closure` iter corofor into a
   ##    trampoline that names the wrapper before cps has emitted it;
-  ##  * cps compiles a call to a FOREIGN `.passive` proc, whose wrapper the
+  ##  * cps compiles a call to a foreign `.passive` proc, whose wrapper the
   ##    DEFINING module's hexer run emits — there is no later point in *this*
   ##    run at which it becomes loadable.
   ##
@@ -293,7 +293,7 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
   ## The shape mirrors what `generateCoroutineHelpers` emits: original params,
   ## then `(param result (ptr T))` if non-void, then
   ## `(param caller Continuation)`, return type `Continuation`, and the
-  ## routine's OWN pragmas — copied, not synthesized, because a foreign
+  ## routine's own pragmas — copied, not synthesized, because a foreign
   ## wrapper's placeholder is never replaced by the real signature in this
   ## process and `constparams.trCall` reads `raises` off it to decide whether
   ## the call returns an `(ErrorCode, T)` tuple. Body is empty (`.`); for a
@@ -377,7 +377,7 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
   ## iterator's slot is its success tuple, the very mapping its init wrapper's
   ## signature gets from `patchParamList`.
   ##
-  ## NOTE: parameter types are copied verbatim (`takeTree`) on the
+  ## Note: parameter types are copied verbatim (`takeTree`) on the
   ## assumption that iter param types are scalar. If we ever support
   ## nested itertypes in param positions we'll need to recurse via a
   ## proctype-walker here.
@@ -416,7 +416,7 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
           dest.addSymUse pool.symId(ContinuationName), info
           dest.addDotToken() # default value
       dest.addSymUse pool.symId(ContinuationName), info
-      # Pragmas: ALWAYS emit `(pragmas (closure))` regardless of whether
+      # Pragmas: always emit `(pragmas (closure))` regardless of whether
       # the source itertype was `.closure` or `.passive`. Two reasons:
       #  (a) cps's `trProctype` re-walks types and treats ProctypeT with
       #      `(pragmas (passive))` as an unlifted passive proctype — it
@@ -425,7 +425,7 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
       #  (b) `(closure)` is the canonical "this is a closure-shaped fn
       #      pointer" marker used by `isClosure`, cps's `HconvX` path,
       #      etc. Both `.closure` and `.passive` iter values share the
-      #      SAME tuple ABI, so they share the same lifted-tuple shape.
+      #      same tuple ABI, so they share the same lifted-tuple shape.
       dest.copyIntoKind PragmasU, info:
         dest.copyIntoKind ClosureP, info: discard
     addRootRef dest, info
@@ -775,20 +775,20 @@ proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor): SymId =
   let info = n.info
   let callStart = n
   n = sub(n)
-  # The branch we take here is the ONLY reliable signal for whether
+  # The branch we take here is the only reliable signal for whether
   # the arg list has an upstream env-arg (case 3, non-Symbol target).
   # Probing the last arg for TupatX is unsound: a regular `(tupat
   # someTuple 0)` arg would falsely match.
   var targetBuf = createTokenBuf(4)
   var upstreamEnvArg = false
   if n.kind == Symbol and isClosureIter(n.symId):
-    # Direct `.passive` iter DECL call — route through the iter's init wrapper.
+    # Direct `.passive` iter decl call — route through the iter's init wrapper.
     # A foreign iter's wrapper exists only in its own module's hexer run.
     publishWrapperSignature(n.symId, c.thisModuleSuffix)
     targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
     inc n
   elif n.kind == Symbol:
-    # Iter-VALUE local: a `.passive` iter value is a bare function pointer
+    # Iter-value local: a `.passive` iter value is a bare function pointer
     # to the wrapper (no env tuple — see cps's `trProctype`), so call it
     # directly. The wrapper always allocates a fresh frame.
     targetBuf.addSymUse n.symId, n.info
@@ -859,7 +859,7 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## already put `Join`'s `=destroy` — which closes an iterator the loop
   ## leaves early — on every way out of its scope.
   ##
-  ## In a REGULAR routine, `(corofor (call iter args... (haddr forLoopVar)
+  ## In a regular routine, `(corofor (call iter args... (haddr forLoopVar)
   ## (haddr cell)) BODY)` becomes
   ##
   ##   attach(addr cell, iter.init(args..., addr forLoopVar,
@@ -908,7 +908,7 @@ proc trCall*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let typ = c.typeCache.getType(fn, {SkipAliases})
   if procHasPragma(typ, PassiveP):
     var retType = getType(c.typeCache, n)
-    # `retType` is the NIMONY answer. A `.raises` callee hands back an
+    # `retType` is the Nimony answer. A `.raises` callee hands back an
     # `ErrorCode` beside it — or instead of it — so the temp receiving the call
     # has to be the Leng type, and a callee that returns nothing still has one.
     # See `builtintypes.addLengReturnType`.
@@ -1011,7 +1011,7 @@ proc trLocal*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skip n
       elif isPassive and n.kind == Symbol:
         # rhs is a `.passive` proc/iter sym used as a value — rewrite to
-        # its init wrapper, NOT `target.symId` (that's the local var).
+        # its init wrapper, not `target.symId` (that's the local var).
         # A non-Symbol rhs (e.g. `nil`, or another value of the same
         # type) is left to `coroTr`: the lowered passive type is a bare
         # wrapper proctype, so a plain `(nil)` is already well-typed.
@@ -1093,7 +1093,7 @@ proc returnValue*(c: var Context; dest: var TokenBuf; n: var Cursor;
       # void type for Symbol can happen for `raise` statements:
       coroTr c, dest, n
     elif isRaise and c.currentProc.resultIsTuple and n.exprKind != TupconstrX:
-      # A BARE code rather than the success tuple the `eraiser` builds at a
+      # A bare code rather than the success tuple the `eraiser` builds at a
       # proc-exit raise. The value half of the slot keeps whatever it held,
       # exactly as an ordinary routine leaves it.
       dest.copyIntoKind AsgnS, info:
@@ -1113,13 +1113,13 @@ proc trYield*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # this.caller.fn = cast[ContinuationProc](nextState)  # .closure iters only
   # return Continuation(fn: stateToProcName(c, sym, nextState), env: this)
   #
-  # The returned Continuation does NOT hand control to `this.caller` —
+  # The returned Continuation does not hand control to `this.caller` —
   # for `.closure` iters that slot is not a return target. State procs
   # are driven directly by the for-loop trampoline's `advance(it) =
   # it.fn(it.env)`; the returned `(nextState, this)` is what the next
   # `advance` invokes to resume. `this.caller.fn = nextState` is a
   # separate cache used only by the wrapper's reuse branch when the
-  # iter VALUE is called as `g()` outside the loop (see
+  # iter value is called as `g()` outside the loop (see
   # `tclosure_iter_shared_state.nim`); `this.caller.env` is the
   # ownership marker read by `emitFinalReturn`.
   #
@@ -1152,7 +1152,7 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # this.res[] = x
   # var tmpCaller = this.caller; deallocFrame(this); return tmpCaller
   #
-  # A `raise` leaves as a RETURN. A state proc's return type is the
+  # A `raise` leaves as a return. A state proc's return type is the
   # `Continuation` the trampoline drives next, and it is not an error channel:
   # the code went into the result slot above, which is where the caller's
   # `(failed tmp)` reads it. Emitting the source's own tag here instead would
@@ -1192,7 +1192,7 @@ const
     ## frame field.
 
 proc markAddressTaken(c: var Context; n: Cursor) =
-  ## A local whose address is taken has to live in the FRAME, not in whichever
+  ## A local whose address is taken has to live in the frame, not in whichever
   ## state proc happens to contain the `addr`. The pointer can be stored
   ## anywhere and read in a later state, i.e. after that proc returned, and the
   ## `def != use` rule below cannot see it: taking an address is not a use in a
@@ -1313,10 +1313,10 @@ proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
     return true
   # `linearScan` visits the nested nodes; the root was checked above.
   #
-  # REGISTER THE LOCALS WE WALK PAST. `isPassiveCall` types the call TARGET,
-  # and this predicate reaches nodes nested arbitrarily deep BEFORE the main
+  # Register the locals we walk past. `isPassiveCall` types the call target,
+  # and this predicate reaches nodes nested arbitrarily deep before the main
   # traversal has registered the locals declared beside them. A local declared
-  # INSIDE this subtree and used as a passive call's target therefore failed
+  # inside this subtree and used as a passive call's target therefore failed
   # the typenav lookup outright:
   #
   #   proc drv() {.passive.} =
@@ -1324,7 +1324,7 @@ proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
   #       let h = arr[0]        # declared inside the branch…
   #       discard h(5)          # …and the call target -> could not find symbol: h.0
   #
-  # The same local declared OUTSIDE the branch was fine, because the main pass
+  # The same local declared outside the branch was fine, because the main pass
   # had already registered it — which is why this only ever showed up for
   # `if`/`while` regions, and why a bare `block:` (never handed to this
   # predicate) compiled. Registration happens in a scope of our own so nothing
@@ -1334,7 +1334,7 @@ proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
   linearScan n:
     let sk = n.stmtKind
     if sk in {LetS, CursorS, PatternvarS, VarS, TvarS, TletS, GvarS, GletS}:
-      # A plain child walk, NOT `into`: `into` asserts its body consumed every
+      # A plain child walk, not `into`: `into` asserts its body consumed every
       # child, and we only want the four leading slots (name, export marker,
       # pragmas, type) — the init value is none of our business here.
       var d = n.childCursor      # at the name
@@ -1370,17 +1370,17 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor)
 # ---------------------------------------------------------------------
 #
 # A state proc is not the coroutine's activation record. It runs, it returns,
-# and its stack is gone — while the FRAME, and everything the frame points at,
+# and its stack is gone — while the frame, and everything the frame points at,
 # has to survive until the coroutine is resumed and, for a `.passive` callee,
 # until that callee has run to completion. So the coroutine has exactly one
 # kind of storage that outlives a state: the frame.
 #
-# `escapingLocals` below decides which NAMED locals go there — the `def != use`
+# `escapingLocals` below decides which named locals go there — the `def != use`
 # rule, plus `markAddressTaken` for a local a pointer is kept to. Neither rule
 # can see data that has no name at all, and a value that is only ever an
 # argument does not get one until much later: `constparams.trConstRef` gives a
 # literal or a constructor a temporary to take the address of, and by then the
-# body has been cut and that temporary is a local of ONE state proc. The
+# body has been cut and that temporary is a local of a single state proc. The
 # pointer taken from it lives on — in an `openArray` in the frame, in the
 # `.passive` callee's own frame — so the length arrives intact and the data
 # pointer points into a dead stack slot.
@@ -1400,11 +1400,11 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor)
 proc trGotoValue(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc extendLifetime(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## `n` is an actual the callee receives as an ADDRESS. If it has no storage
+  ## `n` is an actual the callee receives as an address. If it has no storage
   ## of its own to take an address of, give it some — as a local, which the
   ## `(haddr)` below then pins to the frame.
   if not constructsValue(n):
-    # An lvalue already has storage of its own, and whether THAT storage is
+    # An lvalue already has storage of its own, and whether that storage is
     # durable enough is the ordinary escape question `escapingLocals` answers:
     # a borrow which outlives the call is one the caller kept, and keeping it
     # means an `addr` that `markAddressTaken` can see — `toOpenArray` is
@@ -1490,7 +1490,7 @@ proc trGotoBuf(c: var Context; dest: var TokenBuf; buf: var TokenBuf) =
   ## Run the goto conversion over a freshly synthesized statement list so the
   ## synthesized `ite`s get the same suspension-point splitting as the ones
   ## that came out of `finalir`. `buf` may die on return even though `trGoto`
-  ## registers a local's type in the `TypeCache` as a Cursor INTO it: a Cursor
+  ## registers a local's type in the `TypeCache` as a Cursor into it: a Cursor
   ## holds a reference on the buffer's `CursorOwner`, so the token storage
   ## outlives the `TokenBuf` for exactly as long as something still points at
   ## it.
@@ -1499,11 +1499,11 @@ proc trGotoBuf(c: var Context; dest: var TokenBuf; buf: var TokenBuf) =
     trGoto c, dest, m
 
 proc emitErrorCodeOf(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## The ERROR CODE of a raise operand. An enclosing `try`'s tracker is an
+  ## The error code of a raise operand. An enclosing `try`'s tracker is an
   ## `ErrorCode`, and inside a routine that itself raises, the `eraiser` has
   ## already given the raise the whole success tuple — the code is its first
   ## element. Getting this wrong does not fail to compile, it puts the returned
-  ## VALUE where the code belongs.
+  ## value where the code belongs.
   if n.exprKind == TupconstrX:
     let start = n
     n = sub(n)
@@ -1537,7 +1537,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # is no condition slot to rotate and no prelude to split off, because
       # `finalir.trWhile` already turned `while cond` into a leading guard
       # whose `else` is a `(jmp loopExit)`. So the whole construct is one
-      # state label plus a back-edge to it, and every way OUT is already a
+      # state label plus a back-edge to it, and every way out is already a
       # `jmp` to the `(lab loopExit)` the Final IR emitted after the loop.
       let head = c.currentProc.labelCounter
       inc c.currentProc.labelCounter
@@ -1617,7 +1617,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       case n.kind
       of TagLit:
         if n.exprKind in CallKinds:
-          # Also reached for a `(call ...)` in STATEMENT position: same tree,
+          # Also reached for a `(call ...)` in statement position: same tree,
           # same actuals, and its arguments escape the same way.
           trGotoCall c, dest, n
           return
@@ -1642,11 +1642,11 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # The value is the second operand: a passive call there ends the
           # state, so the label goes after the whole assignment.
           #
-          # At the ROOT of the value, never nested inside it. `coroTr` lowers
+          # At the root of the value, never nested inside it. `coroTr` lowers
           # a passive call into a `return` of the next continuation, so
           # everything after it in the same statement belongs to the state the
           # resume lands in — which a label placed after the assignment cannot
-          # express. A value that merely CONTAINS a suspension point is a
+          # express. A value that merely contains a suspension point is a
           # shape this pass cannot lower at all, so it says so instead of
           # emitting an assignment that sits on the far side of the transition
           # and never runs (the eraiser's old `result = (Success, call())`).
@@ -1841,7 +1841,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # a `block` — in its own `(stmts ...)`, and the scope ends are already
           # spelled out as `kill` instructions. The state machine's `(lab k)`
           # closes the current state proc and opens the next one, so it can only
-          # live at the TOP level of the body: a label emitted inside a nested
+          # live at the top level of the body: a label emitted inside a nested
           # list would close that list's parens instead of the proc's. `nj.nim`
           # never produced the nesting (its guard lowering flattens by
           # construction), which is why this had no counterpart before.
@@ -2125,7 +2125,7 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
             if key == c.currentProc.resultSym:
               # No success-tuple wrapping here even for a raising coroutine:
               # `eraiser.trResultDecl` has already retyped the `result`
-              # local, so `typ` IS the tuple and `patchParamList` built the
+              # local, so `typ` is the tuple and `patchParamList` built the
               # matching pointer from the raw return type.
               dest.copyIntoKind PtrT, info:
                 coroTr c, dest, typ
@@ -2502,7 +2502,7 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
         init.addSymUse thisParam, info
       init.addIntLit 1, info # field is in superclass
 
-  # The `oconstr` and the `asgn` around it stay OPEN: the frame's local
+  # The `oconstr` and the `asgn` around it stay open: the frame's local
   # fields are not known yet — `escapingLocals` discovers them while the
   # body is transformed — and an `oconstr` may not be closed before every
   # field of the type is in it. `completeFrameConstr` finishes both.
@@ -2751,8 +2751,8 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           case n.stmtKind
           of JmpS:
             # Two different `jmp`s meet here. The CPS state machine's own
-            # carries an INTEGER state id (this pass and `togoto` produce
-            # it); the structured Nimony one carries a label SYMBOL and is
+            # carries an integer state id (this pass and `togoto` produce
+            # it); the structured Nimony one carries a label symbol and is
             # `xelim`'s short-circuit lowering, which must survive to Leng
             # untouched (`doc/final_ir.md`).
             if n.childCursor.kind == IntLit:
@@ -2771,7 +2771,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             else:
               takeTree dest, n
           else:
-            # NOT an `elif` branch of the `case` above: nimony's own `case`
+            # Not an `elif` branch of the `case` above: nimony's own `case`
             # takes `of` and `else` and nothing else, so an `elif` here is
             # dropped on the floor — which is exactly how this guard, written
             # as one, silently unmade `coroTr` in the self-hosted hexer. See
@@ -2786,7 +2786,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
               # verbatim and rewrite only the value(s). This is the `DotX` /
               # `DdotX` selector guard above in its other position, and the
               # twin of `lambdalifting`'s `trKv` / `treKv`. A `KvX` table key
-              # IS a real value use, so it stays in `coroTrSons`.
+              # is a real value use, so it stays in `coroTrSons`.
               copyInto dest, n:
                 dest.takeTree n # key (field identity — never rewrite)
                 while n.hasMore:

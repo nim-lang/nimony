@@ -180,7 +180,7 @@ type BootBackend* = enum
   bbNative  ## force `nimony n`, and fail loudly when it is not available
 
 var bootBackend* = bbAuto
-  ## `--boot-backend:`. Exists so the two paths can be MEASURED against each
+  ## `--boot-backend:`. Exists so the two paths can be measured against each
   ## other on a host where the native one is automatic: without it, timing the
   ## C boot on linux/amd64 means hiding `bin/arkham` from hastur.
 var debugBuild* = false

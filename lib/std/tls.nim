@@ -117,7 +117,7 @@ const
   SchemeRsaPssSha256 = 0x0804
   SchemeRsaPssSha384 = 0x0805
   SchemeRsaPssSha512 = 0x0806
-  # offered only so a server knows which CERTIFICATE signatures we can check;
+  # offered only so a server knows which certificate signatures we can check;
   # TLS 1.3 forbids them for CertificateVerify itself
   SchemeRsaPkcs1Sha256 = 0x0401
   SchemeRsaPkcs1Sha384 = 0x0501

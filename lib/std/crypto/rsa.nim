@@ -77,7 +77,7 @@ const
                   0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40]
 
 func rsaVerifyPkcs1v15*(key: RsaPublicKey; h: RsaHash; message, signature: openArray[byte]): bool =
-  ## RSASSA-PKCS1-v1_5. The expected encoding is BUILT and compared whole —
+  ## RSASSA-PKCS1-v1_5. The expected encoding is built and compared whole —
   ## parsing the decrypted block instead is how Bleichenbacher's 2006 forgery
   ## got through so many verifiers.
   result = false

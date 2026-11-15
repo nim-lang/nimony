@@ -457,7 +457,7 @@ proc leadMask(g: Grammar; n: Node): IndSet =
   case n.kind
   of nGuard: result = n.ind
   of nSeq:
-    # "Matches nothing" means EVERY item matched nothing, so every item's
+    # "Matches nothing" means every item matched nothing, so every item's
     # constraint applies -- including a nullable one that *could* have consumed
     # a token. `optInd` is `COMMENT? validInd`: skipping the comment does not
     # excuse the indentation, and treating the optional COMMENT as the end of
@@ -513,7 +513,7 @@ proc firstOf(g: Grammar; n: Node): FirstSet =
       for a in g.argsOf.getOrDefault(n.text): union(result, firstOf(g, a))
   of nTag: result = firstOf(g, n.kids[0])
   of nIndented:
-    # The body's FIRST set is measured against the INNER indentation, and
+    # The body's FIRST set is measured against the inner indentation, and
     # `pushInd` makes the first token of the block define it -- so a token that
     # is `IND{=}` inside is `IND{>}` outside, and one that is not `IND{=}`
     # inside cannot be the first token at all. (`restrict` to `{icGt}` instead
@@ -1499,7 +1499,7 @@ proc toAlt(n: Node): Alt =
                  enterCode: @[], leaveCode: @[], afterCode: @[], presetPos: "")
 
 proc hasFreeAnchor(n: Node): bool =
-  ## True when the node contains a `^tag[...]` that is NOT inside a repetition
+  ## True when the node contains a `^tag[...]` that is not inside a repetition
   ## of its own rule -- such a tag anchors on the *caller's* accumulated value,
   ## so the mark has to cross the rule boundary as a parameter.
   if n.kind == nTag and n.anchored: return true
@@ -1540,7 +1540,7 @@ proc condOf(e: Emitter; n: Node): Code =
     let ah = leadAhead(n)
     if ah != nil: base = condFor(intersectFirst(firstOf(e.g, n), firstOf(e.g, ah.kids[0])))
     else: base = condFor(firstOf(e.g, n))
-  # An optional or repeated body that LEADS with a semantic predicate is only
+  # An optional or repeated body that leads with a semantic predicate is only
   # entered when the predicate holds, and a FIRST set cannot express one -- so
   # it has to be ANDed in here, exactly as `emitAlts` does for alternatives.
   result = withGuards(base, guardsOf(if n.kind == nSeq: n.kids else: @[n]))

@@ -11,7 +11,7 @@
 ## `std/crypto/x25519` runs on the native backend.
 ##
 ## Why assembler: X25519's scalar is the secret, and constant time is a
-## property of the INSTRUCTIONS executed — no branch and no memory index may
+## property of the instructions executed — no branch and no memory index may
 ## depend on it. A compiler is free to turn `mask and (a xor b)` into a branch
 ## if it thinks that faster; an `{.assembler.}` body is transliterated one
 ## statement to one instruction, so what is written here is what runs. Every

@@ -59,7 +59,7 @@ proc initPass*(initialBuf: sink TokenBuf; moduleSuffix: string;
                firstPassName: string; bits: int; nextTemp = 0): Pass =
   ## Initialize a new Pass pipeline with the given input buffer.
   ## The buffer is moved into the Pass and a cursor is created.
-  ## `nextTemp` seeds the xelim temp counter: a NESTED pipeline (e.g. the
+  ## `nextTemp` seeds the xelim temp counter: a nested pipeline (e.g. the
   ## per-coroutine Final-IR run in `treIteratorBody`) must continue the outer
   ## pipeline's counter, or its `lowerExprs` re-mints \`x.N SymIds that
   ## collide with still-live outer temps in the same proc (one frame slot,

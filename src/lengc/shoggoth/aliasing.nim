@@ -185,7 +185,7 @@ proc mayAlias*(a: var Aliasing; x, y: SymId): bool {.inline.} =
 proc accessRoots*(c: Cursor; roots: var seq[SymId]; m: ptr MainModule = nil) =
   ## The base symbols whose memory the value/location at `c` may be rooted at.
   ## Memory accesses contribute their base; calls/constructors the union of
-  ## their operands; an index expression does NOT contribute (it selects within
+  ## their operands; an index expression does not contribute (it selects within
   ## the base, not a separate object). A forging `cast` contributes nothing:
   ## its pointee is untracked, not the inner integer.
   case c.kind

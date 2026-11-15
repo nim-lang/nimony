@@ -43,7 +43,7 @@ Downstream consequences of it all happening here:
 - The destroyer sees a tuple-typed temp like any other local, and `cps` sees a
   coroutine that happens to return a tuple. Neither has to know about this
   pass.
-- A pass that runs LATER and still needs to signal an error must emit the
+- A pass that runs later and still needs to signal an error must emit the
   finished form, because nothing lowers raises after this point. The
   duplifier's out-of-memory check is the only such case; it goes through
   `builtintypes.addRaisedCode`.
@@ -61,7 +61,7 @@ pass.** What that removed elsewhere:
   the handler-less `try`/`finally` that `cps` builds for the `corofor`
   trampoline, and its `trRaise` only ever emits a `return`.
 
-The one `raise` that still reaches codegen is the kind a LATER pass emits for
+The one `raise` that still reaches codegen is the kind a later pass emits for
 an unrecoverable failure — the duplifier's out-of-memory check — which no
 handler catches and which builds its payload with
 `builtintypes.addRaisedCode`.
@@ -100,10 +100,10 @@ type
       ## that loop's iterator call. Per routine: local ids are only unique
       ## within one. A raising `.passive` iterator yields into an
       ## `(ErrorCode, T)` slot, so its loop variable is widened like a raising
-      ## call's temp — and the declaration comes BEFORE the loop that decides
+      ## call's temp — and the declaration comes before the loop that decides
       ## it. See `trCoroFor`.
     lowered: HashSet[SymId]
-      ## Routines an EARLIER pass already ran `lowerRaisesOfRoutine` on —
+      ## Routines an earlier pass already ran `lowerRaisesOfRoutine` on —
       ## the procs lambdalifting cut a `.closure` iterator into. Their raising
       ## calls are temps plus checks already; translating them again would
       ## widen those temps a second time.
@@ -444,7 +444,7 @@ proc takeRaisingHeader(c: var Context; dest: var TokenBuf; decl: Cursor;
 
 proc takeLocalHeader(c: var TypeCache; dest: var TokenBuf; n: var Cursor;
                      kind: SymKind; isTuple: bool) =
-  ## The local is REGISTERED with its source-level type even when the emitted
+  ## The local is registered with its source-level type even when the emitted
   ## declaration widens to a tuple: every use of it is projected onto the value
   ## half, so the source-level type is what a type query about a use must
   ## answer.
@@ -520,7 +520,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetIsTuple: bo
           dest.addSymUse symId, info
           dest.addIntLit 1, info
   else:
-    # A NON-raising call feeding a tuple-shaped destination is the mirror
+    # A non-raising call feeding a tuple-shaped destination is the mirror
     # case: the value is fine, it just has to arrive wrapped.
     var needsTuple = targetIsTuple and not canRaise
     if needsTuple:
@@ -746,7 +746,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ##   <finally>             # the caught path's copy
   ##   (lab :`exend.N)
   ##
-  ## The labels are DIRECT children of the enclosing statement list on purpose:
+  ## The labels are direct children of the enclosing statement list on purpose:
   ## `destroyer.collectLabels` scans direct children only, and a label it
   ## cannot see is a jump whose scope exits run no destructors.
   ##
@@ -1014,7 +1014,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     raiseAssert "BUG: unexpected ParRi in eraiser.tr" # classic ParRi only
 
 proc lowerRaisesOfRoutine*(dest: var TokenBuf; n: Cursor; bits: int) =
-  ## This pass for ONE routine declaration `n`, for a pass that runs before
+  ## This pass for a single routine declaration `n`, for a pass that runs before
   ## it and needs a routine's exceptions lowered first: lambdalifting cuts a
   ## `.closure` iterator into state procs, and in a state proc a raise has no
   ## error channel left that this pass could see. Lowered first, the iterator

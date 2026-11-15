@@ -48,7 +48,7 @@ type
     escapes*: bool      ## param's graph is stored into a global or passed to a
                         ## callee with no summary
     constRef*: bool     ## the parameter carries `(constref)`: it is a pointer
-                        ## `lengcgen` introduced for a source-level BY-VALUE
+                        ## `lengcgen` introduced for a source-level by-value
                         ## parameter, so nothing may write through it. Not a
                         ## result of the analysis below — the precondition that
                         ## licensed passing by reference. See `paramMayWrite`.
@@ -82,7 +82,7 @@ proc paramMayWrite*(s: FunctionSummary; idx: int): bool {.inline.} =
   ## parameter, and the only way to pass it onwards is another by-value
   ## parameter (again `(constref)`) or a copy. Nothing the body does, seen or
   ## unseen, can turn it into a write. Note this says nothing about the
-  ## POINTEE: another argument may alias the same object and be written
+  ## pointee: another argument may alias the same object and be written
   ## through, which is why every argument position is asked separately.
   if idx < 0 or idx >= s.params.len: return true
   if s.params[idx].constRef: return false
@@ -118,7 +118,7 @@ type
     paramLookup: Table[SymId, int]
     localRoots: Table[SymId, seq[int]] ## local sym -> interface elements it aliases
     reads, writes, slotW, escapes: seq[bool]  ## per element, length nParams+1
-    constRef: seq[bool]                ## per PARAM (length nParams): carries
+    constRef: seq[bool]                ## per param (length nParams): carries
                                        ## `(constref)`. Not derived from the
                                        ## body — see `ParamEffect.constRef`.
     writesGlobal, readsGlobal, callsUnknown, raises: bool
@@ -540,7 +540,7 @@ proc markAllUnknown(a: var ProcAnalysis) =
 
 proc isExternProc(pragmas: Cursor): bool =
   ## A proc whose implementation lives outside the NIF world: `importc` /
-  ## `importcpp` / `importjs`. Its body is `(stmts .)` — an EMPTY body, not an effect-free
+  ## `importcpp` / `importjs`. Its body is `(stmts .)` — an empty body, not an effect-free
   ## one, so walking it would "prove" that `time(addr x)` neither writes
   ## through nor escapes its argument and copyprop would then keep believing
   ## `x`'s pre-call value. There is nothing to analyse; say so.
@@ -964,7 +964,7 @@ when isMainModule:
     doAssert not s.writesGlobal
 
   block constref_param_outlives_callsUnknown:
-    # `(constref)` marks a pointer standing for a BY-VALUE source parameter.
+    # `(constref)` marks a pointer standing for a by-value source parameter.
     # A call to a callee with no summary sets `callsUnknown`, which otherwise
     # forces "may write" on every parameter; the marked one keeps its answer,
     # because no body — seen or unseen — can turn a by-value parameter into a

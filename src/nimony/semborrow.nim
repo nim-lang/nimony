@@ -28,9 +28,9 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
   be generic, so generate the parmeter type properly. It also needs to
   skip modifiers first.]#
   var n = signature
-  # Peek the return type first: a distinct return wraps the WHOLE call in a
+  # Peek the return type first: a distinct return wraps the whole call in a
   # `(dconv …)`. Under nifcore's open-tag bookkeeping the wrapper must be
-  # OPENED before the call — classic inserted the open tag after the fact,
+  # opened before the call — classic inserted the open tag after the fact,
   # which now both splits the head from its line-info suffix and corrupts
   # the seal positions.
   var retType = signature

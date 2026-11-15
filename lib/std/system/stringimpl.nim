@@ -102,8 +102,8 @@ func isOom*(s: string): bool {.inline.} =
 # ---- hashing ----
 #
 # `std/hashes` cannot see this representation and `system` cannot import
-# `std/hashes`, so the mixing steps are restated here. THEY MUST STAY IN LOCK-STEP
-# WITH `hashes.!&` AND `hashes.!$` — `hash(string)` is just an inline shim for
+# `std/hashes`, so the mixing steps are restated here. They must stay in lock-step
+# with `hashes.!&` and `hashes.!$` — `hash(string)` is just an inline shim for
 # `hashStr`, and two different mixes would silently split every table.
 
 template hashMix(h: uint; val: uint): uint =
@@ -214,7 +214,7 @@ func hashStrLong(v: uint; sl: int; more: ptr LongString): uint {.noinline.} =
         inc i
 
 func hashStr*(s: string): uint {.alwaysInline, noSideEffect, raises: [], tags: [].} =
-  ## Hash of `s`'s bytes. The VALUE is mixing the chars one at a time (`!&`/`!$`);
+  ## Hash of `s`'s bytes. The value is mixing the chars one at a time (`!&`/`!$`);
   ## the fetch is the prefix word the ABI already has. Short strings stay in this
   ## wrapper (`charAt` of `bytes`). Longer ones call `hashStrLong` for the tail.
   ## By-value and `{.alwaysInline.}` so intern does not call out or take an
@@ -249,7 +249,7 @@ iterator items*(s: string): char {.inline.} =
   ## implicit `string`→`openArray` conversion, and then pays a bounds-checked
   ## `a[i]` per byte — a call the native backend does not inline, ~34
   ## instructions each, millions of them per emitted module. Resolving the
-  ## payload pointer ONCE and indexing it raw is the whole win; the bound is
+  ## payload pointer once and indexing it raw is the whole win; the bound is
   ## `0 ..< len(s)` either way, so no check is being skipped, only hoisted.
   ##
   ## As with `readRawData`, the pointer is captured up front: growing `s` from
@@ -297,7 +297,7 @@ func `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
   s.bytes = 0
 
 func destroyHeapStr(more: ptr LongString) {.noinline.} =
-  ## The cold half of `=destroy`. Only a HEAP string reaches here, and on the
+  ## The cold half of `=destroy`. Only a heap string reaches here, and on the
   ## compiler's own workload that is 0.17% of destroys — so this is the same
   ## split, for the same reason, as `hashStr`/`hashStrLong` above.
   ##
@@ -826,7 +826,7 @@ func cmpStringPtrs(a, b: ptr string): int =
     if result == 0: result = aslen - bslen
     return
   # At least one long. Hot prefix (bytes 1..AlwaysAvail) mirrors heap data,
-  # but ONLY for the first fullLen bytes — `shrink` leaves stale bytes in the
+  # but only for the first fullLen bytes — `shrink` leaves stale bytes in the
   # cache past fullLen. Cap pfxLen at the logical length so we don't compare
   # garbage when a heap string was shrunk below AlwaysAvail.
   let la = if aslen > PayloadSize: a.more.fullLen else: aslen
@@ -865,7 +865,7 @@ func prefixMask(n: int): uint {.inline.} =
   else: prefixMaskImplLE(n)
 
 func equalStringsLong(a, b: string): bool {.noinline.} =
-  ## Length, then prefix, then tail. The prefix compare is MASKED to the logical
+  ## Length, then prefix, then tail. The prefix compare is masked to the logical
   ## length, and that is load-bearing: the prefix cache in `bytes` is only valid
   ## up to `fullLen` (`hashStrLong` says so in as many words — a shrink or an
   ## in-place reuse leaves the older content's bytes above the length). Comparing
@@ -918,8 +918,8 @@ func equalStrings(a, b: string): bool {.alwaysInline.} =
   ## `{.alwaysInline.}` so intern / string-case see the short compare, not a call.
   ## Heap / medium / mixed go to `equalStringsLong`.
   ##
-  ## The reject CANNOT lead with the bare `dropSlen` word: that is only the
-  ## logical value for a SHORT string, where `zeroSwarPad` keeps the pad
+  ## The reject cannot lead with the bare `dropSlen` word: that is only the
+  ## logical value for a short string, where `zeroSwarPad` keeps the pad
   ## canonical. Once a string is medium or heap, `bytes` is a *cache* that may
   ## hold bytes above the length — see `equalStringsLong`.
   let abytes = a.bytes

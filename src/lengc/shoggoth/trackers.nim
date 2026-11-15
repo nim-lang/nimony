@@ -37,7 +37,7 @@
 ## for each branch:
 ##   t.openBranch()
 ##   ...walk branch body...
-##   t.closeBranch()         # ALWAYS — even if the body ended in a jump
+##   t.closeBranch()         # always — even if the body ended in a jump
 ## t.closeBranches()
 ## ```
 ##
@@ -235,7 +235,7 @@ proc rewindOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
     t.log.setLen start
 
 proc consumeOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
-  ## `rewindOpenSibling` plus closing the sibling, so it does NOT contribute to
+  ## `rewindOpenSibling` plus closing the sibling, so it does not contribute to
   ## the enclosing `closeBranches` at all. Used by `closeBranch` on a diverged
   ## path: the branch is over and it reached no join.
   rewindOpenSibling(t)
@@ -250,7 +250,7 @@ proc consumeOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
 #   for each branch:
 #     openBranch t          # or `openFinalBranch t` on an else / wildcard `of`
 #     ...walk branch body...
-#     closeBranch t         # ALWAYS (an embedded `gotoLabel` does not replace it)
+#     closeBranch t         # always (an embedded `gotoLabel` does not replace it)
 #   closeBranches t
 #
 # `openFinalBranch` is `openBranch` plus a flag that tells `closeBranches`
@@ -769,9 +769,9 @@ when isMainModule:
   block all_branches_diverge_propagates_outward:
     # An inner `if c: return else: return` diverges on every path; the tracker
     # must remember this so the enclosing branch is itself dropped from the
-    # OUTER join — without the walker computing divergence.
+    # outer join — without the walker computing divergence.
     var t = initTracker[int, bool]()
-    t.openBranches()                 # OUTER group
+    t.openBranches()                 # outer group
     t.openBranch()                   # outer branch 0
     t.openBranches()                 # inner if/else, both arms diverge
     t.openBranch(); t.markDiverged(); t.closeBranch()
@@ -794,7 +794,7 @@ when isMainModule:
     #
     #   if c:  r = 1; jmp L; lab L; out = r     # out becomes 1 here
     #   else:  out = 2
-    #   use out                                 # → NO agreement, out is unknown
+    #   use out                                 # → no agreement, out is unknown
     var t = initTracker[int, int]()
     let L = LabelId(7)
     const R = 1
@@ -803,7 +803,7 @@ when isMainModule:
     t.openBranch()
     t[R] = 11
     t.gotoLabel L                    # routes {R: 11} to L, rewinds the sibling
-    t.landLabel L, arity = 1         # lands back inside the SAME branch
+    t.landLabel L, arity = 1         # lands back inside the same branch
     doAssert t[R] == 11, "the jump's own snapshot must reach its label"
     t[Outp] = 11
     t.closeBranch()                  # the branch is live: it contributes

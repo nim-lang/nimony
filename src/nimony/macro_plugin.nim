@@ -110,15 +110,15 @@ proc emitNimNodeRetType(dest: var TokenBuf; info: NifLineInfo) =
 
 proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
                                   info: NifLineInfo) =
-  ## Copy a `(params (param ...)*)` subtree but rewrite each param's TYPE slot
+  ## Copy a `(params (param ...)*)` subtree but rewrite each param's type slot
   ## from `(untyped)` / `(typed)` to the ident `NimNode`. The user's macro
   ## signature uses `untyped` (for "any AST, don't sem-check") which is
-  ## meaningful at the macro CALL site, but inside the macro body we want
+  ## meaningful at the macro call site, but inside the macro body we want
   ## the parameter to be usable as a `NimNode` (so methods like `len`,
   ## `[i]`, `kind`, `add`, etc. resolve). This rewrite gives us both.
   ##
   ## Param shape per `(param :name pragmas TYPE default)`. We pass through
-  ## name/pragmas/default verbatim and only swap the TYPE slot.
+  ## name/pragmas/default verbatim and only swap the type slot.
   assert params.substructureKind == ParamsU
   var n = params
   copyInto dest, n:
@@ -283,7 +283,7 @@ proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
 
 proc macroPluginExists*(nifcachePath: string; macroSym: SymId): bool =
   ## True when a compiled plugin binary for `macroSym` already sits in the
-  ## shared nifcache. Used to recognise a macro IMPORTED from another module:
+  ## shared nifcache. Used to recognise a macro imported from another module:
   ## its declaration is never re-semchecked in the importer (so it is absent
   ## from `SemContext.compiledMacros`), but the dependency build compiled its
   ## plugin into the same nifcache we read here.
@@ -298,14 +298,14 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   let exePath = getMacroPluginPath(nifcachePath, macroSym)
   let pluginBaseName = macroFileStem(macroSym)
 
-  # A macro plugin is a HOST-native executable, so it must be built with a
+  # A macro plugin is a host-native executable, so it must be built with a
   # host-consistent toolchain config (host word size, host stdlib layouts). The
-  # outer compile's nifcache may target a DIFFERENT word size — the JS backend
+  # outer compile's nifcache may target a different word size — the JS backend
   # compiles at `--bits:32` so its Leng IR matches the JS runtime — and the
   # plugin's `nimony s` sub-compile reuses whatever stdlib artifacts already sit
   # in the nifcache it is pointed at. Sharing the outer nifcache would hand the
   # 64-bit plugin a 32-bit stdlib (mismatched type sizes) → a plugin that builds
-  # but SEGFAULTS at run. So give the plugin its OWN nifcache subdir, built fresh
+  # but segfaults at run. So give the plugin its own nifcache subdir, built fresh
   # at host bits: `hostCommandLineArgs` is the outer command line minus its
   # target triple (`parseCommonOption` decides what a compile-time-eval
   # process may see). The `macro_*` prefix keeps it out of any target-side
@@ -341,8 +341,8 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   let nimonyExe = getAppDir() / "nimony"
   let srcLibPath = getAppDir().parentDir() / "src" / "lib"
 
-  # Pre-populate the isolated plugin cache with a HOST-bits stdlib. `nimony s`
-  # only READS its imports' `.s.nif` — it does not build them — so in a fresh
+  # Pre-populate the isolated plugin cache with a host-bits stdlib. `nimony s`
+  # only reads its imports' `.s.nif` — it does not build them — so in a fresh
   # per-plugin cache we must first materialise the stdlib the plugin imports.
   # The plugin scaffold imports exactly `std/[syncio, macros]` (see
   # `emitImportStdMacros`); compiling those pulls in the whole host-bits stdlib

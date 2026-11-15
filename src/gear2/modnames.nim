@@ -31,7 +31,7 @@ const
   ## in `<tag>/<mainmod>/`, the main-specific DCE output, code, objects and
   ## executable (`deps.backendDirName`). Those artifacts differ per backend --
   ## hexer alone runs with or without `--native` -- while nifmake reruns a node
-  ## only when its input or output FILES changed, never when a tool's flags
+  ## only when its input or output files changed, never when a tool's flags
   ## did, so two backends sharing a directory would reuse each other's
   ## artifacts. The names are the commands' letters. Kept here so `hastur`,
   ## which shells out to the compiler, can name the same directory without

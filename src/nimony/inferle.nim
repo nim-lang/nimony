@@ -313,7 +313,7 @@ proc consider(best: var Table[(VarId, VarId), xint]; a, b: VarId; c: xint) =
     best[key] = c
 
 proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
-  # At a join we know facts that hold in BOTH branches. For `a <= b + c` a
+  # At a join we know facts that hold in both branches. For `a <= b + c` a
   # branch that guarantees `a <= b + c1` and one that guarantees `a <= b + c2`
   # jointly guarantee only the *weaker* `a <= b + max(c1,c2)` (each branch's own,
   # tighter bound implies the weaker one, so it holds on both). Using min would

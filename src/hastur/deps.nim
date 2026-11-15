@@ -5,7 +5,7 @@ import std / [syncio, os, osproc, strutils]
 import context
 
 # ---- the pinned `nativenif` dependency -------------------------------------
-# arkham and nifasm are built from a SIBLING repo, so "which nativenif" is an
+# arkham and nifasm are built from a sibling repo, so "which nativenif" is an
 # input to every native build the same way a source file is — and until this
 # pin existed it was whatever each machine happened to have checked out. That
 # is not a hypothetical: a native-suite failure could mean a real gap, a
@@ -30,7 +30,7 @@ const
     ## relative to the project root, which is where every hastur command runs.
     ##
     ## Contents: the commit hash, then whitespace, then the commit's date. The
-    ## date is READABILITY ONLY — a diff moving the pin should say *when* it
+    ## date is for readability only — a diff moving the pin should say *when* it
     ## moved to without anyone running `git show` — so nothing checks it and
     ## only the first field is ever compared.
 
@@ -44,7 +44,7 @@ proc firstField(content: string): string =
   result = if cut < 0: s else: s[0 ..< cut]
 
 proc readPin(file: string): string =
-  ## A pin is read at RUNTIME, not compiled in: a `slurp`ed copy would let the
+  ## A pin is read at runtime, not compiled in: a `slurp`ed copy would let the
   ## file and the binary disagree, so `git checkout <pin>` and `hastur update
   ## deps` would go on enforcing and reporting whatever commit the binary was
   ## last built from — silently, and worst on a stale `bin/hastur`, which is the
@@ -74,7 +74,7 @@ proc cloneNativenif(): bool =
   ## remedy — and every caller of it was a person typing the same command
   ## back. Do it for them.
   ##
-  ## Deliberately NOT shallow: the pin is regularly a commit behind whatever
+  ## Deliberately not shallow: the pin is regularly a commit behind whatever
   ## the default branch has, and `--depth 1` would fetch a history that cannot
   ## reach it — so the checkout below would immediately have to deepen again.
   ## The repo is small enough (a couple of hundred commits) that a full clone
@@ -95,12 +95,12 @@ proc syncNativenif*() =
   ##
   ## Never at the cost of uncommitted work: a dirty tree is left alone with a
   ## warning, because the person who dirtied it is precisely the person who
-  ## wants arkham built from THEIR edits. A clean tree gets detached onto the
+  ## wants arkham built from their edits. A clean tree gets detached onto the
   ## pin (the branch that was there is still a `git switch -` away).
   if nativenifChecked: return
   nativenifChecked = true
   # The clone comes first and is not conditional on the pin: whether the
-  # checkout EXISTS and which commit it sits on are two different questions,
+  # checkout exists and which commit it sits on are two different questions,
   # and an unpinned tree still has to be there to be built from.
   let justCloned = cloneNativenif()
   let pin = pinnedNativenifCommit()
@@ -120,12 +120,12 @@ proc syncNativenif*() =
          NativenifCommitFile, " pin (", pin, ")"
     return
 
-  # A checkout sitting on a BRANCH is someone's working tree, and committing a
+  # A checkout sitting on a branch is someone's working tree, and committing a
   # fix there is exactly what makes it stop being dirty — so the guard above
   # would hand it straight to the `git checkout` below and build the arkham that
   # fix was replacing. Leave it be and say so. CI is the one place that must
   # enforce the pin regardless: its checkout is on the default branch too, and a
-  # pin deliberately BEHIND that branch is the whole point of pinning.
+  # pin deliberately behind that branch is the whole point of pinning.
   # `justCloned` is the third exemption alongside CI: a clone made two
   # statements ago is on its default branch by construction, not because
   # someone is working in it, so leaving it there would mean the very first
@@ -166,7 +166,7 @@ proc syncNativenif*() =
     quit "hastur: cannot check out " & pin & " in " & NativenifDir & ":\n" & coOut
 
 # ---- Nim's own parser, checked out for nifler ------------------------------
-# Nifler parses `.nim` source with the HOST compiler's parser: `src/nifler/nim.cfg`
+# Nifler parses `.nim` source with the host compiler's parser: `src/nifler/nim.cfg`
 # puts `$nim` on the search path and `bridge.nim` imports `compiler / syntaxes`.
 # The toolchain can therefore only read the syntax that compiler knows — and one
 # construct Nimony's own stdlib uses, concept refinement
@@ -175,7 +175,7 @@ proc syncNativenif*() =
 #
 # is in no release: Nim 2.2.10 answers `identifier expected, but got 'keyword of'`
 # and every module that reaches `std/math` — which through the plugins is most of
-# the tree — fails to PARSE, long before anything semantic.
+# the tree — fails to parse, long before anything semantic.
 #
 # `src/nifler/config.nims` redirects the module with `patchFile` to
 # `nimparser/parser.nim`. That file is not in this repo and must not be: a copy
@@ -191,7 +191,7 @@ const
     ## Where `config.nims`' `patchFile` looks. Git-ignored: it is Nim's file,
     ## not ours.
   NimParserStampFile* = NimParserDir / "parser.fetched"
-    ## Which commit `parser.nim` was checked out AT. Without it the only way to
+    ## Which commit `parser.nim` was checked out at. Without it the only way to
     ## answer "is this file the pin?" is to fetch and diff, i.e. every build
     ## would go to the network. Git-ignored alongside the file it describes.
   NimParserCommitFile* = NimParserDir / "upstream.commit"
@@ -200,30 +200,30 @@ const
   NimRepoUrl* = "https://github.com/nim-lang/Nim"
   NimDevelBranch* = "devel"
   NimParserInRepo = "compiler/parser.nim"
-    ## Its path INSIDE the Nim tree — used both as a `git show` object path and
+    ## Its path inside the Nim tree — used both as a `git show` object path and
     ## as the tail of the raw-content URL, so it stays spelled with a forward
     ## slash on every host.
 
 proc hostNimTree(): string =
-  ## The host compiler's own SOURCE checkout, when it has one: `nim` in PATH is
+  ## The host compiler's own source checkout, when it has one: `nim` in PATH is
   ## `<tree>/bin/nim`, and a `<tree>/.git` means the blob may already be on this
-  ## disk. Worth the lookup — a Nim developer's install IS a checkout, so the
+  ## disk. Worth the lookup — a Nim developer's install is a checkout, so the
   ## common case needs no network at all — and cheap to be wrong about, since
   ## the download below is the fallback either way.
   let exe = findExe("nim")
   if exe.len == 0: return ""
   var resolved = exe
-  # choosenim (and a hand-made `~/bin/nim`) put a SYMLINK in PATH; the tree we
+  # choosenim (and a hand-made `~/bin/nim`) put a symlink in PATH; the tree we
   # are after is above the real file, not above the link.
   try: resolved = expandFilename(exe)
   except OSError, IOError: discard
   let tree = resolved.parentDir.parentDir
-  # `.git` is a FILE, not a directory, in a worktree or a submodule.
+  # `.git` is a file, not a directory, in a worktree or a submodule.
   result = if dirExists(tree / ".git") or fileExists(tree / ".git"): tree else: ""
 
 proc nimFileFromCheckout(tree, pin, inRepo, dest: string): bool =
   ## `git show <pin>:<inRepo>` out of a Nim checkout that already has the
-  ## commit. Deliberately never FETCHES into it: that tree is someone's working
+  ## commit. Deliberately never fetches into it: that tree is someone's working
   ## repo — we read one object out of it and touch nothing else. A commit it
   ## does not have is not an error here, just a "no".
   if gitIn(tree, "cat-file -e " & pin & ":" & inRepo)[1] != 0: return false
@@ -280,7 +280,7 @@ proc syncNimParser*() =
   let pin = readPin(NimParserCommitFile)
   if pin.len == 0:
     # No pin is the escape hatch, and it is a real one: `config.nims` applies
-    # the patch only if the file is THERE, so an unpinned tree with no
+    # the patch only if the file is there, so an unpinned tree with no
     # `parser.nim` builds nifler against the host compiler's own parser — which
     # is exactly right on a `devel` install, and the only way out if a pinned
     # parser ever stops compiling against a newer `$nim/compiler`.
@@ -292,7 +292,7 @@ proc syncNimParser*() =
     writeFile(NimParserStampFile, pin & "\n")
     return
 
-  # Everything below is a WARNING and not a `quit`: a build that cannot reach
+  # Everything below is a warning and not a `quit`: a build that cannot reach
   # the network is still a build, and the host's parser may well be new enough.
   echo "[deps] WARNING: cannot check out ", NimParserInRepo, " @ ", pin,
        " (no Nim checkout holding it, and `curl` failed or is missing)"
@@ -321,7 +321,7 @@ proc updateParserCmd*() =
     quit "hastur update parser: cannot resolve " & NimRepoUrl & " " & NimDevelBranch & ":\n" & lsOut
   let pin = readPin(NimParserCommitFile)
 
-  # The date is READABILITY ONLY (same as `src/nativenif.commit`), so a machine
+  # The date is for readability only (same as `src/nativenif.commit`), so a machine
   # with no Nim checkout simply writes the hash alone.
   let tree = hostNimTree()
   var date = ""
@@ -386,7 +386,7 @@ proc missingNativeTools*(): seq[string] =
     if not fileExists(binDir() / tool.addFileExt(ExeExt)): result.add tool
 
 # ---- Nim's cycle collectors, included by `system/orc` and `system/yrc` ------
-# `--mm:orc` and `--mm:yrc` run Nim's OWN `lib/system/orc.nim` and `yrc.nim`
+# `--mm:orc` and `--mm:yrc` run Nim's own `lib/system/orc.nim` and `yrc.nim`
 # (they say `when defined(nimony)` where the compilers differ), so a fix to
 # either collector lands once, in Nim. They are copied into
 # `lib/std/system/upstream/` (git-ignored) at the commit
@@ -424,7 +424,7 @@ proc syncNimRuntime*() =
   if fetchNimFiles("orc/yrc runtime", pin, files):
     writeFile(NimRuntimeStampFile, pin & "\n")
   else:
-    # a WARNING, like the parser's: only `--mm:orc`/`--mm:yrc` need the files
+    # a warning, like the parser's: only `--mm:orc`/`--mm:yrc` need the files
     echo "[deps] WARNING: cannot check out Nim's lib/system/{orc,yrc,cellseqs_v2}.nim @ ",
          pin, " (no Nim checkout holding it, and `curl` failed or is missing); ",
          "--mm:orc and --mm:yrc will not compile"

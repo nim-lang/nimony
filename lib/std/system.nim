@@ -160,7 +160,7 @@ include "system/setops"
 include "system/ctypes"
 
 when defined(embedded):
-  # The console of a bare-metal image, and its `exit`. Included BEFORE `exits`,
+  # The console of a bare-metal image, and its `exit`. Included before `exits`,
   # which uses it, and only on the target that has no OS to ask instead.
   include "system/semihosting"
 
@@ -445,7 +445,7 @@ proc finalizeCoroutine*(c: var Continuation) =
   ## frame. Called from the `finally` clause of the closure-iterator
   ## trampoline.
   ##
-  ## For iter-VALUE-owned frames (the iter-value tuple's env slot owns
+  ## For iter-value-owned frames (the iter-value tuple's env slot owns
   ## the frame as a `ref CoroType`), we run `cancel` but skip
   ## `deallocFrame` — the ref's destructor frees the memory later when
   ## the iter-value goes out of scope. The ownership marker is

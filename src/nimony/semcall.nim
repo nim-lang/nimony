@@ -118,7 +118,7 @@ proc deferPluginCall(c: var SemContext; dest: var TokenBuf; it: var Item;
   ## like any other tree, and the instantiation's re-sem turns it back into a
   ## call, which drives the plugin again with concrete arguments.
   ##
-  ## The parked node's RESULT CATEGORY comes from the template's declared
+  ## The parked node's result category comes from the template's declared
   ## return type, because nothing else can supply it: the plugin has produced
   ## nothing to classify, and both categories are live (`distinctBase` returns a
   ## type, a `thrice(n)` folder returns a value). A `typedesc` result is typed
@@ -227,7 +227,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # the throwaway `readonlyCursorAt` that used to supply `.info` bumped the
     # rc and were never released, so `shrink` always took the copying path.
     # `pastFn` counts too: `childCursor` builds its result with `result = c`,
-    # which runs Cursor's `=copy` and takes a ref of its OWN — it does not
+    # which runs Cursor's `=copy` and takes a ref of its own — it does not
     # share `callHead`'s. Leaving it out kept the rc at 2 here and made every
     # template expansion copy the module buffer anyway; `expectUnique` did not
     # catch it because it only asserts under `-d:debug`.
@@ -263,7 +263,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
       a.typ = c.types.voidType
     inc c.routine.inInst
     # An `untyped` template's body is published unresolved, so its field
-    # accesses resolve HERE for the first time and must be judged against the
+    # accesses resolve here for the first time and must be judged against the
     # template's own module. (A typed template's body carries the `"x"` access
     # token instead and takes the `bypassVis` path.) Tokens in the expanded
     # tree that come from another file are call-site arguments substituted in,
@@ -1043,9 +1043,9 @@ proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor,
     convMatch = ensureMove(match)
 
 proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; finalFn: SymId) =
-  # A macro's plugin binary is compiled when its DECLARATION is semchecked
+  # A macro's plugin binary is compiled when its declaration is semchecked
   # (semdecls: `kind == MacroY and pass == checkBody`), which registers it in
-  # `c.compiledMacros`. A macro IMPORTED from another module has its
+  # `c.compiledMacros`. A macro imported from another module has its
   # declaration semchecked in the *defining* module's run, not here, so it is
   # absent from this run's `compiledMacros` — but the dependency build already
   # compiled its plugin into the shared nifcache. Accept that on-disk plugin so
@@ -1097,7 +1097,7 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
 
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   # Everything the candidate collection below writes to `dest` is a
-  # DIAGNOSTIC ("attempt to call routine", a symchoice element that cannot be
+  # diagnostic ("attempt to call routine", a symchoice element that cannot be
   # loaded, ...) and every one of them falls through to the error tail, which
   # emits an error tree of its own. Two trees out of one `semExpr` breaks its
   # one-expression contract: `(cast T (err ...) (err ...))` then has three
@@ -1300,7 +1300,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         typeofCallIs c, dest, it, cs.beforeCall, autoType
       else:
         # `leaveCall` has already closed the call tree at `cs.beforeCall`, so
-        # the error has to REPLACE it: appended, it would be a second child of
+        # the error has to replace it: appended, it would be a second child of
         # whatever encloses the call, and a node with a fixed arity — `(ret X)`
         # above all — then has one child too many. The next reader trips over
         # the leftover (`defer` lowering asserted on it, nim-lang/nimony#2400).

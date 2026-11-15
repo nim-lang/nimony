@@ -115,7 +115,7 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
           failure c, file, outputSpec, testProgramOutput
       elif testProgramExitCode == 0 and testProgramOutput.strip.len > 0 and
            (joinable(file, cat) or (overwrite and cat == Bench)):
-        # A joined member's share of the group's output IS its `.output` file,
+        # A joined member's share of the group's output is its `.output` file,
         # so a member that prints without one would leave text nothing accounts
         # for. Such a test fails, alone as in its group, so that joining does
         # not change its verdict. `--overwrite` is where that gap gets closed:
@@ -168,7 +168,7 @@ proc joinedTest*(c: var TestCounters; dir: string; files: seq[string];
   if not fileExists(driver) or readFile(driver) != driverSrc:
     writeFile(driver, driverSrc)
 
-  # A group is compiled by ONE backend: whether that is the native one is a
+  # A group is compiled by a single backend: whether that is the native one is a
   # property of the members, not of the generated driver (which has no test
   # sidecars of its own to look at). All-or-nothing on purpose — splitting a
   # directory into a native group and a C group would add a whole second

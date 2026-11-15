@@ -1,11 +1,11 @@
-## nifstreams — the classic NIF streaming surface, kept ONLY for external
+## nifstreams — the classic NIF streaming surface, kept only for external
 ## consumers: the Nim compiler's IC modules (ast2nif / deps / modulegraphs /
 ## pipelines under `dist/nimony`) import this module and must keep compiling
 ## unchanged. Nimony's own code imports nifpools (via nifprelude) and must
 ## never import this file.
 ##
 ## Everything here is an honest adapter, not a fake:
-## * Floats get a REAL interning pool: `pool.floats.getOrIncl` returns a
+## * Floats get a real interning pool: `pool.floats.getOrIncl` returns a
 ##   `FloatId` index, `floatToken` packs it into a genuine `FloatLit` NifToken
 ##   (transit-only: it must never enter a TokenBuf, whose float encoding is
 ##   inline multi-token), and `pool.floats[t.floatId]` decodes it — lossless.
@@ -13,12 +13,12 @@
 ##   `ParLe`/`ParRi`/`EofToken` members, so structural scanners (deps.nim)
 ##   see the exact classic kinds. Ident/StringLit/Symbol payloads are interned
 ##   into the global `pool`, so `pool.strings[t.litId]` works as before.
-##   SYMBOLS are stored taken apart now (nimony#2457), but `pool.syms` still
+##   Symbols are stored taken apart now (nimony#2457), but `pool.syms` still
 ##   answers the three questions this surface ever asked of it --
 ##   `getOrIncl(name)`, `[id]`, `getKeyId(name)` -- through `nifcore.SymPool`.
 ##   The spellings below are deliberately the classic ones: the Nim compiler
 ##   ships its own copy of this file, so what compiles here compiles there.
-##   Number tokens keep their KIND only (a 4-byte token cannot always carry
+##   Number tokens keep their kind only (a 4-byte token cannot always carry
 ##   the value); classic scanners never read those payloads.
 
 import std / tables
@@ -39,9 +39,9 @@ from nifreader import Reader, ExpandedToken, decodeStr
 type
   PackedToken* = NifToken           ## ast2nif still says PackedToken
 
-# Raw payload decodes, sound ONLY on this surface. Every token here comes from
+# Raw payload decodes, sound only on this surface. Every token here comes from
 # `next` or the classic `symToken`/`strToken`/`identToken` constructors, which
-# intern EVERY literal — including names of at most `StrInlineMaxLen` bytes,
+# intern every literal — including names of at most `StrInlineMaxLen` bytes,
 # which the nifcore builders would instead store inside the token. On such an
 # inline token the payload is packed bytes, not an id, so nifpools (nimony's own
 # surface, where buffers come from the builders) deliberately has no equivalent:

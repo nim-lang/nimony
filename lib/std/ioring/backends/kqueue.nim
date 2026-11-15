@@ -26,7 +26,7 @@ proc kqueueReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.ni
   # split, so there is no separate "first time vs re-arm" bookkeeping needed
   # here. `ident` (the fd) is what `kqueuePoll` reads back on delivery, not
   # `udata`, so no slot needs to travel through the kernel at all.
-  # Zero-initialised, NOT `{.noinit.}`: `fflags`, `data` and `udata` are read by
+  # Zero-initialised, not `{.noinit.}`: `fflags`, `data` and `udata` are read by
   # the kernel too. A stray NOTE_LOWAT in a garbage `fflags` turns the garbage in
   # `data` into a low-water mark, so the registration would fire only after N
   # bytes — or never.

@@ -84,13 +84,13 @@ proc ensureIndexed*[Id, T](t: var BiTable[Id, T]) =
   ##
   ## `getOrIncl` calls this itself. `getKeyId` cannot — it takes the table
   ## immutably and changing that would break every caller in the ecosystem for
-  ## the sake of the rare one — so a caller that looks up BY VALUE in a table
+  ## the sake of the rare one — so a caller that looks up by value in a table
   ## that might have been filled with `addOrdered` calls this first. Getting it
   ## wrong is an assertion in `getKeyId`, not a wrong answer.
   if not t.isIndexed: rebuildIndex(t)
 
 proc addOrdered*[Id, T](t: var BiTable[Id, T]; v: sink T): Id =
-  ## Append `v` under the next id WITHOUT hashing it.
+  ## Append `v` under the next id without hashing it.
   ##
   ## For a table deserialized in id order, every entry's id is its position, so
   ## the reverse index costs a hash and an insert per entry to reproduce
@@ -237,7 +237,7 @@ when isMainModule:
   assert getKeyId(tf, 32.4) == 3
 
   # `addOrdered` must be indistinguishable from having interned all along, and
-  # the interesting part is the table it leaves BEHIND: the reverse index is
+  # the interesting part is the table it leaves behind: the reverse index is
   # unbuilt, so every lookup path has to notice and build it. A duplicate id
   # handed out here would be silent corruption for a `bif` pool, since the
   # token stream already refers to the first one.
@@ -260,7 +260,7 @@ when isMainModule:
     for i in 0 ..< 5_000:
       assert getKeyId(a, "s" & $i).idToIdx == i
 
-    # and interning must now REUSE those ids rather than append duplicates
+    # and interning must now reuse those ids rather than append duplicates
     for i in 0 ..< 5_000:
       assert a.getOrIncl("s" & $i).idToIdx == i
     assert a.vals.len == 5_000

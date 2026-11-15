@@ -1,7 +1,7 @@
 ## Hastur - Tester tool for Nimony and its related subsystems (Leng etc).
 ## (c) 2024-2025 Andreas Rumpf
 ##
-## This module is the COMMAND LINE — the usage text, the option parsing and the
+## This module is the command line — the usage text, the option parsing and the
 ## dispatch. Everything it dispatches to lives in a sibling module here in
 ## `src/hastur/`, and `kit.nim` re-exports that surface for a test directory's
 ## `setup.nim` custom runner.
@@ -233,7 +233,7 @@ proc handleCmdLine =
     of cmdLongOption, cmdShortOption:
       # `--cachedir` / `--jobs` / `--forward` can appear anywhere — they
       # configure the test runner regardless of position relative to the
-      # primary cmd. `--forward` in particular MUST be position-agnostic
+      # primary cmd. `--forward` in particular must be position-agnostic
       # because the parallel test runner spawns child `hastur test ...`
       # invocations and threads the forward value back in after `test`,
       # so requiring it before the subcommand would silently lose it in
@@ -283,17 +283,17 @@ proc handleCmdLine =
         # workers.
         walkNative = val.normalize notin ["off", "no", "false", "0"]
       of "native-debug", "nativedebug":
-        # Build arkham + nifasm UNOPTIMIZED (they default to -d:release; see
+        # Build arkham + nifasm unoptimized (they default to -d:release; see
         # nativeToolPrefix). For `-d:arkhamDbgSym` / gdb work on the toolchain.
         nativeToolsDebug = true
       of "debug":
-        # Build the front-end tools UNOPTIMIZED (they default to -d:release;
+        # Build the front-end tools unoptimized (they default to -d:release;
         # see nimcPrefix). Position-agnostic like `--release` below: these
         # decide how the toolchain is built, and the tree walk rebuilds it
         # via `setup.hastur` long after the subcommand was parsed.
         debugBuild = true
       of "release":
-        # Build-mode-wise a no-op (release IS the default), for the toolchain
+        # Build-mode-wise a no-op (release is the default), for the toolchain
         # itself *and* — since it is now `boot`'s default — for the toolchain
         # `boot` compiles. Retained as the explicit spelling of that default.
         bootRelease = true
@@ -380,7 +380,7 @@ proc handleCmdLine =
     tierTests(tiersNative, forward)
 
   of "boot":
-    # Same reason, one step further: `bin0/` is a COPY of `bin/`, so a stale
+    # Same reason, one step further: `bin0/` is a copy of `bin/`, so a stale
     # nimsem or hexer there is what every later stage is grown from.
     if not skipBuild: buildNimonyToolchain()
     var bootArgs = ""
@@ -438,7 +438,7 @@ proc handleCmdLine =
       # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
       # the sibling `../nativenif`) plus shoggoth (hexer and the opt-gated Leng
       # optimizer, both of which feed the native path). `all` builds these three too; this
-      # spelling is the one that rebuilds JUST them, and errors out rather than
+      # spelling is the one that rebuilds only them, and errors out rather than
       # skip when the sibling checkout is missing.
       buildArkham(showProgress)
       buildNifasm(showProgress)
@@ -459,18 +459,18 @@ proc handleCmdLine =
 
   of "native":
     # Run the curated native-backend regression set through `nimony n`. Build the
-    # front end AND the C-free native toolchain (arkham + nifasm + shoggoth live in
+    # front end and the C-free native toolchain (arkham + nifasm + shoggoth live in
     # the sibling `../nativenif`; nifmake drives the `n` pipeline).
     #
-    # The front end is rebuilt HERE and not left to whatever `bin/` happens to
+    # The front end is rebuilt here and not left to whatever `bin/` happens to
     # hold. The shared host-Nim artifact cache is restored through a
     # `restore-keys:` prefix, so a commit that changes `src/**` misses the exact
-    # key and still gets the PREVIOUS commit's `bin/` handed to it — which is how
+    # key and still gets the previous commit's `bin/` handed to it — which is how
     # the new closure tests of #2292 came to be run against the pre-#2292 hexer
     # and reported as eight "native gap" failures.
     #
     # nimsem/nimony/hexer and not `nifler`: those three share `programs.nim` and
-    # ARE what a native run exercises, while nifler is the tier-0 Nim parser in
+    # are what a native run exercises, while nifler is the tier-0 Nim parser in
     # front of them — and the most expensive tool in the tree by a distance
     # (28s cold, more than the three together). `build all` covers it, in this
     # same job for CI and via `tests/setup.hastur` for a tree walk.
@@ -484,7 +484,7 @@ proc handleCmdLine =
   of "nativevalgrind":
     # The same corpus as `native`, built with `-d:valgrind` and run under
     # memcheck. Separate command rather than part of `native` because it is a
-    # different question (is the ALLOCATOR's story to valgrind true?) at maybe
+    # different question (is the allocator's story to valgrind true?) at maybe
     # twenty times the runtime — memcheck's interpretation is not cheap.
     if not skipBuild:
       buildNimonyToolchain()

@@ -131,7 +131,7 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
   # same name. Re-exporting the whole module (`export m`) brings its name along.
   if f1.name != "" or mode.kind != FromImport:
     let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
-    # An import that lands under THIS module's own name shadows the implicit
+    # An import that lands under this module's own name shadows the implicit
     # self-module symbol, exactly like in Nim: after `import std/math as m`
     # inside `m.nim`, `m.sin` is math's `sin` and `m` no longer qualifies this
     # module. Without the removal both symbols sit in the same scope under the

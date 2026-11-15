@@ -34,12 +34,12 @@
 ##    rule also rules out objects with destructors or non-trivial copies: their
 ##    lowered `=destroy` / `=copy` appears as `addr o` / a whole-object use, so they
 ##    never survive — and the surviving fields are therefore trivially destructible.
-##    A whole-object *copy* `var tmp = src` is a LOAD, not an escape of `tmp`:
+##    A whole-object *copy* `var tmp = src` is a load, not an escape of `tmp`:
 ##    `tmp.f` becomes a scalar initialised from `src.f`. That is the inliner's
 ##    by-value aggregate param (`var tmp = s` for a 16-byte string).
 ##
 ## 2. **Every accessed field is initialised.** Constructor candidates need the
-##    field in the `(oconstr)`; LOAD candidates initialise each accessed field
+##    field in the `(oconstr)`; load candidates initialise each accessed field
 ##    from `L.f` at the copy. If `o.x` is read but `x` is not a `(kv x …)` of
 ##    the `oconstr`, we bail. For a `case`/variant object this is exactly what
 ##    protects us: reading a field of the *other* variant references a field
@@ -162,17 +162,17 @@ type
     declPos: int                       ## position of the `(var :o …)` decl
     typePos: int                       ## position of the type `T` whose fields the scalars
                                        ## stand for — the `oconstr`'s type operand, or (for a
-                                       ## LOAD candidate) the decl's own type slot (-1 ⇒ absent);
+                                       ## load candidate) the decl's own type slot (-1 ⇒ absent);
                                        ## `lookupField` resolves each scalar's declared type
                                        ## through it
-    loadPos: int                       ## LOAD candidate (`var o = L`, `L` a pure aggregate
+    loadPos: int                       ## load candidate (`var o = L`, `L` a pure aggregate
                                        ## lvalue): position of `L`. -1 ⇒ constructor candidate.
     fieldOrder: seq[SymId]             ## fields in constructor order
     valuePos: Table[SymId, int]        ## field -> position of its `kv` value
     names: Table[SymId, string]        ## field -> fresh scalar name (survivors)
     dotPos: Table[SymId, int]          ## field -> position of a `(dot o f …)` in the body,
                                        ## reused verbatim (field symbol + inherited-depth
-                                       ## operand) when synthesising a LOAD scalar's `L.f`
+                                       ## operand) when synthesising a load scalar's `L.f`
     accessed: HashSet[SymId]           ## fields actually read/written via `.`
     disqualified: bool                 ## escaped → leave the object alone
 
@@ -188,7 +188,7 @@ type
                                        ## for the self-tests, which parse a body in isolation)
 
 proc freshScalarName(c: var Context): string =
-  ## A field scalar is a LOCAL of the body being scalarized, so its name is a
+  ## A field scalar is a local of the body being scalarized, so its name is a
   ## local's: `<ident>.<disamb>` and nothing else. Two bodies both minting
   ## `` `sroa.1 `` is no more a problem than both having a `result.0`.
   inc c.counter
@@ -259,7 +259,7 @@ proc isPureLvaluePath(n: Cursor): bool =
 proc recordLoad(c: var Context; oSym: SymId; declPos, typePos, loadPos: int) =
   ## Record `var oSym = L` where `L` is a pure aggregate lvalue. Unlike the
   ## constructor form there is no per-field value list: each surviving field's
-  ## scalar is initialised from `L.f`, re-read at the SAME program point where the
+  ## scalar is initialised from `L.f`, re-read at the same program point where the
   ## whole-object copy happened, so it observes exactly the same memory.
   if oSym in c.candidates:
     c.candidates.getOrQuit(oSym).disqualified = true
@@ -285,7 +285,7 @@ proc collectCandidates(c: var Context; n: Cursor) =
         skip v                                   # name
       if v.hasMore: skip v                       # pragmas
       if v.hasMore:
-        # The decl's own type slot names the object type for a LOAD candidate.
+        # The decl's own type slot names the object type for a load candidate.
         # An empty slot (`.`) leaves us nothing to resolve the fields through.
         if not (v.kind == DotToken): declTypePos = cursorToPosition(c.orig[], v)
         skip v                                   # type
@@ -315,10 +315,10 @@ proc collectCandidates(c: var Context; n: Cursor) =
 # ---- legality / use classification ---------------------------------------
 
 proc addrEscapeRoot(n: Cursor): SymId =
-  ## The symbol whose STORAGE the address expression `n` (the operand of an
+  ## The symbol whose storage the address expression `n` (the operand of an
   ## `addr`/`haddr`) denotes, or 0 when the chain passes through a dereference
   ## first. `(haddr (pat (dot o f) i))` is the address of an element of the array
-  ## `o.f` POINTS TO — not of `o`'s storage. There `o` is merely read, exactly
+  ## `o.f` points to — not of `o`'s storage. There `o` is merely read, exactly
   ## like any other field load, so it must not disqualify the object. Only a
   ## chain of `dot`/`at` selections reaching `o` directly aliases `o` itself.
   var cur = n
@@ -406,7 +406,7 @@ proc emitRewritten(c: var Context; dest: var TokenBuf; n: Cursor) =
 
 proc emitScalarType(c: var Context; buf: var TokenBuf; typePos: int; f: SymId) =
   ## Spell out the scalar's declared type instead of leaving the slot empty for the
-  ## backend to re-infer. The right type is the FIELD's declared type in `T`, not the
+  ## backend to re-infer. The right type is the field's declared type in `T`, not the
   ## initializer's: the scalar stands in for every `o.f`, so it must have `o.f`'s type.
   ## Re-inference from the value gets this wrong whenever the two differ — a narrow
   ## field initialized from a wider literal would silently widen, changing where the
@@ -436,7 +436,7 @@ proc buildFieldDecl(c: var Context; name: string; value: Cursor;
 
 proc buildLoadFieldDecl(c: var Context; name: string; dotNode, value: Cursor;
                         typePos: int; f: SymId): int =
-  ## Synthesize `(var :name . <field type> (dot <L> f …))` for a LOAD candidate.
+  ## Synthesize `(var :name . <field type> (dot <L> f …))` for a load candidate.
   ## `dotNode` is one of the body's own `(dot o f …)` nodes, reused so the field
   ## symbol and the inherited-depth operand are spelled exactly as the backend
   ## expects; only its base `o` is swapped for the object's initializer `L`.
@@ -492,7 +492,7 @@ proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
     let n = beginRead(buf)
     classify(c, n)
 
-  # A LOAD candidate has no constructor field list: its fields are exactly the ones
+  # A load candidate has no constructor field list: its fields are exactly the ones
   # accessed, ordered by first access so the emitted decls are deterministic.
   for (oSym, fSym, dotAt) in c.accesses:
     if c.candidates.getOrQuit(oSym).loadPos >= 0 and fSym notin c.candidates.getOrQuit(oSym).valuePos:
@@ -528,7 +528,7 @@ proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
     var first = true
     let isLoad = c.candidates.getOrQuit(oSym).loadPos >= 0
     for f in fields:
-      # Everything read out of `c` is copied into locals BEFORE `c` is passed
+      # Everything read out of `c` is copied into locals before `c` is passed
       # as the mutable argument; a borrowed read alongside it aliases.
       let name = c.candidates.getOrQuit(oSym).names.getOrQuit(f) & ""
       let value = cursorAt(c.orig[], c.candidates.getOrQuit(oSym).valuePos.getOrQuit(f))

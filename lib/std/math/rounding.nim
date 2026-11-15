@@ -283,7 +283,7 @@ else:
 func roundSoft(x: float32): float32 {.inline.} =
   let f0p5 = 0.5'f32  # 0.5
   let f0p25 = 0.25'f32  # 0.25
-  # Approximation of EPSILON for f32: 2^-23
+  # Approximation of epsilon for f32: 2^-23
   let actualEps = 1.1920928955078125e-7'f32  # 2^-23
 
   trunc(x + copySign(f0p5 - f0p25 * actualEps, x))
@@ -291,7 +291,7 @@ func roundSoft(x: float32): float32 {.inline.} =
 func roundSoft(x: float64): float64 {.inline.} =
   let f0p5 = 0.5  # 0.5
   let f0p25 = 0.25  # 0.25
-  # Approximation of EPSILON for f64: 2^-52
+  # Approximation of epsilon for f64: 2^-52
   let actualEps = 2.220446049250313080847e-16  # 2^-52
 
   trunc(x + copySign(f0p5 - f0p25 * actualEps, x))

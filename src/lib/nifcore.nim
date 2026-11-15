@@ -144,9 +144,9 @@ func dotToken*(): NifToken {.inline.} = NifToken(uint32(DotToken))
 
 # ── assertion failure helpers ────────────────────────────────────────────
 #
-# An `assert` whose message is COMPUTED (`"… " & $n.kind`) puts the string
+# An `assert` whose message is computed (`"… " & $n.kind`) puts the string
 # building in the proc's body. The build is cold — `assert` only runs it on
-# failure — but its mere presence makes the proc a NON-LEAF, and arkham then
+# failure — but its mere presence makes the proc a non-leaf, and arkham then
 # homes locals in callee-saved registers and pushes them on every call. Measured:
 # `tagLitToken`, a shift and an or, made two calls and pushed all six
 # callee-saved registers for 35 instructions per call.
@@ -221,7 +221,7 @@ func extendedSuffixToken*(high28: uint32): NifToken {.inline.} =
 #
 # An optional `#comment#` decoration (a `StrId` into `pool.strings`) rides as
 # one further `ExtendedSuffix` after the position word. To keep the layout
-# selectable structurally (still no flag bit), a comment ALWAYS forces the
+# selectable structurally (still no flag bit), a comment always forces the
 # overflow position layout, so the count `k` of `ExtendedSuffix` words trailing
 # the `LineInfoLit` decodes unambiguously:
 #   k == 0  →  common position, no comment
@@ -334,7 +334,7 @@ type
     ## "same module?" must not mean building two strings and comparing them.
     name*: StrId
     disamb*: int32
-      ## `NoDisamb` when the spelling has none that is a NUMBER -- then `name`
+      ## `NoDisamb` when the spelling has none that is a number -- then `name`
       ## holds everything up to the module suffix, and the symbol round-trips
       ## unchanged. That covers an atom that is not a symbol at all (`[]=`) and
       ## the reserved disambiguators older artifacts still carry
@@ -509,7 +509,7 @@ func symWithoutModule*(p: Pool; id: SymId): string =
     result.add p.strings[s.dedup]
 
 func symSameEntity*(p: Pool; a, b: SymId): bool =
-  ## Whether two DIFFERENT symbols name the same entity seen from two modules:
+  ## Whether two distinct symbols name the same entity seen from two modules:
   ## both are instantiations and everything but the module suffix matches.
   if a == b: return true
   let sa = p.symbols[a]
@@ -520,7 +520,7 @@ func symSameEntity*(p: Pool; a, b: SymId): bool =
 func symModule*(p: Pool; id: SymId): string {.inline.} =
   ## The module suffix of `id`, `""` when it is local. For the places that need
   ## the suffix as a string -- a table key, a file name, a `(strlit)` -- while
-  ## `sym(p, id).module` is what a COMPARISON should use.
+  ## `sym(p, id).module` is what a comparison should use.
   strOrEmpty(p, p.symbols[id].module)
 
 func symIsLocal*(p: Pool; id: SymId): bool {.inline.} =
@@ -604,7 +604,7 @@ type
     moduleStart, moduleLen: int
 
 func splitSpelling(s: string): Spelling =
-  ## The module is the LAST dot-separated component -- unless it STARTS with a
+  ## The module is the last dot-separated component -- unless it starts with a
   ## digit, which makes it the disambiguator and the symbol local. `p.0h107` is
   ## a local whose disambiguator an inliner minted, not a symbol from a module
   ## called `0h107`.
@@ -649,7 +649,7 @@ func splitSpelling(s: string): Spelling =
 proc symRecord*(p: Pool; s: string): NifSymbol =
   ## Take a spelling apart into the record the pool stores, interning each
   ## component. Every spelling round-trips: one whose disambiguator is not a
-  ## NUMBER keeps it inside the name (`NoDisamb`), so the reserved forms older
+  ## number keeps it inside the name (`NoDisamb`), so the reserved forms older
   ## artifacts carry (`_exit.sys.mod`, `p.0h107`) come back out unchanged.
   assert s.len == 0 or s[s.len-1] != '.',
     "a symbol reaches the pool with its module suffix expanded, never as `" & s & "`"
@@ -665,7 +665,7 @@ proc symRecord*(p: Pool; s: string): NifSymbol =
 
 proc symId*(p: Pool; s: string): SymId {.inline.} =
   ## Intern a symbol given its whole spelling. This is what the reader and the
-  ## deserializers have; code that MINTS a symbol should say what its parts are
+  ## deserializers have; code that mints a symbol should say what its parts are
   ## instead (the overload below).
   p.symbols.getOrIncl(symRecord(p, s))
 
@@ -693,7 +693,7 @@ func isLocal*(s: NifSymbol): bool {.inline.} = s.module == StrId(0)
 # `symId` / `symString`.
 #
 # Twelve files in `nim/compiler` import this library, and CI is the only place
-# they are COMPILED against it: its setup symlinks `nim/dist/nimony` to the
+# they are compiled against it: its setup symlinks `nim/dist/nimony` to the
 # nimony checkout, while a local Nim has a copy of its own. So a change to the
 # names below builds green here and red there -- keep them, or fix Nim first.
 #
@@ -727,7 +727,7 @@ func len*(s: SymPool): int {.inline.} =
 
 proc getKeyId*(s: SymPool; name: string): SymId =
   ## The id `name` already has, or `SymId(0)` when the pool does not hold it.
-  ## Looks up without interning ANYTHING: a component this pool never saw is
+  ## Looks up without interning anything: a component this pool never saw is
   ## proof the symbol is not in it, which is the answer the caller wanted.
   ensureIndexed s.pool.strings
   ensureIndexed s.pool.symbols
@@ -940,7 +940,7 @@ func tokenWidth*(c: Cursor): int {.alwaysInline.} =
   ##  * a conjunction whose second operand contains a call cannot be handed to
   ##    the backend as branches, so it materialises a bool in an if/else
   ##    diamond — 9 x86 instructions and ~90 NIFC tokens for two compares;
-  ##  * factoring the chain walk into a helper made this routine a NON-LEAF,
+  ##  * factoring the chain walk into a helper made this routine a non-leaf,
   ##    and arkham then homes its locals in callee-saved registers and pushes
   ##    them in the prologue on every call, including the overwhelmingly common
   ##    no-suffix path. That cost more than the loop it removed (`parse` +8%).
@@ -1060,7 +1060,7 @@ func strVal*(c: Cursor; pool: Pool): string =
 # `pool(c)`. `pool` returns the pool by value, and a `ref` returned by value is an
 # owned temporary — ARC pairs the call with an incRef and a decRef, and the decRef
 # carries the `Pool`'s whole destructor (three `BiTable`s) behind it, for a pool
-# that outlives the program. Passed as an ARGUMENT the same field is borrowed and
+# that outlives the program. Passed as an argument the same field is borrowed and
 # costs nothing, so the branch is written here where the value is consumed
 # immediately. Same reasoning as `escapeTagOf`; measured together on nifbench.
 proc strVal*(c: Cursor): string {.inline.} =
@@ -1432,7 +1432,7 @@ else:
 
 template requirePools*(b: var TokenBuf) =
   ## A buffer the interning builders and the cross-pool copy are about to write
-  ## through must carry both of its pools. They are THREADED in at construction
+  ## through must carry both of its pools. They are threaded in at construction
   ## (`createTokenBuf` / `initTokenBuf`) and never invented here: a literals
   ## pool decides what a token's payload id means and a tag pool is the
   ## buffer's whole kind space, so substituting a fresh one for either silently
@@ -1474,7 +1474,7 @@ func initTokenBuf*(sharedPool: Pool; sharedTags: TagPool): TokenBuf {.inline.} =
   ## first `add` allocates it. This is what an object field, a `seq` slot or any
   ## other buffer that used to be spelled `default(TokenBuf)` must be
   ## initialized with: the tag pool is a buffer's whole kind space, so it is
-  ## THREADED in at construction and never fallen back to.
+  ## threaded in at construction and never fallen back to.
   TokenBuf(data: nil, len: 0, cap: 0, pool: sharedPool, tags: sharedTags)
 
 proc adoptForeignTokens*(data: pointer; count: int;
@@ -2022,7 +2022,7 @@ func unsafeDec*(c: var Cursor) {.inline.} =
 func peekPastEnd*(n: Cursor): Cursor =
   ## A loosely-bounded cursor at the token following the fully-consumed bounded
   ## scope `n` (`rem == 0`; the close is implicit). Read-only peek at a sibling
-  ## the caller KNOWS exists.
+  ## the caller knows exists.
   result = n
   result.rem = high(int)
 
@@ -2067,7 +2067,7 @@ proc addAcrossPools(dest: var TokenBuf; c: var Cursor;
   ## The trailing `LineInfoLit` is part of the head's width (skipped by
   ## `c.inc`), so it is re-emitted explicitly via `appendLineInfo`.
   ##
-  ## The source pools are THREADED, not re-read: they are the same for every node
+  ## The source pools are threaded, not re-read: they are the same for every node
   ## of one subtree, and `let srcPool = c.pool` at each level cost an owned `ref`
   ## — an incRef, a decRef, and the pool's destructor behind the decRef — per
   ## token. The public wrapper below reads them once.

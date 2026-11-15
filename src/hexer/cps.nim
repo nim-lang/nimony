@@ -85,7 +85,7 @@ proc passiveProcHook(c: var Context; s: SymId): bool =
 
 proc passiveCallHook(c: var Context; n: Cursor): bool =
   ## `Hooks.isPassiveCall`: a call whose statically known target type
-  ## carries `{.passive.}`. `delay`/`delay0`/`suspend` are NOT passive
+  ## carries `{.passive.}`. `delay`/`delay0`/`suspend` are not passive
   ## calls — they're their own lowering shape.
   if n.exprKind in CallKinds - {DelayX}:
     let typ = c.typeCache.getType(n.childCursor, {SkipAliases})
@@ -222,7 +222,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     let fn = n.childCursor
     if fn.kind == Symbol and fn.symId == pool.symId("iterAdvance.0." & SystemModuleSuffix):
       # A `for` loop's step (`coro_transform.lowerPassiveFor`): run the
-      # iterator now, and continue HERE once it yields or finishes.
+      # iterator now, and continue here once it yields or finishes.
       copyIntoKind dest, CallS, info:
         dest.addSymUse pool.symId("iterSwitch.0." & SystemModuleSuffix), info
         let callStart = n
@@ -261,7 +261,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
       dest.addSymUse contVar, info
 
 proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## `(delay0)` — no-arg form: jump to the NEXT suspension point.
+  ## `(delay0)` — no-arg form: jump to the next suspension point.
   c.awaitingSuspendPark = true
   let info = n.info
   let callSite = n
@@ -355,10 +355,10 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # An itertype is a coroutine-shaped value type. `.closure` iter values
     # carry a captured environment, so they lower to a
     # `(closureTuple <wrapper-proctype> (ref RootObj))` — same runtime shape as
-    # closure procs. `.passive` iters have NO environment (their wrapper
+    # closure procs. `.passive` iters have no environment (their wrapper
     # always allocates a fresh frame, see `generateCoroutineHelpers`), so
     # — exactly like a `.passive` proc — they lower to a bare wrapper
-    # proctype function pointer, NOT a tuple.
+    # proctype function pointer, not a tuple.
     let isClosureIterType = nk == ItertypeT and not procHasPragma(n, PassiveP)
     let isPassiveIterType = nk == ItertypeT and procHasPragma(n, PassiveP)
     # A childless routine type is the bare typeclass, as written in `[T: proc]`

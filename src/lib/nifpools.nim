@@ -6,7 +6,7 @@
 ##
 ## Two model bridges do the real work:
 ##
-##  1. Global pool.  The frontend is architected around ONE global `pool`
+##  1. Global pool.  The frontend is architected around a single global `pool`
 ##     (every intern table) + `globalTags` + `lineMan`; nifcore scopes pools
 ##     per-TokenBuf. We bridge by threading the globals through every
 ##     `createTokenBuf`, so ids are comparable across buffers. nifcore's
@@ -44,7 +44,7 @@ export nifroles
 # with the pool API rather than being imported separately everywhere.
 export comesfrom
 # Re-export nifcore verbatim except the two helpers whose shim versions below
-# thread the global pool. `kind`/`NifKind`/its members are re-exported AS-IS:
+# thread the global pool. `kind`/`NifKind`/its members are re-exported as-is:
 # the sem port uses nifcore's own kind model directly (`TagLit`, `StrLit`,
 # `hasMore` for end-of-scope) — there is no classic `NifKind` shim, because
 # nimony's type-bound lookup makes `nifcore.kind(Cursor)` impossible to shadow.
@@ -72,7 +72,7 @@ const NoLineInfo* = NoNifLineInfo
   ## The frontend's classic name for "no line info". A plain `NifLineInfo`
   ## with `NoFile`; test with `isValid`, don't compare against it.
 
-# The old global `pool` (a nifstreams `Literals`) IS a nifcore `Pool` here, so
+# The old global `pool` (a nifstreams `Literals`) is a nifcore `Pool` here, so
 # `pool.strings` / `pool.syms` / `pool.filenames` resolve to real BiTable fields
 # — `pool.strings.getOrIncl`, `.len`, `[id]` all work unchanged. Tags live in a
 # separate `TagPool`, and int/float have no pool, so `pool.tags` / `.files` /
@@ -158,11 +158,11 @@ const InlineInt* = ExtendedSuffix
 
 proc int28Token*(operand: int32; info: NifLineInfo): NifToken {.inline.} =
   ## CF goto/jump carrier: a DotToken with a 28-bit signed inline payload.
-  ## It must NOT be an `ExtendedSuffix`: cursor `tokenWidth` greedily counts
+  ## It must not be an `ExtendedSuffix`: cursor `tokenWidth` greedily counts
   ## consecutive suffix tokens, so an ExtendedSuffix goto would be glued to
   ## whatever token precedes it (or to the previous goto) and every cursor
   ## walk over the CF stream would misalign. A DotToken is always its own
-  ## one-token value; a REAL DotToken has payload 0, so CF walkers treat a
+  ## one-token value; a real DotToken has payload 0, so CF walkers treat a
   ## zero `getInt28` as the plain no-op dot.
   ## `soperand` sign-extends the payload's top bit on read.
   NifToken(((cast[uint32](operand) and PayloadMask) shl KindBits) or
@@ -170,8 +170,8 @@ proc int28Token*(operand: int32; info: NifLineInfo): NifToken {.inline.} =
 proc getInt28*(n: NifToken): int32 {.inline.} = n.soperand
 proc getInt28*(c: Cursor): int32 {.inline.} = load(c).soperand
 
-# NO token-level `symId` / `strId`. A bare `NifToken` cannot be decoded to a
-# pool id: a name of at most `StrInlineMaxLen` bytes is stored INSIDE the token,
+# No token-level `symId` / `strId`. A bare `NifToken` cannot be decoded to a
+# pool id: a name of at most `StrInlineMaxLen` bytes is stored inside the token,
 # and turning those packed bytes into an id requires a pool to intern them in.
 # The old `SymId(uoperand(n) shr 1)` pair silently returned garbage for exactly
 # that case while sitting in the same overload set as the correct `Cursor`
@@ -228,7 +228,7 @@ proc widenSealed*(dest: var TokenBuf; enclosing: int; growth: int) =
   dest[enclosing] = tok
 
 proc widenEnclosingSealed*(dest: var TokenBuf; pos, growth: int) =
-  ## Widen the jump of EVERY sealed scope enclosing `pos` after inserting
+  ## Widen the jump of every sealed scope enclosing `pos` after inserting
   ## `growth` tokens there (classic-name mirror; see nifcursors_classic).
   if growth <= 0: return
   var i = 0
@@ -340,7 +340,7 @@ proc parseFromFile*(filename: string; sizeHint = 100): TokenBuf =
   result = createTokenBuf(sizeHint)
   var r = nifreader.open(filename)
   discard nifreader.processDirectives(r)
-  # dense: classic code reads `n.info` on ANY token (import origins, error
+  # dense: classic code reads `n.info` on any token (import origins, error
   # positions); sparse change-stream info would come back NoLineInfo there
   nifcoreparse.parse(r, result, denseLineInfo = true)
   nifreader.close(r)

@@ -483,7 +483,7 @@ proc hoistTail(c: var Context; pos: int) =
 
 proc tempType(c: var Context; typ: Cursor): Cursor =
   ## The type a temp this pass invents is declared with: the type of the value,
-  ## except where that is a FOREIGN decl's `.closure` proctype -- or a
+  ## except where that is a foreign decl's `.closure` proctype -- or a
   ## structural type holding one, a `tuple` of callbacks say. Such a type was
   ## never rewritten by lambdalifting (see `closuretypes`), so declaring the
   ## temp with it has lengcgen lay the temp out as a bare function pointer
@@ -497,7 +497,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
     # simple enough:
     takeTree result, le
   else:
-    # the temp holds the ADDRESS of the target; `tempType` makes that a `ptr`
+    # the temp holds the address of the target; `tempType` makes that a `ptr`
     # to the (fn, env) tuple when the target is a foreign `.closure` field
     let typ = c.tempType(getType(c.typeCache, le))
     let info = le.info
@@ -657,7 +657,7 @@ proc writesThroughCursorField(c: var Context; le: Cursor): bool =
   ## (see lambdalifting) would get `=dup`'d into its env field, re-forming the
   ## exact ref cycle the cursor was written to break.
   ##
-  ## The field is resolved through the OBJECT's type (typenav's
+  ## The field is resolved through the object's type (typenav's
   ## `lookupFieldDecl`), never via `tryLoadSym` — a field symbol is owned by
   ## its type declaration, not the global symbol table.
   if le.exprKind != DotX: return false
@@ -1053,7 +1053,7 @@ proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   # `isTrivial(c.lifter[], typ)` consults `c.lifter[].op`, which floats
   # with each `getHook(...)` call (e.g. a sibling sink-arg's `=dup`
   # lookup mid-trCall): a follow-up call asks "does `T` have an op?" and
-  # gets answered against the OTHER op, misclassifying types that define
+  # gets answered against the other op, misclassifying types that define
   # `=destroy` but no `=dup` (e.g. TokenBuf) as trivial. `hasDestroyHook`
   # pins the query to `attachedDestroy` regardless of context.
   hasDestroyHook(c.lifter[], typ)
@@ -1072,7 +1072,7 @@ template owningTempDefault(): OwningTemp =
 
 proc bindToTemp(c: var Context; typ: Cursor; info: NifLineInfo; kind = VarS): OwningTemp =
   ## Open a temporary that the value about to be emitted binds to. The decl is
-  ## written at the END of `c.dest` and `finishOwningTemp` relocates it (plus
+  ## written at the end of `c.dest` and `finishOwningTemp` relocates it (plus
   ## any further statements the caller emitted for it, e.g. `trNewobj`'s OOM
   ## check and payload assignment) into `c.hoisted`, replacing it in the
   ## expression by a bare use of the temp. No `(expr (stmts ...) tmp)` is ever
@@ -1369,7 +1369,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
   elif not guardStores:
     genOutOfMemPanic(c, ow, info)
   else:
-    # The caller gets the `nil` and deals with it. What is NOT theirs to deal with
+    # The caller gets the `nil` and deals with it. What is not theirs to deal with
     # is the initialization this pass emits -- a construction that faulted before
     # returning would leave them nothing to check -- so guard exactly those
     # stores. `nil T` and `lenientnils`' `unchecked T` emit the same code and
@@ -1408,7 +1408,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
           else:
             # A `newobj` that a hexer pass synthesized for a type it invented (a
             # closure environment, a coroutine frame) names no fields. The payload
-            # is fresh, uninitialized memory, and an `oconstr` is TOTAL
+            # is fresh, uninitialized memory, and an `oconstr` is total
             # (`doc/tags.md`): the native back end stores exactly what is listed,
             # so an empty one left the frame's fields holding whatever the stack
             # temp it is built in held.
@@ -1441,7 +1441,7 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor)
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
     # These statements do not stay here: `xelim` hoists them in front of the
-    # WHOLE enclosing expression. That is fine for the bitcopy above (a pure
+    # whole enclosing expression. That is fine for the bitcopy above (a pure
     # read), but not for the `=wasMoved` when a sibling operand reads the same
     # location — it would read the emptied one (`tmoved_seq_sibling_field`).
     # Hand the move to `trConstructing`, which schedules it *after* the

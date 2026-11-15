@@ -1,7 +1,7 @@
 # The `orc` memory management strategy: the reference counting of `arc` plus a
 # cycle collector. Selected by `--mm:orc` via `include "$MM"` in `system.nim`.
 #
-# The collector IS Nim's `lib/system/orc.nim` (and its `cellseqs_v2.nim`),
+# The collector is Nim's own `lib/system/orc.nim` (and its `cellseqs_v2.nim`),
 # copied into `system/upstream/` by `hastur` at the commit
 # `system/upstream.commit` pins; it says `when defined(nimony)` where
 # the two compilers differ. This file supplies what Nim's `arc.nim` would.
@@ -9,7 +9,7 @@
 # Nim's collector is synchronous trial deletion after
 # Bacon & Rajan, "Concurrent Cycle Collection in Reference Counted Systems"
 # (https://www.cs.purdue.edu/homes/hosking/690M/Bacon01Concurrent.pdf, Fig. 2),
-# with Lins' observation that only a decrement that does NOT free the cell can
+# with Lins' observation that only a decrement that does not free the cell can
 # leave garbage behind.
 #
 # Like `arc`, the counter updates are not atomic: a `ref` must not be shared

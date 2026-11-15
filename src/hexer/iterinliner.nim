@@ -62,7 +62,7 @@ proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor;
                        needsAddr: bool; res: var Table[SymId, SymId]) =
   assert typ.hasMore
   let local = asLocal(forVar)
-  # A fresh symbol PER YIELD, and a mapping entry so the body reads it —
+  # A fresh symbol per yield, and a mapping entry so the body reads it —
   # exactly what `connectSingleExprToLoopVar` does for the single-variable
   # case. Re-using the for-loop variable's own symbol declared it once per
   # `yield`, so an iterator with two of them emitted two `(let :f.0 …)` for the
@@ -452,7 +452,7 @@ proc emitForBody(e: var EContext; dest: var TokenBuf; body: Cursor;
 type
   IterExit = object
     lab: SymId   ## where the iterator's `return` goes: past the expansion.
-                 ## The `(lab)` goes AFTER the expansion's `scope`, never
+                 ## The `(lab)` goes after the expansion's `scope`, never
                  ## inside it: inside, the `jmp` would stay within the scope
                  ## that owns the iterator's locals, so the destroyer unwinds
                  ## nothing at the jump and then destroys, after the label,

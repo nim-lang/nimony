@@ -136,7 +136,7 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
                        option: ChoiceOption; nearestIsUnique: var bool): int =
   ## Gathers every candidate for `identifier` into `dest`, innermost level
   ## first. A module's own toplevel scope and everything imported into it are
-  ## the SAME, outermost level: `import` is not a shadowing boundary, it is the
+  ## the same, outermost level: `import` is not a shadowing boundary, it is the
   ## `Scope` / `ImportScope` distance that overload resolution already ranks by
   ## (see "Identifier lookup" and "Module-of-origin" in doc/language.md).
   ##
@@ -178,7 +178,7 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
           if sym.kind.isNonOverloadable:
             inc nonOverloadable
     if nearest < 0 and result > before: nearest = result - before
-    # A lone NON-overloadable declaration (let, var, const, type, param, …)
+    # A lone non-overloadable declaration (let, var, const, type, param, …)
     # shadows: nothing further out is visible. Overloadable ones — routines
     # and enum fields — never shadow; they accumulate, and context plus scope
     # distance sort them out later. `FindAll` wants everything regardless.
@@ -331,7 +331,7 @@ proc buildErrAt*(c: var SemContext; dest: var TokenBuf; pos: int; msg: string) =
 
 proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string; orig: Cursor) =
   ## Builds an ErrT node and combines it with the node at `pos` so that what
-  ## spans from `pos` on is still a SINGLE node.
+  ## spans from `pos` on is still a single node.
   ##
   ## That is the entire contract, and it is not cosmetic. A caller that had
   ## emitted one child of the node it is building must still have emitted one
@@ -432,7 +432,7 @@ proc makeGlobalSym*(c: var SemContext; result: var string) =
   result.add c.thisModuleSuffix
 
 proc makeFieldSym*(c: var SemContext; result: var string) =
-  # Fields are scoped to their owning object type, so they are NOT numbered with
+  # Fields are scoped to their owning object type, so they are not numbered with
   # a global running counter (which made the same field diverge — `a.0` vs `a.2`
   # — depending on semcheck order). Within a type a field is `.0`; the number is
   # only bumped when an ancestor type already declares the same field name.
@@ -452,7 +452,7 @@ proc makeLocalSym*(c: var SemContext; result: var string) =
 
 proc newSymId*(c: var SemContext; s: SymId; forceGlobal = false): SymId =
   ## A fresh name for a copy of `s`, keeping its layout — `forceGlobal` promotes
-  ## a local-layout one because the copy lands at MODULE scope where the original
+  ## a local-layout one because the copy lands at module scope where the original
   ## did not (a template body declares in the template's scope; expanding it at
   ## toplevel puts the declaration in the module). See `expandTemplateImpl`.
   let isGlobal = not pool.symIsLocal(s)
@@ -482,7 +482,7 @@ proc hasErrorSince*(dest: TokenBuf; start: int): bool =
 const RoutineLikeSyms* = {TypevarY, StaticTypevarY, ProcY, FuncY, ConverterY,
                           MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY,
                           ConstY}
-  ## The kinds that get GLOBAL symbol layout wherever they are written, because
+  ## The kinds that get global symbol layout wherever they are written, because
   ## the backends lift every one of them out to module scope regardless of the
   ## scope it was declared in (a const: `finalir.toFinalIr`). `identToSym` and `makeTemplateSym` must agree on
   ## this set or the same declaration is named two different ways depending on
@@ -495,11 +495,11 @@ proc makeTemplateSym*(c: var SemContext; result: var string; kind: SymKind) =
   ## layout — i.e. without mangling in `c.thisModuleSuffix`.
   ##
   ## Except for the kinds that are module-level declarations no matter where
-  ## they are WRITTEN. A gensym'd `proc` inside an untyped template used to come
+  ## they are written. A gensym'd `proc` inside an untyped template used to come
   ## out as `helper.1`, a local-layout name, on a declaration the backends emit
   ## at module scope: `nifcoreparse.toModuleString` indexes a decl only when its
   ## name says global, so nothing named it in the module's `(.index …)`, and the
-  ## module was fine to compile and impossible to IMPORT — nifasm resolves a
+  ## module was fine to compile and impossible to import — nifasm resolves a
   ## foreign module's decls through that index and reported "Unknown symbol:
   ## helper.1" in the importer. A local name on a module-level decl is also two
   ## modules' `helper.1` in one link, which is the same bug waiting for a name

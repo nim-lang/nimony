@@ -98,7 +98,7 @@ proc prebuildSharedObjects(forward: string) =
   ## many `parallelTestDir` calls in a single `hastur` run (only the first
   ## does real work; once `static.o` is present the build is a no-op).
   ##
-  ## `forward` MUST be the same flag string the test workers pass to nimony
+  ## `forward` must be the same flag string the test workers pass to nimony
   ## (e.g. `--cc:clang` on Windows CI). The shared object's name is keyed by
   ## its whole compiler command line, so a prebuild with other flags would not
   ## be wrong — it would just build an object the workers never use, and they

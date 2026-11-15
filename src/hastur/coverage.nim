@@ -28,7 +28,7 @@ const NonModuleDirs = ["system", "includes", "private", "deps", "errorcodes",
   ##
   ## A DENY list on purpose. Everything else under `lib/std` — `http/` today —
   ## is a public module the docs must carry, and a new public subdirectory
-  ## should fail this check rather than be silently skipped. A new INTERNALS
+  ## should fail this check rather than be silently skipped. A new internals
   ## directory is the case that needs a line here, and its reason with it.
 
 proc collectModules(dir, prefix: string; result: var seq[string]) =

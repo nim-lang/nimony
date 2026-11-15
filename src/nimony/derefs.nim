@@ -841,7 +841,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     elif e in {WantVarTResult, WantTButSkipDeref} or firstArgIsMutable(c, callExpr):
       finishCallArgs()
     elif not dangerous:
-      # DANGER-ZONE HERE! Consider: `for d in items(a)` where `a` is immutable.
+      # Danger zone here! Consider: `for d in items(a)` where `a` is immutable.
       # Which is turned to `var d: var T = a[i]`.
       # Wether we can allow this or not depends on whether `d` is used later on for mutations!
       # Thus we mark the binding as "dangerous". In a second pass we then look for the pattern
@@ -1533,12 +1533,12 @@ proc trType(c: var Context; n: var Cursor) =
         addHookDecls c.dest, c.hooks[].getOrQuit(s)
       # RTTI classes: the object-level `=destroy` hook is virtual (generated as a
       # method, see lifter.genMissingHooks). It must live in the exported
-      # `(methods)` vtable AND be discoverable as a `(destroy)` hook pragma —
+      # `(methods)` vtable and be discoverable as a `(destroy)` hook pragma —
       # otherwise a foreign consumer that materializes a destroy of this class
-      # forges its OWN module-suffixed hook, which is not in the class's vtable
+      # forges its own module-suffixed hook, which is not in the class's vtable
       # ("method `=destroy_...` not found in class"). Publishing the owner's
       # symbol lets the consumer reuse it (via loadHook/tryLoadHook) so the
-      # dispatched method IS in the vtable.
+      # dispatched method is in the vtable.
       #
       # `=trace` joins it only under `--mm:orc`, where the cycle collector
       # traces a cell through its static type's `=trace` and so needs the

@@ -153,7 +153,7 @@ when defined(windows):
 
   type
     WinChar* = Utf16Char
-    FILETIME* = object ## CANNOT BE int64 BECAUSE OF ALIGNMENT
+    FILETIME* = object ## cannot be int64 because of alignment
       dwLowDateTime*: DWORD
       dwHighDateTime*: DWORD
 

@@ -2,7 +2,7 @@
 
 # Hardcoded Linux/arm64 ABI: the kernel's asm-generic `struct stat`
 # (include/uapi/asm-generic/stat.h), 128 bytes, also used by riscv64 and
-# loongarch64. Note the field ORDER differs from amd64 (mode before nlink,
+# loongarch64. Note the field order differs from amd64 (mode before nlink,
 # both 32-bit) and the trailing padding is two u32s.
 type
   Mode* = uint32   ## mode_t

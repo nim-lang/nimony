@@ -215,7 +215,7 @@ proc waitMillis*(lane: int; requested: int): int =
 proc waitNanos*(lane: int; requestedMs: int): int64 =
   ## `waitMillis` in nanoseconds, for a backend whose wait is a `timespec`.
   ## `-1` is "no bound at all", which only happens when the caller asked for
-  ## none AND the lane is waiting on nothing that can expire.
+  ## none and the lane is waiting on nothing that can expire.
   let d = nextDeadline(lane)
   let byDeadline = if d == never: -1'i64 else: nanosUntil(d, monoNow())
   if requestedMs < 0: return byDeadline

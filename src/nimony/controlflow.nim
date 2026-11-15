@@ -93,7 +93,7 @@ proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
         b.endTree()
       else:
         b.addEmpty
-    # cursor-level accessors: short strings/names live INLINE in the token,
+    # cursor-level accessors: short strings/names live inline in the token,
     # so the raw token payload is not always a pool id
     of Symbol: b.addSymbol readonlyCursorAt(c, i).symName
     of SymbolDef: b.addSymbolDef readonlyCursorAt(c, i).symName
@@ -781,7 +781,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     elif c.resultSym == NoSymId:
       # `(ret x)` in a routine that declares no `result`. Front-end IR never
       # has this, but hexer's IR does and runs this builder over it (the
-      # duplifier's last-read analysis): the eraiser gives a VOID `.raises`
+      # duplifier's last-read analysis): the eraiser gives a void `.raises`
       # routine an `ErrorCode` return type and a trailing `(ret Success)`,
       # and the code goes straight out with no slot to pass through. There is
       # nothing to assign, but the expression's reads must stay visible to the
@@ -1190,7 +1190,7 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
       # For if-then-else, process the condition and both branches
       var p = pos + 1
       # Skip the condition, marking it as reachable. A goto is a DotToken
-      # with a NONZERO payload; plain dots inside the condition don't count.
+      # with a nonzero payload; plain dots inside the condition don't count.
       while p <= last and not (c[p].kind == GotoInstr and c[p].getInt28 != 0):
         result[p - start] = true
         inc p

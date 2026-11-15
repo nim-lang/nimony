@@ -196,7 +196,7 @@ proc trRaise(c: var Context; n: var Cursor) =
   ## Identical to `trReturn`, and that is the whole point: after the `eraiser`
   ## a `raise` can only mean "leave the routine". A raise the source wrote is
   ## already a `jmp` to its handler or a `ret`; the only ones still spelled
-  ## `raise` here are the ones a LATER pass emits for an unrecoverable failure
+  ## `raise` here are the ones a later pass emits for an unrecoverable failure
   ## (the duplifier's out-of-memory check), which no handler catches.
   if c.terminates:
     # unreachable: an earlier jump already left these scopes
@@ -236,9 +236,9 @@ proc trScope(c: var Context; body: var Cursor) =
        already had its destructors emitted by `trReturn`/`trRaise`,
        which walk the whole scope chain before the jump.
        Appending the sequence again here used to be merely dead code in
-       straight-line output — but the CPS pass runs `eliminateJumps` AFTER
+       straight-line output — but the CPS pass runs `eliminateJumps` after
        us, and that rewrites `return` into `(jtrue ´r)` plus fallthrough,
-       which makes the dead tail REACHABLE. The result was every escaping
+       which makes the dead tail reachable. The result was every escaping
        local destroyed twice, plus a destroy of the coroutine-frame field
        the return value had just been moved out of (arcopt elides the
        paired `=wasMoved` together with the first, genuinely dead,
@@ -393,7 +393,7 @@ proc trIf(c: var Context; n: var Cursor) =
     # The arms are one sibling group. `closeBranches` derives the `if`'s own
     # divergence from them — an `if`/`else` whose every arm returns leaves the
     # path dead, which the old "clear the flag after every `if`" could not say.
-    # Without an `else` the group is NOT exhaustive (`openFinalBranch` is what
+    # Without an `else` the group is not exhaustive (`openFinalBranch` is what
     # marks it so), and the implicit no-arm-matched path keeps it live.
     c.flow.openBranches()
     while n.hasMore:
@@ -573,7 +573,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
       tr(c, n)
 
     leaveScope c, addr(c.currentScope)
-  # The root `(stmts` is deliberately left OPEN: the pipeline appends the
+  # The root `(stmts` is deliberately left open: the pipeline appends the
   # generated hooks and closes it. An emitted close cannot be rolled back
   # under `-d:virtualParRi` (it seals the tag and is elided), so the old
   # "close here, shrink away in the pipeline" dance is impossible.

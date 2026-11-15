@@ -656,7 +656,7 @@ func normalize*(s: string): string =
   ## Normalizes the string `s`.
   ##
   ## That means to convert it to lower case and remove any '_'. This
-  ## should NOT be used to normalize Nim identifier names.
+  ## should not be used to normalize Nim identifier names.
   ##
   ## See also:
   ## * `toLowerAscii func<#toLowerAscii,string>`_
@@ -691,7 +691,7 @@ func cmpIgnoreCase*(a, b: string): int =
 func cmpIgnoreStyle*(a, b: string): int =
   ## Semantically the same as `cmp(normalize(a), normalize(b))`. It
   ## is just optimized to not allocate temporary strings. This should
-  ## NOT be used to compare Nim identifier names.
+  ## not be used to compare Nim identifier names.
   ## Use `macros.eqIdent<macros.html#eqIdent,string,string>`_ for that.
   ##
   ## Returns:
@@ -1159,14 +1159,14 @@ type
     ffDecimal,   ## use decimal floating point notation
     ffScientific ## use scientific notation (using `e` character)
 
-# Float formatting reproduces C's `%f`, `%e` and `%g` from the EXACT decimal
+# Float formatting reproduces C's `%f`, `%e` and `%g` from the exact decimal
 # expansion of the double instead of calling `snprintf`. Three reasons:
 #
 # * WebAssembly has no variadic calling convention. An imported function has
-#   ONE type, so a `{.varargs.}` importc cannot be called with different
+#   a single type, so a `{.varargs.}` importc cannot be called with different
 #   argument tails, and `c_snprintf(buf, n, fmt, precision, f)` emits a call
 #   whose f64 argument contradicts the import's declared type. The engine
-#   rejects the whole MODULE, not the call, which is how a single
+#   rejects the whole module, not the call, which is how a single
 #   `formatFloat` on a diagnostic path takes a program down before it starts.
 # * The freestanding targets and `nimony n` have no libc to call.
 # * `snprintf` produces the digit separator of the current C locale, which
@@ -1181,7 +1181,7 @@ type
 # than guessed at, and goes half-to-even like the default rounding mode.
 # (Rounding the shortest round-tripping form from `$f` instead would get
 # 9.995 wrong at two places: it prints as "9.995" but the double is
-# 9.99499999999999957, which rounds DOWN.)
+# 9.99499999999999957, which rounds down.)
 
 const
   DecBase = 1_000_000_000'u64
@@ -1231,7 +1231,7 @@ func exactDigits(f: BiggestFloat): tuple[neg: bool, digits: string, exp: int] =
   ## trailing zeros. Zero yields no digits and `exp = 1`, which is the
   ## exponent `%e` and `%g` print for it (`0.000e+00`, not `0.000e-01`).
   let bits = cast[uint64](f)
-  # Seed the whole tuple: nimony proves initialization per RESULT, not per
+  # Seed the whole tuple: nimony proves initialization per result, not per
   # field, so field-by-field assignment leaves it "possibly uninitialized".
   result = (neg: (bits shr 63) != 0'u64, digits: "", exp: 1)
   let biasedExp = int((bits shr 52) and 0x7FF'u64)

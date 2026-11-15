@@ -9,7 +9,7 @@
 
 ## The optimizer's purity predicates ask about `(call …)`. They have to ask about
 ## `(instr …)` too, and until this module they did not: `cse.isPureExpr` answered
-## TRUE for every intrinsic, so a `volatileLoad` was a pure value and everything
+## true for every intrinsic, so a `volatileLoad` was a pure value and everything
 ## keyed off one could be proved equal to everything keyed off the next. That is
 ## not a slow program — it is a status register read once and believed forever.
 ##
@@ -31,7 +31,7 @@ import ".." / typenav
 
 proc intrinsicOpOf*(m: var MainModule; instrNode: Cursor): IntrinsicOp =
   ## The row an `(instr <sym> …)` applies, or `NoIntrinsicOp` when the callee
-  ## cannot be resolved. Callers must read that as OPAQUE and never as pure: an
+  ## cannot be resolved. Callers must read that as opaque and never as pure: an
   ## unresolvable callee is precisely the case where nothing is known.
   result = NoIntrinsicOp
   if instrNode.kind != TagLit: return
@@ -48,11 +48,11 @@ proc intrinsicEffects*(m: var MainModule; instrNode: Cursor): set[IntrinsicEffec
 
 proc instrIsPure*(m: var MainModule; instrNode: Cursor): bool =
   ## Is this `(instr …)` a value that depends on nothing but its operands? Only a
-  ## row that SAYS SO qualifies; silence is not a claim.
+  ## row that says so qualifies; silence is not a claim.
   efPure in intrinsicEffects(m, instrNode)
 
 proc instrIsVolatile*(m: var MainModule; instrNode: Cursor): bool =
-  ## A volatile access, which additionally may not be reordered against ANOTHER
+  ## A volatile access, which additionally may not be reordered against another
   ## volatile access. That is a property of the pair rather than of either row,
   ## so it is asked here and not read out of `effects`.
   intrinsicOpOf(m, instrNode).isVolatile

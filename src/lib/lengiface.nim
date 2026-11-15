@@ -8,10 +8,10 @@
 #
 
 ## The interface of a Leng module (`M.c.nif`, `M.oc.nif`): the part of it
-## that the codegen nodes of OTHER modules read. `lengc` and `arkham` resolve
+## that the codegen nodes of other modules read. `lengc` and `arkham` resolve
 ## a foreign symbol by loading its declaration out of the owning module's
 ## file: types, globals, constants and string literals, proc signatures, and
-## the BODIES of `.inline` procs, which `lengc` emits into every translation
+## the bodies of `.inline` procs, which `lengc` emits into every translation
 ## unit that calls them. A non-inline proc body is never read from outside.
 ##
 ## The interface file `M.c.idx.nif` (`M.oc.idx.nif`) records a digest of

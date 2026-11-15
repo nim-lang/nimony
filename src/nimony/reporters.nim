@@ -140,7 +140,7 @@ proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var i
             if doReport:
               r.trace infoToStr(n.info), "instantiation from here"
             inc n
-          # error message: an EMPTY one is a deliberately silent `(err …)` —
+          # error message: an empty one is a deliberately silent `(err …)` —
           # the node still counts (so the module fails) but the diagnostic was
           # already reported at the real cause, e.g. a call whose argument is
           # itself erroneous. Printing again would just stack noise on top.

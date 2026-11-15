@@ -45,9 +45,9 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   ## Returns true if the option was recognized and handled.
   ## Sets forwardArg to true if the option should be forwarded to sub-tools.
   ## Sets forwardArgLengc to true if the option should be forwarded to lengc.
-  ## Sets forwardArgHost to false if the option must NOT reach a
+  ## Sets forwardArgHost to false if the option must not reach a
   ## compile-time-eval process: a macro plugin is built for and run on the
-  ## HOST, so the target triple (`--cpu`, `--os`, `--bits`) of the outer
+  ## host, so the target triple (`--cpu`, `--os`, `--bits`) of the outer
   ## compile is wrong for it. Everything else that is forwarded at all is
   ## forwarded there too.
   ## Optional helpMsg and versionMsg provide custom help/version text.
@@ -75,11 +75,11 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.mm = toMM(val)
     if not isStrategyName(config.mm) and not isAbsolute(config.mm) and
        config.mm[0] != '$':
-      # A relative path is read against the CURRENT DIRECTORY, where the user
+      # A relative path is read against the current directory, where the user
       # typed it -- `resolveFile` would otherwise try it against `system.nim`'s
       # directory. Made absolute right here because the option is forwarded to
       # nimsem and to the const-eval sub-compiles, which have to arrive at the
-      # same file. One that is NOT there stays as written, so `--path` can
+      # same file. One that is not there stays as written, so `--path` can
       # still find it, like any other `include`.
       let rt = config.mm.addFileExt(".nim")
       if fileExists(rt):

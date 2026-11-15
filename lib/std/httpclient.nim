@@ -10,7 +10,7 @@
 ## HTTP/1.1 requests as `streamio` constructors (nim-lang/nimony#2635).
 ##
 ## The constructor does the talking — request out, status and headers in — and
-## hands back the response BODY as a `Reader`:
+## hands back the response body as a `Reader`:
 ##
 ## .. code-block:: nim
 ##   var page = httpGet("https://example.com/")
@@ -19,7 +19,7 @@
 ##
 ## * `https` in the URL means TLS (`std/tls`'s `newTlsEngine()` unless an
 ##   engine is passed). An engine on a plain `http` URL raises.
-## * In `httpGet`, `httpPost` and `httpPut` a status outside 2xx RAISES the
+## * In `httpGet`, `httpPost` and `httpPut` a status outside 2xx raises the
 ##   `ErrorCode` `httpToErrorCode` maps it to (404 is `NameNotFound`, 401/403
 ##   `PermissionDenied`, ...), so a `Reader` returned from them always carries
 ##   a successful body. `httpRequest` returns every status as a number instead:
@@ -345,7 +345,7 @@ proc upload(meth, url: string; body: sink Reader; contentType: string;
       w.write toOpenArray(chunk, 0, n - 1)
       w.write "\r\n"
   except ErrorCode as e:
-    # The body failed: the server must NOT see a complete-looking request.
+    # The body failed: the server must not see a complete-looking request.
     w.abort()
     raise e
   w.write "0\r\n\r\n"

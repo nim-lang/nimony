@@ -38,7 +38,7 @@ type
 const
   OS*: array[low(TSystemOS)..high(TSystemOS), TInfoOS] = [
      (name: "embedded",
-      # BARE METAL: no OS to ask for anything, which is a real target and not the
+      # Bare metal: no OS to ask for anything, which is a real target and not the
       # absence of one.
       #
       # Not `standalone`: that is Nim's name for a related but different
@@ -276,7 +276,7 @@ const
 proc findOS*(name: string; res: var TSystemOS): bool =
   ## `true` and sets `res` when `name` is an OS this compiler knows.
   ##
-  ## Separate from `nameToOS` because the first enum value is now a TARGET
+  ## Separate from `nameToOS` because the first enum value is now a target
   ## (`osEmbedded`), so "returned the first one" no longer means "no match" — and
   ## conflating the two would make every typo silently select bare metal.
   for i in low(TSystemOS)..high(TSystemOS):
@@ -286,12 +286,12 @@ proc findOS*(name: string; res: var TSystemOS): bool =
   result = false
 
 proc nameToOS*(name: string): TSystemOS =
-  ## For the HOST's own name, which is always one this compiler knows. A miss here
+  ## For the host's own name, which is always one this compiler knows. A miss here
   ## is a bug in the `hostOS` derivation and not user input — `findOS` is what
   ## validates a flag, and returning `osEmbedded` for a typo is exactly the
   ## silence this split exists to prevent.
   ##
-  ## The out-parameter goes to a LOCAL rather than straight to `result`: `result`
+  ## The out-parameter goes to a local rather than straight to `result`: `result`
   ## is not initialized on entry, and a `var` parameter must be, so handing it
   ## over is a read of an uninitialized location whichever way `findOS` returns.
   var res = osEmbedded

@@ -16,7 +16,7 @@ type
     id: int
       ## The enclosing scope, identified by the position its body starts at.
     pos: int
-      ## Where this `defer`'s `try` BEGINS: the position the statement after it
+      ## Where this `defer`'s `try` begins: the position the statement after it
       ## will be written to. A `defer` protects what follows it, not what
       ## precedes it, so this is not the scope start.
     action: TokenBuf
@@ -81,7 +81,7 @@ proc wrapScopeDefers(c: var Context; dest: var TokenBuf; scopeId: int;
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.stmtKind notin {ScopeS, StmtsS}:
     # Sem gives every statement body a `(stmts …)`, so this is the branch of an
-    # `if`/`case` EXPRESSION (`let x = if c: f() else: 2`): a value, not a
+    # `if`/`case` expression (`let x = if c: f() else: 2`): a value, not a
     # block. It used to be wrapped into a `(stmts …)` like a statement body,
     # which turned the branch into a statement, so the lowering that assigns
     # each branch's value to the expression's temp found no value to assign.
@@ -100,7 +100,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trDefer(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let mine = c.scopeStack[^1]
-  # `dest.len` BEFORE anything else is emitted: the `defer` statement itself
+  # `dest.len` ahead of anything else is emitted: the `defer` statement itself
   # writes nothing here (its body is captured into `deferBody`), so this is
   # exactly where the statements it protects begin.
   let startsAt = dest.len
@@ -217,7 +217,7 @@ proc transformDefer*(dest: var TokenBuf; procBody: int) =
   let topInfo = n.info
   var c = Context()
   var buf = createTokenBuf(50)
-  # The scope id is an index into `buf` (where `trStmt`/`trDefer` build), NOT into
+  # The scope id is an index into `buf` (where `trStmt`/`trDefer` build), not into
   # `dest`. It must be the position of the first body statement — i.e. right after
   # the `(stmts` opener `buf.takeTree` copies below — mirroring `trBlock`'s
   # `beforeBody = dest.len+1`. Seeding it with the `dest`-absolute `procBody`

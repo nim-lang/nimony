@@ -347,7 +347,7 @@ proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDept
 proc topologicalSort(dag: var Dag): seq[int] =
   ## Perform topological sort on the DAG, then re-order by depth. The DFS
   ## post-order is already a valid topological order; sorting by depth on top
-  ## of it is what makes the order a useful dispatch PRIORITY for `runDag` —
+  ## of it is what makes the order a useful dispatch priority for `runDag` —
   ## among the nodes that are ready at the same moment, the one whose
   ## dependency chain is shortest starts first, which keeps a parallel run
   ## deterministic and puts the widest fan-out in front.
@@ -552,7 +552,7 @@ when defined(windows):
 
   proc peakKiBOf(p: Process): int =
     ## Peak working set of a child that has just exited, 0 if Windows won't
-    ## say. The pid still resolves at this point ONLY because osproc's process
+    ## say. The pid still resolves at this point only because osproc's process
     ## handle is still open: it is the last handle to the kernel object, and
     ## `peekExitCode` (not just `close`) drops it. Call this before either of
     ## them -- see `waitForAnyJob`. Wine (10.0) answers this only for the
