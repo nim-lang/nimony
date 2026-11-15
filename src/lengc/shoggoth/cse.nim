@@ -2185,9 +2185,9 @@ proc registerParams(c: var Context; params: Cursor) =
     skip p
 
 proc runCSE*(buf: var TokenBuf;
-             summaries: ptr FunctionSummaryTable = nil;
-             m: ptr MainModule = nil;
-             params: Cursor = default(Cursor)): int {.discardable.} =
+             summaries: ptr FunctionSummaryTable;
+             m: ptr MainModule;
+             params: Cursor; temps: var int): int {.discardable.} =
   ## Two-phase CSE for a single proc `buf` (a Leng body has no nested procs).
   ## `summaries` is the module-level table from `collectFunctionSummaries` run
   ## once on the whole module; nil ⇒ every call conservatively clears. `m` is the
@@ -2195,7 +2195,9 @@ proc runCSE*(buf: var TokenBuf;
   ## nil falls back to the coarse, type-agnostic alias partition.
   # `m`: type context (skips value-CSE of aggregates); the resolver's
   # foreign-summary fallback resolves through it too.
+  ## `temps` is the body's `` `cse `` counter, kept across pipeline rounds.
   var ctx = createContext(addr buf, summaries, m)
+  ctx.tempCounter = temps
   ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
   registerParams(ctx, params)
   block:
@@ -2211,6 +2213,14 @@ proc runCSE*(buf: var TokenBuf;
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
   result = ctx.checksRemoved
+  temps = ctx.tempCounter
+
+proc runCSE*(buf: var TokenBuf;
+             summaries: ptr FunctionSummaryTable = nil;
+             m: ptr MainModule = nil;
+             params: Cursor = default(Cursor)): int {.discardable.} =
+  var temps = 0
+  result = runCSE(buf, summaries, m, params, temps)
 
 # ---- self-tests ----------------------------------------------------------
 

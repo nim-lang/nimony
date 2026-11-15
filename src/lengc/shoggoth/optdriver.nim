@@ -17,7 +17,7 @@
 ## per-body passes (`induction_variables`, …) are still being ported and plug
 ## into `optimizeBody`, which is currently an identity stage.
 
-import std / [os, assertions, strutils, syncio, sets, envvars]
+import std / [os, assertions, strutils, syncio, sets, envvars, hashes]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import ".." / ".." / "lib" / lengiface       # writeLengInterface (`.oc.idx.nif`)
@@ -103,6 +103,88 @@ proc extractModuleSuffix(filename: string): string =
     elif not skip:
       result.add c
 
+const
+  MaxCleanupRounds = 3
+    ## Bound of the cleanup fixpoint. Most bodies converge in two rounds (the
+    ## second confirms); a third catches the chains the second exposes. More
+    ## buys nothing measurable on the benchmarks and costs compile time.
+
+type
+  CleanupStage = enum
+    ## The cleanup pipeline's stages, in round order.
+    stRewrite, stCtorProj, stScalarize, stCopyProp, stUnswitch, stRefold, stCse
+
+  Fixpoint = object
+    ## State of one body's cleanup fixpoint.
+    fp: Hash                  ## fingerprint of the body as it is now
+    lastOut: array[CleanupStage, Hash]  ## fingerprint each stage last produced
+    ran: set[CleanupStage]
+    changed: bool             ## the current round changed the body
+    sroa, us, iv, cse: int
+      ## The temp counters of the passes that mint locals. A pass that runs
+      ## again in a later round continues its own numbering, so it never
+      ## declares a name an earlier round already declared.
+
+const
+  IdempotentStages = {stRewrite, stCtorProj, stScalarize, stUnswitch, stRefold, stCse}
+    ## Stages whose run on their own output is a no-op, so they are skipped
+    ## when nothing changed the body since. The rewriter and unswitching are
+    ## fixpoints themselves. Copy propagation is the exception: one run deletes
+    ## only the last link of a dead-store chain (`x = bytes and 255` over
+    ## `bytes = b.bytes`), so it runs every round.
+
+proc fingerprint(buf: var TokenBuf): Hash =
+  ## Cheap "did this change anything" test. A collision ends the fixpoint early
+  ## or skips a stage that had nothing new to see; neither is unsafe.
+  result = Hash(buf.len)
+  var n = beginRead(buf)
+  while cursorToPosition(buf, n) < buf.len:
+    result = result !& hash(uint(uint32(n.load)))
+    inc n
+  endRead(n)
+  result = !$result
+
+template stage(f: var Fixpoint; buf: var TokenBuf; s: CleanupStage; enabled: bool;
+               body: untyped) =
+  if enabled and not (s in IdempotentStages and s in f.ran and f.lastOut[s] == f.fp):
+    body
+    let now = fingerprint(buf)
+    if now != f.fp:
+      f.fp = now
+      f.changed = true
+    f.lastOut[s] = now
+    f.ran.incl s
+
+proc runPipelineRound(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
+                      summaries: ptr FunctionSummaryTable; m: ptr MainModule;
+                      params: Cursor; eng: Engine) =
+  ## One round of the cleanup pipeline. Each pass leaves work for the next:
+  ## the rewriter's `deref_addr` folds un-poison locals for SROA, SROA's scalar
+  ## copies are what copy propagation deletes, copy propagation makes the
+  ## conditions unswitching compares structurally identical, the unswitched
+  ## copies hand CSE and the rewriter known conditions, and CSE's temps are
+  ## bindings copy propagation can see through on the next round.
+  f.changed = false
+  let rw = eng != nil and passOn("rewrite")
+  stage(f, buf, stRewrite, rw): runRewritesFix(eng, buf)
+  stage(f, buf, stCtorProj, passOn("ctorproj")): runConstructorProjection(buf)
+  stage(f, buf, stScalarize, passOn("scalarize")): runScalarize(buf, m, f.sroa)
+  stage(f, buf, stCopyProp, passOn("copyprop")): runCopyProp(buf, params, summaries, m)
+  stage(f, buf, stUnswitch, passOn("unswitch")): discard runUnswitch(buf, f.us)
+  # Copy propagation and unswitching substitute values into expressions;
+  # `(add T x 0)` and `(lt 14 14)` that only now became foldable fold here,
+  # before CSE keys on them.
+  stage(f, buf, stRefold, rw): runRewritesFix(eng, buf)
+  stage(f, buf, stCse, passOn("cse")):
+    st.checksRemoved += runCSE(buf, summaries, m, params, f.cse)
+
+proc cleanupFixpoint(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
+                     summaries: ptr FunctionSummaryTable; m: ptr MainModule;
+                     params: Cursor; eng: Engine) =
+  for round in 1 .. MaxCleanupRounds:
+    runPipelineRound(buf, f, st, summaries, m, params, eng)
+    if not f.changed: break
+
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                   params: Cursor = default(Cursor); eng: Engine = nil;
@@ -122,41 +204,20 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # anything else looks at the body. Removing those `addr` nodes un-poisons the
   # locals for every later pass (SROA and copyprop treat address-taken locals as
   # untouchable) and for both backends' register allocation.
-  if eng != nil and passOn("rewrite"):
-    runRewritesFix(eng, buf)
-  # SROA first: fold field projections off inline constructors (`T(f: a).f` → `a`),
-  # then explode non-escaping local objects into per-field scalars; copy
-  # propagation then cleans up the resulting scalar copies and dead stores, so the
-  # later passes see simpler, scalar code.
-  if passOn("ctorproj"): runConstructorProjection(buf)
-  if passOn("scalarize"): runScalarize(buf, m)
-  if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
-  # Hoist loop-invariant `if` conditions out of small loops by duplicating them
-  # (loop unswitching): an inlined string accessor's SSO test runs once instead
-  # of per character. After copyprop so propagated copies make structurally
-  # identical conditions actually identical.
-  if passOn("unswitch") and runUnswitch(buf) > 0 and passOn("copyprop"):
-    # A specialized copy no longer reads the temps that fed the hoisted test —
-    # but it still computes them, once per iteration, which is most of what the
-    # unswitch was meant to remove. Copy propagation's dead-store elimination is
-    # what actually deletes them, so it has to see the loop again. They come in
-    # chains (`x = bytes and 255` over `bytes = b.bytes`) and one round only
-    # deletes the last link, so run until the body stops shrinking.
-    for _ in 0 ..< 3:
-      let before = buf.len
-      runCopyProp(buf, params, summaries, m)
-      if buf.len >= before: break
-  # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
-  # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
-  # after those substitutions actually fold. Cheap: the DFA walk is linear
-  # and a miss is a no-op.
-  if eng != nil and passOn("rewrite"):
-    runRewritesFix(eng, buf)
-  if passOn("indvars"): runInductionVariables(buf, m, target.scaledIndex)
-  # CSE also deletes index checks a dominating identical check already made:
-  # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
-  if passOn("cse"):
-    st.checksRemoved += runCSE(buf, summaries, m, params)
+  var f = Fixpoint(fp: fingerprint(buf))
+  cleanupFixpoint(buf, f, st, summaries, m, params, eng)
+  # Strength reduction is a lowering, not a cleanup: it is not idempotent (a
+  # second run reduces its own pointer IVs again), so it runs exactly once, on
+  # the cleaned-up loops. What it leaves behind is cleanup work again —
+  # `` `x = haddr (pat `iv.q `iv.j) `` is a binding copy propagation can
+  # substitute into `(deref `x)` and the rewriter then folds — so the fixpoint
+  # resumes when it changed anything.
+  if passOn("indvars"):
+    runInductionVariables(buf, m, target.scaledIndex, f.iv)
+    let now = fingerprint(buf)
+    if now != f.fp:
+      f.fp = now
+      cleanupFixpoint(buf, f, st, summaries, m, params, eng)
   # The vectorizer runs last of the passes that optimize: its emitted
   # `(instr ...)` applications are final (selection-final by the tag's contract)
   # and no later pass needs to look at them; the scalar remainder loop it leaves

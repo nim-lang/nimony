@@ -263,6 +263,8 @@ type
     litOf: Tracker[SymId, int]         ## y -> (litPos+1): y currently holds that leaf
     addrOf: Tracker[SymId, int]        ## p -> (addrPos+1): p holds that stable `(haddr …)`
     addrDeps: Table[int, seq[SymId]]   ## addrPos -> spine symbols the address depends on
+    addrDepth: Table[int, int]         ## addrPos -> loop depth of its definition
+    loopDepth: int                     ## loops enclosing the current position
     pinned: HashSet[SymId]             ## spine symbols a snapshot may splice: never delete
     addrTaken: HashSet[SymId]          ## syms whose address is taken anywhere
     stableAT: HashSet[SymId]           ## addr-taken syms proven read-only for the
@@ -298,6 +300,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           litOf: initTracker[SymId, int](),
           addrOf: initTracker[SymId, int](),
           addrDeps: initTable[int, seq[SymId]](),
+          addrDepth: initTable[int, int](),
           pinned: initHashSet[SymId](),
           addrTaken: initHashSet[SymId](),
           stableAT: initHashSet[SymId](),
@@ -402,6 +405,7 @@ proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
         let pos = cursorToPosition(c.orig[], src)
         c.addrOf[dest] = pos + 1
         c.addrDeps[pos] = deps
+        c.addrDepth[pos] = c.loopDepth
         # The spliced copies keep reading the spine symbols, but `useCount`
         # was taken before splicing — never delete their decls.
         for d in deps: c.pinned.incl d
@@ -443,8 +447,14 @@ proc substituteLit(c: var Context; n: Cursor; litPos: int) =
   c.patchset.addSubst(pos, cursorAt(c.orig[], litPos))
   c.substCount.mgetOrPut(symId(n), 0) += 1
 
-proc trySubstitute(c: var Context; n: Cursor) =
+proc trySubstitute(c: var Context; n: Cursor; derefBase = false) =
   ## Prefer a snapshotted literal, then a snapshotted address, then a symbol copy.
+  ## An address snapshot is spliced where it folds — as the operand of a `deref`
+  ## (`derefBase`), which the rewriter's `deref_addr` rule turns back into the
+  ## plain lvalue — or at the loop depth it was defined at. Into a deeper loop
+  ## a non-folding splice (`(pat p j)`, a call argument) re-evaluates the
+  ## address every iteration, which undoes the hoisting `induction_variables`
+  ## did: `` `iv.q `` is exactly such a loop-invariant `(addr …)` binding.
   let s = symId(n)
   let root = resolve(c, s)
   var lp = c.litOf[s]
@@ -454,7 +464,11 @@ proc trySubstitute(c: var Context; n: Cursor) =
   if lp != 0:
     substituteLit(c, n, lp - 1)
   elif ap != 0:
-    substituteLit(c, n, ap - 1)     # splices the whole `(haddr …)` subtree
+    if derefBase or c.loopDepth <= c.addrDepth.getOrDefault(ap - 1):
+      substituteLit(c, n, ap - 1)   # splices the whole `(haddr …)` subtree
+    # Otherwise the use stays as it is. Falling through to the symbol copy
+    # would rename it to the snapshot's own binding — a read `useCount` never
+    # saw, of a decl the deletion pass then considers dead.
   elif root != s:
     substituteSym(c, n, root)
 
@@ -496,6 +510,15 @@ proc trExpr(c: var Context; n: var Cursor) =
       # copy `p2 = p` whose only uses are `&((*p2)…)`.
       n.into:
         while n.hasMore: trAddrOperand(c, n)
+    of DerefC:
+      n.into:
+        if n.hasMore:
+          if n.kind == Symbol:
+            trySubstitute(c, n, derefBase = true)
+            inc n
+          else:
+            trExpr(c, n)
+        while n.hasMore: trExpr(c, n)
     of CallC, InstrC:
       n.into:
         if n.hasMore: skip n             # callee
@@ -744,7 +767,9 @@ proc trLoop(c: var Context; n: var Cursor) =
   closeBranch c
   openBranch c
   for s in writes: invalidate(c, s)
+  inc c.loopDepth
   trLoopBody(c, n)
+  dec c.loopDepth
   closeBranch c
   closeBranches c
 
@@ -1471,6 +1496,24 @@ when isMainModule:
       "(stmts (var :st.0.M . . (call f.0.M)) . " &
       "(asgn (deref (haddr (dot (deref st.0.M) tags.0.M 0))) " &
       "(add (i 64) (deref (haddr (dot (deref st.0.M) tags.0.M 0))) 1)))")
+
+  block addr_snapshot_kept_out_of_loop:
+    # An invariant address used as a plain value inside a loop (what
+    # `induction_variables` hoists) is not spliced back into it — neither
+    # directly nor through a copy, which must not be renamed to `p` either:
+    # `p`'s decl is only deletable while its reads are all spliced away.
+    # (`y`'s initializer sits at `p`'s own depth and does get the address.)
+    chk(
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(var :y.0.M . (ptr (i 64)) p.0.M) " &
+      "(loop (stmts (call use.0.M y.0.M) (call use.0.M p.0.M)) " &
+      "(continue c.0.M)))",
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(var :y.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(loop (stmts (call use.0.M y.0.M) (call use.0.M p.0.M)) " &
+      "(continue c.0.M)))")
 
   block addr_snapshot_spine_write_blocks:
     # The spine symbol is reassigned between binding and use: the address

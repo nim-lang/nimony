@@ -472,17 +472,19 @@ proc synthCursor(c: var Context; idx: int): Cursor {.inline.} =
 
 # ---- public entry ---------------------------------------------------------
 
-proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
+proc runScalarize*(buf: var TokenBuf; m: ptr MainModule; temps: var int) =
   ## Scalar-replace non-escaping local objects in a single proc body. Names the
   ## field scalars `` `sroa.<n> ``, which are locals of that body.
   ## `m` is the module type context each scalar's declared type is resolved through;
   ## without it the type slots are left empty and the backend re-infers them.
+  ## `temps` is the body's `` `sroa `` counter: a body the pipeline scalarizes
+  ## again must not mint a name the previous round already declared.
   var c = Context(orig: addr buf,
                   candidates: initTable[SymId, Candidate](),
                   accesses: @[],
                   patchset: initPatchset(addr buf),
                   synth: @[],
-                  counter: 0,
+                  counter: temps,
                   m: m)
   block:
     let n = beginRead(buf)
@@ -519,6 +521,7 @@ proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
     for f in fields:
       let nm = freshScalarName(c)
       c.candidates.getOrQuit(oSym).names[f] = nm
+  temps = c.counter
 
   # Replace each object decl with its field-scalar decls (constructor order).
   for it in survPairs:
@@ -559,6 +562,10 @@ proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
     buf = ensureMove(nb)
 
 # ---- self-tests -----------------------------------------------------------
+
+proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
+  var temps = 0
+  runScalarize(buf, m, temps)
 
 when isMainModule:
   proc parse(src: string): TokenBuf =
