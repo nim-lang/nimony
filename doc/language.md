@@ -3234,7 +3234,7 @@ Two module pragmas move the default:
 A postcondition, stated with `ensures`, is judged in the routine itself, at
 every exit, and a caller takes it without looking. No run-time check backs it,
 so an `ensures` the compiler cannot prove is an error in every mode, like an
-undecided `{.assert}`:
+undecided `{.assert.}`:
 
 ```nim
 proc clampLow(x: int): int {.ensures: result >= 0.} =
