@@ -29,3 +29,8 @@ proc runImi*(input, suffix, xnifDir: string; changed: var bool): TokenBuf =
   ## `changed` reports whether the inliner altered anything.
   result = parseModule(input)
   changed = runInterModuleInliner(result, suffix, xnifDir)
+
+proc runImiOn*(buf: var TokenBuf; suffix, xnifDir: string): bool =
+  ## Inter-module inlining on a module already parsed with `parseModule` (and
+  ## possibly rewritten since); true when the inliner altered anything.
+  runInterModuleInliner(buf, suffix, xnifDir)
