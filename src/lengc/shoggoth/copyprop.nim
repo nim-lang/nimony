@@ -1245,12 +1245,14 @@ proc registerParams(c: var Context; params: Cursor) =
 
 proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
                   summaries: ptr FunctionSummaryTable = nil;
-                  m: ptr MainModule = nil) =
+                  m: ptr MainModule = nil): bool {.discardable.} =
   ## In-place copy propagation + dead-binding elimination for a single proc body.
   ## `params` is the enclosing proc's `(params …)` node (empty for a bare body);
   ## its parameters become eligible copy sources (see `registerParams`).
   ## `summaries`/`m` feed the read-only addr-taken classification (nil ⇒ every
   ## call taking an address taints conservatively, the pre-extension behavior).
+  ## Returns whether it changed `buf`.
+  result = false
   var ctx = createContext(addr buf)
   registerParams(ctx, params)
   block:
@@ -1282,6 +1284,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
+    result = true
 
 # ---- self-tests -----------------------------------------------------------
 

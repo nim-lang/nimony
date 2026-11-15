@@ -751,13 +751,15 @@ proc tr(c: var Context; n: var Cursor) =
 # ---- public entry --------------------------------------------------------
 
 proc runInductionVariables*(buf: var TokenBuf; m: ptr MainModule;
-                            scaledIndex: bool; temps: var int) =
+                            scaledIndex: bool; temps: var int): bool {.discardable.} =
   ## Two-phase IV strength reduction: record rewrite patches, then rebuild
   ## `buf`. Without scaled-index addressing (`scaledIndex` false) every
   ## `(at arr iv)` becomes `(deref p)` for a pointer bumped next to the iv-inc;
   ## with it, a loop whose counter only indexes counts to zero instead
   ## (`rewriteToZero`) and every other loop is left alone.
   ## `temps` is the body's `` `iv `` counter, kept across pipeline rounds.
+  ## Returns whether it changed `buf`.
+  result = false
   var ctx = createContext(addr buf, m, scaledIndex)
   ctx.tempCounter = temps
   var n = beginRead(buf)
@@ -766,6 +768,7 @@ proc runInductionVariables*(buf: var TokenBuf; m: ptr MainModule;
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
+    result = true
 
 proc runInductionVariables*(buf: var TokenBuf;
                             m: ptr MainModule = nil; scaledIndex = false) =
