@@ -3245,6 +3245,17 @@ proc pass(x: int): int {.ensures: result >= 0.} =
   result = x                # Error: cannot prove postcondition: 0 <= result
 ```
 
+A field of an object held by value is a location like any other: a
+constructor `T(f: v)` states what `f` holds, and a copy `x = y` states that
+`x.f` is `y.f`. An `ensures` about `result.f` is proven that way:
+
+```nim
+proc pick(i: int; miss: bool): Hit {.requires: i >= 0 and i < 3,
+    ensures: result.thing >= -1 and result.thing < 3.} =
+  if miss: return Hit(thing: -1)
+  result = Hit(thing: i)    # proven from the `requires`
+```
+
 ### Assertions and assumptions
 
 Inside a body, two statements take part in the same reasoning:
