@@ -431,7 +431,12 @@ proc gif(g: var SrcGen, n: var Cursor) =
         n.into:
           gstmtsOrExpr(g, n, c)
       else:
-        raiseAssert "unreachable"
+        # sem reports a missing or malformed branch with an `(err)` in its place
+        if isErrNode(n):
+          optNL(g)
+          gsub(g, n)
+        else:
+          raiseAssert "unreachable"
 
 proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false)
 
@@ -509,7 +514,13 @@ proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false) =
           putWithSpace(g, tkColon, ":")
           takeCaseStmts(g, n, c, isCaseObject = isCaseObject)
       else:
-        raiseAssert "unreachable"
+        # sem reports a missing branch (`of` expected, cases not covered) with
+        # an `(err)` in its place
+        if isErrNode(n):
+          optNL(g)
+          gsub(g, n)
+        else:
+          raiseAssert "unreachable"
 
 proc takeTypeVars(g: var SrcGen, n: var Cursor) =
   if n.substructureKind == TypevarsU:

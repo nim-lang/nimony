@@ -49,6 +49,15 @@ func len*[T: Keyable](s: HashSet[T]): int =
   for k, v in pairs(s.t):
     if v: inc result
 
+func `==`*[T: Keyable](a, b: HashSet[T]): bool =
+  ## True if `a` and `b` have the same elements, however each was built.
+  if a.len != b.len:
+    return false
+  for x in items(a):
+    if x notin b:
+      return false
+  result = true
+
 func intersection*[T: Keyable](a, b: HashSet[T]): HashSet[T] =
   ## Elements present in both `a` and `b`.
   result = initHashSet[T]()

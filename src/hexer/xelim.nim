@@ -17,6 +17,7 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
 import ".." / finalir / finalir_model
+import ".." / models / tags
 include ".." / nimony / nif_annotations
 
 type
@@ -121,7 +122,7 @@ proc getType(c: var Context; n: Cursor): Cursor =
     # by now: the call's value is the success tuple (#2642).
     var buf = createTokenBuf(6)
     addSuccessTupleType(buf, result, n.info)
-    result = c.typeCache.keepAlive(buf)
+    result = cursorAt(buf, 0)
 
 proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info
@@ -364,7 +365,12 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   let tmp = pool.symId(tempSymName(c))
   dest.addParLe LetS, info
   dest.addSymDef tmp, info
-  dest.addEmpty2 info  # export marker, pragmas
+  dest.addEmpty info  # export marker
+  # `(inline)` like `trExprCall`'s temps: it tells the backend this is
+  # xelim's own temp, which desugar relies on to replace a zero
+  # `default(array)` temp by its value (nimony#2846).
+  dest.copyIntoKind PragmasS, info:
+    dest.copyIntoKind InlineP, info: discard
   dest.copyTree typ
   dest.addTarget childTar
   dest.addParRi()
@@ -491,11 +497,17 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 
+proc transparentExpr(n: Cursor): bool
+
 proc condNodeSafe(n: Cursor): bool =
   var n = n
   case n.kind
   of TagLit:
     if n.exprKind in CallKinds: return false
+    if n.exprKind in {AndX, OrX}:
+      # Below a leaf (`(a or b) != c`) a short-circuit is a value, and the
+      # consumers lower one only on a condition's spine.
+      return false
     if n.exprKind == CastX:
       # A passthrough copies the subtree VERBATIM, so it also skips whatever
       # else the current goal rewrites. `LowerCasts` binds a cast's source and
@@ -533,6 +545,18 @@ const
     ## inflated tiny accessors (`nifcore.load`, `kind`) past the inliner's
     ## 100-token bound, so they stayed real calls.
 
+proc condSpineSafe(n: Cursor): bool =
+  ## The spine (`and`/`or`/`not`/`(expr val)`) as `condSpineHasShortCircuit`
+  ## walks it; whatever hangs off it is a leaf for `condNodeSafe`.
+  if n.exprKind in {AndX, OrX, NotX} or transparentExpr(n):
+    var n = n
+    n.loopInto:
+      if not condSpineSafe(n): return false
+      skip n
+    result = true
+  else:
+    result = condNodeSafe(n)
+
 proc condPassthroughSafe(n: Cursor): bool =
   ## True if an `and`/`or` condition subtree contains only short-circuit nodes
   ## and *pure* leaves that finalir can emit inline — no calls and no
@@ -543,7 +567,7 @@ proc condPassthroughSafe(n: Cursor): bool =
   ## evaluation requires the call to be hoisted *into* the branch, which a
   ## consumer handed the bare tree cannot do.
   if n.kind != TagLit: return false
-  result = condNodeSafe(n)
+  result = condSpineSafe(n)
 
 proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
   ## Copy the condition subtree at `n` into `dest`, dropping the brackets of any
@@ -1249,6 +1273,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     elif n.finalIrKind == LoopV:
       copyInto(dest, n):
         trStmt c, dest, n
+    elif n.kind == TagLit and n.cursorTagId == TagId(KeepovfTagId):
+      # `(keepovf ArithExpr Lvalue)`, which `constparams` emits for checked
+      # arithmetic: its operands are expressions, and a nested checked
+      # operation in one of them is an `(expr (stmts ...) tmp)` to hoist.
+      trStmtCall c, dest, n
     else:
       takeTree dest, n
   of PragmaxS:
@@ -1326,7 +1355,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n, tar
     dest.addTarget tar
 
-  of AsmS, DeferS:
+  of AsmS, DeferS, EmitS:
+    # `(emit Expr+)`: its pieces are expressions too, a checked operation
+    # among them included.
     # IMPORTANT: Stores into `tar` helper!
     var tar = initTarget(IsAppend)
     tar.t.copyInto n:
@@ -1340,9 +1371,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of BlockS:
     var tar = initTarget(IsIgnored)
     trBlock c, dest, n, tar
-  of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+  of MacroS, TemplateS, TypeS, BreakS, ContinueS,
      IncludeS, ImportS, FromimportS, ImportexceptS,
-     ExportS, CommentS, AssumeS, AssertS,
+     ExportS, CommentS, AssumeS, AssertS, InvariantS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      LabS, JmpS:
     # `lab`/`jmp` are atoms for xelim: it PRODUCES them (`trCondJmp`) and never
@@ -1537,7 +1568,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
-         AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+         AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
          StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
          LabS, JmpS, NoStmt:
         trExprLoop c, dest, n, tar

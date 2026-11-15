@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/treadonlyview.nim(8, 6) Error: cannot pass b to var/out T parameter
+tests/nimony/errmsgs/treadonlyview.nim(9, 17) Error: cannot pass toOpenArray(b) to var/out T parameter

@@ -298,3 +298,44 @@ template loopInto*(c: var Cursor; expected: LengTagKind; body: untyped) {.tagDis
     "loopInto " & $expected & ": cursor at kind=" & $c.kind
   loopInto c:
     body
+
+# ── control-flow shapes ─────────────────────────────────────────────────────
+
+proc twoWayParts*(c: Cursor; cond, thenArm, elseArm: var Cursor): bool =
+  ## The parts of a two-way conditional: Leng's `(ite C T E|.)`, or the legacy
+  ## `(if (elif C T) [(else E)])` with a single one-statement `elif`. `elseArm` is
+  ## a `DotToken` cursor or nil when there is no else-branch. False for any other
+  ## shape (an `elif` chain, a multi-statement arm).
+  result = false
+  if c.kind != TagLit: return
+  if c.stmtKind == IteS:
+    var cc = sub(c)
+    if not cc.hasMore: return
+    cond = cc; skip cc
+    if not cc.hasMore: return
+    thenArm = cc; skip cc
+    elseArm = (if cc.hasMore: cc else: default(Cursor))
+    return true
+  if c.stmtKind != IfS: return
+  var cc = sub(c)
+  if not cc.hasMore or cc.substructureKind != ElifU: return
+  var bc = sub(cc)
+  cond = bc; skip bc
+  if not bc.hasMore: return
+  thenArm = bc; skip bc
+  if bc.hasMore: return                       # more than one statement in the arm
+  skip cc
+  elseArm = default(Cursor)
+  if cc.hasMore:
+    if cc.substructureKind != ElseU: return   # an `elif` chain
+    var ec = sub(cc)
+    if not ec.hasMore: return
+    elseArm = ec; skip ec
+    if ec.hasMore: return
+    skip cc
+    if cc.hasMore: return
+  result = true
+
+proc hasArm*(arm: Cursor): bool {.inline.} =
+  ## Is `arm` (from `twoWayParts`) a real branch, not a missing or `.` else?
+  not cursorIsNil(arm) and arm.hasMore and arm.kind != DotToken

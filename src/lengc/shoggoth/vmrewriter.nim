@@ -581,6 +581,54 @@ proc isIntTPred(args: openArray[Cursor]): bool =
   let c = args[0]
   c.kind == TagLit and c.tags.tagName(c.cursorTagId) == "i"
 
+type LitOrder = enum
+  loUnknown, loLess, loEqual, loGreater
+
+proc litOrder(a0, b0: Cursor): LitOrder =
+  ## How two literal operands of a comparison order. The literal kind carries
+  ## the comparison's signedness; a `(suf 14 "i64")` is its literal (both
+  ## operands have the same type); `false < true`, `nil == nil`. Floats stay unknown — NaN is no literal,
+  ## but there is nothing to gain from deciding them either.
+  template peel(c: Cursor): Cursor =
+    (if c.kind == TagLit and c.tags.tagName(c.cursorTagId) == "suf": c.childCursor else: c)
+  template order(x, y: untyped): LitOrder =
+    (if x < y: loLess elif x == y: loEqual else: loGreater)
+  proc nullary(c: Cursor): int =
+    ## `(nil)`, `(false)`, `(true)` as 0, 1, 2; anything else -1.
+    if c.kind != TagLit or c.childCursor.hasMore: return -1
+    case c.tags.tagName(c.cursorTagId)
+    of "nil": 0
+    of "false": 1
+    of "true": 2
+    else: -1
+  let a = peel(a0)
+  let b = peel(b0)
+  if a.kind != b.kind: return loUnknown
+  case a.kind
+  of IntLit: order(intVal(a), intVal(b))
+  of UIntLit: order(uintVal(a), uintVal(b))
+  of CharLit: order(charLit(a), charLit(b))
+  of TagLit:
+    let x = nullary(a)
+    let y = nullary(b)
+    # nil is not ordered against a bool: such an operand pair is ill-typed
+    if x < 0 or y < 0 or (x == 0) != (y == 0): loUnknown
+    else: order(x, y)
+  else: loUnknown
+
+proc litLtPred(args: openArray[Cursor]): bool =
+  ## `(WHEN (litLt X Y))`: X and Y are literals and X < Y.
+  litOrder(args[0], args[1]) == loLess
+
+proc litLePred(args: openArray[Cursor]): bool =
+  litOrder(args[0], args[1]) in {loLess, loEqual}
+
+proc litEqPred(args: openArray[Cursor]): bool =
+  litOrder(args[0], args[1]) == loEqual
+
+proc litNeqPred(args: openArray[Cursor]): bool =
+  litOrder(args[0], args[1]) in {loLess, loGreater}
+
 proc newEngine*(rulesSrc: string; pool: Pool = nil; tags: TagPool = nil): Engine =
   ## Build an engine from a rules source. Pass the MODULE's `pool`/`tags` (e.g.
   ## the typenav context's, as `optdriver` does) so the compiled patterns' tag
@@ -602,6 +650,10 @@ proc newEngine*(rulesSrc: string; pool: Pool = nil; tags: TagPool = nil): Engine
   result.tagVar   = result.tags.registerTag("var")
   result.tagParam = result.tags.registerTag("param")
   result.preds[result.tags.registerTag("isIntT")] = isIntTPred   # built-in guard
+  result.preds[result.tags.registerTag("litLt")] = litLtPred
+  result.preds[result.tags.registerTag("litLe")] = litLePred
+  result.preds[result.tags.registerTag("litEq")] = litEqPred
+  result.preds[result.tags.registerTag("litNeq")] = litNeqPred
   result.ruleBuf = parseFromBuffer(rulesSrc, "R", 256, result.pool, result.tags)
   parseRules(result)
   finalizeRules(result)

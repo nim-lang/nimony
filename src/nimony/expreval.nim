@@ -1139,6 +1139,15 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = charValue(c, char(ch), nOrig.info)
+      elif targetType.typeKind == BoolT:
+        # `bool(1)`: what `low`/`high` of an `array[bool, T]` index fold to
+        let x = getConstOrdinalValue(val)
+        if x == createXint(0'i64):
+          result = c.getFalseValue()
+        elif x == createXint(1'i64):
+          result = c.getTrueValue()
+        else:
+          cannotEval nOrig
       elif targetType.typeKind in {EnumT, HoleyEnumT, AnumT}:
         let x = getConstOrdinalValue(val)
         if isNaN(x):
@@ -1224,7 +1233,7 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
       # for uints, ashr and shr are the same
       evalShiftOp(c, n, `shr`)
     of AshrX:
-      # xints.shr keeps the sign the same, so has ashr behavior for signed ints
+      # xints.shr is an arithmetic shift (rounds toward negative infinity)
       evalShiftOp(c, n, `shr`)
     of EqX:
       evalCmpOp(c, n, `==`)
@@ -1430,6 +1439,25 @@ proc tryEvalOrdinal*(bits: int; n: Cursor): xint =
   else:
     result = getConstOrdinalValue(val)
 
+proc rangesContain*(ranges: Cursor; value: xint; bits: int): bool =
+  ## Does the `(ranges ...)` of a case object's `of` branch hold `value`?
+  ## Compared by value, not by spelling: a discriminator can be a constant,
+  ## a declared default or `default(T)`. False when `value` is NaN.
+  result = false
+  if not value.isNaN:
+    var n = sub(ranges)
+    while n.hasMore and not result:
+      if n.substructureKind == RangeU:
+        var b = sub(n)
+        let lo = tryEvalOrdinal(bits, b)
+        skip b
+        let hi = tryEvalOrdinal(bits, b)
+        result = not lo.isNaN and not hi.isNaN and lo <= value and value <= hi
+      else:
+        let v = tryEvalOrdinal(bits, n)
+        result = not v.isNaN and v == value
+      skip n
+
 proc getConstStringValue*(val: Cursor): StrId =
   if val.isStringLit:
     result = val.strId
@@ -1550,6 +1578,8 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     buf.addSubtree n
     return
   let orig = typ
+  let start = buf.len
+  var n = n
   var typ = skipModifier(typ)
   var symType = default(Cursor)
   var opened = 0
@@ -1562,6 +1592,11 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         buf.addParLe(DconvX, n.info)
         buf.addSymUse(sym, n.info)
         inc opened
+        # a value computed by compile-time execution arrives as a `conv`
+        # to the distinct type (#2926); the `dconv` above replaces it
+        if n.isTagLit and n.exprKind in {ConvX, HconvX}:
+          inc n
+          skip n # type
         typ = decl.body
         inc typ # distinct tag
         continue
@@ -1806,9 +1841,8 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     err = true
 
   if err:
-    if opened > 0:
-      # could also replace with a general shrink to start
-      buf.shrink buf.len - opened
+    # drop the `(dconv T` prefixes opened above
+    buf.shrink start
     buf.addParLe nifpools.ErrT, n.info
     buf.addDotToken()
     let msg = "cannot annotate constant " & asNimCode(n) & " with type " & typeToString(orig)

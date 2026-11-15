@@ -25,7 +25,7 @@
 | `(alignof T)`          | LengExpr, NimonyExpr | `alignof` operation |
 | `(offsetof T Y)`       | LengExpr, NimonyExpr | `offsetof` operation |
 | `(oconstr T (kv Y X)*)`; `(oconstr T (oconstr...)? (kv Y X*))` | LengExpr, NimonyExpr, NiflerKind | object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named |
-| `(aconstr T X*)`       | LengExpr, NimonyExpr | array constructor |
+| `(aconstr T X*)`       | LengExpr, NimonyExpr | array constructor. With no `X` it is the all-zero array of type `T`, whatever its length: desugar emits it for a zero `default(array)` (nimony#2846) so a huge array stays one node, and a back end fills `sizeof(T)` zero bytes in place |
 | `(bracket X*)`         | NimonyExpr, NiflerKind | untyped array constructor |
 | `(curly X*)`           | NimonyExpr, NiflerKind | untyped set constructor |
 | `(curlyat X X)`        | NimonyExpr, NiflerKind | curly expression `a{i}` |
@@ -92,7 +92,7 @@
 | `(else X)`; `(else .T)` | LengOther, NimonyOther, NiflerKind | `else` action, or the default branch of a Leng discriminated `union` |
 | `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)` |
 | `(break .Y)`; `(break)` | LengStmt, NimonyStmt, NiflerKind | `break` statement |
-| `(continue .Y)`; `(continue)` | NimonyStmt, NiflerKind, FinalIrKind | `continue` statement |
+| `(continue .Y)`; `(continue)`; `(continue .X)` | NimonyStmt, NiflerKind, FinalIrKind, LengStmt | `continue` statement. In Leng and the multi-join IR it is a `(loop)` body's last statement, its sole back-edge: `(continue .)` always repeats, `(continue X)` repeats while `X` holds and otherwise leaves the loop. `X` has no effect: no call, no write, no flag read (`ovf`); a load is fine |
 | `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
 | `(while X S)` | LengStmt, NimonyStmt, NiflerKind| `while` statement |
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
@@ -166,8 +166,7 @@
 | `(errs)` | LengPragma | proc annotation |
 | `(static T)`; `(static)`; `(static X)` | LengPragma, NimonyType, NimonyExpr, NiflerKind | `static` type or annotation; as an expression, `static(expr)` evaluates `expr` at compile time |
 | `(ite X S .S S? STR_LIT?)` | ControlFlowKind, FinalIrKind, LengStmt | if-then-else, optionally followed by `join` information and by a label. The multi-join IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's |
-| `(itec X S S)` | FinalIrKind, LengStmt | if-then-else (that was a `case`) |
-| `(loop S)` | FinalIrKind, LengStmt | infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)` |
+| `(loop S)` | FinalIrKind, LengStmt | loop; the body ends in `(continue .X)`, its sole back-edge, and every forward exit is a `(jmp …)` to a label after the loop |
 | `(v X INT_LIT)` | FinalIrKind | `versioned` locations |
 | `(etupat X INT_LIT)` | FinalIrKind | tupat expression for error handling |
 | `(unknown X)` | FinalIrKind | location's contents is unknown at this point |
@@ -233,11 +232,13 @@
 | `(ensures X)` | NimonyPragma | `ensures` pragma |
 | `(assume X)` | NimonyPragma, NimonyStmt, FinalIrKind | `assume` pragma/annotation |
 | `(assert X)` | NimonyPragma, NimonyStmt, FinalIrKind | `assert` pragma/annotation |
+| `(invariant X)` | NimonyPragma, NimonyStmt, FinalIrKind | `invariant` pragma: a loop invariant, the first statement of a loop body |
 | `(build X)`; `(build STR STR STR)`; `(build STR STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma; in the index, each `(tup …)` entry is `(lang source flags [objectName])` for a `compile`d file, or `(builder tool args [linkflags])` for a `build` backend |
 | `(feature STR)` | NimonyPragma | `feature` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |
 | `(establishesBorrow)` | NimonyPragma | `establishesBorrow` pragma: the routine's result borrows from its first parameter. `let v = f(x)` then starts a borrow of `x` that lasts until `v` dies, so `x` cannot be mutated or passed to a `var` parameter in between. This is what carries the borrow across the call boundary for view constructors such as `toOpenArray`, whose bodies build the view out of a raw pointer the borrow checker cannot follow. |
+| `(readonlyView)` | NimonyPragma | `readonlyView` pragma: the routine returns a view that never allows mutation, whatever its first argument is, so a call to it cannot be passed to a `var openArray` (or any `var` view) parameter. For view constructors over a buffer that may be shared or static, such as a copy-on-write `string`: writing through the view would skip the copy. |
 | `(incompleteStruct)` | NimonyPragma | `incompleteStruct` pragma |
 | `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
 | `(hderef X)` | NimonyExpr | hidden pointer deref operation |
@@ -352,7 +353,7 @@
 | `(sync)` | NimonyPragma | `sync` routine pragma: the routine may operate on a shared global (or a field of one) passed to one of its `var`/`ptr` parameters; inside its body those parameters are themselves only usable as such arguments to other `.sync` routines |
 | `(assumeSync)` | NimonyPragma | `assumeSync` marker; only valid inside `{.cast(assumeSync).}:` pragma blocks (the block may access shared globals freely) |
 | `(instruction STR)` | NimonyPragma, LengPragma | target-pinned instruction annotation; the argument is an opcode NAME from `lib/intrinsics`'s `IntrinsicOp`, spelled as a string literal (`{.instruction: "bsf".}`). A string, not an ident: the name is data resolved by table lookup, it is never subject to scope or overload resolution, and an ident would additionally have to dodge Nim's keywords. The proc is a *declaration* of one machine instruction: calls to it become `(instr …)`, never an ABI call. Its signature spelling is dictated by the row's operand roles and checked at the declaration |
-| `(intrinsic STR)` | NimonyPragma, LengPragma | portable-intrinsic annotation; like `instruction` (same string-literal argument) but the opcode is target-neutral and may expand to any number of instructions (`Memcpy`, `AtomicFetchAdd`, …). Its signature is unified against the row's shape at the declaration |
+| `(intrinsic STR)` | NimonyPragma, LengPragma | portable-intrinsic annotation; like `instruction` (same string-literal argument) but the opcode is target-neutral and may expand to any number of instructions (`copyMemIns`, `AtomicFetchAdd`, …). Its signature is unified against the row's shape at the declaration |
 | `(instr SYM X*)` | LengExpr, LengStmt | intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode |
 | `(register STR)` | NimonyPragma, LengPragma | pins a parameter, result or local to a named machine register (`{.register: "rdi".}`). In an `{.assembler.}` proc this is an *assertion* the back end verifies; in an ordinary proc it is a hard pin the register allocator honours |
 | `(stack)` | NimonyPragma, LengPragma | pins a local to a stack slot rather than a register (`{.stack.}`) — the memory counterpart of `(register …)` |
@@ -374,6 +375,7 @@
 | `(canFormCycles T)` | NimonyExpr | `canFormCycles(T)`: does the cycle collector trace through a value of type `T` (it owns a ref that can be part of a cycle)? Folded to `(true)`/`(false)` by `derefs`, with the lifter's own `needsTrace`; always false unless the runtime says `{.enableTrace.}`. Containers that own their buffer through a raw pointer use it to fence structural changes against a concurrent collector (`seq`, `--mm:yrc`) |
 | `(always S*)` | LengStmt, NimonyStmt | the statements of one replicated `finally` section: the eraiser emits one `(always …)` per way out of a `try`, so each copy stays recognizable as "runs on every path" after the `try` itself is gone. Like `stmts`, it opens no scope. Currently pure meta information: `lengcgen` emits its statements unwrapped, so `lengc`/`arkham` never see it. It is meant for checking that every path destroys a value and, later, for precise stack unwinding that runs custom logic |
 | `(supportsCopyMem T)` | NimonyExpr | `supportsCopyMem(T)`: can a value of type `T` be moved and copied as its bytes, i.e. has it no hooks at all (no `=destroy`, `=dup`, `=copy`, nothing owned through a `ref`, `string`, `seq` or closure)? Raw pointers do not count. Folded to `(true)`/`(false)` by `derefs`, with the lifter's own `isTrivial`. `std/channels` uses it to keep values that own heap memory off a `Writer` that may leave the process |
+| `(optionkey STR)` | NifIndexKind | the options a module's sem output was made with: a digest of the frontend's option key (`deps.addFrontendKey`), passed to nimsem as `--optionkey:` and recorded in the module's `.s.deps.nif` (`semmain.writeNewDepsFile`). `deps.nim` reads it back and forces a re-sem of the module when the build's options give another digest (`doc/internals/ic.md`, rule 4) |
 
 ### unpackflat, unpacktup, unpackdecl
 

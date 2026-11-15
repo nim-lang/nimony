@@ -703,7 +703,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of NoStmt, CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS,
          ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, AlwaysS, PragmasS, PragmaxS,
          InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
-         ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+         ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS,
          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
          DeferS:
         # generic container: copy the head and recurse into the children
@@ -864,7 +864,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
      BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS,
      PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
      FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
-     DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+     DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS,
      InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
      DeferS, LabS, JmpS, NoStmt:
     skip n

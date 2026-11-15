@@ -62,6 +62,8 @@ type
   Program* = object
     mods: Table[string, NifModule]
     main*: SplittedModulePath
+    stdDir*: string ## `NifConfig.stdcachePath`: the stdlib's modules are
+                    ## there, not next to `main`
     mem*: ToplevelEntries
 
   ImportFilterKind* = enum
@@ -211,12 +213,20 @@ proc loadModule*(infile: string; owningBuf: var TokenBuf; suffix: string): Curso
   result = beginRead(owningBuf)
   prog.mods[suffix] = m
 
-proc suffixToNif*(suffix: string): string {.inline.} =
+proc suffixToNif*(suffix: string): string =
   ## Imported semchecked file. Doc-mode (`.sc.nif`) imports `.sc.nif` files
   ## so the doc and code-gen cache populations don't mix; every other caller
   ## (hexer, normal `nimony c`) reads `.s.nif`.
+  ##
+  ## A stdlib module is in `prog.stdDir`, every other one next to `main`. The
+  ## stdlib cache is looked at first: only stdlib modules are ever built there
+  ## (`deps.FilePair.std`), while the main's directory may still hold a copy
+  ## of one from before the stdlib had a cache of its own.
   let ext = if prog.main.ext == ".sc.nif": ".sc.nif" else: ".s.nif"
-  prog.main.dir / suffix & ext
+  if prog.stdDir.len > 0:
+    result = prog.stdDir / suffix & ext
+    if fileExists(result): return
+  result = prog.main.dir / suffix & ext
 
 proc customToNif*(suffix: string): string {.inline.} =
   prog.main.dir / suffix & ".nif"

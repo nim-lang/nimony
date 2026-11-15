@@ -92,8 +92,8 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let inheritsFrom = cursorAt(dest, beforeType)
       if c.inGenericDefinition == 0 and not isInheritable(inheritsFrom, true):
         let msg = "cannot inherit from type: " & asNimCode(inheritsFrom)
-        dest.shrink beforeType
-        c.buildErr dest, info, msg
+        # the type is the origin: an erroneous type keeps its own diagnostic
+        c.combineErr dest, beforeType, info, msg
       else:
         # seed the field-name counts from the base chain so a shadowing field
         # continues the numbering (`.1`, …); fresh names start at `.0`.
@@ -136,6 +136,7 @@ type
     enumType: SymId
     thisValue: xint
     hasHole: bool
+    hasPrevField: bool # a field was declared before the current one
     declaredNames: HashSet[StrId]
 
 proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: var EnumTypeState)
@@ -170,6 +171,7 @@ proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType:
         signed = true
       lastValue = state.thisValue
       inc state.thisValue
+      state.hasPrevField = true
     if state.hasHole:
       dest.retagAt(start, HoleyEnumT, readonlyCursorAt(dest, start).info)
     var baseType: Cursor
@@ -219,24 +221,6 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   let parentName = if n.kind == Ident: pool.strings[n.strId] else: ""
   let before = dest.len
   if n.exprKind == AtX or n.typeKind == AtT or n.typeKind == InvokeT:
-    block concreteParentCheck:
-      var probe = n
-      probe.into:
-        if not probe.isSymbol:
-          break concreteParentCheck
-        let decl = getTypeSection(probe.symId)
-        if decl.kind != TypeY or decl.typevars.substructureKind == TypevarsU:
-          break concreteParentCheck
-        skip probe
-        if not probe.hasMore:
-          break concreteParentCheck
-        hadError = true
-        c.buildErr dest, info, "cannot attempt to instantiate a concrete type"
-        while probe.hasMore:
-          var argBuf = createTokenBuf(8)
-          semLocalTypeImpl c, argBuf, probe, AllowValues
-        skip n
-        return
     semInvoke c, dest, n
   else:
     semLocalTypeImpl c, dest, n, InLocalDecl
@@ -251,6 +235,10 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     if parentType.exprKind == ErrX:
       let choice = parentType.childCursor
       ambiguous = choice.exprKind in {CchoiceX, OchoiceX}
+      if not ambiguous:
+        # the parent's own error, already in `dest`, is the diagnostic
+        hadError = true
+        return
     dest.shrink before
     hadError = true
     if ambiguous:
@@ -564,6 +552,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
   var headId: SymId = SymId(0)
   var decl = default TypeDecl
   var ok = false
+  var headErr = ""
   # The `(at …)` head emitted above is still open (sealed only at the end of
   # this proc), so `childCursor`'s jump is not valid yet; address the first
   # child by raw position instead.
@@ -575,9 +564,9 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
     headId = invokeHead.symId
     decl = getTypeSection(headId)
     if decl.kind != TypeY:
-      c.buildErr dest, info, "cannot attempt to instantiate a non-type"
+      headErr = "cannot attempt to instantiate a non-type"
     elif decl.typevars.substructureKind != TypevarsU:
-      c.buildErr dest, info, "cannot attempt to instantiate a concrete type"
+      headErr = "cannot attempt to instantiate a concrete type"
     else:
       ok = true
   else:
@@ -589,7 +578,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
       semMagicInvoke(c, dest, n, kind, info, invokeStart)
       return
     else:
-      c.buildErr dest, info, "cannot attempt to instantiate a non-type"
+      headErr = "cannot attempt to instantiate a non-type"
 
   # One walk over the generic parameters: sem each explicit argument as a
   # compile-time value or a type (`AllowValues`), bind/validate it exactly like
@@ -614,12 +603,30 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
           if not m.err: dest.addSubtree m.inferred.getOrQuit(v)
   while n.hasMore:
     inc argCount
-    semLocalTypeImpl c, dest, n, AllowValues
+    if ok:
+      semLocalTypeImpl c, dest, n, AllowValues
+    else:
+      # a head without generic parameters gives its arguments no meaning:
+      # checking them would only report errors in them, or instantiate
+      skip n
   let isConcrete = usedTypevarsInitial == c.usedTypevars # no generic params were used
 
   dest.addParRi(n.endInfo)
   n = invokeStart; skip n
-  if ok and paramCount != argCount:
+  if not ok:
+    # A head without generic parameters makes `(at …)` no invocation at all,
+    # so it becomes one error: the head's own if it has one, else `headErr`.
+    var headBuf = createTokenBuf(8)
+    if headPos < dest.len:
+      let head = readonlyCursorAt(dest, headPos)
+      if head.typeKind == ErrT: headBuf.addSubtree head
+    dest.shrink typeStart
+    if headBuf.len > 0:
+      dest.add headBuf
+    else:
+      c.buildErr dest, info, headErr
+    return
+  if paramCount != argCount:
     dest.shrink typeStart
     c.buildErr dest, info, "wrong amount of generic parameters for type " & pool.symString(headId) &
       ", expected " & $paramCount & " but got " & $argCount
@@ -629,9 +636,9 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
     c.buildErr dest, m.errorInfo, genericArgErrorMsg(m)
     return
 
-  if ok and (isConcrete or
+  if isConcrete or
       # structural types are inlined even with generic arguments
-      not isNominal(decl.body.typeKind)):
+      not isNominal(decl.body.typeKind):
     # we have to be eager in generic type instantiations so that type-checking
     # can do its job properly:
     let key = typeToCanon(dest, typeStart)
@@ -671,7 +678,11 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
       swap c.typesInProgress, typesInProgress
       dec c.inTypeInst
       c.currentScope = oldScope
-      publish targetSym, ensureMove instance
+      # an object instance's field defaults are typed on demand
+      # (`loadSymWithPhase`); any other instance is complete
+      let complete = asTypeDecl(readonlyCursorAt(instance, 0)).body.typeKind != ObjectT
+      publish targetSym, ensureMove instance,
+        (if complete: SemcheckBodies else: SemcheckSignatures)
       dest.shrink typeStart
       dest.addSymUse(targetSym, info)
       sym.name = targetSym
@@ -766,13 +777,13 @@ proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
         # unresolved index types are left alone
         dest.addSubtree index
     elif index.typeKind != NoType:
-      c.buildErr dest, index.info, "invalid array index type: " & typeToString(index)
+      c.buildErr dest, index.info, "invalid array index type: " & typeToString(index), index
     else:
       # length expression
       var err = false
       let length = asSigned(evalOrdinal(c, index), err)
       if err:
-        c.buildErr dest, index.info, "invalid array index type: " & typeToString(index)
+        c.buildErr dest, index.info, "invalid array index type: " & typeToString(index), index
       else:
         dest.addParLe(RangetypeT, info)
         let ordinal = evalExpr(c, index)

@@ -1,0 +1,4 @@
+tests/nimony/plugins/tplugin_noargs_error.nim(8, 8) Trace: instantiation from here
+tests/nimony/plugins/tplugin_noargs_error.nim(8, 8) Error: Type mismatch at [position]
+takesInt("not an int")
+[1] expected: int64 but got: string (declared in tests/nimony/plugins/tplugin_noargs_error.nim(6, 1))

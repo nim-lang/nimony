@@ -249,6 +249,23 @@ proc literalColon() =
   assert matchLen("x:y", re"(?:x|y):(?:x|y)") == 3
   echo "literal colon ok"
 
+proc assertionsNextToRepetitions() =
+  # An assertion that holds where a repetition can still read on: neither the
+  # assertion nor the byte may win alone.
+  assert "a b".contains(re"a\ *\bb")
+  assert "a b".contains(re"a[^b]*\bb")
+  assert matchLen("a  b", re"a\ *\bb") == 4
+  assert not "a b".contains(re"a\ *\Bb")
+  assert matchLen("ab", re"a\ *\Bb") == 2
+  assert find("a b", re(r"a.*\bb", {reExtended, reAllowEvil})) == 0
+  assert "git commit".contains(re(r"\bgit\b[^\n;&|]*\b(?:commit|merge)\b",
+                                  {reExtended, reAllowEvil}))
+  assert findBounds("xx y", re"x*\B") == (0, 0)
+  assert findBounds("a   ", re"a\ *$") == (0, 3)
+  assert findBounds("  a", re(r"(?:\ |^)*a", {reExtended, reAllowEvil})) == (0, 2)
+  assert findBounds("foo bar  ", re(r"\w+\b\ *$", {reExtended, reAllowEvil})) == (4, 8)
+  echo "assertions next to repetitions ok"
+
 basics()
 anchoring()
 searching()
@@ -260,3 +277,4 @@ runtimePatterns()
 literalSearch()
 determinism()
 literalColon()
+assertionsNextToRepetitions()

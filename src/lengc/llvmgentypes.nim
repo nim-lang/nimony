@@ -127,17 +127,6 @@ proc genTypeLLVMReadOnly(c: var LLVMCode; n: Cursor): LLType =
   var nn = n
   result = genTypeLLVM(c, nn)
 
-proc fixedArrayLen(c: var LLVMCode; n: Cursor): int =
-  result = -1
-  var t = navigateToObjectBody(c.m, n)
-  if t.typeKind == ArrayT:
-    inc t
-    skip t
-    if t.kind == IntLit:
-      result = int(intVal(t))
-    elif t.kind == UIntLit:
-      result = int(uintVal(t))
-
 proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
   case n.typeKind
   of IT, UT, CT:
@@ -953,13 +942,18 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
                 inc at
                 elemType = genTypeLLVMReadOnly(c, at)
                 elemTypeCursor = at
+        var arrTypeCur = n
         skip n # type
         var elems: seq[string] = @[]
         while n.hasMore:
           let tc = genGlobalConstr(c, n, elemTypeCursor)
           elems.add operandStr(tc)
-        let arrTyp = newLLArrayType(elems.len, elemType)
-        result = rawConst(arrTyp, "[ " & elems.join(", ") & " ]")
+        if elems.len == 0 and arrTypeCur.typeKind != FlexarrayT:
+          # `(aconstr T)`: the all-zero array, whatever `T`'s length
+          result = rawConst(genTypeLLVMReadOnly(c, arrTypeCur), "zeroinitializer")
+        else:
+          let arrTyp = newLLArrayType(elems.len, elemType)
+          result = rawConst(arrTyp, "[ " & elems.join(", ") & " ]")
     of CastC, ConvC:
       n.into:
         skip n

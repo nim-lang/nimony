@@ -67,6 +67,9 @@ proc tryBulkDequeue*[T: HasDefault](s: var FifoStripe[T]; bulkSize: int; buf: va
   result = min(s.count, min(bulkSize, buf.len))
   if s.data.len > 0:
     for i in 0 ..< result:
+      # `buf` and `s` are both `var` parameters; the borrow checker keeps
+      # them apart, which the prover does not know
+      {.assume: s.data.len > 0.}
       buf[i] = s.data[s.head and (s.data.len - 1)]
       s.head = (s.head + 1) and (s.data.len - 1)
   dec s.count, result

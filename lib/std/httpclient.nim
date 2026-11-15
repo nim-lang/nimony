@@ -335,7 +335,8 @@ proc upload(meth, url: string; body: sink Reader; contentType: string;
   w.renew(dl)
   var b = body
   w.write req
-  var chunk = newString(16 * 1024)
+  # not a `string`: its copy-on-write buffer cannot be a `var openArray` (#2924)
+  var chunk = newSeq[char](16 * 1024)
   try:
     while true:
       let n = b.read(chunk)

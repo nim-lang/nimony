@@ -5,9 +5,8 @@
 ## coalescing big chunks, huge mmap; owner-stamped lock-free deferred free for
 ## cross-thread deallocations). The driver defines `nimNativeAlloc` for every
 ## backend, because the libc-free stdlib is the default (`nimony.nim`); the
-## mimalloc shim is the opt-OUT, reached with `-d:useMimalloc` (allocator only)
-## or `-d:useLibc` (allocator and IO together), and the native backend is always
-## libc-free regardless.
+## mimalloc shim is the opt-OUT, reached with `-d:useMimalloc` or `-d:useLibc`,
+## and the native backend always uses the native allocator regardless.
 ##
 ## The user-facing `alloc`/`dealloc`/`realloc`/`allocatedSize` wrappers are
 ## `func` (noSideEffect) so they remain usable inside the `func`s of pure data
@@ -22,6 +21,32 @@
 func c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
 func c_memcmp(a, b: pointer; size: csize_t): cint {.importc: "memcmp", header: "<string.h>".}
 func c_memset(dest: pointer; val: cint; size: csize_t) {.importc: "memset", header: "<string.h>".}
+
+# --- block memory operations on LOCATIONS -----------------------------------
+# Unlike `copyMem`/`zeroMem`/`cmpMem` these take no pointers: the operand is the
+# variable (or field, or element) itself, and the byte count defaults to the
+# size of its type. Without an `addr` nothing forces a local into memory, so the
+# native back end lowers `zeroMemIns(x)` on a register-sized local as `x = 0`,
+# `copyMemIns(x, y)` as a move and `cmpMemIns(x, y)` as a compare, and an
+# aggregate or an array span as straight-line memory operations. With an
+# explicit `size` the operation covers that many bytes starting at the location
+# (an array span); the regions of a copy must not overlap. Only a `size` that is
+# not a literal runs a loop.
+
+func zeroMemIns*[T](dest: var T) {.intrinsic: "zeroMemIns".}
+  ## Sets every byte of `dest` to zero. Runs no destructor: like `zeroMem`, it is
+  ## for plain data.
+func zeroMemIns*[T](dest: var T; size: int) {.intrinsic: "zeroMemIns".}
+  ## Sets `size` bytes starting at `dest` to zero.
+func copyMemIns*[T](dest: var T; src: T) {.intrinsic: "copyMemIns".}
+  ## Copies the bytes of `src` to `dest`. Runs no hook: for plain data.
+func copyMemIns*[T](dest: var T; src: T; size: int) {.intrinsic: "copyMemIns".}
+  ## Copies `size` bytes starting at `src` to `dest`. The regions must not overlap.
+func cmpMemIns*[T](a, b: T): int32 {.intrinsic: "cmpMemIns".}
+  ## Compares the bytes of `a` and `b` in memory order; the sign of the result
+  ## is that of `memcmp`'s (its magnitude is unspecified).
+func cmpMemIns*[T](a, b: T; size: int): int32 {.intrinsic: "cmpMemIns".}
+  ## Compares `size` bytes starting at `a` and `b`.
 
 func copyMem*(dest, src: pointer; size: int) {.inline.} =
   ## Copies `size` bytes from `src` to `dest`. The regions must not overlap.

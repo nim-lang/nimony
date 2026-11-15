@@ -61,7 +61,6 @@ type
     types*: seq[Cursor]                  ## points into MainModule.src
     filename*: string
     config*: ConfigRef
-    mem*: seq[TokenBuf]                  ## intermediate results (computed types)
     builtinTypes*: Table[string, Cursor]
     current*: TypeScope
     defs: Table[SymId, Definition]

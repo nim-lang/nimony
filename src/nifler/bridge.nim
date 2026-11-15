@@ -123,11 +123,19 @@ type
       ## `negated` entries (an `else` branch carries the negation of every
       ## prior elif condition) are wrapped in `(prefix not ...)` at emission.
 
-proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
-  var fp = toFullPath(c.conf, i.fileIndex)
+proc lineInfoPath(i: TLineInfo; c: TranslationContext): string =
+  ## Relative to the current directory with `--portablePaths`, else absolute;
+  ## with `/` on every OS either way.
+  result = toFullPath(c.conf, i.fileIndex)
   if c.portablePaths:
-    fp = relativePath(fp, getCurrentDir(), '/')
-  c.b.addLineInfo int32(i.col), int32(i.line), fp
+    result = relativePath(result, getCurrentDir(), '/')
+  else:
+    when defined(windows):
+      for ch in mitems(result):
+        if ch == '\\': ch = '/'
+
+proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
+  c.b.addLineInfo int32(i.col), int32(i.line), lineInfoPath(i, c)
 
 proc relLineInfo(n, parent: PNode; c: var TranslationContext;
                  emitSpace = false) =
@@ -180,10 +188,7 @@ proc lineInfoArgs(n, parent: PNode; c: var TranslationContext): (int32, int32, s
   if not c.lineInfoEnabled: return (0'i32, 0'i32, "")
   let i = n.info
   if parent == nil or i.fileIndex != parent.info.fileIndex:
-    var fp = toFullPath(c.conf, i.fileIndex)
-    if c.portablePaths:
-      fp = relativePath(fp, getCurrentDir(), '/')
-    return (int32(i.col), int32(i.line), fp)
+    return (int32(i.col), int32(i.line), lineInfoPath(i, c))
   let p = parent.info
   return (int32(i.col) - int32(p.col), int32(i.line) - int32(p.line), "")
 

@@ -1,1 +1,4 @@
 tests/nimony/enums/tenumnameconflict.nim(6, 5) Error: attempt to redeclare: Value1
+tests/nimony/enums/tenumnameconflict.nim(12, 9) Error: enum field values must be in ascending order
+tests/nimony/enums/tenumnameconflict.nim(15, 10) Error: enum field values must be in ascending order
+tests/nimony/enums/tenumnameconflict.nim(17, 22) Error: enum field values must be in ascending order

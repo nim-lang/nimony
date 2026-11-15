@@ -191,7 +191,36 @@ else:
       try: removeFile(tmp) except CatchableError: discard   # no `.tmp.NNN` litter
       raise
   proc fileMaybeExists(p: string): bool = fileExists(p)
-  proc openMmapImpl(p: string): MemFile = memfiles.open(p)
+  when defined(windows):
+    import std / [winlean, widestrs]
+    proc openMmapImpl(p: string): MemFile =
+      # `memfiles.open` shares a read-only file for reading only, so it fails
+      # with a sharing violation while another process moves a file into its
+      # place (how every artifact is published, see `vfsMoveInto`). Same
+      # mapping, with the sharing a reader of a replaceable file needs.
+      let h = createFileW(newWideCString(p), GENERIC_READ,
+                          FILE_SHARE_READ or FILE_SHARE_WRITE or FILE_SHARE_DELETE,
+                          nil, OPEN_EXISTING,
+                          FILE_ATTRIBUTE_READONLY or FILE_FLAG_RANDOM_ACCESS, 0)
+      if h == INVALID_HANDLE_VALUE: raiseOSError(osLastError(), p)
+      var hi: DWORD = 0
+      let lo = getFileSize(h, addr hi)
+      let m = createFileMappingW(h, nil, PAGE_READONLY, 0, 0, nil)
+      if m == 0:
+        let e = osLastError()
+        discard closeHandle(h)
+        raiseOSError(e, p)
+      let mem = mapViewOfFileEx(m, FILE_MAP_READ, 0, 0, 0, nil)
+      if mem == nil:
+        let e = osLastError()
+        discard closeHandle(m)
+        discard closeHandle(h)
+        raiseOSError(e, p)
+      discard closeHandle(h)  # the mapping keeps the file open
+      result = MemFile(mem: mem, size: int((int64(hi) shl 32) or int64(uint32(lo))),
+                       fHandle: INVALID_HANDLE_VALUE, mapHandle: m, wasOpened: true)
+  else:
+    proc openMmapImpl(p: string): MemFile = memfiles.open(p)
 
 proc vfsMoveInto*(src, dst: string): bool =
   ## Move `src` onto `dst` as a single filesystem operation, replacing whatever

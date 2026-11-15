@@ -232,8 +232,10 @@ type
     func `-`(x: Self): Self
 
 func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
-  ## Returns the absolute value of `x`.
-  if x < 0: -x else: x
+  ## Returns the absolute value of `x`. Signed arithmetic wraps, so
+  ## `abs(low(T)) == low(T)`: the result is not `>= 0` for every `x`, and
+  ## `abs` states no `ensures`.
+  result = if x < 0: -x else: x
 
 func abs*(x: float64): float64 {.inline.} =
   ## Clears the sign bit, as C's fabs: abs(-0.0) is +0.0 (the generic `x < 0` test keeps -0.0).

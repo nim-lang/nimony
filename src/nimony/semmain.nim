@@ -26,7 +26,7 @@ import ".." / models / nifindex_tags
 import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptcache,
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
-  contracts_fir, exprexec, semimport, module_plugins, sem
+  contracts_fir, exprexec, semimport, module_plugins, sem, templates
 import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
@@ -137,6 +137,10 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       deps.buildTree IsmainmoduleX, NoLineInfo:
         deps.buildTree (if IsMain in c.moduleFlags: TrueX else: FalseX), NoLineInfo:
           discard
+    if c.g.config.optionKey.len > 0:
+      # the options this sem output was made with, see `deps.optionKey`
+      deps.buildTree TagId(OptionkeyIdx), NoLineInfo:
+        deps.addStrLit c.g.config.optionKey
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   onRaiseQuit writeFile(deps, depsFile)
 
@@ -175,8 +179,11 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
   #
   # Path is stored relative to CWD so the `.s.nif` is reproducible across
   # checkouts (CI has a different absolute prefix than the dev's machine).
-  # Mirrors nifler's `--portablePaths` line-info convention.
+  # Mirrors nifler's `--portablePaths` line-info convention, and like it is
+  # absolute in a stdlib module's `.s.nif`, which builds started from any
+  # directory share (`semos.inStdcache`).
   if c.importedModules.len != 0:
+    let shared = inStdcache(c.g.config, getFile(readonlyCursorAt(dest, 0).info))
     let curWorkDir = onRaiseQuit os.getCurrentDir()
     var importBuf = createTokenBuf(c.importedModules.len * 5 + 2)
     importBuf.addParLe ImportS, NoLineInfo
@@ -184,11 +191,11 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
       if i.fromPlugin.len == 0:
         let abs = i.path.toAbsolutePath
         importBuf.buildTree KvU, NoLineInfo:
-          importBuf.addIdent(pool.strings.getOrIncl(moduleSuffix(abs, c.g.config.paths)), NoLineInfo)
+          importBuf.addIdent(pool.strings.getOrIncl(moduleSuffix(abs, c.g.config)), NoLineInfo)
           # Slash-normalise: paths in the .nif must use `/` regardless of OS
           # so the file is byte-identical across Windows / Linux / macOS, and
           # downstream consumers (dagon) compare prefixes uniformly.
-          importBuf.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
+          importBuf.addStrLit toUnixPath(if shared: abs else: abs.toRelativePath(curWorkDir))
     importBuf.addParRi()
     # after the (stmts tag — including its line-info suffix tokens
     dest.insert importBuf, tokenWidth(readonlyCursorAt(dest, 0))
@@ -488,8 +495,10 @@ proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
     onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif")
   var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
   when true: #defined(enableContracts):
+    let hooks = c.typeHooks
+    assert hooks != nil # `semdata` is a `lenientnils` module
     var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
-                                    c.g.config.bits, c.g.config.verbose)
+                                    c.g.config.bits, hooks, c.g.config.verbose)
     if reporters.reportErrors(moreErrors) > 0:
       quit 1
   dest = stripAnalysisFacts(ensureMove fir)
@@ -581,8 +590,13 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest.addParRi()
 
   instantiateGenerics c, dest
-  for i in 0 ..< c.typeInstDecls.len:
+  var i = 0
+  while i < c.typeInstDecls.len: # typing defaults can add instances
     let val = c.typeInstDecls[i]
+    inc i
+    # its field defaults, if no construction typed them yet; the generic
+    # routines they need are instantiated with the hooks below
+    discard loadSymWithPhase(c, val, SemcheckBodies)
     let s = fetchSym(c, val)
     let res = declToCursor(c, dest, s)
     if res.status == LacksNothing:
@@ -681,8 +695,13 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     dest.addParRi()
 
   instantiateGenerics c, dest
-  for i in 0 ..< c.typeInstDecls.len:
+  var i = 0
+  while i < c.typeInstDecls.len: # typing defaults can add instances
     let val = c.typeInstDecls[i]
+    inc i
+    # its field defaults, if no construction typed them yet; the generic
+    # routines they need are instantiated with the hooks below
+    discard loadSymWithPhase(c, val, SemcheckBodies)
     let s = fetchSym(c, val)
     let res = declToCursor(c, dest, s)
     if res.status == LacksNothing:
@@ -819,6 +838,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
   ## For multiple modules, they form a cycle group and are processed together.
   assert infiles.len == outfiles.len
   assert infiles.len > 0
+  prog.stdDir = config.stdcachePath
 
   if infiles.len > 1:
     semcheckCycleGroup(infiles, outfiles, ensureMove config, moduleFlags,

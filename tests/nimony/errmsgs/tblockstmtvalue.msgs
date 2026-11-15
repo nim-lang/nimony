@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tblockstmtvalue.nim(5, 3) Error: expression of type `int64` must be discarded

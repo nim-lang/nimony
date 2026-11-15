@@ -270,7 +270,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   var isLocalSym = false
   var symId = SymId 0
 
-  let moduleName = moduleSuffix(config.toTrack.filename, config.paths)
+  let moduleName = moduleSuffix(config.toTrack.filename, config)
   let nifFile = config.nifcachePath / moduleName & ".s.nif"
 
   var buf = parseFromFile(nifFile)

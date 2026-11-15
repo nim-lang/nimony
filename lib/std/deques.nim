@@ -163,6 +163,24 @@ func contains*[T: Equatable](d: Deque[T]; item: T): bool =
       return true
   result = false
 
+func `==`*[T: Equatable](a, b: Deque[T]): bool =
+  ## True if `a` and `b` hold equal elements in the same order, however each
+  ## was built.
+  runnableExamples:
+    var a = initDeque[int]()
+    a.addLast 1
+    a.addLast 2
+    var b = initDeque[int]()
+    b.addFirst 2
+    b.addFirst 1
+    assert a == b
+  if a.count != b.count:
+    return false
+  for i in 0 ..< a.count:
+    if a.data[(a.head + i) and a.mask] != b.data[(b.head + i) and b.mask]:
+      return false
+  result = true
+
 iterator items*[T](d: Deque[T]): var T =
   ## Yields every element of `d`, from first to last.
   for i in 0 ..< d.count:

@@ -246,7 +246,6 @@ type
     usedTypevars*: int
     phase*: SemPhase
     canSelfExec*: bool
-    checkedForWriteNifModule*: bool
     inWhen*: int
     inUncheckedAccess*: int
     templateInstCounter*: int

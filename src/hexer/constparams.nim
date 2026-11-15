@@ -295,7 +295,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of PragmaxX:
       trPragmaBlock c, dest, n
     of AddX, SubX, MulX, DivX, ModX:
-      if c.keepOverflowFlag:
+      # `overflowFlag()` reports the last `+`, `-` or `*` (`doc/language.md`,
+      # "Signed overflow"): `div` and `mod` stay plain, as outside the block.
+      if c.keepOverflowFlag and ek in {AddX, SubX, MulX}:
         checkedArithOp c, dest, n
       else:
         copyInto dest, n:
@@ -322,7 +324,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
          YldS, StmtsS, AlwaysS,
          PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS,
          ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
-         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS,
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
          AsmS, DeferS, LabS, JmpS, NoStmt:
         # generic container: copy the head and recurse into the children

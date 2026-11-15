@@ -43,6 +43,15 @@ iterator stylesOfScope*(s: Scope; name: StrId; ignoreStyle: bool): StrId {.sideE
     for k in styleSiblings(name):
       if s.tab.hasKey(k): yield k
 
+proc suspendShadows*(s: Scope): seq[Table[StrId, int]] =
+  ## Declarations made until `resumeShadows` are not undone by a rollback of
+  ## a shadow scope that is open on `s` now. Used by `resolveDeferredLocal`
+  ## (semdecls.nim), which declares a toplevel local found on demand.
+  result = move s.undo
+
+proc resumeShadows*(s: Scope; undo: sink seq[Table[StrId, int]]) =
+  s.undo = undo
+
 proc openShadowScope*(s: Scope) =
   s.undo.add initTable[StrId, int]()
 

@@ -458,14 +458,13 @@ func combine*(base, rel: Uri): Uri =
   if rel.path[0] == '/':
     merged = rel.path
   else:
-    var cut = -1
+    var cut = false
     for i in countdown(base.path.len - 1, 0):
       if base.path[i] == '/':
-        cut = i
+        for j in 0..i: merged.add base.path[j]
+        cut = true
         break
-    if cut >= 0:
-      for i in 0..cut: merged.add base.path[i]
-    else:
+    if not cut:
       merged.add '/'
     merged.add rel.path
   var p = ""

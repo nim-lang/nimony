@@ -110,13 +110,19 @@ proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
   # what matters here, and a function-like macro has exactly the one `genInstr`
   # emits.
   of CpuRelaxOp: "NIM_CPU_RELAX"
-  # The size operand is a Leng integer; C converts it to `size_t` implicitly.
-  of MemsetOp: "__builtin_memset"
-  of MemcpyOp: "__builtin_memcpy"
-  of MemcmpOp: "__builtin_memcmp"
+  # Location operands render as `&L`; see `genInstr` for the optional size.
+  of ZeroMemOp: "__builtin_memset"
+  of CopyMemOp: "__builtin_memcpy"
+  of CmpMemOp: "__builtin_memcmp"
   # gcc/clang expand these inline (`sqrtsd`), with an errno slow path for a
   # negative operand unless `-fno-math-errno`.
   of SqrtOp: (if bits == 32: "__builtin_sqrtf" else: "__builtin_sqrt")
+  # Inline (`frintm`, `roundsd`) only where the target has the instruction;
+  # elsewhere a libm call, which is why `std/math` uses these on arm64 alone.
+  of FloorOp: (if bits == 32: "__builtin_floorf" else: "__builtin_floor")
+  of CeilOp: (if bits == 32: "__builtin_ceilf" else: "__builtin_ceil")
+  of TruncOp: (if bits == 32: "__builtin_truncf" else: "__builtin_trunc")
+  of RoundOp: (if bits == 32: "__builtin_roundf" else: "__builtin_round")
   else: ""
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =
@@ -146,8 +152,7 @@ proc createIntegralType*(c: var MainModule; name: string): Cursor =
   result = c.builtinTypes.getOrDefault(name, default(Cursor))
   if cursorIsNil(result):
     var buf = parseFromBuffer(name, "<builtin>", 8, c.pool, c.tags)
-    c.mem.add ensureMove(buf)
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = cursorAt(buf, 0)
     c.builtinTypes[name] = result
 
 proc ptrTypeOf(c: var MainModule; elem: Cursor): Cursor =
@@ -155,8 +160,7 @@ proc ptrTypeOf(c: var MainModule; elem: Cursor): Cursor =
   buf.openTag TagId(ord(PtrTagId))
   buf.addSubtree elem
   buf.closeTag()
-  c.mem.add ensureMove(buf)
-  result = cursorAt(c.mem[c.mem.len-1], 0)
+  result = cursorAt(buf, 0)
 
 # ---- field lookup ---------------------------------------------------------
 
@@ -217,6 +221,29 @@ proc navigateToObjectBody*(c: var MainModule; n: Cursor): Cursor =
       result = asTypeDecl(d.pos).body
     else:
       break
+
+proc fixedArrayLen*(c: var MainModule; n: Cursor): int =
+  ## The length of the `(array T N)` that `n` names, or -1 if `n` is not one.
+  result = -1
+  var t = navigateToObjectBody(c, n)
+  if t.typeKind == ArrayT:
+    inc t
+    skip t
+    if t.kind == IntLit:
+      result = int(intVal(t))
+    elif t.kind == UIntLit:
+      result = int(uintVal(t))
+
+proc isZeroSized*(c: var MainModule; n: Cursor): bool =
+  ## Whether the array type `n` names occupies no storage: its length is 0,
+  ## or its element type is zero-sized by the same rule. Any other type
+  ## counts as sized.
+  var t = navigateToObjectBody(c, n)
+  if t.typeKind == ArrayT:
+    inc t
+    result = fixedArrayLen(c, n) == 0 or isZeroSized(c, t)
+  else:
+    result = false
 
 # ---- the navigator --------------------------------------------------------
 

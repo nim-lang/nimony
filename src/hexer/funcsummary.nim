@@ -260,18 +260,6 @@ proc unwrapConv(n: Cursor): Cursor =
     else:
       break
 
-proc isIdentityExpr(n: Cursor): bool =
-  ## True when `n` names an existing graph (`p`, `addr p`) rather than a
-  ## projection or computed value. Used to decide whether a copy should join
-  ## partition classes.
-  var n = unwrapConv(n)
-  while n.kind == TagLit and n.exprKind in {AddrC, HaddrC}:
-    n = unwrapConv(n.childCursor)
-  result = n.kind == Symbol
-
-proc isTrackedSym(a: ProcAnalysis; s: SymId): bool {.inline.} =
-  s != SymId(0) and (a.paramLookup.hasKey(s) or a.localRoots.hasKey(s))
-
 proc baseSymOf(n: Cursor): SymId =
   ## Innermost symbol of an lvalue path, or `SymId(0)` if the path is computed.
   var n = unwrapConv(n)
@@ -283,6 +271,21 @@ proc baseSymOf(n: Cursor): SymId =
       return SymId(0)
   if n.kind == Symbol: result = n.symId
   else: result = SymId(0)
+
+proc isIdentityExpr(n: Cursor): bool =
+  ## True when `n` names an existing graph (`p`, `addr p`) rather than a
+  ## projection or computed value. Used to decide whether a copy should join
+  ## partition classes. The address of any lvalue path (`addr p[]`,
+  ## `addr p.field`, `addr a[i]`) points into the base's graph: writing
+  ## through it writes that graph (#2930).
+  var n = unwrapConv(n)
+  if n.kind == TagLit and n.exprKind in {AddrC, HaddrC}:
+    result = baseSymOf(n) != SymId(0)
+  else:
+    result = n.kind == Symbol
+
+proc isTrackedSym(a: ProcAnalysis; s: SymId): bool {.inline.} =
+  s != SymId(0) and (a.paramLookup.hasKey(s) or a.localRoots.hasKey(s))
 
 proc collectParamSyms(params: Cursor): seq[SymId] =
   result = @[]
@@ -856,6 +859,15 @@ when isMainModule:
     doAssert not s.params[1].writes
     doAssert s.params[0].cls == s.params[1].cls
     doAssert int(s.resultCls) == 2
+
+  block write_through_local_addr_of_deref:
+    # `var d = addr obj[]; d[] = 3` writes obj's graph (#2930: `inc` on a
+    # `var` param desugars to exactly this).
+    let s = twoParams("""
+      (var :d.0 . . (addr (deref obj.0)))
+      (asgn (deref d.0) 3)""")
+    doAssert s.params[0].writes
+    doAssert not s.writesGlobal
 
   block pointer_field_store_then_write_through:
     # `x.obj = y; x.obj.a = 3` writes y's graph (same class as x).

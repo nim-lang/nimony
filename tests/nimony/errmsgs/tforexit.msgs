@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tforexit.nim(12, 5) Error: cannot prove assertion: 0 <= idx [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tforexit.nim(27, 5) Error: cannot prove assertion: c <= 6 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tforexit.nim(29, 1) Error: cannot prove that result has been initialized [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tforexit.nim(21, 5) Error: cannot prove assertion: 0 <= idx [pass --verbose for the Final IR]

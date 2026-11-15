@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tcaserangeerr.nim(6, 7) Error: undeclared identifier: zzz
+tests/nimony/errmsgs/tcaserangeerr.nim(13, 11) Error: undeclared identifier: www

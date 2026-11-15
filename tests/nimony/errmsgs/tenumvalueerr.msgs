@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tenumvalueerr.nim(6, 10) Error: undeclared identifier: zzz
+tests/nimony/errmsgs/tenumvalueerr.nim(9, 14) Error: undeclared identifier: zzz
+tests/nimony/errmsgs/tenumvalueerr.nim(12, 14) Error: undeclared identifier: zzz
+tests/nimony/errmsgs/tenumvalueerr.nim(14, 11) Error: undeclared identifier: zzz
+tests/nimony/errmsgs/tenumvalueerr.nim(16, 10) Error: expected constant integer value but got: 1.5
+tests/nimony/errmsgs/tenumvalueerr.nim(20, 10) Error: undeclared identifier: zzz

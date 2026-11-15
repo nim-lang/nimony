@@ -156,6 +156,13 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "nimcache":
     config.nifcachePath = val
     forwardArgLengc = false
+  of "stdcache":
+    # internal: deps.nim passes it to the frontend and hexer commands it
+    # generates. Never forwarded: a sub-compile computes its own from its own
+    # options, which need not be the outer build's.
+    config.stdcachePath = val
+    forwardArg = false
+    forwardArgHost = false
   of "out", "o":
     # `--out:PATH` (alias `-o:PATH`) sets the executable's output path,
     # mirroring Nim. The path is split into a directory portion and

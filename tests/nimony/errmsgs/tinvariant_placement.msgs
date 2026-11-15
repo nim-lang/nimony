@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tinvariant_placement.nim(7, 7) Error: an `invariant` must be the first statement of a loop body
+tests/nimony/errmsgs/tinvariant_placement.nim(13, 9) Error: an `invariant` must be the first statement of a loop body
+tests/nimony/errmsgs/tinvariant_placement.nim(17, 5) Error: an `invariant` must be the first statement of a loop body
+tests/nimony/errmsgs/tinvariant_placement.nim(22, 28) Error: an `invariant` must be the first statement of a loop body

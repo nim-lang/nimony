@@ -59,7 +59,9 @@ import ".." / finalir / [finalir_model, finalir]
 import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-  renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof
+  renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof,
+  aliasing
+import ".." / hexer / lifter
 
 type
   BorrowableCheck = enum
@@ -99,7 +101,7 @@ type
     temps: seq[(SymId, Cursor)]
       ## The `{.inline.}` temps `value` refers to, with what they stand for.
       ## Like `param` they are the accessor's own symbols, so reading `value`
-      ## substitutes them (`accessorSubst`).
+      ## expands them (`accessorValue`).
 
   Reading = object
     ## How a proposition is read where it is judged or assumed. At a call site
@@ -112,6 +114,9 @@ type
     args: Table[SymId, Cursor]
     results: Table[SymId, VarId]
     olds: Table[string, VarId]
+    own: bool
+      ## The proposition is about the scope being analysed (no callee's
+      ## parameter in it), so the facts here describe its locations.
 
   CallContext = object
     ## What the calls of one statement established about the locations they
@@ -133,35 +138,69 @@ type
   ProofKind = enum
     ProvenIndex, ProvenCall
 
-  FirContext = object
+  ProcCon = object
+    ## What is known inside the routine being analysed. `traverseProc` swaps
+    ## in a fresh one and restores the enclosing routine's on the way out; the
+    ## module's own statements have one of their own.
     flow: FlowState                    # the journaled analysis state: the
                                        # definite-assignment init-set and the
                                        # `inferle` facts, mutated in place.
-    typeCache: TypeCache
     tr: FlowTracker                    # control flow: fall-through liveness +
                                        # per-exit state accumulation (journaled).
-    errors: TokenBuf
     procCanRaise: bool
     inHook: bool                       # inside a `=destroy`/`=wasMoved`/… body:
                                        # hooks operate on raw, possibly
                                        # moved-from memory, so a `notnil` field
                                        # may legitimately be set to `nil` there.
+    inlineVars: Table[SymId, Cursor] # var -> to its init expression
+    aliased: HashSet[SymId]            # locals of the routine whose address is
+                                       # taken or that a nested routine names:
+                                       # shared (`collectAliased`)
+    aliasInits: Table[SymId, Cursor]   # the routine's inline temps, known
+                                       # before the traversal declares them
+    borrowedParams: HashSet[SymId]     # its `var`, `out` and `lent`
+                                       # parameters: shared
+    destroysAtExit: bool               # a local whose `=destroy` is a barrier
+                                       # was declared: `return` runs it
+    ownEnsures: Cursor
+      ## The `.ensures` of the routine being analysed, proven at every exit
+      ## (`verifyEnsures`); nil when it has none.
+    ownOlds: Table[string, VarId]
+      ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
+    resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
+    laterParams: HashSet[SymId]        # the current proc's params after the first;
+                                       # see `checkResultBorrow`
+    currentProcStart: Cursor           # cursor at the start of the proc whose
+                                       # body we are currently analysing (used
+                                       # for the --verbose dump)
+    stmtContext: NifLineInfo           ## The statement currently under
+                                       ## traversal, but only while it belongs
+                                       ## to the same file as its enclosing
+                                       ## routine (the whole module, at top
+                                       ## level). Expanded code fails that test
+                                       ## and leaves the last statement WRITTEN
+                                       ## here standing -- which is the place an
+                                       ## error inside the expansion is about.
+
+  FirContext = object
+    p: ProcCon                         # the routine under analysis
+    typeCache: TypeCache
+    errors: TokenBuf
     features: set[Feature]
     moduleSuffix: string
     nestedProcs: int
-    loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
-                                       # Their post-join state keeps the pre-loop
-                                       # facts (break-site facts are dropped; only
-                                       # break-site inits are joined). See
-                                       # `bindLoopExit`.
     forBinders: HashSet[SymId]         # `for` loop variables: see `declareForVars`
-    inlineVars: Table[SymId, Cursor] # var -> to its init expression
     derivedIds: Table[string, VarId]   # canonical location key -> derived VarId
                                        # (see "Derived locations" below)
     derivedKeys: seq[string]           # parallel to `derivedRoots`: the location key
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
+    lifter: ref LiftingCtx             # asks a type for its `=destroy`
+    rereading: bool                    # a store reads facts off a value that
+                                       # was analysed already (`storeValue`):
+                                       # its barriers have run and its errors
+                                       # are reported
     obligationOpen: bool               # a range obligation is being judged;
                                        # cleared when it is not discharged
     root: Cursor                       # the lowered module, for token positions
@@ -190,6 +229,10 @@ type
     brokenSteps: HashSet[VarId]
       ## The `assumedSteps` whose step the traversal could not keep inside
       ## their type: the assumption was wrong.
+    loopInvariants: seq[Cursor]
+      ## The `(invariant cond)` statements of the innermost loop being
+      ## analysed: assumed at its head, proven at every `(continue)`.
+    loopDepth: int
     proofLog: seq[(ProofKind, int)]
       ## The positions added to `dischargedIndexes` or `provenCalls` while an
       ## assumption was in force, so that a second analysis of the loop can
@@ -206,14 +249,6 @@ type
     typeRange: Table[VarId, RangeBounds]
       ## The bounds a location's integer type states (`noteTypeRange`), asked
       ## only to rule out a wrap.
-    ownEnsures: Cursor
-      ## The `.ensures` of the routine being analysed, proven at every exit
-      ## (`verifyEnsures`); nil when it has none.
-    ownOlds: Table[string, VarId]
-      ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
-    resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
-    laterParams: HashSet[SymId]        # the current proc's params after the first;
-                                       # see `checkResultBorrow`
     assumeSync: bool                   # inside `{.cast(assumeSync).}:`; see
                                        # "Shared globals" below
     syncArgs: HashSet[int]             # positions of global symbols passed to a
@@ -221,27 +256,16 @@ type
     verbose: bool                      # --verbose: dump final IR on init/contract
                                        # failures for easier debugging
     bits: int                          # target `int` width for compile-time folding
-    currentProcStart: Cursor           # cursor at the start of the proc whose
-                                       # body we are currently analysing (used
-                                       # for the --verbose dump)
-    stmtContext: NifLineInfo           ## The statement currently under
-                                       ## traversal, but only while it belongs
-                                       ## to the same file as its enclosing
-                                       ## routine (the whole module, at top
-                                       ## level). Expanded code fails that test
-                                       ## and leaves the last statement WRITTEN
-                                       ## here standing -- which is the place an
-                                       ## error inside the expansion is about.
 
 # `c.facts` reads/writes the fact set inside the journaled `FlowState`; the bulk
 # of the pass mutates facts through this alias, so it stays spelled `c.facts`.
-template facts(c: FirContext): untyped = c.flow.facts
+template facts(c: FirContext): untyped = c.p.flow.facts
 
 proc markInit(c: var FirContext; symId: SymId) {.inline.} =
-  c.flow.inits.incl symId
+  c.p.flow.inits.incl symId
 
 proc isInitialized(c: FirContext; symId: SymId): bool {.inline.} =
-  symId in c.flow.inits
+  symId in c.p.flow.inits
 
 proc dumpCurrentProc(c: var FirContext; info: NifLineInfo; msg: string) =
   ## Dump the Final IR of the proc currently under analysis to stderr. Used
@@ -249,13 +273,16 @@ proc dumpCurrentProc(c: var FirContext; info: NifLineInfo; msg: string) =
   ## a contract/init failure. Gated on `c.verbose` — callers still invoke
   ## it unconditionally; this proc is the single decision point.
   if not c.verbose: return
-  if cursorIsNil(c.currentProcStart): return
+  if cursorIsNil(c.p.currentProcStart): return
   stderr.writeLine "--- Final IR (--verbose) for: " & msg
   stderr.writeLine "--- at " & infoToStr(info) & ":"
-  stderr.writeLine toString(c.currentProcStart, false)
+  stderr.writeLine toString(c.p.currentProcStart, false)
   stderr.writeLine "--- end Final IR dump ---"
 
 proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
+  # A value read again for its facts was judged when it was analysed, before
+  # the barriers it contains: judging it again after them is no news.
+  if c.rereading: return
   # This pass runs on the FINAL IR, where the node an error is pinned to is
   # often one the compiler synthesized -- the epilogue's `(ret result)` is what
   # an uninitialized `result` is reported at -- and those carry no line info.
@@ -274,15 +301,15 @@ proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
   # code it is about actually sits. A different FILE is the whole test, which
   # is why the comparison is against the CONTEXT and not against the module:
   # an `include`d file is the module's own source and reports in its own name.
-  let procCtx = if not cursorIsNil(c.currentProcStart): c.currentProcStart.info
-                else: c.stmtContext
+  let procCtx = if not cursorIsNil(c.p.currentProcStart): c.p.currentProcStart.info
+                else: c.p.stmtContext
   let expandedFrom = rawInfo.isValid and procCtx.isValid and
                      procCtx.file != rawInfo.file
   let info =
     if not rawInfo.isValid: procCtx
     elif not expandedFrom: rawInfo
-    elif c.stmtContext.isValid and c.stmtContext.file != rawInfo.file:
-      c.stmtContext # the statement the expansion sits in: the closest place
+    elif c.p.stmtContext.isValid and c.p.stmtContext.file != rawInfo.file:
+      c.p.stmtContext # the statement the expansion sits in: the closest place
     else: procCtx   # a template expanded into the signature, say
   when defined(debug):
     writeStackTrace()
@@ -313,13 +340,13 @@ proc freshCall(): CallContext {.inline.} =
 proc plainReading(): Reading {.inline.} =
   ## A proposition that names what it is about.
   Reading(args: initTable[SymId, Cursor](), results: initTable[SymId, VarId](),
-          olds: initTable[string, VarId]())
+          olds: initTable[string, VarId](), own: true)
 
 proc ownReading(c: FirContext): Reading {.inline.} =
   ## A proposition of the routine being analysed: `old(e)` is the snapshot
   ## taken on entry.
   Reading(args: initTable[SymId, Cursor](), results: initTable[SymId, VarId](),
-          olds: c.ownOlds)
+          olds: c.p.ownOlds, own: true)
 
 proc extractSymId(n: Cursor): SymId {.inline.} =
   var n = n
@@ -340,11 +367,15 @@ proc extractSymIdForStore(n: Cursor): SymId =
     inc n
   result = extractSymId(n)
 
-proc skipSymbol(r: var Cursor): SymId {.inline.} =
-  ## Consume a bare Symbol or (v sym version) node and return its SymId.
+proc keepsValue(c: var FirContext; conv: Cursor; facts: bool): bool
+
+proc skipSymbol(c: var FirContext; r: var Cursor): SymId =
+  ## Consume a bare Symbol or (v sym version) node, under conversions that keep
+  ## its value, and return its SymId.
   ## Returns NoSymId (without advancing) if r is neither.
   var n = r
-  while n.exprKind in {HconvX, ConvX, BaseobjX}:
+  while n.exprKind == BaseobjX or
+      (n.exprKind in {HconvX, ConvX} and keepsValue(c, n, facts = true)):
     inc n
     skip n # type
   result = extractSymId(n)
@@ -406,8 +437,8 @@ proc followsInto(c: var FirContext; n: Cursor; follow: bool): bool =
   ## that evaluated it, which is exactly where the value dies, so a view of it
   ## escaping that scope or the proc is caught like any other local's.
   let s = n.symId
-  if s notin c.inlineVars: return false
-  let init = c.inlineVars.getOrQuit(s)
+  if s notin c.p.inlineVars: return false
+  let init = c.p.inlineVars.getOrQuit(s)
   result = not isFreshCall(c, init) and
     (follow or getType(c.typeCache, n).typeKind in {MutT, OutT, LentT} or
      establishesBorrow(c, init))
@@ -419,7 +450,7 @@ proc locInner(c: var FirContext; n: Cursor; follow: bool): Cursor =
   result = default(Cursor)
   if n.isSymbol:
     if followsInto(c, n, follow):
-      result = c.inlineVars.getOrQuit(n.symId)
+      result = c.p.inlineVars.getOrQuit(n.symId)
   elif n.isTagLit:
     case n.exprKind
     of DotX, DdotX, AddrX, DerefX, HaddrX, HderefX, TupatX, ArratX, AtX, PatX:
@@ -606,7 +637,7 @@ proc overlaps(c: var FirContext; a: Cursor; followA: bool;
 
 proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo) =
   var conflict = false
-  for b in c.flow.borrows:
+  for b in c.p.flow.borrows:
     if overlaps(c, mut, true, b.loc, true):
       conflict = true
       break
@@ -631,7 +662,7 @@ proc outlivesProc(c: var FirContext; s: SymId): bool =
   ## Storing here makes the value observable after the proc has returned:
   ## `result` flows out through the return, a global simply stays, and a
   ## `var`/`out` param writes through to a location the caller owns.
-  if s == c.resultSym: return true
+  if s == c.p.resultSym: return true
   let x = localInfoOf(c, s)
   result = x.kind in {GvarY, TvarY, GletY, TletY} or
            (isParamLike(x.kind) and x.typ.typeKind in {MutT, OutT})
@@ -644,11 +675,11 @@ proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
   result = BorrowInfo(info: value.info)
   let s = extractSymId(value)
   if s != NoSymId:
-    for b in c.flow.borrows:
+    for b in c.p.flow.borrows:
       if b.borrower == s:
         return b
-    if s in c.inlineVars:
-      let init = c.inlineVars.getOrQuit(s)
+    if s in c.p.inlineVars:
+      let init = c.p.inlineVars.getOrQuit(s)
       return borrowCarriedBy(c, init)
   if establishesBorrow(c, value):
     result.loc = value
@@ -656,7 +687,7 @@ proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
 proc borrowedName(c: var FirContext; root: SymId): string =
   ## What a borrow is *of*, for a message: a hoisted temp has no name the user
   ## ever wrote.
-  if root in c.inlineVars: "a temporary"
+  if root in c.p.inlineVars: "a temporary"
   else: "'" & asNimCode(root) & "'"
 
 proc checkBorrowOutlivesProc(c: var FirContext; value: Cursor) =
@@ -679,17 +710,17 @@ proc checkResultBorrow(c: var FirContext; value: Cursor) =
   if canCarryBorrow(c, value):
     let borrowed = borrowCarriedBy(c, value).loc
     let root = locRootSym(c, borrowed)
-    if root in c.laterParams and borrowMode(c, borrowed) == IsBorrowable:
+    if root in c.p.laterParams and borrowMode(c, borrowed) == IsBorrowable:
       buildErr c, value.info, "borrow of " & borrowedName(c, root) &
         " escapes the proc; a returned view can only borrow from the first parameter"
 
 proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
   if destRoot != NoSymId and outlivesProc(c, destRoot):
     checkBorrowOutlivesProc(c, value)
-    if destRoot == c.resultSym: checkResultBorrow(c, value)
+    if destRoot == c.p.resultSym: checkResultBorrow(c, value)
 
 proc endBorrow(c: var FirContext; sym: SymId) =
-  c.flow.borrows.endBorrowsOf sym
+  c.p.flow.borrows.endBorrowsOf sym
 
 template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
 
@@ -821,12 +852,17 @@ proc foldOrdinal(bits: int; n: Cursor): xint =
   result = tryEvalOrdinal(bits, n)
   if not result.isNaN and foldWraps(bits, n): result = createNaN()
 
+const
+  ArithmeticExprs = {AddX, SubX, MulX, DivX, ModX, NegX, ShlX, ShrX, AshrX,
+                     BitandX, BitorX, BitxorX, BitnotX}
+
 proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
                  keepWrap = false): bool =
   ## The interval `n` lies in by its *shape* alone — no flow facts: a constant,
   ## `a and k` (`0..k` for a constant `k >= 0`, whatever `a` is), `a shr k` of a
-  ## non-negative bounded `a`, and a conversion whose target type holds the
-  ## operand's interval. What bit-twiddling code computes an index from —
+  ## non-negative bounded `a`, a conversion whose target type holds the
+  ## operand's interval, and at least the type of any integer operation, which
+  ## wraps. What bit-twiddling code computes an index from —
   ## `HexChars[(n and 0xF0) shr 4]`, `bits[u shr IntShift]` — is exactly this,
   ## and none of it is expressible as `a <= b + c`.
   result = false
@@ -991,20 +1027,23 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0;
                   result = not lo.isNaN and not hi.isNaN
       else:
         discard
-      if result and not keepWrap and n.exprKind in {AddX, SubX, MulX, ShlX}:
-        # The interval above is the *mathematical* one. Where the operation
-        # wraps and the interval leaves the type, the value is merely some
-        # value of the type.
+      if not keepWrap and n.exprKind in ArithmeticExprs:
+        # The interval above is the *mathematical* one. An operation on an
+        # integer type `T` yields a value of `T` whatever its operands, since
+        # it wraps (doc/language.md). So where the interval leaves `T`, or the
+        # operands gave none (`x * 3'u64` of an unbounded `x`, or one past
+        # what `xint` holds), the value is merely some value of `T`.
         var t = n
         t = sub(t)
         if typeWraps(t):
           var tLo = zero()
           var tHi = zero()
           if not integerTypeBounds(c.bits, arithType(t), tLo, tHi):
-            result = false
-          elif lo < tLo or tHi < hi:
+            if n.exprKind in {AddX, SubX, MulX, ShlX}: result = false
+          elif not result or lo < tLo or tHi < hi:
             lo = tLo
             hi = tHi
+            result = true
       if not result and (n.isSymbol or
           n.exprKind in {DotX, DdotX, TupatX, HderefX, DerefX, ArratX, AtX, PatX}):
         # a location lies in whatever the flow facts bound it to
@@ -1062,55 +1101,121 @@ const
   FirstDerivedVarId = -2
   MaxLocationDepth = 6   ## bounds accessor look-through and path nesting
 
-proc peelExpr(n: Cursor): Cursor =
+proc keepsValue(c: var FirContext; conv: Cursor; facts: bool): bool =
+  ## Does the conversion `conv` hand on its operand's value unchanged? A
+  ## conversion to an integer type does only where that type holds every value
+  ## of the operand's: `int64(a)` of an `int32` is `a`, but `uint32(a)` is not
+  ## (`-1` becomes `high(uint32)`), and neither is `uint8(i)` of an `int` —
+  ## unless, with `facts`, the flow facts keep the operand inside it: `uint(m)`
+  ## under `0 <= m`. Only for an operand of the scope being analysed: a
+  ## callee's parameter can share a symbol with a local here.
+  var n = conv
+  n = sub(n)
+  var tLo = zero()
+  var tHi = zero()
+  if not integerTypeBounds(c.bits, arithType(n), tLo, tHi): return true
+  skip n # the target type
+  var src = default(Cursor)
+  if n.isSymbol:
+    src = lookupSymbol(c.typeCache, n.symId)
+  elif n.kind in {IntLit, UIntLit}:
+    let v = if n.kind == IntLit: createXint(n.intVal) else: createXint(n.uintVal)
+    return tLo <= v and v <= tHi
+  elif n.isTagLit and n.exprKind in ArithmeticExprs + {ConvX, HconvX, CastX}:
+    src = sub(n) # the type operand
+  elif facts and not c.prescanning:
+    # an operand of the scope being analysed has a type the cache knows
+    src = getType(c.typeCache, n)
+  if cursorIsNil(src): return false
+  while src.typeKind in {LentT, SinkT, MutT, OutT, OwnedT}:
+    src = sub(src)
+  src = arithType(src)
+  if src.typeKind == BoolT: return true
+  var sLo = zero()
+  var sHi = zero()
+  if src.typeKind in {EnumT, OnumT, AnumT}:
+    # an enum is judged by the ordinals it declares: `eNeg = -1` does not
+    # survive `uint32`, nor `eb = 200` an `int8`
+    let b = enumBounds(src)
+    if b.lo.isNaN or b.hi.isNaN: return false
+    sLo = b.lo
+    sHi = b.hi
+  elif not integerTypeBounds(c.bits, src, sLo, sHi): return false
+  if facts and not (tLo <= sLo and sHi <= tHi):
+    var fLo = createNaN()
+    var fHi = createNaN()
+    operandRange(c, n, fLo, fHi)
+    if not fLo.isNaN and sLo < fLo: sLo = fLo
+    if not fHi.isNaN and fHi < sHi: sHi = fHi
+  result = tLo <= sLo and sHi <= tHi
+
+proc peelExpr(c: var FirContext; n: Cursor; facts = false): Cursor =
   ## Look through the wrappers a value picks up on its way into a parameter or
-  ## out of a location: hidden conversions, the hidden address of a `var`
-  ## argument, a literal's type suffix.
+  ## out of a location: conversions that keep its value (`keepsValue`), the
+  ## hidden address of a `var` argument, a literal's type suffix.
   result = n
   var guard = 0
   while guard < MaxLocationDepth:
     inc guard
     case result.exprKind
     of HconvX, ConvX:
+      if not keepsValue(c, result, facts): break
       inc result
       skip result # the target type
     of HaddrX, HderefX, ParX, SufX:
       inc result
     else: break
 
-proc argOf(n: Cursor; subst: Table[SymId, Cursor]): Cursor =
+proc argOf(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
+           own = false): Cursor =
   ## `n` with a substituted symbol replaced by the expression it stands for: a
   ## callee's parameter by the argument written at the call site, or an
   ## accessor's parameter by the expression it was applied to. `subst` is empty
   ## wherever the symbols already are the ones to reason about.
-  result = peelExpr(n)
+  result = peelExpr(c, n, facts = own or subst.len == 0)
   if result.isSymbol and subst.hasKey(result.symId):
-    result = peelExpr(subst.getOrQuit(result.symId))
+    result = peelExpr(c, subst.getOrQuit(result.symId), facts = true)
 
-proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor]) =
+proc addSubstituted(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Cursor];
+                     sameRoutine = false) =
   ## `n` with every substituted symbol replaced by the expression it stands for.
+  ## An argument is an expression of the caller and is copied as it is; with
+  ## `sameRoutine` the replacements belong to the routine `n` is from (an
+  ## accessor's temps) and are substituted in turn.
   var n = n
   case n.kind
   of Symbol:
     if subst.hasKey(n.symId):
-      dest.addSubtree subst.getOrQuit(n.symId)
+      if sameRoutine:
+        addSubstituted(dest, subst.getOrQuit(n.symId), subst, sameRoutine)
+      else:
+        dest.addSubtree subst.getOrQuit(n.symId)
     else:
       dest.addSubtree n
   of TagLit:
+    # A field shares its symbol with a parameter of the same name, not its
+    # identity: the selector of a `dot`/`ddot` and the key of a `kv` stay.
+    let isSel = n.exprKind in {DotX, DdotX}
+    let isKey = n.substructureKind == KvU
     dest.addParLe(n.cursorTagId, n.info)
     n.into:
+      if (isSel or isKey) and n.hasMore:
+        if isSel: addSubstituted(dest, n, subst, sameRoutine) # the object
+        else: dest.addSubtree n # the field name
+        skip n
       while n.hasMore:
-        addSubstituted(dest, n, subst)
+        if isSel: dest.addSubtree n # field selector, depth, access token
+        else: addSubstituted(dest, n, subst, sameRoutine)
         skip n
       dest.addParRi(n.endInfo)
   else:
     dest.addSubtree n
 
-proc substitutes(n: Cursor; subst: Table[SymId, Cursor]): bool =
+proc substitutes(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): bool =
   ## Whether `argOf(n, subst)` replaces `n`. The replacement is an expression of
   ## the caller: it must be read with no substitution, because a caller's local
   ## can carry the same symbol id as a callee's parameter.
-  let p = peelExpr(n)
+  let p = peelExpr(c, n)
   result = p.isSymbol and subst.hasKey(p.symId)
 
 proc derivedIdOf(c: var FirContext; key: string; root: SymId): VarId =
@@ -1125,9 +1230,13 @@ proc derivedIdOf(c: var FirContext; key: string; root: SymId): VarId =
 proc invalidateDerivedFrom(c: var FirContext; root: SymId) =
   ## Everything derived from `root` is stale once `root` — or anything inside
   ## it — is written. Coarse on purpose: writing `d.head` also drops `d.count`.
+  ## Projected, not dropped, like `invalidateWrittenPath`: after `best = h`,
+  ## `best.thing == h.thing` and `h.thing < 3`, a new `h` must leave
+  ## `best.thing < 3` behind. Every location of `root` goes, so what remains
+  ## mentions none of them.
   for i in 0 ..< c.derivedRoots.len:
     if c.derivedRoots[i] == root:
-      invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+      projectOut(c.facts, VarId(FirstDerivedVarId - i))
 
 proc isElementWrite(n: Cursor): bool {.inline.} =
   ## A write to one element of an array or of a pointer's target: it changes
@@ -1155,23 +1264,36 @@ proc keyUnder(derived, written: string): bool =
   else:
     result = false
 
-proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
-  ## A variant object or a union: writing one field may change another.
-  var t = objType
+proc typeBody(c: var FirContext; typ: Cursor; t: var Cursor): bool =
+  ## Follows the type names in `typ` to the body they stand for, into `t`.
+  ## False if a declaration cannot be loaded or is a union: either way nothing
+  ## is known about how its fields are laid out.
+  t = typ
   var guard = 0
-  result = false
-  while t.isSymbol and guard < 8:
+  result = true
+  while result and t.isSymbol and guard < 8:
     var declCursor = default(Cursor)
     if c.moduleTypes.hasKey(t.symId):
       declCursor = c.moduleTypes.getOrQuit(t.symId)
     else:
       let decl = tryLoadSym(t.symId)
-      if decl.status != LacksNothing or decl.decl.symKind != TypeY: return true
-      declCursor = decl.decl
-    let td = asTypeDecl(declCursor)
-    if hasPragma(td.pragmas, UnionP): return true
-    t = td.body
-    inc guard
+      if decl.status != LacksNothing or decl.decl.symKind != TypeY:
+        result = false
+      else:
+        declCursor = decl.decl
+    if result:
+      let td = asTypeDecl(declCursor)
+      if hasPragma(td.pragmas, UnionP):
+        result = false
+      else:
+        t = td.body
+        inc guard
+
+proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
+  ## A variant object or a union: writing one field may change another.
+  var t = default(Cursor)
+  if not typeBody(c, objType, t): return true
+  result = false
   if t.typeKind in {PtrT, RefT, MutT}:
     t = sub(t)
     return hasOverlappingFields(c, t)
@@ -1191,6 +1313,44 @@ proc invalidateAllDerived(c: var FirContext) =
   for i in 0 ..< c.derivedRoots.len:
     if c.derivedRoots[i] != NoSymId:
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+
+# --- Aliasing: barriers end what is known about shared variables ---
+#
+# See `aliasing.nim` for which variables are shared and what is a barrier.
+
+proc isShared(c: var FirContext; s: SymId): bool =
+  s in c.p.aliased or s in c.p.borrowedParams or
+    localInfoOf(c, s).kind in {GvarY, TvarY}
+
+proc forgetShared(c: var FirContext; spared: openArray[SymId] = []) =
+  ## A barrier: what is known about every shared variable, and about what is
+  ## derived from it, goes; what the facts connected through it stays
+  ## (`projectOut`). The `spared` variables are the ones the barrier writes by
+  ## name, which is accounted for where the write is made.
+  var vars = initHashSet[VarId]() # collected first: `projectOut` edits the facts
+  for i in 0 ..< c.facts.len:
+    for v in [c.facts[i].a, c.facts[i].b]:
+      if int(v) > 0 or int(v) <= FirstDerivedVarId: vars.incl v
+  for v in vars:
+    let root = if int(v) > 0: SymId(int(v))
+               else: c.derivedRoots[FirstDerivedVarId - int(v)]
+    if root != NoSymId and root notin spared and isShared(c, root):
+      projectOut(c.facts, v)
+
+proc destroyIsBarrier(c: var FirContext; kind: SymKind; typ: Cursor): bool {.inline.} =
+  kind in {VarY, LetY} and destroyHasSideEffect(c.lifter[], typ)
+
+proc killIsBarrier(c: var FirContext; kill: Cursor): bool =
+  ## Does a local the `(kill …)` ends die by a `=destroy` that is a barrier?
+  result = false
+  var r = kill
+  r.into:
+    while r.hasMore:
+      let s = extractSymId(r)
+      if s != NoSymId:
+        let li = getLocalInfo(c.typeCache, s)
+        if destroyIsBarrier(c, li.kind, li.typ): result = true
+      skip r
 
 proc isKeyableCall(fnSym: SymId): bool =
   ## May a call to `fnSym` stand for a location of its own?
@@ -1306,7 +1466,8 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
         return false
       temps.add (l.name.symId, l.val)
       skip b
-    elif b.stmtKind in {RetS, AssumeS, AssertS} or b.finalIrKind in {AssumeV, AssertV}:
+    elif b.stmtKind in {RetS, AssumeS, AssertS, InvariantS} or
+        b.finalIrKind in {AssumeV, AssertV, InvariantV}:
       # a proposition changes nothing at run time: `len` states its own
       # non-negativity next to the path it returns
       skip b
@@ -1317,12 +1478,26 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
   value = val
   result = true
 
-proc accessorSubst(a: AccessorInfo): Table[SymId, Cursor] =
-  ## The substitution reading `a.value` needs for its temps; a caller that
-  ## applies the accessor to an argument adds `a.param`.
-  result = initTable[SymId, Cursor]()
+proc accessorValue(a: AccessorInfo; buf: var TokenBuf): Cursor =
+  ## `a.value` in terms of `a.param` alone: every temp it names, and every temp
+  ## those name, replaced by what it stands for. A caller that applies the
+  ## accessor substitutes `a.param` only.
+  if a.temps.len == 0: return a.value
+  var temps = initTable[SymId, Cursor]()
   for it in a.temps:
-    result[it[0]] = it[1]
+    temps[it[0]] = it[1]
+  addSubstituted(buf, a.value, temps, sameRoutine = true)
+  result = cursorAt(buf, 0)
+
+proc callerArg(c: var FirContext; arg: Cursor; subst: Table[SymId, Cursor];
+               buf: var TokenBuf): Cursor =
+  ## `arg`, written where `subst` applies, in the terms of the scope being
+  ## analysed: what an accessor applied to `arg` reads its parameter as.
+  if subst.len == 0 or substitutes(c, arg, subst):
+    result = argOf(c, arg, subst)
+  else:
+    addSubstituted(buf, arg, subst)
+    result = cursorAt(buf, 0)
 
 proc accessorOf(c: var FirContext; fnSym: SymId; a: var AccessorInfo): bool =
   ## `c.accessors` is filled by a pre-pass over the module being analysed, which
@@ -1350,7 +1525,12 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   ## Canonical key of a pure location. `steps == 0` means the location *is* the
   ## plain variable `root`; anything else is derived.
   if depth > MaxLocationDepth: return false
-  let m = argOf(n, subst)
+  if substitutes(c, n, subst):
+    # an argument, an expression of the caller: none of its symbols is one
+    # `subst` stands for
+    let noSubst = initTable[SymId, Cursor]()
+    return locationKey(c, argOf(c, n, subst), noSubst, root, key, steps, depth)
+  let m = argOf(c, n, subst)
   let s = extractSymId(m)
   if s != NoSymId:
     root = s
@@ -1393,38 +1573,14 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     if accessorOf(c, fnSym, acc):
       # Key the *path the accessor returns*, so that `len(s)` and the `s.len`
       # written inside the defining module are one and the same location.
-      # The argument is resolved against the substitution in flight *first*: in
-      # a callee's `.requires`, `len(a)` applies the accessor to the callee's
-      # parameter `a`, which stands for the argument at the call site. The
-      # accessor's own path then needs its parameter and nothing else — keeping
-      # the outer map there would substitute twice, and a recursive call with
-      # swapped arguments maps `a` to `b` and `b` back to `a`.
-      let resolved = argOf(arg, subst)
-      if resolved.isSymbol or not resolved.isTagLit or subst.len == 0:
-        var inner = accessorSubst(acc)
-        inner[acc.param] = resolved
-        return locationKey(c, acc.value, inner, root, key, steps, depth+1)
-      # A path argument (`len(b.data)`) still names the callee's parameters
-      # inside: key it under the substitution in flight, then graft the path
-      # the accessor returns onto it.
-      var argRoot = NoSymId
-      var argKey = ""
-      var argSteps = 0
-      if not locationKey(c, arg, subst, argRoot, argKey, argSteps, depth+1): return false
-      var own = NoSymId
-      var ownKey = ""
-      var ownSteps = 0
-      # in terms of the accessor's own parameter: only its temps are resolved
-      let ownSubst = accessorSubst(acc)
-      if not locationKey(c, acc.value, ownSubst, own, ownKey, ownSteps, depth+1): return false
-      let paramKey = "v" & $uint32(acc.param)
-      if own != acc.param or not ownKey.startsWith(paramKey) or
-          (ownKey.len > paramKey.len and ownKey[paramKey.len] notin {'.', '-'}):
-        return false
-      root = argRoot
-      key = argKey & ownKey.substr(paramKey.len)
-      steps = argSteps + ownSteps
-      return true
+      # The accessor's parameter stands for the argument in the caller's
+      # terms: in a callee's `.requires`, `len(a)` and `len(b.data)` name the
+      # callee's parameters, which the substitution in flight replaces first.
+      var vbuf = createTokenBuf(16)
+      var abuf = createTokenBuf(16)
+      var inner = initTable[SymId, Cursor]()
+      inner[acc.param] = callerArg(c, arg, subst, abuf)
+      return locationKey(c, accessorValue(acc, vbuf), inner, root, key, steps, depth+1)
     if not isKeyableCall(fnSym): return false
     if not locationKey(c, arg, subst, root, key, steps, depth+1): return false
     key = "c" & $uint32(fnSym) & "(" & key & ")"
@@ -1476,7 +1632,7 @@ proc noteTypeRange(c: var FirContext; v: VarId; n: Cursor) =
   if staticRangeBounds(t, lo, hi) or integerTypeBounds(c.bits, arithType(t), lo, hi):
     c.typeRange[v] = RangeBounds(lo: lo, hi: hi)
 
-proc resultBound(bits: int; r: Cursor; resultSyms: seq[SymId]; lo, hi: var xint) =
+proc resultBound(c: var FirContext; r: Cursor; resultSyms: seq[SymId]; lo, hi: var xint) =
   ## Narrow `lo..hi` by one conjunct of an `.ensures` that compares `result`
   ## with an integer constant (`high(int)` among them); any other conjunct
   ## says nothing here.
@@ -1484,22 +1640,22 @@ proc resultBound(bits: int; r: Cursor; resultSyms: seq[SymId]; lo, hi: var xint)
   of AndX:
     var x = r
     x = sub(x)
-    resultBound(bits, x, resultSyms, lo, hi)
+    resultBound(c, x, resultSyms, lo, hi)
     skip x
-    resultBound(bits, x, resultSyms, lo, hi)
+    resultBound(c, x, resultSyms, lo, hi)
   of LeX, LtX:
     let strict = if r.exprKind == LtX: createXint(1'i64) else: zero()
     var x = r
     x = sub(x)
     skip x # the type operand
-    let a = peelExpr(x)
+    let a = peelExpr(c, x)
     skip x
-    let b = peelExpr(x)
+    let b = peelExpr(c, x)
     if b.isSymbol and b.symId in resultSyms:
-      let k = tryEvalOrdinal(bits, a)
+      let k = tryEvalOrdinal(c.bits, a)
       if not k.isNaN: lo = max(lo, k + strict)
     elif a.isSymbol and a.symId in resultSyms:
-      let k = tryEvalOrdinal(bits, b)
+      let k = tryEvalOrdinal(c.bits, b)
       if not k.isNaN: hi = min(hi, k - strict)
   else: discard
 
@@ -1530,18 +1686,22 @@ proc ensuredResultRange(c: var FirContext; call: Cursor; lo, hi: var xint): bool
   if resultSyms.len == 0: return
   lo = createXint(low(int64))
   hi = createXint(high(int64))
-  resultBound(c.bits, cond, resultSyms, lo, hi)
+  resultBound(c, cond, resultSyms, lo, hi)
   result = lo > createXint(low(int64)) or hi < createXint(high(int64))
 
 proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): VarId =
   ## The `VarId` standing for the location `n` denotes, or `InvalidVarId`.
+  if substitutes(c, n, subst):
+    # an argument is read in the caller's scope, with no substitution
+    let noSubst = initTable[SymId, Cursor]()
+    return locationVarId(c, argOf(c, n, subst), noSubst)
   var root = NoSymId
   var key = ""
   var steps = 0
   if locationKey(c, n, subst, root, key, steps, 0) and root != NoSymId:
     result = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
     if steps > 0 and not c.prescanning and not c.declaredRange.hasKey(result):
-      let m = argOf(n, subst)
+      let m = argOf(c, n, subst)
       var lo = zero()
       var hi = zero()
       if m.exprKind in CallKinds and ensuredResultRange(c, m, lo, hi):
@@ -1553,7 +1713,7 @@ proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): V
         # caller's argument can be typed here (#2643)
         var buf = createTokenBuf(16)
         addSubstituted(buf, m, subst)
-        noteDeclaredRange(c, result, getType(c.typeCache, c.typeCache.keepAlive(buf)))
+        noteDeclaredRange(c, result, getType(c.typeCache, cursorAt(buf, 0)))
     if not c.prescanning and subst.len == 0:
       noteTypeRange(c, result, n)
   else:
@@ -1570,7 +1730,7 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   ## `high(s)`: a transparent accessor whose body is a location plus a
   ## constant (`s.len - 1`), read as that location and that constant.
   result = false
-  let m = argOf(n, subst)
+  let m = argOf(c, n, subst)
   if m.exprKind in CallKinds:
     var r = m
     r = sub(r)
@@ -1581,28 +1741,28 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
       # a call of a transparent accessor, its parameter standing for `arg`
       let arg = r
       skip r
-      let body = peelExpr(acc.value)
+      var vbuf = createTokenBuf(16)
+      let body = peelExpr(c, accessorValue(acc, vbuf))
       if not r.hasMore and body.exprKind in {AddX, SubX}:
         # ... with exactly that one argument, and a body `path ± k`
         var b = body
         b = sub(b)
-        var inner = accessorSubst(acc)
-        inner[acc.param] = argOf(arg, subst)
+        var abuf = createTokenBuf(16)
+        var inner = initTable[SymId, Cursor]()
+        inner[acc.param] = callerArg(c, arg, subst, abuf)
         if typeWraps(b):
           # the body is in terms of the accessor's parameter: the facts rule
           # out a wrap of it with the argument in its place
           var buf = createTokenBuf(16)
           addSubstituted(buf, body, inner)
-          if not noWrap(c, c.typeCache.keepAlive(buf)): return false
+          if not noWrap(c, cursorAt(buf, 0)): return false
         skip b # the type operand
-        # Not `locationVarId`: that asks the type cache about the path, which
-        # names the accessor's own parameter.
-        var root = NoSymId
-        var key = ""
-        var steps = 0
-        if locationKey(c, b, inner, root, key, steps, 0) and root != NoSymId:
+        # `locationVarId`, so that a call path gets the range its `.ensures`
+        # states, as it does when written out: `len(s)` in `high(s)` is at
+        # most `MaxContainerLen`
+        let loc = locationVarId(c, b, inner)
+        if loc != InvalidVarId:
           # `path` is a location of the argument
-          let loc = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
           skip b
           let off = foldOrdinal(c.bits, b)
           if not off.isNaN:
@@ -1611,7 +1771,7 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
             k = if body.exprKind == SubX: -off else: off
             result = true
 
-proc matchStep(decl: Cursor; info: var StepInfo): bool =
+proc matchStep(c: var FirContext; decl: Cursor; info: var StepInfo): bool =
   ## Recognize a *step routine*: one whose whole body moves its first, `var`,
   ## parameter by a fixed amount. `inc`/`dec` are exactly that after sem:
   ##
@@ -1649,7 +1809,7 @@ proc matchStep(decl: Cursor; info: var StepInfo): bool =
   skip b
   if b.hasMore: return false          # a second statement: not a plain step
 
-  let v = peelExpr(value)
+  let v = peelExpr(c, value)
   if v.exprKind notin {AddX, SubX}: return false
   var e = v
   e = sub(e)
@@ -1663,7 +1823,7 @@ proc matchStep(decl: Cursor; info: var StepInfo): bool =
     info.stepSym = second
     return true
   # `inc` on a `Natural` steps by `(conv (rangetype …) 1)`
-  let lit = peelExpr(e)
+  let lit = peelExpr(c, e)
   case lit.kind
   of IntLit: info.stepLit = createXint(lit.intVal)
   of UIntLit: info.stepLit = createXint(lit.uintVal)
@@ -1678,7 +1838,7 @@ proc stepOf(c: var FirContext; fnSym: SymId; info: var StepInfo): bool =
     return true
   if fnSym in c.notSteps: return false
   let s = tryLoadSym(fnSym)
-  if s.status == LacksNothing and matchStep(s.decl, info):
+  if s.status == LacksNothing and matchStep(c, s.decl, info):
     c.steps[fnSym] = info
     return true
   c.notSteps.incl fnSym
@@ -1732,7 +1892,7 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
   if info.stepSym != NoSymId:
     # the step is the second parameter: read it from this call site
     if not r.hasMore: return false
-    let arg = peelExpr(r)
+    let arg = peelExpr(c, r, facts = true)
     case arg.kind
     of IntLit: step = createXint(arg.intVal)
     of UIntLit: step = createXint(arg.uintVal)
@@ -1752,7 +1912,7 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
       return false
     if c.prescanning:
       if not declaredStepFits(c, info.opType, loc, moved): mayWrap = true
-    elif not stepFits(c, info.opType, peelExpr(target), moved):
+    elif not stepFits(c, info.opType, peelExpr(c, target, facts = true), moved):
       if loc in c.assumedSteps: c.brokenSteps.incl loc
       loc = InvalidVarId
       stepArg = default(Cursor)
@@ -1826,9 +1986,9 @@ proc varResultRoot(c: var FirContext; dest: Cursor): SymId =
   result = NoSymId
   if d.exprKind == HderefX:
     d = sub(d)
-    if d.isSymbol and c.inlineVars.hasKey(d.symId):
+    if d.isSymbol and c.p.inlineVars.hasKey(d.symId):
       # `var x = data[i]` bound as an `(inline)` temp
-      d = c.inlineVars.getOrQuit(d.symId)
+      d = c.p.inlineVars.getOrQuit(d.symId)
     if d.exprKind in CallKinds:
       var arg = d
       arg = sub(arg)
@@ -2057,10 +2217,6 @@ proc cannotProve(c: var FirContext; info: NifLineInfo; report: bool; msg: string
   c.obligationOpen = false
   if report: buildErr c, info, msg
 
-const
-  ArithmeticExprs = {AddX, SubX, MulX, DivX, ModX, NegX, ShlX, ShrX, AshrX,
-                     BitandX, BitorX, BitxorX, BitnotX}
-
 proc normalizedArith(c: var FirContext; n: Cursor): Cursor
 
 proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
@@ -2107,7 +2263,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   var off = zero()
   var isLit = false
   var r = value
-  let sym = skipSymbol(r)
+  let sym = skipSymbol(c, r)
   # The rules below read `+`, `-` and `*` mathematically, which a wrapping one
   # (`typeWraps`) only is once its operands keep it inside its type.
   let mathValue = value.exprKind notin {AddX, SubX, MulX} or noWrap(c, value)
@@ -2123,7 +2279,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     a = sub(a)
     skip a # the type operand
     let baseStart = a
-    var baseSym = skipSymbol(a)
+    var baseSym = skipSymbol(c, a)
     var baseLoc = if baseSym != NoSymId: getVarId(c, baseSym) else: InvalidVarId
     if baseSym == NoSymId:
       # a derived location as the base: `a.d[a.nd - 1]`
@@ -2478,7 +2634,7 @@ proc normalizedArith(c: var FirContext; n: Cursor): Cursor =
   if r.hasMore: buf.addSubtree r
   else: buf.addIntLit(1, info)
   buf.addParRi()
-  result = c.typeCache.keepAlive(buf)
+  result = cursorAt(buf, 0)
 
 proc checkSuccPred(c: var FirContext; n: Cursor) =
   ## `succ`/`pred` of a `range` type owe the range: their result is a `T`
@@ -3219,7 +3375,7 @@ proc wantNotNil(c: var FirContext; n: Cursor) =
           skip n # skip type
           if n.isSymbol and pool.symString(n.symId) == ("Success.0." & SystemModuleSuffix):
             inc n
-        if n.exprKind == NewobjX and c.procCanRaise:
+        if n.exprKind == NewobjX and c.p.procCanRaise:
           discard "fine, nil value is mapped to OOM by the compiler"
         else:
           buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
@@ -3315,7 +3471,7 @@ proc constStringLen(c: var FirContext; n: Cursor; rd: Reading;
     if fnSym != NoSymId and pool.symBasename(fnSym) == "len":
       skip r # the callee
       if r.hasMore:
-        let strSym = extractSymId(argOf(r, rd.args))
+        let strSym = extractSymId(argOf(c, r, rd.args, rd.own))
         skip r
         if strSym != NoSymId and not r.hasMore:
           var value = default(Cursor)
@@ -3339,13 +3495,20 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
   v = VarId(0)
   cnst = createXint(0'i32)
   if rd.results.len > 0:
-    let rs = extractSymId(peelExpr(n))
+    let rs = extractSymId(peelExpr(c, n))
     if rs != NoSymId and rd.results.hasKey(rs):
       v = rd.results.getOrQuit(rs)
       return true
-  if substitutes(n, rd.args):
-    return pureOperand(c, rd.args.getOrQuit(peelExpr(n).symId), default(Reading), v, cnst)
-  let m = peelExpr(n)
+  if substitutes(c, n, rd.args):
+    return pureOperand(c, rd.args.getOrQuit(peelExpr(c, n).symId), plainReading(), v, cnst)
+  let m = peelExpr(c, n, facts = rd.own)
+  if m.exprKind in {ConvX, HconvX} and not rd.own and rd.args.len > 0 and
+      rd.results.len == 0 and rd.olds.len == 0:
+    # whether `uint(s.len)` of a callee keeps its value is a question about
+    # the arguments: read it with them in place
+    var buf = createTokenBuf(16)
+    addSubstituted(buf, m, rd.args)
+    return pureOperand(c, cursorAt(buf, 0), plainReading(), v, cnst)
   case m.kind
   of IntLit:
     cnst = createXint(m.intVal)
@@ -3375,7 +3538,7 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     var baseConst = zero()
     if not pureOperand(c, r, rd, base, baseConst): return false
     skip r
-    let k = argOf(r, rd.args)
+    let k = argOf(c, r, rd.args, rd.own)
     var off = createXint(0'i32)
     case k.kind
     of IntLit: off = createXint(k.intVal)
@@ -3397,7 +3560,7 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     if rd.args.len == 0: return noWrap(c, m)
     var buf = createTokenBuf(16)
     addSubstituted(buf, m, rd.args)
-    result = noWrap(c, c.typeCache.keepAlive(buf))
+    result = noWrap(c, cursorAt(buf, 0))
     return result
   var oldOf = default(Cursor)
   if oldArg(m, oldOf):
@@ -3411,9 +3574,9 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     return false
   if constStringLen(c, m, rd, cnst):
     return true
-  if offsetAccessor(c, n, rd.args, v, cnst):
+  if offsetAccessor(c, m, rd.args, v, cnst):
     return true
-  let loc = locationVarId(c, n, rd.args)
+  let loc = locationVarId(c, m, rd.args)
   if loc != InvalidVarId:
     v = loc
     return true
@@ -3470,21 +3633,21 @@ proc operandInterval(c: var FirContext; n: Cursor; rd: Reading;
     lo = k
     hi = k
     result = true
-  elif rd.args.len == 0 or substitutes(n, rd.args):
-    result = valueBounds(c, argOf(n, rd.args), lo, hi)
+  elif rd.args.len == 0 or substitutes(c, n, rd.args):
+    result = valueBounds(c, argOf(c, n, rd.args, rd.own), lo, hi)
   else:
     # `m.value` of a callee's parameter `m`: `valueBounds` reads the caller's
     # scope, so it has to see the argument in place of `m` (#2643)
     var buf = createTokenBuf(16)
     addSubstituted(buf, n, rd.args)
-    result = valueBounds(c, c.typeCache.keepAlive(buf), lo, hi)
+    result = valueBounds(c, cursorAt(buf, 0), lo, hi)
 
 
 proc assumableSide(c: var FirContext; e: Cursor; rd: Reading): bool =
   ## May a comparison be *assumed* with its operand `e` read mathematically?
   ## A wrapped value is not ordered with the mathematical one at all, so a
   ## wrapping `e` must be known to stay inside its type.
-  let m = peelExpr(e)
+  let m = peelExpr(c, e, facts = rd.own)
   result = m.exprKind notin {AddX, SubX, MulX, NegX} or not typeWraps(sub(m)) or
            (rd.args.len == 0 and rd.results.len == 0 and noWrap(c, m))
 
@@ -3539,11 +3702,11 @@ proc proveMasked(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   var r = n
   r = sub(r)
   skip r # the type operand
-  let leftRd = if substitutes(r, rd.args): default(Reading) else: rd
-  let left = argOf(r, rd.args)
+  let leftRd = if substitutes(c, r, rd.args): plainReading() else: rd
+  let left = argOf(c, r, rd.args, rd.own)
   skip r
-  let rightRd = if substitutes(r, rd.args): default(Reading) else: rd
-  let right = argOf(r, rd.args)
+  let rightRd = if substitutes(c, r, rd.args): plainReading() else: rd
+  let right = argOf(c, r, rd.args, rd.own)
   let strict = if k == LtX: createXint(1'i64) else: zero()
   if left.exprKind == BitandX:
     var rv = VarId(0)
@@ -3726,7 +3889,7 @@ proc bindResultPaths(c: var FirContext; rd: var Reading;
   if dest == NoSymId or resultSyms.len == 0: return
   var buf = createTokenBuf(1)
   buf.addSymUse dest, NoLineInfo
-  let cur = c.typeCache.keepAlive(buf)
+  let cur = cursorAt(buf, 0)
   for rs in resultSyms:
     rd.args[rs] = cur
 
@@ -3736,9 +3899,9 @@ proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo;
   ## for `resultVar`, `old(e)` for what `e` held on entry. A postcondition is
   ## the routine's promise to every caller, who takes it without looking; left
   ## unproven it would be a `{.assume.}` in disguise.
-  if not cursorIsNil(c.ownEnsures) and c.tr.live:
+  if not cursorIsNil(c.p.ownEnsures) and c.p.tr.live:
     var rd = ownReading(c)
-    var cond = c.ownEnsures
+    var cond = c.p.ownEnsures
     while cond.exprKind == ExprX:
       var inner = cond
       inner = sub(inner)
@@ -3755,8 +3918,11 @@ proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo;
     of Disproven:
       buildErr c, info, "postcondition violated: " & asNimCode(cond)
     of Unprovable:
-      if StaticContractsFeature in c.features:
-        buildErr c, info, "cannot prove postcondition: " & asNimCode(cond)
+      # Unlike an undecided `.requires`, which keeps the run-time guard the
+      # callee carries, nothing checks a postcondition at run time: every
+      # caller simply assumes it. Undecided is therefore an error whatever the
+      # module's contract features, exactly as for `{.assert}`.
+      buildErr c, info, "cannot prove postcondition: " & asNimCode(cond)
 
 proc assumeOwnContract(c: var FirContext; n: Cursor) =
   assumeCond(c, n, plainReading())
@@ -3889,10 +4055,10 @@ proc checkRequires(c: var FirContext; req: Cursor; rd: Reading;
   # An obligation on a path control cannot reach is vacuous, and the facts there
   # are not merely weak but meaningless — a join on a dead path keeps *both*
   # arms of the preceding `if`, so contradictory facts hold at once and anything
-  # at all can be "disproved". (`trFor` emits the exit label of every `for` so
-  # that a loop no longer makes its own continuation look dead; what is left
+  # at all can be "disproved". (A `for` falls through where its iterator runs
+  # out, so a loop does not make its own continuation look dead; what is left
   # here is genuinely unreachable code.)
-  if not c.tr.live: return
+  if not c.p.tr.live: return
   let res = proveCond(c, req, rd)
   when defined(contractStats):
     stderr.writeLine "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
@@ -4006,7 +4172,7 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
     # On a path control cannot reach the facts are not merely weak but
     # contradictory, and an obligation judged against them could report a
     # correct index as a violation. `checkRequires` bails for the same reason.
-    if pc.hasMore and c.tr.live and RuntimeContractsFeature notin c.features:
+    if pc.hasMore and c.p.tr.live and RuntimeContractsFeature notin c.features:
       c.obligationOpen = false
       checkIndexInBounds c, idx, pc
       when defined(contractStats):
@@ -4086,7 +4252,7 @@ proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
     let symId = pc.symId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {VarY, LetY, CursorY, PatternvarY, ResultY}:
-      if c.tr.live and not isInitialized(c, symId):
+      if c.p.tr.live and not isInitialized(c, symId):
         buildErr(c, pc.info, "cannot prove that " & asNimCode(pc) & " has been initialized")
         # don't report the same symbol twice from later references
         markInit(c, symId)
@@ -4469,6 +4635,8 @@ proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext) =
   # a leave after noreturn calls). The init-set on this dead path contributes to
   # no exit, exactly as a `raise`/`return` would.
   var isNoReturn = false
+  var named: seq[SymId] = @[]
+  let barrier = isBarrierCall(c.typeCache, n, c.p.aliasInits, named)
   n.into: # call instruction
     block:
       var pragmas = skipProcTypeToParams(getType(c.typeCache, n))
@@ -4477,8 +4645,9 @@ proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext) =
         skip pragmas # return type
         isNoReturn = hasPragma(pragmas, NoreturnP)
     analyseCallArgs(c, n, call)
+  if barrier and not c.rereading: forgetShared(c, named)
   if isNoReturn:
-    c.tr.live = false
+    c.p.tr.live = false
 
 # --- Assignment fact tracking ---
 
@@ -4503,7 +4672,17 @@ proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
     c.facts.add query(dest, VarId(0), hi)
   # a mask can bound it more tightly than the interval of a conversion around
   # it does: `int(h and mask)`
-  if (let v = peelExpr(value); v.exprKind == BitandX):
+  var v = peelExpr(c, value, facts = true)
+  var top = createNaN()
+  if v.exprKind in {ConvX, HconvX}:
+    # ... where the mask fits the conversion's type, which then keeps the value
+    var d = v
+    d = sub(d)
+    var tLo = zero()
+    if integerTypeBounds(c.bits, arithType(d), tLo, top):
+      skip d
+      v = peelExpr(c, d, facts = true)
+  if v.exprKind == BitandX:
     # `x and m` lies in `0..m` for a mask `m` known not to be negative: the
     # `hash and high(data)` every hash table starts its probe with.
     let rd = plainReading()
@@ -4514,7 +4693,8 @@ proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
       var mv = VarId(0)
       var mk = zero()
       if pureOperand(c, r, rd, mv, mk) and mv != VarId(0) and
-          impliesHere(c, query(VarId(0), mv, mk)):
+          impliesHere(c, query(VarId(0), mv, mk)) and
+          (top.isNaN or impliesHere(c, query(mv, VarId(0), top - mk))):
         # every such operand bounds it: `a.len and high(b)` is below both
         c.facts.add query(VarId(0), dest, zero())
         c.facts.add query(dest, mv, mk)
@@ -4547,7 +4727,7 @@ proc isHookProc(symId: SymId): bool =
   result = false
 
 proc checkStoreNilMatch(c: var FirContext; value: Cursor; expected: Cursor) {.inline.} =
-  if not c.inHook:
+  if not c.p.inHook:
     checkNilMatch c, value, expected
 
 # --- Final-IR-specific traversal ---
@@ -4559,7 +4739,7 @@ proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
   ## `x` lies within `d` of `y`. `x = d + y` is the same sum: both orientations
   ## of a `+` contribute, so the facts do not depend on the operands' order.
   result = false
-  let v = peelExpr(value)
+  let v = peelExpr(c, value)
   if v.exprKind notin {AddX, SubX}: return
   if not noWrap(c, v): return
   var r = v
@@ -4605,8 +4785,8 @@ proc locationIsComputed(c: var FirContext; n: Cursor): bool =
   result = false
   if n.isSymbol:
     let s = n.symId
-    if s in c.inlineVars:
-      let init = c.inlineVars.getOrQuit(s)
+    if s in c.p.inlineVars:
+      let init = c.p.inlineVars.getOrQuit(s)
       result = locationIsComputed(c, init)
   elif n.isTagLit:
     case n.exprKind
@@ -4627,8 +4807,8 @@ proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[Cursor]) =
   ## contains, looking through the inline temps the calls were hoisted into.
   if n.isSymbol:
     let s = n.symId
-    if s in c.inlineVars:
-      let init = c.inlineVars.getOrQuit(s)
+    if s in c.p.inlineVars:
+      let init = c.p.inlineVars.getOrQuit(s)
       collectMutatedArgs(c, init, dest)
   elif n.isTagLit and n.exprKind in CallKinds:
     var arg = n.childCursor
@@ -4656,6 +4836,85 @@ proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[Cursor]) =
       collectMutatedArgs(c, r, dest)
       skip r
 
+proc stateValue(c: var FirContext; loc: VarId; value: Cursor) =
+  ## What `loc` holds once it is given the pure `value`: `loc == v + k` for
+  ## `v + k`, else whatever interval the value is known to lie in.
+  var src = VarId(0)
+  var k = zero()
+  if pureOperand(c, value, plainReading(), src, k):
+    if src != loc: addAsgnFact c, query(loc, src, k)
+  elif not sumWithBoundedTerm(c, value, loc):
+    addBoundFacts c, loc, value
+
+proc isValueObject(c: var FirContext; typ: Cursor): bool =
+  ## An object or tuple held by value, without overlapping fields: a copy of
+  ## it is a copy of each field, and no alias writes those behind our back.
+  var t = default(Cursor)
+  result = typeBody(c, typ, t) and t.typeKind in {ObjectT, TupleT} and
+    not hasOverlappingFields(c, typ)
+
+proc readsSym(n: Cursor; s: SymId): bool =
+  ## Does the subtree `n` mention the symbol `s` anywhere?
+  if n.kind == Symbol:
+    result = n.symId == s
+  elif n.kind == TagLit:
+    result = false
+    var it = n
+    it.into:
+      while it.hasMore and not result:
+        result = readsSym(it, s)
+        skip it
+      while it.hasMore: skip it
+  else:
+    result = false
+
+proc addFieldFacts(c: var FirContext; root: SymId; key: string; value: Cursor;
+                   depth = 0) =
+  ## What storing `value` into the location keyed `key` says about the fields
+  ## under it, as derived locations of `root`: `x = T(f: v)` gives
+  ## `x.f == v`, and `x = y` gives `x.p == y.p` for every field path `p` of
+  ## `y` known so far. The caller has invalidated what was derived from `root`.
+  if depth > MaxLocationDepth: return
+  let v = peelExpr(c, value)
+  if v.exprKind == OconstrX:
+    var n = v
+    n.into:
+      if isValueObject(c, n):
+        skip n # the type
+        while n.hasMore:
+          if n.substructureKind == KvU:
+            var kv = n
+            kv.into:
+              if kv.isSymbol:
+                let fieldKey = key & "." & $uint32(kv.symId)
+                skip kv # the field
+                let loc = derivedIdOf(c, fieldKey, root)
+                stateValue c, loc, kv
+                addFieldFacts c, root, fieldKey, kv, depth+1
+              while kv.hasMore: skip kv
+          skip n
+      else:
+        while n.hasMore: skip n
+  else:
+    let src = extractSymId(v)
+    if src != NoSymId and src != root and isValueObject(c, getType(c.typeCache, v)):
+      let srcKey = "v" & $uint32(src)
+      let known = c.derivedRoots.len # the loop adds `root`'s own paths
+      for i in 0 ..< known:
+        let k = c.derivedKeys[i]
+        if c.derivedRoots[i] == src and k.len > srcKey.len and
+            k[srcKey.len] == '.' and k.startsWith(srcKey):
+          let loc = derivedIdOf(c, key & k.substr(srcKey.len), root)
+          addAsgnFact c, query(loc, VarId(FirstDerivedVarId - i), zero())
+
+proc storeFieldFacts(c: var FirContext; root: SymId; value: Cursor) =
+  ## The fields of a value stored into the plain variable `root`, as locations
+  ## of their own. A value that reads `root` is left alone: in `x = T(a: x.b)`
+  ## the `x.b` of the value is the old one, and the location of that name
+  ## already stands for the new one.
+  if not readsSym(value, root):
+    addFieldFacts c, root, "v" & $uint32(root), value
+
 proc checkDestAliasesValue(c: var FirContext; dest: Cursor; value: Cursor) =
   ## `s[0].x = grow(s)`: the address of `s[0]` is taken before `grow` runs, so
   ## when `grow` reallocates `s` the store goes to freed memory.
@@ -4680,7 +4939,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     # `i = i ± k`, a step the loop's pre-scan may have assumed not to wrap
     let destLoc = plainLocationVarId(c, n)
     if destLoc in c.assumedSteps:
-      let v = peelExpr(valueFacts)
+      let v = peelExpr(c, valueFacts)
       if v.exprKind in {AddX, SubX} and not noWrap(c, v): c.brokenSteps.incl destLoc
 
   # Check borrow conflicts for the destination
@@ -4689,6 +4948,9 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
   if not c.features.contains(LenientAliasingFeature):
     checkDestAliasesValue(c, n, valueStart)
   checkEscapingBorrow(c, valueStart, locRootSym(c, n))
+  # A write to a shared variable or through a pointer is a barrier, once the
+  # destination itself is accounted for.
+  let written = writtenRootOf(c.typeCache, n, c.p.aliasInits)
 
   # Now handle the destination (a Symbol; the NJVL `(v symId version)` form
   # is no longer produced, see the `VV` branch of `traverseStmt`)
@@ -4702,7 +4964,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
   # parameters stay out: a global is shared storage this analysis does not
   # follow, and a `var openArray` parameter cannot be replaced at all.
   if destSymId != NoSymId and
-     (destSymId == c.resultSym or not outlivesProc(c, destSymId)) and
+     (destSymId == c.p.resultSym or not outlivesProc(c, destSymId)) and
      canCarryBorrow(c, valueStart):
     # What the value carries is asked *before* the destination's own borrow
     # ends: `a = toOpenArray(a, 1, 2)` is derived from `a` itself, so `a` keeps
@@ -4712,7 +4974,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
       endBorrow(c, destSymId)
       if borrowMode(c, b.loc).isTracked:
         b.borrower = destSymId
-        c.flow.borrows.incl b
+        c.p.flow.borrows.incl b
   if destSymId != NoSymId:
     let symId = destSymId
     if n.kind == Symbol: checkSharedAccess c, n
@@ -4739,7 +5001,10 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
 
     # Try to extract facts from the value
     var valueForFact = valueFacts
-    if rightHandSide(c, valueForFact, fact, call):
+    c.rereading = true
+    let hasRhs = rightHandSide(c, valueForFact, fact, call)
+    c.rereading = false
+    if hasRhs:
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
       else:
@@ -4750,7 +5015,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
       addBoundFacts c, fact.a, valueFacts
 
     # Check if the rhs is known to be not nil
-    if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
+    if (valueStart.exprKind == NewobjX and c.p.procCanRaise) or cannotBeNil(c, valueStart):
       c.facts.add isNotNil(fact.a)
     else:
       # Also check: the destination type might have notnil (e.g. proctype)
@@ -4761,8 +5026,11 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     # The (re)assigned location again holds an in-range value; the fact
     # bookkeeping above may have invalidated its range facts, so restore them.
     seedRangeFacts c, symId, expected
+    # The fields of a constructed or copied value, as locations of their own.
+    storeFieldFacts c, symId, valueStart
     # ... and whatever the callee promised about what it just returned.
     assumeEnsures c, valueStart, getVarId(c, symId), call.olds, symId
+    if written.barrier: forgetShared(c, [written.sym])
 
     skip n
   else:
@@ -4790,9 +5058,13 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
       # `d.count = n` proves `d.count == n` for the guard that follows.
       var fact = query(destLoc, InvalidVarId, createXint(0'i32))
       var valueForFact = valueFacts
-      if rightHandSide(c, valueForFact, fact, call) and fact.a != fact.b:
+      c.rereading = true
+      let hasRhs = rightHandSide(c, valueForFact, fact, call)
+      c.rereading = false
+      if hasRhs and fact.a != fact.b:
         addAsgnFact c, fact
     traverseExpr c, n, call
+    if written.barrier: forgetShared(c, [written.sym])
 
 proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## Handle `(asgn dest value)`. The value is the second operand but the first
@@ -4832,13 +5104,13 @@ proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
   buf.addSubtree dest
   if hasStep: buf.addSubtree step
   buf.addParRi()
-  let value = c.typeCache.keepAlive(buf)
+  let value = cursorAt(buf, 0)
   checkSuccPred c, value
   var d = dest
   storeValue c, d, value, normalizedArith(c, value), call
   n = start; skip n
 
-# --- Exit-summary plumbing (drives the journaled FlowTracker over c.flow) ---
+# --- Exit-summary plumbing (drives the journaled FlowTracker over c.p.flow) ---
 #
 # Every leave/bind/branch operation now goes through the `FlowTracker`, which
 # journals the whole `FlowState` (init-set + facts) in place: a leave snapshots
@@ -4846,10 +5118,53 @@ proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
 # fall-through, and an `ite`/`case`/`try` checkpoints once and rolls back rather
 # than copying the state per branch.
 
-proc leaveToLabel(c: var FirContext; label: SymId) = gotoLabel(c.tr, c.flow, label)
-proc leaveToReturn(c: var FirContext) = gotoReturn(c.tr, c.flow)
-proc leaveToRaise(c: var FirContext) = gotoRaise(c.tr, c.flow)
-proc leaveToContinue(c: var FirContext) = gotoContinue(c.tr, c.flow)
+proc collectLoopInvariants(n: Cursor; dest: var seq[Cursor]) =
+  ## The `(invariant cond)` statements of the loop whose body is `n`, not those
+  ## of a loop nested in it. Sem allows them only at the start of a loop body.
+  if n.finalIrKind == InvariantV:
+    dest.add n
+  elif n.isTagLit and n.finalIrKind != LoopV and n.stmtKind != ForS and
+      not isRoutine(n.symKind):
+    var it = n
+    it.into:
+      while it.hasMore:
+        collectLoopInvariants(it, dest)
+        skip it
+
+proc judgeInvariant(c: var FirContext; inv: Cursor; where: string) =
+  ## Proves the condition of `(invariant cond)` here: on entry to its loop or
+  ## at a back-edge. On a path control cannot reach the claim is vacuous.
+  if c.p.tr.live:
+    var cond = inv
+    cond = sub(cond)
+    let res = proveCond(c, cond, ownReading(c))
+    case res
+    of Proven: discard
+    of Disproven:
+      buildErr c, inv.info, "loop invariant violated " & where & ": " & asNimCode(cond)
+    of Unprovable:
+      buildErr c, inv.info, "cannot prove loop invariant " & where & ": " & asNimCode(cond)
+
+proc assumeInvariants(c: var FirContext) =
+  ## The induction hypothesis: at the head of the loop every invariant holds,
+  ## because it held on entry and every back-edge re-established it.
+  # moved out for the loop: `assumeCond` takes all of `c`
+  var invariants = move c.loopInvariants
+  for inv in invariants:
+    var cond = inv
+    cond = sub(cond)
+    assumeCond(c, cond, ownReading(c))
+  c.loopInvariants = move invariants
+
+proc leaveToLabel(c: var FirContext; label: SymId) = gotoLabel(c.p.tr, c.p.flow, label)
+proc leaveToReturn(c: var FirContext) = gotoReturn(c.p.tr, c.p.flow)
+proc leaveToRaise(c: var FirContext) = gotoRaise(c.p.tr, c.p.flow)
+proc leaveToContinue(c: var FirContext) =
+  # the back-edge: every invariant of the loop has to hold again here
+  var invariants = move c.loopInvariants # `judgeInvariant` takes all of `c`
+  for inv in invariants: judgeInvariant(c, inv, "at the end of an iteration")
+  c.loopInvariants = move invariants
+  gotoContinue(c.p.tr, c.p.flow)
 
 proc traverseIte(c: var FirContext; n: var Cursor) =
   ## `(ite cond then else)`. Each arm is analyzed under the condition's polarity;
@@ -4877,7 +5192,7 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
     if constCond >= 0 and (negations and 1) == 1:
       constCond = 1 - constCond
 
-  var b = splitBranch(c.tr, c.flow)
+  var b = splitBranch(c.p.tr, c.p.flow)
   # `analyseCondition` states what the *true* path knows and hands back what the
   # false path knows; only it can tell the two apart (`a != b` is the case where
   # all the knowledge sits on the false path).
@@ -4885,17 +5200,17 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   discard analyseCondition(c, n, condFactsList, call)
 
   # then-branch (under assume(c)):
-  let liveBeforeThen = c.tr.live
-  if constCond == 0: c.tr.live = false
+  let liveBeforeThen = c.p.tr.live
+  if constCond == 0: c.p.tr.live = false
   traverseStmt c, n, call
   # `commitThen` captures the then-branch (its init delta, facts, and exits) and
-  # rolls `c.flow` back to the split baseline — which drops the condition facts,
+  # rolls `c.p.flow` back to the split baseline — which drops the condition facts,
   # since the split was taken before them.
-  commitThen(c.tr, c.flow, b)
+  commitThen(c.p.tr, c.p.flow, b)
 
   # else-branch (under assume(¬c)):
-  if constCond == 1: c.tr.live = false
-  elif constCond == 0: c.tr.live = liveBeforeThen
+  if constCond == 1: c.p.tr.live = false
+  elif constCond == 0: c.p.tr.live = liveBeforeThen
   for f in condFactsList:
     c.facts.add f
   if n.isDotToken:
@@ -4904,7 +5219,7 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
     traverseStmt c, n, call
   # `mergeBranches` joins the then-branch (in `b`) with the current else-branch,
   # merging both the init-set and the facts; a leaving arm drops out.
-  mergeBranches(c.tr, c.flow, b)
+  mergeBranches(c.p.tr, c.p.flow, b)
 
   n = iteStart; skip n
 
@@ -4936,6 +5251,9 @@ type
       ## `Positive`-returning call is exactly that — declared inside the body,
       ## so no fact about it exists yet when this scan runs.
     opaque: bool          ## a write we could not attribute to any location
+    barriers: int         ## how many barriers the body has (`forgetShared`) ...
+    namedBy: Table[SymId, int] ## ... and how many of them write each variable
+                          ## by name; one that all of them name keeps its facts
     preserved: seq[VarId] ## derived locations the call just scanned promises
                           ## to leave alone (`s.len == old(s.len)`); holds
                           ## for the `(unknown …)` that follows it too
@@ -4987,8 +5305,8 @@ proc preservedLocations(c: var FirContext; cond: Cursor; subst: Table[SymId, Cur
     skip r
     var oldOf = default(Cursor)
     var plain = lhs
-    if oldArg(argOf(lhs, subst), oldOf): plain = r
-    elif not oldArg(argOf(r, subst), oldOf): plain = default(Cursor)
+    if oldArg(argOf(c, lhs, subst), oldOf): plain = r
+    elif not oldArg(argOf(c, r, subst), oldOf): plain = default(Cursor)
     if not cursorIsNil(plain):
       let a = locationVarId(c, plain, subst)
       if a != InvalidVarId and a == locationVarId(c, oldOf, subst):
@@ -5033,7 +5351,7 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
   ## `inc` takes.
   result = ivUnknown
   if cursorIsNil(value): return
-  let v = peelExpr(value)
+  let v = peelExpr(c, value)
   if v.exprKind in {ShrX, AshrX, BitandX}:
     # `v = v shr k` keeps `v >= 0` (given it held), and `v = v and k` makes it
     # so outright for a non-negative mask. Neither is monotone.
@@ -5121,8 +5439,24 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
     # like are keyed on the root, so stay conservative there.
     noteWrite(w, getVarId(c, root), ivUnknown)
 
+proc noteBarrier(w: var LoopWrites; named: openArray[SymId]) =
+  inc w.barriers
+  var seen: seq[SymId] = @[]
+  for s in named:
+    if s != NoSymId and s notin seen:
+      seen.add s
+      w.namedBy.mgetOrPut(s, 0) += 1
+
+proc noteStoreBarrier(c: var FirContext; w: var LoopWrites; dest: Cursor) =
+  let written = writtenRootOf(c.typeCache, dest, c.p.aliasInits)
+  if written.barrier: noteBarrier(w, [written.sym])
+
 proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if not n.isTagLit:
+    skip n
+    return
+  if n.finalIrKind == KillV:
+    if killIsBarrier(c, n): noteBarrier(w, [])
     skip n
     return
   if n.stmtKind in {IncS, DecS}:
@@ -5142,7 +5476,8 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     else: buf.addIntLit(1, start.info)
     buf.addParRi()
     w.preserved.setLen 0
-    noteWriteTo(c, w, dest, c.typeCache.keepAlive(buf))
+    noteStoreBarrier(c, w, dest)
+    noteWriteTo(c, w, dest, cursorAt(buf, 0))
     w.pendingStep = InvalidVarId
     n = start; skip n
     return
@@ -5152,6 +5487,7 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     let dest = r
     skip r
     w.preserved.setLen 0
+    noteStoreBarrier(c, w, dest)
     noteWriteTo(c, w, dest, r)
     w.pendingStep = InvalidVarId
     skip n
@@ -5169,6 +5505,9 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     return
   if n.exprKind in CallKinds:
     w.preserved.setLen 0
+    block:
+      var named: seq[SymId] = @[]
+      if isBarrierCall(c.typeCache, n, c.p.aliasInits, named): noteBarrier(w, named)
     var stepLoc = InvalidVarId
     var delta = createNaN()
     var mayWrap = false
@@ -5224,6 +5563,9 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     # A local declared inside the body is rebound every iteration.
     w.preserved.setLen 0
     let local = asLocal(n)
+    # Its `kill` is in the body too, but the scan does not know the local's
+    # type there: the declaration says whether it dies by a barrier.
+    if destroyIsBarrier(c, n.symKind, local.typ): noteBarrier(w, [])
     if local.name.kind == SymbolDef:
       var lo = zero()
       var hi = zero()
@@ -5282,6 +5624,17 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for ch in bypasses:
     c.facts.add ch
 
+proc forgetWrites(c: var FirContext; w: LoopWrites) =
+  ## Drops the facts the writes and barriers `w` records may break: the
+  ## shared ones at a barrier, unless every barrier names the variable, and
+  ## those about a written location that its writes do not keep.
+  if w.barriers > 0:
+    var spared: seq[SymId] = @[]
+    for s, k in w.namedBy:
+      if k == w.barriers: spared.add s
+    forgetShared(c, spared)
+  restrictFactsToLoopInvariants(c, w)
+
 proc factsMention(c: FirContext; v: VarId): bool =
   result = false
   for i in 0 ..< c.facts.len:
@@ -5296,9 +5649,12 @@ proc revokeProofs(c: var FirContext; mark: int) =
     of ProvenCall: c.provenCalls.excl pos
   c.proofLog.setLen mark
 
-proc analyseLoopBody(c: var FirContext; n: var Cursor) =
+proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
+                     iterNamed: seq[SymId] = @[]) =
   ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
-  ## via `(jmp loopExit)` and never falls through.
+  ## via `(jmp loopExit)` and never falls through. `iterBarrier`: the
+  ## iterator of a `for` is a barrier, which runs before every iteration;
+  ## `iterNamed` is what it writes by name.
   ##
   ## **Why the body may be analysed more than once.** Before the body is
   ## traversed, `scanLoopWrites` decides which facts survive the back-edge
@@ -5334,11 +5690,20 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
   ## location changes nothing and its step need not be judged.
   var call = freshCall()
   let bodyStart = n
+  # `{.invariant.}`: proven here, on entry, and judged again at every
+  # back-edge; in between it is assumed at the head. Proven before `errMark`:
+  # a round that is analysed again keeps what was said about the entry.
+  var invariants: seq[Cursor] = @[]
+  collectLoopInvariants(n, invariants)
+  for inv in invariants: judgeInvariant(c, inv, "on entry")
+  var outerInvariants = move c.loopInvariants
+  c.loopInvariants = invariants
+  inc c.loopDepth
   let errMark = c.errors.len
   let proofMark = c.proofLog.len
-  let exitsMark = exitsCheckpoint(c.tr)
-  let wasLive = c.tr.live
-  let base = c.flow.checkpoint()
+  let exitsMark = exitsCheckpoint(c.p.tr)
+  let wasLive = c.p.tr.live
+  let base = c.p.flow.checkpoint()
   # The enclosing loops' broken steps, set aside: `brokenSteps` then holds
   # only what this body breaks, and they are merged back at the end. A
   # `move` rather than a copy of the set.
@@ -5355,6 +5720,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     block:
       var w = LoopWrites(kinds: initTable[VarId, IvKind](),
                          nonNeg: initHashSet[VarId](), opaque: false,
+                         namedBy: initTable[SymId, int](),
                          assumed: initHashSet[VarId](),
                          pendingStep: InvalidVarId)
       var scan = n
@@ -5363,14 +5729,17 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
       c.prescanning = false
       for v in demoted:
         if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
-      restrictFactsToLoopInvariants(c, w)
+      # a barrier in the body is one before every iteration too
+      if iterBarrier: noteBarrier(w, iterNamed)
+      forgetWrites(c, w)
+      assumeInvariants(c)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
             w.kinds.getOrDefault(v, ivUnknown) in {ivIncreasing, ivDecreasing} and
             factsMention(c, v):
           added.add v
     for v in added: c.assumedSteps.incl v
-    cp = c.flow.checkpoint()
+    cp = c.p.flow.checkpoint()
     traverseStmt c, n, call        # the body `(stmts ...)`; ends by leaving
     for v in added: c.assumedSteps.excl v
     var broken = false
@@ -5384,34 +5753,31 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     c.brokenSteps.clear()
     c.errors.shrink errMark
     revokeProofs(c, proofMark)
-    rollbackExits(c.tr, exitsMark)
-    c.tr.live = wasLive
-    c.flow.rollbackTo base
+    rollbackExits(c.p.tr, exitsMark)
+    c.p.tr.live = wasLive
+    c.p.flow.rollbackTo base
     call = freshCall()
     n = bodyStart
   # What this body broke of the enclosing loops' assumptions is theirs to judge.
   for v in outerBroken: c.brokenSteps.incl v
+  c.loopInvariants = move outerInvariants
+  dec c.loopDepth
   # Outside every loop no assumption can be taken back any more.
   if c.assumedSteps.len == 0: c.proofLog.setLen proofMark
-  let backEdge = backEdgeBorrows(c.tr)
-  dropContinue(c.tr)       # the loop header consumes the back-edge
-  # The loop never falls through; reset the working state to the pre-loop base.
-  # A following `(lab loopExit)` installs the join of the states its exits
-  # jumped with (`bindLoopExit`).
-  c.flow.rollbackTo cp
+  let backEdge = backEdgeBorrows(c.p.tr)
+  dropContinue(c.p.tr)       # the loop header consumes the back-edge
+  # The body never falls through; reset the working state to the loop's head.
+  # A following `(lab loopExit)` joins the states its exits jumped with like
+  # any other label: the body was analysed only under the facts no iteration
+  # can break (`restrictFactsToLoopInvariants`), so what holds where a `break`
+  # or the guard jumps out holds on *every* iteration's exit, the guard's
+  # negation included.
+  c.p.flow.rollbackTo cp
   # Borrows are the exception to the pre-loop base: what the body leaves
   # borrowed stays borrowed when the loop stops (see `backEdgeBorrows`).
   # Borrows of the body's own locals are not among them, their `kill`
   # ends them before the back-edge.
-  c.flow.inclBorrows backEdge
-
-proc recordLoopExitLabel(c: var FirContext; n: Cursor) =
-  ## The trailing `(lab loopExit)` is this loop's exit; record it so
-  ## `traverseLabel` uses `bindLoopExit`.
-  if n.isTagLit and n.finalIrKind == LabV:
-    var peek = n
-    inc peek
-    c.loopExitLabels.incl peek.symId
+  c.p.flow.inclBorrows backEdge
 
 proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
@@ -5419,12 +5785,9 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## `(ite (not cond) (jmp loopExit) .)` *inside* the body, so it needs no
   ## special handling here. Iteration-gained facts/inits flow only to the
   ## break sites (captured) and to the back-edge (discarded); the loop never
-  ## falls through. The `(lab loopExit)` that follows installs the merged
-  ## break state via `bindLoopExit`.
+  ## falls through. The `(lab loopExit)` that follows joins the break states.
   n.into: # loop tag
     analyseLoopBody c, n
-
-  recordLoopExitLabel c, n
 
 proc forIterFirstArg(c: var FirContext; iter: Cursor): Cursor =
   ## The container a borrowing `for` borrows from: the iterator call's first
@@ -5433,8 +5796,8 @@ proc forIterFirstArg(c: var FirContext; iter: Cursor): Cursor =
   var it = iter
   if it.isTagLit and it.exprKind in {HderefX, HaddrX}:
     inc it
-  if it.isSymbol and c.inlineVars.hasKey(it.symId):
-    it = c.inlineVars.getOrQuit(it.symId)
+  if it.isSymbol and c.p.inlineVars.hasKey(it.symId):
+    it = c.p.inlineVars.getOrQuit(it.symId)
   if it.isTagLit and it.exprKind in CallKinds:
     var r = it
     r = sub(r)
@@ -5469,7 +5832,7 @@ proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor;
           "through a `ref`: an alias of the `ref` could mutate it during the " &
           "loop; iterate by index, or over `uncheckedBorrow(...)` to take that risk"
       elif mode.isTracked:
-        c.flow.borrows.incl BorrowInfo(borrower: name, loc: firstArg, info: firstArg.info)
+        c.p.flow.borrows.incl BorrowInfo(borrower: name, loc: firstArg, info: firstArg.info)
 
 proc traverseFor(c: var FirContext; n: var Cursor) =
   ## `(for iterCall vars body)`. The iterator's `.ensures` about the loop
@@ -5478,16 +5841,28 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
   var call = freshCall()
   n.into: # for tag
     let firstArg = forIterFirstArg(c, n)
+    # the iterator resumes before every iteration
+    var iterNamed: seq[SymId] = @[]
+    var iter = n
+    while iter.exprKind in {HderefX, HaddrX}: inc iter
+    if iter.isSymbol and c.p.aliasInits.hasKey(iter.symId):
+      iter = c.p.aliasInits.getOrQuit(iter.symId)
+    let iterBarrier = iter.exprKind notin CallKinds or
+      isBarrierCall(c.typeCache, iter, c.p.aliasInits, iterNamed)
     traverseExpr c, n, call
     var binders: seq[SymId] = @[]
     declareForVars c, n, firstArg, binders
     skip n # the loop variables
-    analyseLoopBody c, n
-    # The iterator running out is an exit no `jmp` stands for, so no `kill`
-    # either: the loop variables die with the loop, and their borrows with them.
+    let liveBefore = c.p.tr.live
+    analyseLoopBody c, n, iterBarrier, iterNamed
+    # The iterator running out is an exit no `jmp` stands for: it falls through
+    # with the state at the loop's head, which `analyseLoopBody` leaves in
+    # place, before the first iteration as after any other. The `(lab)` that
+    # follows joins it with every `break`.
+    c.p.tr.live = liveBefore
+    # No `kill` stands for that exit either: the loop variables die with the
+    # loop, and their borrows with them.
     for b in binders: endBorrow c, b
-
-  recordLoopExitLabel c, n
 
 proc traverseLabel(c: var FirContext; n: var Cursor) =
   ## `(lab L)` — the multi-join. Every forward `jmp L` has already been seen.
@@ -5495,10 +5870,7 @@ proc traverseLabel(c: var FirContext; n: var Cursor) =
   n.into:
     label = n.symId
     inc n # symdef
-  if c.loopExitLabels.contains(label):
-    bindLoopExit(c.tr, c.flow, label)
-  else:
-    bindLabel(c.tr, c.flow, label)
+  bindLabel(c.p.tr, c.p.flow, label)
 
 proc traverseJmp(c: var FirContext; n: var Cursor) =
   ## `(jmp L)` — a forward structural transfer (loop-`break` included).
@@ -5513,25 +5885,33 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## with a non-`result` operand *provides* the result directly (the NJVL path
   ## rewrote this to `result = value`), so it initializes `result` on this exit.
   let info = n.info
+  # the locals still alive are destroyed on the way out, which no `kill` shows
+  if c.p.destroysAtExit: forgetShared(c)
   n.into:
     if n.isDotToken:
-      verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), info, c.resultSym
+      verifyEnsures c, (if c.p.resultSym != NoSymId: getVarId(c, c.p.resultSym) else: InvalidVarId), info, c.p.resultSym
       inc n
     else:
+      let res = c.p.resultSym
       var retLoc = plainLocationVarId(c, n)
-      if retLoc == InvalidVarId and not cursorIsNil(c.ownEnsures):
-        # `return i - 1`: the value gets a slot of its own to be judged in
-        retLoc = derivedIdOf(c, "#ret", NoSymId)
-        invalidateFactsAbout(c.facts, retLoc)
-        var v = VarId(0)
-        var k = zero()
-        if pureOperand(c, n, plainReading(), v, k):
-          addAsgnFact c, query(retLoc, v, k)
-        elif not sumWithBoundedTerm(c, n, retLoc):
-          addBoundFacts c, retLoc, n
-      verifyEnsures c, retLoc, info, (if n.isSymbol: n.symId else: NoSymId)
-      let providesResult = c.resultSym != NoSymId and
-        not (n.isSymbol and n.symId == c.resultSym)
+      var retSym = if n.isSymbol: n.symId else: NoSymId
+      if retLoc == InvalidVarId and not cursorIsNil(c.p.ownEnsures):
+        if res != NoSymId and peelExpr(c, n).exprKind == OconstrX:
+          # `return T(f: v)` stores into `result`, whose paths the `.ensures`
+          # names; the path ends here, so nothing else sees the facts.
+          retLoc = getVarId(c, res)
+          retSym = res
+          invalidateFactsAbout(c.facts, retLoc)
+          invalidateDerivedFrom(c, res)
+          storeFieldFacts c, res, n
+        else:
+          # `return i - 1`: the value gets a slot of its own to be judged in
+          retLoc = derivedIdOf(c, "#ret", NoSymId)
+          invalidateFactsAbout(c.facts, retLoc)
+          stateValue c, retLoc, n
+      verifyEnsures c, retLoc, info, retSym
+      let providesResult = res != NoSymId and
+        not (n.isSymbol and n.symId == res)
       if providesResult:
         # `return toOpenArray(a)` returns the value directly rather than storing
         # it into `result` first, so `traverseAsgn`'s escape check never sees it.
@@ -5539,7 +5919,7 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
         checkResultBorrow(c, n)
       traverseExpr c, n, call
       if providesResult:
-        markInit(c, c.resultSym)
+        markInit(c, c.p.resultSym)
   leaveToReturn(c)
 
 proc traverseRaise(c: var FirContext; n: var Cursor; call: var CallContext) =
@@ -5605,59 +5985,94 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
       skip n
   n = caseStart; skip n # close 'case'
 
-  let cp = c.flow.checkpoint()
-  let baseLive = c.tr.live
+  let cp = c.p.flow.checkpoint()
+  let baseLive = c.p.tr.live
 
   var merged = default(FlowSnap)   # join of the fall-through arms (see joinSnap)
   var haveMerged = false
 
   for br in branches:
     # Each branch resumes from the pre-case state (the selector chose this arm).
-    c.flow.rollbackTo cp
-    c.tr.live = baseLive
+    c.p.flow.rollbackTo cp
+    c.p.tr.live = baseLive
     if not cursorIsNil(br.ranges):
       addCaseFacts(c, selSym, br.ranges)
     var bc = br.body
     traverseStmt c, bc, call
-    if c.tr.live:
-      merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
+    if c.p.tr.live:
+      merged = if haveMerged: joinSnap(merged, snapshot(c.p.flow)) else: snapshot(c.p.flow)
       haveMerged = true
 
   # A case with no `else` is exhaustive (sem guarantees this), so the selector
   # always matches some branch — there is no implicit fall-through to add.
   if haveMerged:
-    c.tr.live = true
-    setTo(c.flow, cp, merged)
+    c.p.tr.live = true
+    setTo(c.p.flow, cp, merged)
   else:
-    c.tr.live = false
-    c.flow.rollbackTo cp
+    c.p.tr.live = false
+    c.p.flow.rollbackTo cp
+
+proc scanWrites(c: var FirContext; n: Cursor; w: var LoopWrites) =
+  ## Adds what `n` may write to `w`, as `scanLoopWrites` finds it for a loop
+  ## body, but without a direction: a point in the middle of `n` has seen only
+  ## part of a step.
+  var scan = n
+  let wasPrescanning = c.prescanning
+  c.prescanning = true
+  scanLoopWrites(c, scan, w)
+  c.prescanning = wasPrescanning
+  var written: seq[VarId] = @[]
+  for v in w.kinds.keys: written.add v
+  for v in written: w.kinds[v] = ivUnknown
+
+proc enterAfterRaise(c: var FirContext; cp: FlowCp; live: bool; w: LoopWrites;
+                     borrows: seq[BorrowInfo]) =
+  ## The state a raise in a `try` hands its `except` or `fin`. A raise can
+  ## leave at any point of the code before the handler, at a call to a
+  ## `.raises` routine as much as at a `raise`, and no edge of the Final IR
+  ## stands for the call. So what is known there is the pre-`try` state
+  ## without what that code may change (`w`, its writes and barriers), the
+  ## pre-`try` inits (the code only adds to them), and the borrows it may hold.
+  c.p.flow.rollbackTo cp
+  c.p.tr.live = live
+  forgetWrites(c, w)
+  c.p.flow.inclBorrows borrows
 
 proc traverseTry(c: var FirContext; n: var Cursor) =
-  ## `(try body (except ...)* (fin ...)?)`. Conservative: an `except` handler
-  ## may run after *any* point of the body, so it can only assume the pre-try
-  ## state; a `fin` is analyzed on the merged fall-through (its inits are not
-  ## propagated onto exit paths — sound, since that only withholds knowledge).
+  ## `(try body (except ...)* (fin ...)?)`. A handler is entered as
+  ## `enterAfterRaise` says. A `fin` runs on every way out of the `try`, so it
+  ## is reached whenever the `try` is, and it is entered as a raise from the
+  ## body or a handler leaves it. Its inits are the fall-through's, and are
+  ## not propagated onto exit paths (sound, since that only withholds
+  ## knowledge).
   var call = freshCall()
   let tryStart = n # skip 'try'
   n = sub(n)
-  let cp = c.flow.checkpoint()
-  let baseLive = c.tr.live
+  let cp = c.p.flow.checkpoint()
+  let baseLive = c.p.tr.live
+  var w = LoopWrites(kinds: initTable[VarId, IvKind](),
+                     nonNeg: initHashSet[VarId](), opaque: false,
+                     namedBy: initTable[SymId, int](),
+                     assumed: initHashSet[VarId](),
+                     pendingStep: InvalidVarId)
+  scanWrites(c, n, w)
 
   traverseStmt c, n, call # try body
   # A handler may run after any point of the body, so it starts with what was
   # borrowed before the `try` or is borrowed where the body ended.
   var bodyBorrows: seq[BorrowInfo] = @[]
-  for b in c.flow.borrows: bodyBorrows.add b
+  for b in c.p.flow.borrows: bodyBorrows.add b
 
   var merged = default(FlowSnap)   # join of the fall-through of body + handlers
   var haveMerged = false
-  if c.tr.live:
-    merged = snapshot(c.flow); haveMerged = true
+  if c.p.tr.live:
+    merged = snapshot(c.p.flow); haveMerged = true
 
   if n.substructureKind == ExceptU:
     # The excepts catch the body's raises.
-    discard takeRaise(c.tr)
+    discard takeRaise(c.p.tr)
 
+  var wAll = w   # what the body and the handlers write, for the `fin`
   while n.substructureKind == ExceptU:
     n.into: # 'except'
       var boundExc = NoSymId
@@ -5667,30 +6082,32 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
           c.typeCache.registerLocal(local.name.symId, n.symKind, local.typ)
           boundExc = local.name.symId
         skip n
-      # handler entry = pre-try state (a raise may interrupt the body anywhere):
-      c.flow.rollbackTo cp
-      c.tr.live = baseLive
-      c.flow.inclBorrows bodyBorrows
+      enterAfterRaise(c, cp, baseLive, w, bodyBorrows)
       # The bound exception value is initialized *in the handler* — mark it after
       # resetting to the pre-try state, which would otherwise discard the init.
       if boundExc != NoSymId:
         markInit(c, boundExc)
       if n.stmtKind in {StmtsS, ScopeS}:
+        scanWrites(c, n, wAll)
         traverseStmt c, n, call
-      if c.tr.live:
-        merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
+      if c.p.tr.live:
+        merged = if haveMerged: joinSnap(merged, snapshot(c.p.flow)) else: snapshot(c.p.flow)
         haveMerged = true
 
-  if haveMerged:
-    c.tr.live = true
-    setTo(c.flow, cp, merged)
-  else:
-    c.tr.live = false
-    c.flow.rollbackTo cp
-
   if n.substructureKind == FinU:
+    enterAfterRaise(c, cp, baseLive, wAll, bodyBorrows)
+    if haveMerged:
+      c.p.flow.inclInits merged
+      c.p.flow.inclBorrows borrowsOf(merged)
     n.into:
-      traverseStmt c, n, call # finally body, on the merged fall-through
+      traverseStmt c, n, call # finally body
+    if not haveMerged: c.p.tr.live = false
+  elif haveMerged:
+    c.p.tr.live = true
+    setTo(c.p.flow, cp, merged)
+  else:
+    c.p.tr.live = false
+    c.p.flow.rollbackTo cp
   n = tryStart; skip n # close 'try'
 
 proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
@@ -5711,6 +6128,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip n # pragmas
   c.typeCache.registerLocal(name, kind, n)
   let localType = n
+  if destroyIsBarrier(c, kind, localType): c.p.destroysAtExit = true
   skip n # type
   let initStart = n
   if not n.isDotToken or skipInitCheck:
@@ -5734,9 +6152,9 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
         typeToString(localType) & "', which has no default value (" & why &
         "): give it an initial value"
   if kind == ResultY:
-    c.resultSym = name
+    c.p.resultSym = name
   if isInline:
-    c.inlineVars[name] = n
+    c.p.inlineVars[name] = n
   # Detect borrow: (haddr X) as init expression starts a borrow.
   # Validate that the path is borrowable (no deref in the middle, no calls).
   # Explicit `addr` in the path is an escape hatch ("unchecked").
@@ -5744,7 +6162,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     let inner = n.childCursor
     let mode = borrowMode(c, inner)
     if mode.isTracked:
-      c.flow.borrows.incl BorrowInfo(borrower: name, loc: inner, info: inner.info)
+      c.p.flow.borrows.incl BorrowInfo(borrower: name, loc: inner, info: inner.info)
     elif mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
@@ -5761,7 +6179,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     # precisely, and only for the duration of the call, by the inline-var
     # look-through in `locInner`.
     if borrowMode(c, n).isTracked:
-      c.flow.borrows.incl BorrowInfo(borrower: name, loc: n, info: n.info)
+      c.p.flow.borrows.incl BorrowInfo(borrower: name, loc: n, info: n.info)
   elif not isInline and n.isSymbol and canCarryBorrow(c, n):
     # `let a = b` for a view `b`: `a` aliases whatever `b` does, so it takes over
     # `b`'s borrow. Otherwise `b = toOpenArray(r)` would release the only borrow
@@ -5769,7 +6187,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     var b = borrowCarriedBy(c, n)
     if borrowMode(c, b.loc).isTracked:
       b.borrower = name
-      c.flow.borrows.incl b
+      c.p.flow.borrows.incl b
   if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT, ItertypeT}:
     checkNilMatch c, n, localType
   if not n.isDotToken:
@@ -5801,6 +6219,10 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   # record that for downstream obligations that reference this symbol.
   if initAccepted:
     seedRangeFacts c, name, localType
+    if not initStart.isDotToken:
+      # a local declared in a loop body is a new value on every iteration
+      invalidateDerivedFrom(c, name)
+      storeFieldFacts c, name, initStart
     assumeEnsures c, initStart, getVarId(c, name), call.olds, name
 
 proc traverseAssume(c: var FirContext; n: var Cursor) =
@@ -5843,7 +6265,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
     let cond = n
     skip n
     # On a path control cannot reach every claim is vacuous (see `checkRequires`).
-    if c.tr.live:
+    if c.p.tr.live:
       let res = proveCond(c, cond, rd)
       if expectUnprovable:
         if res == Proven:
@@ -5863,49 +6285,39 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
 proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   var call = freshCall()
   let decl = n
-  # Fresh, journaling flow state (init-set + facts) for this proc; the enclosing
-  # proc's state (with its live checkpoints) is restored on the way out.
-  let oldFlow = move c.flow
-  c.flow = initFlowState()
-  c.procCanRaise = false
-  let oldInHook = c.inHook
-  let oldTr = move c.tr
-  c.tr = initFlowTracker()
+  # A fresh, journaling flow state (init-set + facts) for this routine. The
+  # statement context starts at its own head, so an error in expanded code
+  # cannot inherit a statement from whatever came before it.
+  var p = ProcCon(flow: initFlowState(), tr: initFlowTracker(),
+                  currentProcStart: decl, stmtContext: decl.info,
+                  ownOlds: initTable[string, VarId]())
   # Seed with the enclosing init-set ONLY for genuinely nested procs (closures),
   # so a captured outer local stays initialized inside the closure body. A
   # top-level proc must NOT inherit the whole module-level init-set: those syms
   # are globals/consts that are never init-checked. `nested` means "inside a
   # statement": another proc's body, or a top-level statement such as a
-  # `block` whose locals an inline iterator may use (#2555).
+  # `block` whose locals an inline iterator may use (#2555). A nested routine
+  # also keeps what the enclosing one shares: it reaches it too.
   if nested:
-    inheritInits(c.flow, oldFlow)
-  let oldResultSym = c.resultSym
-  let oldLaterParams = move c.laterParams
-  c.laterParams = initHashSet[SymId]()
-  let oldInlineVars = move c.inlineVars
-  let oldProcStart = c.currentProcStart
-  c.currentProcStart = decl
-  # Start this routine's statement context at its own head, so an error in
-  # expanded code cannot inherit a statement from whatever came before it.
-  let oldStmtContext = c.stmtContext
-  c.stmtContext = decl.info
-  c.resultSym = NoSymId
+    inheritInits(p.flow, c.p.flow)
+    p.aliased = c.p.aliased
+    p.aliasInits = c.p.aliasInits
+  var outer = move c.p
+  c.p = ensureMove p
   let procStart = n
   n = sub(n)
   let symId = n.symId
-  c.inHook = isHookProc(symId)
+  c.p.inHook = isHookProc(symId)
   var isGeneric = false
   var isExternProc = false
   var isAsm = false
   var isNoReturn = false
   var ownContract = default(Cursor)
   var ownEnsures = default(Cursor)
-  let oldOwnEnsures = c.ownEnsures
-  let oldOwnOlds = move c.ownOlds
   var outParams: seq[SymId] = @[]
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
-      c.procCanRaise = hasPragma(n, RaisesP)
+      c.p.procCanRaise = hasPragma(n, RaisesP)
       isExternProc = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP) or
                      hasPragma(n, ImportjsP)
       isAsm = hasPragma(n, AssemblerP)
@@ -5923,8 +6335,14 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
         var isFirst = true
         while p.hasMore:
           let r = takeLocal(p, SkipFinalParRi)
-          if not isFirst: c.laterParams.incl r.name.symId
+          if not isFirst: c.p.laterParams.incl r.name.symId
           isFirst = false
+          # a parameter that names the caller's storage is shared; a view
+          # (`var openArray`) is the routine's own value, whose length is all
+          # a fact can be about
+          if (r.typ.typeKind in {MutT, OutT} and not isVarOpenArray(c, r.typ)) or
+              r.typ.typeKind == LentT:
+            c.p.borrowedParams.incl r.name.symId
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
             outParams.add r.name.symId
@@ -5941,12 +6359,11 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
     assumeOwnContract c, ownContract
   # ... and has to deliver its own `.ensures`, measured against the state it
   # was entered with.
-  c.ownEnsures = ownEnsures
-  c.ownOlds = initTable[string, VarId]()
+  c.p.ownEnsures = ownEnsures
   if not cursorIsNil(ownEnsures):
     var entry = plainReading()
     snapshotOlds c, ownEnsures, entry
-    c.ownOlds = entry.olds
+    c.p.ownOlds = entry.olds
 
   # Analyze body. Generic procs are only checked once instantiated. Extern
   # (importc/importcpp) procs satisfy their contract at the C level and have no
@@ -5956,43 +6373,37 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   # the final init check. An `{.assembler.}` body is machine code, kept
   # verbatim by `finalir` for the backend; there is nothing to analyse.
   if not isGeneric and not isExternProc and not isAsm:
+    block:
+      var scan = n
+      collectAliased(c.typeCache, scan, c.p.aliasInits, c.p.aliased)
     traverseStmt c, n, call
     # Falling off the end is an exit too.
-    verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info, c.resultSym
+    verifyEnsures c, (if c.p.resultSym != NoSymId: getVarId(c, c.p.resultSym) else: InvalidVarId), decl.info, c.p.resultSym
     # Join every `return` into the natural fall-through: the result init-set at
     # proc exit is the intersection over all exit paths. The init-check below
-    # then reads `c.flow.inits` — `result`/out-params must be init on every path
+    # then reads `c.p.flow.inits` — `result`/out-params must be init on every path
     # that leaves the proc.
-    bindReturn(c.tr, c.flow)
+    bindReturn(c.p.tr, c.p.flow)
     let info = decl.info
     # Only when control can actually leave the proc *normally* (fall-through or a
     # `return`) must `result`/out-params be initialized. A proc whose every path
-    # raises or otherwise never returns (`c.tr.live == false` here) has no normal
+    # raises or otherwise never returns (`c.p.tr.live == false` here) has no normal
     # exit, so the init obligation is vacuous — e.g. `proc f: string = raise X`.
-    if c.tr.live and isNoReturn:
+    if c.p.tr.live and isNoReturn:
       # Every call site trusts the pragma: `analyseCall` ends the path after
       # the call, so a guard `if i >= a.len: fail()` proves `a[i]`. A body
       # that can return breaks that proof (nim-lang/nimony#2858).
       buildErr c, info, asNimCode(symId) & " is marked .noreturn but can return"
-    elif c.tr.live:
-      if c.resultSym != NoSymId and not isInitialized(c, c.resultSym):
-        buildErr c, info, "cannot prove that " & asNimCode(c.resultSym) & " has been initialized"
+    elif c.p.tr.live:
+      if c.p.resultSym != NoSymId and not isInitialized(c, c.p.resultSym):
+        buildErr c, info, "cannot prove that " & asNimCode(c.p.resultSym) & " has been initialized"
       for sym in outParams:
         if not isInitialized(c, sym):
           buildErr c, info, "cannot prove that " & asNimCode(sym) & " has been initialized"
   else:
     skip n
   n = procStart; skip n
-  c.tr = ensureMove oldTr
-  c.flow = ensureMove oldFlow
-  c.resultSym = oldResultSym
-  c.laterParams = ensureMove oldLaterParams
-  c.inlineVars = ensureMove oldInlineVars
-  c.currentProcStart = oldProcStart
-  c.stmtContext = oldStmtContext
-  c.ownEnsures = oldOwnEnsures
-  c.ownOlds = oldOwnOlds
-  c.inHook = oldInHook
+  c.p = ensureMove outer
 
 proc traversePragmaBlock(c: var FirContext; n: var Cursor; call: var CallContext) =
   let oldAssumeSync = c.assumeSync
@@ -6011,11 +6422,11 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     call = freshCall()
   # See `stmtContext`: a statement from another file is expanded code, and
   # naming it would send the reader to a template body in the stdlib.
-  if n.info.isValid and (cursorIsNil(c.currentProcStart) or
-                         n.info.file == c.currentProcStart.info.file):
-    c.stmtContext = n.info
+  if n.info.isValid and (cursorIsNil(c.p.currentProcStart) or
+                         n.info.file == c.p.currentProcStart.info.file):
+    c.p.stmtContext = n.info
   case n.finalIrKind
-  of IteV, ItecV:
+  of IteV:
     traverseIte c, n
   of LoopV:
     traverseLoop c, n
@@ -6023,6 +6434,16 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     traverseAssume c, n
   of AssertV:
     traverseAssert c, n
+  of InvariantV:
+    if c.loopDepth > 0:
+      skip n # the loop's head assumed it, its entry and back-edges prove it
+    else:
+      # no loop is left around it: a claim about this point, like `assert`
+      judgeInvariant(c, n, "here")
+      var cond = n
+      cond = sub(cond)
+      assumeCond(c, cond, ownReading(c))
+      skip n
   of LabV:
     traverseLabel c, n
   of JmpV:
@@ -6037,6 +6458,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   of KillV:
     # Variables going out of scope. NJ emits one `kill` per scope, which is what
     # makes this the place to catch a borrow whose source dies under it.
+    let killStart = n
     n.into:
       # The whole list has to be read before judging any single entry: a
       # borrower dying alongside its source is precisely what should happen.
@@ -6047,12 +6469,14 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
         if s != NoSymId: dying.add s
         skip m
       var escaping: seq[BorrowInfo] = @[]
-      for b in c.flow.borrows:
+      for b in c.p.flow.borrows:
         if b.borrower notin dying and locRootSym(c, b.loc) in dying:
           escaping.add b
       for b in escaping:
         buildErr c, b.info, "borrow of " & borrowedName(c, locRootSym(c, b.loc)) &
           " escapes its scope; it does not live long enough"
+      # A dying local whose `=destroy` is no `func` dies by a barrier.
+      if killIsBarrier(c, killStart): forgetShared(c)
       # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
         let s = extractSymId(n)
@@ -6158,7 +6582,7 @@ proc traverseToplevel(c: var FirContext; n: var Cursor) =
   var call = freshCall()
   # Remember where at module level we are, so `buildErr` has somewhere to pin an
   # error that a template expanded into this statement from another file.
-  if n.info.isValid: c.stmtContext = n.info
+  if n.info.isValid: c.p.stmtContext = n.info
   case n.stmtKind
   of StmtsS:
     n.into:
@@ -6399,17 +6823,20 @@ proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int): Toke
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
+proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int;
+                     hooks: ref Table[SymId, HooksPerType]; verbose = false): TokenBuf =
   ## Analyze contracts on an already lowered module. When `verbose` is true,
   ## every contract/init failure dumps the enclosing proc's IR to stderr.
+  ## `hooks` are the module's own type-bound hooks, which tell whether a
+  ## local's `=destroy` is a barrier.
+  let lifter = createLiftingCtx(moduleSuffix, bits, hooks)
+  assert lifter != nil # `lifter` is a `lenientnils` module
   var c = FirContext(
     errors: initTokenBuf(),
     typeCache: createTypeCache(bits),
     moduleSuffix: moduleSuffix,
-    tr: initFlowTracker(),
-    flow: initFlowState(),
-    ownOlds: initTable[string, VarId](),
-    loopExitLabels: initHashSet[SymId](),
+    p: ProcCon(tr: initFlowTracker(), flow: initFlowState(),
+               ownOlds: initTable[string, VarId]()),
     forBinders: initHashSet[SymId](),
     declaredRange: initTable[VarId, RangeBounds](),
     typeRange: initTable[VarId, RangeBounds](),
@@ -6417,7 +6844,8 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     brokenSteps: initHashSet[VarId](),
     verbose: verbose,
     features: features,
-    bits: bits
+    bits: bits,
+    lifter: lifter
   )
   c.typeCache.openScope()
   var ownSplits = initHashSet[SymId]()
@@ -6432,6 +6860,9 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     collectSplitRoutines(scan2, ownSplits)
     endRead(scan2)
     for s in ownSplits: c.splitRoutines.incl s
+    var scan3 = beginRead(finalBuf)
+    collectAliasedToplevel(c.typeCache, scan3, c.p.aliasInits, c.p.aliased)
+    endRead(scan3)
 
   block:
     var fin = beginRead(finalBuf)
@@ -6450,7 +6881,8 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
   ## Lower `input` and analyze it. nimsem lowers once and calls
   ## `analyzeFinalIr` directly.
   var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
-  result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits, verbose)
+  result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits,
+                          (ref Table[SymId, HooksPerType])(), verbose)
 
 when isMainModule:
   import std / [syncio, os]

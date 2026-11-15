@@ -64,7 +64,7 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
           break
 
       if not isRecursive:
-        var buf = parseFile(f2, c.g.config.paths, c.g.config.nifcachePath)
+        var buf = parseFile(f2, c.g.config)
         c.includeStack.add f2
         #c.m.includes.add f2
         var n = cursorAt(buf, 0)
@@ -106,7 +106,7 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
   if not fileExists(f2):
     c.buildErr dest, info, "file not found: " & f2
     return
-  let suffix = moduleSuffix(f2, c.g.config.paths)
+  let suffix = moduleSuffix(f2, c.g.config)
   let effectiveName =
     if f1.name != "": f1.name
     else: moduleNameFromPath(f2)
@@ -162,8 +162,8 @@ proc importPluginImports*(c: var SemContext) =
   var dest = createTokenBuf(4) # no errors: only existing files are imported
   var sources = move c.pluginSources # `importSingleFile` mutates `c`
   for src in sources:
-    for path in pluginProgramImports(src, c.g.config.paths, c.g.config.nifcachePath):
-      if moduleSuffix(path, c.g.config.paths) != c.thisModuleSuffix:
+    for path in pluginProgramImports(src, c.g.config):
+      if moduleSuffix(path, c.g.config) != c.thisModuleSuffix:
         importSingleFile c, dest, ImportedFilename(path: path), src,
           ImportFilter(kind: FromImport, list: initHashSet[StrId]()), NoLineInfo
   c.pluginSources = move sources
@@ -202,7 +202,7 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
           if not semos.fileExists(f2):
             c.buildErr dest, info, "file not found: " & f2
             continue
-          let suffix = moduleSuffix(f2, c.g.config.paths)
+          let suffix = moduleSuffix(f2, c.g.config)
           if suffix in c.cycleGroup:
             # Defer the actual interface loading until after phase1/phase2.
             deferCyclicModule(c, suffix, f2, f1.name, info)

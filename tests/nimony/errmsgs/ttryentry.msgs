@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/ttryentry.nim(18, 7) Error: cannot prove assertion: y == 0 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(28, 7) Error: cannot prove assertion: y == 0 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(38, 7) Error: cannot prove assertion: y == 0 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(46, 7) Error: cannot prove assertion: y == 0 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(58, 7) Error: cannot prove assertion: y == 0 [pass --verbose for the Final IR]

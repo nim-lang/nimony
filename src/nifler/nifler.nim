@@ -26,7 +26,8 @@ Command:
                                         entire configuration of `project.nim`
 
 Options:
-  --portablePaths       keep line information portable accross different OSes
+  --portablePaths       write file paths relative to the current directory,
+                        with `/` on every OS; without it they are absolute
   --deps                also produce a <inputfile>.deps.nif file (for 'parse' command)
   --docs                preserve `##` doc comments as NIF comment-meta on decls
   --force, -f           force a rebuild
@@ -41,7 +42,7 @@ proc handleCmdLine() =
   var action = ""
   var args: seq[string] = @[]
   var forceRebuild = false
-  var portablePaths = true # false
+  var portablePaths = false
   var deps = false
   var preserveDocs = false
   for kind, key, val in getopt():

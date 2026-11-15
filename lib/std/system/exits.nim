@@ -7,17 +7,15 @@
 ## exit funnels through `cExit`/`cAbort`, so the flush happens in exactly one
 ## place regardless of who terminates the process.
 ##
-## Under `-d:nimNativeIo` the primitives are raw syscalls (`kill`/`getpid`/
-## `_exit`) — all real libc symbols *and* real Linux syscalls, so they link on
-## today's C backend and lower to bare `syscall` instructions on arkham. The
-## default build defers to libc `exit`/`abort` (which flush stdio themselves).
+## The primitives are raw syscalls (`kill`/`getpid`/`_exit`) — all real libc
+## symbols *and* real Linux syscalls, so they link on the C backend and lower
+## to bare `syscall` instructions on arkham.
 
 proc nimNoopFlush() {.nimcall.} = discard
 
 var gExitFlush: proc () {.nimcall.} = nimNoopFlush
-  ## Flushes the buffered standard streams on process exit. A no-op by default
-  ## (the libc build's stdio flushes itself); `syncio` installs the real one
-  ## via `setExitFlush` when `-d:nimNativeIo` is in effect.
+  ## Flushes the buffered standard streams on process exit. A no-op until
+  ## `syncio` installs the real one via `setExitFlush`.
 
 proc setExitFlush*(p: proc () {.nimcall.}) {.inline.} =
   ## Registers the std-stream flush callback (called by `syncio`).
@@ -48,7 +46,7 @@ when defined(embedded):
     gExitFlush()
     semihostExit(127)
 
-elif defined(nimNativeIo):
+else:
   when defined(windows):
     # Freestanding Windows: terminate through kernel32 `ExitProcess` — no libc
     # and no POSIX signals, the direct counterpart of the Linux syscall path.
@@ -91,16 +89,3 @@ elif defined(nimNativeIo):
       gExitFlush()
       discard cKill(cGetpid(), SIGABRT)
       cExitSys(127'i32)
-else:
-  proc cExitLibc(code: cint) {.importc: "exit", header: "<stdlib.h>", noreturn.}
-  proc cAbortLibc() {.importc: "abort", header: "<stdlib.h>", noreturn.}
-
-  proc cExit*(code: int) {.noreturn.} =
-    ## Normal process termination: flush the standard streams, then `exit`.
-    gExitFlush()
-    cExitLibc(code.int32)
-
-  proc cAbort*() {.noreturn.} =
-    ## Abnormal termination via libc `abort()` (flushes stdio, raises SIGABRT).
-    gExitFlush()
-    cAbortLibc()

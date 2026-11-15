@@ -144,6 +144,11 @@ proc handleCmdLine() =
           # nifmake would `--force` the shared nimcache under the running
           # sibling `nimsem`s.
           forwardArg = false
+        of "optionkey":
+          # The driver's, for this nimsem's `.s.deps.nif` alone; a sub-compile's
+          # driver computes its own.
+          config.optionKey = val
+          forwardArg = false
         else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key

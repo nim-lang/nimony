@@ -25,8 +25,8 @@ when defined(windows):
   import errorcodes / errorcodes_windows
 else:
   import errorcodes / errorcodes_posix
-  # `errno` comes from posix/posix: the libc accessor under useLibc, or the
-  # native global maintained by the freestanding wrappers.
+  # `errno` comes from posix/posix: libc's accessor, or the native global
+  # maintained by the freestanding wrappers.
 {.feature: "lenientnils".}
 
 proc tryCreateFinalDir*(dir: Path): ErrorCode =

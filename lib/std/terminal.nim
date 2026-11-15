@@ -128,7 +128,7 @@ proc setBackgroundColor*(f: File; bg: BackgroundColor; bright = false) =
   ## Sets the terminal's background color.
   write f, ansiBackgroundColorCode(bg, bright)
 
-when defined(nimNativeIo) and defined(posix):
+when defined(posix):
   # Libc-free: a `File` carries a raw fd (no `FILE*`, so no `fileno`), and `isatty`
   # is itself a libc helper — implement it as the "get terminal attributes" ioctl
   # (== 0 ⇒ a tty), the same probe libc's `isatty` uses.
@@ -153,7 +153,7 @@ when defined(nimNativeIo) and defined(posix):
   proc c_isatty(fildes: cint): cint =
     var termbuf {.noinit.}: array[128, byte]   # holds any `struct termios` (at most 72B)
     if nativeIoctl(fildes, TCGETS, addr termbuf) == 0'i32: 1'i32 else: 0'i32
-elif defined(nimNativeIo) and defined(windows):
+elif defined(windows):
   # Libc-free: a `File` wraps a Win32 `HANDLE`, not an msvcrt `FILE*`, so there is
   # no `_fileno`/`_isatty` to call. `GetConsoleMode` succeeds only for console
   # handles, which is exactly the "is this a terminal?" probe we need.
@@ -161,15 +161,6 @@ elif defined(nimNativeIo) and defined(windows):
   proc c_isatty(h: Handle): cint =
     var mode: DWORD = 0'u32
     if isSuccess(getConsoleMode(h, addr mode)): 1'i32 else: 0'i32
-elif defined(posix):
-  proc c_isatty(fildes: cint): cint {.importc: "isatty", header: "<unistd.h>".}
-  proc c_fileno(f: File): cint {.importc: "fileno", header: "<stdio.h>".}
-  proc nativeIoctl(fd: cint; request: uint; arg: pointer): cint {.
-    importc: "ioctl", header: "<sys/ioctl.h>", sideEffect.}
-elif defined(windows):
-  proc c_isatty(fildes: cint): cint {.importc: "_isatty", header: "<io.h>".}
-  proc c_fileno(f: File): cint {.importc: "_fileno", header: "<stdio.h>".}
-  proc c_get_osfhandle(fd: cint): int {.importc: "_get_osfhandle", header: "<io.h>".}
 
 proc isatty*(f: File): bool =
   ## Returns true if `f` is associated with a terminal device.
@@ -222,9 +213,7 @@ when defined(posix):
     if found: result = (int(ws.wsCol), int(ws.wsRow))
 
 elif defined(windows):
-  proc conHandle(f: File): Handle =
-    when defined(nimNativeIo): getFileHandle(f)
-    else: Handle(c_get_osfhandle(c_fileno(f)))
+  proc conHandle(f: File): Handle = getFileHandle(f)
 
   proc ttySize(): tuple[w, h: int] =
     result = (0, 0)

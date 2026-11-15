@@ -1,0 +1,2 @@
+# Installs a process-wide SIGALRM handler and forks a writer child: neither
+# belongs in a program shared with other tests.

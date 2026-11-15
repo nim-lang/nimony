@@ -16,7 +16,7 @@
 ## continues.
 
 import std / [syncio, os, osproc, strutils, times, algorithm]
-import context, counters, category, joined, nativelist, parallel, runner, coverage
+import context, counters, category, joined, parallel, runner, coverage
 
 var walkBuiltAll = false
   ## A `setup.hastur` of this walk ran a plain `build` (= `build all`): the
@@ -96,8 +96,8 @@ type WalkPlan = object
   ## saturated parallel pool instead of one pool per directory. The old
   ## walk ran each leaf directory to completion before starting the next,
   ## so every directory boundary was a hard pool barrier (N-1 cores idle on
-  ## its tail test) plus a fresh `warmupSharedCache` spawn. Flattening every
-  ## parallel-safe file into a single queue pays warmup/prebuild once and
+  ## its tail test) plus a fresh shared-object prebuild. Flattening every
+  ## parallel-safe file into a single queue pays the prebuild once and
   ## keeps the pool full across the whole run — the win is largest where
   ## process spawns are expensive (Windows CI).
   parItems: seq[WorkItem]            # parallel-safe units of work, flattened
@@ -126,8 +126,7 @@ proc collectTests*(c: var TestCounters; plan: var WalkPlan; dir, forward: string
     # suites were half the wall time of `hastur all`. Otherwise (a suite named
     # directly, or a serial run) it runs right here and may build what it needs.
     if not isRoot and parallelJobs > 1 and (skipBuild or walkBuiltAll):
-      plan.parItems.add WorkItem(path: dir, setup: true, weight: 1,
-                                 noPrefill: true)
+      plan.parItems.add WorkItem(path: dir, setup: true, weight: 1)
     else:
       runSetupNimDir(c, dir, forward, overwrite)
     return
@@ -166,21 +165,12 @@ proc collectTests*(c: var TestCounters; plan: var WalkPlan; dir, forward: string
       let members = joinMembers(dir, cat, overwrite)
       let joined = members.len >= MinJoinGroup
       if joined:
-        # Mirrors `joinedTest`'s own all-or-nothing rule, so the prefill the
-        # parent hands the worker is the one the worker will want.
-        var groupNative = nativeJoinable(dir)
-        if groupNative:
-          for f in members:
-            if not walkUsesNative(f, cat): groupNative = false; break
-        plan.parItems.add WorkItem(path: dir, joined: true, weight: members.len,
-                                   native: groupNative)
+        plan.parItems.add WorkItem(path: dir, joined: true, weight: members.len)
       for x in walkDir(dir):
         if x.kind == pcFile and x.path.endsWith(".nim") and
            not isGeneratedTestFile(x.path) and
            not (joined and joinable(x.path, cat)):
-          plan.parItems.add WorkItem(path: x.path, weight: 1,
-                                     native: walkUsesNative(x.path, cat),
-                                     noPrefill: not prefillable(cat))
+          plan.parItems.add WorkItem(path: x.path, weight: 1)
     else:
       # A serial (`--jobs:1`) run keeps the in-process `testFile` path, where
       # `Basics`/`Compat` reset the one shared `nimcache/` around their loop.

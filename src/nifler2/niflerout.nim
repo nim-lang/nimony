@@ -24,7 +24,7 @@
 ##   absolute position, so storing the position nifler's output decodes to and
 ##   encoding it against the NIF parent gives the same bytes.
 ## * The root carries the file, relative to the current directory
-##   (`--portablePaths`, which is how nimony runs nifler).
+##   (`--portablePaths`), else absolute.
 ## * `addEmpty(n)` writes `n` dots without separators, and bridge.nim calls it
 ##   with `n > 1` in exactly three places: the first four and the last two
 ##   slots of a `proctype`/`itertype`, the four empty slots of a `for` loop's
@@ -199,7 +199,7 @@ proc emit(w: var Writer; n: Node; reference: NifLineInfo;
 proc writeNifler*(first: Node; pool: Pool; tags: TagPool; sizeHint: int;
                   outfile, file: string) {.raises.} =
   ## `file` is the module's path as nifler writes it: relative to the current
-  ## directory.
+  ## directory (`--portablePaths`) or absolute.
   var w = Writer(b: nifbuilder.open(sizeHint), file: file, pool: pool, tags: tags)
   w.b.addHeader "Nifler", "nim-parsed"
   if first != nil: w.rootFile = first.info.file

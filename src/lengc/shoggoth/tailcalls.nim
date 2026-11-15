@@ -53,6 +53,7 @@ import std / [tables]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
 import patchsets
+import ".." / ".." / "lib" / lengaa
 
 type
   TailRule* = enum
@@ -100,21 +101,6 @@ type
 
 proc posOf(s: TailScan; n: Cursor): int {.inline.} =
   cursorToPosition(s.buf[], n)
-
-proc countReads(n: Cursor; sym: SymId): int =
-  ## `Symbol` (read) occurrences of `sym` in one subtree. A `SymbolDef` is a decl,
-  ## not a read, and does not count.
-  case n.kind
-  of Symbol:
-    result = (if n.symId == sym: 1 else: 0)
-  of TagLit:
-    result = 0
-    var it = n
-    it.into:
-      while it.hasMore:
-        result += countReads(it, sym)
-        skip it
-  else: result = 0
 
 # ---- grammar ---------------------------------------------------------------
 
@@ -194,11 +180,22 @@ proc tailStmtOf(n: Cursor; res: var Cursor): bool =
   if result: res = cur
 
 proc matchTotalIf(n: Cursor; bodies: var seq[Cursor]): bool =
-  ## Every arm's body of a TOTAL `if` — one that has an `else`. Without an
+  ## Every arm's body of a TOTAL `if`/`ite` — one that has an `else`. Without an
   ## `else` a path leaves the `if` having assigned nothing, and sinking would
   ## delete the `ret` that path still needed. A malformed arm answers false too.
   result = false
-  if n.kind == TagLit and n.stmtKind == IfS:
+  if n.kind == TagLit and n.stmtKind == IteS:
+    # `(ite C T E)`: total exactly when it has an else-branch.
+    bodies.setLen 0
+    var it = n.childCursor
+    skip it                                     # the condition
+    if it.hasMore:
+      bodies.add it
+      skip it
+      if it.hasMore and it.kind != DotToken:
+        bodies.add it
+        result = true
+  elif n.kind == TagLit and n.stmtKind == IfS:
     bodies.setLen 0
     var hasElse = false
     var ok = true
@@ -275,7 +272,7 @@ proc matchFold(s: var TailScan; list: Cursor; lc: ListCtx; cur: Cursor) =
      matchVarDecl(lc.prev, t, init) and
      init.kind == TagLit and init.exprKind == CallC and
      matchRetSym(cur, r) and r == t and
-     countReads(list, t) == 1:
+     countUses(list, t) == 1:
     s.folds.add FoldSite(varPos: s.posOf(lc.prev), retPos: s.posOf(cur),
                          callPos: s.posOf(init), retStart: -1)
 
@@ -295,7 +292,7 @@ proc matchSink(s: var TailScan; list: Cursor; lc: ListCtx) =
     let declPos = lc.decls.getOrDefault(sym, -1)
     var arms: seq[SunkArm] = @[]
     if declPos >= 0 and matchSunkArms(s, lc.prev2, sym, arms) and
-       countReads(list, sym) == arms.len + 1:
+       countUses(list, sym) == arms.len + 1:
       s.sinks.add SinkSite(retPos: s.posOf(lc.prev), declPos: declPos,
                            arms: arms)
 

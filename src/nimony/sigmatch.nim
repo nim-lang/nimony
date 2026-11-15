@@ -347,6 +347,8 @@ type LinearMatchFlag = enum
 const ConstraintMatchFlags = {InferActualTypevar}
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
+proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor;
+                    flags: set[LinearMatchFlag] = {})
 
 proc tryLinearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}): bool {.inline.} =
   let oldErr = m.err
@@ -396,6 +398,23 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
   result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
 
+proc isBuiltinContainerSym(s: SymId; decl: Cursor): bool =
+  ## `string`, `seq` and `openArray` are declared as objects in `lib/std/system`,
+  ## but the language gives them kinds of their own: the `object` type class
+  ## must not see through to their declaration. `s` is the type or the head of
+  ## an invocation; `decl` is its declaration, whose generic parameters name the
+  ## head when `s` is an instance.
+  if s == pool.symId(StringName):
+    return true
+  var head = s
+  let td = asTypeDecl(decl)
+  if td.typevars.typeKind == InvokeT:
+    var inv = td.typevars
+    inc inv
+    if inv.isSymbol: head = inv.symId
+  let name = pool.symString(head)
+  result = name == SeqHeadName or name == OpenArrayHeadName
+
 proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
@@ -410,6 +429,8 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     if aTag.isSymbol:
       let res = tryLoadSym(aTag.symId)
       if res.status == LacksNothing and res.decl.stmtKind == TypeS:
+        # a built-in container has no type-class tag (`object`, `tuple`, …)
+        resolvable = not isBuiltinContainerSym(aTag.symId, res.decl)
         aTag = typeImpl(aTag.symId)
       else:
         # `(at <plugin template> …)`: a plugin that deferred its expansion. The
@@ -1220,6 +1241,32 @@ proc rematchInferredTypevar(m: var Match; fs: SymId; prev: Cursor;
     inc f
 
 proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
+                     flags: set[LinearMatchFlag])
+
+proc matchChildren(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
+                   flags: set[LinearMatchFlag]) =
+  ## Generic tree: same tag, then match the children pairwise.
+  ## Compare tag ids, not raw operands — under `-d:virtualParRi` the
+  ## operand carries the sealed jump, which differs whenever the two
+  ## subtrees have different token counts (e.g. typevar vs. concrete).
+  if f.cursorTagId != a.cursorTagId:
+    m.error(InvalidMatch, fOrig, aOrig)
+  else:
+    let fStart = f
+    f = sub(f)
+    let aStart = a
+    a = sub(a)
+    while f.hasMore and a.hasMore and not m.err:
+      linearMatchTree m, f, a, fOrig, aOrig, flags
+    if not m.err:
+      if not f.hasMore and not a.hasMore:
+        f = fStart; skip f
+        a = aStart; skip a
+      else:
+        # different child counts
+        m.error(InvalidMatch, fOrig, aOrig)
+
+proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
                      flags: set[LinearMatchFlag]) =
   ## Matches a single tree/token of `f` against `a`, advancing both past it.
   ## On mismatch `m.err` is set and the cursors may be left mid-tree —
@@ -1363,27 +1410,20 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
           matchNilAnnotations m, f, a, fOrig, aOrig
           expectParRi m, f, fStart
           expectParRi m, a, aStart
-      else:
-        # generic tree: same tag, then match the children pairwise.
-        # Compare tag ids, not raw operands — under `-d:virtualParRi` the
-        # operand carries the sealed jump, which differs whenever the two
-        # subtrees have different token counts (e.g. typevar vs. concrete).
-        if f.cursorTagId != a.cursorTagId:
+      of ArrayT:
+        # An array reached through any enclosing type (`ptr array[N, T]`,
+        # `seq[array[N, T]]`, a tuple field, `typedesc[…]`): its index slot is
+        # the canonical `0 .. N-1` that only `matchArrayType` knows how to
+        # compare with an actual's folded `0 .. 2`. It leaves `a` mid-tree.
+        if a.typeKind != ArrayT:
           m.error(InvalidMatch, fOrig, aOrig)
         else:
-          let fStart = f
-          f = sub(f)
           let aStart = a
-          a = sub(a)
-          while f.hasMore and a.hasMore and not m.err:
-            linearMatchTree m, f, a, fOrig, aOrig, flags
+          matchArrayType m, f, a, flags
           if not m.err:
-            if not f.hasMore and not a.hasMore:
-              f = fStart; skip f
-              a = aStart; skip a
-            else:
-              # different child counts
-              m.error(InvalidMatch, fOrig, aOrig)
+            a = aStart; skip a
+      else:
+        matchChildren m, f, a, fOrig, aOrig, flags
     else:
       # ParRi/close (classic) or a stray suffix (nifcore) — unreachable: subtree
       # ends are consumed by the bounded scopes above.
@@ -1941,22 +1981,8 @@ proc symbolicArrayLength(f: Cursor): Cursor =
         if one.kind == IntLit and one.intVal == 1:
           result = lenExpr
 
-proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor)
-
-proc matchArrayElem(m: var Match; f, a: var Cursor) =
-  ## The element types of two arrays. A nested `array` has to go through
-  ## `matchArrayType` again: `linearMatch` compares index slots tree-wise and
-  ## would trip over a formal's canonical `0 .. N-1` versus an actual's folded
-  ## `0 .. 2`. `matchArrayType` leaves `a` mid-tree, so seal it here.
-  if f.typeKind == ArrayT and a.typeKind == ArrayT:
-    let aStart = a
-    matchArrayType m, f, a
-    a = aStart
-    skip a
-  else:
-    linearMatch m, f, a
-
-proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
+proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor;
+                    flags: set[LinearMatchFlag] = {}) =
   if a.typeKind == ArrayT:
     var a1 = a
     var f1 = f
@@ -1984,20 +2010,27 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
         let fStart = f
         f = sub(f)
         inc a
-        matchArrayElem m, f, a # element types; `a` lands on the index type
+        linearMatch m, f, a, flags # element types; `a` lands on the index type
         if not m.err:
           var fl = fLenExpr
           linearMatch m, fl, a
         skip f # index type
         expectParRi m, f, fStart
       else:
-        # match typevars
-        linearMatch m, f, a
+        # both lengths symbolic (a generic body checked against itself), or a
+        # concrete formal against a symbolic actual: compare structurally.
+        # Not `linearMatch`, which would route the array right back here.
+        let fOrig = f
+        let aOrig = a
+        matchChildren m, f, a, fOrig, aOrig, flags
+        if m.err:
+          f = fOrig; skip f
+          a = aOrig; skip a
     elif fLen == aLen:
       let fStart = f
       f = sub(f)
       inc a
-      matchArrayElem m, f, a # element types
+      linearMatch m, f, a, flags # element types
       skip f # index type
       expectParRi m, f, fStart
     else:
@@ -2030,7 +2063,7 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
     return false
   if a.typeKind == InvokeT:
     inc a # tag
-    result = a.isSymbol and pool.symString(a.symId) == "seq.0." & SystemModuleSuffix
+    result = a.isSymbol and pool.symString(a.symId) == SeqHeadName
     if result:
       inc a
       elemType = a
@@ -3179,25 +3212,28 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
       return FirstWins
     elif aInh > bInh:
       return SecondWins
-    let diff = a.inferred.len - b.inferred.len
-    if diff < 0:
-      result = FirstWins
-    elif diff > 0:
-      result = SecondWins
+    # Compare the formals before falling back to the inferred-typevar count:
+    # a concrete formal like `Box[A, B]` is more specific than a constrained
+    # typevar like `T: object`, even though the latter infers fewer typevars.
+    if a.fn.typ.typeKind in RoutineTypes and b.fn.typ.typeKind in RoutineTypes:
+      result = mutualGenericMatch(a, b)
     else:
-      if a.fn.typ.typeKind in RoutineTypes and b.fn.typ.typeKind in RoutineTypes:
-        result = mutualGenericMatch(a, b)
-      else:
-        result = NobodyWins
-      if result == NobodyWins and a.context != nil and
-          StaticOverloadsFeature in a.context.features:
-        # Nim 2's preference for the more-constant candidate. Applied last so
-        # it only breaks otherwise-exact ties; without the feature candidates
-        # that differ only in static-ness stay ambiguous.
-        if a.staticArgs > b.staticArgs:
-          result = FirstWins
-        elif a.staticArgs < b.staticArgs:
-          result = SecondWins
+      result = NobodyWins
+    if result == NobodyWins:
+      let diff = a.inferred.len - b.inferred.len
+      if diff < 0:
+        result = FirstWins
+      elif diff > 0:
+        result = SecondWins
+    if result == NobodyWins and a.context != nil and
+        StaticOverloadsFeature in a.context.features:
+      # Nim 2's preference for the more-constant candidate. Applied last so
+      # it only breaks otherwise-exact ties; without the feature candidates
+      # that differ only in static-ness stay ambiguous.
+      if a.staticArgs > b.staticArgs:
+        result = FirstWins
+      elif a.staticArgs < b.staticArgs:
+        result = SecondWins
 
 type
   ParamsInfo = object

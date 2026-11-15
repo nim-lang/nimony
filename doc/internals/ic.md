@@ -104,25 +104,39 @@ would look older than it and be parsed on every build.
 
 Defines, `--opt`, `--cc`, the target and so on change what the tools
 produce, and nifmake cannot see them. The driver keeps a **memo** of the
-options a stage's artifacts were made with and passes `--rerun` to that
-stage's nifmake when they differ. `--rerun` runs every node of the build but
-leaves mtimes to the tools, so unchanged interface files still spare their
-dependents.
+options artifacts were made with, and remakes them when the build's options
+differ. A memo must describe exactly the artifacts the build that reads it
+can remake: a build remakes only its own modules, so a memo of everything
+in the nimcache would be rewritten by a build that left other modules as
+another build made them.
 
-* `<nimcache>/config.nif` is the frontend's memo: everything sem reads
-  (defines, `--mm`, cycles, bits, cpu, os, `--app`, the C compiler's name,
-  the check flags, `--inlineframes`). It is written before the frontend
-  runs, because the sub-compiles sem starts (compile-time evaluation, the
-  `writenif` helper) share the nimcache and must see the configuration the
-  outer build is producing. If a build that reruns everything fails, the memo
-  is emptied, so the next build reruns everything again instead of trusting
-  half-remade artifacts.
+* The frontend's memo is per module: the `(optionkey …)` entry of
+  `M.s.deps.nif`, a digest of everything sem reads (defines, `--mm`, cycles,
+  bits, cpu, os, `--app`, the C compiler's name, the check flags,
+  `--inlineframes`). The driver passes the digest to nimsem, which records
+  it with the module's other outputs. When a module's entry differs from the
+  build's digest, the driver gives the module's node an input written now,
+  `M.s.nif.resem`, as it does when the module last ran in the other
+  `isMainModule` role, so the module is semchecked again. It touches no
+  output: other builds' nimsems may be writing or reading them (the stdlib
+  cache's, below). Its `.s.idx.nif` stays: an interface that comes out the
+  same still spares the importers. `M.s.deps.nif` is an output of the node,
+  so a module without one, from a sem that failed or was killed before it
+  recorded, is semchecked again by nifmake. Compile-time evaluation's
+  program builds are passed the outer build's options, so they compute the
+  same digest.
 * `<nimcache>/<backend>/<main>/config.nif` is the backend's memo: the
   frontend's key plus `--opt`, the C compiler and linker, `--passC`/`--passL`
-  and `.passc` pragmas, `--layout`, `--browser`. Since it contains the
-  frontend's key, a changed define reruns the backend too — even when the sem
-  results came out the same, and even when another main module's build was
-  the one that changed them. It is written after the backend succeeded.
+  and `.passc` pragmas, `--layout`, `--browser`. One file is enough here,
+  because only this main module's builds write this directory. The shared
+  `<backend>/M.x.nif` follows its `.s.nif` by mtime: every option hexer
+  takes is part of the frontend's key. When the memo differs, the driver
+  passes `--rerun` to the backend's nifmake, which runs every node of the
+  build but leaves mtimes to the tools, so unchanged interface files still
+  spare their dependents. Since the memo contains the frontend's key, a
+  changed define reruns the backend too, even when the sem results came out
+  the same, and even when another main module's build was the one that
+  changed them. It is written after the backend succeeded.
 
 Neither memo is an input of any node: an mtime cannot express "already built
 against this", and a file that every node depended on kept nodes stale
@@ -132,10 +146,9 @@ whenever their outputs legitimately came out the same.
 
 ```
 <nimcache>/
-  config.nif               frontend memo
   M.p.nif, M.p.deps.nif    nifler (shared by every main and backend)
-  M.s.nif, M.s.idx.nif,    nimsem (shared by every main and backend)
-  M.s.deps.nif
+  M.s.nif, M.s.idx.nif,    nimsem (shared by every main and backend);
+  M.s.deps.nif             .s.deps.nif holds the frontend memo
   <main>.build.nif         the frontend build
   c/  l/  n/  w/  j/       one directory per backend, named by its command
     M.x.nif                hexer, for every module but the main one
@@ -155,6 +168,78 @@ backend, switching from `nimony c` to `nimony n` and back finds each
 backend's files as it left them, and a sub-compile with another backend in
 the same nimcache (`nimony n` builds compile-time helpers with the C
 backend) cannot replace the outer build's files.
+
+## The stdlib cache
+
+A module of the toolchain itself, anything under its `lib/` or `src/` (the
+stdlib imports compiler modules: `std/macros` the parser, a `{.plugin.}` the
+plugin API), is a **stdlib module**: its frontend
+artifacts and its `.x.nif` are not in the build's nimcache but in a cache
+that every build with the same options shares:
+
+```
+<toolchain>/stdcache/<bin dir>/<frontend key>/
+  M.p.nif, M.s.nif, ...     as in a nimcache, stdlib modules only
+  <hash>.build.nif          the stdlib's part of a stage, named by content
+  lock                      held by whoever builds here
+  <backend>-<opt key>/
+    M.x.nif                 hexer
+```
+
+The frontend key (`deps.addFrontendKey`, plus `--compat`, `--noSystem` and
+`--keepsemtree`) names the directory, so that cache needs no memo. The bin dir is in the path because tools of different builds
+of the compiler (the boot stages) make different artifacts. Within one bin
+dir, the tools themselves are inputs of the stdlib's nodes: a rebuilt
+`nimsem` or `shoggoth` reruns them, as does a rebuilt parser.
+
+Each stage first runs the stdlib's nodes in a build file of their own, with
+`nifmake --lock`, then the build's own nodes, which only read the stdlib's
+outputs. nifmake takes the lock only when something is stale, so concurrent
+builds (the parallel test suite) that find the stdlib current never wait for
+one another. A nested build that holds the same key, such as a
+compile-time evaluation inside a locked stdlib build, runs under its
+ancestor's lock (`NIFMAKE_HELD_LOCKS`): the OS lock belongs to the ancestor,
+which would otherwise wait for its own child. Tools write every output by
+rename, and so does the parsing the driver does itself while it walks the
+graph (`semos.runParser`), whatever parser binary it runs: a build that read
+the cache without the lock never sees half a file. The root module is never a
+stdlib module: it is compiled as the main module, which a shared artifact
+cannot be. A stdlib module importing a module outside the toolchain is an
+error. Its shared `.s.nif` would depend on one build's sources. A
+compile-time evaluation's program imports `std/writenif`, so that module is
+part of the program's graph and rebuilt when stale like every other.
+
+A compile-time evaluation's programs are built in a nimcache of the
+evaluating module's own, `<nimcache>/M.eval/` (`semos.evalCacheDir`), as a
+macro plugin's are in `<stem>.host`: the program's build runs while the
+build around it goes on, and in that build's nimcache two modules evaluating
+at once hexed the module they both import into the same `.x.nif`. The
+program's stdlib is in the stdlib cache, under its lock, except for a stdlib
+module's evaluation: that runs under the lock its ancestor holds, while the
+ancestor goes on semchecking other stdlib modules, among them
+`std/writenif`'s imports. Such a program's stdlib is in `M.eval/` too
+(`--stdcache`), which only the evaluating module's nimsem writes.
+
+Builds started from any directory share the stdlib cache, so nothing in it
+depends on the directory a build was started from:
+
+- A stdlib module's name is the same in every build (`semos.moduleSuffix`):
+  a file of `lib/` or `src/lib/` is named relative to it, the rest of
+  `src/` relative to `src/`, whatever the CWD and the build's search paths.
+  The `.s.nif` of a stdlib module names the modules it imports.
+- Every path stored in a stdlib module's artifacts is absolute
+  (`semos.inStdcache`): the line information of its `.p.nif` (nimony runs
+  the parser without `--portablePaths`), and with it that of its `.s.nif`
+  and `.x.nif`, the paths of its imports in its `.s.nif` and the files of
+  its `.compile`, `.build` and `.bundle` pragmas. `include` resolves
+  against the path in the line information, and a stdlib module's sem
+  node can run in a build started elsewhere than the one that parsed it.
+  A diagnostic still prints such a path relative to the CWD when it is
+  under it (`reporters.shortenDir`).
+
+nimsem and hexer find a module in the
+stdlib cache first (`programs.suffixToNif`, `--stdcache`), then next to the
+main module.
 
 ## Known cost: the optimizer
 

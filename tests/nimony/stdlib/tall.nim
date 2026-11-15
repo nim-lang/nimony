@@ -49,6 +49,7 @@ import std/dirs
 import std/dns
 import std/editdistance
 import std/encodings
+import std/endians
 import std/envvars
 import std/fenv
 import std/files
@@ -77,6 +78,7 @@ import std/memfiles
 import std/monotimes
 import std/nativesocket
 import std/nifply
+import std/oids
 import std/opt
 import std/options
 import std/os
@@ -84,6 +86,7 @@ import std/oserrors
 import std/osproc
 import std/packedsets
 import std/parfor
+import std/parsecsv
 import std/parsejson
 import std/parseopt
 import std/parseutils
@@ -103,6 +106,7 @@ import std/sha1
 import std/smartcli
 import std/socket
 import std/stacktraces
+import std/stats
 import std/streamio
 import std/streams
 import std/stripes

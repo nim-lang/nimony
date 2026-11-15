@@ -202,7 +202,7 @@ func copyImpl[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
   dest.len = src.len
   var i = 0
   while i < dest.len:
-    dest.data[i] = `=dup`(src.data[i])
+    {.cast(noSideEffect).}: dest.data[i] = `=dup`(src.data[i])
     inc i
 
 func `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
@@ -220,7 +220,7 @@ func add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
     # it could not be added:
     `=destroy`(elem)
   else:
-    (s.data[L]) = elem
+    {.cast(noSideEffect).}: (s.data[L]) = elem
     inc s.len
     seqFenceExit fenced
 
@@ -236,20 +236,22 @@ func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
   ## Unchecked pointer to `s`'s element storage (valid for `0 ..< s.len`).
   result = s.data
 
-func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} = s.data[i]
+func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} =
+  {.cast(noSideEffect).}: result = s.data[i]
 
 func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0),
     ensures: s.len == old(s.len), inline, linear.} =
-  (s.data[i]) = elem
+  {.cast(noSideEffect).}: (s.data[i]) = elem
   # the element storage never overlaps the seq's own `len`, which a write
   # through the `data` pointer may reach as far as the prover can tell
   {.assume: s.len == old(s.len).}
 
-func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} = s.data[int i]
+func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} =
+  {.cast(noSideEffect).}: result = s.data[int i]
 
 func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint),
     ensures: s.len == old(s.len), inline, linear.} =
-  (s.data[int i]) = elem
+  {.cast(noSideEffect).}: (s.data[int i]) = elem
   {.assume: s.len == old(s.len).}
 
 func `@`*[I, T](a: sink array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq".} =
@@ -281,7 +283,7 @@ func del*[T](s: var seq[T]; idx: int) {.nodestroy.} =
   let L = s.len
   `=destroy`(s.data[idx])
   if idx != L-1:
-    (s.data[idx]) = s.data[L-1]
+    {.cast(noSideEffect).}: (s.data[idx]) = s.data[L-1]
   dec s.len
 
 func addUnique*[T: Equatable](s: var seq[T]; x: sink T) =
@@ -328,7 +330,7 @@ func grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
   # and fill `newLen` slots into storage that never grew.
   if s.len >= newLen:
     while i < newLen:
-      (s.data[i]) = `=dup`(val)
+      {.cast(noSideEffect).}: (s.data[i]) = `=dup`(val)
       inc i
   seqFenceExit fenced
 
@@ -342,7 +344,7 @@ func setLen*[T: HasDefault](s: var seq[T]; newLen: int) {.nodestroy.} =
     growUnsafeImpl(s, newLen)
     if s.len >= newLen: # else out of memory; see `grow`
       while i < newLen:
-        (s.data[i]) = default(T)
+        {.cast(noSideEffect).}: (s.data[i]) = default(T)
         inc i
     seqFenceExit fenced
 
@@ -372,6 +374,6 @@ func delete*[T](s: var seq[T]; idx: int) {.requires: (idx >= 0 and idx < s.len),
   `=destroy`(s.data[idx])
   var i = idx
   while i < L-1:
-    (s.data[i]) = s.data[i+1]
+    {.cast(noSideEffect).}: (s.data[i]) = s.data[i+1]
     inc i
   dec s.len

@@ -28,3 +28,23 @@ block:
 
   assert s1 == 1.3
   assert s2 == 5.0
+# issue #2926: compile-time execution of a call with a distinct result type
+import std/assertions
+
+type
+  Dur = distinct float32
+  Freq = distinct float32
+  Count = distinct int
+  Flag = distinct bool
+
+func `/`(a: float32, f: Freq): Dur = Dur(a / float32(f))
+func twice(c: int): Count = Count(c * 2)
+func flip(b: bool): Flag = Flag(not b)
+
+const SampleDur = 1'f32 / 44100.Freq
+const C = twice(21)
+const F = flip(false)
+
+assert float32(SampleDur) > 0'f32
+assert int(C) == 42
+assert bool(F)

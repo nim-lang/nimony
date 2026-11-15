@@ -1539,6 +1539,87 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
   if c.dest.len > 0:
     dest.add c.dest
 
+proc destroyWrites(c: var LiftingCtx; typ: TypeCursor; seen: var seq[SymId]): bool
+
+proc destroyWritesFields(c: var LiftingCtx; body: Cursor; seen: var seq[SymId]): bool =
+  var n = body
+  n = sub(n) # skip `(object` token; bound the walk, `n` is a copy
+  result = false
+  if n.kind != DotToken and destroyWrites(c, n, seen): result = true
+  skip n # basetype
+  if not result and n.hasMore and n.kind != DotToken:
+    var iter = initObjFieldIter()
+    while nextField(iter, n):
+      let field = takeLocal(n, SkipFinalParRi)
+      if field.kind in {FldY, GfldY}:
+        if not hasPragma(field.pragmas, CursorP) and destroyWrites(c, field.typ, seen):
+          return true
+      else:
+        skip n
+
+proc destroyWrites(c: var LiftingCtx; typ: TypeCursor; seen: var seq[SymId]): bool =
+  if typ.kind == Symbol:
+    let s = typ.symId
+    if s in seen: return false
+    seen.add s
+    let res = tryLoadSym(s)
+    if res.status != LacksNothing: return true
+    let saved = c.op
+    c.op = attachedDestroy
+    let hook = loadHook(c, attachedDestroy, s)
+    c.op = saved
+    if hook != SymId(0):
+      let h = tryLoadSym(hook)
+      if h.status != LacksNothing: return true
+      let r = asRoutine(h.decl)
+      if whichEffect(h.decl.stmtKind, r.pragmas) == HasSideEffect: return true
+    let r = asTypeDecl(res.decl)
+    if r.isGeneric: return true
+    case r.body.typeKind
+    of ObjectT:
+      result = hasRtti(r.pragmas) or destroyWritesFields(c, r.body, seen)
+    of RefT, PtrT:
+      var b = r.body
+      inc b
+      if b.typeKind == ObjectT:
+        result = hasRtti(r.pragmas) or destroyWritesFields(c, b, seen)
+      else:
+        result = destroyWrites(c, b, seen)
+    of ProctypeT:
+      result = isClosureProcType(r.body)
+    else:
+      result = destroyWrites(c, r.body, seen)
+  else:
+    case typ.typeKind
+    of RefT, PtrT, UarrayT, SinkT, ArrayT, OwnedT, DistinctT, LentT, MutT, OutT:
+      result = destroyWrites(c, typ.childCursor, seen)
+    of ObjectT:
+      result = destroyWritesFields(c, typ, seen)
+    of TupleT, ClosureTupleT:
+      var tup = typ
+      tup = sub(tup)
+      result = false
+      while tup.hasMore:
+        if destroyWrites(c, getTupleFieldType(tup), seen): return true
+        skip tup
+    of RoutineTypes:
+      result = isClosureProcType(typ)
+    of IntT, UIntT, FloatT, BoolT, CharT, SetT, EnumT, HoleyEnumT, AnumT, VoidT,
+       CstringT, PointerT, RangetypeT, NiltT:
+      result = false
+    else:
+      result = true
+
+proc destroyHasSideEffect*(c: var LiftingCtx; typ: TypeCursor): bool =
+  ## Can the `=destroy` of a `typ` write a location that is not part of the
+  ## value destroyed? It can when a `=destroy` that runs for it is no `func`
+  ## (doc/language.md, "Func"): one of `typ` itself, of a field, or of what a
+  ## pointer in it leads to, which a container's own hook destroys. A method
+  ## and a closure's environment are not known here and count as well.
+  ## Generous: `true` for whatever is not understood.
+  var seen: seq[SymId] = @[]
+  result = hasDestroyHook(c, typ) and destroyWrites(c, typ, seen)
+
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ref Table[SymId, HooksPerType] = nil;
                        cycles = false): ref LiftingCtx =
   (ref LiftingCtx)(dest: initTokenBuf(), op: attachedDestroy, info: NoLineInfo,

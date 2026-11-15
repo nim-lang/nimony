@@ -21,7 +21,7 @@
 ##   shoggoth d file1.nif file2.nif ...  dead code elimination for the given files
 ##   shoggoth dl <x.nif>...              compute the global live sets
 ##   shoggoth de <x.nif> <live.nif>      per-module emit of the live code
-##   shoggoth opt [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]
+##   shoggoth opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] <input.nif> [<output.nif>]
 ##       optimize NIFC modules. With no `<output>` (and no `--outdir`) each
 ##       input is rewritten in place.
 ##   shoggoth pat [--from:NIF] [--keep] [--shoggoth] <file.nim> [<substr>]
@@ -29,6 +29,7 @@
 
 import std / [os, strutils, syncio, dirs, paths, parseopt, assertions]
 import ".." / ".." / nimony / [langmodes, nifconfig]
+from ".." / ".." / nimony / programs import prog
 import ".." / ".." / hexer / hexer
 import ".." / ".." / lib / [vfs, nimversion]
 import optdriver    # processFile / Stats — keeps its nifcore world isolated
@@ -50,7 +51,7 @@ Command:
   dl file1.x.nif ...        compute the global live set (one .live.nif per module)
   de file.x.nif file.live.nif
                             emit one module's live code as .c.nif
-  opt [--outdir:DIR] [--verify] [--stats] [--vectorize[:sse]] in.nif [out.nif]
+  opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] [--vectorize[:sse]] in.nif [out.nif]
                             optimize NIFC modules (in place without out.nif)
   pat [--from:NIF] [--keep] [--shoggoth] file.nim [substr]
                             compile a .nim file and print its NIFC procs
@@ -59,6 +60,7 @@ Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --os:NAME                 target operating system (default: the host's)
   --outdir:DIR              (d, dl, de) write the outputs to DIR
+  --stdcache:DIR            (c) where the stdlib's semchecked modules are
   --isMain                  mark the file as the main module
   --native                  target the native backend (arkham+nifasm, no C)
   --app:TYPE                application type: console, gui, lib, staticlib (default: console)
@@ -110,6 +112,9 @@ proc hexerMain() =
         isWindows = normalize(val) == "windows"
       of "outdir":
         outdir = val
+      of "stdcache":
+        # the stdlib's `.s.nif` are there, not next to the input (`deps.nim`)
+        prog.stdDir = val
       of "ismain":
         isMain = true
       of "native":
@@ -156,9 +161,8 @@ proc hexerMain() =
     else:
       writeHelp()
 
-proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode;
-            memOpts: MemOpts) =
-  let st = processFile(input, output, verify, vecMode, memOpts)
+proc runOne(input, output: string; verify, stats: bool; target: Target) =
+  let st = processFile(input, output, verify, target)
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
@@ -171,15 +175,15 @@ proc optimizeMain(args: seq[string]) =
   var outdir = ""
   var verify = false
   var stats = false
-  var vecMode = vecOff
-  var memOpts = MemOpts(intrinsics: true)
+  var target = Target(mem: MemOpts(intrinsics: true))
   for a in args:
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
     elif a == "--verify": verify = true
     elif a == "--stats": stats = true
-    elif a == "--vectorize": vecMode = vecNeon
-    elif a == "--vectorize:sse": vecMode = vecSse
-    elif a == "--no-mem-intrinsics": memOpts.intrinsics = false   # a back end without the Memset/Memcpy rows
+    elif a.startsWith("--cpu:"): target.scaledIndex = hasScaledIndex(a["--cpu:".len .. ^1])
+    elif a == "--vectorize": target.vecMode = vecNeon
+    elif a == "--vectorize:sse": target.vecMode = vecSse
+    elif a == "--no-mem-intrinsics": target.mem.intrinsics = false   # a back end without the zeroMemIns/copyMemIns rows
     elif a.startsWith("--merge-stores:"):
       # adjacent constant field stores -> one wider store; the value is the
       # target's word in bits. Little-endian and type-agnostic back ends only.
@@ -187,23 +191,23 @@ proc optimizeMain(args: seq[string]) =
       for ch in a["--merge-stores:".len .. ^1]:
         if ch in {'0'..'9'}: bits = bits * 10 + (ord(ch) - ord('0'))
         else: quit "--merge-stores takes the word size in bits: " & a
-      memOpts.mergeWordBytes = bits div 8
+      target.mem.mergeWordBytes = bits div 8
     elif a.startsWith("-"): quit "unknown option: " & a
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
     onRaiseQuit createDir(path(outdir))
     for inp in positional:
-      runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode, memOpts)
+      runOne(inp, outdir / extractFilename(inp), verify, stats, target)
   elif positional.len == 2:
-    runOne(positional[0], positional[1], verify, stats, vecMode, memOpts)
+    runOne(positional[0], positional[1], verify, stats, target)
   else:
     # in-place rewrite of each input
     for inp in positional:
-      runOne(inp, inp, verify, stats, vecMode, memOpts)
+      runOne(inp, inp, verify, stats, target)
 
 proc main =
   # `commandLineParams` rather than `paramStr`: Nimony's `parseopt` exports a

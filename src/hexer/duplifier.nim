@@ -489,7 +489,7 @@ proc tempType(c: var Context; typ: Cursor): Cursor =
   ## temp with it has lengcgen lay the temp out as a bare function pointer
   ## while the value it receives is the (fn, env) pair: the env is dropped and
   ## the hooks disagree about what they are copying.
-  c.typeCache.closureValueType(typ)
+  closureValueType(typ)
 
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
@@ -941,7 +941,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
           FromimportS, ImportexceptS, ExportS, ExportexceptS,
           CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
-          AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+          AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
           StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
           LabS, JmpS, NoStmt:
         # generic statement: copy the head and recurse into the children
@@ -1847,7 +1847,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trBranches c, n
       else:
         case n.finalIrKind
-        of IteV, ItecV:
+        of IteV:
           trBranches c, n
         of LoopV:
           forgetMentions c, n # the back-edge

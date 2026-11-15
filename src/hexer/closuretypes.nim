@@ -175,13 +175,13 @@ proc loweredClosureType*(typ: Cursor): TokenBuf =
   var n = typ
   lowerClosureProcTypes(result, n)
 
-proc closureValueType*(c: var TypeCache; typ: Cursor): Cursor =
+proc closureValueType*(typ: Cursor): Cursor =
   ## `typ`, unless it holds an un-rewritten `.closure` proctype somewhere:
   ## then the lowered copy, so that a local declared with the result gets
   ## the tuple's layout in C rather than a bare function pointer — also
-  ## inside a tuple of closures, or an array of them. The copy is owned by
-  ## the type cache, which outlives every cursor handed out of it.
+  ## inside a tuple of closures, or an array of them.
   if containsClosureProcType(typ):
-    result = c.keepAlive(loweredClosureType(typ))
+    var buf = loweredClosureType(typ)
+    result = cursorAt(buf, 0)
   else:
     result = typ

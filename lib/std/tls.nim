@@ -179,10 +179,11 @@ proc get24(d: openArray[byte]; pos: var int; limit: int; v: var int): bool =
 proc getBytes(d: openArray[byte]; pos: var int; limit, n: int; res: var seq[byte]): bool =
   result = false
   if n < 0 or pos < 0 or pos + n > limit or limit > d.len: return
+  let start = pos # a write to `res` is a write to a `var` parameter, as `pos` is one
   res = @[]
-  for i in pos ..< pos + n:
+  for i in start ..< start + n:
     if i < d.len: res.add d[i]
-  pos = pos + n
+  pos = start + n
   result = true
 
 # ------------------------------------------------------------ key schedule --

@@ -1,0 +1,6 @@
+got 1
+consume w.first
+destroy w.first
+destroy w.patched
+end w.second
+destroy w.second

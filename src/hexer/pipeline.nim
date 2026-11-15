@@ -61,7 +61,8 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   # Pass 3: Lambda Lifting
   pass.prepareForNext("lambdalift")
-  elimLambdas(pass)
+  var raisesLowered = initHashSet[SymId]()
+  elimLambdas(pass, raisesLowered)
 
   # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
   # a check, and the success tuple lands in the same pass: signatures, the
@@ -80,7 +81,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # needs to signal an error emits the finished form (the duplifier's
   # out-of-memory check, via `builtintypes.addRaisedCode`).
   pass.prepareForNext("eraiser")
-  injectRaisingCalls(pass, c.bits div 8)
+  injectRaisingCalls(pass, c.bits div 8, raisesLowered)
 
   # Pass 6: Inject Duplication Points. Like the eraiser it emits its owning
   # temps as statements (`bindToTemp` → `c.hoisted`), which is what removed the

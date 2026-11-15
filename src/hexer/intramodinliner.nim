@@ -66,6 +66,8 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / lib / foreignmodules
 import ".." / lengc / [leng_model]
+import ".." / lib / lengaa
+from ".." / models / tags import IteTagId, LoopTagId
 
 type
   InlineInfo* = object
@@ -146,6 +148,20 @@ proc tokenCountAux(n: var Cursor): int =
   case n.kind
   of TagLit:
     result = 1
+    # The bounds below were calibrated on Leng's `if`/`while true`: count an
+    # `ite` and a `loop` as the statement they replace, so the switch to them
+    # (nimony#2984) leaves the policy where it was. `(if (elif C T) (else E))`
+    # is two tokens more than `(ite C T E)`, one more without the else;
+    # `(while (true) B)` is one less than `(loop B (continue .))`.
+    let tag = n.cursorTagId
+    if tag == TagId(IteTagId):
+      var e = n
+      inc e
+      skip e                                  # the condition
+      skip e                                  # the then-branch
+      result += (if e.hasMore and e.kind != DotToken: 2 else: 1)
+    elif tag == TagId(LoopTagId):
+      result -= 1
     n.into:
       while n.hasMore:
         result += tokenCountAux(n)
@@ -249,6 +265,8 @@ type
     src: ptr TokenBuf                       # the module's parsed buffer
     xnifDir: string                         # directory holding the `.c.nif`s
     maxDepth*: int                          # 0 = unlimited; cross-module mode sets a cap
+    callerFacts: LocalFacts                 # `lengaa` owned-ness of the proc being
+                                            # walked, splices included (`emitSplice`)
     growthLeft*: int
       # Remaining tokens the proc currently being walked may gain from
       # splices. Set per top-level `(proc …)` from `growthBudget` (a caller
@@ -643,14 +661,41 @@ proc isForwardedRet(bnd: Bindings; n: Cursor; targetSym: SymId): bool =
   result = n.isSymbol and not bnd.subst.hasKey(n.symId) and
     bnd.rename.getOrDefault(n.symId, n.symId) == targetSym
 
+proc peelValueConv(c: Cursor): Cursor =
+  ## Skip the value-preserving wrappers a call site puts around an argument:
+  ## `(conv T x)`, `(cast T x)`, `(suf x "T")`, `(par x)`. `copyMem(addr x, …)`
+  ## arrives as `(conv (ptr (void)) (addr x))`, `sizeof(x)` as a `size_t` conv.
+  result = c
+  while result.isTagLit:
+    case result.exprKind
+    of ConvC, CastC:
+      var t = result; inc t; skip t     # past the target type
+      result = t
+    of SufC, ParC:
+      var t = result; inc t
+      result = t
+    else: break
+
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
   ## spliced at every use instead of bound to a parameter copy. (Symbol args are
   ## NOT included: the inliner cannot prove the caller's variable is unmodified
-  ## during the body without alias info.)
+  ## during the body without alias info.) `(sizeof T)`/`(alignof T)` are
+  ## constants too: binding `zeroMem(addr x, sizeof x)`'s size to a temp hid the
+  ## constant from arkham, so a 16-byte clear ran as a runtime memset loop.
+  ##
+  ## A conversion around a numeric constant (`csize_t(8)`) is peeled; one around
+  ## `nil` is NOT: `(conv (ptr T) (nil))` spliced into a dead `if p != nil` arm
+  ## folds to a `(deref nil)` that the native back end cannot type.
   case c.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLit: true
-  of TagLit: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit: return true
+  of TagLit:
+    if c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}: return true
+  else: return false
+  let p = peelValueConv(c)
+  case p.kind
+  of IntLit, UIntLit, FloatLit, CharLit: true
+  of TagLit: p.exprKind in {SizeofC, AlignofC}
   else: false
 
 proc isStableDerefArg(c: Cursor): bool =
@@ -684,8 +729,34 @@ proc isStableAddrArg(c: Cursor): bool =
   ## A compound lvalue (`(haddr (dot o f))`, `(haddr (at a i))`) is excluded: the
   ## path would be re-evaluated at each use, and the body could write through
   ## another pointer parameter to a symbol the path mentions.
+  ##
+  ## A pointer conversion around the address (`(conv (ptr (void)) (addr x))`, the
+  ## shape every `copyMem(addr x, …)`/`zeroMem(addr x, …)` call site has) does not
+  ## change that: the converted address is just as constant.
+  let c = peelValueConv(c)
   if not c.isTagLit or c.exprKind notin AddrKinds: return false
   result = c.childCursor.isSymbol
+
+proc isLocalOrIntLit(c: Cursor): bool =
+  result = (c.isSymbol and pool.symIsLocal(c.symId)) or c.kind in {IntLit, UIntLit}
+
+proc isLocalAffineArg(c: Cursor): bool =
+  ## `(add T x y)` / `(sub T x y)` whose operands are caller locals or integer
+  ## literals: `a[i + j]`'s index. Substituted, not bound to a temp, for the
+  ## reason a bare local is: the inlined body never assigns a caller local, so
+  ## the operands cannot change across the splice. Re-evaluating it at each use
+  ## is one `add`, which CSE folds back; binding it hid the affine index from
+  ## the induction-variable pass, and the second `c[i + j]` of `c[i + j] += x`
+  ## got a temp of its own. The plain `add`/`sub` wrap: they never trap.
+  result = false
+  if c.isTagLit and c.exprKind in {AddC, SubC}:
+    var n = c.childCursor                  # the type
+    skip n
+    if n.hasMore and isLocalOrIntLit(n):
+      skip n
+      if n.hasMore and isLocalOrIntLit(n):
+        skip n
+        result = not n.hasMore
 
 proc slotRootOf(c: Cursor): SymId =
   ## Like `rootOf`, but a spine that crosses a pointer dereference targets the
@@ -797,73 +868,14 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
       scanParamUsage(n, params, assigned, addrTaken, opaqueEffects)
       skip n
 
-proc scanRets(n: var Cursor; resultSym: var SymId; found, ok: var bool) =
-  ## Walk one subtree looking for `(ret X)`. `ok` stays true iff EVERY ret
-  ## returns the same bare symbol, reported in `resultSym`; `found` records
-  ## that at least one ret exists. Nested proc decls (if any) are skipped.
-  case n.kind
-  of TagLit:
-    if n.stmtKind == RetS:
-      var hasVal = false
-      var valIsSym = false
-      var valSym = SymId(0)
-      into n:
-        if n.hasMore and not n.isDotToken:
-          hasVal = true
-          if n.isSymbol:
-            valIsSym = true
-            valSym = n.symId
-        while n.hasMore: skip n
-      if not hasVal or not valIsSym:
-        ok = false
-      elif not found:
-        resultSym = valSym
-        found = true
-      elif resultSym != valSym:
-        ok = false
-    elif n.stmtKind == ProcS:
-      skip n
-    else:
-      into n:
-        while n.hasMore: scanRets(n, resultSym, found, ok)
-  else:
-    inc n
-
 proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
   ## The callee's result LOCAL for destination forwarding: every `(ret X)` in
   ## the body returns the same bare, body-local, non-param symbol (nimsem's
   ## implicit `result` after lowering). SymId(0) when the pattern doesn't hold.
-  var resultSym = SymId(0)
-  var found = false
-  var ok = true
-  var b = body
-  scanRets(b, resultSym, found, ok)
-  if not (found and ok) or resultSym == SymId(0): return SymId(0)
-  if resultSym in pSyms: return SymId(0)          # a param: bound to its arg
-  if not pool.symIsLocal(resultSym): return SymId(0)
-  result = resultSym
-
-proc countSymUses(n: Cursor; sym: SymId): int =
-  ## Count `Symbol` (use, not `SymbolDef`) occurrences of `sym` within the
-  ## single subtree rooted at `n` (which may be a leaf token).
-  result = 0
-  if n.isSymbol:
-    if n.symId == sym: result = 1
-    return
-  if not n.isTagLit:
-    return
-  var it = n
-  it.into:
-    while it.hasMore:
-      case it.kind
-      of Symbol:
-        if it.symId == sym: inc result
-        inc it
-      of TagLit:
-        result += countSymUses(it, sym)
-        skip it
-      else:
-        inc it
+  result = returnedLocal(body)
+  if result == SymId(0): return
+  if result in pSyms: return SymId(0)             # a param: bound to its arg
+  if not pool.symIsLocal(result): return SymId(0)
 
 proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
   ## The local `L` in a body whose LAST two statements are
@@ -916,7 +928,7 @@ proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
   if src == resultSym or src in pSyms: return SymId(0)
   if not pool.symIsLocal(src): return SymId(0)
   # `resultSym` must be mentioned nowhere but those two statements.
-  if countSymUses(body, resultSym) != 2: return SymId(0)
+  if countUses(body, resultSym) != 2: return SymId(0)
   result = src
 
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
@@ -1274,7 +1286,7 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
     if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
-       (arg.isSymbol and pool.symIsLocal(arg.symId)):
+       (arg.isSymbol and pool.symIsLocal(arg.symId)) or isLocalAffineArg(arg):
       result.subst[pSyms[i]] = arg
     elif callerReadOnly and isPurePathArg(arg) and
          uses.getOrDefault(pSyms[i]) <= MaxPathSubstUses:
@@ -1419,6 +1431,14 @@ proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
       if tailCopy != SymId(0):
         rename[tailCopy] = target
 
+  # The callee's locals now live in the caller under their new names: carry
+  # over which of them are exposed, so a later splice into one of them (the
+  # cascade re-walks this content) asks the right question.
+  let calleeFacts = analyseLocals(site.pd.body)
+  for s in calleeFacts.localSyms: c.callerFacts.addLocal rename.getOrDefault(s, s)
+  for s in site.pSyms: c.callerFacts.addLocal rename.getOrDefault(s, s)
+  for s in calleeFacts.exposedSyms: c.callerFacts.expose rename.getOrDefault(s, s)
+
   var bnd = bindingsFor(c, site.pSyms, site.argCursors, site.pd.body, rename)
   bnd.dropDecl = resultLocal
   bnd.dropDecl2 = tailCopy
@@ -1515,11 +1535,11 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## all of this shape). Emits one `(scope …)` and returns 1.
   ##
   ## `lhs` is the natural target and takes the result over (`forwardResult`)
-  ## unless an argument mentions it: a substituted argument is evaluated inside
-  ## the body, after the result was first written. The body cannot name a caller
-  ## local otherwise. Like NRVO, reading `lhs` through a raw pointer while the
-  ## body runs sees the partial result: `y = f(addr y)` is the programmer's
-  ## problem. A global `lhs` keeps the copy: the body may read it.
+  ## when nothing but the result can reach it while the body runs: an owned
+  ## local (`lengaa`) that no argument mentions. A substituted argument is
+  ## evaluated inside the body, after the result was first written; a local
+  ## whose address is taken can be read through the pointer; a global by the
+  ## body itself. Those keep the copy.
   if not n.isTagLit or n.stmtKind != AsgnS: return 0
   let entry = n
   var probe = n
@@ -1530,9 +1550,11 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
 
   var site = SpliceSite()
   if not prepareSplice(c, probe, site): return 0
-  var forward = pool.symIsLocal(lhsSym)
-  for a in site.argCursors:
-    if forward and countSymUses(a, lhsSym) > 0: forward = false
+  var lhsCur = entry
+  inc lhsCur                               # the lhs symbol
+  var rhsCur = lhsCur
+  skip rhsCur                              # the call
+  let forward = not destMayBeObserved(c.callerFacts, lhsCur, rhsCur)
   emitSplice(c, dest, site, lhsSym, forward, entry.info)
 
   n = entry
@@ -1612,7 +1634,7 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
     skip p                                 # past pragmas
     skip p                                 # past type
     if p.isDotToken: return false    # no initializer here
-    if countSymUses(p, R) != 0: return false
+    if countUses(p, R) != 0: return false
     outVal = p
     return true
   of 3:
@@ -1636,7 +1658,7 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
     inc a                                  # past `asgn`
     if not a.isSymbol or a.symId != R: return false
     skip a                                 # past LHS (R)
-    if countSymUses(a, R) != 0: return false
+    if countUses(a, R) != 0: return false
     outVal = a
     return true
   else:
@@ -1681,10 +1703,16 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   # --- peek the next sibling: must be `(if (elif tmp …) …)` guarding on tmp ---
   var nextCur = entry
   skip nextCur                             # past the whole var decl
-  if not nextCur.isTagLit or nextCur.stmtKind != IfS: return 0
-  let firstElif = nextCur.childCursor
-  if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
-  var condCur = firstElif.childCursor
+  if not nextCur.isTagLit: return 0
+  let isIte = nextCur.cursorTagId == TagId(IteTagId)   # `(ite tmp …)`: no elif level
+  var condCur = default(Cursor)
+  if isIte:
+    condCur = nextCur.childCursor
+  else:
+    if nextCur.stmtKind != IfS: return 0
+    let firstElif = nextCur.childCursor
+    if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
+    condCur = firstElif.childCursor
   # The guard may be the temp itself or its negation — xelim's two-target
   # condition compiler guards early exits with `(not tmp)`. `not` evaluates
   # its operand unconditionally, so splicing X under it is as sound as the
@@ -1702,11 +1730,11 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   # `scope` with `into`), so "the `if` plus the siblings that follow it" is
   # the whole live range — no dataflow needed, and no guess from the name
   # about who minted the local either.
-  if countSymUses(nextCur, tmpSym) != 1: return 0
+  if countUses(nextCur, tmpSym) != 1: return 0
   var rest = nextCur
   skip rest                                # past the whole `if`
   while rest.hasMore:
-    if countSymUses(rest, tmpSym) != 0: return 0
+    if countUses(rest, tmpSym) != 0: return 0
     skip rest
 
   # --- heavier inline eligibility checks (only after the shape matched) ---
@@ -1730,23 +1758,34 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
 
   # --- emit the rewritten `if`, splicing X into the first elif's condition ---
   var ifOpener = nextCur
-  dest.addParLe(ifOpener.cursorTagId, ifOpener.info)  # copy `(if` opener
-  ifOpener.into:
-    var elifn = ifOpener
-    dest.addParLe(elifn.cursorTagId, elifn.info)   # copy `(elif` opener
-    elifn.into:
+  dest.addParLe(ifOpener.cursorTagId, ifOpener.info)  # copy `(if`/`(ite` opener
+  if isIte:
+    ifOpener.into:
       if negatedGuard:
-        dest.addParLe(TagId(NotC), elifn.info)
+        dest.addParLe(TagId(NotC), ifOpener.info)
       emitRenamed(dest, retVal, bnd)     # X' replaces the tmp condition
       if negatedGuard:
         dest.addParRi()
-      skip elifn                           # drop the original tmp/(not tmp) condition
-      while elifn.hasMore:
-        dest.takeTree elifn                # elif body verbatim
-    dest.addParRi()                        # close (elif …)
-    skip ifOpener                          # past the elif we just consumed
-    while ifOpener.hasMore:
-      dest.takeTree ifOpener               # else / further elifs verbatim
+      skip ifOpener                      # drop the original tmp/(not tmp) condition
+      while ifOpener.hasMore:
+        dest.takeTree ifOpener           # the arms verbatim
+  else:
+    ifOpener.into:
+      var elifn = ifOpener
+      dest.addParLe(elifn.cursorTagId, elifn.info)   # copy `(elif` opener
+      elifn.into:
+        if negatedGuard:
+          dest.addParLe(TagId(NotC), elifn.info)
+        emitRenamed(dest, retVal, bnd)     # X' replaces the tmp condition
+        if negatedGuard:
+          dest.addParRi()
+        skip elifn                           # drop the original tmp/(not tmp) condition
+        while elifn.hasMore:
+          dest.takeTree elifn                # elif body verbatim
+      dest.addParRi()                        # close (elif …)
+      skip ifOpener                          # past the elif we just consumed
+      while ifOpener.hasMore:
+        dest.takeTree ifOpener               # else / further elifs verbatim
   dest.addParRi()                          # close (if …)
 
   # Advance past BOTH the var decl and the if we folded into it.
@@ -1856,6 +1895,26 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
   ## the label and its jumps with it.
   case n.kind
   of TagLit:
+    if n.cursorTagId == TagId(IteTagId):
+      # `(ite C T E|.)`: a decided condition leaves the arm it picks (or
+      # nothing); an undecided one keeps the `ite` and recurses into the arms.
+      let v = condVal(n.childCursor)
+      if v == condUnknown:
+        dest.addParLe(n.cursorTagId, n.info)
+        n.into:
+          while n.hasMore:
+            emitPruned(dest, n)
+        dest.addParRi()
+        return
+      var b = n
+      b.into:
+        skip b                                    # the condition
+        if v == condFalse: skip b                 # the then-branch
+        if b.hasMore and b.kind != DotToken:
+          emitPruned(dest, b)
+        while b.hasMore: skip b
+      skip n
+      return
     if n.stmtKind == IfS:
       # Peek pass over the arms: what survives? The cursors index into the
       # buffer `n` reads, which outlives the re-emit below.
@@ -2071,12 +2130,15 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
         let bodySize = (if pd.body.isTagLit: tokenCount(pd.body) else: 0)
         let savedGrowth = c.growthLeft
         c.growthLeft = growthBudget(bodySize)
+        var savedFacts = analyseLocals(n)
+        swap savedFacts, c.callerFacts
         dest.addParLe(n.cursorTagId, n.info)
         into n:
           while n.hasMore:
             trIntra(c, dest, n)
         dest.addParRi()
         c.growthLeft = savedGrowth
+        swap savedFacts, c.callerFacts
         return
       if sk == VarS:
         var probe = n
@@ -2159,6 +2221,7 @@ proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
          n.childCursor.isSymbolDef and ma.inlineInfo.hasKey(n.childCursor.symId):
         let tag = n.cursorTagId
         let info = n.info
+        ctx.callerFacts = analyseLocals(n)
         let d = takeProcDecl(n)
         dest.addParLe(tag, info)
         dest.addSubtree d.name

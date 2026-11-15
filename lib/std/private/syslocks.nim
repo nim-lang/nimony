@@ -103,7 +103,7 @@ elif defined(genode):
   func broadcastSysCond*(cond: var SysCond) {.
     noSideEffect, importcpp.}
 
-elif defined(nimNativeIo) and not defined(illumos):
+elif not defined(illumos):
   # Freestanding, libc-header-free locks built directly on the kernel futex
   # primitive instead of pthread. `SysLock`/`SysCond` are plain 32-bit words, so
   # there is no opaque libc struct to `importc` and no fixed ABI layout to track.

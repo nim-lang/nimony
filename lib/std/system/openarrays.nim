@@ -7,7 +7,8 @@ type
     a: ptr UncheckedArray[T]
     len: int
 
-func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} = x.a[idx]
+func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} =
+  {.cast(noSideEffect).}: result = x.a[idx]
 
 func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem
@@ -36,8 +37,10 @@ converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline, establishesBorrow,
   result = openArray[T](a: rawData(s), len: s.len)
   {.assume: len(result) == len(s).}
 
+# `readonlyView`: a string's buffer is copy-on-write, so it may be shared with
+# other strings or be a literal's static storage (#2924).
 converter toOpenArray*(s {.byref.}: string): openArray[char] {.inline, establishesBorrow,
-    ensures: len(result) == len(s).} =
+    readonlyView, ensures: len(result) == len(s).} =
   result = openArray[char](a: readRawData(s), len: s.len)
   {.assume: len(result) == len(s).}
 

@@ -88,13 +88,14 @@ By default Nimony's standard library does not depend on libc: memory comes from
 Nimony's own allocator (a region allocator over `mmap`) and I/O goes straight to
 the operating system. With the C backend libc is still linked, and the standard
 library falls back to it where a libc-free implementation is impossible or only
-approximate. Three defines opt back into libc:
+approximate. libc's stdio is never used: the standard library's own buffered
+I/O layer over `read`/`write`/`open` is the only one. Two defines opt back
+into libc:
 
 | Define | C backend (`nimony c`) | Native backend (`nimony n`) |
 |---|---|---|
-| `-d:useLibc` | mimalloc as the allocator, libc for I/O | Linux: link libc (see below); elsewhere ignored |
+| `-d:useLibc` | mimalloc as the allocator | Linux: link libc (see below); elsewhere ignored |
 | `-d:useMimalloc` | mimalloc as the allocator | ignored |
-| `-d:useLibcIo` | libc for I/O | ignored |
 
 The native backend normally links no libc at all. On Linux it writes a static,
 freestanding executable, which cannot bind a foreign symbol. On Linux,

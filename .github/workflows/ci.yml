@@ -44,7 +44,7 @@ jobs:
   # `Windows`. Two runs picking at the same moment may both see it idle; the
   # loser then queues behind the winner rather than failing.
   pick:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       windows: ${{ steps.p.outputs.windows }}
     steps:
@@ -69,7 +69,7 @@ jobs:
         branch: [master]
         target:
           # `builder` lives on the target (not a keyed `include`) because the
-          # two linux rows need different runners: amd64 on ubuntu-24.04,
+          # two linux rows need different runners: amd64 on ubuntu-26.04,
           # arm64 on the arm-hosted image. An os-keyed include can't express
           # that split.
           #
@@ -79,12 +79,12 @@ jobs:
           - os: linux
             cpu: amd64
             nim_branch: devel
-            builder: ubuntu-24.04
+            builder: ubuntu-26.04
             skip: tests/boot
           - os: linux
             cpu: i386
             nim_branch: devel
-            builder: ubuntu-24.04
+            builder: ubuntu-26.04
             skip: tests/boot
           # linux/arm64 exercises the asm-generic `struct stat` layout and the
           # arm64-divergent fcntl constants (O_DIRECTORY et al) that no other
@@ -93,7 +93,7 @@ jobs:
           - os: linux
             cpu: arm64
             nim_branch: devel
-            builder: ubuntu-24.04-arm
+            builder: ubuntu-26.04-arm
             skip: tests/boot
           - os: macos
             cpu: arm64
@@ -103,7 +103,7 @@ jobs:
           # Windows is the slow runner (4 cores, and a process creation costs
           # what a dozen do elsewhere), so it is the one job where a suite has
           # to earn its place by asserting something the OTHER four do not.
-          # These six do not — each is dropped with its own reason:
+          # These seven do not — each is dropped with its own reason:
           #
           #   tests/nimony/macros   ~40% of the whole suite's cost, measured, on
           #     BOTH hosts. Every test here is a compile-time macro, and a macro
@@ -130,11 +130,13 @@ jobs:
           #   bench                 `-d:benchSmoke` build-and-compare. The
           #     question is "does it still build and still compute the same
           #     numbers" — host-independent by construction.
+          #   tests/importjs        `nimony j` output run under node; nothing in
+          #     it is host-dependent.
           #   tests/nimony/opt      `--opt:speed`, i.e. the shoggoth passes.
           #     The windows `boot` job below already builds every stage
           #     `-d:release`, which is shoggoth on this host at full size.
           #
-          # All six keep running on linux-amd64, linux-arm64 and macos-arm64, so
+          # All seven keep running on linux-amd64, linux-arm64 and macos-arm64, so
           # a regression in them is still caught the same day — just not four
           # times. Measured on run 35283728131: the tree walk's parallel phase
           # was 1593s of a 2003s step, and macros+plugins alone owned the
@@ -144,7 +146,7 @@ jobs:
             nim_branch: devel
             builder: windows-2025
             skip: >-
-              tests/boot;tests/nimony/macros;tests/nimony/plugins;tests/nimony/valgrind;tests/ithaqua;bench;tests/nimony/opt
+              tests/boot;tests/nimony/macros;tests/nimony/plugins;tests/nimony/valgrind;tests/ithaqua;tests/importjs;bench;tests/nimony/opt
 
     name: '${{ matrix.target.os }}-${{ matrix.target.cpu }}-nim-${{ matrix.target.nim_branch }} (${{ matrix.branch }})'
     # The windows row only; `boot` stays hosted, since the one self-hosted
@@ -213,11 +215,11 @@ jobs:
           - os: linux
             cpu: amd64
             nim_branch: devel
-            builder: ubuntu-24.04
+            builder: ubuntu-26.04
           - os: linux
             cpu: arm64
             nim_branch: devel
-            builder: ubuntu-24.04-arm
+            builder: ubuntu-26.04-arm
           - os: macos
             cpu: arm64
             nim_branch: devel

@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tabs_low.nim(6, 5) Error: cannot prove assertion: 0 <= a [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tabs_low.nim(10, 5) Error: cannot prove assertion: not a < 0'i8 [pass --verbose for the Final IR]

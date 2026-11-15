@@ -132,7 +132,11 @@ proc open*(filename: string, mode: FileMode = fmRead,
 
   when defined(windows):
     let desiredAccess = GENERIC_READ
-    let shareMode = FILE_SHARE_READ
+    # A read-only mapping lets other processes rename or replace the file
+    # meanwhile, as POSIX does: without `FILE_SHARE_DELETE` the open fails
+    # with a sharing violation while one of them moves a file into its place.
+    let shareMode = if readonly: FILE_SHARE_READ or FILE_SHARE_WRITE or FILE_SHARE_DELETE
+                    else: FILE_SHARE_READ
     let flags = FILE_FLAG_RANDOM_ACCESS
 
     template fail(errCode: OSErrorCode, msg: string) =

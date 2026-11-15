@@ -11,6 +11,7 @@ There is one important exception: **Nimony is case sensitive** like most other m
 
 A program consists of one or more modules. A module is a file that contains code. A module can `import` other modules. The `system` module is the only exception: It is always automatically imported. `system` contains all the "builtin" names like `int` or `string`.
 A module's name can be used to disambiguate names. For example if both the `system` and a `foreign` module contain a `delay` proc, `system.delay` can be used to clarify that it is the `system` module's `delay` proc.
+A module's name is its file name without the extension and must not start with a digit: `01_x.nim` can be neither compiled nor imported as a module (it can still be included).
 
 
 ## Order of evaluation
@@ -1893,6 +1894,9 @@ exceptions:
   translated by the compiler, the other statements are not checked for
   semantics! However, each condition is checked for semantics.
 
+In a checked generic, a `when` whose condition depends on a generic parameter
+follows different rules; see [Generics](#generics).
+
 The `when` statement enables conditional compilation techniques.
 
 
@@ -2664,6 +2668,34 @@ through a borrow copies it, so it leaves freely:
     return -1
   ```
 
+### `readonlyView` pragma
+
+A call to a routine that returns a view, such as `toOpenArray`, can usually be
+passed to a `var openArray` parameter when its first argument is a mutable
+location. A routine marked `readonlyView`:idx: opts out: its result is never
+mutable, whatever its first argument is.
+
+This is what a container with copy-on-write storage needs. Its buffer may be
+shared with other values or be a literal's static storage, and only the
+container's own mutating operations make it unique first; a write through a
+raw view would skip that copy. `string` is such a container:
+
+  ```nim
+  converter toOpenArray*(s {.byref.}: string): openArray[char]
+      {.inline, establishesBorrow, readonlyView.} =
+    openArray[char](a: readRawData(s), len: s.len)
+
+  proc poke(p: var openArray[char]) = p[0] = 'X'
+
+  var a = "a much longer string that lives on the heap"
+  var b = a
+  poke(b)                 # Error: cannot pass b to var/out T parameter
+  poke(toOpenArray(b))    # Error: the same
+  ```
+
+`readonlyView` and `establishesBorrow` are independent: one says how the result
+may be used, the other what it keeps aliasing.
+
 ### Iterating through a `ref`
 
 A borrow is tracked along an access path, but a `ref` can have aliases that
@@ -3087,7 +3119,7 @@ A `func` is a `proc` that is treated as `noSideEffect` by default. Likewise, `it
 
 A routine is **side-effect free** when it does not access global or thread-local variables, does not call any routine that has side effects and does not mutate memory through a `ref` or `ptr`.
 
-The last rule covers every way a location can be mutated: an assignment to it and passing it to a `var` or `out` parameter. A location is "behind a `ref`/`ptr`" when its access path contains a dereference — `p[]`, `r.field` for a `ref`/`ptr` typed `r`, or `p[i]` for a `ptr UncheckedArray`. The mutation is nonetheless allowed when the head of the access path is already of a `var` type: a `var`/`out` parameter or a call that returns `var T`. The caller handed that state over for mutation explicitly.
+The last rule covers every way a location can be mutated: an assignment to it and passing it to a `var` or `out` parameter. A location is "behind a `ref`/`ptr`" when its access path contains a dereference — `p[]`, `r.field` for a `ref`/`ptr` typed `r`, or `p[i]` for a `ptr UncheckedArray`. A `var`/`out` parameter at the head of the access path does not change that: a `func` may write the own storage of its `var` parameter — the variable the caller named — but not what that variable points to. For the same reason a `func` cannot return a location behind a `ref`/`ptr` as its `var T` result. So a call to a `func` writes exactly the variables it is handed as `var`, which is what lets the compiler reason about `s.add x` or `inc i` precisely (see [Aliasing](#aliasing)). `var T` means "this variable may be assigned", not "everything reachable from it is mutable": a `var ref T` parameter lets a `func` make the variable refer to another object, and neither it nor a `ref T` parameter lets a `func` change the object.
 
 ```nim
 type
@@ -3103,18 +3135,21 @@ func badLocal(h: Holder) =
   var copy = h
   copy.r.x = 5     # Error: `copy` is a local, its `r` still aliases `h.r`
 
-func fine(h: var Holder) =
-  inc h.r.x        # the head `h` is `var Holder`
+func alsoBad(h: var Holder) =
+  inc h.r.x        # Error: `h` is `var`, but `h.r.x` is behind the `ref`
+
+func fine(h: var Holder; n: Node) =
+  h.r = n          # the own storage of the `var` parameter
 ```
 
 `result` is not of a `var` type either, so a `func` that returns a fresh `ref` builds it with an object constructor — `Node(x: 5)` — rather than filling in its fields afterwards.
 
-Low-level code that writes through a pointer that is not rooted at a `var` parameter — a freshly allocated block, say — states that the mutation is invisible to the outside world with `{.cast(noSideEffect).}`:
+Low-level code that writes through a pointer — the block a container owns, say — states that the mutation is invisible to the outside world, or part of the value of its `var` parameter, with `{.cast(noSideEffect).}`:
 
 ```nim
 func add*[T](s: var seq[T]; elem: sink T) =
   ...
-  let impl = s.p     # a plain `ptr`, no longer rooted at the `var` parameter
+  let impl = s.p     # the block `s` owns
   {.cast(noSideEffect).}:
     impl.data[impl.len] = elem
 ```
@@ -3196,6 +3231,31 @@ Two module pragmas move the default:
 * `{.feature: "runtimeContracts".}` — no call site in this module is judged at
   all, and the run-time guard is the only check. It wins if both are given.
 
+A postcondition, stated with `ensures`, is judged in the routine itself, at
+every exit, and a caller takes it without looking. No run-time check backs it,
+so an `ensures` the compiler cannot prove is an error in every mode, like an
+undecided `{.assert.}`:
+
+```nim
+proc clampLow(x: int): int {.ensures: result >= 0.} =
+  if x < 0: return 0
+  return x                  # proven: the guard bounds `x`
+
+proc pass(x: int): int {.ensures: result >= 0.} =
+  result = x                # Error: cannot prove postcondition: 0 <= result
+```
+
+A field of an object held by value is a location like any other: a
+constructor `T(f: v)` states what `f` holds, and a copy `x = y` states that
+`x.f` is `y.f`. An `ensures` about `result.f` is proven that way:
+
+```nim
+proc pick(i: int; miss: bool): Hit {.requires: i >= 0 and i < 3,
+    ensures: result.thing >= -1 and result.thing < 3.} =
+  if miss: return Hit(thing: -1)
+  result = Hit(thing: i)    # proven from the `requires`
+```
+
 ### Assertions and assumptions
 
 Inside a body, two statements take part in the same reasoning:
@@ -3228,6 +3288,103 @@ run-time check for debugging, compiled out by `-d:noAssertions` and
 other, but an obligation that only it discharges stops being provable once it
 is switched off — the build then fails rather than losing a check. State such a
 claim with `{.assert.}`.
+
+### Loop invariants
+
+A location the body of a loop writes is not known to keep any bound at the
+head of the loop, except for a counter the body only moves one way. So an
+`{.assert.}` at the top of the body cannot be proven from what the loop
+does: it asks about what the head has already forgotten.
+
+`{.invariant: cond.}` states that `cond` holds at the head of **every**
+iteration. It is proven by induction:
+
+* on entry to the loop, from what is known before it;
+* at the end of every iteration, the end of the body and every `continue`,
+  from what the body did.
+
+Then `cond` is known at the head: at the start of the body, and after the
+loop, which is left from the head. Like an assertion, an invariant is a
+compile-time claim only, and one that is not proven is an error, whatever the
+module's contract features say.
+
+```nim
+proc nearest(n: int): Hit {.ensures: result.thing >= -1 and result.thing < 3.} =
+  var best = Hit(thing: -1)
+  for i in 0 ..< n:
+    {.invariant: best.thing >= -1 and best.thing < 3.}
+    let h = probe(i)          # ensures: -1 <= result.thing < 3
+    if h.thing != -1: best = h
+  result = best               # proven: the invariant holds after the loop
+```
+
+An invariant is written as the first statement of a `while` or `for` body,
+comments aside, and nowhere else: anywhere else it would read as a claim about
+that point, which is what `{.assert.}` is for. Several may follow each other.
+It is a claim about the head, before the iteration starts, so it cannot depend
+on the variable of a `for` loop: that variable is bound by the iteration, and
+what it holds is stated by the iterator's own `ensures`. A nested loop has its
+own invariants, and the `continue` of the nested loop judges only those.
+
+### Aliasing
+
+The prover reasons about values. A variable stands for a value only while
+nothing can change it except a write that names it:
+
+- An **owned** variable is a local, `result`, or a parameter that is not
+  `var`, `out` or `lent`, whose address is not taken and that no nested
+  routine names. What is known about it holds until a write that names it.
+  Passing it as `var` is such a write; afterwards what the callee's `ensures`
+  states about it holds.
+- Every other variable is **shared**: a `var`, `out` or `lent` parameter, a
+  global, a variable whose address is taken, a local that a nested routine
+  names. What is known about it holds until the next *barrier* that does not
+  name it.
+
+A parameter that is not `var`, `out` or `lent` is read-only: the prover
+assumes it does not change while the routine runs, whether the compiler
+passes it by copy or by reference.
+
+A **barrier** is anything that can write a location without naming it:
+
+- a call to a `proc`, a method or a routine value;
+- a store whose target is not an owned variable: through a `ptr`, a `ref` or
+  a view, to a global, or to a `var` parameter.
+
+A `func` writes nothing but the variables it is handed as `var` (see
+[Func](#func)), so a call to one is a write to those variables and nothing
+else: `inc i` and `s.add x` for an owned `i` and `s` are no barriers at all,
+and neither are `len` and `[]`. Only when the variable handed over is itself
+shared is the call a barrier, as any other write to it is. A barrier spares
+the variable it names: `s[i] = x` and `s.add x` are writes to `s`, which the
+prover accounts for.
+
+A fact is only ever about a variable, its fields, and pure accessors of them
+such as `len`; never about what lies behind a pointer or a `ref`, and never
+about an element.
+
+```nim
+var gLen = 0
+proc f(s: seq[int]) =
+  if gLen < s.len:
+    log("x")          # a barrier: `gLen` is shared
+    echo s[gLen]      # checked at run time
+  let n = gLen        # an owned copy keeps the fact
+  if n < s.len:
+    log("x")
+    echo s[n]         # proven
+```
+
+To keep a fact about a shared variable across a barrier, copy the value into
+a local.
+
+A `var` or `out` parameter is borrowed for the call and no longer. Its
+location may leave the routine as the routine's `var T` result (see
+[Var return type](#var-return-type)): the caller then knows that a write
+through the result is a write to the first argument. The prover does not
+follow pointers: `addr` is unsafe, and a routine that keeps the address of its
+`var` parameter past the call is as unsafe as one that keeps the address of a
+local.
 
 ## Lifetime-tracking hooks
 
@@ -3921,6 +4078,9 @@ In the example the constructors `newLit` and `newPlus` are procs
 because they should use static binding, but `eval` is a method because it
 requires dynamic binding.
 
+An override of a `.noSideEffect` method must be `.noSideEffect` itself: a call
+is checked against the method it resolves to statically.
+
 
 ### Inhibit dynamic method resolution via procCall
 
@@ -4039,7 +4199,10 @@ except ErrorCode as e:
 ### Raises types
 
 `{.raises.}` means `{.raises: ErrorCode.}`. The only other type a routine may
-raise is a `ref` object type, usually one inheriting from `Exception`:
+raise is a `ref` object type with runtime type information, usually one
+inheriting from `Exception`. An object type without an ancestor is final and
+has no such information, and neither has a `pure` root, so `.raises`, `except`
+and `raise` reject a `ref` to one:
 
 ```nim
 type ParseError = ref object of Exception
@@ -4344,6 +4507,19 @@ echo find(myCollection, 3) # 2
 ```
 
 These form of generics are called "checked generics" because the typing rules are checked at the point of definition and also at the point of instantiation.
+
+In a checked generic, a `when` whose condition depends on a generic parameter cannot be decided at the point of definition. It is checked like an `if` with a constant condition. Every branch is checked, against the constraints of the generic parameters, and every branch is its own scope. So a name declared in such a branch is not visible after the `when`:
+
+```nim
+proc f[T](x: T) =
+  when T is int:
+    var y = 1
+  else:
+    var y = "a"
+  echo y # Error: undeclared identifier: y
+```
+
+Declare the name before the `when`, or use an untyped generic, where `when` keeps the rules of the [When statement](#when-statement).
 
 
 ### Untyped generics
@@ -4884,7 +5060,6 @@ The following features are available:
 | `"canraise"` | Allows procs without a `raises` annotation to raise exceptions. |
 | `"lenientconverters"` | Allows the definition of converters for basic types such as `int`. For compatibility with Nim 2. |
 | `"untyped"` | Treats templates and generic procs as `.untyped` by default. For compatibility with Nim 2. |
-| `"earlymagics"` | Resolves magic procs before overload resolution. For compatibility with Nim 2. |
 | `"ignoreStyle"` | Be compatible with Nim 2's style insensitivity rules. |
 | `"varToverloads"` | Allow for overloading via `var T`. For compatibility with Nim 2. |
 | `"lenientFloats"` | Allows implicit narrowing of float *values* (named constants and arbitrary expressions, not just literals) to a smaller float type. Off by default because the narrowing can lose precision. For compatibility with Nim 2. |
@@ -4988,6 +5163,12 @@ and instead, the generated code should contain an `#include`:c:\:
     PFile {.importc: "FILE*", header: "<stdio.h>".} = ptr object
       # import C's FILE* type; Nim will treat it as a new pointer type
   ```
+
+On a `ptr object` or `ref object` the pragma names the C type the pointer
+points to; a trailing `*` is optional and is dropped. Only an inline `object`
+is accepted there: `ptr cint` or `ptr SomeNamedObject` cannot be imported this
+way. A C typedef that is itself a pointer (`typedef struct S* H;`) is imported
+as `H {.importc.} = pointer`.
 
 The `header` pragma always expects a string constant. The string constant
 contains the header file: As usual for C, a system header file is enclosed

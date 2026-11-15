@@ -442,6 +442,18 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParLe(pk, n.info)
       dest.addParRi()
     toPragmaArgs()
+  of ReadonlyViewP:
+    # Declares that the returned view never allows mutation: derefs refuses a
+    # call to it where a `var` view is expected, even for a mutable argument.
+    # A copy-on-write container needs this, as nothing makes its buffer unique
+    # before a write through the view.
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, $pk & " pragma is only allowed on routines"
+    else:
+      crucial.flags.incl pk
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+    toPragmaArgs()
   of EnableTraceP:
     buildErr c, dest, n.info, "`enableTrace` is a statement in the body of `nimTraceRef`"
     toPragmaArgs()
@@ -550,9 +562,16 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       # Sem-check the type properly
       let typeInfo = n.info
       crucial.raisesType = semLocalType(c, dest, n)
-      if raisesFamily(crucial.raisesType) == NotRaisable:
+      case raisesFamily(crucial.raisesType)
+      of NotRaisable:
         buildErr c, dest, typeInfo, "`.raises` takes `ErrorCode` or a `ref` object type, not `" &
           typeToString(crucial.raisesType) & "`"
+      of RefLacksRtti:
+        # The type is reported at the pragma: the expanded `ref` type carries
+        # its declaration's line info.
+        buildErr c, dest, start.info, "`.raises` takes a `ref` object type with RTTI, not `" &
+          typeToString(crucial.raisesType) & "`; inherit its object from `Exception`"
+      of CodeRaises, RefRaises, UnknownRaises: discard
       dest.addParRi()
       var emptyRaises = false
       if nn.exprKind == BracketX:
@@ -582,7 +601,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         inc n
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
-  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
+  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, InvariantP, PragmaP, PushP, PopP, PassLP, PassCP:
     if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0) and
         not isPreservedCustomPragma(n):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
@@ -876,6 +895,12 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
     # An int the back end reads as a LITERAL (32/64) at the call site; the
     # declared parameter type is any integer.
     result = intBitsOf(c, typ) > 0
+  of ptLoc:
+    # A location of ANY type: `zeroMemIns[T](x: var T)` is generic, and what the
+    # op does to it is decided by the type's size, not by a pattern.
+    result = true
+  of ptOptSize:
+    result = intBitsOf(c, typ) > 0
   of ptImmLit:
     # Same shape as `ptLaneBits` and checked the same way: the DECLARATION only
     # has to say "an integer". That the argument must be a literal is a fact
@@ -926,7 +951,9 @@ proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
       inc i
       skip p
   if result.len == 0:
-    if i != row.arity:
+    # A trailing `ptOptSize` (the block-memory rows' byte count) may be omitted.
+    let optional = row.arity > 0 and row.params[row.arity - 1] == ptOptSize
+    if i != row.arity and not (optional and i == row.arity - 1):
       result = "`" & opName & "` takes " & $row.arity & " operand(s), " &
                "but " & $i & " were declared"
     else:
@@ -1016,7 +1043,9 @@ proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
   if not semos.fileExists(name):
     buildErr c, dest, info, "cannot find: " & name
-  name = name.toRelativePath(curWorkDir)
+  # absolute in a stdlib module, whose `.s.nif` builds started from any
+  # directory share (`semos.inStdcache`); so are `.build` and `.bundle` tools
+  if not inStdcache(c.g.config, info.getFile): name = name.toRelativePath(curWorkDir)
   c.toBuild.buildTree TupX, info:
     c.toBuild.addStrLit lang, info
     c.toBuild.addStrLit name, info
@@ -1049,7 +1078,7 @@ proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
   if not semos.fileExists(tool):
     buildErr c, dest, info, "build: cannot find tool source: " & tool
-  tool = tool.toRelativePath(curWorkDir)
+  if not inStdcache(c.g.config, info.getFile): tool = tool.toRelativePath(curWorkDir)
   # Link flags are passed through verbatim (with `${path}` substitution), NOT a
   # file path — they end up on the linker command line next to this module's `.o`.
   let linkFlags = replaceSubs(rawLinkFlags, currentDir, c.g.config)
@@ -1074,7 +1103,7 @@ proc addBundle(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
   if not semos.fileExists(tool):
     buildErr c, dest, info, "bundle: cannot find linker tool source: " & tool
-  tool = tool.toRelativePath(curWorkDir)
+  if not inStdcache(c.g.config, info.getFile): tool = tool.toRelativePath(curWorkDir)
   c.toBundle.buildTree TupX, info:
     c.toBundle.addStrLit builder, info
     c.toBundle.addStrLit tool, info
@@ -1174,7 +1203,10 @@ proc semLinkPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: N
   elif path notin c.toLink:
     c.toLink.add path
 
-proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
+proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool;
+                    loopHead: var bool) =
+  ## `loopHead`: the line starts a loop body, the one place an `invariant` may
+  ## stand (`semLoopBody`). It stays true only while every pragma is one.
   # A statement pragma arrives either wrapped — `(call build "a")` /
   # `(kv assume expr)` with the pragma name as first child — or as a bare
   # ident / tag-form node. For wrapped forms the wrapper's scope is entered
@@ -1196,6 +1228,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     if hasScope:
       it.n = start; skip it.n
     else: skipParRi it.n # degenerate bare-ident form; historical behavior
+  if it.n.pragmaKind != InvariantP: loopHead = false
   if c.phase == SemcheckSignatures and not isPragmaBlock and
       it.n.pragmaKind in {CompileP, LinkP, PassCP, PassLP}:
     # These evaluate their arguments as constant expressions, which needs the
@@ -1273,9 +1306,12 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     toPragmaArgs()
     semEmit c, dest, it
     closePragmaLine()
-  of AssumeP, AssertP:
-    let kind = if it.n.pragmaKind == AssumeP: AssumeS else: AssertS
+  of AssumeP, AssertP, InvariantP:
+    let pk = it.n.pragmaKind
+    let kind = if pk == AssumeP: AssumeS elif pk == AssertP: AssertS else: InvariantS
     let info = it.n.info
+    if pk == InvariantP and not loopHead:
+      buildErr c, dest, info, "an `invariant` must be the first statement of a loop body"
     toPragmaArgs()
     dest.addParLe(kind, info)
     semBoolExpr c, dest, it.n
@@ -1495,13 +1531,17 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       skip it.n
       while it.n.hasMore: skip it.n
 
-proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item; loopHead: var bool) =
   let info = it.n.info
   it.n.into:
     while it.n.hasMore:
       # kv/call wrappers around a pragma line are entered by `semPragmaLine`
-      semPragmaLine c, dest, it, false
+      semPragmaLine c, dest, it, false, loopHead
   producesVoid c, dest, info, it.typ # in case it was not already produced
+
+proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  var loopHead = false
+  semPragmasLine c, dest, it, loopHead
 
 proc hasCastUncheckedAccess(n: Cursor): bool =
   ## Scan the first pragma of the `(pragmas ...)` list at `n` to see if it
@@ -1525,11 +1565,15 @@ proc semPragmaExpr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     assert it.n.stmtKind == PragmasS
     hasUncheckedAccess = hasCastUncheckedAccess(it.n)
     copyInto dest, it.n: # (pragmas
+      var loopHead = false
       while it.n.hasMore:
-        semPragmaLine c, dest, it, true
+        semPragmaLine c, dest, it, true, loopHead
     if hasUncheckedAccess:
       inc c.inUncheckedAccess
-    semStmt(c, dest, it.n, false)
+    var list = createTokenBuf(0)
+    var body = bodyAsList(it.n, list)
+    semStmt(c, dest, body, false)
+    skip it.n
     if hasUncheckedAccess:
       dec c.inUncheckedAccess
   producesVoid c, dest, info, it.typ

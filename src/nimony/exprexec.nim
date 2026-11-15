@@ -17,7 +17,10 @@ import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, ty
 import ".." / lib / symparser
 
 const
-  ParamSymName = "dest.0"
+  ParamSymName = "`dest.0" # unspellable: the program is re-checked from
+                           # idents beside the user's declarations
+  WriteNifAlias = "`writenif" # unspellable alias of `std/writenif`; the
+                              # program calls its routines through it
 
 when false:
   proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
@@ -54,6 +57,7 @@ type
     requests: seq[GenProcRequest]
     usedModules: HashSet[string]
     errorMsg: string
+    indexVars: int           # counter for `newIndexVar`
     semCtx: ptr SemContext   # used to resolve `InvokeT` types via sem's
                              # `instantiateType` (kept as a ptr so this
                              # struct stays trivially-copyable; the SemContext
@@ -123,6 +127,19 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
   ## generated serializer reference private types from other modules
   ## (e.g. `HashEntry` in `std/tables`) without those libraries needing
   ## to re-export them just for the const-eval machinery.
+  ##
+  ## `std/writenif`'s symbols are the program's own calls into its reporting
+  ## routines, plain non-generic procs: they become idents without a look at
+  ## their declarations, as the program's build is what builds that module
+  ## (it is an import, see `semos.runEval`) and it may not exist yet. They
+  ## are qualified with the module's unspellable alias, so a routine of the
+  ## user's with the same name cannot take the call.
+  if pool.symModule(sym) == writeNifModuleSuffix:
+    buf.addParLe(DotX, info)
+    buf.addIdent(WriteNifAlias, info)
+    buf.addIdent(pool.strings.getOrIncl(pool.symBasename(sym)), info)
+    buf.addParRi()
+    return
   let typevars = instantiationTypevars(sym)
   if not cursorIsNil(typevars):
     buf.addParLe(AtX, info)
@@ -253,6 +270,12 @@ proc genStringCall(c: var SynthesizeSerializerCtx; name, arg: string) =
     c.dest.addSymUse pool.symId(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addStrLit arg, c.info
 
+proc genTypeCall(c: var SynthesizeSerializerCtx; t: TypeCursor) =
+  ## Emits `t` as a raw atom. Like every atom it needs a leading space: a
+  ## type that is just a symbol (`Dur.0.m`) would otherwise fuse with the
+  ## tag in front of it, `(convDur.0.m …` (#2926).
+  genStringCall(c, "writeNifRaw", " " & toString(t, false))
+
 proc genParRiCall(c: var SynthesizeSerializerCtx) =
   c.dest.copyIntoKind CallS, c.info:
     c.dest.addSymUse pool.symId("writeNifParRi.0." & writeNifModuleSuffix), c.info
@@ -352,7 +375,7 @@ proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: Toke
 proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; depth: int) =
   genStringCall(c, "writeNifParLe", "oconstr")
   # we simply generate the type as a raw string:
-  genStringCall(c, "writeNifRaw", toString(orig, false))
+  genTypeCall(c, orig)
 
   var n = orig
   let needsDeref = n.typeKind in {RefT, PtrT}
@@ -375,7 +398,7 @@ proc unravelTuple(c: var SynthesizeSerializerCtx;
   assert orig.typeKind == TupleT
   genStringCall(c, "writeNifParLe", "tupconstr")
   # we simply generate the type as a raw string:
-  genStringCall(c, "writeNifRaw", toString(orig, false))
+  genTypeCall(c, orig)
 
   var n = orig
   var idx = 0
@@ -423,6 +446,14 @@ proc incIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
       copyIntoSymUse c.dest, indexVar, c.info
       c.dest.addIntLit(+1, c.info)
 
+proc newIndexVar(c: var SynthesizeSerializerCtx): SymId =
+  ## A fresh index variable for one serializer loop. The program is
+  ## re-checked from idents (`rewriteSymsToIdents`), so the loops of one
+  ## routine, nested (an array of arrays) or in sequence (a tuple of
+  ## arrays), must differ by basename, not only by symbol.
+  result = pool.symId("`idx" & $c.indexVars & ".0")
+  inc c.indexVars
+
 proc declareIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
   copyIntoKind c.dest, VarY, c.info:
     addSymDef c.dest, indexVar, c.info
@@ -438,12 +469,12 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
   inc n
   let baseType = n
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "aconstr")
   # we simply generate the type as a raw string:
-  genStringCall(c, "writeNifRaw", toString(orig, false))
+  genTypeCall(c, orig)
 
   copyIntoKind c.dest, WhileS, c.info:
     indexVarLowerThanArrayLen c, indexVar, arrayLen
@@ -471,12 +502,12 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
   inc ft # past uarray tag
   let baseType = ft
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "addr")
   genStringCall(c, "writeNifParLe", "aconstr")
-  genStringCall(c, "writeNifRaw", toString(uarrayType, false))
+  genTypeCall(c, uarrayType)
 
   copyIntoKind c.dest, WhileS, c.info:
     # while idx < len(param):
@@ -507,9 +538,9 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
   let baseType = orig.childCursor
   let maxValue = bitsetSizeInBytes(baseType) * createXint(8'i64)
   genStringCall(c, "writeNifParLe", "setconstr")
-  genStringCall(c, "writeNifRaw", toString(orig, false))
+  genTypeCall(c, orig)
 
-  let indexVar = pool.symId("idx.0")
+  let indexVar = newIndexVar(c)
   declareIndexVar c, indexVar
   # the element is our int indexVar, converted back to the set's base type
   var indexVarAsBuf = createTokenBuf(4)
@@ -560,7 +591,7 @@ proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
     return
   elif orig.typeKind == CstringT:
     genStringCall(c, "writeNifParLe", "conv")
-    genStringCall(c, "writeNifRaw", toString(orig, false))
+    genTypeCall(c, orig)
     primitiveCall(c, "writeNifStr", arg)
     genParRiCall c
     return
@@ -571,8 +602,19 @@ proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
     # do not lose the type:
     genStringCall(c, "writeNifParLe", "conv")
     # we simply generate the type as a raw string:
-    genStringCall(c, "writeNifRaw", toString(orig, false))
-    entryPoint(c, typ.childCursor, arg)
+    genTypeCall(c, orig)
+    let baseType = typ.childCursor
+    if typ.typeKind == DistinctT:
+      # the serializers only accept the base type and a distinct type does
+      # not convert to it implicitly, so unwrap `arg` (#2926):
+      var baseArg = createTokenBuf(8)
+      copyIntoKind baseArg, ConvX, c.info:
+        baseArg.addSubtree baseType
+        baseArg.addSubtree arg
+      entryPoint(c, baseType, readonlyCursorAt(baseArg, 0))
+    else:
+      # a range converts to its base type implicitly
+      entryPoint(c, baseType, arg)
     genParRiCall c
   of IT:
     primitiveCall(c, "writeNifInt", arg)
@@ -754,9 +796,6 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
   ## body is too complex for `expreval.eval` — local `var`s, nested procs,
   ## `for` loops, etc.). The result is serialised to NIF in `dest` using the
   ## same `entryPoint` machinery that `executeCall` uses.
-  let prepResult = semos.prepareEval(s)
-  if prepResult.len > 0: return prepResult
-
   var c = SynthesizeSerializerCtx(dest: createTokenBuf(150), info: info,
     routineKind: ProcY, bits: s.g.config.bits, errorMsg: "",
     thisModuleSuffix: s.thisModuleSuffix,
@@ -767,10 +806,13 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
   c.dest.addParLe StmtsS, info
 
   c.dest.copyIntoKind ImportS, info:
-    c.dest.copyIntoKind InfixX, info:
-      c.dest.addIdent "/", info
-      c.dest.addIdent "std", info
-      c.dest.addIdent "writenif", info
+    c.dest.copyIntoKind InfixX, info: # std/writenif as `writenif
+      c.dest.addIdent "as", info
+      c.dest.copyIntoKind InfixX, info:
+        c.dest.addIdent "/", info
+        c.dest.addIdent "std", info
+        c.dest.addIdent "writenif", info
+      c.dest.addIdent WriteNifAlias, info
 
   if s.importSnippets.len > 0:
     # buffer-level `add` keeps the seals intact; a token-by-token `add`
@@ -779,7 +821,7 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.symId("setup.0." & writeNifModuleSuffix), info
-    c.dest.addStrLit toAbsolutePath(s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif"), info
+    c.dest.addStrLit toAbsolutePath(evalCacheDir(s) / c.newModuleSuffix & ".out.nif"), info
 
   var retTypeBuf = createTokenBuf(4)
   if cursorIsNil(expectedType):

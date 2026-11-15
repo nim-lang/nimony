@@ -1,0 +1,1 @@
+Error: invalid module name: '1digitmain' (tests/nimony/errmsgs/1digitmain.nim); a module name must not start with a digit
