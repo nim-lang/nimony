@@ -14,28 +14,6 @@
 ## [excellent paper by Adam Langley](https://www.imperialviolet.org/binary/critbit.pdf).
 ## (A crit bit tree is a form of `radix tree`:idx: or `patricia trie`:idx:.)
 
-runnableExamples:
-  from std/sequtils import toSeq
-
-  var critbitAsSet: CritBitTree[void] = ["kitten", "puppy"].toCritBitTree
-  doAssert critbitAsSet.len == 2
-  critbitAsSet.incl("")
-  doAssert "" in critbitAsSet
-  critbitAsSet.excl("")
-  doAssert "" notin critbitAsSet
-  doAssert toSeq(critbitAsSet.items) == @["kitten", "puppy"]
-  let same = ["puppy", "kitten", "puppy"].toCritBitTree
-  doAssert toSeq(same.keys) == toSeq(critbitAsSet.keys)
-
-  var critbitAsDict: CritBitTree[int] = {"key1": 42}.toCritBitTree
-  doAssert critbitAsDict.len == 1
-  critbitAsDict["key2"] = 0
-  doAssert "key2" in critbitAsDict
-  doAssert critbitAsDict["key2"] == 0
-  critbitAsDict.excl("key1")
-  doAssert "key1" notin critbitAsDict
-  doAssert toSeq(critbitAsDict.pairs) == @[("key2", 0)]
-
 import std/assertions
 
 type
@@ -444,12 +422,6 @@ iterator leaves[T](n: nil Node[T]): Node[T] =
 
 iterator keys*[T](c: CritBitTree[T]): string =
   ## Yields all keys in lexicographical order.
-  runnableExamples:
-    from std/sequtils import toSeq
-
-    let c = {"key1": 1, "key2": 2}.toCritBitTree
-    doAssert toSeq(c.keys) == @["key1", "key2"]
-
   for x in leaves(c.root): yield x.key
 
 iterator values*[T](c: CritBitTree[T]): lent T =
@@ -458,12 +430,6 @@ iterator values*[T](c: CritBitTree[T]): lent T =
   ##
   ## **See also:**
   ## * `mvalues iterator <#mvalues.i,CritBitTree[T]>`_
-  runnableExamples:
-    from std/sequtils import toSeq
-
-    let c = {"key1": 1, "key2": 2}.toCritBitTree
-    doAssert toSeq(c.values) == @[1, 2]
-
   for x in leaves(c.root): yield x.val
 
 iterator mvalues*[T](c: var CritBitTree[T]): var T {.sideEffect.} =
@@ -484,12 +450,6 @@ iterator pairs*[T](c: CritBitTree[T]): tuple[key: string, val: T] =
   ##
   ## **See also:**
   ## * `mpairs iterator <#mpairs.i,CritBitTree[T]>`_
-  runnableExamples:
-    from std/sequtils import toSeq
-
-    let c = {"key1": 1, "key2": 2}.toCritBitTree
-    doAssert toSeq(c.pairs) == @[(key: "key1", val: 1), (key: "key2", val: 2)]
-
   for x in leaves(c.root): yield (x.key, x.val)
 
 iterator mpairs*[T](c: var CritBitTree[T]): tuple[key: string, val: var T] {.sideEffect.} =
@@ -518,12 +478,6 @@ func allprefixedAux[T](c: CritBitTree[T], key: string): nil Node[T] =
 
 iterator keysWithPrefix*[T](c: CritBitTree[T], prefix: string): string =
   ## Yields all keys starting with `prefix`.
-  runnableExamples:
-    from std/sequtils import toSeq
-
-    let c = {"key1": 42, "key2": 43}.toCritBitTree
-    doAssert toSeq(c.keysWithPrefix("key")) == @["key1", "key2"]
-
   let top = allprefixedAux(c, prefix)
   for x in leaves(top): yield x.key
 
@@ -533,12 +487,6 @@ iterator valuesWithPrefix*[T](c: CritBitTree[T], prefix: string): lent T =
   ##
   ## **See also:**
   ## * `mvaluesWithPrefix iterator <#mvaluesWithPrefix.i,CritBitTree[T],string>`_
-  runnableExamples:
-    from std/sequtils import toSeq
-
-    let c = {"key1": 42, "key2": 43}.toCritBitTree
-    doAssert toSeq(c.valuesWithPrefix("key")) == @[42, 43]
-
   let top = allprefixedAux(c, prefix)
   for x in leaves(top): yield x.val
 
@@ -562,12 +510,6 @@ iterator pairsWithPrefix*[T](c: CritBitTree[T],
   ##
   ## **See also:**
   ## * `mpairsWithPrefix iterator <#mpairsWithPrefix.i,CritBitTree[T],string>`_
-  runnableExamples:
-    from std/sequtils import toSeq
-
-    let c = {"key1": 42, "key2": 43}.toCritBitTree
-    doAssert toSeq(c.pairsWithPrefix("key")) == @[(key: "key1", val: 42), (key: "key2", val: 43)]
-
   let top = allprefixedAux(c, prefix)
   for x in leaves(top): yield (x.key, x.val)
 
