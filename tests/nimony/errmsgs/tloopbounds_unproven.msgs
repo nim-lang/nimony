@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tloopbounds_unproven.nim(12, 1) Error: cannot prove postcondition: -1 <= result.thing and result.thing < 3 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tloopbounds_unproven.nim(18, 1) Error: cannot prove postcondition: -1 <= result.thing and result.thing < 3 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tloopbounds_unproven.nim(25, 1) Error: cannot prove postcondition: -1 <= result.thing and result.thing < 3 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tloopbounds_unproven.nim(33, 1) Error: cannot prove postcondition: -1 <= result and result < 6 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tloopbounds_unproven.nim(39, 1) Error: cannot prove postcondition: -1 <= result.thing and result.thing < 3 [pass --verbose for the Final IR]

@@ -3256,6 +3256,20 @@ proc pick(i: int; miss: bool): Hit {.requires: i >= 0 and i < 3,
   result = Hit(thing: i)    # proven from the `requires`
 ```
 
+A loop that overwrites a location keeps a constant bound on it when every
+write in the body stores a value of a constant interval: a literal, a
+constructor of such values, a call whose `ensures` bounds its result with
+constants, or a local of the body declared with one. At the head of the loop
+the location lies in the hull of those intervals and of its bound on entry:
+
+```nim
+var best = Hit(thing: -1)
+for i in 0 ..< 3:
+  let h = pick(i, miss(i))
+  if h.thing != -1 and closer(h): best = h
+# -1 <= best.thing and best.thing < 3
+```
+
 ### Assertions and assumptions
 
 Inside a body, two statements take part in the same reasoning:

@@ -5213,6 +5213,35 @@ type
     pendingStep: VarId    ## the `(unknown v)` a step call emits right after
                           ## itself is that call's own doing, not a second,
                           ## unclassified write
+    writeBounds: Table[VarId, Interval]
+      ## For a written location, the hull of the constant intervals of the
+      ## values its writes store (`writeBoundsAtHead`) ...
+    unbounded: HashSet[VarId]
+      ## ... unless one of its writes stores a value no constant bounds.
+    thisWrite: Table[VarId, Interval]
+      ## The intervals the write being noted stores into each location it
+      ## writes; `noteWrite` takes them from here.
+    localPaths: Table[SymId, PathBounds]
+      ## The intervals the value a local of the body was declared with lies
+      ## in, per field path: `let h = probe(i)` under `probe`'s `.ensures`.
+
+  Interval = object
+    lo, hi: xint          ## NaN: no bound on that side
+  PathBounds = Table[string, Interval]
+    ## Keyed by a field path below a value as the derived-location keys spell
+    ## it (`""` for the value itself, `".<field>"` below it).
+
+proc hull(a, b: Interval): Interval =
+  ## The smallest interval holding both.
+  result = Interval(
+    lo: (if a.lo.isNaN or b.lo.isNaN: createNaN() else: min(a.lo, b.lo)),
+    hi: (if a.hi.isNaN or b.hi.isNaN: createNaN() else: max(a.hi, b.hi)))
+
+proc meet(a, b: Interval): Interval =
+  ## Both at once: two conjuncts bounding the same path.
+  result = Interval(
+    lo: (if a.lo.isNaN: b.lo elif b.lo.isNaN: a.lo else: max(a.lo, b.lo)),
+    hi: (if a.hi.isNaN: b.hi elif b.hi.isNaN: a.hi else: min(a.hi, b.hi)))
 
 proc joinIv(a, b: IvKind): IvKind =
   ## What two writes in the same body jointly guarantee. Raising a non-negative
@@ -5229,6 +5258,147 @@ proc noteWrite(w: var LoopWrites; v: VarId; kind: IvKind) =
     w.kinds[v] = joinIv(w.kinds.getOrQuit(v), kind)
   else:
     w.kinds[v] = kind
+  if v notin w.unbounded:
+    if w.thisWrite.hasKey(v):
+      let iv = w.thisWrite.getOrQuit(v)
+      w.writeBounds[v] = if w.writeBounds.hasKey(v): hull(w.writeBounds.getOrQuit(v), iv)
+                         else: iv
+    else:
+      w.unbounded.incl v
+      w.writeBounds.del v
+
+proc peelProp(c: var FirContext; n: Cursor): Cursor =
+  ## A conjunct of an `.ensures` inside the `(expr …)` wrappers an inlined
+  ## comparison template leaves around it.
+  result = n
+  var guard = 0
+  while result.exprKind == ExprX and guard < MaxLocationDepth:
+    inc guard
+    var inner = result
+    inner = sub(inner)
+    if not inner.hasMore: break
+    while inner.hasMore and not isLastSon(inner): skip inner
+    result = inner
+  result = peelExpr(c, result)
+
+proc resultPath(c: var FirContext; n: Cursor; results: openArray[SymId];
+                path: var string; depth = 0): bool =
+  ## Is `n` the routine's `result` or a field path below it? `path` is the
+  ## path in `PathBounds` spelling.
+  let m = peelProp(c, n)
+  if depth > MaxLocationDepth:
+    result = false
+  elif m.isSymbol:
+    result = m.symId in results
+    path = ""
+  elif m.exprKind == DotX:
+    var r = m
+    r = sub(r)
+    result = resultPath(c, r, results, path, depth+1)
+    if result:
+      skip r # the object
+      result = r.isSymbol
+      if result: path.add "." & $uint32(r.symId)
+  else:
+    result = false
+
+proc ensuresIntervals(c: var FirContext; cond: Cursor; results: openArray[SymId];
+                      dest: var PathBounds) =
+  ## The constant intervals the conjuncts of an `.ensures` state about the
+  ## result and its fields: `result.thing >= -1 and result.thing < 3`. A bound
+  ## that names a parameter is not constant and is left out.
+  let p = peelProp(c, cond)
+  case p.exprKind
+  of AndX:
+    var r = p
+    r = sub(r)
+    ensuresIntervals(c, r, results, dest)
+    skip r
+    ensuresIntervals(c, r, results, dest)
+  of LeX, LtX, EqX:
+    var r = p
+    r = sub(r)
+    skip r # the type operand
+    let a = peelProp(c, r)
+    skip r
+    let b = peelProp(c, r)
+    let strict = if p.exprKind == LtX: createXint(1'i64) else: zero()
+    var path = ""
+    var iv = Interval(lo: createNaN(), hi: createNaN())
+    var found = false
+    if a.isIntLit and resultPath(c, b, results, path):
+      iv.lo = createXint(a.intVal) + strict        # k <= path
+      if p.exprKind == EqX: iv.hi = iv.lo
+      found = true
+    elif b.isIntLit and resultPath(c, a, results, path):
+      iv.hi = createXint(b.intVal) - strict        # path <= k
+      if p.exprKind == EqX: iv.lo = iv.hi
+      found = true
+    if found:
+      dest[path] = if dest.hasKey(path): meet(dest.getOrQuit(path), iv) else: iv
+  else:
+    discard
+
+proc callIntervals(c: var FirContext; call: Cursor; dest: var PathBounds) =
+  ## What a declared routine's `.ensures` bounds its result to, with constants.
+  var fn = call
+  fn = sub(fn)
+  let fnSym = extractSymId(fn)
+  if fnSym != NoSymId:
+    let routine = tryLoadSym(fnSym)
+    if routine.status == LacksNothing and isRoutine(routine.decl.symKind):
+      var t = asRoutine(routine.decl).params
+      if not cursorIsNil(t) and t.isParamsTag:
+        skip t # params
+        skip t # return type
+        let ens = extractPragma(t, EnsuresP)
+        if not cursorIsNil(ens):
+          # the `result` symbols of the wrappers, one per sem-check
+          var results: seq[SymId] = @[]
+          var e = ens
+          var guard = 0
+          while e.exprKind == ExprX and guard < MaxLocationDepth:
+            inc guard
+            var inner = e
+            inner = sub(inner)
+            if not inner.hasMore: break
+            if inner.symKind == ResultY: results.add asLocal(inner).name.symId
+            while inner.hasMore and not isLastSon(inner): skip inner
+            e = inner
+          ensuresIntervals(c, e, results, dest)
+
+proc valueIntervals(c: var FirContext; w: LoopWrites; value: Cursor;
+                    dest: var PathBounds; depth = 0) =
+  ## The constant intervals `value` and its fields lie in, as far as they are
+  ## known without a fact of the loop: a literal, a constructor of such
+  ## values, a call's `.ensures`, a local of the body declared with one.
+  if depth > MaxLocationDepth or cursorIsNil(value): return
+  let v = peelExpr(c, value)
+  if v.isIntLit:
+    let k = createXint(v.intVal)
+    dest[""] = Interval(lo: k, hi: k)
+  elif v.isSymbol:
+    if w.localPaths.hasKey(v.symId):
+      for path, iv in w.localPaths.getOrQuit(v.symId): dest[path] = iv
+  elif v.exprKind == OconstrX:
+    var n = v
+    n.into:
+      let byValue = isValueObject(c, n)
+      skip n # the type
+      while n.hasMore:
+        if byValue and n.substructureKind == KvU:
+          var kv = n
+          kv.into:
+            if kv.isSymbol:
+              let field = "." & $uint32(kv.symId)
+              skip kv
+              var sub = initTable[string, Interval]()
+              valueIntervals(c, w, kv, sub, depth+1)
+              for path, iv in sub: dest[field & path] = iv
+            while kv.hasMore: skip kv
+        skip n
+  elif v.exprKind in CallKinds:
+    callIntervals(c, v, dest)
 
 proc noteDerivedOf(c: var FirContext; w: var LoopWrites; root: SymId; keep: VarId) =
   ## Writing a location disturbs everything derived from the same root: after
@@ -5353,7 +5523,7 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
     mayWrap = true
   result = directionOf(v.exprKind == SubX, k)
 
-proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
+proc noteWriteToImpl(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) =
   if isElementWrite(dest): return
   let root = writtenRoot(c, dest)
   if root == NoSymId:
@@ -5390,6 +5560,30 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
     # Writing `d.count` says nothing about `d` itself, but nil-ness and the
     # like are keyed on the root, so stay conservative there.
     noteWrite(w, getVarId(c, root), ivUnknown)
+
+proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
+  ## Notes the write `dest = value`, with the constant intervals the value
+  ## stores into `dest` and the field paths below it (`w.thisWrite`).
+  let root = writtenRoot(c, dest)
+  let loc = if isElementWrite(dest) or root == NoSymId: InvalidVarId
+            else: plainLocationVarId(c, dest)
+  if loc != InvalidVarId and not cursorIsNil(value):
+    var pb = initTable[string, Interval]()
+    valueIntervals(c, w, value, pb)
+    if pb.len > 0:
+      let destKey = if loc == getVarId(c, root): "v" & $uint32(root)
+                    else: c.derivedKeys[FirstDerivedVarId - int(loc)]
+      if pb.hasKey(""): w.thisWrite[loc] = pb.getOrQuit("")
+      for i in 0 ..< c.derivedRoots.len:
+        let k = c.derivedKeys[i]
+        if c.derivedRoots[i] == root and k.len > destKey.len and
+            k[destKey.len] == '.' and k.startsWith(destKey):
+          let path = k.substr(destKey.len)
+          if pb.hasKey(path): w.thisWrite[VarId(FirstDerivedVarId - i)] = pb.getOrQuit(path)
+  # what a local of the body was declared with holds no longer
+  if root != NoSymId: w.localPaths.del root
+  noteWriteToImpl(c, w, dest, value)
+  w.thisWrite.clear()
 
 proc noteBarrier(w: var LoopWrites; named: openArray[SymId]) =
   inc w.barriers
@@ -5525,6 +5719,12 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
         w.nonNeg.incl getVarId(c, local.name.symId)
       noteWrite(w, getVarId(c, local.name.symId), ivUnknown)
       noteDerivedOf(c, w, local.name.symId, InvalidVarId)
+      # what it is declared with, for a write that copies it later
+      w.localPaths.del local.name.symId
+      if not cursorIsNil(local.val) and not local.val.isDotToken:
+        var pb = initTable[string, Interval]()
+        valueIntervals(c, w, local.val, pb)
+        if pb.len > 0: w.localPaths[local.name.symId] = pb
   w.pendingStep = InvalidVarId
   n.into:
     while n.hasMore:
@@ -5549,6 +5749,31 @@ proc isLoopInvariant(c: FirContext; w: LoopWrites; f: LeXplusC): bool =
     else: return false
   result = true
 
+proc writeBoundsAtHead(c: var FirContext; w: LoopWrites): seq[LeXplusC] =
+  ## At the head of a loop a written location holds what it held on entry or
+  ## what one of the body's writes stored. When every write stores a value of
+  ## a constant interval (`w.writeBounds`), the hull of that and the bound it
+  ## has on entry holds on every iteration: `var best = Hit(thing: -1)`, then
+  ## `best = h` with `-1 <= h.thing < 3` by `probe`'s `.ensures`, keeps
+  ## `-1 <= best.thing < 3`. One pass, no guess to take back.
+  result = @[]
+  if not w.opaque and w.writeBounds.len > 0:
+    let fromZero = boundsFrom(c.facts, VarId(0)) # `0 <= v + d`: `v >= -d`
+    for v, iv in w.writeBounds:
+      var root = NoSymId
+      if int(v) > 0: root = SymId(int(v))
+      elif int(v) <= FirstDerivedVarId: root = c.derivedRoots[FirstDerivedVarId - int(v)]
+      # a barrier forgets a shared location whatever its writes store
+      if v notin w.unbounded and root != NoSymId and
+          not (w.barriers > 0 and isShared(c, root)):
+        if not iv.hi.isNaN:
+          let up = boundsFrom(c.facts, v)       # `v <= 0 + d`
+          if up.hasKey(VarId(0)):
+            result.add query(v, VarId(0), max(iv.hi, up.getOrDefault(VarId(0))))
+        if not iv.lo.isNaN and fromZero.hasKey(v):
+          let entryLo = -fromZero.getOrDefault(v)
+          result.add query(VarId(0), v, -min(iv.lo, entryLo))
+
 proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   # Strengthen before widening. `0 <= b` may only be *derivable* on entry — from
   # `0 <= y` and `y <= b` after `var b = y` — and the chain it hangs on is not
@@ -5565,6 +5790,7 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for v, kind in w.kinds:
     for ch in chainsThrough(c.facts, v):
       if isLoopInvariant(c, w, ch): bypasses.add ch
+  let hulls = writeBoundsAtHead(c, w)
   var i = 0
   while i < c.facts.len:
     if isLoopInvariant(c, w, c.facts[i]):
@@ -5575,6 +5801,8 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
     c.facts.add query(VarId(0), v, zero())
   for ch in bypasses:
     c.facts.add ch
+  for h in hulls:
+    c.facts.add h
 
 proc forgetWrites(c: var FirContext; w: LoopWrites) =
   ## Drops the facts the writes and barriers `w` records may break: the
