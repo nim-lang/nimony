@@ -1139,6 +1139,15 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = charValue(c, char(ch), nOrig.info)
+      elif targetType.typeKind == BoolT:
+        # `bool(1)`: what `low`/`high` of an `array[bool, T]` index fold to
+        let x = getConstOrdinalValue(val)
+        if x == createXint(0'i64):
+          result = c.getFalseValue()
+        elif x == createXint(1'i64):
+          result = c.getTrueValue()
+        else:
+          cannotEval nOrig
       elif targetType.typeKind in {EnumT, HoleyEnumT, AnumT}:
         let x = getConstOrdinalValue(val)
         if isNaN(x):

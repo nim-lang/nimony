@@ -3231,6 +3231,20 @@ Two module pragmas move the default:
 * `{.feature: "runtimeContracts".}` — no call site in this module is judged at
   all, and the run-time guard is the only check. It wins if both are given.
 
+A postcondition, stated with `ensures`, is judged in the routine itself, at
+every exit, and a caller takes it without looking. No run-time check backs it,
+so an `ensures` the compiler cannot prove is an error in every mode, like an
+undecided `{.assert}`:
+
+```nim
+proc clampLow(x: int): int {.ensures: result >= 0.} =
+  if x < 0: return 0
+  return x                  # proven: the guard bounds `x`
+
+proc pass(x: int): int {.ensures: result >= 0.} =
+  result = x                # Error: cannot prove postcondition: 0 <= result
+```
+
 ### Assertions and assumptions
 
 Inside a body, two statements take part in the same reasoning:
