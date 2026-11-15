@@ -17,7 +17,7 @@
 ## per-body passes (`induction_variables`, …) are still being ported and plug
 ## into `optimizeBody`, which is currently an identity stage.
 
-import std / [os, assertions, strutils, syncio, sets, envvars, hashes]
+import std / [os, assertions, strutils, syncio, sets, envvars]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import ".." / ".." / "lib" / lengiface       # writeLengInterface (`.oc.idx.nif`)
@@ -116,9 +116,8 @@ type
 
   Fixpoint = object
     ## State of one body's cleanup fixpoint.
-    fp: Hash                  ## fingerprint of the body as it is now
-    lastOut: array[CleanupStage, Hash]  ## fingerprint each stage last produced
-    ran: set[CleanupStage]
+    clean: set[CleanupStage]
+      ## Stages whose last run is still current: nothing changed the body since.
     changed: bool             ## the current round changed the body
     sroa, us, iv, cse: int
       ## The temp counters of the passes that mint locals. A pass that runs
@@ -133,27 +132,17 @@ const
     ## only the last link of a dead-store chain (`x = bytes and 255` over
     ## `bytes = b.bytes`), so it runs every round.
 
-proc fingerprint(buf: var TokenBuf): Hash =
-  ## Cheap "did this change anything" test. A collision ends the fixpoint early
-  ## or skips a stage that had nothing new to see; neither is unsafe.
-  result = Hash(buf.len)
-  var n = beginRead(buf)
-  while cursorToPosition(buf, n) < buf.len:
-    result = result !& hash(uint(uint32(n.load)))
-    inc n
-  endRead(n)
-  result = !$result
+proc mutated(f: var Fixpoint) {.inline.} =
+  ## The body changed: every stage has something new to look at.
+  f.changed = true
+  f.clean = {}
 
-template stage(f: var Fixpoint; buf: var TokenBuf; s: CleanupStage; enabled: bool;
-               body: untyped) =
-  if enabled and not (s in IdempotentStages and s in f.ran and f.lastOut[s] == f.fp):
-    body
-    let now = fingerprint(buf)
-    if now != f.fp:
-      f.fp = now
-      f.changed = true
-    f.lastOut[s] = now
-    f.ran.incl s
+template stage(f: var Fixpoint; s: CleanupStage; enabled: bool; pass: untyped) =
+  ## Runs `pass`, which returns whether it changed the body, unless the stage
+  ## is idempotent and the body is still what its last run left behind.
+  if enabled and s notin f.clean:
+    if pass: mutated(f)
+    if s in IdempotentStages: f.clean.incl s
 
 proc runPipelineRound(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
                       summaries: ptr FunctionSummaryTable; m: ptr MainModule;
@@ -166,17 +155,17 @@ proc runPipelineRound(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
   ## bindings copy propagation can see through on the next round.
   f.changed = false
   let rw = eng != nil and passOn("rewrite")
-  stage(f, buf, stRewrite, rw): runRewritesFix(eng, buf)
-  stage(f, buf, stCtorProj, passOn("ctorproj")): runConstructorProjection(buf)
-  stage(f, buf, stScalarize, passOn("scalarize")): runScalarize(buf, m, f.sroa)
-  stage(f, buf, stCopyProp, passOn("copyprop")): runCopyProp(buf, params, summaries, m)
-  stage(f, buf, stUnswitch, passOn("unswitch")): discard runUnswitch(buf, f.us)
+  stage(f, stRewrite, rw): runRewritesFix(eng, buf) > 0
+  stage(f, stCtorProj, passOn("ctorproj")): runConstructorProjection(buf)
+  stage(f, stScalarize, passOn("scalarize")): runScalarize(buf, m, f.sroa)
+  stage(f, stCopyProp, passOn("copyprop")): runCopyProp(buf, params, summaries, m)
+  stage(f, stUnswitch, passOn("unswitch")): runUnswitch(buf, f.us) > 0
   # Copy propagation and unswitching substitute values into expressions;
   # `(add T x 0)` and `(lt 14 14)` that only now became foldable fold here,
   # before CSE keys on them.
-  stage(f, buf, stRefold, rw): runRewritesFix(eng, buf)
-  stage(f, buf, stCse, passOn("cse")):
-    st.checksRemoved += runCSE(buf, summaries, m, params, f.cse)
+  stage(f, stRefold, rw): runRewritesFix(eng, buf) > 0
+  stage(f, stCse, passOn("cse")):
+    runCSE(buf, summaries, m, params, f.cse, st.checksRemoved)
 
 proc cleanupFixpoint(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
                      summaries: ptr FunctionSummaryTable; m: ptr MainModule;
@@ -204,7 +193,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # anything else looks at the body. Removing those `addr` nodes un-poisons the
   # locals for every later pass (SROA and copyprop treat address-taken locals as
   # untouchable) and for both backends' register allocation.
-  var f = Fixpoint(fp: fingerprint(buf))
+  var f = Fixpoint()
   cleanupFixpoint(buf, f, st, summaries, m, params, eng)
   # Strength reduction is a lowering, not a cleanup: it is not idempotent (a
   # second run reduces its own pointer IVs again), so it runs exactly once, on
@@ -212,12 +201,9 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # `` `x = haddr (pat `iv.q `iv.j) `` is a binding copy propagation can
   # substitute into `(deref `x)` and the rewriter then folds — so the fixpoint
   # resumes when it changed anything.
-  if passOn("indvars"):
-    runInductionVariables(buf, m, target.scaledIndex, f.iv)
-    let now = fingerprint(buf)
-    if now != f.fp:
-      f.fp = now
-      cleanupFixpoint(buf, f, st, summaries, m, params, eng)
+  if passOn("indvars") and runInductionVariables(buf, m, target.scaledIndex, f.iv):
+    mutated(f)
+    cleanupFixpoint(buf, f, st, summaries, m, params, eng)
   # The vectorizer runs last of the passes that optimize: its emitted
   # `(instr ...)` applications are final (selection-final by the tag's contract)
   # and no later pass needs to look at them; the scalar remainder loop it leaves

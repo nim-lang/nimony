@@ -139,11 +139,12 @@ proc collectProjections(orig: ptr TokenBuf; ps: var Patchset; n: Cursor): int =
     result += collectProjections(orig, ps, m)
     skip m
 
-proc runConstructorProjection*(buf: var TokenBuf) =
+proc runConstructorProjection*(buf: var TokenBuf): bool {.discardable.} =
   ## Fold field projections off inline (never-bound) object constructors.
   ## Iterated to a fixpoint so chains (`T(a: U(x: 1)).a.x`) collapse fully;
   ## each round removes at least one `oconstr`, so it terminates. Mints no new
-  ## symbols.
+  ## symbols. Returns whether it folded anything.
+  result = false
   var rounds = 0
   while rounds < 100:
     inc rounds
@@ -154,6 +155,7 @@ proc runConstructorProjection*(buf: var TokenBuf) =
     if folded == 0: break
     var nb = ps.apply()
     buf = ensureMove(nb)
+    result = true
 
 # ---- context --------------------------------------------------------------
 
@@ -472,13 +474,15 @@ proc synthCursor(c: var Context; idx: int): Cursor {.inline.} =
 
 # ---- public entry ---------------------------------------------------------
 
-proc runScalarize*(buf: var TokenBuf; m: ptr MainModule; temps: var int) =
+proc runScalarize*(buf: var TokenBuf; m: ptr MainModule; temps: var int): bool {.discardable.} =
   ## Scalar-replace non-escaping local objects in a single proc body. Names the
   ## field scalars `` `sroa.<n> ``, which are locals of that body.
   ## `m` is the module type context each scalar's declared type is resolved through;
   ## without it the type slots are left empty and the backend re-infers them.
   ## `temps` is the body's `` `sroa `` counter: a body the pipeline scalarizes
   ## again must not mint a name the previous round already declared.
+  ## Returns whether it changed `buf`.
+  result = false
   var c = Context(orig: addr buf,
                   candidates: initTable[SymId, Candidate](),
                   accesses: @[],
@@ -560,6 +564,7 @@ proc runScalarize*(buf: var TokenBuf; m: ptr MainModule; temps: var int) =
   if not c.patchset.isEmpty:
     var nb = c.patchset.apply()
     buf = ensureMove(nb)
+    result = true
 
 # ---- self-tests -----------------------------------------------------------
 
