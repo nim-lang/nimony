@@ -1226,9 +1226,13 @@ proc derivedIdOf(c: var FirContext; key: string; root: SymId): VarId =
 proc invalidateDerivedFrom(c: var FirContext; root: SymId) =
   ## Everything derived from `root` is stale once `root` — or anything inside
   ## it — is written. Coarse on purpose: writing `d.head` also drops `d.count`.
+  ## Projected, not dropped, like `invalidateWrittenPath`: after `best = h`,
+  ## `best.thing == h.thing` and `h.thing < 3`, a new `h` must leave
+  ## `best.thing < 3` behind. Every location of `root` goes, so what remains
+  ## mentions none of them.
   for i in 0 ..< c.derivedRoots.len:
     if c.derivedRoots[i] == root:
-      invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+      projectOut(c.facts, VarId(FirstDerivedVarId - i))
 
 proc isElementWrite(n: Cursor): bool {.inline.} =
   ## A write to one element of an array or of a pointer's target: it changes
@@ -1256,23 +1260,36 @@ proc keyUnder(derived, written: string): bool =
   else:
     result = false
 
-proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
-  ## A variant object or a union: writing one field may change another.
-  var t = objType
+proc typeBody(c: var FirContext; typ: Cursor; t: var Cursor): bool =
+  ## Follows the type names in `typ` to the body they stand for, into `t`.
+  ## False if a declaration cannot be loaded or is a union: either way nothing
+  ## is known about how its fields are laid out.
+  t = typ
   var guard = 0
-  result = false
-  while t.isSymbol and guard < 8:
+  result = true
+  while result and t.isSymbol and guard < 8:
     var declCursor = default(Cursor)
     if c.moduleTypes.hasKey(t.symId):
       declCursor = c.moduleTypes.getOrQuit(t.symId)
     else:
       let decl = tryLoadSym(t.symId)
-      if decl.status != LacksNothing or decl.decl.symKind != TypeY: return true
-      declCursor = decl.decl
-    let td = asTypeDecl(declCursor)
-    if hasPragma(td.pragmas, UnionP): return true
-    t = td.body
-    inc guard
+      if decl.status != LacksNothing or decl.decl.symKind != TypeY:
+        result = false
+      else:
+        declCursor = decl.decl
+    if result:
+      let td = asTypeDecl(declCursor)
+      if hasPragma(td.pragmas, UnionP):
+        result = false
+      else:
+        t = td.body
+        inc guard
+
+proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
+  ## A variant object or a union: writing one field may change another.
+  var t = default(Cursor)
+  if not typeBody(c, objType, t): return true
+  result = false
   if t.typeKind in {PtrT, RefT, MutT}:
     t = sub(t)
     return hasOverlappingFields(c, t)
@@ -4814,6 +4831,85 @@ proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[Cursor]) =
       collectMutatedArgs(c, r, dest)
       skip r
 
+proc stateValue(c: var FirContext; loc: VarId; value: Cursor) =
+  ## What `loc` holds once it is given the pure `value`: `loc == v + k` for
+  ## `v + k`, else whatever interval the value is known to lie in.
+  var src = VarId(0)
+  var k = zero()
+  if pureOperand(c, value, plainReading(), src, k):
+    if src != loc: addAsgnFact c, query(loc, src, k)
+  elif not sumWithBoundedTerm(c, value, loc):
+    addBoundFacts c, loc, value
+
+proc isValueObject(c: var FirContext; typ: Cursor): bool =
+  ## An object or tuple held by value, without overlapping fields: a copy of
+  ## it is a copy of each field, and no alias writes those behind our back.
+  var t = default(Cursor)
+  result = typeBody(c, typ, t) and t.typeKind in {ObjectT, TupleT} and
+    not hasOverlappingFields(c, typ)
+
+proc readsSym(n: Cursor; s: SymId): bool =
+  ## Does the subtree `n` mention the symbol `s` anywhere?
+  if n.kind == Symbol:
+    result = n.symId == s
+  elif n.kind == TagLit:
+    result = false
+    var it = n
+    it.into:
+      while it.hasMore and not result:
+        result = readsSym(it, s)
+        skip it
+      while it.hasMore: skip it
+  else:
+    result = false
+
+proc addFieldFacts(c: var FirContext; root: SymId; key: string; value: Cursor;
+                   depth = 0) =
+  ## What storing `value` into the location keyed `key` says about the fields
+  ## under it, as derived locations of `root`: `x = T(f: v)` gives
+  ## `x.f == v`, and `x = y` gives `x.p == y.p` for every field path `p` of
+  ## `y` known so far. The caller has invalidated what was derived from `root`.
+  if depth > MaxLocationDepth: return
+  let v = peelExpr(c, value)
+  if v.exprKind == OconstrX:
+    var n = v
+    n.into:
+      if isValueObject(c, n):
+        skip n # the type
+        while n.hasMore:
+          if n.substructureKind == KvU:
+            var kv = n
+            kv.into:
+              if kv.isSymbol:
+                let fieldKey = key & "." & $uint32(kv.symId)
+                skip kv # the field
+                let loc = derivedIdOf(c, fieldKey, root)
+                stateValue c, loc, kv
+                addFieldFacts c, root, fieldKey, kv, depth+1
+              while kv.hasMore: skip kv
+          skip n
+      else:
+        while n.hasMore: skip n
+  else:
+    let src = extractSymId(v)
+    if src != NoSymId and src != root and isValueObject(c, getType(c.typeCache, v)):
+      let srcKey = "v" & $uint32(src)
+      let known = c.derivedRoots.len # the loop adds `root`'s own paths
+      for i in 0 ..< known:
+        let k = c.derivedKeys[i]
+        if c.derivedRoots[i] == src and k.len > srcKey.len and
+            k[srcKey.len] == '.' and k.startsWith(srcKey):
+          let loc = derivedIdOf(c, key & k.substr(srcKey.len), root)
+          addAsgnFact c, query(loc, VarId(FirstDerivedVarId - i), zero())
+
+proc storeFieldFacts(c: var FirContext; root: SymId; value: Cursor) =
+  ## The fields of a value stored into the plain variable `root`, as locations
+  ## of their own. A value that reads `root` is left alone: in `x = T(a: x.b)`
+  ## the `x.b` of the value is the old one, and the location of that name
+  ## already stands for the new one.
+  if not readsSym(value, root):
+    addFieldFacts c, root, "v" & $uint32(root), value
+
 proc checkDestAliasesValue(c: var FirContext; dest: Cursor; value: Cursor) =
   ## `s[0].x = grow(s)`: the address of `s[0]` is taken before `grow` runs, so
   ## when `grow` reallocates `s` the store goes to freed memory.
@@ -4925,6 +5021,8 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     # The (re)assigned location again holds an in-range value; the fact
     # bookkeeping above may have invalidated its range facts, so restore them.
     seedRangeFacts c, symId, expected
+    # The fields of a constructed or copied value, as locations of their own.
+    storeFieldFacts c, symId, valueStart
     # ... and whatever the callee promised about what it just returned.
     assumeEnsures c, valueStart, getVarId(c, symId), call.olds, symId
     if written.barrier: forgetShared(c, [written.sym])
@@ -5734,20 +5832,26 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
       verifyEnsures c, (if c.p.resultSym != NoSymId: getVarId(c, c.p.resultSym) else: InvalidVarId), info, c.p.resultSym
       inc n
     else:
+      let res = c.p.resultSym
       var retLoc = plainLocationVarId(c, n)
+      var retSym = if n.isSymbol: n.symId else: NoSymId
       if retLoc == InvalidVarId and not cursorIsNil(c.p.ownEnsures):
-        # `return i - 1`: the value gets a slot of its own to be judged in
-        retLoc = derivedIdOf(c, "#ret", NoSymId)
-        invalidateFactsAbout(c.facts, retLoc)
-        var v = VarId(0)
-        var k = zero()
-        if pureOperand(c, n, plainReading(), v, k):
-          addAsgnFact c, query(retLoc, v, k)
-        elif not sumWithBoundedTerm(c, n, retLoc):
-          addBoundFacts c, retLoc, n
-      verifyEnsures c, retLoc, info, (if n.isSymbol: n.symId else: NoSymId)
-      let providesResult = c.p.resultSym != NoSymId and
-        not (n.isSymbol and n.symId == c.p.resultSym)
+        if res != NoSymId and peelExpr(c, n).exprKind == OconstrX:
+          # `return T(f: v)` stores into `result`, whose paths the `.ensures`
+          # names; the path ends here, so nothing else sees the facts.
+          retLoc = getVarId(c, res)
+          retSym = res
+          invalidateFactsAbout(c.facts, retLoc)
+          invalidateDerivedFrom(c, res)
+          storeFieldFacts c, res, n
+        else:
+          # `return i - 1`: the value gets a slot of its own to be judged in
+          retLoc = derivedIdOf(c, "#ret", NoSymId)
+          invalidateFactsAbout(c.facts, retLoc)
+          stateValue c, retLoc, n
+      verifyEnsures c, retLoc, info, retSym
+      let providesResult = res != NoSymId and
+        not (n.isSymbol and n.symId == res)
       if providesResult:
         # `return toOpenArray(a)` returns the value directly rather than storing
         # it into `result` first, so `traverseAsgn`'s escape check never sees it.
@@ -6055,6 +6159,10 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   # record that for downstream obligations that reference this symbol.
   if initAccepted:
     seedRangeFacts c, name, localType
+    if not initStart.isDotToken:
+      # a local declared in a loop body is a new value on every iteration
+      invalidateDerivedFrom(c, name)
+      storeFieldFacts c, name, initStart
     assumeEnsures c, initStart, getVarId(c, name), call.olds, name
 
 proc traverseAssume(c: var FirContext; n: var Cursor) =
