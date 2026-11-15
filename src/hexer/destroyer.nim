@@ -540,7 +540,7 @@ proc tr(c: var Context; n: var Cursor) =
         WhenS, ForS, YldS, StmtsS, AlwaysS, PragmasS,
         PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,
-        CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,
+        CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, InvariantS,
         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
         BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
       if n.finalIrKind == IteV:

@@ -965,7 +965,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               expectIntLit c, n
               result.bits = n.intVal
               inc n
-          of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
+          of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, InvariantP, ReportP,
              TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
              BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP, SizeP,
              FeatureP, UncheckedAssignP, UncheckedAccessP, SyncP, AssumeSyncP,
@@ -2552,7 +2552,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         trTypeDecl c, dest, n, mode
     of ContinueS, WhenS:
       error c, "unreachable: ", n
-    of PragmasS, AssumeS, AssertS:
+    of PragmasS, AssumeS, AssertS, InvariantS:
       skip n, SkipFull
   else:
     assert n.hasMore

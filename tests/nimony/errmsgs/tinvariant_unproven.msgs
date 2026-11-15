@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tinvariant_unproven.nim(8, 7) Error: cannot prove loop invariant on entry: 0 <= k and k < 10 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tinvariant_unproven.nim(15, 7) Error: loop invariant violated on entry: k < 10 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tinvariant_unproven.nim(22, 7) Error: cannot prove loop invariant at the end of an iteration: 0 <= k and k < 10 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tinvariant_unproven.nim(29, 7) Error: cannot prove loop invariant at the end of an iteration: k < 10 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tinvariant_unproven.nim(39, 7) Error: cannot prove loop invariant on entry: 0 <= i [pass --verbose for the Final IR]

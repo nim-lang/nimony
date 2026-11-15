@@ -200,7 +200,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
         RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS,
         IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
         ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
-        UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+        UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS, InfixS,
         PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
         AsmS, DeferS, LabS, JmpS, NoStmt:
       if c.substructureKind == KvU:
@@ -729,7 +729,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         WhenS, CaseS, RetS, YldS, PragmasS, PragmaxS, InclS,
         ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS,
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
-        TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+        TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS,
         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
         UsingS, AsmS, DeferS, CoroforS, LabS, JmpS, NoStmt:
       takeInto dest, c:

@@ -601,7 +601,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         inc n
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
-  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
+  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, InvariantP, PragmaP, PushP, PopP, PassLP, PassCP:
     if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0) and
         not isPreservedCustomPragma(n):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
@@ -992,6 +992,31 @@ proc interruptSignatureError*(dest: var TokenBuf; paramsAt: int): string =
              "caller, so it must not return a value"
   endRead n
 
+proc markLeadingInvariants*(c: var SemContext; body: Cursor) =
+  ## Records the `{.invariant: cond.}` pragmas the loop body `body` starts
+  ## with, comments aside: the one place an invariant may stand, because it is
+  ## the claim about the head of every iteration. Anywhere else it would read
+  ## as a claim about that point, which is what `{.assert.}` is for.
+  if body.stmtKind == StmtsS:
+    var n = body
+    n.into:
+      var leading = true
+      while n.hasMore:
+        if leading and n.stmtKind == PragmasS:
+          var p = n
+          p.into:
+            while p.hasMore:
+              var name = p
+              if name.isTagLit: name = sub(name)
+              if name.pragmaKind == InvariantP:
+                c.routine.invariantSites.add name.info
+              else:
+                leading = false
+              skip p
+        elif n.stmtKind != CommentS:
+          leading = false
+        skip n
+
 proc semAssumeAssert*(c: var SemContext; dest: var TokenBuf; it: var Item; kind: StmtKind) =
   let info = it.n.info
   dest.addParLe(kind, info)
@@ -1302,9 +1327,12 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     toPragmaArgs()
     semEmit c, dest, it
     closePragmaLine()
-  of AssumeP, AssertP:
-    let kind = if it.n.pragmaKind == AssumeP: AssumeS else: AssertS
+  of AssumeP, AssertP, InvariantP:
+    let pk = it.n.pragmaKind
+    let kind = if pk == AssumeP: AssumeS elif pk == AssertP: AssertS else: InvariantS
     let info = it.n.info
+    if pk == InvariantP and info notin c.routine.invariantSites:
+      buildErr c, dest, info, "an `invariant` must be the first statement of a loop body"
     toPragmaArgs()
     dest.addParLe(kind, info)
     semBoolExpr c, dest, it.n
