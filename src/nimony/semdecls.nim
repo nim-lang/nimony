@@ -678,7 +678,13 @@ proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): 
         dest.addUIntLit(valU, info)
   c.phase = oldPhase
 
-proc takeExplicitValue(state: var EnumTypeState; value: xint) =
+proc takeExplicitValue(c: var SemContext; dest: var TokenBuf; state: var EnumTypeState;
+                       value: xint; valueStart: int; info: NifLineInfo) =
+  # `state.thisValue` is the previous field's value + 1. The spec requires the
+  # ordinal values in ascending order; an equal value is "value already handled".
+  if state.hasPrevField and value < state.thisValue - createXint(1'i64):
+    dest.shrink valueStart
+    c.buildErr dest, info, "enum field values must be in ascending order"
   # A hole is a gap between a field and the field before it. The first field
   # has no predecessor, so its explicit value, `1` or any other, is no hole.
   if state.hasPrevField and value != state.thisValue:
@@ -743,8 +749,10 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
     else:
       if n.isTagLit and n.exprKind == TupX:
         takeInto dest, n:
+          let valueStart = dest.len
+          let info = n.info
           let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
-          takeExplicitValue state, explicitValue
+          takeExplicitValue c, dest, state, explicitValue, valueStart, info
           dest.add evalExpr(c, n)
       else:
         var ec = initEvalContext(addr c)
@@ -758,8 +766,10 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
           n = valueCursor
         else:
           dest.addParLe(TupX, n.info)
+          let valueStart = dest.len
+          let info = n.info
           let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
-          takeExplicitValue state, explicitValue
+          takeExplicitValue c, dest, state, explicitValue, valueStart, info
           dest.addStrLit(delayed.lit, n.endInfo)
           dest.addParRi()
     dest.addParRi(n.endInfo)

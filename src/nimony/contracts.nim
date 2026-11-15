@@ -739,7 +739,9 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           analyseAsgn(c, pc)
         of AssumeS:
           analyseAssume(c, pc)
-        of AssertS:
+        of AssertS, InvariantS:
+          # this walker does no induction: an invariant is judged where it
+          # stands, which may reject one but never accepts a wrong one
           analyseAssert(c, pc)
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
@@ -938,7 +940,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      UnpackdeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
-     BreakS, ContinueS, RetS, InclS, ExclS, IncS, DecS, DiscardS, AssumeS, AssertS,
+     BreakS, ContinueS, RetS, InclS, ExclS, IncS, DecS, DiscardS, AssumeS, AssertS, InvariantS,
      LabS, JmpS, NoStmt:
     c.toplevelStmts.takeTree n
 

@@ -1668,7 +1668,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             IncludeS, ImportS, ImportasS, FromimportS,
             ImportexceptS, ExportS, ExportexceptS, CommentS,
             DiscardS, UnpackdeclS, AssumeS,
-            AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+            AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
             DeferS, LabS, JmpS, NoStmt:
           dest.addParLe(n.cursorTagId, n.info)
@@ -2700,7 +2700,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS,
         StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
         ExportexceptS, DiscardS, TryS, UnpackdeclS,
-        AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
+        AssumeS, AssertS, InvariantS, CallstrlitS, InfixS, PrefixS,
         HcallS, StaticstmtS, BindS, MixinS, UsingS,
         AsmS, DeferS, LabS, JmpS, NoStmt:
       case n.exprKind

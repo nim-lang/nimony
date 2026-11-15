@@ -232,6 +232,7 @@
 | `(ensures X)` | NimonyPragma | `ensures` pragma |
 | `(assume X)` | NimonyPragma, NimonyStmt, FinalIrKind | `assume` pragma/annotation |
 | `(assert X)` | NimonyPragma, NimonyStmt, FinalIrKind | `assert` pragma/annotation |
+| `(invariant X)` | NimonyPragma, NimonyStmt, FinalIrKind | `invariant` pragma: a loop invariant, the first statement of a loop body |
 | `(build X)`; `(build STR STR STR)`; `(build STR STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma; in the index, each `(tup …)` entry is `(lang source flags [objectName])` for a `compile`d file, or `(builder tool args [linkflags])` for a `build` backend |
 | `(feature STR)` | NimonyPragma | `feature` pragma |
 | `(string)` | NimonyPragma | `string` pragma |

@@ -588,7 +588,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CoroforS,
       CaseS, RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
-      AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+      AssumeS, AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
       NoStmt:
       case n.exprKind
@@ -2075,7 +2075,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS,
       CaseS, RetS, YldS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
-      AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+      AssumeS, AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
       NoStmt:
       case n.exprKind

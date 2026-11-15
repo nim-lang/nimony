@@ -229,18 +229,10 @@ type
     brokenSteps: HashSet[VarId]
       ## The `assumedSteps` whose step the traversal could not keep inside
       ## their type: the assumption was wrong.
-    invCands: seq[LeXplusC]
-      ## The innermost loop's *candidate invariants*: constant bounds on a
-      ## location the body writes, held on entry and assumed to survive the
-      ## back-edge. Every `(continue)` judges them (`invHolds`); one that does
-      ## not hold there was no invariant, and the body is analysed again
-      ## without it (`analyseLoopBody`).
-    invHolds: seq[bool]
-    invWeaker: seq[xint]
-      ## Parallel to `invCands`: for a refuted candidate, the weakest constant
-      ## its location is bounded by at the back-edges that refuted it (NaN:
-      ## some back-edge bounds it not at all). `x == -1` on entry and `x = hit`
-      ## in the body refutes `x <= -1` but may well keep `x <= 2`.
+    loopInvariants: seq[Cursor]
+      ## The `(invariant cond)` statements of the innermost loop being
+      ## analysed: assumed at its head, proven at every `(continue)`.
+    loopDepth: int
     proofLog: seq[(ProofKind, int)]
       ## The positions added to `dischargedIndexes` or `provenCalls` while an
       ## assumption was in force, so that a second analysis of the loop can
@@ -1238,9 +1230,13 @@ proc derivedIdOf(c: var FirContext; key: string; root: SymId): VarId =
 proc invalidateDerivedFrom(c: var FirContext; root: SymId) =
   ## Everything derived from `root` is stale once `root` — or anything inside
   ## it — is written. Coarse on purpose: writing `d.head` also drops `d.count`.
+  ## Projected, not dropped, like `invalidateWrittenPath`: after `best = h`,
+  ## `best.thing == h.thing` and `h.thing < 3`, a new `h` must leave
+  ## `best.thing < 3` behind. Every location of `root` goes, so what remains
+  ## mentions none of them.
   for i in 0 ..< c.derivedRoots.len:
     if c.derivedRoots[i] == root:
-      invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+      projectOut(c.facts, VarId(FirstDerivedVarId - i))
 
 proc isElementWrite(n: Cursor): bool {.inline.} =
   ## A write to one element of an array or of a pointer's target: it changes
@@ -1268,23 +1264,36 @@ proc keyUnder(derived, written: string): bool =
   else:
     result = false
 
-proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
-  ## A variant object or a union: writing one field may change another.
-  var t = objType
+proc typeBody(c: var FirContext; typ: Cursor; t: var Cursor): bool =
+  ## Follows the type names in `typ` to the body they stand for, into `t`.
+  ## False if a declaration cannot be loaded or is a union: either way nothing
+  ## is known about how its fields are laid out.
+  t = typ
   var guard = 0
-  result = false
-  while t.isSymbol and guard < 8:
+  result = true
+  while result and t.isSymbol and guard < 8:
     var declCursor = default(Cursor)
     if c.moduleTypes.hasKey(t.symId):
       declCursor = c.moduleTypes.getOrQuit(t.symId)
     else:
       let decl = tryLoadSym(t.symId)
-      if decl.status != LacksNothing or decl.decl.symKind != TypeY: return true
-      declCursor = decl.decl
-    let td = asTypeDecl(declCursor)
-    if hasPragma(td.pragmas, UnionP): return true
-    t = td.body
-    inc guard
+      if decl.status != LacksNothing or decl.decl.symKind != TypeY:
+        result = false
+      else:
+        declCursor = decl.decl
+    if result:
+      let td = asTypeDecl(declCursor)
+      if hasPragma(td.pragmas, UnionP):
+        result = false
+      else:
+        t = td.body
+        inc guard
+
+proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
+  ## A variant object or a union: writing one field may change another.
+  var t = default(Cursor)
+  if not typeBody(c, objType, t): return true
+  result = false
   if t.typeKind in {PtrT, RefT, MutT}:
     t = sub(t)
     return hasOverlappingFields(c, t)
@@ -1457,7 +1466,8 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
         return false
       temps.add (l.name.symId, l.val)
       skip b
-    elif b.stmtKind in {RetS, AssumeS, AssertS} or b.finalIrKind in {AssumeV, AssertV}:
+    elif b.stmtKind in {RetS, AssumeS, AssertS, InvariantS} or
+        b.finalIrKind in {AssumeV, AssertV, InvariantV}:
       # a proposition changes nothing at run time: `len` states its own
       # non-negativity next to the path it returns
       skip b
@@ -4826,6 +4836,85 @@ proc collectMutatedArgs(c: var FirContext; n: Cursor; dest: var seq[Cursor]) =
       collectMutatedArgs(c, r, dest)
       skip r
 
+proc stateValue(c: var FirContext; loc: VarId; value: Cursor) =
+  ## What `loc` holds once it is given the pure `value`: `loc == v + k` for
+  ## `v + k`, else whatever interval the value is known to lie in.
+  var src = VarId(0)
+  var k = zero()
+  if pureOperand(c, value, plainReading(), src, k):
+    if src != loc: addAsgnFact c, query(loc, src, k)
+  elif not sumWithBoundedTerm(c, value, loc):
+    addBoundFacts c, loc, value
+
+proc isValueObject(c: var FirContext; typ: Cursor): bool =
+  ## An object or tuple held by value, without overlapping fields: a copy of
+  ## it is a copy of each field, and no alias writes those behind our back.
+  var t = default(Cursor)
+  result = typeBody(c, typ, t) and t.typeKind in {ObjectT, TupleT} and
+    not hasOverlappingFields(c, typ)
+
+proc readsSym(n: Cursor; s: SymId): bool =
+  ## Does the subtree `n` mention the symbol `s` anywhere?
+  if n.kind == Symbol:
+    result = n.symId == s
+  elif n.kind == TagLit:
+    result = false
+    var it = n
+    it.into:
+      while it.hasMore and not result:
+        result = readsSym(it, s)
+        skip it
+      while it.hasMore: skip it
+  else:
+    result = false
+
+proc addFieldFacts(c: var FirContext; root: SymId; key: string; value: Cursor;
+                   depth = 0) =
+  ## What storing `value` into the location keyed `key` says about the fields
+  ## under it, as derived locations of `root`: `x = T(f: v)` gives
+  ## `x.f == v`, and `x = y` gives `x.p == y.p` for every field path `p` of
+  ## `y` known so far. The caller has invalidated what was derived from `root`.
+  if depth > MaxLocationDepth: return
+  let v = peelExpr(c, value)
+  if v.exprKind == OconstrX:
+    var n = v
+    n.into:
+      if isValueObject(c, n):
+        skip n # the type
+        while n.hasMore:
+          if n.substructureKind == KvU:
+            var kv = n
+            kv.into:
+              if kv.isSymbol:
+                let fieldKey = key & "." & $uint32(kv.symId)
+                skip kv # the field
+                let loc = derivedIdOf(c, fieldKey, root)
+                stateValue c, loc, kv
+                addFieldFacts c, root, fieldKey, kv, depth+1
+              while kv.hasMore: skip kv
+          skip n
+      else:
+        while n.hasMore: skip n
+  else:
+    let src = extractSymId(v)
+    if src != NoSymId and src != root and isValueObject(c, getType(c.typeCache, v)):
+      let srcKey = "v" & $uint32(src)
+      let known = c.derivedRoots.len # the loop adds `root`'s own paths
+      for i in 0 ..< known:
+        let k = c.derivedKeys[i]
+        if c.derivedRoots[i] == src and k.len > srcKey.len and
+            k[srcKey.len] == '.' and k.startsWith(srcKey):
+          let loc = derivedIdOf(c, key & k.substr(srcKey.len), root)
+          addAsgnFact c, query(loc, VarId(FirstDerivedVarId - i), zero())
+
+proc storeFieldFacts(c: var FirContext; root: SymId; value: Cursor) =
+  ## The fields of a value stored into the plain variable `root`, as locations
+  ## of their own. A value that reads `root` is left alone: in `x = T(a: x.b)`
+  ## the `x.b` of the value is the old one, and the location of that name
+  ## already stands for the new one.
+  if not readsSym(value, root):
+    addFieldFacts c, root, "v" & $uint32(root), value
+
 proc checkDestAliasesValue(c: var FirContext; dest: Cursor; value: Cursor) =
   ## `s[0].x = grow(s)`: the address of `s[0]` is taken before `grow` runs, so
   ## when `grow` reallocates `s` the store goes to freed memory.
@@ -4839,72 +4928,6 @@ proc checkDestAliasesValue(c: var FirContext; dest: Cursor; value: Cursor) =
           "', which the destination's address was taken from; " &
           "assign the right-hand side to a temporary first"
         break
-
-proc copyBounds(c: var FirContext; dest, src: VarId; k: xint) =
-  ## `dest == src + k`: the constant bounds known of `src` are bounds of `dest`
-  ## too, and are stated as facts of their own. Derivable through the equality
-  ## is not enough where two paths join: a join keeps a fact both arms state,
-  ## and `nearest = hit` in one arm states nothing about `nearest` directly.
-  if src == VarId(0) or src == dest: return
-  var add: seq[LeXplusC] = @[]
-  for i in 0 ..< c.facts.len:
-    let f = c.facts[i]
-    if f.a == VarId(0) and f.b == src:
-      add.add query(VarId(0), dest, f.c - k)    # 0 <= src + c
-    elif f.a == src and f.b == VarId(0):
-      add.add query(dest, VarId(0), f.c + k)    # src <= c
-  for f in add: c.facts.add f
-
-proc addFieldFacts(c: var FirContext; root: SymId; key: string; value: Cursor;
-                   depth = 0) =
-  ## What storing `value` into the location keyed `key` (under `root`) says
-  ## about the derived locations under it: `x = T(f: v)` gives `x.f == v`, and
-  ## `x = y` gives `x.f == y.f` for every field path of `y` a fact is known
-  ## about. Without it `result = Intersection(thing: -1)` proves nothing about
-  ## `result.thing`, the one thing an `.ensures` over an object result states.
-  ## The caller has invalidated what was derived from `root` already.
-  if depth > MaxLocationDepth: return
-  let v = peelExpr(c, value)
-  if v.exprKind == OconstrX:
-    var n = v
-    n.into:
-      skip n # the type
-      while n.hasMore:
-        if n.substructureKind == KvU:
-          var kv = n
-          kv.into:
-            if kv.isSymbol:
-              let fieldKey = key & "." & $uint32(kv.symId)
-              skip kv # field name
-              let val = kv
-              let loc = derivedIdOf(c, fieldKey, root)
-              invalidateFactsAbout(c.facts, loc)
-              var src = VarId(0)
-              var k = zero()
-              if pureOperand(c, val, plainReading(), src, k):
-                if src != loc:
-                  addAsgnFact c, query(loc, src, k)
-                  copyBounds c, loc, src, k
-              elif not sumWithBoundedTerm(c, val, loc):
-                addBoundFacts c, loc, val
-              addFieldFacts(c, root, fieldKey, val, depth+1)
-            while kv.hasMore: skip kv
-        skip n
-  else:
-    let src = extractSymId(v)
-    if src == NoSymId or src == root: return
-    # `x = y`: every field path of `y` with an id of its own is now one of `x`
-    let srcKey = "v" & $uint32(src) & "."
-    let known = c.derivedKeys.len
-    for i in 0 ..< known:
-      let k = c.derivedKeys[i]
-      if c.derivedRoots[i] == src and k.startsWith(srcKey):
-        let dstKey = key & k.substr(srcKey.len - 1)
-        let loc = derivedIdOf(c, dstKey, root)
-        invalidateFactsAbout(c.facts, loc)
-        let srcLoc = VarId(FirstDerivedVarId - i)
-        addAsgnFact c, query(loc, srcLoc, zero())
-        copyBounds c, loc, srcLoc, zero()
 
 proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor;
                 call: var CallContext) =
@@ -5004,7 +5027,7 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
     # bookkeeping above may have invalidated its range facts, so restore them.
     seedRangeFacts c, symId, expected
     # The fields of a constructed or copied value, as locations of their own.
-    addFieldFacts c, symId, "v" & $uint32(symId), valueStart
+    storeFieldFacts c, symId, valueStart
     # ... and whatever the callee promised about what it just returned.
     assumeEnsures c, valueStart, getVarId(c, symId), call.olds, symId
     if written.barrier: forgetShared(c, [written.sym])
@@ -5095,29 +5118,52 @@ proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
 # fall-through, and an `ite`/`case`/`try` checkpoints once and rolls back rather
 # than copying the state per branch.
 
+proc collectLoopInvariants(n: Cursor; dest: var seq[Cursor]) =
+  ## The `(invariant cond)` statements of the loop whose body is `n`, not those
+  ## of a loop nested in it. Sem allows them only at the start of a loop body.
+  if n.finalIrKind == InvariantV:
+    dest.add n
+  elif n.isTagLit and n.finalIrKind != LoopV and n.stmtKind != ForS and
+      not isRoutine(n.symKind):
+    var it = n
+    it.into:
+      while it.hasMore:
+        collectLoopInvariants(it, dest)
+        skip it
+
+proc judgeInvariant(c: var FirContext; inv: Cursor; where: string) =
+  ## Proves the condition of `(invariant cond)` here: on entry to its loop or
+  ## at a back-edge. On a path control cannot reach the claim is vacuous.
+  if c.p.tr.live:
+    var cond = inv
+    cond = sub(cond)
+    let res = proveCond(c, cond, ownReading(c))
+    case res
+    of Proven: discard
+    of Disproven:
+      buildErr c, inv.info, "loop invariant violated " & where & ": " & asNimCode(cond)
+    of Unprovable:
+      buildErr c, inv.info, "cannot prove loop invariant " & where & ": " & asNimCode(cond)
+
+proc assumeInvariants(c: var FirContext) =
+  ## The induction hypothesis: at the head of the loop every invariant holds,
+  ## because it held on entry and every back-edge re-established it.
+  # moved out for the loop: `assumeCond` takes all of `c`
+  var invariants = move c.loopInvariants
+  for inv in invariants:
+    var cond = inv
+    cond = sub(cond)
+    assumeCond(c, cond, ownReading(c))
+  c.loopInvariants = move invariants
+
 proc leaveToLabel(c: var FirContext; label: SymId) = gotoLabel(c.p.tr, c.p.flow, label)
 proc leaveToReturn(c: var FirContext) = gotoReturn(c.p.tr, c.p.flow)
 proc leaveToRaise(c: var FirContext) = gotoRaise(c.p.tr, c.p.flow)
-proc backEdgeBound(c: FirContext; f: LeXplusC): xint =
-  ## The tightest constant the facts state outright for the bound `f` is of:
-  ## `v <= k` for an upper bound, `0 <= v + k` for a lower one. NaN if none.
-  result = createNaN()
-  for i in 0 ..< c.facts.len:
-    let g = c.facts[i]
-    if g.a == f.a and g.b == f.b and (result.isNaN or g.c < result):
-      result = g.c
-
 proc leaveToContinue(c: var FirContext) =
-  if c.p.tr.live:
-    # the back-edge: a candidate invariant has to hold again here
-    for i in 0 ..< c.invCands.len:
-      if not impliesHere(c, c.invCands[i]):
-        let k = backEdgeBound(c, c.invCands[i])
-        if c.invHolds[i]:
-          c.invHolds[i] = false
-          c.invWeaker[i] = k
-        elif not c.invWeaker[i].isNaN:
-          c.invWeaker[i] = if k.isNaN: k else: max(k, c.invWeaker[i])
+  # the back-edge: every invariant of the loop has to hold again here
+  var invariants = move c.loopInvariants # `judgeInvariant` takes all of `c`
+  for inv in invariants: judgeInvariant(c, inv, "at the end of an iteration")
+  c.loopInvariants = move invariants
   gotoContinue(c.p.tr, c.p.flow)
 
 proc traverseIte(c: var FirContext; n: var Cursor) =
@@ -5578,57 +5624,16 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for ch in bypasses:
     c.facts.add ch
 
-const MaxInvariantCandidates = 16
-
-proc isInvariantCandidate(w: LoopWrites; f: LeXplusC): bool =
-  ## A constant bound on one written location, `lo <= v` or `v <= hi`, that
-  ## the shape of the writes does not decide already: a monotone location
-  ## keeps the bound its direction keeps (`isLoopInvariant`) and loses the
-  ## other one for certain — guessing that one would only cost a round.
-  let v = if f.a == VarId(0): f.b elif f.b == VarId(0): f.a else: VarId(0)
-  if v == VarId(0) or v == InvalidVarId: return false
-  result = w.kinds.getOrDefault(v, ivUnknown) == ivUnknown
-
-proc forgetBarrierWrites(c: var FirContext; w: LoopWrites) =
-  ## The shared facts a barrier of `w` may break, unless every barrier names
-  ## the variable.
+proc forgetWrites(c: var FirContext; w: LoopWrites) =
+  ## Drops the facts the writes and barriers `w` records may break: the
+  ## shared ones at a barrier, unless every barrier names the variable, and
+  ## those about a written location that its writes do not keep.
   if w.barriers > 0:
     var spared: seq[SymId] = @[]
     for s, k in w.namedBy:
       if k == w.barriers: spared.add s
     forgetShared(c, spared)
-
-proc forgetWrites(c: var FirContext; w: LoopWrites) =
-  ## Drops the facts the writes and barriers `w` records may break: the
-  ## shared ones at a barrier, unless every barrier names the variable, and
-  ## those about a written location that its writes do not keep.
-  forgetBarrierWrites(c, w)
   restrictFactsToLoopInvariants(c, w)
-
-proc forgetLoopWrites(c: var FirContext; w: LoopWrites; cands: var seq[LeXplusC];
-                      rejected: HashSet[(VarId, VarId)];
-                      weakened: Table[(VarId, VarId), xint]) =
-  ## `forgetWrites` at a loop's head. What the shape of the writes cannot vouch
-  ## for may still hold: `nearest = hit` keeps `-1 <= nearest.thing` when
-  ## `hit.thing` has that bound on every iteration. Such bounds are kept as
-  ## `cands`, *candidate invariants*, which the traversal of the body must
-  ## confirm at every back-edge (`leaveToContinue`); `rejected` are the bounds
-  ## a previous round refuted for good, `weakened` the ones it refuted but
-  ## found a weaker constant for.
-  forgetBarrierWrites(c, w)
-  cands.setLen 0
-  for i in 0 ..< c.facts.len:
-    var f = c.facts[i]
-    let key = (f.a, f.b)
-    if cands.len < MaxInvariantCandidates and isInvariantCandidate(w, f) and
-        not isLoopInvariant(c, w, f) and key notin rejected:
-      if weakened.hasKey(key): f.c = max(f.c, weakened.getOrDefault(key))
-      var dup = false
-      for g in cands:
-        if g.a == f.a and g.b == f.b: dup = true
-      if not dup: cands.add f
-  restrictFactsToLoopInvariants(c, w)
-  for f in cands: c.facts.add f
 
 proc factsMention(c: FirContext; v: VarId): bool =
   result = false
@@ -5685,6 +5690,15 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
   ## location changes nothing and its step need not be judged.
   var call = freshCall()
   let bodyStart = n
+  # `{.invariant.}`: proven here, on entry, and judged again at every
+  # back-edge; in between it is assumed at the head. Proven before `errMark`:
+  # a round that is analysed again keeps what was said about the entry.
+  var invariants: seq[Cursor] = @[]
+  collectLoopInvariants(n, invariants)
+  for inv in invariants: judgeInvariant(c, inv, "on entry")
+  var outerInvariants = move c.loopInvariants
+  c.loopInvariants = invariants
+  inc c.loopDepth
   let errMark = c.errors.len
   let proofMark = c.proofLog.len
   let exitsMark = exitsCheckpoint(c.p.tr)
@@ -5695,13 +5709,6 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
   # `move` rather than a copy of the set.
   var outerBroken = move c.brokenSteps
   c.brokenSteps = initHashSet[VarId]()
-  # The enclosing loop's candidate invariants are judged at ITS back-edge.
-  var outerCands = move c.invCands
-  var outerHolds = move c.invHolds
-  var outerWeaker = move c.invWeaker
-  var cands: seq[LeXplusC] = @[]
-  var rejected = initHashSet[(VarId, VarId)]()
-  var weakened = initTable[(VarId, VarId), xint]()
   var demoted = initHashSet[VarId]()
   var added: seq[VarId] = @[]   # this loop's own `assumedSteps`, undone after
   var cp = base
@@ -5724,11 +5731,8 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
         if w.kinds.hasKey(v): w.kinds[v] = ivUnknown
       # a barrier in the body is one before every iteration too
       if iterBarrier: noteBarrier(w, iterNamed)
-      forgetLoopWrites(c, w, cands, rejected, weakened)
-      c.invCands = cands
-      c.invHolds = newSeq[bool](cands.len)
-      c.invWeaker = newSeq[xint](cands.len)
-      for i in 0 ..< c.invHolds.len: c.invHolds[i] = true
+      forgetWrites(c, w)
+      assumeInvariants(c)
       for v in w.assumed:
         if v notin demoted and v notin c.assumedSteps and
             w.kinds.getOrDefault(v, ivUnknown) in {ivIncreasing, ivDecreasing} and
@@ -5744,21 +5748,6 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
         demoted.incl v
         broken = true
     added.setLen 0
-    # A candidate some back-edge refuted was no invariant: the round ran on
-    # facts too strong, exactly like a broken step.
-    # It may be retried once, at the weaker bound every back-edge states;
-    # once weakened, a second refutation drops it: every round either drops a
-    # bound or weakens one never weakened before, so the rounds are finite.
-    for i in 0 ..< c.invHolds.len:
-      if not c.invHolds[i]:
-        let f = c.invCands[i]
-        let key = (f.a, f.b)
-        let k = c.invWeaker[i]
-        if weakened.hasKey(key) or k.isNaN or k <= f.c:
-          rejected.incl key
-        else:
-          weakened[key] = k
-        broken = true
     if not broken: break
     # A step an assumption rests on may wrap: undo the round, try again.
     c.brokenSteps.clear()
@@ -5771,9 +5760,8 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
     n = bodyStart
   # What this body broke of the enclosing loops' assumptions is theirs to judge.
   for v in outerBroken: c.brokenSteps.incl v
-  c.invCands = move outerCands
-  c.invHolds = move outerHolds
-  c.invWeaker = move outerWeaker
+  c.loopInvariants = move outerInvariants
+  dec c.loopDepth
   # Outside every loop no assumption can be taken back any more.
   if c.assumedSteps.len == 0: c.proofLog.setLen proofMark
   let backEdge = backEdgeBorrows(c.p.tr)
@@ -5903,38 +5891,27 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
     if n.isDotToken:
       verifyEnsures c, (if c.p.resultSym != NoSymId: getVarId(c, c.p.resultSym) else: InvalidVarId), info, c.p.resultSym
       inc n
-    elif c.p.resultSym != NoSymId and not cursorIsNil(c.p.ownEnsures) and
-         peelExpr(c, n).exprKind == OconstrX:
-      # `return T(f: v)`: judged as `result = T(f: v)` would be, so that
-      # `result.f` is the location the constructor's field facts are about.
-      # The path ends here; the facts are restored right after.
-      if c.p.tr.live:
-        let cp = c.p.flow.checkpoint()
-        let res = c.p.resultSym
-        invalidateFactsAbout(c.facts, getVarId(c, res))
-        invalidateDerivedFrom(c, res)
-        addFieldFacts c, res, "v" & $uint32(res), n
-        verifyEnsures c, getVarId(c, res), info, res
-        c.p.flow.rollbackTo cp
-      checkBorrowOutlivesProc(c, n)
-      checkResultBorrow(c, n)
-      traverseExpr c, n, call
-      markInit(c, c.p.resultSym)
     else:
+      let res = c.p.resultSym
       var retLoc = plainLocationVarId(c, n)
+      var retSym = if n.isSymbol: n.symId else: NoSymId
       if retLoc == InvalidVarId and not cursorIsNil(c.p.ownEnsures):
-        # `return i - 1`: the value gets a slot of its own to be judged in
-        retLoc = derivedIdOf(c, "#ret", NoSymId)
-        invalidateFactsAbout(c.facts, retLoc)
-        var v = VarId(0)
-        var k = zero()
-        if pureOperand(c, n, plainReading(), v, k):
-          addAsgnFact c, query(retLoc, v, k)
-        elif not sumWithBoundedTerm(c, n, retLoc):
-          addBoundFacts c, retLoc, n
-      verifyEnsures c, retLoc, info, (if n.isSymbol: n.symId else: NoSymId)
-      let providesResult = c.p.resultSym != NoSymId and
-        not (n.isSymbol and n.symId == c.p.resultSym)
+        if res != NoSymId and peelExpr(c, n).exprKind == OconstrX:
+          # `return T(f: v)` stores into `result`, whose paths the `.ensures`
+          # names; the path ends here, so nothing else sees the facts.
+          retLoc = getVarId(c, res)
+          retSym = res
+          invalidateFactsAbout(c.facts, retLoc)
+          invalidateDerivedFrom(c, res)
+          storeFieldFacts c, res, n
+        else:
+          # `return i - 1`: the value gets a slot of its own to be judged in
+          retLoc = derivedIdOf(c, "#ret", NoSymId)
+          invalidateFactsAbout(c.facts, retLoc)
+          stateValue c, retLoc, n
+      verifyEnsures c, retLoc, info, retSym
+      let providesResult = res != NoSymId and
+        not (n.isSymbol and n.symId == res)
       if providesResult:
         # `return toOpenArray(a)` returns the value directly rather than storing
         # it into `result` first, so `traverseAsgn`'s escape check never sees it.
@@ -6243,7 +6220,9 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   if initAccepted:
     seedRangeFacts c, name, localType
     if not initStart.isDotToken:
-      addFieldFacts c, name, "v" & $uint32(name), initStart
+      # a local declared in a loop body is a new value on every iteration
+      invalidateDerivedFrom(c, name)
+      storeFieldFacts c, name, initStart
     assumeEnsures c, initStart, getVarId(c, name), call.olds, name
 
 proc traverseAssume(c: var FirContext; n: var Cursor) =
@@ -6455,6 +6434,16 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     traverseAssume c, n
   of AssertV:
     traverseAssert c, n
+  of InvariantV:
+    if c.loopDepth > 0:
+      skip n # the loop's head assumed it, its entry and back-edges prove it
+    else:
+      # no loop is left around it: a claim about this point, like `assert`
+      judgeInvariant(c, n, "here")
+      var cond = n
+      cond = sub(cond)
+      assumeCond(c, cond, ownReading(c))
+      skip n
   of LabV:
     traverseLabel c, n
   of JmpV:

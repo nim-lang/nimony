@@ -9,13 +9,24 @@ when defined(linux) or defined(osx):
   import std/[assertions, syncio]
   import std/posix/posix
 
-  type Sigaction {.importc: "struct sigaction", header: "<signal.h>".} = object
-    sa_handler: nil proc (sig: cint) {.cdecl.}
-    sa_flags: cint
+  type
+    Sigaction {.importc: "struct sigaction", header: "<signal.h>".} = object
+      sa_handler: nil proc (sig: cint) {.cdecl.}
+      sa_flags: cint
+    Timeval {.importc: "struct timeval", header: "<sys/time.h>".} = object
+      tv_sec: Time
+      tv_usec: clong
+    Itimerval {.importc: "struct itimerval", header: "<sys/time.h>".} = object
+      it_interval: Timeval
+      it_value: Timeval
 
   proc sigaction(sig: cint; act, old: nil ptr Sigaction): cint {.
     importc, header: "<signal.h>".}
-  proc ualarm(usecs, interval: cuint): cuint {.importc, header: "<unistd.h>".}
+  # Android's bionic libc does not provide `ualarm`.
+  proc setitimer(which: cint; curr, old: nil ptr Itimerval): cint {.
+    importc, header: "<sys/time.h>".}
+
+  const ITIMER_REAL = cint(0)
 
   var hits = 0   ## the handler ran, so the read really was interrupted
   proc onAlarm(sig: cint) {.cdecl.} =
@@ -52,7 +63,9 @@ when defined(linux) or defined(osx):
     var s = ""
     assert readLine(f, s)
     assert s == "a"
-    discard ualarm(100_000'u32, 0'u32)
+    var alarm = Itimerval(it_value: Timeval(tv_sec: Time(0),
+      tv_usec: clong(100_000)))
+    discard setitimer(ITIMER_REAL, addr alarm, nil)
     assert readLine(f, s)
     assert s == "b"
     assert not failed(f)

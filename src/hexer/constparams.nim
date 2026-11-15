@@ -324,7 +324,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
          YldS, StmtsS, AlwaysS,
          PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS,
          ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
-         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS,
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
          AsmS, DeferS, LabS, JmpS, NoStmt:
         # generic container: copy the head and recurse into the children

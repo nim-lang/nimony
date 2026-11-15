@@ -601,7 +601,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         inc n
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
-  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
+  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, InvariantP, PragmaP, PushP, PopP, PassLP, PassCP:
     if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0) and
         not isPreservedCustomPragma(n):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
@@ -1203,7 +1203,10 @@ proc semLinkPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: N
   elif path notin c.toLink:
     c.toLink.add path
 
-proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
+proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool;
+                    loopHead: var bool) =
+  ## `loopHead`: the line starts a loop body, the one place an `invariant` may
+  ## stand (`semLoopBody`). It stays true only while every pragma is one.
   # A statement pragma arrives either wrapped — `(call build "a")` /
   # `(kv assume expr)` with the pragma name as first child — or as a bare
   # ident / tag-form node. For wrapped forms the wrapper's scope is entered
@@ -1225,6 +1228,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     if hasScope:
       it.n = start; skip it.n
     else: skipParRi it.n # degenerate bare-ident form; historical behavior
+  if it.n.pragmaKind != InvariantP: loopHead = false
   if c.phase == SemcheckSignatures and not isPragmaBlock and
       it.n.pragmaKind in {CompileP, LinkP, PassCP, PassLP}:
     # These evaluate their arguments as constant expressions, which needs the
@@ -1302,9 +1306,12 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     toPragmaArgs()
     semEmit c, dest, it
     closePragmaLine()
-  of AssumeP, AssertP:
-    let kind = if it.n.pragmaKind == AssumeP: AssumeS else: AssertS
+  of AssumeP, AssertP, InvariantP:
+    let pk = it.n.pragmaKind
+    let kind = if pk == AssumeP: AssumeS elif pk == AssertP: AssertS else: InvariantS
     let info = it.n.info
+    if pk == InvariantP and not loopHead:
+      buildErr c, dest, info, "an `invariant` must be the first statement of a loop body"
     toPragmaArgs()
     dest.addParLe(kind, info)
     semBoolExpr c, dest, it.n
@@ -1524,13 +1531,17 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       skip it.n
       while it.n.hasMore: skip it.n
 
-proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item; loopHead: var bool) =
   let info = it.n.info
   it.n.into:
     while it.n.hasMore:
       # kv/call wrappers around a pragma line are entered by `semPragmaLine`
-      semPragmaLine c, dest, it, false
+      semPragmaLine c, dest, it, false, loopHead
   producesVoid c, dest, info, it.typ # in case it was not already produced
+
+proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  var loopHead = false
+  semPragmasLine c, dest, it, loopHead
 
 proc hasCastUncheckedAccess(n: Cursor): bool =
   ## Scan the first pragma of the `(pragmas ...)` list at `n` to see if it
@@ -1554,8 +1565,9 @@ proc semPragmaExpr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     assert it.n.stmtKind == PragmasS
     hasUncheckedAccess = hasCastUncheckedAccess(it.n)
     copyInto dest, it.n: # (pragmas
+      var loopHead = false
       while it.n.hasMore:
-        semPragmaLine c, dest, it, true
+        semPragmaLine c, dest, it, true, loopHead
     if hasUncheckedAccess:
       inc c.inUncheckedAccess
     var list = createTokenBuf(0)

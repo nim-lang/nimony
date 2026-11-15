@@ -155,6 +155,7 @@ proc intersections(ray: Ray): Intersection {.
     closest = FarAway
     nearest = Intersection(thing: -1, dist: 0.0)
   for i in 0 ..< 3:
+    {.invariant: nearest.thing >= -1 and nearest.thing < 3.}
     let hit = objectIntersect(i, ray)
     if hit.thing != -1 and hit.dist < closest:
       nearest = hit

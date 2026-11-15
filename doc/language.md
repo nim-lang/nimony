@@ -3234,19 +3234,27 @@ Two module pragmas move the default:
 A postcondition, stated with `ensures`, is judged in the routine itself, at
 every exit, and a caller takes it without looking. No run-time check backs it,
 so an `ensures` the compiler cannot prove is an error in every mode, like an
-undecided `{.assert}`:
+undecided `{.assert.}`:
 
 ```nim
-proc pick(i: int): Hit {.requires: i >= 0 and i < 3,
-    ensures: result.thing >= -1 and result.thing < 3.} =
-  if miss(i): return Hit(thing: -1)   # proven: the constructor states the field
-  result = Hit(thing: i)              # proven from the `requires`
+proc clampLow(x: int): int {.ensures: result >= 0.} =
+  if x < 0: return 0
+  return x                  # proven: the guard bounds `x`
+
+proc pass(x: int): int {.ensures: result >= 0.} =
+  result = x                # Error: cannot prove postcondition: 0 <= result
 ```
 
-A field of an object result is a location like any other: a constructor or a
-copy states what it holds. A bound on it survives a loop that overwrites the
-object when every iteration ends with the bound true again, as in a loop that
-keeps the nearest of several `pick` results.
+A field of an object held by value is a location like any other: a
+constructor `T(f: v)` states what `f` holds, and a copy `x = y` states that
+`x.f` is `y.f`. An `ensures` about `result.f` is proven that way:
+
+```nim
+proc pick(i: int; miss: bool): Hit {.requires: i >= 0 and i < 3,
+    ensures: result.thing >= -1 and result.thing < 3.} =
+  if miss: return Hit(thing: -1)
+  result = Hit(thing: i)    # proven from the `requires`
+```
 
 ### Assertions and assumptions
 
@@ -3280,6 +3288,43 @@ run-time check for debugging, compiled out by `-d:noAssertions` and
 other, but an obligation that only it discharges stops being provable once it
 is switched off — the build then fails rather than losing a check. State such a
 claim with `{.assert.}`.
+
+### Loop invariants
+
+A location the body of a loop writes is not known to keep any bound at the
+head of the loop, except for a counter the body only moves one way. So an
+`{.assert.}` at the top of the body cannot be proven from what the loop
+does: it asks about what the head has already forgotten.
+
+`{.invariant: cond.}` states that `cond` holds at the head of **every**
+iteration. It is proven by induction:
+
+* on entry to the loop, from what is known before it;
+* at the end of every iteration, the end of the body and every `continue`,
+  from what the body did.
+
+Then `cond` is known at the head: at the start of the body, and after the
+loop, which is left from the head. Like an assertion, an invariant is a
+compile-time claim only, and one that is not proven is an error, whatever the
+module's contract features say.
+
+```nim
+proc nearest(n: int): Hit {.ensures: result.thing >= -1 and result.thing < 3.} =
+  var best = Hit(thing: -1)
+  for i in 0 ..< n:
+    {.invariant: best.thing >= -1 and best.thing < 3.}
+    let h = probe(i)          # ensures: -1 <= result.thing < 3
+    if h.thing != -1: best = h
+  result = best               # proven: the invariant holds after the loop
+```
+
+An invariant is written as the first statement of a `while` or `for` body,
+comments aside, and nowhere else: anywhere else it would read as a claim about
+that point, which is what `{.assert.}` is for. Several may follow each other.
+It is a claim about the head, before the iteration starts, so it cannot depend
+on the variable of a `for` loop: that variable is bound by the iteration, and
+what it holds is stated by the iterator's own `ensures`. A nested loop has its
+own invariants, and the `continue` of the nested loop judges only those.
 
 ### Aliasing
 
