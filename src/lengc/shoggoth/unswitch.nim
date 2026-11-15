@@ -312,7 +312,9 @@ proc collectLoopDefs(c: var Context; whileCur: Cursor) =
   var blocked = false
   var body = whileCur
   body.into:
-    if body.hasMore: skip body                   # the loop condition
+    # `(while COND BODY)` leads with its condition; `(loop BODY (continue
+    # COND))` leads with the body, which is exactly what must be scanned.
+    if whileCur.stmtKind == WhileS and body.hasMore: skip body
     while body.hasMore:
       scanLoopDefs(c.orig, body, true, c.defs, multi, blocked)
       skip body
@@ -699,12 +701,12 @@ proc applyCandidate(c: var Context; cand: Candidate): TokenBuf =
 
 # ── public entry ─────────────────────────────────────────────────────────────
 
-proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
+proc runUnswitch*(buf: var TokenBuf; minted: var int): int {.discardable.} =
   ## Fixpoint: unswitch one loop per round (the innermost candidate), rebuild,
-  ## rescan. Returns the number of loops unswitched.
+  ## rescan. Returns the number of loops unswitched. `minted` is the body's
+  ## `` `us `` counter, kept across pipeline rounds.
   result = 0
   var rounds = 0
-  var minted = 0
   while rounds < MaxRounds:
     inc rounds
     var c = Context(orig: addr buf, counter: minted,
@@ -722,6 +724,10 @@ proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
     minted = c.counter
     buf = ensureMove(newBuf)
     inc result
+
+proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
+  var minted = 0
+  result = runUnswitch(buf, minted)
 
 # ── self-tests ───────────────────────────────────────────────────────────────
 
@@ -848,6 +854,18 @@ when isMainModule:
       "(asgn i.0 (add (i 64) i.0 1)))))")
     doAssert got.count("(while") == 2, got
     doAssert got.count("(elif") == 1, got      # the hoisted one; both ifs folded
+    doAssert "(dot b.0.M" in got, got          # hoisted in terms of `b`, not `x.1`
+
+  block chased_temp_hoisted_loop_form:
+    # The same shape in the rotated `(loop BODY (continue COND))` form, whose
+    # first child is the body, not a condition: the temps are defined there.
+    let got = unswitched(
+      "(stmts (loop (stmts " &
+      "(var :bytes.1 . (u 64) (dot b.0.M bytes.0.M 0)) " &
+      "(var :x.1 . (i 64) (conv (i 64) (bitand (u 64) bytes.1 255u))) " &
+      "(ite (lt 14 x.1) (stmts (asgn a.0 1)) (stmts (asgn a.0 2))) " &
+      "(asgn i.0 (add (i 64) i.0 1))) (continue (lt i.0 n.0))))")
+    doAssert got.count("(loop") == 2, got
     doAssert "(dot b.0.M" in got, got          # hoisted in terms of `b`, not `x.1`
 
   block chased_temps_dedup_across_copies:
