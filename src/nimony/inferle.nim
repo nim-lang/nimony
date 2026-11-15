@@ -349,23 +349,40 @@ proc tightest(f: Facts): Table[(VarId, VarId), xint] =
     if key notin result or x.c < result.getOrDefault(key):
       result[key] = x.c
 
+proc derivedBound(f: Facts; chains: var Table[VarId, Table[VarId, xint]];
+                  a, b: VarId): xint =
+  ## The tightest `c` a chain of `f` gives for `a <= b + c`, NaN if none does.
+  ## `chains` caches `boundsFrom` per start: a join asks about the same `a`
+  ## (the constant 0 above all) many times.
+  if a notin chains: chains[a] = boundsFrom(f, a)
+  let dist = chains.getOrDefault(a)
+  result = if b in dist: dist.getOrDefault(b) else: createNaN()
+
 proc join*(x, y: Facts): Facts =
   ## The facts that hold after a confluence of `x` and `y`: every bound one side
   ## states that the other implies, at the weaker of the two constants. Each
   ## side contributes its *tightest* bound per pair — a redundant weaker fact
   ## next to a tighter one must not weaken the result — and a bound only one
-  ## side states outright survives when the other derives it through a chain.
+  ## side states outright survives when the other derives it through a chain,
+  ## at the weaker of the stated and the derived constant: `r = 0` in one arm
+  ## and `r = x` under `x <= 2` in the other still leave `r <= 2`.
   result = Facts()
   let bx = tightest(x)
   let by = tightest(y)
+  var chainsX = initTable[VarId, Table[VarId, xint]]()
+  var chainsY = initTable[VarId, Table[VarId, xint]]()
   for key, c in bx:
     if key in by:
       result.x.add LeXplusC(a: key[0], b: key[1], c: max(c, by.getOrDefault(key)))
-    elif implies(y, LeXplusC(a: key[0], b: key[1], c: c)):
-      result.x.add LeXplusC(a: key[0], b: key[1], c: c)
+    else:
+      let d = derivedBound(y, chainsY, key[0], key[1])
+      if not d.isNaN:
+        result.x.add LeXplusC(a: key[0], b: key[1], c: max(c, d))
   for key, c in by:
-    if key notin bx and implies(x, LeXplusC(a: key[0], b: key[1], c: c)):
-      result.x.add LeXplusC(a: key[0], b: key[1], c: c)
+    if key notin bx:
+      let d = derivedBound(x, chainsX, key[0], key[1])
+      if not d.isNaN:
+        result.x.add LeXplusC(a: key[0], b: key[1], c: max(c, d))
 
 when isMainModule:
   import std/syncio
