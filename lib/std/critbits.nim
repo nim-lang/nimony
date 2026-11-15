@@ -18,7 +18,7 @@ import std/assertions
 
 type
   NodeObj[T] {.acyclic.} = object
-    byte: int ## byte index of the difference
+    byte: Natural ## byte index of the difference
     otherBits: char
     case isLeaf: bool
     of false: child: array[2, nil Node[T]]
