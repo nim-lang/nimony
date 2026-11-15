@@ -3896,8 +3896,11 @@ proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo;
     of Disproven:
       buildErr c, info, "postcondition violated: " & asNimCode(cond)
     of Unprovable:
-      if StaticContractsFeature in c.features:
-        buildErr c, info, "cannot prove postcondition: " & asNimCode(cond)
+      # Unlike an undecided `.requires`, which keeps the run-time guard the
+      # callee carries, nothing checks a postcondition at run time: every
+      # caller simply assumes it. Undecided is therefore an error whatever the
+      # module's contract features, exactly as for `{.assert}`.
+      buildErr c, info, "cannot prove postcondition: " & asNimCode(cond)
 
 proc assumeOwnContract(c: var FirContext; n: Cursor) =
   assumeCond(c, n, plainReading())

@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tensuresundecided.nim(8, 1) Error: cannot prove postcondition: 0 <= result.thing and result.thing < 3 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tensuresundecided.nim(11, 1) Error: cannot prove postcondition: 0 <= result [pass --verbose for the Final IR]
