@@ -91,7 +91,7 @@ type
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
   CliOption = enum
-    Parallel, Force, Rerun, Verbose, Profile, Report, Progress, KeepGoing
+    Parallel, Force, Rerun, Verbose, Profile, Report, Progress, Done, KeepGoing
 
   CmdStats = object
     sec: float
@@ -408,7 +408,9 @@ type
     ## percentage is remapped into `[lo, hi]` so a caller that runs nifmake in
     ## several phases (Nimony's frontend/backend split) can hand each phase a
     ## sub-range and present one continuous 0..100% bar across processes.
-    active: bool
+    ## `closes` (`--done`) marks the run that owns the line: only it prints
+    ## `done` and the newline when its range ends at 100.
+    active, closes: bool
     done, total, lo, hi: int
 
 proc nodeLabel(dag: Dag; node: Node): string =
@@ -447,10 +449,12 @@ proc draw(p: Progressor; label: string) =
 
 proc finish(p: Progressor) =
   if not p.active: return
-  p.draw(if p.hi >= 100: "done" else: "")
-  # Only the final phase (`hi == 100`) closes the line; earlier phases leave the
-  # cursor parked so the next nifmake process overwrites the same line via `\r`.
-  if p.hi >= 100:
+  let last = p.closes and p.hi >= 100
+  p.draw(if last: "done" else: "")
+  # Only the `--done` run whose range ends at 100 closes the line; every other
+  # run leaves the cursor parked so the next nifmake process overwrites the
+  # same line via `\r`.
+  if last:
     stdout.write "\n"
     stdout.flushFile()
 
@@ -632,6 +636,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
   # machine-readable stdout.
   var prog = Progressor(
     active: Progress in opt and Verbose notin opt and Report notin opt and isatty(stdout),
+    closes: Done in opt,
     done: 0, total: 0, lo: progressLo, hi: progressHi)
   if prog.active:
     prog.total = countToBuild(dag, sortedNodes, opt, sc)
@@ -972,7 +977,9 @@ Options:
                         on an interactive terminal; ignored with --verbose and
                         --report). The optional LO:HI range remaps the bar so a
                         caller running several builds can show one continuous
-                        0..100% bar across them.
+                        0..100% bar across them. Never closes the line.
+  --done[:LO,HI]        Like --progress, but this run owns the line: when HI
+                        is 100 it finishes with `[100%] done` and a newline.
   --profile             Print time and peak memory of executed commands to stderr.
   --report              Print machine-readable per-command invocation
                         counts to stdout, e.g.
@@ -1123,20 +1130,22 @@ proc main() =
       of "lock": lockFile = val
       of "profile": opt.incl Profile
       of "report": opt.incl Report
-      of "progress":
+      of "progress", "done":
         opt.incl Progress
-        # Optional `--progress:LO:HI` remaps the bar into a sub-range so a
-        # multi-phase caller gets one continuous 0..100% indicator.
+        if key.normalize == "done": opt.incl Done
+        # Optional `--progress:LO:HI` / `--done:LO,HI` remaps the bar into a
+        # sub-range so a multi-phase caller gets one continuous 0..100%
+        # indicator.
         if val.len > 0:
-          let parts = val.split(':')
+          let parts = val.split({':', ','})
           if parts.len == 2:
             try:
               progressLo = parseInt(parts[0])
               progressHi = parseInt(parts[1])
             except ValueError:
-              quit "invalid --progress range: " & val
+              quit "invalid --" & key & " range: " & val
           else:
-            quit "invalid --progress range: " & val
+            quit "invalid --" & key & " range: " & val
       else:
         echo "Unknown option: --", key
         quit(1)
