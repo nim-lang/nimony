@@ -43,7 +43,7 @@ type
     byte: int ## byte index of the difference
     otherBits: char
     case isLeaf: bool
-    of false: child: array[0..1, nil ref NodeObj[T]]
+    of false: child: array[2, nil Node[T]]
     of true:
       key: string
       when T isnot void:
