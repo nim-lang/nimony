@@ -30,9 +30,6 @@ type
     breakTargets*: seq[SymId]
       ## What an unlabeled `break` can leave, innermost last: `SymId(0)` for a
       ## loop, the label for a `block` (only under `anonBlockBreaks`).
-    invariantSites*: seq[NifLineInfo]
-      ## The `{.invariant.}` pragmas that start a loop body, the only place
-      ## one may stand (`markLeadingInvariants`).
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma (e.g., ErrorCode, MyError)
