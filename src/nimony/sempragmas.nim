@@ -992,31 +992,6 @@ proc interruptSignatureError*(dest: var TokenBuf; paramsAt: int): string =
              "caller, so it must not return a value"
   endRead n
 
-proc markLeadingInvariants*(c: var SemContext; body: Cursor) =
-  ## Records the `{.invariant: cond.}` pragmas the loop body `body` starts
-  ## with, comments aside: the one place an invariant may stand, because it is
-  ## the claim about the head of every iteration. Anywhere else it would read
-  ## as a claim about that point, which is what `{.assert.}` is for.
-  if body.stmtKind == StmtsS:
-    var n = body
-    n.into:
-      var leading = true
-      while n.hasMore:
-        if leading and n.stmtKind == PragmasS:
-          var p = n
-          p.into:
-            while p.hasMore:
-              var name = p
-              if name.isTagLit: name = sub(name)
-              if name.pragmaKind == InvariantP:
-                c.routine.invariantSites.add name.info
-              else:
-                leading = false
-              skip p
-        elif n.stmtKind != CommentS:
-          leading = false
-        skip n
-
 proc semAssumeAssert*(c: var SemContext; dest: var TokenBuf; it: var Item; kind: StmtKind) =
   let info = it.n.info
   dest.addParLe(kind, info)
@@ -1228,7 +1203,10 @@ proc semLinkPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: N
   elif path notin c.toLink:
     c.toLink.add path
 
-proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
+proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool;
+                    loopHead: var bool) =
+  ## `loopHead`: the line starts a loop body, the one place an `invariant` may
+  ## stand (`semLoopBody`). It stays true only while every pragma is one.
   # A statement pragma arrives either wrapped — `(call build "a")` /
   # `(kv assume expr)` with the pragma name as first child — or as a bare
   # ident / tag-form node. For wrapped forms the wrapper's scope is entered
@@ -1250,6 +1228,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     if hasScope:
       it.n = start; skip it.n
     else: skipParRi it.n # degenerate bare-ident form; historical behavior
+  if it.n.pragmaKind != InvariantP: loopHead = false
   if c.phase == SemcheckSignatures and not isPragmaBlock and
       it.n.pragmaKind in {CompileP, LinkP, PassCP, PassLP}:
     # These evaluate their arguments as constant expressions, which needs the
@@ -1331,7 +1310,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     let pk = it.n.pragmaKind
     let kind = if pk == AssumeP: AssumeS elif pk == AssertP: AssertS else: InvariantS
     let info = it.n.info
-    if pk == InvariantP and info notin c.routine.invariantSites:
+    if pk == InvariantP and not loopHead:
       buildErr c, dest, info, "an `invariant` must be the first statement of a loop body"
     toPragmaArgs()
     dest.addParLe(kind, info)
@@ -1552,13 +1531,17 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       skip it.n
       while it.n.hasMore: skip it.n
 
-proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item; loopHead: var bool) =
   let info = it.n.info
   it.n.into:
     while it.n.hasMore:
       # kv/call wrappers around a pragma line are entered by `semPragmaLine`
-      semPragmaLine c, dest, it, false
+      semPragmaLine c, dest, it, false, loopHead
   producesVoid c, dest, info, it.typ # in case it was not already produced
+
+proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  var loopHead = false
+  semPragmasLine c, dest, it, loopHead
 
 proc hasCastUncheckedAccess(n: Cursor): bool =
   ## Scan the first pragma of the `(pragmas ...)` list at `n` to see if it
@@ -1582,8 +1565,9 @@ proc semPragmaExpr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     assert it.n.stmtKind == PragmasS
     hasUncheckedAccess = hasCastUncheckedAccess(it.n)
     copyInto dest, it.n: # (pragmas
+      var loopHead = false
       while it.n.hasMore:
-        semPragmaLine c, dest, it, true
+        semPragmaLine c, dest, it, true, loopHead
     if hasUncheckedAccess:
       inc c.inUncheckedAccess
     var list = createTokenBuf(0)

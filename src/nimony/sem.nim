@@ -41,6 +41,27 @@ proc semStmtBody(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScop
   semStmtBranch c, dest, it, isNewScope
   n = it.n
 
+proc semLoopBody(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## The body of a `while` or `for`: `semStmtBody`, except that the pragma
+  ## lines it starts with, comments aside, may hold `{.invariant: cond.}`. That
+  ## is the one place an invariant may stand, because it is the claim about the
+  ## head of every iteration. Anywhere else it would read as an `{.assert.}`.
+  var list = createTokenBuf(0)
+  let orig = n
+  var body = bodyAsList(orig, list)
+  var loopHead = true
+  copyInto dest, body:
+    while body.hasMore:
+      if loopHead and body.stmtKind == PragmasS and c.phase != SemcheckTopLevelSyms:
+        var it = Item(n: body, typ: c.types.voidType)
+        semPragmasLine c, dest, it, loopHead
+        body = it.n
+      else:
+        if body.stmtKind != CommentS: loopHead = false
+        semStmt c, dest, body, false
+  n = orig
+  skip n
+
 proc semConv(c: var SemContext; dest: var TokenBuf; it: var Item)
 proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false): bool =
   template checkBranch(branch) =
@@ -1417,8 +1438,7 @@ proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
       inc c.routine.inLoop
       c.routine.breakTargets.add SymId(0)
       withNewScope c:
-        markLeadingInvariants c, it.n
-        semStmtBody c, dest, it.n, true
+        semLoopBody c, dest, it.n
       discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
   producesVoid c, dest, info, it.typ
@@ -3554,8 +3574,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       skip it.n
     inc c.routine.inLoop
     c.routine.breakTargets.add SymId(0)
-    markLeadingInvariants c, it.n
-    semStmtBody c, vb, it.n, true
+    semLoopBody c, vb, it.n
     discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   it.n = forStart; skip it.n # skip the for's closing ')'
@@ -3707,8 +3726,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     else:
       inc c.routine.inLoop
       c.routine.breakTargets.add SymId(0)
-      markLeadingInvariants c, it.n
-      semStmtBody c, dest, it.n, true
+      semLoopBody c, dest, it.n
       discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
 

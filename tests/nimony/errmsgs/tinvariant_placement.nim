@@ -16,6 +16,13 @@ proc outside(): int =
   result = 0
   {.invariant: result >= 0.}
 
+proc afterAssert(): int =
+  result = 0
+  while result < 3:
+    {.assert: result >= 0, invariant: result >= 0.}
+    inc result
+
 discard notFirst()
 discard inIf()
 discard outside()
+discard afterAssert()
