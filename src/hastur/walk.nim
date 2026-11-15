@@ -2,7 +2,7 @@
 ## every parallel-safe test in the tree ends up in one saturated pool.
 ##
 ## A directory describes how it is tested with two optional files:
-##   setup.nim     — a custom runner program that OWNS the directory (and its
+##   setup.nim     — a custom runner program that owns the directory (and its
 ##                   subtree): hastur compiles+runs it, passes context on argv,
 ##                   and takes its exit code as the verdict. This is the escape
 ##                   hatch for suites that aren't "a folder of inputs" (boot,
@@ -92,7 +92,7 @@ proc setupDirCmd*(dir: string; overwrite: bool; forward: string) =
     quit "FAILURE: Some tests failed."
 
 type WalkPlan = object
-  ## Accumulated during the tree walk so the run phase can drive ONE
+  ## Accumulated during the tree walk so the run phase can drive a single
   ## saturated parallel pool instead of one pool per directory. The old
   ## walk ran each leaf directory to completion before starting the next,
   ## so every directory boundary was a hard pool barrier (N-1 cores idle on
@@ -154,12 +154,12 @@ proc collectTests*(c: var TestCounters; plan: var WalkPlan; dir, forward: string
         quit "FAILURE: " & dir & " groups test suites (" & s &
              " is one) but also holds test files:\n  " & strays.join("\n  ") &
              "\nMove them into a suite directory — left here they hide the whole tree."
-    # Leaf test directory: gather its own `.nim` files and do NOT descend.
+    # Leaf test directory: gather its own `.nim` files and do not descend.
     # Nested dirs here (`deps/`, `imp/`, `system/`, …) hold import fixtures
     # pulled in by those tests, not standalone tests — the old per-category
     # runner never entered them either.
     if parallelJobs > 1 and canRunParallel(cat):
-      # The directory's plain tests become ONE unit (a `joined` worker compiles
+      # The directory's plain tests become a single unit (a `joined` worker compiles
       # them into a single program); whatever cannot be joined stays a unit of
       # its own. Both kinds go into the same flat queue.
       let members = joinMembers(dir, cat, overwrite)

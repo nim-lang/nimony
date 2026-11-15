@@ -762,7 +762,7 @@ proc emitUsedDecls(c: var SynthesizeSerializerCtx; s: var SemContext; stack: var
       if owner == c.thisModuleSuffix:
         let res = tryLoadSym(sym)
         # A field / enum field resolves to a symbol of its own, but its decl
-        # is a part of the TYPE's, which travels with the type.
+        # is a part of the type's, which travels with the type.
         if res.status == LacksNothing and res.decl.symKind notin {FldY, EfldY}:
           var deps = newSeq[SymId]()
           var d = res.decl

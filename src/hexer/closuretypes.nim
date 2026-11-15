@@ -13,7 +13,7 @@
 ## also carries an environment. Hexer's `lambdalifting` turns the values of that
 ## type into the `(closureTuple <fn proctype> (ref RootObj))` pair the back end
 ## lays out, and rewrites the proctypes it walks along with them — but it only
-## walks THIS module. The type of a foreign decl (a field of an imported
+## walks this module. The type of a foreign decl (a field of an imported
 ## object, an imported global, an imported proc's result) is answered by
 ## `typenav` straight from its semchecked declaration and keeps the nimsem
 ## spelling. Hexer therefore meets both spellings of one type and has to agree
@@ -88,8 +88,8 @@ proc isLiftedClosureTuple*(n: Cursor): bool {.inline.} =
   n.typeKind == ClosureTupleT
 
 proc isClosureProcType*(typ: Cursor): bool {.inline.} =
-  ## A `.closure` proctype that lambdalifting did NOT rewrite: the type of a
-  ## FOREIGN decl, answered from its semchecked declaration. Its runtime
+  ## A `.closure` proctype that lambdalifting did not rewrite: the type of a
+  ## foreign decl, answered from its semchecked declaration. Its runtime
   ## representation is the `(closureTuple …)` pair all the same (`sizeof`
   ## sizes it as two pointers), so every pass below lambdalifting has to
   ## treat it as that pair: hook it like one (`lifter`) and lay it out like
@@ -99,14 +99,14 @@ proc isClosureProcType*(typ: Cursor): bool {.inline.} =
 proc isClosureValueType*(typ: Cursor): bool =
   ## The (fn, env) pair in any of its spellings: the lowered `ClosureTupleT`, a
   ## `.closure` proctype whose decl has not been rewritten yet, or a `.closure`
-  ## iterator. A `.passive` iterator is NOT one — it lowers to a bare wrapper
+  ## iterator. A `.passive` iterator is not one — it lowers to a bare wrapper
   ## proctype.
   isLiftedClosureTuple(typ) or isClosureProcType(typ) or
     (typ.typeKind == ItertypeT and not procHasPragma(typ, PassiveP))
 
 proc containsClosureProcType*(typ: Cursor): bool =
   ## Is there an un-rewritten `.closure` proctype anywhere in `typ`'s
-  ## STRUCTURE — the type itself, a tuple/array element, a param? Symbols
+  ## structure — the type itself, a tuple/array element, a param? Symbols
   ## are not followed: a nominal type's layout is its own decl's business.
   ## An already lowered `(closureTuple …)` counts as done.
   var n = typ

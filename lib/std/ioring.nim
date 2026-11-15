@@ -92,7 +92,7 @@ proc setupRing() =
   # The release half of `threadpool.reactorReady`: the workers have been running
   # since `initPool` above, so everything the reactor reaches — the op queues,
   # the slot arenas, the timer heaps, the backend's own arenas — has to be
-  # visible to them BEFORE the reactor itself is.
+  # visible to them before the reactor itself is.
   atomicStore(gReactorState, 1, moRelease)
 
 proc initIoRing*() =
@@ -148,7 +148,7 @@ proc enqueueOp(op: OpContext) =
       if owner >= 0: lane = owner
     let foreign = lane != ioLane()
     while not gOpQueues[lane].tryEnqueue(op, MaxOpQueue):
-      # Draining OUR lane cannot make room in someone else's, so the wake goes
+      # Draining our own lane cannot make room in someone else's, so the wake goes
       # inside the retry and not only after a successful enqueue: only the owner
       # empties that stripe, and it is asleep in its completion wait. Without
       # this the producer spins until the owner surfaces on its own idle budget.
@@ -480,7 +480,7 @@ proc waitCompletions*(comps: var openArray[IoCompletion]): int =
 proc cancelPendingOps(fd: cint): int =
   ## The platform-neutral half of `closeFd`: cancel any ops still in flight on
   ## `fd` so their continuations are resumed (with a cancellation result)
-  ## instead of leaking, and deregister the fd from the backend — all BEFORE
+  ## instead of leaking, and deregister the fd from the backend — all before
   ## the actual close. Previously `closeFd` only called close(2): the backend
   ## never found out (so epoll/kqueue kept a registration for a possibly-reused
   ## fd number) and any pending slot for this fd stayed in use forever — a
@@ -526,7 +526,7 @@ proc submitPollRemove*(fd: cint): int {.discardable.} =
   ##
   ## Named for `IORING_OP_POLL_REMOVE`, but it is not a `submit*` in behaviour:
   ## those enqueue an op and return a `SeqNum` to wait on. Cancelling is not
-  ## something you wait for, so this acts on THIS lane and answers at once.
+  ## something you wait for, so this acts on this lane and answers at once.
   ##
   ## ⚠ **This lane only**, exactly like `closeFd` — see `cancelPendingOps`.
   ##
@@ -567,10 +567,10 @@ when defined(posix):
       variadicFcntl(fd, cmd, arg)
   else:
     proc fcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
-      ## FIXED arity with a defaulted third argument, not `varargs` — the same
+      ## Fixed arity with a defaulted third argument, not `varargs` — the same
       ## shape and the same reason as `posix.open`: sem monomorphizes a `varargs`
       ## importc into one variant per arity, all of them `importc "fcntl"`, and
-      ## `nimony n` lowers an importc syscall to ONE register-signature stub keyed
+      ## `nimony n` lowers an importc syscall to a single register-signature stub keyed
       ## by the C name. Two arities would collapse into that single stub and the
       ## two-argument call would leave a declared argument unbound.
       ##

@@ -22,7 +22,7 @@ type
     ## `stream` is nil.
     stream: nil pointer
 
-# On x86_64 the PLAIN `opendir`/`readdir` symbols are the legacy
+# On x86_64 the plain `opendir`/`readdir` symbols are the legacy
 # 32-bit-inode ABI; the 64-bit-inode variants carry the `$INODE64` suffix
 # (what <dirent.h> transparently rewrote to). arm64 shipped 64-bit-inode
 # only, under the plain names.

@@ -481,7 +481,7 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   # A portable row lowers exactly like the GCC builtin it stands for, and
   # `genGccBuiltinCall` already emits those: the `llvm.cttz`/`ctlz`/`ctpop`/
   # `bswap` call, the `i1 is_zero_poison` operand, and the i64→i32 truncation.
-  # It is keyed on the builtin NAME, which is what `cBuiltinFor` returns, so
+  # It is keyed on the builtin name, which is what `cBuiltinFor` returns, so
   # `(instr …)` needs no lowering of its own — resolve the row and reuse it.
   # A target-pinned row has no portable spelling by construction, so there
   # `cBuiltinFor` yields "" and this rejects rather than substituting.

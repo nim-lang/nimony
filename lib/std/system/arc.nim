@@ -16,7 +16,7 @@ func arcInc*(memLoc: var int) {.inline.} =
 
 func arcDec*(memLoc: var int): bool {.inline.} =
   ## Decrements the reference count. Returns true when it reaches zero.
-  ## Mirrors `atomicSubFetch`: the comparison is against the value AFTER the
+  ## Mirrors `atomicSubFetch`: the comparison is against the value after the
   ## decrement, and a fresh object starts at 0, so "reached zero" is `< 0`.
   {.cast(noSideEffect).}:
     dec memLoc

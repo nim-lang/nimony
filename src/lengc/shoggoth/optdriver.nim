@@ -110,14 +110,14 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported.
   ##
-  ## The temps these passes mint are LOCALS of the body, so they are named like
+  ## The temps these passes mint are locals of the body, so they are named like
   ## locals -- `` `sroa.1 ``, `` `cse.1 `` -- and two bodies' first temps do
-  ## share a pool symbol. That is what a local name IS: every proc in the module
+  ## share a pool symbol. That is what a local name is: every proc in the module
   ## already has its own `result.0`, and both backends scope a local to its
   ## function. This used to paste a per-body `<module>.<n>` after the counter to
-  ## avoid the sharing, which made the module suffix a MIDDLE segment of the
+  ## avoid the sharing, which made the module suffix a middle segment of the
   ## symbol (nimony#2457) -- a global's spelling for something that is not one.
-  # The structural rewriter runs FIRST so its `deref_addr` rules fold the
+  # The structural rewriter runs first so its `deref_addr` rules fold the
   # inliner's by-address residue — `inc i` splices as `(deref (haddr i))` — before
   # anything else looks at the body. Removing those `addr` nodes un-poisons the
   # locals for every later pass (SROA and copyprop treat address-taken locals as
@@ -133,14 +133,14 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
   # Hoist loop-invariant `if` conditions out of small loops by duplicating them
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
-  # of per character. AFTER copyprop so propagated copies make structurally
+  # of per character. After copyprop so propagated copies make structurally
   # identical conditions actually identical.
   if passOn("unswitch") and runUnswitch(buf) > 0 and passOn("copyprop"):
-    # A specialized copy no longer READS the temps that fed the hoisted test —
+    # A specialized copy no longer reads the temps that fed the hoisted test —
     # but it still computes them, once per iteration, which is most of what the
     # unswitch was meant to remove. Copy propagation's dead-store elimination is
     # what actually deletes them, so it has to see the loop again. They come in
-    # CHAINS (`x = bytes and 255` over `bytes = b.bytes`) and one round only
+    # chains (`x = bytes and 255` over `bytes = b.bytes`) and one round only
     # deletes the last link, so run until the body stops shrinking.
     for _ in 0 ..< 3:
       let before = buf.len
@@ -157,7 +157,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
   if passOn("cse"):
     st.checksRemoved += runCSE(buf, summaries, m, params)
-  # The vectorizer runs last of the passes that OPTIMIZE: its emitted
+  # The vectorizer runs last of the passes that optimize: its emitted
   # `(instr ...)` applications are final (selection-final by the tag's contract)
   # and no later pass needs to look at them; the scalar remainder loop it leaves
   # behind was already optimized by everything above. Only the encoding passes
@@ -177,7 +177,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   if target.vecMode != vecOff and passOn("vectorize"):
     if runVectorizer(buf, "vec." & suffix):
       inc st.vectorized
-  # The tail-call encoding runs after EVERYTHING, the vectorizer included.
+  # The tail-call encoding runs after everything, the vectorizer included.
   # `(ret (call …))` deliberately violates the Leng rule that calls are bound and
   # do not nest: it is a directive to the backend ("do the tail call"), not an
   # expression. Minting it last is what keeps every pass above from having to
@@ -288,7 +288,7 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
   var n = src.beginRead()
   if n.kind == TagLit and n.stmtKind == StmtsS:
     # Open the root by hand so the intrinsic declarations the vectorizer and
-    # memidioms need can be appended INSIDE it once every body is processed.
+    # memidioms need can be appended inside it once every body is processed.
     let tag = n.cursorTagId
     let li = rawLineInfo(n)
     result.openTag tag
@@ -329,7 +329,7 @@ proc processFile*(input, output: string; verify = false;
   let suffix = extractModuleSuffix(input)
   var st = Stats()
   # 1. Load the module as a typenav context (for type-precise aliasing), in the
-  #    SAME pools as `src`, so symbol ids line up between the type context and
+  #    same pools as `src`, so symbol ids line up between the type context and
   #    the optimization buffer. This used to serialize the inliner's result to
   #    NIF text and re-parse it into the context's pools: on `sem.nim` that
   #    round trip was 9.7 % of the whole run.

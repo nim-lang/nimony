@@ -5,7 +5,7 @@
 ## coalescing big chunks, huge mmap; owner-stamped lock-free deferred free for
 ## cross-thread deallocations). The driver defines `nimNativeAlloc` for every
 ## backend, because the libc-free stdlib is the default (`nimony.nim`); the
-## mimalloc shim is the opt-OUT, reached with `-d:useMimalloc` or `-d:useLibc`,
+## mimalloc shim is the opt-out, reached with `-d:useMimalloc` or `-d:useLibc`,
 ## and the native backend always uses the native allocator regardless.
 ##
 ## The user-facing `alloc`/`dealloc`/`realloc`/`allocatedSize` wrappers are
@@ -22,7 +22,7 @@ func c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<
 func c_memcmp(a, b: pointer; size: csize_t): cint {.importc: "memcmp", header: "<string.h>".}
 func c_memset(dest: pointer; val: cint; size: csize_t) {.importc: "memset", header: "<string.h>".}
 
-# --- block memory operations on LOCATIONS -----------------------------------
+# --- block memory operations on locations -----------------------------------
 # Unlike `copyMem`/`zeroMem`/`cmpMem` these take no pointers: the operand is the
 # variable (or field, or element) itself, and the byte count defaults to the
 # size of its type. Without an `addr` nothing forces a local into memory, so the
@@ -109,7 +109,7 @@ func zeroMem*(dest: pointer; size: int) {.inline.} =
 # since `nimNativeAlloc` is the default. A `-d:useMimalloc` build ignores both.
 
 when not defined(nimNativeAlloc):
-  # NOTE: `-d:valgrind` does nothing here. It instruments the NATIVE allocator
+  # Note: `-d:valgrind` does nothing here. It instruments the native allocator
   # (`system/valgrind.nim`), and this build uses mimalloc, whose heap valgrind
   # already understands through mimalloc's own `-DMI_TRACK_VALGRIND=1`.
   #
@@ -188,7 +188,7 @@ else:
 
   # alloc.nim's dirty templates and intrusive generics carry per-routine
   # `{.untyped.}` so their bodies are checked at instantiation. We deliberately
-  # do NOT enable the `untyped` feature module-wide here — it would leak into
+  # do not enable the `untyped` feature module-wide here — it would leak into
   # seqimpl/stringimpl and the mm strategy and miscompile their `{.cast(noSideEffect).}`.
 
   # --- the ported allocator (alloc.nim itself `include`s osalloc) ----------

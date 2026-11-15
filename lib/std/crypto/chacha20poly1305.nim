@@ -254,7 +254,7 @@ else:
 
   func padTo16(p: var Poly1305) =
     ## The AEAD pads each part with zeros to a whole block. Flushing the partial
-    ## block as a FULL block (hibit set, zeros after) is exactly that.
+    ## block as a full block (hibit set, zeros after) is exactly that.
     if p.bufLen > 0:
       var n: int = p.bufLen
       while n < 16:

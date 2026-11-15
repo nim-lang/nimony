@@ -170,7 +170,7 @@ when defined(posix):
       variadicFcntl(fd, cmd, arg)
   else:
     proc posixFcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
-      ## FIXED arity with a defaulted third argument, not `varargs`: the same
+      ## Fixed arity with a defaulted third argument, not `varargs`: the same
       ## shape and the same reason as iouring.nim's `fcntl` — nimony collapses
       ## same-named importc stubs, so a varargs fcntl would mono-morph into
       ## arities that fight over one register-signature stub. `F_GETFL` ignores
@@ -244,7 +244,7 @@ when defined(posix):
     ## Perform, on the polling thread, the I/O of every op pending on a regular
     ## file `fd`. A regular file has no readiness to wait for — its read and
     ## write answer at once (never EAGAIN: the fd is not O_NONBLOCK) — so the
-    ## transfer IS the event, and this is what `processFd` is for a descriptor
+    ## transfer is the event, and this is what `processFd` is for a descriptor
     ## that does deliver events. This runs instead of arming the fd: kqueue's
     ## registration of a file is accepted yet, after a first delivery, never
     ## fires again, so an armed file op would park forever on its second read.

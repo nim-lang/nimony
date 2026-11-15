@@ -870,7 +870,7 @@ proc typeBits(typ: Cursor): int =
       if result <= 0: result = 64
 
 proc floatWidthOf(n: Cursor): int =
-  ## The bit width of the float expression `n` BEFORE evaluation, or -1. The
+  ## The bit width of the float expression `n` before evaluation, or -1. The
   ## evaluated value is a plain `FloatLit` and has lost it: `0.25'f32` and
   ## `0.25` evaluate alike, but their bit patterns do not.
   case n.kind

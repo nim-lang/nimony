@@ -824,7 +824,7 @@ const
 
 proc scanExpr(c: var ScanContext, popVars: var seq[string], popCounts: var seq[int], n: var Cursor) =
   ## Consumes one node. Mirrors the classic linear ParLe/ParRi walk: every
-  ## compound pushes a pop-var frame and its (virtual) close pops the TOP
+  ## compound pushes a pop-var frame and its (virtual) close pops the top
   ## frame — except `(POP :v)`, whose frame deliberately survives so the
   ## variable stays visible until the enclosing scope closes.
   if n.isTagLit:

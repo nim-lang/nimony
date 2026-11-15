@@ -87,11 +87,11 @@ proc derivedName*(stem, tag: string): string =
   ##   derivedName("outer.0", "env")        == "outer`env.0"
   ##   derivedName("gen.12.Iaaaa", "coro")  == "gen.12.Iaaaa`coro.0"
   ##
-  ## The tag goes INTO the identifier rather than becoming a dotted segment of
+  ## The tag goes into the identifier rather than becoming a dotted segment of
   ## its own, because the two shapes say different things. nif-spec.md gives a
-  ## global symbol as `<ident>.<disamb>.<moduleSuffix>` OR
+  ## global symbol as `<ident>.<disamb>.<moduleSuffix>` or
   ## `<ident>.<disamb>.<key>.<moduleSuffix>`, "where `key` usually is the result
-  ## from a generic instantiation". The `key` slot answers WHICH instantiation of
+  ## from a generic instantiation". The `key` slot answers which instantiation of
   ## `<ident>.<disamb>` this is — and because every module needing that
   ## instantiation derives the same key independently, `<ident>.<disamb>.<key>` is
   ## meaningful across module boundaries. That is exactly what lets a backend
@@ -113,12 +113,12 @@ proc derivedName*(stem, tag: string): string =
   ## distinguishing parts — stem and tag — inside the identifier where they
   ## belong.
   ##
-  ## Only a version at the very END counts, and that restriction is the whole
+  ## Only a version at the very end counts, and that restriction is the whole
   ## point rather than an implementation detail: the result must be an UNKEYED
   ## global symbol. Scanning back past a later segment to find a number would
   ## leave that segment sitting in the key slot — `("gen.12.Iaaaa", "coro")` would
   ## come back as `gen`coro.12.Iaaaa`, a keyed name again, and one that has
-  ## silently adopted the ORIGINAL symbol's key as its own cross-module identity.
+  ## silently adopted the original symbol's key as its own cross-module identity.
   var i = stem.len - 1
   while i > 0 and stem[i] in {'0'..'9'}: dec i
   if i > 0 and i < stem.len - 1 and stem[i] == '.':
@@ -232,7 +232,7 @@ when isMainModule:
   # An instantiation stem ends in its key, not in a version: the tag and a fresh
   # number are appended so the key stays inside the identifier.
   assert derivedName("gen.12.Iaaaa", "coro") == "gen.12.Iaaaa`coro.0"
-  # Whatever a caller appends its module to, the result must NOT read back as an
+  # Whatever a caller appends its module to, the result must not read back as an
   # instantiation — that is the whole point of the exercise.
   assert not isInstantiation(derivedName("outer.0", "env") & ".mymod")
   assert not isInstantiation(derivedName("gen.12.Iaaaa", "coro") & ".mymod")

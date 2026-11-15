@@ -9,7 +9,7 @@
 # hands to the shared `complete` (same resume path as every other backend).
 #
 # Lane affinity (the briefing's open question): a socket is associated with
-# exactly ONE completion port for its lifetime, so every op for a socket must
+# exactly one completion port for its lifetime, so every op for a socket must
 # be issued — and its slot allocated — on the lane whose port the socket is
 # bound to. `ioring.enqueueOp` asks `iocpOwnerLane` and routes to that lane's
 # op queue (stripes are lock-protected, so cross-lane enqueue is safe), then
@@ -239,11 +239,11 @@ when defined(windows):
       result = owner == lane
     gOwnerLock.release()
 
-  # WSAIoctl writes the function pointer straight into the proc-typed GLOBAL: a
+  # WSAIoctl writes the function pointer straight into the proc-typed global: a
   # pointer→proc cast is not allowed on this toolchain, so there is nothing to
   # assign across from a local.
   #
-  # Which means the STATE, not the pointer, is what carries the load between
+  # Which means the state, not the pointer, is what carries the load between
   # lanes. Every lane's first accept/connect runs this, and neither the guard
   # (`gAcceptEx != nil`) nor ws2_32's write into those eight bytes is atomic or
   # ordered on its own — two lanes could both pass the guard and both call
@@ -335,7 +335,7 @@ when defined(windows):
   proc issue(lane: int; slot: Slot) =
     ## Issue the op in `slot` as an overlapped operation.
     ##
-    ## Every path that does NOT leave an OVERLAPPED with the kernel must give
+    ## Every path that does not leave an OVERLAPPED with the kernel must give
     ## the Aux block back before it returns, or it leaks.
     let op = addr slot.op
     case op.kind
@@ -428,7 +428,7 @@ when defined(windows):
       else:
         # ConnectEx demands a bound socket, which a caller has no reason to
         # have done — `socketNonBlocking` just creates one. Bind the wildcard
-        # here; a socket that IS already bound answers WSAEINVAL, which is why
+        # here; a socket that is already bound answers WSAEINVAL, which is why
         # the result is discarded rather than checked.
         var any = default(array[16, uint8])
         any[0] = 2'u8               # sin_family = AF_INET, the rest zero

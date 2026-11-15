@@ -341,7 +341,7 @@ proc genLeaf(c: var Context; dest: var TokenBuf; n: var Cursor;
 proc genCond(c: var Context; dest: var TokenBuf; n: var Cursor;
              trueL, falseL, fallL: SymId) =
   ## The two-target condition compiler `Cx(cond)(trueL, falseL)` from
-  ## `doc/final_ir.md`. `and` chains on the FALSE target, `or` on the TRUE
+  ## `doc/final_ir.md`. `and` chains on the false target, `or` on the true
   ## target (exact duals), `not` swaps targets. Each `and`/`or` join is a fresh
   ## shared `(lab)` — so a deeply nested boolean is *flat* and analyses in one
   ## forward pass instead of an exponential path tree. `fallL` names the label

@@ -1,7 +1,7 @@
 ## `hastur wasmdiff` — the native backend as an executable ORACLE for the wasm
 ## backend.
 ##
-## Every fixture under `tests/ithaqua/` is one Nim source pushed through BOTH
+## Every fixture under `tests/ithaqua/` is one Nim source pushed through both
 ## C-free pipelines. There is no golden file to record and no expected output to
 ## keep in sync: the two legs must simply agree, byte for byte on stdout and on
 ## the exit code. That is what makes this cheap to extend — a new fixture is a
@@ -14,7 +14,7 @@
 ##               `jorogumo w`, orchestrated by nifmake), then
 ##               `node run_wasm.js out.wasm`.
 ##
-## The oracle cuts both ways: fixtures whose NATIVE leg is the wrong one get
+## The oracle cuts both ways: fixtures whose native leg is the wrong one get
 ## quarantined too, as `tests/ithaqua/nativebugs/` once held. They are kept as
 ## sources, out of the sweep, so the reproducers do not get lost; when the oracle
 ## is fixed they move back up into the sweep.
@@ -40,7 +40,7 @@ proc soleNimcacheSubdir(nimcache: string): string =
 
 proc runFixtureProgram(cmd: string; secs: int): tuple[output: string, exitCode: int, timedOut: bool] =
   ## Run a compiled fixture (the native ELF, or `node out.wasm`) capturing its
-  ## stdout ONLY (`options={}` leaves stderr on hastur's own stderr), so the
+  ## stdout only (`options={}` leaves stderr on hastur's own stderr), so the
   ## comparison is over real program output rather than merged streams. A
   ## MISCOMPILED wasm program can loop forever, so the run is wrapped in the
   ## `timeout` coreutil when it's on PATH: exit 124 then means it was killed for

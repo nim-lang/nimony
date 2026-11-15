@@ -57,9 +57,9 @@ type
 
 proc dynlibIsStaticImport*(e: EContext): bool {.inline.} =
   ## How `{.dynlib.}` on an `importc` proc is mapped, which is hexer's call to
-  ## make and depends on BOTH the target OS and the backend.
+  ## make and depends on both the target OS and the backend.
   ##
-  ## On Windows a `dynlib` is an import LIBRARY: the symbol is bound through the
+  ## On Windows a `dynlib` is an import library: the symbol is bound through the
   ## image's import table, filled in by the loader before the first instruction
   ## of the process runs. The native backend needs the `(dynlib …)` pragma to
   ## build that table itself, so the annotation is passed on to Leng. Everywhere
@@ -74,7 +74,7 @@ proc dynlibIsStaticImport*(e: EContext): bool {.inline.} =
   ## loader lowering in `trProc` (`dlopen`/`dlsym` behind a function-pointer
   ## global). Handing Windows to that lowering is not merely redundant, it
   ## cannot work: `system/dyncalls` imports `LoadLibraryA` and `GetProcAddress`
-  ## from kernel32 with `dynlib`, and those two ARE the loader — resolving them
+  ## from kernel32 with `dynlib`, and those two are the loader — resolving them
   ## through it means the module init calls `nimLoadLibrary("kernel32")`, which
   ## jumps through a function pointer that the same init only assigns further
   ## down. A call to address 0 before the process can print anything.

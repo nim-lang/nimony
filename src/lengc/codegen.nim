@@ -303,11 +303,11 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         result.flags.incl NodeclP
         skip n
       of DynlibP:
-        # Static-import library annotation for the NATIVE backend (arkham);
+        # Static-import library annotation for the native backend (arkham);
         # meaningless for C output — the linker resolves the symbol.
         skip n
       of ConstrefP:
-        # A PARAMETER pragma; never legal on a proc.
+        # A parameter pragma; never legal on a proc.
         error c.m, "invalid proc pragma: ", n
       of ImportjsP:
         # The JS back end's extern: the argument is a JS splice template only
@@ -385,7 +385,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
     error c.m, "expected proc pragmas but got: ", n
 
 proc isBareImportProc(prag: PragmaInfo): bool {.inline.} =
-  ## `importc` proc with neither `header` nor `nodecl`: declared by US, under
+  ## `importc` proc with neither `header` nor `nodecl`: declared by us, under
   ## its mangled name + `__asm__` label (collision-proof against header
   ## prototypes for the same libc identifier — see `mangleSym`).
   ImportcP in prag.flags and {HeaderP, NodeclP} * prag.flags == {}
@@ -665,7 +665,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   if prag.flags * {InstructionP, IntrinsicP} != {}:
     # No C declaration: an intrinsic has no definition to link against, and
     # every application of it is an `(instr …)` lowered at the use site.
-    # Undo EVERY piece of entry state, `inToplevel` included: the normal exit
+    # Undo every piece of entry state, `inToplevel` included: the normal exit
     # restores it, and leaving it false here would make the rest of the module
     # think it is inside a proc — so a later module-scope `(var …)` would stop
     # being routed into `c.init` and land at file scope with its initializer.

@@ -67,7 +67,7 @@ type
     llrmwNand, llrmwMin, llrmwMax, llrmwUmin, llrmwUmax
 
   LLValueKind* = enum
-    llvNone,    # no value (for void results) — MUST be first = zero default
+    llvNone,    # no value (for void results) — must be first = zero default
     llvReg,     # result of an instruction: %t5
     llvInt,     # integer literal: stored textually (e.g. "42", "-1")
     llvFloat,   # float/double literal: stored textually
@@ -84,7 +84,7 @@ type
     typ*: LLType          # type of this value
     case kind*: LLValueKind
     of llvReg:
-      regName*: string    # stored WITHOUT the leading %
+      regName*: string    # stored without the leading %
     of llvInt:
       intText*: string    # canonical integer text
     of llvFloat:
@@ -92,7 +92,7 @@ type
     of llvBool:
       boolVal*: bool
     of llvGlobal:
-      globalName*: string # stored WITHOUT the leading @
+      globalName*: string # stored without the leading @
     of llvCString:
       strVal*: string
     of llvRawText:
@@ -236,7 +236,7 @@ type
     metadata*: LLFuncMetadata
 
   LLGlobal* = object
-    name*: string   # WITHOUT leading @
+    name*: string   # without leading @
     typ*: LLType
     initVal*: LLValue
     isThreadLocal*: bool
@@ -247,7 +247,7 @@ type
     dbgLoc*: string # ", !dbg !N" suffix, empty if none
 
   LLExternDecl* = object
-    name*: string        # bare extern name (WITHOUT @; for dedup)
+    name*: string        # bare extern name (without @; for dedup)
     retType*: LLType     # return type (used when raw == "")
     params*: seq[LLType] # parameter types (used when raw == "")
     isVarargs*: bool
@@ -256,7 +256,7 @@ type
 
   LLNamedType* = object
     ## A named type definition: `%Name = type <body>`.
-    name*: string # WITHOUT leading %
+    name*: string # without leading %
     body*: LLType # nil => emit `= type opaque`
     packed*: bool
 

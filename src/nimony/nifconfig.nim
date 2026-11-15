@@ -66,12 +66,12 @@ const
     ## chain in `system.nim` that every strategy has to be added to.
   MmDir* = "system/"
     ## Where the strategy modules that ship with the stdlib live, relative to
-    ## `system.nim`. A `--mm` given as a PATH does not go through here.
+    ## `system.nim`. A `--mm` given as a path does not go through here.
 
 proc isStrategyName*(val: string): bool =
-  ## Tells the two kinds of `--mm:` value apart. A bare NAME (`--mm:atomicArc`)
+  ## Tells the two kinds of `--mm:` value apart. A bare name (`--mm:atomicArc`)
   ## selects a strategy that ships with the stdlib, a file under `MmDir`.
-  ## Anything else is the PATH of a runtime of the user's own (`--mm:rt/mygc`,
+  ## Anything else is the path of a runtime of the user's own (`--mm:rt/mygc`,
   ## `--mm:$RT/gc`, `--mm:/opt/rt/gc.nim`) and is used as written.
   result = val.len > 0
   for ch in val:
@@ -79,7 +79,7 @@ proc isStrategyName*(val: string): bool =
 
 proc toMM*(val: string): string =
   ## What `NifConfig.mm` stores for a `--mm:` value. A strategy name is
-  ## `normalize`d, because it becomes a FILENAME under `MmDir` and filenames
+  ## `normalize`d, because it becomes a filename under `MmDir` and filenames
   ## stay all-lowercase while the option is spelled in camelCase
   ## (`--mm:atomicArc` -> `system/atomicarc`). A path is kept verbatim: there
   ## the spelling is the user's file's own, and on a case-sensitive filesystem
@@ -132,8 +132,8 @@ type
                           ## `nifcachePath` like any other module
     bits*: int
     bitsExplicit*: bool  ## `--bits:N` (or an `intbits` config row) was given, so
-                         ## `--cpu` must NOT overwrite it. Without this the two
-                         ## flags would resolve by ORDER, and `--bits:32 --cpu:arm32`
+                         ## `--cpu` must not overwrite it. Without this the two
+                         ## flags would resolve by order, and `--bits:32 --cpu:arm32`
                          ## and `--cpu:arm32 --bits:32` would not mean the same thing.
     compat*: bool
     targetCPU*: TSystemCPU
@@ -143,7 +143,7 @@ type
     linker*: string
     depFile*: string ## `--depfile:FILE`: where the driver writes the source
                      ## files of the program as `(stmts (dependency …))`
-    layoutFile*: string  # `--layout:FILE` — the BOARD, for a bare-metal target:
+    layoutFile*: string  # `--layout:FILE` — the board, for a bare-metal target:
                          # its memory regions, stack slots and heap. Forwarded to
                          # arkham verbatim; empty on a hosted target, which has an
                          # OS to ask for memory instead of a file that says what
@@ -244,7 +244,7 @@ proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
   ## The CPU also decides how wide `int` is. It is not a separate question — a
   ## target whose `int` is not its word is a target nobody asked for — so naming
   ## the CPU answers it, and `--bits` stays for the rare case of contradicting
-  ## the table on purpose. Before this, `--cpu:arm32` left `bits` at the HOST's
+  ## the table on purpose. Before this, `--cpu:arm32` left `bits` at the host's
   ## width: the whole 32-bit target was type-checked with a 64-bit `int`.
   result = platform.findCPU(symbol, config.targetCPU)
   if result and not config.bitsExplicit:
@@ -327,7 +327,7 @@ proc expandMM*(config: NifConfig; path: string): string =
     result.add config.mm
 
 proc mmName*(config: NifConfig): string =
-  ## The strategy's NAME, the way `defined(gcName)` spells it. For a runtime
+  ## The strategy's name, the way `defined(gcName)` spells it. For a runtime
   ## given as a path that is the module's basename, so `--mm:../rt/myGc.nim`
   ## still makes `defined(gcMyGc)` true.
   result = normalize(splitFile(config.mm).name)

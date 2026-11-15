@@ -1,4 +1,4 @@
-## Masking the parts of an executable that record WHEN it was linked, so two
+## Masking the parts of an executable that record when it was linked, so two
 ## builds of the same code compare (and hash) equal. `boot` compares its stages
 ## with it; the toolchain build stamps the nifler2 cache with it.
 

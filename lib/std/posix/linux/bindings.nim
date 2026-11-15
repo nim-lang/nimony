@@ -44,7 +44,7 @@ when not linuxA64Raw:
   proc fork*(): Pid {.importc: "fork", sideEffect.}
 
 # Implemented over the `fallocate` symbol, which is a glibc/musl export
-# AND a raw syscall name arkham can lower — one binding serves every
+# and a raw syscall name arkham can lower — one binding serves every
 # configuration (glibc's own posix_fallocate is just this plus a
 # gap-plugging fallback for filesystems without fallocate support).
 when not defined(i386):

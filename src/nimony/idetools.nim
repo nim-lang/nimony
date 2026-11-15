@@ -186,7 +186,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
 proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: NifLineInfo;
                    tokenLen: int; parentPos: int; symOffset, parentOffset: var int): bool =
   ## Positions of the tracked symbol token and its innermost parent TagLit
-  ## in the PARSED buffer. (The caller's stream scan counts the file's
+  ## in the parsed buffer. (The caller's stream scan counts the file's
   ## physical ParRi tokens, which are elided in the in-memory buffer under
   ## `-d:virtualParRi`, so its offsets cannot be used here.)
   result = false

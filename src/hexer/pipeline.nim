@@ -64,10 +64,10 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   var raisesLowered = initHashSet[SymId]()
   elimLambdas(pass, raisesLowered)
 
-  # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
+  # Pass 5: Exception Handling — all of it. A raising call becomes a temp plus
   # a check, and the success tuple lands in the same pass: signatures, the
   # `result` slot, the temps, and every use projected onto its value half.
-  # Emitted as STATEMENTS in front of the enclosing statement, so it does not
+  # Emitted as statements in front of the enclosing statement, so it does not
   # re-introduce the `(expr (stmts ...) tmp)` nesting that used to require a
   # second `xelim` run right after it.
   #
@@ -140,7 +140,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("constparams")
   injectConstParamDerefs(pass, c.bits div 8, needsXelimAgain)
 
-  # Pass 11: the remaining REAL lowering step, not a repair pass: `LowerCasts`
+  # Pass 11: the remaining real lowering step, not a repair pass: `LowerCasts`
   # unnests calls (the Final-IR "calls are unnested statements" rule) and binds
   # a cast's source and result to variables. `vtables`/`constparams` still emit
   # `(expr (stmts ...) v)` for their temps, so this run also flattens those —

@@ -105,7 +105,7 @@ proc serializeNamedTypeDef*(nt: LLNamedType; result: var string) =
   result.add "\n"
 
 proc serializeUnqualified*(v: LLValue; result: var string) =
-  ## Append the bare value text WITHOUT its type prefix.
+  ## Append the bare value text without its type prefix.
   case v.kind
   of llvReg: result.add "%" & v.regName
   of llvInt: result.add v.intText
@@ -132,7 +132,7 @@ proc resultPrefix(i: LLInstr; result: var string) =
     result.add "%" & i.result.regName & " = "
 
 proc serialize*(i: LLInstr; result: var string) =
-  ## Append a single instruction WITHOUT leading indentation or trailing
+  ## Append a single instruction without leading indentation or trailing
   ## newline. The caller adds those.
   case i.kind
   of llBinOp:

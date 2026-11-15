@@ -1,6 +1,6 @@
 ## The curated native-backend (`nimony n`: arkham + nifasm) regression set,
 ## the same corpus under memcheck, and the `tests/nativecg` machine-code golden
-## suite. WHAT the set covers is `nativelist`, which the Windows tree walk
+## suite. What the set covers is `nativelist`, which the Windows tree walk
 ## reads too — the whole point of that list being a module of its own.
 
 import std / [syncio, os, osproc, strutils, times, algorithm, sets]
@@ -30,7 +30,7 @@ when defined(linux):
     ## All three were absent once, and the way they failed is why this is a test:
     ## nothing crashed and no test went red. The image merged code and data into one
     ## R+W+X segment, which valgrind's ELF reader — it classifies a mapping as the
-    ## text map only when it is R+X and NOT writable — declined to read at all, so
+    ## text map only when it is R+X and not writable — declined to read at all, so
     ## every frame of every report came back as `???` and valgrind looked like it
     ## simply had nothing to say about native binaries. `.eh_frame` sat outside every
     ## PT_LOAD, which valgrind treats as a FATAL debug-info error, taking `.symtab`
@@ -141,7 +141,7 @@ proc nativeValgrindTestFile*(c: var TestCounters; file: string) =
   ## One native test built with `-d:valgrind` and run under memcheck.
   ##
   ## Two things are asserted, and the second is the one worth the runtime: that
-  ## the program still prints what it should, and that memcheck has NOTHING to
+  ## the program still prints what it should, and that memcheck has nothing to
   ## say about it. The heap instrumentation lives in the allocator, so a mistake
   ## in it is not a wrong answer anywhere — it is a false report, arriving in
   ## whatever unrelated program someone was debugging, looking exactly like the
@@ -175,7 +175,7 @@ proc nativeValgrindTestFile*(c: var TestCounters; file: string) =
 
 const NativeValgrindSkip: array[0, string] = [
   # Empty. A test belongs here when it runs correctly under `hastur native` but
-  # memcheck reports a real defect in it that is NOT the allocator
+  # memcheck reports a real defect in it that is not the allocator
   # instrumentation's doing — with the reason spelled out, as
   # `tclosure_iter_string` had before its two causes were fixed (`allocFrame`
   # now uses `alloc0`, and the coroutine frame's `oconstr` is total).
@@ -251,7 +251,7 @@ proc nativetests*(overwrite: bool) =
 
 proc asmNifTarget*(asmFile: string): string =
   ## The target arkham compiled for, read off the `(arch …)` its asm-NIF opens
-  ## with (`x64`, `win_x64`, `arm64`, `linux_arm64`). Taken from the OUTPUT rather
+  ## with (`x64`, `win_x64`, `arm64`, `linux_arm64`). Taken from the output rather
   ## than re-derived from `hostOS`/`hostCPU` so the golden can never be filed under
   ## a target the file was not actually generated for.
   let s = readFile(asmFile)
@@ -276,7 +276,7 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
   ## long as hastur is invoked from the repo root (which it always is). No
   ## normalization is needed.
   ##
-  ## It is NOT portable across TARGETS, though — machine code is the point of the
+  ## It is not portable across targets, though — machine code is the point of the
   ## suite. So the golden is per-target (`tinlinecond.x64.asm.nif`,
   ## `tinlinecond.win_x64.asm.nif`, …), named for the `(arch …)` arkham actually
   ## emitted. A target with no checked-in golden yet fails as a missing file;

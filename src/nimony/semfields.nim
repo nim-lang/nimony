@@ -4,7 +4,7 @@ type FieldsIter = object
   obj1, obj2: Cursor
 
 proc addFieldsAccessToken(buf: var TokenBuf; info: NifLineInfo; ownerSym: SymId) =
-  ## `fields()` is compiler reflection: it enumerates EVERY field of the
+  ## `fields()` is compiler reflection: it enumerates every field of the
   ## object, private ones included, and that is the point — it is what lets a
   ## generic `==`/`$` in `system` work on a foreign module's private fields.
   ## The field name came from walking the type's own declaration rather than

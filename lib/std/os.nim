@@ -42,7 +42,7 @@ when defined(posix):
     ## and splicing in the target of every symlink met, so the result names
     ## the file itself rather than a path to it. `..` pops the resolved
     ## prefix, which is right because that prefix holds no symlinks: as in
-    ## `realpath`, `link/..` is the parent of the link's TARGET. Errors are
+    ## `realpath`, `link/..` is the parent of the link's target. Errors are
     ## `realpath`'s: ENOENT for a missing component, ENOTDIR for a
     ## non-directory followed by more path, ELOOP after too many links.
     if filename.len == 0:

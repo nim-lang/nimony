@@ -11,22 +11,22 @@
 #
 # ------------------------------------------------- the one syscall policy ---
 #
-# An io_uring backend must not make its own syscalls: the ring IS the kernel
+# An io_uring backend must not make its own syscalls: the ring is the kernel
 # for this process's I/O, and every operation here is expressed as an SQE. To
-# that end, before adding a ring op a future agent MUST first check whether
+# that end, before adding a ring op a future agent must first check whether
 # io_uring already has the operation (`OP_*` in lib/std/posix/io_uring.nim,
 # plus `SOCKET_URING_OP_*` commands of `IORING_OP_URING_CMD`), verified
 # against the kernel's own io_uring sources (`io_uring/net.c`,
 # `io_uring/uring_cmd.c`, `include/uapi/linux/io_uring.h`) and its kernel
 # floors (socket op: 5.19, socket uring-cmds: 6.7, see each builder's doc).
-# Only when a requested operation genuinely has NO io_uring form — as
+# Only when a requested operation genuinely has no io_uring form — as
 # bind(2) has on every released kernel, `IORING_OP_BIND` being unreleased —
 # and the syscall cannot be avoided does this backend fall back to one, and
 # only with the user's explicit allowance. Right now the ledger is:
 #
 #   socket(2)        -> IORING_OP_SOCKET, SOCK_NONBLOCK in the type (5.19+)
 #   setsockopt(2)    -> IORING_OP_URING_CMD + SOCKET_URING_OP_SETSOCKOPT (6.7+)
-#   bind(2)          -> bind(2) syscall, the ONE allowed syscall (the user
+#   bind(2)          -> bind(2) syscall, the one allowed syscall (the user
 #                       explicitly allowed it; there is no ring form on
 #                       released kernels)
 #   fcntl O_NONBLOCK -> no syscall: the ring fds are non-blocking by construction
@@ -178,7 +178,7 @@ proc fillSqe(sqe: ptr Sqe; slot: Slot) {.inline.} =
 
 proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
   # Drain the shared deferred queue: for every pending slot, fill a fresh
-  # SQE in THIS thread's io_uring instance. Only worker threads (and
+  # SQE in this thread's io_uring instance. Only worker threads (and
   # callers of waitCompletions) poll, so all SQEs are always submitted
   # from within the poll loop that also reads their CQEs.
   #
@@ -210,8 +210,8 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
           complete(s, IoTimedOut)
           continue
       if buf[i].kind in {opBind, opSetNonBlocking}:
-        # The two config ops that have NO ring form, completed here before any
-        # SQE is taken. bind(2) is this backend's ONE allowed syscall (there is
+        # The two config ops that have no ring form, completed here before any
+        # SQE is taken. bind(2) is this backend's one allowed syscall (there is
         # no bind operation on any released kernel — IORING_OP_BIND is
         # unreleased — and the user explicitly allowed it: it answers in
         # microseconds and there is nothing for the ring to wait on), performed
@@ -254,7 +254,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       fillSqe(sqe, s)
   # Sleep in the kernel until something is due — an I/O completion, or the
   # earliest deadline this lane is waiting on, whichever comes first. That is
-  # ONE timeout for the whole lane, taken off the top of the deadline heap,
+  # A single timeout for the whole lane, taken off the top of the deadline heap,
   # rather than one timeout per op: a `link_timeout` on every SQE would buy the
   # same wakeup for a second submission and a second completion each, and a
   # server holding an idle deadline per connection would spend most of its ring
@@ -263,7 +263,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
   # same heap.
   #
   # The wait is still bounded from above by what the caller asked for, because
-  # nothing wakes a worker when a TASK is enqueued — `threadpool.submit` only
+  # nothing wakes a worker when a task is enqueued — `threadpool.submit` only
   # enqueues — so a lane may not sleep past its next look at the run queue.
   # Give the pool a wakeup and this bound can go, and then the ring sleeps
   # until there is genuinely something to do.

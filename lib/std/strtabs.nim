@@ -346,7 +346,7 @@ proc del*(t: StringTableRef, key: string) =
       while true: # KnuthV3 Algo6.4R adapted for i=i+1 instead of i=i-1
         var j = i # The correctness of this depends on (h+1) in nextTry,
         var r = j # though may be adaptable to other simple sequences.
-        t.data[i].hasValue = false # mark current EMPTY
+        t.data[i].hasValue = false # mark current empty
         t.data[i].key = ""
         t.data[i].val = ""
         while true:
@@ -361,7 +361,7 @@ proc del*(t: StringTableRef, key: string) =
         else:
           t.data[j] = move t.data[i]
         # else:
-        #   shallowCopy(t.data[j], t.data[i]) # data[j] will be marked EMPTY next loop
+        #   shallowCopy(t.data[j], t.data[i]) # data[j] will be marked empty next loop
 
 proc `$`*(t: StringTableRef): string =
   ## The `$` operator for string tables. Used internally when calling

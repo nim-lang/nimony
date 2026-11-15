@@ -280,7 +280,7 @@ type
     case kind*: IoOp
     of opNop, opTimeout, opSetNonBlocking:
       ## The payload-less ops: a nop completes `0` on arrival, a timer is
-      ## nothing but its deadline (the heap IS the wait), and a non-blocking
+      ## nothing but its deadline (the heap is the wait), and a non-blocking
       ## fcntl answers on the polling thread.
       discard
     of opRead:
@@ -336,7 +336,7 @@ type
       pollMask*: IoEvents
         ## opPollAdd only: the direction(s) the caller actually waits for.
         ## Without it a readiness probe has to arm both directions, and a caller
-        ## waiting to READ is woken every time the fd is merely WRITABLE — which,
+        ## waiting to read is woken every time the fd is merely writable — which,
         ## for a socket, is almost always. Since the op is oneshot, that caller's
         ## re-arm turns into a hot spin.
 

@@ -16,7 +16,7 @@
 ## `doc/version.md` holds the version number, then whitespace, then the ISO
 ## date that number was set on — the same shape as `src/nativenif.commit`, and
 ## for the same reason: a diff bumping the version should say *when* without
-## anyone running `git log`. The date is READABILITY ONLY. Nothing reads it
+## anyone running `git log`. The date is for readability only. Nothing reads it
 ## back, only the first field is ever used, and the split doubles as the
 ## trailing-newline guard the old whole-file `slurp` never had (it worked only
 ## because the file happened to carry no final newline — one editor save away
@@ -47,7 +47,7 @@ const Version* = firstField(VersionFile)
   ## and its own inner build is incremental, so it costs ~0.1 s — it is not the
   ## thing to avoid. What used to make it expensive was a build-graph bug it
   ## walked into, since fixed: the sub-compile is a second nimony driving the
-  ## same nimcache, and the configuration memo — then an input of EVERY sem node —
+  ## same nimcache, and the configuration memo — then an input of every sem node —
   ## carried the root module name, so the two builds overwrote each other's
   ## entry on every run and each re-semmed everything the other had just done.
   ## See `deps.nim`'s `addFrontendKey`.

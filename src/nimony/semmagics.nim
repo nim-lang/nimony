@@ -254,7 +254,7 @@ proc readBindSymRule(arg: Cursor): string =
 proc addNifSymbol(dest: var string; s: string) =
   ## Append `s` to `dest` the way NIF spells a symbol.
   ##
-  ## `bindSym` round-trips the resolved symbol through TEXT (see below), and a
+  ## `bindSym` round-trips the resolved symbol through text (see below), and a
   ## symbol name is not text: `@` introduces line info, `(`/`)` nest, and so on.
   ## `@.0.sysvq0asl` — `bindSym "@"`, the `@[…]` sequence constructor — came
   ## back from the re-parse as an unbalanced tree and the plugin died on
@@ -1128,7 +1128,7 @@ proc semInternalTypeName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     else:
       typeName = pool.symString(typ.symId)
   if not isGeneric:
-    # only after `copyInto` closed its tag: shrinking away an OPEN tag would
+    # only after `copyInto` closed its tag: shrinking away an open tag would
     # leave the close unmatched (nifcore's closeTag asserts)
     dest.shrink beforeExpr
     dest.addStrLit typeName, info

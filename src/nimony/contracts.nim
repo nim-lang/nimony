@@ -238,7 +238,7 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   of ProctypeT, ItertypeT:
     # `(proctype <NilTag> (params) RetType <Pragmas>)`. The nilability marker is
     # at slot 0, and `(itertype ...)` mirrors that shape exactly (doc/tags.md):
-    # a first-class closure-iterator VALUE is a pointer pair like any other
+    # a first-class closure-iterator value is a pointer pair like any other
     # closure, so it is not-nil by default the same way.
     let e = t.childCursor
     if e.substructureKind == mark:

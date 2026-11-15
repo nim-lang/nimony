@@ -17,7 +17,7 @@ proc execNimony*(cmd: string; cat: Category): (string, int) =
                      cacheArg & cmd)
 
 proc execNimonyNative*(cmd: string): (string, int) =
-  ## Compile with the C-FREE NATIVE backend (`nimony n` → arkham emits typed asm-NIF,
+  ## Compile with the C-free native backend (`nimony n` → arkham emits typed asm-NIF,
   ## nifasm links a static libc-free executable). Mirrors `execNimony` but selects the
   ## `n` command instead of `c`/`m`.
   let cacheArg =
@@ -94,7 +94,7 @@ proc nimonyCmdFor*(file: string; cat: Category; forward: string): string =
     result.add " "
 
 proc nimonyNativeCmdFor*(forward: string): string =
-  ## The flags a NATIVE tree-walk compile takes, minus the file. Deliberately
+  ## The flags a native tree-walk compile takes, minus the file. Deliberately
   ## only `--forward`'s: `execNimonyNative` already supplies
   ## `n --silentMake --isMain`, and every flag `nimonyCmdFor` adds beyond that
   ## names something the native path does not have (`-d:useLibc` picks the libc

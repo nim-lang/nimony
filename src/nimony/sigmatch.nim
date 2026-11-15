@@ -68,14 +68,14 @@ type
                       ## the generic parameters again. Concept probing restores
                       ## `inferred` wholesale (`inferenceBase`), which can put a
                       ## typevar back to unbound behind the count's back; that
-                      ## direction only makes `sigmatch` MISS a rejection —
+                      ## direction only makes `sigmatch` miss a rejection —
                       ## never invent one — and `buildTypeArgs` still catches it
                       ## the way it always did.
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
     concreteMatch: bool
-    inferable: HashSet[SymId] ## concept probing only: typevars on the ARGUMENT
+    inferable: HashSet[SymId] ## concept probing only: typevars on the argument
                               ## side that the candidate's formals may bind —
                               ## a container concept's own parameter, or an
                               ## enclosing generic's, following the "first use
@@ -94,7 +94,7 @@ type
     staticArgs: int ## how many arguments went to a `staticParam`; consulted
                     ## only by the `staticOverloads` tiebreaker in `cmpMatches`
     returnType*: Cursor
-    expected*: TypeCursor ## the type the CALL SITE wants, or a nil/`auto`
+    expected*: TypeCursor ## the type the call site wants, or a nil/`auto`
                           ## cursor when it wants nothing in particular. The
                           ## last thing that can bind a leftover typevar (see
                           ## `inferTypevarsFromExpected`), so matching needs it
@@ -116,7 +116,7 @@ proc createMatch*(context: ptr SemContext; expected: TypeCursor = default(Cursor
         firstVarargPosition: -1, varargsEndPosition: -1)
 
 proc bindTypevar(m: var Match; fs: SymId; a: Cursor) =
-  ## Record a FRESH binding for the formal typevar `fs`. Every call site is
+  ## Record a fresh binding for the formal typevar `fs`. Every call site is
   ## already inside the "not `inferred.contains(fs)`" branch, so the count is
   ## never decremented twice for the same typevar. Typevars that are not the
   ## candidate's own — an enclosing generic's, or the argument's under
@@ -1296,7 +1296,7 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
       var prev = m.inferred.getOrQuit(fs)
       rematchInferredTypevar(m, fs, prev, f, a, fOrig, aOrig, flags)
     elif matchesConstraint(m, fs, a):
-      bindTypevar m, fs, a # NOTICE: Can introduce modifiers for a type var!
+      bindTypevar m, fs, a # Notice: Can introduce modifiers for a type var!
       inc f
       skip a
     else:
@@ -1323,7 +1323,7 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
     else:
       m.error(ConstraintMismatch, f, a)
   elif f.kind == a.kind:
-    # Atoms are compared by their DECODED value, never by the raw token payload:
+    # Atoms are compared by their decoded value, never by the raw token payload:
     # a literal of at most `StrInlineMaxLen` bytes is stored inside its token
     # (so its payload is not a pool id), and a numeric payload is only the low
     # 28 bits (so values differing above that would compare equal).
@@ -2477,7 +2477,7 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
       # forward their own union-typed parameter (`template wrap*(x:
       # NimonyTagKind) = inner(x)` calling `inner(x: NimonyTagKind)`) —
       # without this, the per-branch matching would try to unify each
-      # formal alternative with the WHOLE arg-OR and reject at the first
+      # formal alternative with the whole arg-OR and reject at the first
       # mismatch.
       if arg.typ.typeKind == OrT and sameTrees(f, arg.typ):
         skip f
@@ -2740,10 +2740,10 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
     # Must come before the `auto` cases: an argument that sem could not type
     # (an `(err …)` node, or anything untyped) is `auto`, and routing it
     # through `singleArgCore` would hand `useArg` the whole `(varargs T)` as
-    # the formal type. `varargs[untyped]` would then copy the SEMCHECKED arg
+    # the formal type. `varargs[untyped]` would then copy the semchecked arg
     # instead of `arg.orig`, so a template — a plugin in particular — saw
     # sem's diagnostics where the user's own tree belongs. `varargsMatch`
-    # re-dispatches on the ELEMENT type, which brings the `auto` handling
+    # re-dispatches on the element type, which brings the `auto` handling
     # below back for every element type that is not `untyped`/`typed`.
     varargsMatch(m, f, arg)
   elif arg.typ.typeKind == AutoT:
@@ -2881,7 +2881,7 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
 
 
 iterator genericParams*(sym: SymId): tuple[symId: SymId, kind: SymKind, elemType: Cursor] {.sideEffect.} =
-  ## The generic parameters of a routine OR a type, in declaration order, each paired with
+  ## The generic parameters of a routine or a type, in declaration order, each paired with
   ## its kind (`TypevarY`/`StaticTypevarY`) and its declared constraint / value-parameter
   ## element type. Shared by both routine overload resolution and type instantiation.
   let res = tryLoadSym(sym)
@@ -2940,7 +2940,7 @@ proc notATypeArg(e: Cursor): bool =
 
 proc matchExplicitGenericArg*(m: var Match; v: SymId; kind: SymKind;
                               elemType, e: Cursor) =
-  ## Bind/validate ONE explicit generic argument `e` against the generic
+  ## Bind/validate a single explicit generic argument `e` against the generic
   ## parameter `v`. A value (`static`) parameter binds its canonical folded
   ## value (`2 + 3` -> `5`, an enum `const` -> its field symbol); a type
   ## parameter is validated against its constraint and bound verbatim. Either
@@ -2993,9 +2993,9 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
 
 proc inferTypevarsFromExpected(m: var Match) =
   ## Last chance to bind a generic routine's leftover typevars: unify its
-  ## RETURN type with the type the call site expects — `let r: Result[int,
+  ## return type with the type the call site expects — `let r: Result[int,
   ## string] = ok(5)` infers `E` that way, as `ok`'s argument only mentions
-  ## `T`. This is part of MATCHING, not a touch-up applied to the winner
+  ## `T`. This is part of matching, not a touch-up applied to the winner
   ## afterwards: whether the expected type completes a candidate is exactly
   ## what separates one that can be instantiated from one that cannot, and the
   ## latter must not reach `pickBestMatch` at all. Merges only on a clean
@@ -3019,7 +3019,7 @@ proc inferTypevarsFromExpected(m: var Match) =
 proc anArgIsStillUntyped(args: openArray[CallArg]): bool =
   ## `auto` on an argument is not a type, it is "not decided yet": an empty
   ## literal (`@[]`) whose element type only the enclosing context can supply.
-  ## A typevar the arguments left unbound is then unbound because the ARGUMENT
+  ## A typevar the arguments left unbound is then unbound because the argument
   ## is unfinished, not because the candidate is uninstantiable — so the
   ## rejection below has nothing to say about it.
   result = false
@@ -3064,7 +3064,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
     # `3`). Hence `insertedParam` bows out here.
     inferTypevarsFromExpected m
     if m.unboundTvars > 0:
-      # A typevar still unbound now is one that NOTHING will ever bind, so the
+      # A typevar still unbound now is one that nothing will ever bind, so the
       # candidate cannot be instantiated — and a candidate that cannot be
       # instantiated is not a match at all. Left in the running it either ties
       # a viable overload at `pickBestMatch` and turns a clear call into

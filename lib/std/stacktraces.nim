@@ -3,7 +3,7 @@
 ## The walk itself is four lines, because arkham's frames are regular: the
 ## prologue lowers SP **once** and SP is constant until the epilogue
 ## (`nativenif/src/arkham/design.md`). So "where is my return address" is a
-## per-PROC constant, and nifasm writes those constants — with each proc's code
+## per-proc constant, and nifasm writes those constants — with each proc's code
 ## range and name — into a table at the end of `.text`
 ## (`nativenif/src/nifasm/tracetable.nim`). Given that table, unwinding is
 ## repeated address lookup; no DWARF interpreter, no frame pointer, and nothing
@@ -16,7 +16,7 @@
 ##   what makes nifasm emit the table at all, so a program that never asks for a
 ##   stack trace carries none of this.
 ## * `stackPointer()` inside a `{.naked.}` proc — with no prologue, SP on entry
-##   still points at the return address the `call` pushed, which is the CALLER's
+##   still points at the return address the `call` pushed, which is the caller's
 ##   frame. A proc with a prologue can only describe its own.
 
 const maxStackTraceFrames* = 128
@@ -37,7 +37,7 @@ when stackTracesAvailable:
     ## The address of nifasm's per-proc metadata blob.
 
   proc callerFrame(): pointer {.assembler, naked.} =
-    ## The address of OUR CALLER's return-address slot. `{.naked.}` is what makes
+    ## The address of our caller's return-address slot. `{.naked.}` is what makes
     ## this true: with no prologue, SP on entry is exactly where the `call`
     ## pushed the return address, so the value handed back describes the frame
     ## above rather than this one.
@@ -134,7 +134,7 @@ when stackTracesAvailable:
     ## and neither trailing part helps a reader: the disambiguator is an internal
     ## counter, and the module suffix is the cache's mangling of a path
     ## (`stagd0hts`, `sysvq0asl`) rather than a name anyone typed. The frame
-    ## SEQUENCE is what disambiguates two procs that share a name, and it is
+    ## sequence is what disambiguates two procs that share a name, and it is
     ## right there in the trace.
     ##
     ## A leading backtick goes too: NIF quotes a symbol whose name would not
@@ -168,7 +168,7 @@ when stackTracesAvailable:
     let t = openTraceTable()
     if t.count == 0: return
     # `callerFrame()` is naked, so this is the address of the return-address slot
-    # in OUR frame: the `pc` read from it lies in `getStackTrace` itself, and
+    # in our frame: the `pc` read from it lies in `getStackTrace` itself, and
     # each step then moves to the frame above.
     var slot = cast[uint](callerFrame())
     let origin = slot

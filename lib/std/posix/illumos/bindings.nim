@@ -21,7 +21,7 @@ proc fork*(): Pid {.importc: "fork", sideEffect.}
 proc posix_fallocate*(fd: cint; offset, len: Off): cint {.importc: "posix_fallocate".}
 proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.importc: "waitpid", sideEffect.}
 
-# sys/wait.h: WCONTINUED (8) is an OPTION, not the status word (0xffff).
+# sys/wait.h: WCONTINUED (8) is an option, not the status word (0xffff).
 proc WEXITSTATUS*(s: cint): cint = (s shr 8) and 0xff
 proc WTERMSIG*(s: cint): cint = s and 0x7f
 proc WSTOPSIG*(s: cint): cint = (s shr 8) and 0xff

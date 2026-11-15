@@ -86,7 +86,7 @@ proc addDefaultField(dest: var TokenBuf; n: var Cursor; info: NifLineInfo;
                      ptrSize: int; depth: int; isUnion: bool) =
   let field = takeLocal(n, SkipFinalParRi)
   if isUnion:
-    # A union has ONE active member, and sibling designated initializers
+    # A union has a single active member, and sibling designated initializers
     # for the others would zero it back out under C's last-wins rule. So a
     # union constructor is the one that stays partial — mirroring nimsem,
     # which skips the unset members here for the same reason.
@@ -201,8 +201,8 @@ proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSiz
   of MutT, LentT:
     # `var T` / `lent T` is a pointer in Leng, and naturally so — `var array[8,
     # char]` is `(ptr array)`. A VIEW is the one exception, and it is forced
-    # rather than chosen: a view IS the reference, so `var` adds no indirection
-    # and there is nothing for a pointer to point AT. `openArrays.scratch`
+    # rather than chosen: a view is the reference itself, so `var` adds no indirection
+    # and there is nothing for a pointer to point at. `openArrays.scratch`
     # returns `var openArray[char]` built by `toOpenArray(buf, …)` — the two
     # words are constructed in the callee and have no storage of their own, so
     # a `ptr openArray` return would name a temporary. `lengcgen.trType`'s
@@ -210,7 +210,7 @@ proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSiz
     # about to write), and this consults the same predicate.
     #
     # The two must agree because they are one decision made twice. `(nil T)` is
-    # a nil POINTER (`doc/tags.md`), so `(nil (mut <view>))` lowers to a nil
+    # a nil pointer (`doc/tags.md`), so `(nil (mut <view>))` lowers to a nil
     # against a two-word struct — malformed Leng that only C's `.field = 0`
     # meaning `{0}` hid. arkham rejects it, which is how it surfaced: a
     # `var openArray` temp in a `.passive` proc becomes a coroutine-frame field

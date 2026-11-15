@@ -39,7 +39,7 @@ when defined(embedded):
 
   proc cAbort*() {.noreturn.} =
     ## Abnormal termination. There is no `SIGABRT` to raise and no core to dump —
-    ## the debugger IS the thing that would have caught the signal, and it is
+    ## the debugger is the thing that would have caught the signal, and it is
     ## already watching. So this is `cExit` with the status libc's `abort` leaves
     ## behind, and the difference between the two is the number, which is all a
     ## status can carry here.
@@ -52,7 +52,7 @@ else:
     # and no POSIX signals, the direct counterpart of the Linux syscall path.
     # No `header: "<windows.h>"`, keeping the whole `system` translation unit
     # free of the Windows header (see `panics`). `dynlib` names the import
-    # library, and means a STATIC import on every backend: the native image
+    # library, and means a static import on every backend: the native image
     # bakes it into its import table, the C backend emits a prototype that
     # kernel32.lib resolves at link time.
     proc cExitProcess(uExitCode: uint32) {.stdcall, importc: "ExitProcess",

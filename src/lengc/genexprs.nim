@@ -88,7 +88,7 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
       # NB: no early `return` from inside `n.into:` — its epilogue drains the
       # scope, and skipping that left the statement generator closing a brace it
       # had not opened.
-      # Not a builtin call: C spells a volatile access as a CAST, which is also
+      # Not a builtin call: C spells a volatile access as a cast, which is also
       # how Nim's own `std/volatile` emits it. `__typeof__` keeps this free of any
       # type rendering — the pointee's type is whatever the operand already has,
       # and naming it again is a chance to name it differently.
@@ -111,7 +111,7 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
         c.add ParRi
       while n.hasMore: skip n
     elif op.isMemOp:
-      # The operands are LOCATIONS: the written one spelled `(haddr L)` (rendered
+      # The operands are locations: the written one spelled `(haddr L)` (rendered
       # `&L`) like any intrinsic's `var` operand, the read ones bare lvalues, whose
       # address is taken here. The byte count is optional: absent, it is the size
       # of the first operand.
@@ -418,7 +418,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add s
       inc n
     of StrLit:
-      # The cast and the literal must be emitted as ONE parenthesized unit.
+      # The cast and the literal must be emitted as a single parenthesized unit.
       # C's postfix operators bind tighter than a cast, so an unwrapped
       # `(NC8*)"lit"` that a caller then subscripts yields
       # `(NC8*)"lit"[i]` = `(NC8*)("lit"[i])` — a char cast to a pointer,
@@ -449,7 +449,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     c.add "NIM_TRUE"
     skip n
   of NilC:
-    # A bare `NIM_NIL`, NOT a cast to the `(nil T)` type the frontend attaches.
+    # A bare `NIM_NIL`, not a cast to the `(nil T)` type the frontend attaches.
     # `NIM_NIL` is assignment-compatible with every pointer type, and casting
     # would make an `{.importc.}` signature whose C spelling differs from
     # Nimony's (`cstring` is `unsigned char*`, `strtod` wants `char**`) a hard
@@ -551,7 +551,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add ParRi
       while n.hasMore: skip n
   of AddrC, HaddrC:
-    # C has one `&`: a hidden address is the same `&x`, only the REASON differs
+    # C has one `&`: a hidden address is the same `&x`, only the reason differs
     # (see `nifcdecl.AddrKinds`), and C has nowhere to put the reason.
     genAddr c, n
     c.flags.excl gfInCallImportC

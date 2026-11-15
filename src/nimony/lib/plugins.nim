@@ -54,16 +54,16 @@ let
   pluginPool = newPool()
   pluginTags = createPluginTags()
 
-# A plugin process shares ONE pool world across every buffer in it, which is
+# A plugin process shares a single pool world across every buffer in it, which is
 # exactly the case `nifcore.fallbackPool`/`fallbackTags` exist for — and they
-# now exist for it ALONE: nifcore declares them only under `-d:nimonyPlugin`,
+# now exist for it alone: nifcore declares them only under `-d:nimonyPlugin`,
 # the define every plugin sub-compile carries, because the compiler side has
 # been purged of them (nim-lang/nimony#2456). This is the global the plugin
 # system is allowed to keep, and this is where it is installed.
 #
 # `NifBuilder` is an alias for `TokenBuf`, so a builder
 # `createTree` did not mint (an object field, `default(...)`, a `seq` slot) has
-# nil pools; `nifcore.ensurePools` then minted a PRIVATE pool, and the first
+# nil pools; `nifcore.ensurePools` then minted a private pool, and the first
 # `withTree` died in `openTagEscaped` — a fresh pool declares no escape tag —
 # as a bare `[Assertion Failure]` with no file and no line. Kind queries
 # dispatch on `pluginTags` *identity* too, so such a builder also read back as
@@ -85,7 +85,7 @@ var
   fileDependencies: seq[string] = @[]
 
 proc dependsOn*(path: string) =
-  ## Records that this plugin run READ `path`, so that a later build reruns the
+  ## Records that this plugin run read `path`, so that a later build reruns the
   ## plugin when the file changes. Without it a plugin that reads outside its
   ## input is memoized forever: the compiler keys its cache on the input tree,
   ## which did not change (nim-lang/nimony#1378).
@@ -1223,7 +1223,7 @@ proc saveTree*(tree: sink NifBuilder) =
   ## re-semantacked by the compiler — identifiers are resolved, types are
   ## checked, and calls are instantiated just like normal source. This means
   ## the output can use raw identifiers (e.g. `addIdent "echo"`). Module and
-  ## type plugin output is NOT re-semantacked — it must already be fully
+  ## type plugin output is not re-semantacked — it must already be fully
   ## semanticked NIF (resolved symbols, typed expressions) because it
   ## directly replaces the module body.
   var output = ensureMove(tree)

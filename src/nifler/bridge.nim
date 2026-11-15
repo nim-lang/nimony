@@ -838,7 +838,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     # Walk children manually so we can push each branch's condition onto
     # `whenCondStack` before recursing into the body. Imports nested in the
     # body then carry the condition into the deps file. An `else` branch
-    # carries the NEGATION of every prior elif condition: emitting its
+    # carries the negation of every prior elif condition: emitting its
     # imports unguarded ("conservative") schedules platform-dead modules
     # for compilation — chronicles' `when not defined(js): ... else: import
     # jsconsole` made the build compile jsconsole, which refuses to compile

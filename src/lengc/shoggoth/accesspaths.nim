@@ -100,7 +100,7 @@ proc samePrefix*(a, b: AccessPath): bool =
   result = true
 
 proc directOverlap*(a, b: AccessPath): bool {.inline.} =
-  ## For two DIRECT paths: distinct roots are distinct storage, so the whole
+  ## For two direct paths: distinct roots are distinct storage, so the whole
   ## question is the root plus the prefix test.
   a.root == b.root and samePrefix(a, b)
 
@@ -139,7 +139,7 @@ proc build(n: Cursor; p: var AccessPath) =
         p.add PathStep(kind: DerefStep, field: SymId(0))
         p.add PathStep(kind: ElemStep, field: SymId(0))
     of AddrC, HaddrC:
-      # The VALUE is an address; as a location it is the addressed lvalue, which
+      # The value is an address; as a location it is the addressed lvalue, which
       # is what a store target or a conservative reader wants.
       build(firstChild(n), p)
     of ConvC, CastC:
@@ -160,13 +160,13 @@ proc build(n: Cursor; p: var AccessPath) =
 
 proc pathOfLvalue*(n: Cursor): AccessPath =
   ## The path an lvalue names — a store target, or the principal path of a read.
-  ## Index operands are NOT descended into: they are values selecting within the
+  ## Index operands are not descended into: they are values selecting within the
   ## base, not part of the location.
   result = AccessPath(root: SymId(0), known: false, truncated: false, len: 0)
   build(n, result)
 
 proc collectReadPaths*(n: Cursor; acc: var seq[AccessPath]) =
-  ## Every path the expression READS: its own, plus those of index operands and
+  ## Every path the expression reads: its own, plus those of index operands and
   ## of any nested operand. An entry is invalidated when a write may overlap any
   ## one of them.
   case n.kind
@@ -176,8 +176,8 @@ proc collectReadPaths*(n: Cursor; acc: var seq[AccessPath]) =
     case n.exprKind
     of DotC, AtC, DerefC, PatC, AddrC, HaddrC, ConvC, CastC, BaseobjC, ParC:
       acc.add pathOfLvalue(n)
-      # Walk down the lvalue chain for the reads that are NOT the location
-      # itself: index operands (`a[y.i]` reads `y.i`), and the POINTER VALUE a
+      # Walk down the lvalue chain for the reads that are not the location
+      # itself: index operands (`a[y.i]` reads `y.i`), and the pointer value a
       # `deref`/`pat` goes through — `(deref (dot t p))` reads `t.p` as well as
       # what it points to, so a store to `t.p` changes what the load sees even
       # though the two paths never name the same storage. Missing that kept
@@ -209,7 +209,7 @@ proc collectReadPaths*(n: Cursor; acc: var seq[AccessPath]) =
     of CallC, InstrC:
       # Neither a call's value nor an intrinsic's is described by any path
       # (`isPureExpr` keeps both out of the load cache; guard facts can still hold
-      # one). Conservative for a PURE intrinsic too, and free: a pure row's value
+      # one). Conservative for a pure intrinsic too, and free: a pure row's value
       # is not a memory path either, so there was never a path to lose.
       acc.add unknownPath()
     else:

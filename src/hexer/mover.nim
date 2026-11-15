@@ -539,15 +539,15 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
     let lhsRedefinesRoot = (lhs.kind == Symbol and lhs.symId == root) or
                            sameTrees(lhs, x)
     if not lhsRedefinesRoot:
-      # A *partial* write — `x.field = v`, `x[i] = v`, `x[] = v` — still READS
+      # A *partial* write — `x.field = v`, `x[i] = v`, `x[] = v` — still reads
       # the base `x`: for a `ref` it dereferences the pointer, for a value
       # object it keeps the object live. `containsRoot` skips statically
       # disjoint sibling fields, so `a.other = v` after a move of `a.field`
       # still sinks.
       if scanAt(base, lhsPos, x, otherUsage): return false
     # The RHS is evaluated *before* the store, so a read of the old value here
-    # (as in `x = f(x)`) means the earlier occurrence is NOT the last use —
-    # even when the LHS fully redefines `root`. This MUST be checked before the
+    # (as in `x = f(x)`) means the earlier occurrence is not the last use —
+    # even when the LHS fully redefines `root`. This must be checked before the
     # redefinition case below.
     let rhsPos = endOf(base, lhsPos)
     if rhsPos < endOf(base, pc) and scanAt(base, rhsPos, x, otherUsage):
@@ -559,7 +559,7 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
   of VarS, LetS, CursorS, PatternvarS, ConstS, ResultS, GvarS, TvarS, GletS, TletS:
     let namePos = firstChild(base, pc)
     let name = at(base, namePos)
-    let value = lastChild(base, pc) # name, export marker, pragmas, type, VALUE
+    let value = lastChild(base, pc) # name, export marker, pragmas, type, value
     if root != NoSymId and name.kind == SymbolDef and name.symId == root:
       result = true # the declaration itself: the location gets a new value
     elif value >= 0 and scanAt(base, value, x, otherUsage):

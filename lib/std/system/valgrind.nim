@@ -58,11 +58,11 @@ when vgTracking:
     ReqMakeMemDefined    = 0x4D430002'u
 
   template vgDo(r, a1, a2, a3, a4) {.untyped.} =
-    ## One request, as a STATEMENT — the form every announcement below uses.
+    ## One request, as a statement — the form every announcement below uses.
     ##
     ## A template and not a proc, for the same reason valgrind's own interface is
     ## a macro: valgrind records the stack at the instant of the request, so a
-    ## helper proc here would put ITSELF at the top of every allocation and every
+    ## helper proc here would put itself at the top of every allocation and every
     ## free stack in every report. That is a frame of pure noise in front of the
     ## answer the reader wants, and it costs one of the `--num-callers` frames
     ## that would otherwise show more of the caller.
@@ -75,7 +75,7 @@ when vgTracking:
       discard vgClientRequest(cast[pointer](addr blk[0]))
 
   proc vgRequestValue(r, a1, a2, a3, a4: uint): uint {.inline.} =
-    ## The expression form, for the one request whose ANSWER is the point.
+    ## The expression form, for the one request whose answer is the point.
     ## `vgRunningOnValgrind` is asked once, outside any report, so the extra frame
     ## that made `vgDo` a template does not matter here.
     var blk: array[6, uint] = [r, a1, a2, a3, a4, 0'u]
@@ -122,7 +122,7 @@ template vgResizeInPlace(p, oldSize, newSize, rzB) {.untyped.} =
 # ── what the allocator says about its own memory ───────────────────────────
 #
 # The three primitives below exist for one problem: this allocator keeps its
-# free-list links INSIDE the cells it has handed back, so the moment a block is
+# free-list links inside the cells it has handed back, so the moment a block is
 # declared free, the allocator's own bookkeeping writes to it become
 # use-after-free — reported against the allocator, on every single dealloc.
 #

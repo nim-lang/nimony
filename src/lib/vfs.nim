@@ -225,7 +225,7 @@ else:
 proc vfsMoveInto*(src, dst: string): bool =
   ## Move `src` onto `dst` as a single filesystem operation, replacing whatever
   ## was there. The point is that `dst` is never opened for writing: a reader
-  ## that mmap'd it, or a process currently EXECUTING it, keeps the old inode
+  ## that mmap'd it, or a process currently executing it, keeps the old inode
   ## and is undisturbed, while everyone who opens the path afterwards sees the
   ## complete new file. There is no window in which `dst` is half-written.
   ##

@@ -184,7 +184,7 @@ when not defined(windows):
     while a[result] != nil: inc result
 
   proc resolveExecPaths(command: string; usePath: bool): seq[string] =
-    ## Builds the candidate executable paths BEFORE forking. A forked child of
+    ## Builds the candidate executable paths before forking. A forked child of
     ## a multithreaded parent may only do async-signal-safe work (another
     ## thread can hold the allocator lock at fork time), so all PATH searching
     ## and string building happens here, in the parent; the child just walks

@@ -20,17 +20,17 @@
 ## `indexOffset` are raw host-endian dumps and BIF is *defined* to be
 ## little-endian (every supported target is), so the `Magic` carries a fixed
 ## endianness byte (`0` = little) plus a version, and a mismatched/foreign file is
-## rejected rather than misread. The host word size does NOT appear — a token is
+## rejected rather than misread. The host word size does not appear — a token is
 ## always `uint32`. Every integer is a SQLite-style `varint`
 ## (`std/varints`) — most counts and lengths are small, so the header and the
-## per-string/-entry length prefixes shrink to a byte or two. The SOLE exception
+## per-string/-entry length prefixes shrink to a byte or two. The sole exception
 ## is `indexOffset`, which is a **fixed 8-byte** little integer: it is written as
 ## a placeholder and patched in place once the tail offset is known, so it must
 ## keep a constant width (a varint would change size when patched):
 ##
 ## ```
 ##   Magic            8 bytes  ("NIFBIN" + endianness byte (0=little) + Version)
-##   indexOffset      u64      -- FIXED 8 bytes; BYTE offset of the index (patched)
+##   indexOffset      u64      -- fixed 8 bytes; byte offset of the index (patched)
 ##   tokenCount       varint
 ##   nTags            varint
 ##   nStrings         varint
@@ -49,7 +49,7 @@
 ##
 ## The `index` is the binary analogue of a text NIF's embedded `(.index …)`:
 ## global `SymbolDef` -> declaration token position + visibility, so a loaded
-## buffer can locate one symbol without scanning. It is ALWAYS present (a cache
+## buffer can locate one symbol without scanning. It is always present (a cache
 ## with no index would force a full rescan to find any declaration) and lives at
 ## the **end** of the file, exactly like the text format's trailing index. The
 ## single `indexOffset` header field is the binary `(.indexat …)`: the fixed
@@ -68,17 +68,17 @@
 ## id order and re-interned in order on load, reproducing identical ids, so the
 ## raw token words stay valid **without any patching**.
 ##
-## INVARIANT (important): that zero-patch property holds *only* because `load`
+## Invariant (important): that zero-patch property holds *only* because `load`
 ## interns into **empty, freshly minted** pools, so the first `getOrIncl` returns
 ## id 1 again. `load` therefore never loads into a shared/pre-populated pool:
 ## doing so would assign different ids to the same strings while the token words
 ## still carry the old ids — silent corruption.
 ##
-## A consumer that must share ONE pool across modules — the compiler frontend
+## A consumer that must share a single pool across modules — the compiler frontend
 ## uses `SymId` *equality* as symbol identity, so every buffer of one
 ## compilation has to speak the same pool — uses `loadInto` instead: it takes
 ## the caller's pools, maps the file's ids onto them (one `getOrIncl` per pool
-## ENTRY, not per token) and translates the token stream through those maps. See
+## entry, not per token) and translates the token stream through those maps. See
 ## "loading into caller-supplied pools" below. `nifcore.addSubtree` also
 ## re-interns properly, but decodes and re-hashes every literal.
 
@@ -132,10 +132,10 @@ const
 
 # ── embedded index ──────────────────────────────────────────────────────────
 # A text NIF carries a trailing `(.index …)` mapping every *global* `SymbolDef`
-# to the BYTE offset of its declaration, so a reader can seek straight to one
+# to the byte offset of its declaration, so a reader can seek straight to one
 # symbol without scanning. Byte offsets are meaningless in the binary token
-# world, so `bif` persists its OWN index: each global symbol's SymId, the TOKEN
-# POSITION of its declaration's enclosing tag, and its visibility. This is what
+# world, so `bif` persists its own index: each global symbol's SymId, the token
+# position of its declaration's enclosing tag, and its visibility. This is what
 # lets a `bif`-loaded buffer back an on-demand symbol loader (no full scan).
 
 type
@@ -230,7 +230,7 @@ proc readExact(f: File; p: pointer; n: int) =
 
 proc isBifFile*(filename: string): bool =
   ## Cheap format probe: does `filename` start with the BIF magic name? Only the
-  ## 6 name bytes are compared — NOT endianness/version — so that a
+  ## 6 name bytes are compared — not endianness/version — so that a
   ## wrong-version `.bif` is still routed to `load` and rejected with the
   ## precise "bad magic / incompatible" message instead of being fed to the
   ## text parser. Pipeline files keep their `.nif` names regardless of content;
@@ -289,7 +289,7 @@ proc tokenPad(pos: int): int =
   ## the token block begins `NifToken`-aligned. The mmap loader borrows that block
   ## in place and `adoptForeignTokens` asserts it is aligned; the fixed-header
   ## format got this for free, but a varint header can end on any byte. Writer and
-  ## every reader compute this from the SAME post-header position, so they agree.
+  ## every reader compute this from the same post-header position, so they agree.
   let a = sizeof(NifToken)
   (a - (pos and (a - 1))) and (a - 1)
 
@@ -329,7 +329,7 @@ proc storeToString*(b: var TokenBuf; dottedSuffix = ""): string =
   ## shares a pool with other buffers, the *entire* shared pool is written
   ## (still correct — ids stay dense and load reproduces them — but larger
   ## than this module needs). For a compact, self-contained result — and for
-  ## DETERMINISTIC bytes, which content-addressed callers require — build the
+  ## deterministic bytes, which content-addressed callers require — build the
   ## buffer against its own private pool. `dottedSuffix` is the self-module
   ## suffix used to decide which symbols are global (it gets the same
   ## compression as the text writer).
@@ -407,10 +407,10 @@ proc readIndex(f: File): seq[IndexEntry] =
     result[i] = IndexEntry(sym: sym, pos: pos, vis: IndexVis(v))
 
 proc loadIndexFromFile*(f: File): seq[IndexEntry] =
-  ## Read ONLY the symbol index, by following the header's `indexOffset` and
+  ## Read only the symbol index, by following the header's `indexOffset` and
   ## seeking straight to the trailing index section — the token block and pools
   ## are never touched. This is the binary analogue of `nifindexes` jumping to a
-  ## text NIF's `(.indexat …)` target. NOTE: each entry's `sym` is a `SymId`
+  ## text NIF's `(.indexat …)` target. Note: each entry's `sym` is a `SymId`
   ## that is only meaningful together with the buffer's `syms` pool, so a fully
   ## standalone consumer must also load that pool (or use the names another way).
   checkMagic(f)
@@ -426,13 +426,13 @@ proc loadIndex*(filename: string): seq[IndexEntry] =
 
 proc containsSym*(filename, name: string): bool =
   ## Cheap membership probe: does the `.bif` at `filename` reference the symbol
-  ## `name`? Reads ONLY the trailing symbol table — seeking past the (large) token
+  ## `name`? Reads only the trailing symbol table — seeking past the (large) token
   ## block and the tags/strings tables to reach `syms`, which it scans comparing
   ## just the equal-length entries. No token block is mapped and no pool `BiTable`
   ## is built, so a module that never mentions `name` is rejected far more cheaply
   ## than a full `load`.
   ##
-  ## NOTE: nothing calls this yet. It exists for a whole-project symbol query
+  ## Note: nothing calls this yet. It exists for a whole-project symbol query
   ## (`idetools.usages` is the candidate — it currently scans every file it is
   ## handed) and is covered by the self-test below, not by a consumer.
   ##
@@ -456,7 +456,7 @@ proc containsSym*(filename, name: string): bool =
     let pad = tokenPad(int getPos(f))
     setPos(f, getPos(f) + int64(pad) + int64(tokenCount) * sizeof(NifToken))
     for _ in 1 .. nTags + nStrings:
-      let n = readCount(f)              # read length first, THEN skip the bytes
+      let n = readCount(f)              # read length first, then skip the bytes
       setPos(f, getPos(f) + n)
     # Scan the syms table; only entries of matching length can be `name`.
     for _ in 1 .. nSyms:
@@ -475,7 +475,7 @@ proc containsSym*(filename, name: string): bool =
 
 proc loadFromFile*(f: File): BifModule =
   ## Read a `BifModule` (token buffer + symbol index) from an already-open binary
-  ## file. Always mints FRESH pools — see the INVARIANT in the module doc: the
+  ## file. Always mints fresh pools — see the invariant in the module doc: the
   ## raw token words embed pool ids that are only reproduced by interning into
   ## empty pools from id 1, so loading into a shared/pre-populated pool is
   ## deliberately not supported. Quits on a magic/version mismatch.
@@ -492,7 +492,7 @@ proc loadFromFile*(f: File): BifModule =
   let pad = tokenPad(int getPos(f))
   if pad > 0: setPos(f, getPos(f) + int64(pad))
 
-  result.buf = createTokenBuf(max(tokenCount, 16))   # fresh pools — see INVARIANT
+  result.buf = createTokenBuf(max(tokenCount, 16))   # fresh pools — see the invariant
   # token stream: read straight into the storage in one block.
   if tokenCount > 0:
     let dest = result.buf.growRawUninit(tokenCount)
@@ -510,7 +510,7 @@ proc loadFromFile*(f: File): BifModule =
   result.index = readIndex(f)
 
 # ── mmap-backed load (zero-copy token block) ────────────────────────────────
-# `load` maps the whole `.bif` with `vfs.vfsOpenMmap` and BORROWS its token block
+# `load` maps the whole `.bif` with `vfs.vfsOpenMmap` and borrows its token block
 # straight into the returned `TokenBuf` via `adoptForeignTokens` — no multi-hundred
 # -MB `readBuffer` into the heap. The pages are file-backed and read-only, so every
 # process that maps the same cache file shares one physical copy (the whole point
@@ -564,9 +564,9 @@ proc rStr(r: var BifReader): string =
     r.pos += n
 
 proc load*(filename: string): BifModule =
-  ## Read a `BifModule` from a binary `.bif` file, memory-mapping it and BORROWING
+  ## Read a `BifModule` from a binary `.bif` file, memory-mapping it and borrowing
   ## the token block (zero-copy — see `adoptForeignTokens`). Mints fresh pools (the
-  ## bif INVARIANT). The mapping stays resident for the process lifetime.
+  ## bif invariant). The mapping stays resident for the process lifetime.
   let blob = vfsOpenMmap(filename)          # left mapped for the buffer's lifetime
   var r = BifReader(base: cast[uint](blob.data), pos: 0, size: blob.size)
   block:                                    # magic
@@ -611,12 +611,12 @@ proc load*(filename: string): BifModule =
 
 # ── loading into caller-supplied pools ──────────────────────────────────────
 # `load` mints fresh pools because the stored token words carry raw pool ids
-# (see the INVARIANT). The compiler frontend cannot use that: it compares
+# (see the invariant). The compiler frontend cannot use that: it compares
 # `SymId`s for symbol identity, so all its buffers must share one `Pool` (and
 # one `TagPool`, since `kind` queries cast a `TagId` straight to a tag enum).
 #
 # `loadInto` bridges the two worlds. It maps the file's pools onto the caller's
-# — one `getOrIncl` per stored pool ENTRY, i.e. per distinct string, not per
+# — one `getOrIncl` per stored pool entry, i.e. per distinct string, not per
 # token — and then rewrites the token stream through those maps.
 #
 # Rewriting cannot be an in-place patch of the id fields: a `LineInfoLit` packs
@@ -819,7 +819,7 @@ proc remapInto(raw: var BifModule; pool: Pool; tags: TagPool;
                                  pos: t.newPos[i], vis: raw.index[i].vis)
 
 proc loadInto*(filename: string; pool: Pool; tags: TagPool): BifModule =
-  ## Read a `.bif` and translate it into the CALLER's pools, so the result can
+  ## Read a `.bif` and translate it into the caller's pools, so the result can
   ## share one `Pool`/`TagPool` with every other buffer of the run — which is
   ## what makes `SymId` equality a valid symbol-identity test across modules.
   ## The returned `index` is translated too (its `sym`s are caller-pool ids, its
@@ -940,7 +940,7 @@ when isMainModule:
 
   block embedded_index:
     # A module-shaped buffer: a global exported def, a global hidden def, and a
-    # purely-local def (< 2 dots) which must NOT be indexed.
+    # purely-local def (< 2 dots) which must not be indexed.
     var src = createTokenBuf(16)
     let tStmts = src.tags.registerTag("stmts")
     let tSdef = src.tags.registerTag("sdef")
@@ -1045,7 +1045,7 @@ when isMainModule:
     doAssert m.buf.len > src.len,
              "line infos did not widen — the remap path was not exercised"
 
-    # The point of the exercise: ids in the loaded buffer ARE the caller pool's
+    # The point of the exercise: ids in the loaded buffer are the caller pool's
     # ids, so `SymId` equality is a valid identity test against anything else
     # interned there.
     doAssert m.index.len == 1, "expected 1 global sym, got " & $m.index.len
@@ -1058,7 +1058,7 @@ when isMainModule:
     doAssert body.kind == SymbolDef
     doAssert symId(body, pool) == m.index[0].sym
 
-    # A second module translated into the SAME pools must agree on the symbol
+    # A second module translated into the same pools must agree on the symbol
     # they share — the relation the whole translation exists for.
     var src2 = buildModule("bar.7.other", "shared.1.othermod", "else/where.nim")
     let tmp2 = "/tmp/bif_remap_selftest2.bif"
@@ -1080,7 +1080,7 @@ when isMainModule:
     # …and the tag pools agree too, which is what makes `cursorTagId` castable.
     doAssert m2.buf.tags == tags
     # Guard against a vacuous comparator: two genuinely different modules must
-    # NOT compare equal.
+    # not compare equal.
     var d1 = src.beginRead()
     var d2 = m2.buf.beginRead()
     doAssert not sameTree(d1, d2), "sameTree does not detect a difference"
@@ -1102,7 +1102,7 @@ when isMainModule:
       doAssert m.index[i].pos == plain.index[i].pos
     doAssert m.buf.pool == pool
 
-    # The file (non-mmap) reader must reach the same result, and must NOT hand
+    # The file (non-mmap) reader must reach the same result, and must not hand
     # out a token block that dies with the temporary buffer.
     let pool2 = newPool()
     let tags2 = newTagPool()

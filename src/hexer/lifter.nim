@@ -50,7 +50,7 @@ type
     routineKind: SymKind
     calledErrorHook: NifLineInfo
     calledErrorHookSet: bool
-      ## the FLAG for `.error` propagation. `calledErrorHook` only carries
+      ## the flag for `.error` propagation. `calledErrorHook` only carries
       ## the position for the message; it may legitimately be `NoLineInfo`
       ## (an index-jumped decl load cannot resolve its relative line infos),
       ## so info-validity must not double as the flag.
@@ -120,7 +120,7 @@ proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
 
 proc hasDestroyHook*(c: var LiftingCtx; typ: TypeCursor): bool =
   ## Specifically checks whether `typ` has a `=destroy` hook reachable.
-  ## Unlike `isTrivial`, this does NOT depend on the lifter's current
+  ## Unlike `isTrivial`, this does not depend on the lifter's current
   ## `c.op` (which floats with each `getHook` call), so it is safe to
   ## call from the duplifier mid-pass without risk of misclassifying
   ## types that define `=destroy` but no `=dup`/`=copy` (e.g. TokenBuf).
@@ -209,7 +209,7 @@ proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
 #   its `=trace` pushes it for the collector. Conservative where the static type
 #   does not tell: an inheritable object (a subclass may add the edge back) and
 #   a closure (the environment may hold anything) count as cyclic.
-# * `needsTrace(T)` (the library's `canFormCycles(T)`): does a VALUE of type `T` own a ref the collector must
+# * `needsTrace(T)` (the library's `canFormCycles(T)`): does a value of type `T` own a ref the collector must
 #   follow? That is: does it contain a `ref U` with `canFormCycle(ref U)`.
 #   A value that cannot itself be part of a cycle may still hold the only edge
 #   into one (a field of a cyclic object of type `seq[Node]`).
@@ -499,7 +499,7 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
         # We set the RTTI field in `=wasMoved` so objects with a vtable are not trivial.
         result = false
       elif c.op == attachedDestroy:
-        # A value of an inheritable type may really be a DERIVED object that
+        # A value of an inheritable type may really be a derived object that
         # owns resources, and its `=destroy` is a method: the destroy has to
         # be dispatched through the vtable even when this class itself has
         # nothing to release. `RootObj` is the case that matters: a closure's
@@ -831,13 +831,13 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
         # `=wasMoved` is called on memory that is not necessarily initialized:
         # a proc's `result` slot receives `=wasMoved` followed by `=destroy`
         # before its first assignment (see `some[T]` in `std/opt`). Dispatching
-        # on the discriminant READS that garbage, in BOTH hooks. The pair is
+        # on the discriminant reads that garbage, in both hooks. The pair is
         # self-neutralizing only while the two loads agree — `=wasMoved` clears
         # the payload of whatever branch it read, so the `=destroy` behind it
         # finds an empty one. Nothing guarantees they agree: an uninitialized
         # load is `undef`, and the optimizer may materialize it independently
         # per use. `=wasMoved` reading None while `=destroy` reads Some frees a
-        # `string` that was never constructed. So SELECT the branch instead of
+        # `string` that was never constructed. So select the branch instead of
         # reading it: write the discriminant, then let the dispatch below clear
         # exactly that branch. Every op a `=wasMoved` emits is a pure write, so
         # the result is a valid, trivially-destroyable value either way.

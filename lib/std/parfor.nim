@@ -138,7 +138,7 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ##
   ## **`hint` is deliberately ignored — do not "fix" this.** The plugin passes
   ## the chunk number, and spreading chunks across stripes by it sounds like the
-  ## better scheduling decision. It is much worse, because it changes WHICH
+  ## better scheduling decision. It is much worse, because it changes which
   ## `threadpool.submit` runs: any hint but `-1` takes the shared stripe and one
   ## lock acquisition per chunk, while `-1` on a worker stages the chunk on that
   ## worker's private ring and hands a whole batch over on its next cycle. A
@@ -160,7 +160,7 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## itself running a pool task. Helpers keep the single-stripe targeting.
   ##
   ## The parameter stays because the chunk number is the plugin's to say and a
-  ## future scheduler may want it; what it is NOT is a stripe index.
+  ## future scheduler may want it; what it is not is a stripe index.
   submit(c, -1)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;

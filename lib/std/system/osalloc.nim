@@ -199,10 +199,10 @@ elif defined(windows) and not defined(StandaloneHeapSize):
 
 elif defined(wasm32) and defined(standalone):
   # Growing page provider over wasm linear memory (ward-bridge B0): the
-  # allocator draws pages from the END of linear memory, growing it on
+  # allocator draws pages from the end of linear memory, growing it on
   # demand via memory.grow — no fixed reservation, so a small module
   # stays small and a viewer's caches can budget in the hundreds of MB.
-  # An optional CEILING (set by the host at startup from device signals —
+  # An optional ceiling (set by the host at startup from device signals —
   # D8: budgets are device-derived) turns growth failures into ordinary
   # out-of-memory before the browser's own tab limit does it for us.
   const WasmPageSize = 65536
@@ -256,9 +256,9 @@ elif defined(embedded) or defined(StandaloneHeapSize):
   # This used to read `hostOS == "standalone"`. Nimony does not expose `hostOS`
   # (see `nifconfig`, which derives its own `hostCPU`/`hostOS` consts precisely
   # because the magics are missing), so that arm was not merely unreachable — the
-  # identifier is undeclared, and naming it in the condition is an ERROR even
+  # identifier is undeclared, and naming it in the condition is an error even
   # when an earlier `or` operand already decided the branch.
-  # The heap is the one the BOARD LAYOUT reserved, not a `.bss` array standing in
+  # The heap is the one the board layout reserved, not a `.bss` array standing in
   # for it. An array would be a second answer to "how much RAM may the allocator
   # have?" — the layout file already says, and it says it where the stacks and the
   # globals are sized too, so the three cannot silently add up to more than the
@@ -294,7 +294,7 @@ elif defined(embedded) or defined(StandaloneHeapSize):
     result = bumpFrom(size)
 
   proc osDeallocPages(p: pointer, size: int) {.inline.} =
-    # A bump allocator can only give back the LAST thing it handed out; anything
+    # A bump allocator can only give back the last thing it handed out; anything
     # else stays lost until reset. That is the trade a firmware image makes for a
     # page allocator with no bookkeeping of its own, and `alloc.nim` recycles
     # within its own chunks regardless.

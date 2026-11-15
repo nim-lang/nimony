@@ -13,8 +13,8 @@
 ##   - statement-position calls only (call as a direct stmts child);
 ##   - single-return procs only (no `(ret …)` mid-body).
 ##
-## The inlining POLICY is size-driven, not annotation-driven, and it asks the
-## question of the CALLEE, once (see `computeInlineInfo`): a body of at most
+## The inlining policy is size-driven, not annotation-driven, and it asks the
+## question of the callee, once (see `computeInlineInfo`): a body of at most
 ## `InlineTinyBound` tokens is inlinable — that covers forwarders, accessors
 ## and hooks whether or not the author wrote `.inline` — a `.noinline` proc
 ## never is, and anything bigger is not inlinable either unless the
@@ -97,7 +97,7 @@ const
     ## forwarder, an accessor with its assert, a hook's nil-test-and-call), so
     ## inlining cannot lose. Measured evidence for the value: capping splices
     ## at 100 tokens on a full nimsem build shrank the optimized IR 6x and the
-    ## binary 4x while the produced compiler ran slightly FASTER — beyond this
+    ## binary 4x while the produced compiler ran slightly faster — beyond this
     ## size, inlining pays icache, not wins.
   InlineHintBound* = 2 * InlineTinyBound
     ## A body the author marked `.inline` is spliced unconditionally up to this
@@ -183,7 +183,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   ##   - body ≤ `InlineTinyBound` tokens, or `.inline` and ≤ `InlineHintBound`
   ##     → inlinable;
   ##   - `.alwaysInline` → inlinable and `forced` (it also skips the budget);
-  ##   - anything bigger → NOT inlinable, unless the module-level small-total
+  ##   - anything bigger → not inlinable, unless the module-level small-total
   ##     rule (`applySmallTotalRule`) lifts it afterwards.
   ##
   ## There used to be a fourth tier here: bodies above the bounds went through
@@ -195,10 +195,10 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   ## 115,306 of 513,204 spliced tokens (22 %)** — average body 299 tokens,
   ## largest 1,337. It spent the caller's growth budget on the biggest bodies
   ## in the program, and the budget is a fixed pot checked before anything
-  ## else, so what it really bought was 6,450 REFUSED splices of bodies ≤ 100
+  ## else, so what it really bought was 6,450 refused splices of bodies ≤ 100
   ## tokens — the class that cannot lose — starved because a 300-token body
   ## reached the pot first. Deleting it: `.c.nif` −19.8 %, `.oc.nif` −22.5 %,
-  ## nimsem image −17.8 %, and 12,076 splices instead of 11,433 (MORE
+  ## nimsem image −17.8 %, and 12,076 splices instead of 11,433 (more
   ## inlining, 17 % fewer tokens). The gate (`nimony check nimsem.nim`, 135
   ## nimsem invocations under callgrind) went 42,104,669,900 → 41,986,537,540
   ## Ir = −0.28 %. nifbench says +1.8 % on the native build, which is the
@@ -222,7 +222,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
           hinted = true
         if pr.isTagLit and pr.pragmaKind in {NoinlineP, ImportcP, ImportcppP, ImportjsP,
                                              AssemblerP, NakedP, InterruptP}:
-          # importc: the decl's `(stmts .)` "body" is a PLACEHOLDER — the real
+          # importc: the decl's `(stmts .)` "body" is a placeholder — the real
           # code is external. Splicing it deletes the call (measured: memfiles
           # inlined posix `open`'s empty shell and never called open(2)).
           # assembler: the body is machine-level (register-pinned locals, 1:1
@@ -231,7 +231,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
           # them (measured: tcbackend's firstBit spliced + DCE'd, so the C
           # backend saw a bare register-pinned local instead of rejecting the
           # assembler proc).
-          # interrupt: the proc IS a interrupt-table entry, so it must keep an
+          # interrupt: the proc is an interrupt-table entry, so it must keep an
           # address of its own. Splicing it into some ordinary caller (which
           # would have to have called it explicitly) leaves the table pointing
           # at whatever survived.
@@ -245,7 +245,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   result.size = size
   if forced:
     # `{.alwaysInline.}` — no size bound, like MSVC's `__forceinline`. The
-    # size bounds below are a PROXY for cost; the annotation is a direct
+    # size bounds below are a proxy for cost; the annotation is a direct
     # statement about it, so the proxy has no standing. `trySplice`'s
     # `inProgress` cycle guard still applies: that is termination, not policy.
     # `.noinline` above still wins, because a proc carrying both is a
@@ -278,7 +278,7 @@ type
       # splices compounds multiplicatively (measured: 8.4x IR blowup and
       # multi-GB hexer RSS on nimsem).
       #
-      # ONE pot, and every class draws on it — tiny bodies included. Exempting
+      # A single pot, and every class draws on it — tiny bodies included. Exempting
       # the tiny ones (and giving the threshold-0 class a 4x pot of its own)
       # looks harmless per module and is not: `shoggoth`'s inter-module inliner
       # runs this same policy across module boundaries at `maxDepth = 4`, where
@@ -384,7 +384,7 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
         skip n
   # The small-total rule needs the module's call sites, and only the module
   # being rewritten has them all in view: a foreign module's internal count says
-  # nothing about how often ITS callers reach for the proc (measured: applied to
+  # nothing about how often its own callers reach for the proc (measured: applied to
   # foreign modules it turned every once-called 400-token helper into an
   # always-splice for the whole program). Hence foreign procs never get it.
   applySmallTotalRule(buf, found)
@@ -429,7 +429,7 @@ proc openedForeign(c: var InlinerCtx; modul: string): bool =
   result = true
 
 proc foreignProc(c: var InlinerCtx; calleeSym: SymId; decl: var Cursor): bool =
-  ## Parses the ONE `(proc …)` decl of `calleeSym` out of its module, through
+  ## Parses the single `(proc …)` decl of `calleeSym` out of its module, through
   ## the module's embedded index. This used to parse the whole callee module
   ## and score every proc in it — including just to learn that the callee is
   ## not inlinable. Measured on a native release build of nimsem: 2,620
@@ -466,11 +466,11 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
 
 proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
   ## Mint a fresh local sym for an inlined body's local. The name must carry
-  ## NO module suffix, so dce2's per-module rewrite emits it unconditionally
+  ## No module suffix, so dce2's per-module rewrite emits it unconditionally
   ## instead of consulting the global live set — these syms were minted
   ## post-`markLive` and aren't tracked there.
-  ## The pass letter goes INTO the identifier (`` result`i.5 ``), which is what
-  ## keeps it out of the DISAMBIGUATOR, where a NIF symbol is specified to carry
+  ## The pass letter goes into the identifier (`` result`i.5 ``), which is what
+  ## keeps it out of the disambiguator, where a NIF symbol is specified to carry
   ## a number and nothing else (#2457). The backtick makes the result
   ## unspellable, so it can collide neither with a user's `result.26` nor with
   ## the other passes' fresh syms: the hexer-stage same-module pass, the
@@ -535,7 +535,7 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
                       callNode: Cursor): bool =
   ## Decides whether to splice a call to `calleeSym` at this call site. The
   ## policy (`computeInlineInfo`) has already answered the question for the
-  ## CALLEE; all that is left here is the two per-SITE questions: is the
+  ## callee; all that is left here is the two per-site questions: is the
   ## splice legal (`argContainsConstructor`), and is there budget for it.
   let info = lookupInlineInfo(c, calleeSym)
   template decide(v: bool; why: string): untyped =
@@ -560,7 +560,7 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
   if info.forced: decide(true, "forced")
   # Every class — tiny, `.inline` within `InlineHintBound`, small-total — is
   # bounded by the one pot; see `growthLeft` for what an exempt class costs
-  # cross-module. NOTE: the pot is spent first-come-first-served in source
+  # cross-module. Note: the pot is spent first-come-first-served in source
   # order, which is a real weakness — on a traced nimsem build 6,888 splices
   # are refused here, 4,007 of them bodies ≤ 100 tokens, because a call site
   # earlier in the same proc got there first. Spending it best-first (cost all
@@ -617,13 +617,13 @@ type
     rename: Table[SymId, SymId]      ## original param/local sym -> fresh sym
     subst: Table[SymId, Cursor]      ## read-only param sym -> argument subtree
                                      ## to splice at uses (no copy emitted)
-    dropDecl: SymId                  ## the callee's RESULT local (every `(ret X)`
+    dropDecl: SymId                  ## the callee's result local (every `(ret X)`
                                      ## returns it): renamed to the splice
                                      ## destination, so its `(var …)` decl folds
                                      ## to an assignment (or vanishes) and the
                                      ## ret's `dest = result'` self-copy is
                                      ## elided. SymId(0) = no forwarding.
-    dropDecl2: SymId                 ## the local the result was copied FROM in a
+    dropDecl2: SymId                 ## the local the result was copied from in a
                                      ## `(asgn result L) (ret result)` tail — renamed
                                      ## to the destination as well, so its decl folds
                                      ## away too and the copy becomes a self-assign
@@ -637,7 +637,7 @@ proc isForwarded(bnd: Bindings; nameSlot: Cursor): bool {.inline.} =
      (bnd.dropDecl2 != SymId(0) and nameSlot.symId == bnd.dropDecl2))
 
 proc isSelfAsgn(bnd: Bindings; n: Cursor): bool =
-  ## `(asgn A B)` where A and B are bare symbols that RENAME to the same one — the
+  ## `(asgn A B)` where A and B are bare symbols that rename to the same one — the
   ## residue of forwarding both ends of the callee's `result = tmp` tail copy to the
   ## destination. A self-assignment of a plain symbol has no effect and no side
   ## effect, so dropping it is unconditional.
@@ -655,7 +655,7 @@ proc isSelfAsgn(bnd: Bindings; n: Cursor): bool =
 proc isForwardedRet(bnd: Bindings; n: Cursor; targetSym: SymId): bool =
   ## Is `n`, the value of a callee `(ret n)`, the splice destination itself once
   ## renamed — so the `targetSym = n` copy would be a self-assignment? Only the
-  ## RENAMED symbol may be compared: the callee's own names live in its scope, and
+  ## renamed symbol may be compared: the callee's own names live in its scope, and
   ## a callee local can share its name with the caller's destination (both procs
   ## have a `canRaise.0`) while being a different variable (#2674).
   result = n.isSymbol and not bnd.subst.hasKey(n.symId) and
@@ -679,13 +679,13 @@ proc peelValueConv(c: Cursor): Cursor =
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
   ## spliced at every use instead of bound to a parameter copy. (Symbol args are
-  ## NOT included: the inliner cannot prove the caller's variable is unmodified
+  ## Not included: the inliner cannot prove the caller's variable is unmodified
   ## during the body without alias info.) `(sizeof T)`/`(alignof T)` are
   ## constants too: binding `zeroMem(addr x, sizeof x)`'s size to a temp hid the
   ## constant from arkham, so a 16-byte clear ran as a runtime memset loop.
   ##
   ## A conversion around a numeric constant (`csize_t(8)`) is peeled; one around
-  ## `nil` is NOT: `(conv (ptr T) (nil))` spliced into a dead `if p != nil` arm
+  ## `nil` is not: `(conv (ptr T) (nil))` spliced into a dead `if p != nil` arm
   ## folds to a `(deref nil)` that the native back end cannot type.
   case c.kind
   of IntLit, UIntLit, FloatLit, CharLit, StrLit: return true
@@ -710,7 +710,7 @@ proc isStableDerefArg(c: Cursor): bool =
   result = c.childCursor.isSymbol
 
 proc isStableAddrArg(c: Cursor): bool =
-  ## `(haddr L)` / `(addr L)` for a bare symbol `L`. The argument is an ADDRESS,
+  ## `(haddr L)` / `(addr L)` for a bare symbol `L`. The argument is an address,
   ## and a named slot's address is a constant for the whole body — so unlike a
   ## symbol's *value* this needs no alias reasoning and holds for globals and
   ## caller params too.
@@ -810,7 +810,7 @@ proc countParamUses(c: Cursor; params: HashSet[SymId]; uses: var Table[SymId, in
 proc isPurePathArg(c: Cursor): bool =
   ## Is the argument an lvalue path — symbols, fields, indices, derefs, casts —
   ## with no call and no constructor in it? Such an expression can be spliced at
-  ## a use site and re-evaluated there, PROVIDED nothing writes what it reads;
+  ## a use site and re-evaluated there, provided nothing writes what it reads;
   ## that second half is `bodyIsCallerReadOnly`'s job.
   case c.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
@@ -850,7 +850,7 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
   ## a through-pointer/unmodelled lvalue (`slotRootOf` = 0), or any call
   ## (whose callee may write through captured pointers). While it stays false,
   ## the body provably reads — never writes — everything reachable through an
-  ## address it takes, which is what lets an ADDRESS-TAKEN read-only param
+  ## address it takes, which is what lets an address-taken read-only param
   ## still be substituted by a caller lvalue (see `bindingsFor`).
   if not c.isTagLit: return
   if c.stmtKind == AsgnS:
@@ -869,7 +869,7 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
       skip n
 
 proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
-  ## The callee's result LOCAL for destination forwarding: every `(ret X)` in
+  ## The callee's result local for destination forwarding: every `(ret X)` in
   ## the body returns the same bare, body-local, non-param symbol (nimsem's
   ## implicit `result` after lowering). SymId(0) when the pattern doesn't hold.
   result = returnedLocal(body)
@@ -878,7 +878,7 @@ proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
   if not pool.symIsLocal(result): return SymId(0)
 
 proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
-  ## The local `L` in a body whose LAST two statements are
+  ## The local `L` in a body whose last two statements are
   ##
   ##   (asgn resultSym L)
   ##   (ret resultSym)
@@ -1033,7 +1033,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
       into body:                            # enter (ret …)
         if body.hasMore and not body.isDotToken and targetSym != SymId(0):
           if bnd.isForwardedRet(body, targetSym):
-            skip body                       # `ret result`: dest IS result (forwarded)
+            skip body                       # `ret result`: dest is result (forwarded)
           else:
             dest.addParLe TagId(AsgnS), info
             dest.addSymUse targetSym, info
@@ -1046,7 +1046,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
       dest.addParRi()
       return
     if body.stmtKind == VarS and bnd.isForwarded(body.childCursor):
-      # The callee's result var (or the local its tail copies from): its storage IS
+      # The callee's result var (or the local its tail copies from): its storage is
       # the splice destination (renamed), so the decl folds away — an initializer
       # becomes a plain assignment to the destination.
       let vinfo = body.info
@@ -1103,10 +1103,10 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
 
 proc emitTailStmt(dest: var TokenBuf; body: var Cursor; bnd: Bindings;
                   targetSym: SymId; returnLabel: SymId) =
-  ## Emit a statement that is in TAIL position — the last statement reached
+  ## Emit a statement that is in tail position — the last statement reached
   ## before the inline body's `(lab :returnLabel)`. A tail `(ret X)` becomes its
-  ## `(asgn targetSym X)` with NO `(jmp returnLabel)` (control falls straight into
-  ## the label). A tail `stmts`/`scope` recurses so ITS last statement inherits
+  ## `(asgn targetSym X)` without a `(jmp returnLabel)` (control falls straight into
+  ## the label). A tail `stmts`/`scope` recurses so its own last statement inherits
   ## the tail position; anything else is handled by the general `(ret)`-rewriter
   ## (interior returns still jump). Mirrors the arkham value-core's tail handling.
   if body.isTagLit and body.stmtKind == RetS:
@@ -1114,7 +1114,7 @@ proc emitTailStmt(dest: var TokenBuf; body: var Cursor; bnd: Bindings;
     into body:
       if body.hasMore and not body.isDotToken and targetSym != SymId(0):
         if bnd.isForwardedRet(body, targetSym):
-          skip body                          # `ret result`: dest IS result (forwarded)
+          skip body                          # `ret result`: dest is result (forwarded)
         else:
           dest.addParLe TagId(AsgnS), rinfo
           dest.addSymUse targetSym, rinfo
@@ -1155,13 +1155,13 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   inc c.counter
   let returnLabel = pool.symId(
     derivedName("returnLabel." & $c.counter, c.counterPrefix))
-  # Emit the inlined body as a real variable SCOPE, not a bare `(stmts)`: the
+  # Emit the inlined body as a real variable scope, not a bare `(stmts)`: the
   # callee's fresh locals then belong to *this* scope frame, so the backend frees
   # their registers at the inlined body's end instead of leaking their live range
   # to the end of the *caller* (arkham measures a local's `freeAfter` at its
   # enclosing scope; a `stmts` is not a scope). Without this, N sequential inline
   # sites keep N sets of locals simultaneously live → false register pressure.
-  # The `returnLabel` stays INSIDE the scope so every early-return path reaches the
+  # The `returnLabel` stays inside the scope so every early-return path reaches the
   # scope's exit (its variable kills), never jumping out of a still-open scope.
   dest.addParLe TagId(ScopeS), info
   into body:                                # bounded: source `)` may be virtual
@@ -1197,7 +1197,7 @@ proc calleeIsNoReturn(c: var InlinerCtx; calleeSym: SymId): bool =
   result = false
 
 proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
-  ## Can this body change ANY memory its caller can observe?
+  ## Can this body change any memory its caller can observe?
   ##
   ## It cannot when every write goes to a plain slot of one of its own locals
   ## (never through a pointer, never to a global) and every call it makes is one
@@ -1240,11 +1240,11 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
   # different substitutions — neither implies the other:
   #
   # - `opaqueEffects` (above, free: it rides the same walk) is about writes
-  #   *through pointers*. It tolerates a write to a named GLOBAL slot, so the
-  #   address-taken substitution below is restricted to caller LOCALS.
+  #   *through pointers*. It tolerates a write to a named global slot, so the
+  #   address-taken substitution below is restricted to caller locals.
   # - `bodyIsCallerReadOnly` is about caller-observable memory at large: it
   #   forbids the global write, but tolerates calls that do not return. That is
-  #   what a pure PATH argument needs to be stable across the splice.
+  #   what a pure path argument needs to be stable across the splice.
   var uses = initTable[SymId, int]()
   var callerReadOnly = false
   when PathArgSubstitution:
@@ -1262,15 +1262,15 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
       continue                               # slot mutated → copy
     let arg = argCursors[i]
     if pSyms[i] in addrTaken:
-      # The body takes the param's ADDRESS — but if it provably never writes
+      # The body takes the param's address — but if it provably never writes
       # through any pointer (`opaqueEffects` false: no store the scan can't
       # attribute to a named local slot, and no call), everything reachable
-      # through that address is only READ, so the copy and the caller's own
+      # through that address is only read, so the copy and the caller's own
       # slot are indistinguishable and the copy can go. This is the SSO string
       # case: `hashStr`/`[]`/`==` take `haddr s` purely to reach the packed
-      # bytes, and binding forced a whole-string copy per call PLUS an
+      # bytes, and binding forced a whole-string copy per call plus an
       # address-taken stack object that poisoned copyprop/CSE around every
-      # call site. The argument must be a bare LOCAL lvalue: `(haddr arg)` is
+      # call site. The argument must be a bare local lvalue: `(haddr arg)` is
       # spliced verbatim, so a literal or compound is unusable, and a global
       # is excluded because the body may assign a global directly (that write
       # targets a named slot, so it does not set `opaqueEffects`) — a local
@@ -1348,7 +1348,7 @@ type
     ## What `prepareSplice` resolved about one inlinable call: the callee, its
     ## decl, its parameters and the cursors of the call's actual arguments.
     ## Resolving is split from emitting because a caller may have to write
-    ## something of its own BEFORE the splice (`trySpliceVarInit` re-emits the
+    ## something of its own ahead of the splice (`trySpliceVarInit` re-emits the
     ## `(var …)` first) and must be able to refuse without having emitted
     ## anything.
     calleeSym: SymId
@@ -1649,7 +1649,7 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
     inc p                                  # past name
     skip p                                 # past pragmas
     skip p                                 # past type
-    # The result var must have NO initializer — otherwise `X` is not the sole
+    # The result var must have no initializer — otherwise `X` is not the sole
     # value of `R` and a side-effecting initializer would be dropped.
     if not p.isDotToken: return false
     let asgn = stmts[1]
@@ -1788,7 +1788,7 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
         dest.takeTree ifOpener               # else / further elifs verbatim
   dest.addParRi()                          # close (if …)
 
-  # Advance past BOTH the var decl and the if we folded into it.
+  # Advance past both the var decl and the if we folded into it.
   n = entry
   skip n                                   # past var
   skip n                                   # past if
@@ -1828,7 +1828,7 @@ proc condVal(n: Cursor): CondVal =
   ## What a guard evaluates to once argument substitution made it literal:
   ## `(neq (nil) (nil))` from a spliced `if c != nil` with `c := nil`, or the
   ## `(not (eq …))` a nested `!=` forwarder splice leaves behind. `and`/`or`
-  ## fold only when BOTH operands decide, so no operand whose evaluation the
+  ## fold only when both operands decide, so no operand whose evaluation the
   ## fold would discard is ever left unjudged.
   result = condUnknown
   if not n.isTagLit: return
@@ -1889,7 +1889,7 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
   ## with no live arm left contributes its `else` body, or nothing.
   ##
   ## A decided arm may be deleted with its labels: a jmp into a sibling
-  ## branch is not part of the final IR (try/except lowers to a FLAT goto
+  ## branch is not part of the final IR (try/except lowers to a flat goto
   ## sequence), so any `(lab …)` inside the arm is jumped to only from
   ## inside it — this inliner's own returnLabel pattern — and the arm takes
   ## the label and its jumps with it.
@@ -1984,7 +1984,7 @@ proc emitPruned(dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
       skip n
     elif n.stmtKind in {StmtsS, ScopeS}:
-      # Drop UNREACHABLE statements: after an unconditional `(jmp …)`/`(ret …)`
+      # Drop unreachable statements: after an unconditional `(jmp …)`/`(ret …)`
       # nothing executes until the next `(lab …)`, so def-free statements in
       # between are dead. The value-splice epilogue produces exactly this —
       # a callee whose every path returns via `(asgn dest X) (jmp RL)` leaves
@@ -2061,7 +2061,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             if nEmitted > 0:
               if calleeSym != SymId(0):
                 c.inProgress.incl calleeSym
-              # Nested splices first, into a scratch buffer; THEN prune the
+              # Nested splices first, into a scratch buffer; only then prune the
               # branches the substituted arguments decided — only after the
               # nested walk are inlined guards (`!=` forwarders) reduced to
               # the literal comparisons `condVal` can judge.
