@@ -29,10 +29,11 @@ iterator `..`*[T: Ordinal and Comparable and Orderable](a, b: T): T {.inline,
   ## error. (`ord(high(uint64))` does not fold, so a `uint64` loop up to
   ## `high` is not caught.)
   var i = a
-  when T is range:
+  when T is range or T is bool:
     # A `range` value past `b` is not one: `inc` on it owes the range
-    # (nim-lang/nimony#2855), so the step is only taken below `b`, and the
-    # test that says so is fresh on every round.
+    # (nim-lang/nimony#2855), and `inc(true)` stays `true` (a C `_Bool`), so
+    # the step is only taken below `b`, and the test that says so is fresh
+    # on every round.
     var more = i <= b
     while more:
       yield i
@@ -88,9 +89,17 @@ iterator countup*[T: Ordinal and Comparable and Orderable](a, b: T; step: Positi
   ## enough: this fails if `b + step > high(T)` for efficiency reasons and
   ## it is a rare case.
   var res = a
-  while res <= b:
-    yield res
-    inc(res, step)
+  when T is bool:
+    # `inc(true)` stays `true` (a C `_Bool`): step only below `b`, like `..`.
+    var more = res <= b
+    while more:
+      yield res
+      if res < b: inc(res, step)
+      else: more = false
+  else:
+    while res <= b:
+      yield res
+      inc(res, step)
 
 # RootObj is replaced with untyped for now:
 
