@@ -16,3 +16,6 @@ type
   FooNonObj1 {.inheritable.} = int
   FooNonObj2 {.final, union, packed.} = int
   FooNonObj3 {.view.} = int
+
+# a proc type in a parameter list: no `result` is in scope there
+proc takesFn(g: proc (x: int): int {.nimcall, ensures: result >= 0.}): int = g(1)
