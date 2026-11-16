@@ -1058,8 +1058,8 @@ proc loadPluginTree(filename: string): NifBuilder =
   if hint.len > 0:
     var hintBase = ""
     var hintNumber = 0
-    assert splitLocalSymName(hint, hintBase, hintNumber),
-      "plugin .unusedname must be a local symbol"
+    let isLocal = splitLocalSymName(hint, hintBase, hintNumber)
+    assert isLocal, "plugin .unusedname must be a local symbol"
     if unusedNameBase.len == 0:
       unusedNameBase = hintBase
       nextUnusedName = hintNumber
