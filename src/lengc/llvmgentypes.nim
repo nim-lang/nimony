@@ -385,8 +385,8 @@ proc addObjectFieldsLLVM(c: var LLVMCode; n: var Cursor; fields: var seq[LLType]
       if n.kind == DotToken:
         inc n
       elif n.kind == Symbol:
-        let baseName = mangleSym(c, n.symId)
-        fields.add LLType(kind: llStruct, name: baseName)
+        # The base is embedded by value, so this module needs its definition.
+        fields.add ensureTypeDef(c, n.symId)
         inc n
       else:
         error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
@@ -688,8 +688,7 @@ proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LLType] =
         var bitfieldUnit = 0
         body.into:
           if body.kind == Symbol:
-            let baseName = mangleToC(c.m.pool.symString(body.symId))
-            result.add LLType(kind: llStruct, name: baseName)
+            result.add ensureTypeDef(c, body.symId)
             inc body
           elif body.kind == DotToken:
             inc body
