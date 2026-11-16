@@ -69,6 +69,7 @@ import cse                                    # FunctionSummary + SummaryResolve
                                               # classification consults callee
                                               # summaries (see `scanStab`)
 import ".." / nifmodules                      # MainModule (foreign summary lookup)
+import ".." / typenav                         # navigateToObjectBody: is a pointee an aggregate?
 
 # ---- nifcore helpers ------------------------------------------------------
 
@@ -283,6 +284,8 @@ type
     writtenEver: HashSet[SymId]        ## storage roots of every direct or
                                        ## deref-of-addr store in the body
     localDefs: HashSet[SymId]          ## syms declared by a local `(var …)`
+    pointees: Table[SymId, Cursor]     ## local `(var :p . (ptr T) …)` → `T`
+    m: ptr MainModule                  ## type context; nil ⇒ every pointee is opaque
     useCount: Table[SymId, int]        ## every `Symbol` (read) token per sym
     substCount: Table[SymId, int]      ## uses we rewrote away per sym
     writeSites: Table[SymId, seq[int]] ## pure (leaf/symbol RHS) write positions
@@ -293,8 +296,9 @@ type
     patchset: Patchset
     synth: seq[TokenBuf]
 
-proc createContext(orig: ptr TokenBuf): Context =
-  result = Context(orig: orig,
+proc createContext(orig: ptr TokenBuf; m: ptr MainModule = nil): Context =
+  result = Context(orig: orig, m: m,
+          pointees: initTable[SymId, Cursor](),
           copyOf: initTracker[SymId, SymId](),
           litOf: initTracker[SymId, int](),
           addrOf: initTracker[SymId, int](),
@@ -361,6 +365,35 @@ proc isEligible(c: Context; s: SymId): bool {.inline.} =
   s != SymId(0) and s in c.localDefs and
     (s notin c.addrTaken or s in c.stableAT)
 
+proc indexesVariably(n: Cursor): bool =
+  ## `n`, an lvalue, selects an element by an index that is not a literal.
+  if n.kind != TagLit: return false
+  case n.exprKind
+  of AtC, PatC:
+    var m = child0(n)
+    let base = m
+    skip m
+    result = m.kind notin {IntLit, UIntLit, CharLit} or indexesVariably(base)
+  of DotC, DerefC:
+    result = indexesVariably(child0(n))
+  else:
+    result = false
+
+proc keepsScaledAddress(c: Context; dest: SymId; src: Cursor): bool =
+  ## `var p = addr a[i].f` is worth keeping, not splicing back into its uses,
+  ## when `p` points at an aggregate, is read more than once and the address
+  ## scales a variable index: an aggregate's stride is rarely an addressing
+  ## mode's scale (1, 2, 4, 8), so every spliced `(deref p)` would pay a
+  ## multiply and an add for the address `p` holds — SROA's per-field loads
+  ## of `var o = a[i]` are this, nine of them for one object. A single use or
+  ## a scalar pointee folds as before: `inc a[i]` indexes for free.
+  result = false
+  if c.m == nil or c.useCount.getOrDefault(dest) < 2: return
+  if dest notin c.pointees: return
+  if not indexesVariably(child0(src)): return
+  let t = navigateToObjectBody(c.m[], c.pointees.getOrDefault(dest))
+  result = t.kind == TagLit and t.typeKind in {ObjectT, UnionT, ArrayT}
+
 proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
   ## Record that `dest` now holds `src`'s value. A leaf literal is snapshotted
   ## (survives a later write to a symbol that happened to hold the same bits);
@@ -392,7 +425,7 @@ proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
     # into `(deref p)` re-forms `(deref (haddr LVAL))`, which the rewrite
     # engine's `deref_addr` rule then folds back to the plain lvalue.
     var deps: seq[SymId] = @[]
-    if isStableAddrExpr(src, deps):
+    if isStableAddrExpr(src, deps) and not keepsScaledAddress(c, dest, src):
       var ok = true
       for d in deps:
         if not c.isEligible(d):
@@ -854,6 +887,8 @@ proc preScan(c: var Context; n: Cursor) =
         if t.kind == TagLit and
            t.typeKind in {IT, UT, FT, CT, BoolT, PtrT, AptrT}:
           c.scalarHomed.incl symId(nameCur)
+        if t.kind == TagLit and t.typeKind == PtrT:
+          c.pointees[symId(nameCur)] = child0(t)
     if n.exprKind in AddrKinds:
       # Only a local whose own storage is addressed is excluded from copy prop. An
       # `addr((*p).f)` addresses the pointee (computed from p's value), so `p` stays
@@ -1250,7 +1285,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
   ## call taking an address taints conservatively, the pre-extension behavior).
   ## Returns whether it changed `buf`.
   result = false
-  var ctx = createContext(addr buf)
+  var ctx = createContext(addr buf, m)
   registerParams(ctx, params)
   block:
     let pn = beginRead(buf)

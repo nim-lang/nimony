@@ -74,7 +74,7 @@ proc lvalueRoot*(n: Cursor): SymId =
       else: return NoSym
     else: return NoSym
 
-proc fieldSlot(n: Cursor): int =
+proc fieldSlot*(n: Cursor): int =
   ## The child index of `n` that names a field, -1 when none. A field is a
   ## symbol too, and it can be spelled exactly like a variable (`x.0` for a
   ## field `x` and for the first local `x`), so a use count that walks into it

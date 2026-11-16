@@ -796,15 +796,20 @@ const MaxPathSubstUses = 2
   ## (`cse` would re-fold the repeats, but it only runs under `--opt`.)
 
 proc countParamUses(c: Cursor; params: HashSet[SymId]; uses: var Table[SymId, int]) =
+  ## Uses of each parameter. A field that shares the parameter's symbol —
+  ## `vector(x, y, z)` building `Vec3(x: x, …)` — is not one (`fieldSlot`).
   case c.kind
   of Symbol:
     if c.symId in params: uses[c.symId] = uses.getOrDefault(c.symId) + 1
   of TagLit:
     var n = c
+    var i = 0
+    let f = fieldSlot(c)
     n.into:
       while n.hasMore:
-        countParamUses(n, params, uses)
+        if i != f: countParamUses(n, params, uses)
         skip n
+        inc i
   else: discard
 
 proc isPurePathArg(c: Cursor): bool =
@@ -826,6 +831,41 @@ proc isPurePathArg(c: Cursor): bool =
           skip n
     else:
       result = false
+  else:
+    result = false
+
+proc isPureValueArg(c: Cursor): bool =
+  ## A pure path, or non-trapping arithmetic over pure values: `a.x - b.x`.
+  ## Evaluating it reads the same memory a path does and nothing else, and it
+  ## cannot fault beyond what its paths can. `div`/`mod` are excluded (they
+  ## trap on zero), so is anything with a call or a constructor.
+  if isPurePathArg(c): return true
+  result = false
+  if c.isTagLit and c.exprKind in {AddC, SubC, MulC, NegC}:
+    result = true
+    var n = c
+    n.into:
+      if n.hasMore: skip n                   # the type
+      while n.hasMore:
+        if not isPureValueArg(n): result = false
+        skip n
+
+proc usedInLoop(c: Cursor; s: SymId; inLoop = false): bool =
+  ## Does `s` occur inside a loop of the body `c`?
+  case c.kind
+  of Symbol:
+    result = inLoop and c.symId == s
+  of TagLit:
+    let loop = inLoop or c.stmtKind in {LoopS, WhileS}
+    result = false
+    var n = c
+    var i = 0
+    let f = fieldSlot(c)
+    n.into:
+      while n.hasMore:
+        if not result and i != f and usedInLoop(n, s, loop): result = true
+        skip n
+        inc i
   else:
     result = false
 
@@ -930,6 +970,62 @@ proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
   # `resultSym` must be mentioned nowhere but those two statements.
   if countUses(body, resultSym) != 2: return SymId(0)
   result = src
+
+proc flattenStmts(n: Cursor; acc: var seq[Cursor]) =
+  ## The statements of `n` in execution order, through `stmts`/`scope`.
+  if n.isTagLit and n.stmtKind in {StmtsS, ScopeS}:
+    var it = n
+    it.into:
+      while it.hasMore:
+        flattenStmts(it, acc)
+        skip it
+  elif not n.isDotToken:
+    acc.add n
+
+proc labelOf(n: Cursor): SymId =
+  ## The label a `(lab :L)` defines or a `(jmp L)` names, else 0.
+  result = SymId(0)
+  if n.isTagLit and n.stmtKind in {LabS, JmpS}:
+    let l = n.childCursor
+    if l.kind in {Symbol, SymbolDef}: result = l.symId
+
+proc resultWrittenLast(body: Cursor; res: SymId): bool =
+  ## Is `res`, the callee's result local, written once — by a whole
+  ## `(asgn res E)` that runs after every other statement of the body, with
+  ## only jumps, labels and the `ret`s behind it? Then everything the body
+  ## reads, its arguments included, is read before or while `E` is evaluated,
+  ## and `res` may live in a destination an argument mentions: `c = mul(c, d)`
+  ## reads `c` for `E` and stores into `c` last, exactly as the call did.
+  result = false
+  if res == SymId(0): return
+  var stmts: seq[Cursor] = @[]
+  flattenStmts(body, stmts)
+  var writeAt = -1
+  var rets = 0
+  for i in 0 ..< stmts.len:
+    let s = stmts[i]
+    if s.isTagLit and s.stmtKind == AsgnS and s.childCursor.kind == Symbol and
+       s.childCursor.symId == res:
+      if writeAt >= 0: return                  # written twice
+      writeAt = i
+    elif s.isTagLit and s.stmtKind == RetS:
+      if writeAt < 0: return                   # a return before the write
+      inc rets
+    elif writeAt >= 0 and not (s.isTagLit and s.stmtKind in {JmpS, LabS}):
+      return                                   # something runs after the write
+  if writeAt < 0: return
+  # Its value is not read, nor is it written any other way.
+  var e = stmts[writeAt].childCursor
+  skip e
+  if mentions(e, res) or countUses(body, res) != 1 + rets: return
+  # No jump from before the write lands behind it.
+  var after = initHashSet[SymId]()
+  for i in writeAt + 1 ..< stmts.len:
+    if stmts[i].isTagLit and stmts[i].stmtKind == LabS: after.incl labelOf(stmts[i])
+  for i in 0 ..< writeAt:
+    if stmts[i].isTagLit and stmts[i].stmtKind == JmpS and labelOf(stmts[i]) in after:
+      return
+  result = true
 
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
                  bnd: Bindings) =
@@ -1209,8 +1305,10 @@ proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
   ## This is the fact the two "cannot prove it without alias info" refusals in
   ## `isSubstitutableArg` / `isStableAddrArg` were missing. It is answered from
   ## the body about to be spliced — no summaries, no types, no alias partition.
-  if not body.isTagLit: return false
+  ##
+  ## A leaf — a symbol, a literal, `.` — writes nothing.
   result = true
+  if not body.isTagLit: return
   var n = body
   if n.stmtKind == AsgnS:
     if not writeTargetIsLocalSlot(n.childCursor): return false
@@ -1251,7 +1349,7 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
     var anyPathArg = false
     for i in 0 ..< pSyms.len:
       if pSyms[i] notin assigned and pSyms[i] notin addrTaken and
-         not argCursors[i].isSymbol and isPurePathArg(argCursors[i]):
+         not argCursors[i].isSymbol and isPureValueArg(argCursors[i]):
         anyPathArg = true
         break
     if anyPathArg:
@@ -1295,6 +1393,15 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
       # it leaves `(deref (haddr (dot o f)))` at the use, which the rewrite
       # engine's `deref_addr` rule folds back to `(dot o f)` — the same reason
       # `isStableAddrArg` exists, now without the bare-symbol restriction.
+      result.subst[pSyms[i]] = arg
+    elif callerReadOnly and isPureValueArg(arg) and
+         uses.getOrDefault(pSyms[i]) == 1 and not usedInLoop(body, pSyms[i]):
+      # `vector(a.x - b.x, …)`: arithmetic over pure paths, used once. Spliced
+      # at its one use it is still evaluated at most once, reads what it read
+      # at the call (the body writes nothing the caller sees), and leaves no
+      # parameter local behind. A local would sit between the computation and
+      # its consumer — after scalar replacement, a `dest.x = p` copy out of a
+      # `scope` that copy propagation cannot see through.
       result.subst[pSyms[i]] = arg
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
@@ -1399,7 +1506,8 @@ proc prepareSplice(c: var InlinerCtx; call: Cursor; site: var SpliceSite): bool 
   result = true
 
 proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
-                target: SymId; forwardResult: bool; info: NifLineInfo) =
+                target: SymId; forwardResult: bool; info: NifLineInfo;
+                tailCopyOk = true) =
   ## The splice itself, identical whatever call position asked for it:
   ##
   ##   (scope
@@ -1427,7 +1535,8 @@ proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
     resultLocal = resultLocalOf(site.pd.body, site.pSyms)
     if resultLocal != SymId(0):
       rename[resultLocal] = target         # overrides the seed walk's fresh sym
-      tailCopy = tailCopySource(site.pd.body, resultLocal, site.pSyms)
+      if tailCopyOk:
+        tailCopy = tailCopySource(site.pd.body, resultLocal, site.pSyms)
       if tailCopy != SymId(0):
         rename[tailCopy] = target
 
@@ -1539,7 +1648,8 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## local (`lengaa`) that no argument mentions. A substituted argument is
   ## evaluated inside the body, after the result was first written; a local
   ## whose address is taken can be read through the pointer; a global by the
-  ## body itself. Those keep the copy.
+  ## body itself. Those keep the copy — except an argument that mentions
+  ## `lhs` of a body that writes its result last (`resultWrittenLast`).
   if not n.isTagLit or n.stmtKind != AsgnS: return 0
   let entry = n
   var probe = n
@@ -1554,8 +1664,16 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   inc lhsCur                               # the lhs symbol
   var rhsCur = lhsCur
   skip rhsCur                              # the call
-  let forward = not destMayBeObserved(c.callerFacts, lhsCur, rhsCur)
-  emitSplice(c, dest, site, lhsSym, forward, entry.info)
+  if not destMayBeObserved(c.callerFacts, lhsCur, rhsCur):
+    emitSplice(c, dest, site, lhsSym, true, entry.info)
+  elif c.callerFacts.isOwned(lhsSym) and
+       resultWrittenLast(site.pd.body, resultLocalOf(site.pd.body, site.pSyms)):
+    # An argument mentions `lhs`, but the body reads all of them before its
+    # one store into the result (`resultWrittenLast`). Not the local a tail
+    # `result = L` copies from: `L` may be written before an argument is read.
+    emitSplice(c, dest, site, lhsSym, true, entry.info, tailCopyOk = false)
+  else:
+    emitSplice(c, dest, site, lhsSym, false, entry.info)
 
   n = entry
   skip n

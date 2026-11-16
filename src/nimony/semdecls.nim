@@ -833,13 +833,43 @@ proc semParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   else:
     buildErr c, dest, n.info, "expected '.' or 'params'"
 
+proc endsInReturn(n: Cursor): bool =
+  ## Control never falls off the end of the statement `n`: it is a `return`
+  ## or a `raise`, or a statement list whose last statement is one. Not a
+  ## `block`, which a `break` leaves at its end.
+  let k = n.stmtKind
+  if k in {RetS, RaiseS}:
+    result = true
+  elif k in {StmtsS, ScopeS}:
+    result = false
+    var last = default(Cursor)
+    var hasLast = false
+    var it = n
+    it.into:
+      while it.hasMore:
+        if not it.isDotToken:
+          last = it
+          hasLast = true
+        skip it
+    if hasLast: result = endsInReturn(last)
+  else:
+    result = false
+
 proc addReturnResult(c: var SemContext; dest: var TokenBuf; resId: SymId; info: NifLineInfo; bodyStart: int) =
+  ## Ends the body with `return result` unless it already ends in a return:
+  ## `return f(x)` then leaves an unreachable `(ret result)` behind it, and
+  ## every later pass has to cope with a body returning two different symbols
+  ## — the inliner, for one, forwards the callee's result into the call's
+  ## destination only when every `ret` returns the same local.
   if resId != SymId(0):
-    dest.reopenLastTree bodyStart # reopen the body `(stmts)`
-    # maybe add `return result`:
-    buildTree(dest, RetS, info):
-      dest.addSymUse resId, info
-    dest.addParRi() # add it back
+    var body = cursorAt(dest, bodyStart)
+    let exits = endsInReturn(body)
+    endRead body
+    if not exits:
+      dest.reopenLastTree bodyStart # reopen the body `(stmts)`
+      buildTree(dest, RetS, info):
+        dest.addSymUse resId, info
+      dest.addParRi() # add it back
 
 proc semBorrow(c: var SemContext; dest: var TokenBuf; fn: StrId; beforeParams: int) =
   let signature = cursorAt(dest, beforeParams)
