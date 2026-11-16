@@ -641,12 +641,27 @@ proc foldIntConst(text: string; srcBits: int; srcUnsigned: bool;
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
                      result: var LLValue) =
   let destTyp = genTypeLLVMReadOnly(c, destTypeCursor)
+  let destTK = scalarTypeKind(c, destTypeCursor)
+  if destTK == BoolT and scalarTypeKind(c, srcTypeCursor) in
+      {IT, UT, CT, FT, PtrT, AptrT, ProctypeT}:
+    # A bool is `x != 0`, as a C cast to `bool` makes it; a `trunc` (or no
+    # instruction, from an `i8`) would keep the low byte: 256 gave false, 2 a
+    # bool that is neither.
+    let nonZero = llReg(c.nextTemp(), c.prim.i1)
+    if isFloatType(val.typ):
+      c.emit LLInstr(kind: llFcmp, result: nonZero, fcmpPred: "une",
+                     fcmpLhs: val, fcmpRhs: llFloatText("0.0", val.typ))
+    else:
+      c.emit LLInstr(kind: llIcmp, result: nonZero, icmpPred: "ne",
+                     icmpLhs: val, icmpRhs: zeroVal(val.typ))
+    result = llReg(c.nextTemp(), destTyp)
+    c.emit LLInstr(kind: llZext, result: result, castOp: "zext",
+                   castSrc: nonZero, castDstType: destTyp)
+    return
   if typeEq(val.typ, destTyp):
     result = val
     return
-
   let srcTK = scalarTypeKind(c, srcTypeCursor)
-  let destTK = scalarTypeKind(c, destTypeCursor)
   let t = c.nextTemp()
 
   if isLengPtr(srcTK) and isLengPtr(destTK):
