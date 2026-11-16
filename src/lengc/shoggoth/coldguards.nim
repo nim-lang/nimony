@@ -18,8 +18,8 @@
 ## ```
 ##
 ## A guard is what hexer emits for a bounds check or an undischarged `.requires`
-## (`emitRequiresGuard`): an `ite` without an else-arm whose arm is one call to a
-## proc that never returns. In place, the arm puts its argument setup and call in
+## (`emitRequiresGuard`): an `ite` without an else-arm whose arm cannot fall
+## through because it ends in a call to a proc that never returns. In place, the arm puts its argument setup and call in
 ## the middle of the hot path, and the backend has to branch around it on every
 ## check that passes. At the end of the body the check becomes a single
 ## conditional branch to the cold block, the hot path falls through, and the cold
@@ -98,29 +98,33 @@ proc callIsNoReturn(c: var Context; call: Cursor): bool =
   var s = default(FunctionSummary)
   result = resolveCallee(c.resolver, callee.symId, s) and s.noReturn
 
-proc soleStmt(n: Cursor): Cursor =
-  ## Through `(stmts X)`/`(scope X)` wrappers with exactly one child. (Leng
-  ## statement lists carry no `.` holes, so a child is a statement.)
-  result = n
-  while result.kind == TagLit and result.stmtKind in {StmtsS, ScopeS}:
-    var it = result
-    var only = default(Cursor)
-    var count = 0
+proc terminates(c: var Context; n: Cursor; panicsOnly = false): bool =
+  ## Control never continues after `n`. With `panicsOnly`, only a noreturn call
+  ## counts (not `ret`/`jmp`): such an arm is worth moving out of line.
+  if n.kind != TagLit: return false
+  case n.stmtKind
+  of RetS, JmpS: result = not panicsOnly
+  of CallS: result = c.callIsNoReturn(n)
+  of StmtsS, ScopeS:
+    var last = default(Cursor)
+    var it = n
     it.into:
       while it.hasMore:
-        only = it
-        inc count
+        last = it
         skip it
-    if count != 1: return default(Cursor)
-    result = only
+    result = not cursorIsNil(last) and c.terminates(last, panicsOnly)
+  of IteS:
+    var cond, thenArm, elseArm = default(Cursor)
+    result = twoWayParts(n, cond, thenArm, elseArm) and hasArm(elseArm) and
+             c.terminates(thenArm, panicsOnly) and c.terminates(elseArm, panicsOnly)
+  else: result = false
 
 proc coldArm(c: var Context; n: Cursor; arm: var Cursor): bool =
   ## `n` is a guard; `arm` is set to its failure arm.
   var cond, thenArm, elseArm = default(Cursor)
   if n.kind != TagLit or n.stmtKind != IteS: return false
   if not twoWayParts(n, cond, thenArm, elseArm) or hasArm(elseArm): return false
-  let call = soleStmt(thenArm)
-  if cursorIsNil(call) or not c.callIsNoReturn(call): return false
+  if not c.terminates(thenArm, panicsOnly = true): return false
   if not c.isMovable(thenArm): return false
   arm = thenArm
   result = true
@@ -170,26 +174,6 @@ proc rewrite(c: var Context; dest: var TokenBuf; n: Cursor) =
     dest.closeTag()
   else:
     dest.addSubtree n
-
-proc terminates(c: var Context; n: Cursor): bool =
-  ## Control never continues after `n`.
-  if n.kind != TagLit: return false
-  case n.stmtKind
-  of RetS, JmpS: result = true
-  of CallS: result = c.callIsNoReturn(n)
-  of StmtsS, ScopeS:
-    var last = default(Cursor)
-    var it = n
-    it.into:
-      while it.hasMore:
-        last = it
-        skip it
-    result = not cursorIsNil(last) and c.terminates(last)
-  of IteS:
-    var cond, thenArm, elseArm = default(Cursor)
-    result = twoWayParts(n, cond, thenArm, elseArm) and hasArm(elseArm) and
-             c.terminates(thenArm) and c.terminates(elseArm)
-  else: result = false
 
 proc runColdGuards*(buf: var TokenBuf; summaries: ptr FunctionSummaryTable;
                     m: ptr MainModule; params: Cursor; isVoid: bool): int =
@@ -290,6 +274,14 @@ when isMainModule:
         "(stmts (loop (stmts (ite (not (lt i.0.M n.0.M)) (stmts (jmp `cold.1)) .) " &
         "(continue (lt i.0.M n.0.M)))) (ret x.0.M) " &
         "(lab :`cold.1) (scope (stmts (call panic.0.M m.0.M))))", isVoid = false)
+
+  block multi_statement_arm:
+    chk("(stmts (ite a.0.M (stmts (call other.0.M) (call panic.0.M m.0.M)) .) (ret .))",
+        "(stmts (ite a.0.M (stmts (jmp `cold.1)) .) (ret .) " &
+        "(lab :`cold.1) (scope (stmts (call other.0.M) (call panic.0.M m.0.M))))")
+
+  block ret_arm_stays:
+    unchanged("(stmts (ite a.0.M (stmts (ret .)) .) (call other.0.M) (ret .))")
 
   block arm_reads_a_local:
     unchanged("(stmts (var :i.0 . (i 64) 0) " &
