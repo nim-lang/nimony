@@ -876,10 +876,13 @@ proc isStringLiteral(n: Cursor): bool =
 proc skipRangeBase(t: TypeCursor): TypeCursor =
   ## `range[lo..hi]` as the ordinal it is carved out of. Its value
   ## representation *is* the base type's, which is why `isCastableType` below
-  ## looks through it too.
+  ## looks through it too. A base that is a symbol (an enum, a distinct type)
+  ## is resolved like the unranged type is by `skipDistinct`.
   result = t
   if result.typeKind == RangetypeT:
     inc result # past the tag, to the base type
+    var isDistinct = false
+    result = skipDistinct(result, isDistinct)
 
 proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: Item; info: NifLineInfo; beforeExpr: int) =
   const
