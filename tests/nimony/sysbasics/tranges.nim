@@ -31,3 +31,23 @@ assert ord(re) == 2
 assert int(re) == 2
 assert int8(re) == 2'i8
 assert int(rd) == 3
+
+# subrange match: a range of an enum, distinct or bool type is passed to a
+# parameter of its base type (nimony-bugs-llms#183)
+proc byValE(x: RangeE): int = ord(x)
+assert byValE(re) == 2
+proc byValD(x: RangeD): int = int(x)
+assert byValD(rd) == 3
+proc byValB(x: bool): bool = x
+var rb: range[false..true] = true
+assert byValB(rb)
+# a subrange match ranks below an exact and a generic match
+proc ovE(x: range[reB..reC]): string = "range"
+proc ovE(x: RangeE): string = "E"
+assert ovE(re) == "range"
+proc ovG[T](x: T): string = "generic"
+proc ovG(x: RangeE): string = "E"
+assert ovG(re) == "generic"
+proc ovB[T](x: T): string = "generic"
+proc ovB(x: bool): string = "bool"
+assert ovB(rb) == "generic"

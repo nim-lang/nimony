@@ -1830,6 +1830,9 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
     if not matchConceptSym(m, fs, a):
       m.error InvalidMatch, f, a
   else:
+    if a.typeKind == RangetypeT and m.skippedMod notin {MutT, OutT}:
+      inc a # subrange match: `range[T]` matches when `T` matches exactly
+      inc m.inheritanceCosts
     # fast check that works for aliases too:
     if a.isSymbol and sameSymbol(a.symId, fs):
       discard "perfect match"
@@ -2263,6 +2266,9 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
       matchIntegralType m, f, arg # consumes the whole tree, incl. the close
     of BoolT:
       var a = skipModifier(arg.typ)
+      if a.typeKind == RangetypeT and m.skippedMod notin {MutT, OutT}:
+        inc a # subrange match
+        inc m.inheritanceCosts
       if a.typeKind != fk:
         m.error InvalidMatch, f, a
       let fStart = f
