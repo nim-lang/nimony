@@ -2418,6 +2418,8 @@ proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewSco
       let nr = isNoReturn(ex)
       if nr:
         it.typ = c.types.autoType
+    elif it.typ.typeKind == MutT:
+      inc it.typ # a branch's value is not a location: no `var` for the siblings
   of VoidT:
     # performs discard check:
     semStmt c, dest, it.n, isNewScope
