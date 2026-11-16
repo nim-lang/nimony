@@ -111,6 +111,17 @@ type
 
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor)
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner)
+
+proc trListMember(c: var EContext; dest: var TokenBuf; n: var Cursor;
+                  mode = TraverseInner) =
+  ## One child of a statement list. A `.` there is a hole an earlier pass left
+  ## where it removed a statement; Leng lists carry none, so it is dropped here
+  ## rather than stepped over by every pass and backend downstream. (A `.` in a
+  ## fixed slot — an `ite` without an else-arm — is a different thing and goes
+  ## through `trStmt`.)
+  if n.kind == DotToken: skip n, SkipStmt
+  else: trStmt c, dest, n, mode
+
 proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId; constRef = false)
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string
 
@@ -986,8 +997,8 @@ proc trProcBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     n.into:
       var prevStmt = NoStmt
       while n.hasMore:
-        prevStmt = n.stmtKind
-        trStmt c, dest, n, TraverseInner
+        if n.kind != DotToken: prevStmt = n.stmtKind   # a hole is not the last statement
+        trListMember c, dest, n, TraverseInner
       if prevStmt == RetS or c.resultSym == SymId(0):
         discard "ok, do not add another return"
       else:
@@ -1397,7 +1408,7 @@ proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addParLe(exprStart.cursorTagId, exprStart.info)
     while n.hasMore:
       if not isLastSon(n):
-        trStmt c, dest, n
+        trListMember c, dest, n
       else:
         trExpr c, dest, n
     takeParRi dest, n, exprStart
@@ -2010,7 +2021,7 @@ proc trStmtList(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind StmtsS, info:
       n.into:
         while n.hasMore:
-          trStmt c, dest, n
+          trListMember c, dest, n
     c.typeCache.closeScope()
   else:
     trStmt c, dest, n
@@ -2340,7 +2351,7 @@ proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
             dest.addDotToken()
             dest.addParRi()
         else:
-          trStmt c, dest, n
+          trListMember c, dest, n
     if asLoop and not sawContinue:
       dest.addParLe(TagId(ContinueTagId), info)
       dest.addDotToken()
@@ -2437,32 +2448,32 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       n.into:
         skip n
         while n.hasMore:
-          trStmt c, dest, n, mode
+          trListMember c, dest, n, mode
     of AlwaysS:
       # A replicated `finally`: meta information for now, so `lengc` and
       # `arkham` get its statements without the wrapper.
       n.into:
         while n.hasMore:
-          trStmt c, dest, n, mode
+          trListMember c, dest, n, mode
     of StmtsS:
       if mode == TraverseTopLevel:
         n.into:
           while n.hasMore and n.kind != EofToken:
-            trStmt c, dest, n, mode
+            trListMember c, dest, n, mode
       else:
         takeInto dest, n:
           while n.hasMore:
-            trStmt c, dest, n, mode
+            trListMember c, dest, n, mode
     of ScopeS:
       c.typeCache.openScope()
       if mode == TraverseTopLevel:
         n.into:
           while n.hasMore and n.kind != EofToken:
-            trStmt c, dest, n, mode
+            trListMember c, dest, n, mode
       else:
         takeInto dest, n:
           while n.hasMore:
-            trStmt c, dest, n, mode
+            trListMember c, dest, n, mode
       c.typeCache.closeScope()
     of VarS, LetS, CursorS, PatternvarS:
       trLocal c, dest, n, VarY, mode, SymId(0)
@@ -3077,6 +3088,9 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ## Consumes the whole `(stmts …)` node at `n`, including its close.
   n.into:
     while n.hasMore:
+      if n.kind == DotToken:
+        skip n, SkipStmt        # a hole (see `trListMember`), not init-proc code
+        continue
       let sk = n.stmtKind
       if sk in {GvarS, GletS, TvarS, TletS}:
         let tag = if sk in {TvarS, TletS}: TvarY else: GvarY

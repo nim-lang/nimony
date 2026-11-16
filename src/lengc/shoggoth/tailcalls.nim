@@ -36,11 +36,11 @@
 ## `(ret X)` as `return X;`, so the fold just hands the C compiler `return f(a);`.
 ##
 ## Implementation. This is the only shoggoth pass that matches on statement
-## ADJACENCY rather than within a subtree, which is what makes the `.` holes
-## copyprop leaves behind visible here and nowhere else. The walk is therefore a
-## Peephole: one forward pass per statement list carrying the last two real
-## statements (`ListCtx`) — no materialized child list, no index arithmetic, and
-## no hole-skipping beyond the one `if` that declines to shift the window. The
+## ADJACENCY rather than within a subtree. Statement lists carry no `.` holes
+## (lengcgen drops them, and the passes delete with `Patchset.addDelete`); the
+## walk still declines to shift its window over a `.`, which costs nothing. It is
+## a Peephole: one forward pass per statement list carrying the last two real
+## statements (`ListCtx`) — no materialized child list, no index arithmetic. The
 ## sink rule's "the `ret` must end the list" then costs nothing to enforce: at
 ## the end of the walk `prev` is the last real statement.
 ##
@@ -257,9 +257,8 @@ proc matchFold(s: var TailScan; list: Cursor; lc: ListCtx; cur: Cursor) =
   ##
   ## ADJACENCY is the whole soundness argument. A statement between the call and
   ## the return is exactly what makes this not a tail call — a `=destroy` of a
-  ## local, say, needs the frame the callee would inherit. The window has already
-  ## stepped over the `.` holes copyprop left where it deleted bindings, which
-  ## are not statements.
+  ## local, say, needs the frame the callee would inherit. Bindings copyprop
+  ## deleted are gone from the list, so they cannot sit in between.
   ##
   ## The last conjunct is the temp's read count: the `ret` must be its only
   ## read, since folding the call into it drops the temp entirely and a second
@@ -345,12 +344,9 @@ type
     ## shared, so a cursor taken early makes each later `add` copy the whole
     ## thing — one copy per site instead of one in total.
     scratch: TokenBuf
-    hole: TokenBuf        ## a lone `.`: what a deleted statement becomes
 
 proc createRetEmitter(buf: TokenBuf; sizeHint: int): RetEmitter =
-  result = RetEmitter(scratch: createTokenBuf(sizeHint, buf.pool, buf.tags),
-                      hole: createTokenBuf(2, buf.pool, buf.tags))
-  result.hole.addDotToken()
+  result = RetEmitter(scratch: createTokenBuf(sizeHint, buf.pool, buf.tags))
 
 proc addRet(e: var RetEmitter; buf: var TokenBuf; valuePos: int): int =
   ## `(ret <the tree at valuePos>)`, reported by its start in the scratch buffer.
@@ -360,9 +356,6 @@ proc addRet(e: var RetEmitter; buf: var TokenBuf; valuePos: int): int =
   e.scratch.addSubtree v
   e.scratch.closeTag()
   endRead v
-
-proc holeCursor(e: var RetEmitter): Cursor {.inline.} =
-  cursorAt(e.hole, 0)
 
 proc retCursor(e: var RetEmitter; start: int): Cursor {.inline.} =
   cursorAt(e.scratch, start)
@@ -395,8 +388,8 @@ proc sinkReturns(buf: var TokenBuf) =
         arm.retStart = addRet(e, buf, arm.valuePos)
     var patch = initPatchset(addr buf)
     for site in s.sinks:
-      patch.addSubst(site.retPos, e.holeCursor)
-      patch.addSubst(site.declPos, e.holeCursor)
+      patch.addDelete(site.retPos)
+      patch.addDelete(site.declPos)
       for arm in site.arms:
         patch.addSubst(arm.asgnPos, e.retCursor(arm.retStart))
     var nb = patch.apply()
@@ -411,7 +404,7 @@ proc foldTailCalls(buf: var TokenBuf) =
       site.retStart = addRet(e, buf, site.callPos)
     var patch = initPatchset(addr buf)
     for site in s.folds:
-      patch.addSubst(site.varPos, e.holeCursor)
+      patch.addDelete(site.varPos)
       patch.addSubst(site.retPos, e.retCursor(site.retStart))
     var nb = patch.apply()
     buf = ensureMove(nb)

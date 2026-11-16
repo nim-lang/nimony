@@ -188,6 +188,7 @@ type
     dispatch: Table[TagId, int]  # root tag -> dfa index
     preds: Table[TagId, PredProc]
     dslIds: array[rtRules..rtSame, TagId]  # DSL vocabulary tag ids (see ruleTok)
+    stmtsTag, scopeTag: TagId    # statement lists: a member rewritten to `.` is dropped
     # meta-tag vocabulary for compiled patterns (in `tags`)
     metaWild, metaAnyInt, metaAnySym, metaAnyLit, metaPure, metaSame: TagId
     tagVar, tagParam: TagId      # NIFC local-var / parameter decl tags
@@ -640,6 +641,8 @@ proc newEngine*(rulesSrc: string; pool: Pool = nil; tags: TagPool = nil): Engine
                   dispatch: initTable[TagId, int](),
                   preds: initTable[TagId, PredProc]())
   result.metaWild   = result.tags.registerTag("@wild")
+  result.stmtsTag   = result.tags.registerTag("stmts")
+  result.scopeTag   = result.tags.registerTag("scope")
   result.metaAnyInt = result.tags.registerTag("@anyint")
   result.metaAnySym = result.tags.registerTag("@anysym")
   result.metaAnyLit = result.tags.registerTag("@anylit")
@@ -786,23 +789,32 @@ proc tryRulesAt(e: Engine; node: Cursor; dest: var TokenBuf): bool =
   return false
 
 proc rewriteNode(e: Engine; src: var Cursor; dest: var TokenBuf;
-                 fired: var bool) =
+                 fired: var bool; inList = false) =
+  ## `inList`: `src` is a member of a `(stmts …)`/`(scope …)`. A statement a rule
+  ## rewrites to `.` — `(ite (false) A .)` — is then dropped instead of left as
+  ## a hole: Leng lists carry none.
   if src.kind != TagLit:
     dest.addSubtree src
     skip src
     return
   let tagId = cursorTagId(src)
   let li = rawLineInfo(src)
+  let isList = tagId == e.stmtsTag or tagId == e.scopeTag
   var tmp = createTokenBuf(16, e.pool, e.tags)
   tmp.openTag tagId
   tmp.appendLineInfo li
   src.into:
     while src.hasMore:
-      rewriteNode(e, src, tmp, fired)
+      rewriteNode(e, src, tmp, fired, isList)
   tmp.closeTag()
   var tc = tmp.beginRead()
-  if tryRulesAt(e, tc, dest):
+  var res = createTokenBuf(16, e.pool, e.tags)
+  if tryRulesAt(e, tc, res):
     fired = true
+    var rc = res.beginRead()
+    if not (inList and rc.kind == DotToken):
+      dest.addSubtree rc
+    endRead rc
   else:
     var tc2 = tmp.beginRead()
     dest.addSubtree tc2
@@ -911,6 +923,19 @@ when isMainModule:
     if not sameTokens(buf, exp):
       echo "FAILED. got:\n", toString(buf), "\nexpected:\n", toString(exp)
       quit 1
+
+  block dead_ite_leaves_no_hole:
+    # `(ite (false) A .)` rewrites to its missing else-arm, `.`; as a statement
+    # list member that is a hole, so it goes instead.
+    var buf = e.parseInput("(stmts (asgn x.0.M 1) (ite (false) (stmts (asgn x.0.M 2)) .) (asgn y.0.M 3))")
+    discard runRewrites(e, buf)
+    check buf, "(stmts (asgn x.0.M 1) (asgn y.0.M 3))"
+
+  block dead_ite_in_fixed_slot_keeps_dot:
+    # The same rewrite as an `ite` ARM is a slot, not a list member: keep `.`.
+    var buf = e.parseInput("(stmts (ite c.0.M (ite (false) (stmts (asgn x.0.M 2)) .) .))")
+    discard runRewrites(e, buf)
+    check buf, "(stmts (ite c.0.M . .))"
 
   block add_zero:
     var buf = e.parseInput("(stmts (asgn x.0.M (add (i 32) x.0.M 0)))")

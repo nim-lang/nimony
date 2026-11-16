@@ -13,12 +13,18 @@
 ## semantics; the only structural
 ## difference here is that nifcore has no ParRi token — a substituted/rebuilt
 ## subtree is reopened with `openTag`/`closeTag` so jump fields are recomputed.
+##
+## `addDelete` removes a statement outright: a pass's deletion leaves no `.`
+## hole in a `(stmts …)`/`(scope …)` list, so no later pass and no backend has to
+## step over one. Only where the deleted node fills a fixed slot (a bare `ite`
+## arm, say) does a `.` take its place, because there the arity is the meaning.
 
 import std / [tables, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
+import ".." / ".." / "lib" / nifcdecl        # stmtKind: is the parent a statement list?
 
 type
-  PatchKind* = enum pkInsert, pkSubst
+  PatchKind* = enum pkInsert, pkSubst, pkDelete
 
   Patch = object
     kind: PatchKind
@@ -40,7 +46,12 @@ proc addInsert*(p: var Patchset; pos: int; src: Cursor) =
 proc addSubst*(p: var Patchset; pos: int; src: Cursor) =
   p.patches.mgetOrPut(pos, @[]).add Patch(kind: pkSubst, src: src)
 
-proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor) =
+proc addDelete*(p: var Patchset; pos: int) =
+  ## Remove the statement at `pos` (see the module doc for the one exception).
+  p.patches.mgetOrPut(pos, @[]).add Patch(kind: pkDelete)
+
+proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor; inList = false) =
+  ## `inList`: `n` is a child of a `(stmts …)`/`(scope …)`, so it may vanish.
   let pos = cursorToPosition(p.orig[], n)
   var substituted = false
   if pos in p.patches:
@@ -52,6 +63,10 @@ proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor) =
         if not substituted:
           dest.addSubtree patch.src
           substituted = true
+      of pkDelete:
+        if not substituted:
+          if not inList: dest.addDotToken()
+          substituted = true
     if substituted:
       skip n
       return
@@ -61,10 +76,11 @@ proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor) =
     # inserts/substitutions changed the child count.
     let tag = n.cursorTagId
     let li = rawLineInfo(n)
+    let isList = n.stmtKind in {StmtsS, ScopeS}
     dest.openTag tag
     if li.isValid: dest.appendLineInfo li
     n.loopInto:
-      applyOne(p, dest, n)
+      applyOne(p, dest, n, isList)
     dest.closeTag()
   else:
     dest.addSubtree n
@@ -135,5 +151,48 @@ when isMainModule:
     var newBuf = ps.apply()
     doAssert countKind(newBuf, DotToken) == 2
     doAssert countKind(newBuf, TagLit) == 1    # just the outer stmts
+
+  proc parseLeng(src: string): TokenBuf =
+    parseFromBuffer(src, "M", 100, sharedTags = createLengTagPool())
+
+  proc canonLeng(src: string): string =
+    var b = parseLeng(src)
+    toString(b, includeLineInfo = false)
+
+  proc posOfTag(buf: var TokenBuf; nth: int): int =
+    ## The position of the `nth` (0-based) TagLit in `buf`.
+    var c = beginRead(buf)
+    var seen = 0
+    while c.hasMore:
+      if c.kind == TagLit:
+        if seen == nth: return cursorToPosition(buf, c)
+        inc seen
+      inc c
+    doAssert false, "no such tag"
+
+  block delete_in_list_leaves_no_hole:
+    var buf = parseLeng("(stmts (call x.0.M) (call y.0.M))")
+    var ps = initPatchset(addr buf)
+    ps.addDelete(posOfTag(buf, 1))              # the first `(call`
+    var newBuf = ps.apply()
+    doAssert toString(newBuf, includeLineInfo = false) ==
+             canonLeng("(stmts (call y.0.M))")
+
+  block delete_in_scope_leaves_no_hole:
+    var buf = parseLeng("(stmts (scope (var :t.0 . (i 64) 0) (call y.0.M)))")
+    var ps = initPatchset(addr buf)
+    ps.addDelete(posOfTag(buf, 2))              # the `(var` inside the scope
+    var newBuf = ps.apply()
+    doAssert toString(newBuf, includeLineInfo = false) ==
+             canonLeng("(stmts (scope (call y.0.M)))")
+
+  block delete_in_fixed_slot_keeps_a_dot:
+    # A bare `ite` arm is a slot, not a list member: the arity has to survive.
+    var buf = parseLeng("(stmts (ite c.0.M (call x.0.M) .))")
+    var ps = initPatchset(addr buf)
+    ps.addDelete(posOfTag(buf, 2))              # the `(call` that IS the arm
+    var newBuf = ps.apply()
+    doAssert toString(newBuf, includeLineInfo = false) ==
+             canonLeng("(stmts (ite c.0.M . .))")
 
   echo "patchsets.nim: all self-tests passed"

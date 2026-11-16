@@ -292,7 +292,6 @@ type
     closedLocals: HashSet[SymId]       ## locals of every `(scope)` already left
     patchset: Patchset
     synth: seq[TokenBuf]
-    dotBuf: TokenBuf                   ## a single `.` token: replaces a dead decl
 
 proc createContext(orig: ptr TokenBuf): Context =
   result = Context(orig: orig,
@@ -315,9 +314,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           scopeDecls: @[newSeq[SymId]()],
           closedLocals: initHashSet[SymId](),
           patchset: initPatchset(orig),
-          synth: @[],
-          dotBuf: createTokenBuf(2, orig[].pool, orig[].tags))
-  result.dotBuf.addDotToken()
+          synth: @[])
 
 proc resolve(c: Context; s: SymId): SymId =
   ## Chase `s` to the root of its copy chain. Bindings are stored flat (resolved
@@ -1278,9 +1275,9 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
     let subst = ctx.substCount.getOrDefault(s)
     let sites = ctx.writeSites.getOrDefault(s)
     if subst + sites.len == uses:
-      ctx.patchset.addSubst(defPos, cursorAt(ctx.dotBuf, 0))
+      ctx.patchset.addDelete(defPos)
       for pos in sites:
-        ctx.patchset.addSubst(pos, cursorAt(ctx.dotBuf, 0))
+        ctx.patchset.addDelete(pos)
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
@@ -1315,7 +1312,7 @@ when isMainModule:
       "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :y.0.M . . x.0.M) " &
       "(call use.0.M y.0.M))",
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(call use.0.M x.0.M))")
 
   block chained_copy:
@@ -1324,7 +1321,7 @@ when isMainModule:
       "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :y.0.M . . x.0.M) (var :z.0.M . . y.0.M) " &
       "(call use.0.M z.0.M))",
-      "(stmts (var :x.0.M . . (call f.0.M)) . . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(call use.0.M x.0.M))")
 
   block store_back_through_alias:
@@ -1334,7 +1331,7 @@ when isMainModule:
       "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :y.0.M . . x.0.M) (asgn x.0.M y.0.M) " &
       "(ret x.0.M))",
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(asgn x.0.M x.0.M) (ret x.0.M))")
 
   block source_reassigned_blocks:
@@ -1364,14 +1361,14 @@ when isMainModule:
       "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :y.0.M . . x.0.M) (call side.0.M) " &
       "(call use.0.M y.0.M))",
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(call side.0.M) (call use.0.M x.0.M))")
 
   block dead_store_unused_pure_binding:
     # var t = 5 with t never used → dead store, deleted.
     chk(
       "(stmts (var :t.0.M . . 5) (call side.0.M))",
-      "(stmts . (call side.0.M))")
+      "(stmts (call side.0.M))")
 
   block dead_store_pure_expression_deleted:
     # `var t; t = (x and 255)` with `t` never read: the shape a loop unswitch
@@ -1379,14 +1376,14 @@ when isMainModule:
     chk(
       "(stmts (var :t.0.M . (u 64) .) " &
       "(asgn t.0.M (bitand (u 64) x.0.M 255u)) (call side.0.M))",
-      "(stmts . . (call side.0.M))")
+      "(stmts (call side.0.M))")
 
   block dead_decl_pure_field_read_deleted:
     # the same for a field read of a named slot, which is what the temp's own
     # initializer is (`(dot b bytes 0)`)
     chk(
       "(stmts (var :t.0.M . (u 64) (dot b.0.M bytes.0.M 0)) (call side.0.M))",
-      "(stmts . (call side.0.M))")
+      "(stmts (call side.0.M))")
 
   block dead_store_keeps_faulting_expression:
     # a `deref` can fault, so evaluating it is observable: not dead code
@@ -1403,7 +1400,7 @@ when isMainModule:
     chk(
       "(stmts (var :x.0.M . . (call f.0.M)) (var :y.0.M . . x.0.M) " &
       "(if (elif c.0.M (call a.0.M y.0.M)) (else (call b.0.M y.0.M))))",
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(if (elif c.0.M (call a.0.M x.0.M)) (else (call b.0.M x.0.M))))")
 
   block loop_preserves_unwritten_copy:
@@ -1412,7 +1409,7 @@ when isMainModule:
       "(stmts (var :x.0.M . . (call f.0.M)) (var :y.0.M . . x.0.M) " &
       "(while c.0.M (stmts (call use.0.M y.0.M))) " &
       "(call use2.0.M y.0.M))",
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(while c.0.M (stmts (call use.0.M x.0.M))) " &
       "(call use2.0.M x.0.M))")
 
@@ -1428,13 +1425,13 @@ when isMainModule:
     chk(
       "(stmts (var :x.0.M . . (call f.0.M)) (var :y.0.M . . .) " &
       "(asgn y.0.M x.0.M) (call use.0.M y.0.M))",
-      "(stmts (var :x.0.M . . (call f.0.M)) . . (call use.0.M x.0.M))")
+      "(stmts (var :x.0.M . . (call f.0.M)) (call use.0.M x.0.M))")
 
   block literal_copy:
     # var y = 5; use y  →  use 5  (decl deleted)
     chk(
       "(stmts (var :y.0.M . . 5) (call use.0.M y.0.M))",
-      "(stmts . (call use.0.M 5))")
+      "(stmts (call use.0.M 5))")
 
   block suffixed_int_literal_copy:
     # hexer's typed `7i64` is `(suf 7 "i64")`, not a bare IntLit. Inlining
@@ -1442,7 +1439,7 @@ when isMainModule:
     # memcpy size must become the suf node so arkham can unroll.
     chk(
       "(stmts (var :y.0.M . . (suf 7 \"i64\")) (call memcpy.0.M d.0.M s.0.M y.0.M))",
-      "(stmts . (call memcpy.0.M d.0.M s.0.M (suf 7 \"i64\")))")
+      "(stmts (call memcpy.0.M d.0.M s.0.M (suf 7 \"i64\")))")
 
   block literal_snapshot_survives_source_write:
     # y captures 5 at bind time; a later write to x must not poison y.
@@ -1451,7 +1448,7 @@ when isMainModule:
     chk(
       "(stmts (var :x.0.M . . 5) (var :y.0.M . . x.0.M) " &
       "(asgn x.0.M 6) (call use.0.M y.0.M))",
-      "(stmts . . . (call use.0.M 5))")
+      "(stmts (call use.0.M 5))")
 
   block through_ptr_store_keeps_pointer_copy:
     # `(*p).f = v` writes the pointee, not p. A copy of p stays valid, and
@@ -1460,7 +1457,7 @@ when isMainModule:
       "(stmts (var :p.0.M . . (call f.0.M)) (var :q.0.M . . p.0.M) " &
       "(asgn (dot (deref q.0.M) fld.0.M) v.0.M) " &
       "(call use.0.M q.0.M))",
-      "(stmts (var :p.0.M . . (call f.0.M)) . " &
+      "(stmts (var :p.0.M . . (call f.0.M)) " &
       "(asgn (dot (deref p.0.M) fld.0.M) v.0.M) " &
       "(call use.0.M p.0.M))")
 
@@ -1470,7 +1467,7 @@ when isMainModule:
       "(stmts (var :p.0.M . . (call f.0.M)) (var :q.0.M . . p.0.M) " &
       "(while c.0.M (stmts (asgn (deref q.0.M) v.0.M))) " &
       "(call use.0.M q.0.M))",
-      "(stmts (var :p.0.M . . (call f.0.M)) . " &
+      "(stmts (var :p.0.M . . (call f.0.M)) " &
       "(while c.0.M (stmts (asgn (deref p.0.M) v.0.M))) " &
       "(call use.0.M p.0.M))")
 
@@ -1496,7 +1493,7 @@ when isMainModule:
       "(stmts (var :st.0.M . . (call f.0.M)) " &
       "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
       "(asgn (deref p.0.M) (add (i 64) (deref p.0.M) 1)))",
-      "(stmts (var :st.0.M . . (call f.0.M)) . " &
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
       "(asgn (deref (haddr (dot (deref st.0.M) tags.0.M 0))) " &
       "(add (i 64) (deref (haddr (dot (deref st.0.M) tags.0.M 0))) 1)))")
 
@@ -1544,7 +1541,7 @@ when isMainModule:
       "(stmts (var :q.0.M . . (call f.0.M)) " &
       "(var :p.0.M . (ptr (i 64)) (haddr (deref q.0.M))) " &
       "(asgn (deref p.0.M) 1))",
-      "(stmts (var :q.0.M . . (call f.0.M)) . " &
+      "(stmts (var :q.0.M . . (call f.0.M)) " &
       "(asgn (deref (haddr (deref q.0.M))) 1))")
 
   block inlined_callee_with_early_returns:
@@ -1617,7 +1614,7 @@ when isMainModule:
       "(call ro.0.M (haddr y.0.M)) " &
       "(call use.0.M y.0.M))",
       RoDecl,
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(call ro.0.M (haddr x.0.M)) " &
       "(call use.0.M x.0.M))")
 
@@ -1630,7 +1627,7 @@ when isMainModule:
       "(var :p.0.M . . (call esc.0.M (haddr y.0.M))) " &
       "(call use.0.M (pat p.0.M 0)))",
       EscDecl,
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :p.0.M . . (call esc.0.M (haddr x.0.M))) " &
       "(call use.0.M (pat p.0.M 0)))")
 
@@ -1642,7 +1639,7 @@ when isMainModule:
       "(call esc.0.M (haddr y.0.M)) " &
       "(call use.0.M y.0.M))",
       EscDecl,
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(call esc.0.M (haddr x.0.M)) " &
       "(call use.0.M x.0.M))")
 
@@ -1710,7 +1707,7 @@ when isMainModule:
       RoDecl,
       "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :y.0.M . . x.0.M) " &
-      "(var :d.0.M . . (haddr (dot x.0.M b.0.M 0))) . " &
+      "(var :d.0.M . . (haddr (dot x.0.M b.0.M 0))) " &
       "(asgn (deref (haddr (dot (deref d.0.M) p.0.M 0))) 1) " &
       "(call use.0.M y.0.M))")
 
@@ -1735,7 +1732,7 @@ when isMainModule:
       "(call ro.0.M p.0.M) " &
       "(call use.0.M (pat p.0.M 0)))",
       RoDecl,
-      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :p.0.M . . (conv (aptr (c 8)) (haddr x.0.M))) " &
       "(call ro.0.M p.0.M) " &
       "(call use.0.M (pat p.0.M 0)))")
