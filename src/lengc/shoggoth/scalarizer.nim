@@ -236,8 +236,6 @@ type
                                        ## object becomes one scalar per field of its *type*,
                                        ## so a total `oconstr` over them rebuilds it
     disqualified: bool                 ## escaped → leave the object alone
-    first, last: int                   ## positions of the first and last touch: its
-                                       ## initialised decl, a def, an access, a read
     declDepth: int                     ## loops enclosing the decl
     loopUse: bool                      ## touched in a loop the decl is outside of
 
@@ -246,8 +244,6 @@ type
     candidates: Table[SymId, Candidate]
     accesses: seq[(SymId, SymId, int)] ## (object, field, dot-node position)
     reads: seq[WholeRead]
-    calls: seq[(int, int)]             ## every call: its position and where it ends,
-                                       ## by position (the walk is pre-order)
     loopDepth: int
     patchset: Patchset
     synth: seq[TokenBuf]
@@ -277,7 +273,6 @@ proc isSurvivor(c: var Context; s: SymId): bool =
 
 proc newCandidate(declPos, typePos: int; init: InitKind; loadPos = -1): Candidate =
   Candidate(declPos: declPos, typePos: typePos, init: init, loadPos: loadPos,
-            first: high(int), last: -1,
             valuePos: initTable[SymId, int](),
             names: initTable[SymId, string](),
             dotPos: initTable[SymId, int](),
@@ -413,15 +408,13 @@ proc addrEscapeRoot(n: Cursor): SymId =
 proc isCandidateSym(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and symId(n) in c.candidates
 
-proc touch(c: var Context; s: SymId; pos: int) =
-  if pos < c.cand(s).first: c.cand(s).first = pos
-  if pos > c.cand(s).last: c.cand(s).last = pos
+proc touch(c: var Context; s: SymId) =
   if c.loopDepth > c.cand(s).declDepth: c.cand(s).loopUse = true
 
 proc noteRead(c: var Context; n: Cursor; stmtPos: int; owner: SymId; kind: ReadKind) =
   ## `n` is a bare candidate symbol in a position that reads the whole object.
   let s = symId(n)
-  touch(c, s, cursorToPosition(c.orig[], n))
+  touch(c, s)
   c.cand(s).whole = true
   if s == owner: c.cand(s).selfDef = true          # `o = f(o)`
   c.cand(s).reads.add c.reads.len
@@ -454,7 +447,7 @@ proc noteAccess(c: var Context; dot: Cursor; oSym, owner: SymId; isRead: bool) =
   if f.kind == Symbol:
     let fSym = symId(f)
     let at = cursorToPosition(c.orig[], dot)
-    touch(c, oSym, at)
+    touch(c, oSym)
     if oSym == owner: c.cand(oSym).selfDef = true   # `o = T(a: o.b, …)`
     if fSym notin c.cand(oSym).accessed:
       c.cand(oSym).accessOrder.add fSym
@@ -518,7 +511,7 @@ proc classify(c: var Context; n: Cursor; stmtPos: int; owner: SymId) =
           own = symId(m)                             # `o = RHS`: a whole assignment
           c.cand(own).defs.add here
           c.cand(own).whole = true
-          touch(c, own, here)
+          touch(c, own)
         else:
           classifyTarget(c, m, stmtPos, owner)
         skip m
@@ -538,7 +531,6 @@ proc classify(c: var Context; n: Cursor; stmtPos: int; owner: SymId) =
            c.cand(symId(m)).declPos == cursorToPosition(c.orig[], n):
           own = symId(m)
           c.cand(own).declDepth = c.loopDepth
-          if c.cand(own).init != ikNone: touch(c, own, c.cand(own).declPos)
         skip m                                       # name
         if m.hasMore:
           classify(c, m, stmtPos, owner); skip m     # pragmas
@@ -574,9 +566,6 @@ proc classify(c: var Context; n: Cursor; stmtPos: int; owner: SymId) =
         c.cand(r).disqualified = true
       classifyKids(c, n, stmtPos, owner)
     of CallC:
-      var e = n
-      skip e
-      c.calls.add (cursorToPosition(c.orig[], n), cursorToPosition(c.orig[], e))
       var m = n
       m.into:
         if m.hasMore:
@@ -932,22 +921,6 @@ proc emitRead(c: var Context; r: WholeRead) =
 
 # ---- public entry ---------------------------------------------------------
 
-proc crossesCall(c: var Context; oSym: SymId): bool =
-  ## Does a call run while `oSym` holds a value it reads later? A call its
-  ## last use is an argument of does not count: nothing is live after it.
-  result = false
-  let first = c.cand(oSym).first
-  let last = c.cand(oSym).last
-  var i = 0                                          # the first call after `first`
-  var hi = c.calls.len
-  while i < hi:
-    let mid = (i + hi) div 2
-    if c.calls[mid][0] <= first: i = mid + 1
-    else: hi = mid
-  while i < c.calls.len and c.calls[i][0] < last:
-    if c.calls[i][1] <= last: return true
-    inc i
-
 proc scalarize(buf: var TokenBuf; m: ptr MainModule; temps: var int;
                knownFields: Table[SymId, seq[SymId]]): bool =
   result = false
@@ -972,26 +945,24 @@ proc scalarize(buf: var TokenBuf; m: ptr MainModule; temps: var int;
     if survives(c, oSym): legal.incl oSym
   # An object assigned or read as a whole is only worth decomposing when the
   # scalars replace memory traffic, and arkham charges for every scalar: with
-  # five volatile registers, one that is live next to anything else, or across
-  # a call, gets a callee-saved register — a save and a restore on every entry
-  # to the proc. So the object must
+  # five volatile registers, one that is live next to anything else gets a
+  # callee-saved register — a save and a restore on every entry to the proc.
+  # So the object must
   #
   # * have its fields read one by one: through `o.f`, or by being copied as a
   #   whole into an object that is decomposed itself;
   # * never be rebuilt — passed whole to a call, returned, stored into memory
   #   — unless it is used in a loop it is declared outside of, where the
-  #   rebuild is paid once and the saved loads every iteration;
-  # * not live across a call, under the same loop exemption.
+  #   rebuild is paid once and the saved loads every iteration.
   #
-  # `t = V(…); ret t`, a `result` built field by field, `enterScope`'s
-  # `CursorScope` (one field read, then returned) and `reinternLineInfo`'s
-  # `fname` (live across a call) all stay in memory; a raytracer's color,
-  # accumulated over the lights and returned, and the chains of inlined
-  # `Vec3` results feeding it, are decomposed.
+  # `t = V(…); ret t`, a `result` built field by field and `enterScope`'s
+  # `CursorScope` (one field read, then returned) stay in memory; a
+  # raytracer's color, accumulated over the lights and returned, and the
+  # chains of inlined `Vec3` results feeding it, are decomposed. Both rules
+  # are about the object alone: what else the proc does around it, calls
+  # included, does not enter into it.
   var useful = initHashSet[SymId]()
-  for oSym in legal:
-    if not c.cand(oSym).whole or c.cand(oSym).loopUse or not crossesCall(c, oSym):
-      useful.incl oSym
+  for oSym in legal: useful.incl oSym
   # Whether an object pays depends on the owners its whole reads feed, so a
   # drop is propagated to those it fed, and only to those.
   var work: seq[SymId] = @[]
@@ -1315,10 +1286,14 @@ when isMainModule:
       "(stmts (var :o.0.M . V.0.M src.0.M) (asgn (dot o.0.M y.0.M 0) 5) " &
       "(asgn q.0.M (dot o.0.M x.0.M 0)) (asgn r.0.M (call f.0.M o.0.M)))")
 
-  block live_across_a_call_unchanged:
-    assertUnchangedV(
+  block live_across_a_call_decomposed:
+    # A call between the def and the use changes nothing: whether the object
+    # pays is a question about the object, not about its neighbours.
+    chkV(
       "(stmts (var :t.0.M . V.0.M .) (asgn t.0.M " & ctorV & ") " &
-      "(call g.0.M) (asgn r.0.M (dot t.0.M x.0.M 0)))")
+      "(call g.0.M) (asgn r.0.M (dot t.0.M x.0.M 0)))",
+      "(stmts (var :`sroa.1 . . .) (var :`sroa.2 . . .) (asgn `sroa.1 1) " &
+      "(asgn `sroa.2 2) (call g.0.M) (asgn r.0.M `sroa.1))")
 
   block loop_accumulator_rebuilt_at_ret:
     # Accumulated in a loop that calls, returned after it: the scalars win
