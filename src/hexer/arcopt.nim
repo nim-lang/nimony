@@ -417,17 +417,21 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
   else: # atoms and suffix kinds; classic: also a physical ParRi
     inc n
 
-proc opt(c: Con; n: var Cursor; dest: var TokenBuf) =
+proc opt(c: Con; n: var Cursor; dest: var TokenBuf; inList = false) =
+  ## `inList`: `n` is a child of a `(stmts …)`/`(scope …)`. A deleted statement
+  ## there simply goes — Leng lists carry no `.` holes. Anywhere else the node
+  ## fills a fixed slot, and a `.` keeps the arity.
   case n.kind
   of TagLit:
     let pos = cursorToPosition(c.source[], n)
     if c.toDelete.contains(pos):
-      dest.addDotToken(n.info)
+      if not inList: dest.addDotToken(n.info)
       skip n
     else:
+      let isList = n.stmtKind in {StmtsS, ScopeS}
       takeInto dest, n:
         while n.hasMore:
-          opt(c, n, dest)
+          opt(c, n, dest, isList)
   else:
     dest.takeTree n
 

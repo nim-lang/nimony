@@ -315,7 +315,6 @@ type
     shortCircuit: Table[SymId, (int, int, bool)]
                                     ## bool temp → (pos of A, pos of B, isAnd) for the
                                     ## diamond hexer lowers `A and B` / `A or B` to
-    dotBuf: TokenBuf                ## a single `.` token: replaces a deleted guard
     checksRemoved*: int
     loopStack: seq[LoopFrame]   ## enclosing loops, outermost first; LICM reads
                                 ## this to hoist invariant loads to a pre-header
@@ -343,10 +342,8 @@ proc createContext(orig: ptr TokenBuf;
           defCount: initTable[SymId, int](),
           tainted: initHashSet[SymId](),
           shortCircuit: initTable[SymId, (int, int, bool)](),
-          dotBuf: createTokenBuf(2, orig[].pool, orig[].tags),
           checksRemoved: 0,
           loopStack: @[])
-  result.dotBuf.addDotToken()
 
 proc currentStmtPos(c: Context): int {.inline.} =
   if c.stmtStack.len > 0: c.stmtStack[^1] else: -1
@@ -2096,7 +2093,7 @@ proc tr(c: var Context; n: var Cursor) =
         let key = provenKey(c, gcond)
         if c.proven[key] > 0:
           # A dominating guard already tested this and did not panic.
-          c.patchset.addSubst(cursorToPosition(c.orig[], n), cursorAt(c.dotBuf, 0))
+          c.patchset.addDelete(cursorToPosition(c.orig[], n))
           inc c.checksRemoved
           skip n
         else:
