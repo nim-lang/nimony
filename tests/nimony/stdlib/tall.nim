@@ -90,6 +90,7 @@ import std/parsecsv
 import std/parsejson
 import std/parseopt
 import std/parseutils
+import std/parsexml
 import std/pathnorm
 import std/paths
 import std/random
