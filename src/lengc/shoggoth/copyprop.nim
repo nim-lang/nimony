@@ -287,7 +287,9 @@ type
     localDefs: HashSet[SymId]          ## syms declared by a local `(var …)`
     pointees: Table[SymId, Cursor]     ## local `(var :p . (ptr T) …)` → `T`
     m: ptr MainModule                  ## type context; nil ⇒ every pointee is opaque
-    useCount: Table[SymId, int]        ## every `Symbol` (read) token per sym
+    useCount: Table[SymId, int]        ## every `Symbol` token per sym,
+                                       ## `asgn` targets included
+    asgnTargets: Table[SymId, int]     ## of those, the plain `(asgn sym …)` targets
     substCount: Table[SymId, int]      ## uses we rewrote away per sym
     writeSites: Table[SymId, seq[int]] ## pure (leaf/symbol RHS) write positions
     names: Table[SymId, string]        ## sym -> its textual name (for synthesis)
@@ -312,6 +314,7 @@ proc createContext(orig: ptr TokenBuf; m: ptr MainModule = nil): Context =
           writtenEver: initHashSet[SymId](),
           localDefs: initHashSet[SymId](),
           useCount: initTable[SymId, int](),
+          asgnTargets: initTable[SymId, int](),
           substCount: initTable[SymId, int](),
           writeSites: initTable[SymId, seq[int]](),
           names: initTable[SymId, string](),
@@ -375,7 +378,9 @@ proc keepsScaledAddress(c: Context; dest: SymId; src: Cursor): bool =
   ## of `var o = a[i]` are this, nine of them for one object. A single use or
   ## a scalar pointee folds as before: `inc a[i]` indexes for free.
   result = false
-  if c.m == nil or c.useCount.getOrDefault(dest) < 2: return
+  if c.m == nil: return
+  let reads = c.useCount.getOrDefault(dest) - c.asgnTargets.getOrDefault(dest)
+  if reads < 2: return
   if dest notin c.pointees: return
   if not indexesVariably(child0(src)): return
   let t = navigateToObjectBody(c.m[], c.pointees.getOrDefault(dest))
@@ -864,6 +869,10 @@ proc preScan(c: var Context; n: Cursor) =
   of SymbolDef:
     c.names[symId(n)] = symName(n)
   of TagLit:
+    if n.stmtKind == AsgnS:
+      let target = child0(n)
+      if target.kind == Symbol:
+        c.asgnTargets.mgetOrPut(symId(target), 0) += 1
     if n.stmtKind == VarS:
       let nameCur = child0(n)
       if nameCur.kind == SymbolDef:
