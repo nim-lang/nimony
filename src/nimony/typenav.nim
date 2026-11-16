@@ -455,9 +455,18 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
             break
           skip n
       of TryS:
+        # Like `if`: a body that ends in `return`/`raise` is void, so the
+        # first non-void `except` arm decides.
         var n = n
-        inc n
+        inc n # skip `try`
         result = typeofBranchBody(c, n, flags)
+        skip n
+        while result.typeKind == VoidT and n.substructureKind == ExceptU:
+          var br = n
+          inc br # `except`
+          skip br # exception type, `let` or `.`
+          result = typeofBranchBody(c, br, flags)
+          skip n
       of BlockS:
         var n = n
         inc n

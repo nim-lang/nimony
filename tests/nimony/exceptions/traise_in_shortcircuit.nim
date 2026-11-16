@@ -55,7 +55,19 @@ proc loop() =
       else: i * 10
     echo a, " ", b
 
+# A `try` body that leaves: the first `except` arm with a value types the
+# `try` (planetis-m/nimony-bugs-llms#210).
+proc tryLeaves(v: int): int =
+  let a = try: return v except ErrorCode: return 0 except: 5
+  result = a
+
+proc tryRaises[T](x: T): T {.raises.} =
+  let a = try: raise ValueError except: x
+  result = a
+
 try: echo pick(2) except ErrorCode as e: echo "unexpected ", e
 try: discard pick(0) except ErrorCode as e: echo "if ", e
 try: discard pick(1) except ErrorCode as e: echo "case ", e
 loop()
+echo tryLeaves(3)
+try: echo tryRaises("x") except: echo "unexpected"
