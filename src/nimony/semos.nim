@@ -805,8 +805,8 @@ proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
 
   var nextBase = ""
   var nextDisamb = 0
-  assert splitLocalSymName(nextName, nextBase, nextDisamb) and
-    nextBase == pluginTempBase and nextDisamb >= firstDisamb,
+  let isLocal = splitLocalSymName(nextName, nextBase, nextDisamb)
+  assert isLocal and nextBase == pluginTempBase and nextDisamb >= firstDisamb,
     "invalid .unusedname returned by plugin"
 
   for disamb in firstDisamb ..< nextDisamb:
