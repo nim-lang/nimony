@@ -1,5 +1,5 @@
 # `a..b` up to `high(T)` never ends: `inc` wraps there. Unless `T` has bits
-# to spare (an enum, a small `range`, `bool`), that is a compile-time error.
+# to spare (an enum, a small `range`), that is a compile-time error.
 
 type
   E = enum ea, eb, ec

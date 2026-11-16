@@ -54,3 +54,14 @@ var total = 0
 for x in low(R)..high(R): total = total + x
 for x in R(7)..R(6): total = total + 1000
 echo total
+
+# `bool` up to `true`: `inc(true)` stays `true`, the loops still end
+# (planetis-m/nimony-bugs-llms#167)
+var rounds = 0
+for b in false..true:
+  inc rounds
+  if rounds > 4: break
+for b in countup(false, true):
+  inc rounds
+  if rounds > 8: break
+echo rounds
