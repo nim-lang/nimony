@@ -5,3 +5,5 @@ tests/nimony/errmsgs/tforunpacknontuple.nim(14, 5) Error: tuple types expected, 
 tests/nimony/errmsgs/tforunpacknontuple.nim(17, 5) Error: tuple types expected, but got: int64
 tests/nimony/errmsgs/tforunpacknontuple.nim(21, 7) Error: tuple types expected, but got: T
 tests/nimony/errmsgs/tforunpacknontuple.nim(31, 7) Error: tuple types expected, but got: int64
+tests/nimony/errmsgs/tforunpacknontuple.nim(34, 5) Error: too few for loop variables
+tests/nimony/errmsgs/tforunpacknontuple.nim(37, 5) Error: too few for loop variables
