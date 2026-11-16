@@ -142,8 +142,7 @@ func getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
   let hc = readHash(t, k)
   let idx = rawGet(t, k, hc)
   if idx < 0:
-    {.cast(noSideEffect).}:
-      raiseAssert "key not found"
+    raiseAssert "key not found"
   t.data[idx][1]
 
 when defined(nimony):
@@ -221,8 +220,7 @@ func mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V 
     # a refusal that left a non-empty one. Keeping `idx < 0` explicit is also
     # what tells the contract prover that the index below is in range.
     if idx < 0 or t.data.len <= oldLen:
-      {.cast(noSideEffect).}:
-        raiseAssert "out of memory"
+      raiseAssert "out of memory"
   result = t.data[idx][1]
 
 func mgetOrPut*[K: Keyable, V: HasDefault](t: var Table[K, V];
