@@ -1442,6 +1442,22 @@ proc trTupleConstr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi() # "kv"
     dest.addParRi(n.endInfo)
 
+proc zeroFillBits(c: var EContext; srcType, destType: Cursor): int =
+  ## A cast to a larger type zeroes the remaining memory (doc/language.md,
+  ## "Type casts"), but a Leng `cast` is a C cast, which sign-extends a signed
+  ## source: the width of such a source, else 0.
+  var isDistinct = false
+  var t = skipDistinct(srcType, isDistinct)
+  if t.typeKind in {EnumT, HoleyEnumT, RangetypeT}:
+    inc t # the base type
+    t = skipDistinct(t, isDistinct)
+  result = 0
+  if t.typeKind == IntT:
+    let srcSize = getSize(t, c.bits div 8, c.sizeofCache)
+    if srcSize < getSize(destType, c.bits div 8, c.sizeofCache):
+      var err = false
+      result = int(asSigned(srcSize, err)) * 8
+
 proc trConv(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let beforeConv = dest.len
@@ -1719,8 +1735,17 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trExpr(c, dest, n)
     of CastX:
       takeInto dest, n:
+        let destType = n
         trType(c, dest, n)
+        let bits = zeroFillBits(c, getType(c.typeCache, n), destType)
+        if bits > 0:
+          # Through the unsigned type of the source's width, which zero-extends.
+          dest.addParLe("cast", n.info)
+          dest.addParLe("u", n.info)
+          dest.addIntLit(bits, n.info)
+          dest.addParRi()
         trExpr(c, dest, n)
+        if bits > 0: dest.addParRi()
     of HconvX, ConvX:
       trConv c, dest, n
     of DconvX:
