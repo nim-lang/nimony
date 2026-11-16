@@ -3403,6 +3403,7 @@ proc semLoopVarsNoTuple(c: var SemContext; dest: var TokenBuf; it: var Item; typ
       semForLoopVar c, dest, it, varType
 
 proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup: TypeCursor; loopvarTypeMod = NoType) =
+  let info = it.n.info # the unpack's closing parenthesis has no line info
   var tup = tup
   var loopvarTypeMod = loopvarTypeMod
   if tup.typeKind in TypeModifiers:
@@ -3424,7 +3425,7 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
     if not tup.hasMore:
       discard "all fine"
     else:
-      buildErr c, dest, it.n.endInfo, "too few for loop variables"
+      buildErr c, dest, info, "too few for loop variables"
   else:
     buildErr c, dest, it.n.info, "too many for loop variables"
     # drain the rest; the caller entered the unpack scope and its
