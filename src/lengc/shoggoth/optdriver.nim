@@ -31,6 +31,7 @@ import vectorizer                             # runVectorizer (map loops -> (ins
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
 import tailcalls                              # runTailCalls (the tail-call encoding)
+import coldguards                             # runColdGuards (guard arms to the body's end)
 import memidioms                              # runMemIdioms (zero-fill loops -> zeroMemIns)
 import ".." / ".." / "lib" / intrinsics       # IntrinsicOp (Stats.memOps)
 export MemOpts                                # the driver flags' type, for shoggoth.nim
@@ -70,7 +71,7 @@ let disabledPasses = block:
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
   ## memidioms (both stages), memloops (only the loop idioms before the
-  ## inliner), vectorize, sinkret, tailcall.
+  ## inliner), vectorize, sinkret, tailcall, coldguards.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -177,7 +178,8 @@ proc cleanupFixpoint(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                   params: Cursor = default(Cursor); eng: Engine = nil;
-                  target = Target(mem: MemOpts(intrinsics: true))) =
+                  target = Target(mem: MemOpts(intrinsics: true));
+                  isVoid = false) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported.
   ##
@@ -237,6 +239,11 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   if passOn("sinkret"): tailRules.incl trSink
   if passOn("tailcall"): tailRules.incl trFold
   if tailRules != {}: runTailCalls(buf, tailRules)
+  # Guards' failure arms move to the end of the body last of all: CSE and the
+  # redundant-guard elimination read a guard as a fact, which its `jmp` form no
+  # longer is, and the tail-call encoding reads the body's final statement.
+  if passOn("coldguards"):
+    discard runColdGuards(buf, summaries, m, params, isVoid)
 
 proc isAssemblerProc(pragmas: Cursor): bool =
   ## An `{.assembler.}` body is a one-to-one transcription of machine code
@@ -299,7 +306,8 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
         body.addSubtree d.body
         case stage
         of stOptimize:
-          optimizeBody(body, suffix, st, summaries, m, d.params, eng, target)
+          optimizeBody(body, suffix, st, summaries, m, d.params, eng, target,
+                       isVoid = d.returnType.kind == DotToken)
         of stLoopIdioms:
           recognizeMemLoopsInBody(body, suffix, st, m, d.params, target)
         if m != nil: m[].closeScope()
