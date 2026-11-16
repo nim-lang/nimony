@@ -99,7 +99,8 @@ proc callIsNoReturn(c: var Context; call: Cursor): bool =
   result = resolveCallee(c.resolver, callee.symId, s) and s.noReturn
 
 proc soleStmt(n: Cursor): Cursor =
-  ## Through `(stmts X)`/`(scope X)` wrappers with exactly one real child.
+  ## Through `(stmts X)`/`(scope X)` wrappers with exactly one child. (Leng
+  ## statement lists carry no `.` holes, so a child is a statement.)
   result = n
   while result.kind == TagLit and result.stmtKind in {StmtsS, ScopeS}:
     var it = result
@@ -107,9 +108,8 @@ proc soleStmt(n: Cursor): Cursor =
     var count = 0
     it.into:
       while it.hasMore:
-        if it.kind != DotToken:
-          only = it
-          inc count
+        only = it
+        inc count
         skip it
     if count != 1: return default(Cursor)
     result = only
@@ -182,7 +182,7 @@ proc terminates(c: var Context; n: Cursor): bool =
     var it = n
     it.into:
       while it.hasMore:
-        if it.kind != DotToken: last = it
+        last = it
         skip it
     result = not cursorIsNil(last) and c.terminates(last)
   of IteS:
