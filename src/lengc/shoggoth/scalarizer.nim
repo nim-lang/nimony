@@ -90,6 +90,7 @@ import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKin
 import ".." / ".." / "lib" / symparser        # derivedName -- one spelling for a derived name
 import ".." / ".." / "models" / tags          # VarTagId for synthesis
 import patchsets
+import accesspaths                            # indexesVariably
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import ".." / typenav                         # lookupField — the scalar's declared type
 
@@ -224,8 +225,13 @@ type
                                        ## reused verbatim (field symbol + inherited-depth
                                        ## operand) when synthesising a load scalar's `L.f`
     accessed: HashSet[SymId]           ## fields actually read/written via `.`
+    accessOrder: seq[SymId]            ## the same, in order of first access
     fieldReads: int                    ## how many of those accesses read the field
     defs: seq[int]                     ## `(asgn o RHS)` statements: whole assignments
+    selfDef: bool                      ## one of them reads `o` in its RHS
+    reads: seq[int]                    ## its whole reads, indices into `Context.reads`
+    fedBy: seq[SymId]                  ## the objects read whole into its own
+                                       ## decl or assignments, in place
     whole: bool                        ## assigned or read as a whole somewhere. Such an
                                        ## object becomes one scalar per field of its *type*,
                                        ## so a total `oconstr` over them rebuilds it
@@ -240,7 +246,8 @@ type
     candidates: Table[SymId, Candidate]
     accesses: seq[(SymId, SymId, int)] ## (object, field, dot-node position)
     reads: seq[WholeRead]
-    calls: seq[(int, int)]             ## every call: its position and where it ends
+    calls: seq[(int, int)]             ## every call: its position and where it ends,
+                                       ## by position (the walk is pre-order)
     loopDepth: int
     patchset: Patchset
     synth: seq[TokenBuf]
@@ -337,54 +344,51 @@ proc isPureLvaluePath(n: Cursor): bool =
       skip m
   else: result = false
 
-proc collectCandidates(c: var Context; n: Cursor) =
-  if n.kind != TagLit: return
-  if n.stmtKind == VarS:
-    var v = n
-    var oSym = SymId(0)
-    var oconstrCur = default(Cursor)
-    var init = ikNone
-    var declTypePos = -1
-    var loadPos = -1
-    var known = false
-    v.into:
-      if v.hasMore:
-        if v.kind == SymbolDef: oSym = symId(v)
-        skip v                                   # name
-      if v.hasMore: skip v                       # pragmas
-      if v.hasMore:
-        # The decl's own type slot names the object type for a load or an
-        # uninitialised candidate. An empty slot (`.`) leaves us nothing to
-        # resolve the fields through.
-        if not (v.kind == DotToken): declTypePos = cursorToPosition(c.orig[], v)
-        skip v                                   # type
-      if v.hasMore:
-        if v.kind == TagLit and v.exprKind == OconstrC:
-          init = ikCtor; known = true
-          oconstrCur = v
-        elif declTypePos >= 0 and (
-             v.kind == Symbol or
-             (v.kind == TagLit and v.exprKind in {DotC, AtC, PatC, DerefC} and
-              isPureLvaluePath(v))):
-          # Whole-object copy `var o = src` or a field/deref path. A Symbol is
-          # the inliner's `var tmp = s` for a by-value aggregate param.
-          init = ikLoad; known = true
-          loadPos = cursorToPosition(c.orig[], v)
-        elif declTypePos >= 0 and v.kind == DotToken:
-          # `var o: T`: the inliner's result slot, assigned by the callee's `ret`.
-          init = ikNone; known = true
-        skip v                                   # initializer
-      while v.hasMore: skip v
-    if oSym != SymId(0) and known:
-      let declPos = cursorToPosition(c.orig[], n)
-      case init
-      of ikCtor: recordOconstr(c, oSym, declPos, oconstrCur)
-      of ikLoad: addCandidate(c, oSym, newCandidate(declPos, declTypePos, ikLoad, loadPos))
-      of ikNone: addCandidate(c, oSym, newCandidate(declPos, declTypePos, ikNone))
-  var m = n
-  m.loopInto:
-    collectCandidates(c, m)
-    skip m
+proc recordDecl(c: var Context; n: Cursor) =
+  ## The `(var …)` `n` declares a candidate when it is a local object with a
+  ## constructor, a pure lvalue or nothing as its initializer. Its uses follow
+  ## it in the walk: a local is declared before anything names it.
+  var v = n
+  var oSym = SymId(0)
+  var oconstrCur = default(Cursor)
+  var init = ikNone
+  var declTypePos = -1
+  var loadPos = -1
+  var known = false
+  v.into:
+    if v.hasMore:
+      if v.kind == SymbolDef: oSym = symId(v)
+      skip v                                   # name
+    if v.hasMore: skip v                       # pragmas
+    if v.hasMore:
+      # The decl's own type slot names the object type for a load or an
+      # uninitialised candidate. An empty slot (`.`) leaves us nothing to
+      # resolve the fields through.
+      if not (v.kind == DotToken): declTypePos = cursorToPosition(c.orig[], v)
+      skip v                                   # type
+    if v.hasMore:
+      if v.kind == TagLit and v.exprKind == OconstrC:
+        init = ikCtor; known = true
+        oconstrCur = v
+      elif declTypePos >= 0 and (
+           v.kind == Symbol or
+           (v.kind == TagLit and v.exprKind in {DotC, AtC, PatC, DerefC} and
+            isPureLvaluePath(v))):
+        # Whole-object copy `var o = src` or a field/deref path. A Symbol is
+        # the inliner's `var tmp = s` for a by-value aggregate param.
+        init = ikLoad; known = true
+        loadPos = cursorToPosition(c.orig[], v)
+      elif declTypePos >= 0 and v.kind == DotToken:
+        # `var o: T`: the inliner's result slot, assigned by the callee's `ret`.
+        init = ikNone; known = true
+      skip v                                   # initializer
+    while v.hasMore: skip v
+  if oSym != SymId(0) and known:
+    let declPos = cursorToPosition(c.orig[], n)
+    case init
+    of ikCtor: recordOconstr(c, oSym, declPos, oconstrCur)
+    of ikLoad: addCandidate(c, oSym, newCandidate(declPos, declTypePos, ikLoad, loadPos))
+    of ikNone: addCandidate(c, oSym, newCandidate(declPos, declTypePos, ikNone))
 
 # ---- legality / use classification ---------------------------------------
 
@@ -419,6 +423,10 @@ proc noteRead(c: var Context; n: Cursor; stmtPos: int; owner: SymId; kind: ReadK
   let s = symId(n)
   touch(c, s, cursorToPosition(c.orig[], n))
   c.cand(s).whole = true
+  if s == owner: c.cand(s).selfDef = true          # `o = f(o)`
+  c.cand(s).reads.add c.reads.len
+  if kind == rkInPlace and owner != SymId(0) and owner != s:
+    c.cand(owner).fedBy.add s
   c.reads.add WholeRead(obj: s, pos: cursorToPosition(c.orig[], n),
                         stmtPos: stmtPos, owner: owner, kind: kind)
 
@@ -440,13 +448,17 @@ proc classifyOperand(c: var Context; n: Cursor; stmtPos: int; owner: SymId) =
   else:
     classify(c, n, stmtPos, owner)
 
-proc noteAccess(c: var Context; dot: Cursor; oSym: SymId; isRead: bool) =
+proc noteAccess(c: var Context; dot: Cursor; oSym, owner: SymId; isRead: bool) =
   var f = child0(dot)
   skip f
   if f.kind == Symbol:
     let fSym = symId(f)
     let at = cursorToPosition(c.orig[], dot)
     touch(c, oSym, at)
+    if oSym == owner: c.cand(oSym).selfDef = true   # `o = T(a: o.b, …)`
+    if fSym notin c.cand(oSym).accessed:
+      c.cand(oSym).accessOrder.add fSym
+      c.cand(oSym).dotPos[fSym] = at
     c.cand(oSym).accessed.incl fSym
     if isRead:
       let reads = c.cand(oSym).fieldReads + 1
@@ -461,7 +473,7 @@ proc classifyTarget(c: var Context; n: Cursor; stmtPos: int; owner: SymId) =
   if n.kind == TagLit and n.exprKind in {DotC, AtC}:
     let base = child0(n)
     if n.exprKind == DotC and isCandidateSym(c, base):
-      noteAccess(c, n, symId(base), false)
+      noteAccess(c, n, symId(base), owner, false)
     else:
       var m = n
       m.into:
@@ -518,6 +530,7 @@ proc classify(c: var Context; n: Cursor; stmtPos: int; owner: SymId) =
           skip m
       return
     of VarS:
+      recordDecl(c, n)
       var m = n
       m.into:
         var own = SymId(0)
@@ -552,7 +565,7 @@ proc classify(c: var Context; n: Cursor; stmtPos: int; owner: SymId) =
     of DotC:
       let base = child0(n)
       if isCandidateSym(c, base):
-        noteAccess(c, n, symId(base), true)
+        noteAccess(c, n, symId(base), owner, true)
       else:
         classifyKids(c, n, stmtPos, owner)           # nested base (`o.a.b`, deref, …)
     of AddrC, HaddrC:
@@ -616,17 +629,6 @@ proc typeFields(c: var Context; typePos: int): seq[SymId] =
         skip body
   if not ok: result.setLen 0
 
-proc mentions(n: Cursor; s: SymId): bool =
-  result = false
-  case n.kind
-  of Symbol: result = symId(n) == s
-  of TagLit:
-    var m = n
-    m.loopInto:
-      if not result and mentions(m, s): result = true
-      skip m
-  else: discard
-
 proc sameFields(order: seq[SymId]; fields: seq[SymId]): bool =
   ## `order` names every field of `fields` exactly once (it names each at most
   ## once already, `readKvs`).
@@ -635,15 +637,15 @@ proc sameFields(order: seq[SymId]; fields: seq[SymId]): bool =
     for f in order:
       if f notin fields: return false
 
-proc wholeDefOk(c: var Context; oSym: SymId; defPos: int; fields: seq[SymId]): bool =
+proc wholeDefOk(c: var Context; defPos: int; fields: seq[SymId]): bool =
   ## `(asgn o RHS)` decomposes into one assignment per field: RHS is a total
-  ## `oconstr` or a pure lvalue, and it does not read `o` itself — the field
-  ## assignments run one after another, and `o = T(a: o.b, b: o.a)` would read
-  ## a field the previous one already overwrote.
+  ## `oconstr` or a pure lvalue. (That it does not read `o` itself is
+  ## `selfDef`: the field assignments run one after another, and
+  ## `o = T(a: o.b, b: o.a)` would read a field the previous one already
+  ## overwrote.)
   var a = cursorAt(c.orig[], defPos)
   inc a                                              # into the asgn: the target
   skip a                                             # the value
-  if mentions(a, oSym): return false
   if a.kind == TagLit and a.exprKind == OconstrC:
     var order: seq[SymId] = @[]
     var values = initTable[SymId, int]()
@@ -662,13 +664,8 @@ proc fieldwiseOk(c: var Context; oSym: SymId): bool =
     for f in accessed:
       if f notin c.cand(oSym).valuePos: result = false  # read but never constructed
   else:
-    # By index: iterating `c.accesses` directly would borrow `c` for the whole
-    # loop, and the body mutates it.
-    for ai in 0 ..< c.accesses.len:
-      let (o, f, dotAt) = c.accesses[ai]
-      if o == oSym and f notin c.cand(oSym).dotPos:
-        c.cand(oSym).dotPos[f] = dotAt
-        c.cand(oSym).fieldOrder.add f
+    let order = c.cand(oSym).accessOrder
+    c.cand(oSym).fieldOrder = order
     result = c.cand(oSym).fieldOrder.len > 0         # a load nobody reads by field: leave it
 
 proc wholeOk(c: var Context; oSym: SymId): bool =
@@ -676,13 +673,13 @@ proc wholeOk(c: var Context; oSym: SymId): bool =
   ## every access naming one of them, every whole assignment decomposable, a
   ## constructor initializer total. Fills in its `fieldOrder`.
   let fields = typeFields(c, c.cand(oSym).typePos)
-  result = fields.len > 0
+  result = fields.len > 0 and not c.cand(oSym).selfDef
   let accessed = c.cand(oSym).accessed
   for f in accessed:
     if f notin fields: result = false
   let defs = c.cand(oSym).defs
   for d in defs:
-    if result and not wholeDefOk(c, oSym, d, fields): result = false
+    if result and not wholeDefOk(c, d, fields): result = false
   if result:
     if c.cand(oSym).init == ikCtor:
       result = sameFields(c.cand(oSym).fieldOrder, fields)
@@ -846,20 +843,6 @@ proc replaceWhole(c: var Context; pos: int; stmts: seq[Cursor]) =
     if i == 0: c.patchset.addSubst(pos, stmts[i])
     else: c.patchset.addInsert(pos, stmts[i])
 
-proc indexesVariably(n: Cursor): bool =
-  ## `n`, an lvalue, selects an element by an index that is not a literal.
-  if n.kind != TagLit: return false
-  case n.exprKind
-  of AtC, PatC:
-    var m = child0(n)
-    let base = m
-    skip m
-    result = m.kind notin {IntLit, UIntLit, CharLit} or indexesVariably(base)
-  of DotC, DerefC:
-    result = indexesVariably(child0(n))
-  else:
-    result = false
-
 proc addressOnce(c: var Context; src: Cursor): bool =
   ## Is the address of the load source `src` worth computing once for all its
   ## fields? It is when it scales a variable index: an element of an array of
@@ -955,10 +938,15 @@ proc crossesCall(c: var Context; oSym: SymId): bool =
   result = false
   let first = c.cand(oSym).first
   let last = c.cand(oSym).last
-  for i in 0 ..< c.calls.len:
-    let (p, e) = c.calls[i]
-    if first < p and p < last and not (last < e):
-      return true
+  var i = 0                                          # the first call after `first`
+  var hi = c.calls.len
+  while i < hi:
+    let mid = (i + hi) div 2
+    if c.calls[mid][0] <= first: i = mid + 1
+    else: hi = mid
+  while i < c.calls.len and c.calls[i][0] < last:
+    if c.calls[i][1] <= last: return true
+    inc i
 
 proc scalarize(buf: var TokenBuf; m: ptr MainModule; temps: var int;
                knownFields: Table[SymId, seq[SymId]]): bool =
@@ -974,11 +962,8 @@ proc scalarize(buf: var TokenBuf; m: ptr MainModule; temps: var int;
                   knownFields: knownFields)
   block:
     let n = beginRead(buf)
-    collectCandidates(c, n)
-  if c.candidates.len == 0: return
-  block:
-    let n = beginRead(buf)
     classify(c, n, cursorToPosition(buf, n), SymId(0))
+  if c.candidates.len == 0: return
 
   var syms: seq[SymId] = @[]
   for oSym in c.candidates.keys: syms.add oSym
@@ -1007,25 +992,26 @@ proc scalarize(buf: var TokenBuf; m: ptr MainModule; temps: var int;
   for oSym in legal:
     if not c.cand(oSym).whole or c.cand(oSym).loopUse or not crossesCall(c, oSym):
       useful.incl oSym
-  var shrunk = true
-  while shrunk:
-    shrunk = false
-    var drop: seq[SymId] = @[]
-    for oSym in useful:
-      if not c.cand(oSym).whole: continue
-      var feeds = false
-      var rebuilt = false
-      for ri in 0 ..< c.reads.len:
-        let r = c.reads[ri]
-        if r.obj != oSym: continue
-        if r.kind == rkInPlace and r.owner in useful: feeds = true
-        else: rebuilt = true
-      if not (c.cand(oSym).fieldReads > 0 or feeds) or
-         (rebuilt and not c.cand(oSym).loopUse):
-        drop.add oSym
-    for oSym in drop:
+  # Whether an object pays depends on the owners its whole reads feed, so a
+  # drop is propagated to those it fed, and only to those.
+  var work: seq[SymId] = @[]
+  for oSym in useful: work.add oSym
+  while work.len > 0:
+    let oSym = work.pop()
+    if oSym notin useful or not c.cand(oSym).whole: continue
+    var feeds = false
+    var rebuilt = false
+    let reads = c.cand(oSym).reads
+    for ri in reads:
+      let r = c.reads[ri]
+      if r.kind == rkInPlace and r.owner in useful: feeds = true
+      else: rebuilt = true
+    if not (c.cand(oSym).fieldReads > 0 or feeds) or
+       (rebuilt and not c.cand(oSym).loopUse):
       useful.excl oSym
-      shrunk = true
+      # What `oSym` was fed in place is now rebuilt for it: ask again.
+      let fedBy = c.cand(oSym).fedBy
+      for s in fedBy: work.add s
   var survPairs: seq[(int, SymId)] = @[]
   for oSym in syms:
     if oSym in useful: survPairs.add (c.cand(oSym).declPos, oSym)
@@ -1035,11 +1021,9 @@ proc scalarize(buf: var TokenBuf; m: ptr MainModule; temps: var int;
   var dropped = false
   for ri in 0 ..< c.reads.len:
     let r = c.reads[ri]
-    if r.kind == rkHoisted and r.owner != SymId(0) and r.owner in c.candidates:
-      for i in 0 ..< survPairs.len:
-        if survPairs[i][1] == r.owner:
-          c.cand(r.obj).disqualified = true
-          dropped = true
+    if r.kind == rkHoisted and r.owner in useful:
+      c.cand(r.obj).disqualified = true
+      dropped = true
   if dropped:
     var kept: seq[(int, SymId)] = @[]
     for it in survPairs:

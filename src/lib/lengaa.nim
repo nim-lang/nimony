@@ -123,28 +123,38 @@ proc exposeAll(f: var LocalFacts; n: Cursor) =
       skip it
   else: discard
 
-proc walk(f: var LocalFacts; n: Cursor) =
-  if not n.isTag: return
+proc noteNode*(f: var LocalFacts; n: Cursor) =
+  ## What the tag node `n` itself contributes to the facts, its children aside:
+  ## a `(var …)` declares a local, an `(addr …)` exposes its root, an
+  ## `(emit …)` everything it names. For a pass that walks the body anyway and
+  ## would otherwise pay `analyseLocals`' walk on top; it calls this on every
+  ## tag node outside nested `proc`/`type` decls, `analyseLocals` included.
   case n.stmtKind
-  of ProcS, TypeS: return                       # a different routine / no code
   of VarS:
     let name = n.childCursor
     if name.hasMore and name.kind == SymbolDef: f.locals.incl name.symId
   of EmitS:
     exposeAll(f, n)
-    return
-  else: discard
-  if n.exprKind == AddrC:
-    let r = lvalueRoot(n.childCursor)
-    if r != NoSym: f.exposed.incl r
+  else:
+    if n.exprKind == AddrC:
+      let r = lvalueRoot(n.childCursor)
+      if r != NoSym: f.exposed.incl r
+
+proc walk(f: var LocalFacts; n: Cursor) =
+  if not n.isTag or n.stmtKind in {ProcS, TypeS}: return  # another routine / no code
+  noteNode(f, n)
+  if n.stmtKind == EmitS: return                # `noteNode` saw all of it
   var it = n
   it.loopInto:
     walk(f, it)
     skip it
 
+proc initLocalFacts*(): LocalFacts =
+  LocalFacts(locals: initHashSet[SymId](), exposed: initHashSet[SymId]())
+
 proc analyseLocals*(procDecl: Cursor): LocalFacts =
   ## The owned-ness facts for one `(proc …)` (or any statement subtree).
-  result = LocalFacts(locals: initHashSet[SymId](), exposed: initHashSet[SymId]())
+  result = initLocalFacts()
   if procDecl.stmtKind == ProcS:
     var it = procDecl.childCursor
     skip it                                     # name

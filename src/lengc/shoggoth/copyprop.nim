@@ -64,6 +64,7 @@ import std / [tables, sets, hashes, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
 import trackers, patchsets
+import accesspaths                            # indexesVariably
 import cse                                    # FunctionSummary + SummaryResolver:
                                               # the read-only addr-taken
                                               # classification consults callee
@@ -364,20 +365,6 @@ proc isEligible(c: Context; s: SymId): bool {.inline.} =
   ## taken but the whole-body classification proved it is never written at all.
   s != SymId(0) and s in c.localDefs and
     (s notin c.addrTaken or s in c.stableAT)
-
-proc indexesVariably(n: Cursor): bool =
-  ## `n`, an lvalue, selects an element by an index that is not a literal.
-  if n.kind != TagLit: return false
-  case n.exprKind
-  of AtC, PatC:
-    var m = child0(n)
-    let base = m
-    skip m
-    result = m.kind notin {IntLit, UIntLit, CharLit} or indexesVariably(base)
-  of DotC, DerefC:
-    result = indexesVariably(child0(n))
-  else:
-    result = false
 
 proc keepsScaledAddress(c: Context; dest: SymId; src: Cursor): bool =
   ## `var p = addr a[i].f` is worth keeping, not splicing back into its uses,
