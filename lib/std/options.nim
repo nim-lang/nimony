@@ -28,7 +28,7 @@ type
 
 
 func raiseEmptyOption() {.noinline, noreturn.} =
-  {.cast(noSideEffect).}: quit "Tried to access the value of an empty Option"
+  quit "Tried to access the value of an empty Option"
 
 func some*[T](val: sink T): Option[T] =
   ## Returns an `Option` that contains `val`.

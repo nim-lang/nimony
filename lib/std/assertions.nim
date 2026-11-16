@@ -8,17 +8,20 @@ const assertionsEnabled* = not defined(danger) and not defined(noAssertions)
   ## is what you want when profiling: an `assert` costs a compare, a branch and a
   ## string literal at every call site, and those are not what is being measured.
 
-proc raiseAssert*(msg: string) {.noreturn.} =
-  echo "[Assertion Failure] ", msg
+func raiseAssert*(msg: string) {.noreturn.} =
+  ## Terminates the program after printing an assertion failure. The process
+  ## does not return, so the output cannot be observed as a side effect of the
+  ## caller.
+  {.cast(noSideEffect).}:
+    echo "[Assertion Failure] ", msg
   quit 1
 
-proc failedAssertImpl*(msg: string) {.noinline, noSideEffect, noreturn.} =
+func failedAssertImpl*(msg: string) {.noinline, noreturn.} =
   ## Raises an assertion failure, but is hidden from the effect system: the
   ## process terminates, so a failed assertion cannot return a side effect to
   ## its caller. Mirrors upstream Nim's `failedAssertImpl`, and keeps `assert`
   ## usable inside `func` (and therefore inside read-only accessors).
-  {.cast(noSideEffect).}:
-    raiseAssert(msg)
+  raiseAssert(msg)
 
 template assert*(cond: bool; msg = "") =
   when assertionsEnabled:

@@ -450,25 +450,29 @@ iterator lines*(f: File): string {.sideEffect.} =
   while readLine(f, line):
     yield line
 
-proc quit*(value: int) {.noreturn.} =
+func quit*(value: int) {.noreturn.} =
   ## Terminates the program with the given exit code, flushing the standard
-  ## streams first (via `system/exits`).
-  cExit(value)
+  ## streams first (via `system/exits`). The process does not return, so the
+  ## flush cannot be observed as a side effect of the caller.
+  {.cast(noSideEffect).}:
+    cExit(value)
 
 const
   QuitSuccess* = 0
   QuitFailure* = 1
 
-proc quit*(msg: string) {.noreturn.} =
-  echo msg
+func quit*(msg: string) {.noreturn.} =
+  {.cast(noSideEffect).}:
+    echo msg
   quit QuitFailure
 
-proc quit*(msg: string; errorcode: int) {.noreturn.} =
+func quit*(msg: string; errorcode: int) {.noreturn.} =
   ## Exits the program with a status code or message.
   ##
   ## Use `quit(int)` to exit with a code only, `quit(string)` to print a message and exit
   ## with failure, or this overload to print a message and use a specific code.
-  echo msg
+  {.cast(noSideEffect).}:
+    echo msg
   quit errorcode
 
 const ReadBufSize = 4000
