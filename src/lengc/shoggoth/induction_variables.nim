@@ -24,6 +24,7 @@ include ".." / ".." / "lib" / compat2   # getOrQuit (host Nim)
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import intrinsiceffects                       # is this `(instr …)` a pure value?
 import ".." / typenav                         # getNominalType — the temp's declared type
+import countedloops                           # detectLoop: the count-to-zero form
 
 type
   AccessInfo = object
@@ -572,35 +573,6 @@ proc countReads(n: Cursor; sym: SymId): int =
       skip m
   else: discard
 
-proc loopCounterCond(body: Cursor; ivSym: SymId): Cursor =
-  ## The comparison in the body's trailing `(continue (lt|le|neq iv bound))`, or
-  ## nil. `!=` arrives as `(not (eq iv bound))`; then it is the inner `eq` — the
-  ## `not` stays where it is. Only a rotated `(loop …)` has a trailing test; its
-  ## guard ran the same test before the first iteration, so the decls hoisted in
-  ## front of the loop only execute when the loop does — which is also why
-  ## `iv - bound` cannot overflow there.
-  result = default(Cursor)
-  if body.kind == TagLit and body.stmtKind == StmtsS:
-    var last = default(Cursor)
-    var m = body
-    m.loopInto:
-      last = m
-      skip m
-    if not cursorIsNil(last) and last.kind == TagLit and last.stmtKind == ContinueS:
-      var cond = last.childCursor
-      if cond.kind == TagLit and cond.exprKind == NotC and
-         cond.childCursor.kind == TagLit and cond.childCursor.exprKind == EqC:
-        cond = cond.childCursor
-      if cond.kind == TagLit and cond.exprKind in {LtC, LeC, NeqC, EqC}:
-        let iv = cond.childCursor
-        var bound = iv
-        skip bound
-        # exactly `(op iv bound)`: no type child, nothing after the bound
-        if iv.kind == Symbol and symId(iv) == ivSym and bound.hasMore:
-          var after = bound
-          skip after
-          if not after.hasMore: result = cond
-
 # ---- main traversal -------------------------------------------------------
 
 proc tr(c: var Context; n: var Cursor)   # forward
@@ -683,17 +655,19 @@ proc transformLoop(c: var Context; n: var Cursor) =
         # than "after the loop" keeps an enclosing loop's back edge from
         # needing its own argument), the bound is loop-invariant, and `iv` is
         # signed, so `iv - bound` goes negative. Otherwise the loop stays as is.
-        var add = cursorAt(c.orig[], ivInfo.incPos)
-        add = add.childCursor                # past `(asgn` → iv
-        skip add                             # → `(add T iv 1)`
-        let ivType = add.childCursor
-        let cond = loopCounterCond(body, ivInfo.ivSym)
-        if not cursorIsNil(cond) and ivType.kind == TagLit and ivType.typeKind == IT:
-          var bound = cond.childCursor
-          skip bound
-          if operandIsInvariant(c, bound, facts) and
-             countReads(beginRead(c.orig[]), ivInfo.ivSym) == stable.len + 2:
-            rewriteToZero(c, loopPos, ivInfo.ivSym, ivInfo.incPos, stable, cond, bound, ivType)
+        #
+        # Only a rotated `(loop …)` qualifies (`countedloops`): its guard ran the
+        # same test before the first iteration, so the decls hoisted in front of
+        # the loop only execute when the loop does — which is also why
+        # `iv - bound` cannot overflow there. `!=` arrives as `(not (eq iv
+        # bound))`; the test rewritten is then the inner `eq`.
+        let d = detectLoop(n)
+        if d.kind in {CountUp, CountUpExclusive, CountUpUntil} and
+           d.counterSym == ivInfo.ivSym and d.typ.kind == TagLit and
+           d.typ.typeKind == IT and operandIsInvariant(c, d.stop, facts) and
+           countReads(beginRead(c.orig[]), ivInfo.ivSym) == stable.len + 2:
+          rewriteToZero(c, loopPos, ivInfo.ivSym, ivInfo.incPos, stable, d.test,
+                        d.stop, d.typ)
 
   # Recurse into the loop body so nested loops are transformed too.
   n.loopInto:

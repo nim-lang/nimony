@@ -22,8 +22,8 @@
 ## The C compiler finds some of them on its own; arkham finds none, and on the
 ## native backend each stays a loop of one store per element.
 ##
-## The shape matched is the one hexer's `for` lowering produces once loop
-## rotation (#2995) has moved the test to the back-edge:
+## The loops matched are the counted loops of `countedloops` that count up by
+## one, the rotated form hexer's `for` lowering produces:
 ##
 ##   (ite (lt IV HI)                      ; or `le`
 ##     (stmts (loop (stmts
@@ -32,11 +32,8 @@
 ##       (continue (lt IV HI)))))         ; the same test again
 ##     .)
 ##
-## seen through the `(scope …)`/`(stmts …)` wrappers and the labels nobody jumps
-## to that inlining leaves behind. The unrotated forms — `(while (true) (if
-## (elif COND …) (else (jmp L))))` and `(loop (stmts (ite COND … (stmts (jmp
-## L))) (continue .)))`, each followed by `(lab L)` — are matched too. It
-## becomes
+## the store seen through the `(scope …)`/`(stmts …)` wrappers and past the
+## labels nobody jumps to that inlining leaves behind. It becomes
 ##
 ##   (ite (lt IV HI)
 ##     (stmts (instr zeroMemIns (haddr (at B IV)) (mul (i -1) COUNT (sizeof E)))
@@ -79,9 +76,9 @@
 ## loop is then replaced like a fill. Otherwise the copy goes in front of the
 ## untouched loop, guarded by a runtime test that the byte ranges are disjoint:
 ##
-##   (if (elif (and (lt IV HI) DISJOINT)
-##     (stmts (instr copyMemIns (haddr D[IV]) S[IV] N) (asgn IV HI))))
-##   (while (true) …)                     ; finds IV == HI and exits at once
+##   (ite (and (lt IV HI) DISJOINT)
+##     (stmts (instr copyMemIns (haddr D[IV]) S[IV] N) (asgn IV HI)) .)
+##   (ite (lt IV HI) …)                   ; finds IV == HI and skips the loop
 ##
 ## so an overlapping copy still runs the loop it always ran, and no label in
 ## that loop is ever duplicated.
@@ -93,6 +90,7 @@ import ".." / nifmodules                      # MainModule
 import ".." / typenav                         # getType / registerLocal / scopes
 import patchsets
 import vmrewriter                             # subtreeEqual
+import countedloops                           # detectGuardedLoop
 import ".." / ".." / "lib" / intrinsics       # ZeroMemOp / CopyMemOp
 
 type
@@ -437,58 +435,15 @@ proc invariantValue(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool =
     else: false
   else: false
 
-# ---- the loop grammar ------------------------------------------------------
+# ---- the loop ------------------------------------------------------------
 
 type
   LoopMatch = object
     ## A matched loop, as cursors into the body: valid while the scan stands
     ## on it, which is all the build below needs.
-    cond, hi, incTyp, one, lhs, value, elemType: Cursor
-    iv, exitLab: SymId
-    isLe: bool
-
-  StmtRole = enum
-    ## What the next statement of a sibling run must be.
-    srIf                             ## `(if (elif COND BODY) (else EXIT))`
-    srStore                          ## `(asgn (at B IV) V)` / `(asgn (pat P IV) V)`
-    srIncrement                      ## `(asgn IV (add T IV 1))`
-    srExit                           ## `(jmp L)`, `L` the label after the loop
-    srRepeat                         ## `(continue .)`, a `(loop)`'s back-edge
-    srRepeatCond                     ## `(continue COND)`, a rotated loop's
-                                     ## back-edge testing the entry's COND
-    srRotatedLoop                    ## `(loop (stmts STORE INCREMENT
-                                     ## (continue COND)))`
-
-proc isOne(n: Cursor): bool =
-  case n.kind
-  of IntLit: intVal(n) == 1
-  of UIntLit: uintVal(n) == 1'u64
-  of TagLit:
-    if n.exprKind in {SufC, ParC}: isOne(n.childCursor)
-    elif n.exprKind == ConvC:
-      var c = n.childCursor
-      skip c
-      isOne(c)
-    else: false
-  else: false
-
-proc matchIncrement(n: Cursor; iv: SymId; typ, one: var Cursor): bool =
-  ## `(asgn IV (add T IV 1))`.
-  result = false
-  if n.kind == TagLit and n.stmtKind == AsgnS:
-    var c = n.childCursor
-    if c.kind == Symbol and c.symId == iv:
-      skip c
-      if c.kind == TagLit and c.exprKind == AddC:
-        var a = c.childCursor
-        typ = a
-        skip a
-        if a.kind == Symbol and a.symId == iv:
-          skip a
-          if isOne(a):
-            one = a
-            skip a
-            result = not a.hasMore
+    loop: DetectedLoop
+    iv: SymId
+    lhs, value, elemType: Cursor
 
 proc isElemAt(n: Cursor; iv: SymId): bool =
   ## `(at B IV)` / `(pat P IV)`: element `IV` of an array or a pointer.
@@ -513,20 +468,6 @@ proc matchStore(n: Cursor; iv: SymId; lhs, value: var Cursor): bool =
         skip c
         result = not c.hasMore
 
-proc matchCond(s: MemScan; n: Cursor; lm: var LoopMatch): bool =
-  ## `(lt IV HI)` / `(le IV HI)`, `IV` a local whose address is never taken.
-  result = false
-  if n.kind == TagLit and n.exprKind in {LtC, LeC}:
-    var c = n.childCursor
-    if c.kind == Symbol and s.safeLocal(c.symId):
-      lm.cond = n
-      lm.isLe = n.exprKind == LeC
-      lm.iv = c.symId
-      skip c
-      lm.hi = c
-      skip c
-      result = not c.hasMore
-
 proc isDeadLabel(s: MemScan; n: Cursor): bool =
   ## A `(lab L)` nobody jumps to: inlining leaves them behind.
   result = false
@@ -534,100 +475,27 @@ proc isDeadLabel(s: MemScan; n: Cursor): bool =
     let l = n.childCursor
     result = l.kind == SymbolDef and l.symId notin s.facts.jumpedTo
 
-proc matchStmts(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
-                lm: var LoopMatch): bool
-
-proc matchIf(s: var MemScan; n: Cursor; lm: var LoopMatch): bool =
-  ## `(if (elif COND STORE INCREMENT) (else EXIT))` or
-  ## `(ite COND (stmts STORE INCREMENT) (stmts EXIT))`.
-  result = false
-  if n.kind == TagLit and n.stmtKind == IteS:
-    var e = n.childCursor
-    if matchCond(s, e, lm):
-      skip e
-      let thenArm = e
-      skip e
-      if e.hasMore and e.kind != DotToken:
-        result = matchStmts(s, thenArm.childCursor, [srStore, srIncrement], lm) and
-          matchStmts(s, e.childCursor, [srExit], lm)
-  elif n.kind == TagLit and n.stmtKind == IfS:
-    let elifNode = n.childCursor
-    var arm = elifNode
-    if arm.substructureKind == ElifU:
-      skip arm
-      if arm.hasMore and arm.substructureKind == ElseU:
-        let elseNode = arm
-        skip arm
-        var e = elifNode.childCursor
-        if not arm.hasMore and matchCond(s, e, lm):
-          skip e
-          result = matchStmts(s, e, [srStore, srIncrement], lm) and
-            matchStmts(s, elseNode.childCursor, [srExit], lm)
-
-proc matchRole(s: var MemScan; n: Cursor; role: StmtRole; lm: var LoopMatch): bool =
-  case role
-  of srIf: matchIf(s, n, lm)
-  of srStore: matchStore(n, lm.iv, lm.lhs, lm.value)
-  of srIncrement: matchIncrement(n, lm.iv, lm.incTyp, lm.one)
-  of srRepeat:
-    n.kind == TagLit and n.stmtKind == ContinueS and n.childCursor.kind == DotToken
-  of srRepeatCond:
-    n.kind == TagLit and n.stmtKind == ContinueS and
-      subtreeEqual(n.childCursor, lm.cond)
-  of srRotatedLoop:
-    n.kind == TagLit and n.stmtKind == LoopS and n.childCursor.kind == TagLit and
-      matchStmts(s, n.childCursor.childCursor,
-                 [srStore, srIncrement, srRepeatCond], lm)
-  of srExit:
-    n.kind == TagLit and n.stmtKind == JmpS and
-      n.childCursor.kind == Symbol and n.childCursor.symId == lm.exitLab
-
-proc matchRun(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
-              next: var int; lm: var LoopMatch): bool =
-  ## Match the statements of the sibling run starting at `first` against
-  ## `roles[next..]`, seen through `(stmts …)`/`(scope …)` and past `.` holes
-  ## and labels nobody jumps to. A label somebody does jump to is control flow
-  ## we do not model: no match.
-  result = true
-  var it = first
-  while result and it.hasMore:
-    if it.kind == TagLit and it.stmtKind in {StmtsS, ScopeS}:
-      result = matchRun(s, it.childCursor, roles, next, lm)
-    elif it.kind != DotToken and not isDeadLabel(s, it):
-      result = next < roles.len and matchRole(s, it, roles[next], lm)
-      inc next
-    skip it
-
-proc matchStmts(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
-                lm: var LoopMatch): bool =
-  ## The sibling run starting at `first` is exactly `roles`, in order.
-  var next = 0
-  result = matchRun(s, first, roles, next, lm) and next == roles.len
-
 proc matchLoop(s: var MemScan; w: Cursor; lm: var LoopMatch): bool =
-  ## The loop grammar of the module comment, up to the store: everything a
-  ## fill and a copy have in common.
-  var c = w.childCursor
-  if w.stmtKind == IteS:
-    # The rotated form loop rotation leaves (`leng`'s `for` lowering since
-    # #2995): the entry test guards a `(loop)` whose back-edge repeats it,
-    #   (ite COND (stmts (loop (stmts STORE INCREMENT (continue COND)))) .)
-    # The exit is falling out of the `ite`, so no label is involved.
-    result = matchCond(s, c, lm)
-    if result:
-      skip c
-      let thenArm = c
-      skip c
-      result = thenArm.kind == TagLit and (not c.hasMore or c.kind == DotToken) and
-        matchStmts(s, thenArm.childCursor, [srRotatedLoop], lm)
-  elif w.stmtKind == LoopS:
-    # `(loop (stmts (ite …) (continue .)))`
-    result = c.kind == TagLit and matchStmts(s, c.childCursor, [srIf, srRepeat], lm)
-  else:
-    result = c.kind == TagLit and c.exprKind == TrueC
-    if result:
-      skip c
-      result = matchStmts(s, c, [srIf], lm)
+  ## A counted loop counting up by one (`countedloops`) whose counter is a
+  ## local whose address is never taken, and whose body, past labels nobody
+  ## jumps to, is one element store: everything a fill and a copy have in
+  ## common.
+  ##
+  ## The guard must test the counter itself, not the entry value copy
+  ## propagation can substitute into it: a copy leaves the loop behind its
+  ## fast path and relies on that test finding the counter at its final value.
+  lm.loop = detectGuardedLoop(w)
+  result = lm.loop.kind in {CountUp, CountUpExclusive} and lm.loop.isUnitStep and
+    s.safeLocal(lm.loop.counterSym) and
+    subtreeEqual(lm.loop.guard.childCursor, lm.loop.cond)
+  if result:
+    lm.iv = lm.loop.counterSym
+    var stores = 0
+    for n in bodyStmts(lm.loop):
+      if not isDeadLabel(s, n):
+        inc stores
+        result = result and matchStore(n, lm.iv, lm.lhs, lm.value)
+    result = result and stores == 1
   if result:
     lm.elemType = getNominalType(s.m[], lm.lhs)
 
@@ -641,11 +509,11 @@ proc baseInvariant(s: MemScan; elem: Cursor; iv: SymId; stored: Leaves): bool =
 proc boundOk(s: MemScan; lm: LoopMatch; stored: Leaves): bool =
   ## `HI` does not change, and the loop terminates: `IV <= HI` with `HI` the
   ## type's maximum never becomes false, and a `memset` must not make it.
-  result = invariantValue(s, lm.hi, lm.iv, stored)
-  if result and lm.isLe:
+  result = invariantValue(s, lm.loop.stop, lm.iv, stored)
+  if result and lm.loop.kind == CountUp:
     var hv = 0'u64
     var maxv = 0'i64
-    result = constBits(s, lm.hi, hv) and maxOfType(s.m, lm.incTyp, maxv) and
+    result = constBits(s, lm.loop.stop, hv) and maxOfType(s.m, lm.loop.typ, maxv) and
       cast[int64](hv) < maxv
 
 proc localArray(s: MemScan; elem: Cursor): SymId =
@@ -674,16 +542,16 @@ proc emitIntType(b: var TokenBuf; tag: LengType) =
 
 proc emitCount(b: var TokenBuf; lm: LoopMatch) =
   ## The iterations left: `HI - IV`, plus one for `le`, in the loop's own type.
-  if lm.isLe:
+  if lm.loop.kind == CountUp:
     b.openTag TagId(AddC)
-    b.addSubtree lm.incTyp
+    b.addSubtree lm.loop.typ
   b.openTag TagId(SubC)
-  b.addSubtree lm.incTyp
-  b.addSubtree lm.hi
+  b.addSubtree lm.loop.typ
+  b.addSubtree lm.loop.stop
   b.addSymUse lm.iv
   b.closeTag()
-  if lm.isLe:
-    b.addSubtree lm.one
+  if lm.loop.kind == CountUp:
+    b.addSubtree lm.loop.step
     b.closeTag()
 
 proc emitBytes(b: var TokenBuf; lm: LoopMatch) =
@@ -719,14 +587,14 @@ proc emitFinalIv(b: var TokenBuf; lm: LoopMatch) =
   ## `(asgn IV <the value the loop leaves in it>)`.
   b.openTag TagId(AsgnS)
   b.addSymUse lm.iv
-  if lm.isLe:
+  if lm.loop.kind == CountUp:
     b.openTag TagId(AddC)
-    b.addSubtree lm.incTyp
-    b.addSubtree lm.hi
-    b.addSubtree lm.one
+    b.addSubtree lm.loop.typ
+    b.addSubtree lm.loop.stop
+    b.addSubtree lm.loop.step
     b.closeTag()
   else:
-    b.addSubtree lm.hi
+    b.addSubtree lm.loop.stop
   b.closeTag()
 
 proc memIntrinsicName(op: IntrinsicOp; suffix: string): string =
@@ -766,52 +634,42 @@ proc emitEndsBefore(b: var TokenBuf; lm: LoopMatch; first, second: Cursor) =
   b.closeTag()
 
 proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
-                     guardDisjoint, asIte: bool) =
-  ## The `(if …)` that does the loop's work in one call to the intrinsic
+                     guardDisjoint: bool) =
+  ## The `(ite …)` that does the loop's work in one call to the intrinsic
   ## `name`:
   ##
-  ##   (if (elif COND (stmts MEMSTMT (asgn IV FINAL))))
+  ##   (ite COND (stmts MEMSTMT (asgn IV FINAL)) .)
   ##
   ## With `guardDisjoint` the condition also demands that the two ranges do
-  ## not overlap, and the original loop stays behind it: on the fast path it
-  ## finds `IV` already at its final value and exits at once, otherwise it
+  ## not overlap, and the original loop stays behind it: on the fast path its
+  ## guard finds `IV` already at its final value and skips it, otherwise it
   ## runs as it always did. Leaving it in place rather than copying it into
   ## an `else` keeps every label in it defined exactly once.
-  ##
-  ## `asIte` spells it `(ite COND (stmts …) .)`, the form a `(loop)` lives in.
-  if asIte:
-    b.openTag TagId(IteS)
-  else:
-    b.openTag TagId(IfS)
-    b.openTag TagId(ElifU)
+  b.openTag TagId(IteS)
   if guardDisjoint:
     b.openTag TagId(AndC)
-    b.addSubtree lm.cond
+    b.addSubtree lm.loop.cond
     b.openTag TagId(OrC)
     emitEndsBefore(b, lm, lm.lhs, lm.value)
     emitEndsBefore(b, lm, lm.value, lm.lhs)
     b.closeTag()
     b.closeTag()
   else:
-    b.addSubtree lm.cond
+    b.addSubtree lm.loop.cond
   b.openTag TagId(StmtsS)
   emitMemStmt(b, lm, name, isCopy)
   emitFinalIv(b, lm)
   b.closeTag()
-  if asIte:
-    b.addDotToken()
-  else:
-    b.closeTag()
+  b.addDotToken()
   b.closeTag()
 
-proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
-  ## Match the loop `w` (its exit label `exitLab` follows it; none for the
-  ## rotated `(ite COND (stmts (loop …)) .)`) and, when it is a
-  ## fill or a copy, build its replacement. A copy is `D[IV] = S[IV]` (the
+proc tryLoop(s: var MemScan; w: Cursor) =
+  ## Match the rotated loop `w`, `(ite COND (stmts (loop …)) .)`, and, when it
+  ## is a fill or a copy, build its replacement. A copy is `D[IV] = S[IV]` (the
   ## assignment says the element types agree); unless its two ranges are
   ## disjoint by construction, it becomes a guarded fast path in front of the
   ## loop.
-  var lm = LoopMatch(exitLab: exitLab)
+  var lm = LoopMatch()
   if matchLoop(s, w, lm):
     let stored = leavesOf(s.m, lm.elemType)
     let isCopy = isElemAt(lm.value, lm.iv)
@@ -824,8 +682,7 @@ proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
       let op = if isCopy: CopyMemOp else: ZeroMemOp
       s.used.incl op
       let start = s.scratch.len
-      emitReplacement(s.scratch, lm, memIntrinsicName(op, s.suffix), isCopy,
-                      guarded, asIte = w.stmtKind in {LoopS, IteS})
+      emitReplacement(s.scratch, lm, memIntrinsicName(op, s.suffix), isCopy, guarded)
       s.sites.add MemSite(pos: s.posOf(w), start: start, insert: guarded)
 
 # ---- adjacent field stores ------------------------------------------------
@@ -1110,26 +967,14 @@ proc scanStoreRuns(s: var MemScan; list: Cursor) =
 
 # ---- the walk --------------------------------------------------------------
 
-proc exitLabelAfter(list: Cursor; w: Cursor; lab: var SymId): bool =
-  ## Is the next real statement after `w` in its list a `(lab L)`?
-  var it = w
-  skip it
-  while it.hasMore and it.kind == DotToken: skip it
-  result = it.hasMore and it.kind == TagLit and it.stmtKind == LabS and
-    it.childCursor.kind == SymbolDef
-  if result: lab = it.childCursor.symId
-
 proc scan(s: var MemScan; n: Cursor)
 
 proc scanList(s: var MemScan; list: Cursor) =
   if s.opts.mergeWordBytes > 0: scanStoreRuns(s, list)
   var it = list.childCursor
   while it.hasMore:
-    if it.kind == TagLit and it.stmtKind in {WhileS, LoopS}:
-      var lab = SymId(0)
-      if s.opts.intrinsics and exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
-    elif it.kind == TagLit and it.stmtKind == IteS and s.opts.intrinsics:
-      tryLoop(s, it, SymId(0))
+    if it.kind == TagLit and it.stmtKind == IteS and s.opts.intrinsics:
+      tryLoop(s, it)
     scan(s, it)
     skip it
 
