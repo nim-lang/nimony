@@ -19,3 +19,15 @@ assert wide == 3
 # equal bounds still match
 var same: range[0..10] = wide
 assert same == 3
+
+# a range of an enum or distinct type converts to an int type
+# (nimony-bugs-llms#123)
+type
+  RangeE = enum reA, reB, reC, reD
+  RangeD = distinct int
+var re: range[reB..reC] = reC
+var rd: range[RangeD(0)..RangeD(7)] = RangeD(3)
+assert ord(re) == 2
+assert int(re) == 2
+assert int8(re) == 2'i8
+assert int(rd) == 3
