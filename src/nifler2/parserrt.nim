@@ -860,7 +860,7 @@ proc attachBlocks*(p: var Parser; m: Mark) =
     isCall = t == tagId(CallL) or t == tagId(CmdL) or t == tagId(InfixL) or
              t == tagId(PrefixL) or t == tagId(CallstrlitL)
   if isCall:
-    # The operand already IS the call, so the blocks just join its children:
+    # The operand is the call already, so the blocks just join its children:
     # `kids[1..]` are still chained to each other, so one link does it.
     var tail = op.down
     if tail == nil:

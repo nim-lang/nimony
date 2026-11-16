@@ -149,7 +149,7 @@ func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
   # Two ways this can have no new entry to index: an index that could not be
   # allocated (`hashes` empty), or an `add` that could not allocate -- which
   # leaves `data` untouched, so `data.len` is the test. Indexing anyway would
-  # write a slot whose `position` names an OLD pair: `rawGet` compares keys and
+  # write a slot whose `position` names an old pair: `rawGet` compares keys and
   # so never matches it, but it stays filled forever, and enough of them make
   # `emptySlot` spin on a probe sequence with no free slot left.
   if t.data.len > oldLen and t.hashes.len > 0:
@@ -172,7 +172,7 @@ func mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V 
     let oldLen = t.data.len
     rawPut(t, k, v, h)
     idx = t.data.len-1
-    # When the insert was refused, `data.len-1` names the pair BEFORE the one
+    # When the insert was refused, `data.len-1` names the pair before the one
     # asked for, so a reference to someone else's value would escape. Both tests
     # matter: `idx < 0` for a table that is still empty, and `len <= oldLen` for
     # a refusal that left a non-empty one. Keeping `idx < 0` explicit is also
@@ -221,7 +221,7 @@ func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
     inc j
   t.data.shrink(t.data.len - 1)
   if t.data.len > HashThreshold:
-    # `rawGet` does NOT rebuild lazily: when `data.len > HashThreshold`
+    # `rawGet` does not rebuild lazily: when `data.len > HashThreshold`
     # it indexes into `t.hashes` directly, so leaving `hashes = @[]`
     # turns the next lookup into an out-of-bounds read. Rebuild the
     # hash table sized to fit the current data.len. We can't just call

@@ -141,14 +141,14 @@ type
                              ## question; hexer only carries the string across.
     interrupt: StrId         ## `{.interrupt: "SysTick".}` — the exception/interrupt
                              ## vector this proc handles. Same arrangement as
-                             ## `register`: which vectors a part HAS is arkham's
+                             ## `register`: which vectors a part has is arkham's
                              ## question, so hexer only carries the name across.
 
 proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): CollectedPragmas
 
 proc applicationTag(n: Cursor): string =
   ## `"call"` or `"instr"` for a call-shaped node. Whether something costs an
-  ## ABI call must be answerable downstream from the TAG ALONE — with no symbol
+  ## ABI call must be answerable downstream from the tag alone — with no symbol
   ## resolution and no cross-module load — so the callee is resolved once, here,
   ## and the answer is baked into the tag.
   result = "call"
@@ -195,14 +195,14 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
   if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {} and
       c.dynlibIsStaticImport:
-    # The library name goes into Leng wherever a `dynlib` means a STATIC import
+    # The library name goes into Leng wherever a `dynlib` means a static import
     # — see `dynlibIsStaticImport` for the whole matrix. Only the native backend
     # reads it (it builds the import table itself); `lengc`'s C and LLVM code
     # generators skip the pragma, because their linker resolves the symbol.
     #
     # Not gated on `c.nativeBackend`: the pragma costs the C and LLVM back ends
     # nothing. (It used to be gated, back when a non-main module's `.x.nif` was
-    # shared by all backends in a nimcache: then the file's CONTENT depended on
+    # shared by all backends in a nimcache: then the file's content depended on
     # which backend's hexer run got there first, and arkham refused `system`'s
     # externs in a build that had been green a moment earlier. Every backend
     # has its own directory now, see `modnames.BackendDirC`.)
@@ -580,7 +580,7 @@ proc pointerTag(n: Cursor): string =
   ## Which Leng pointer a `ptr`/`var`/`lent` node becomes: `aptr` when it points at
   ## an `UncheckedArray[T]`, `ptr` otherwise.
   ##
-  ## Leng distinguishes the two — `ptr` addresses ONE object, `aptr` an array of
+  ## Leng distinguishes the two — `ptr` addresses a single object, `aptr` an array of
   ## them — and only `aptr` may be indexed or have an offset added to it. That is
   ## exactly the distinction Nim already draws between `ptr T` and
   ## `ptr UncheckedArray[T]`, so the tag is a rename, not a judgement call.
@@ -712,7 +712,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
     of CstringT:
       # `(aptr (c 8))`, not `(ptr (c 8))`: a cstring is indexed (`s[i]`, and every
       # scan in std/strings walks it), which is what Leng's `aptr` means — a pointer
-      # to an array of elements. `ptr` addresses ONE object and may not be indexed.
+      # to an array of elements. `ptr` addresses a single object and may not be indexed.
       dest.addParLe("aptr", n.info)
       dest.addParLe($CharT, n.info)
       dest.addIntLit(8, n.info)
@@ -830,7 +830,7 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor;
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
     # `constRef = true`: this pointer exists only because the parameter is
-    # passed by reference for efficiency — the SOURCE parameter is by-value, so
+    # passed by reference for efficiency — the source parameter is by-value, so
     # nothing may write through it. `passByConstRef` already excluded
     # `sink`/`var`/`out`, so that is the precondition which licensed the
     # pointer, not something anyone has to analyse. `funcsummary` reads the
@@ -924,7 +924,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.flags.incl pk
               inc n
           of InstructionP, IntrinsicP:
-            # sem already resolved and checked the opcode; re-resolve the NAME
+            # sem already resolved and checked the opcode; re-resolve the name
             # here so hexer carries the enum rather than a string.
             n.into:
               expectStrLit c, n
@@ -965,7 +965,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               expectIntLit c, n
               result.bits = n.intVal
               inc n
-          of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
+          of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, InvariantP, ReportP,
              TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
              BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP, SizeP,
              FeatureP, UncheckedAssignP, UncheckedAccessP, SyncP, AssumeSyncP,
@@ -1126,8 +1126,8 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     # optimizer's condition-elimination pass reads it to learn facts from the
     # fall-through of assert/panic guards.
     #
-    # NOT for `.raises` procs: under goto exceptions a raising "noreturn" proc
-    # (raiseOSError) RETURNS at the Leng level — it hands back an error code
+    # Not for `.raises` procs: under goto exceptions a raising "noreturn" proc
+    # (raiseOSError) does return at the Leng level — it hands back an error code
     # for the caller to propagate. Telling C it never returns made gcc delete
     # the callers' error paths (a stage-2 boot miscompile), and it would
     # mislead the fall-through learning the same way. Only a proc that
@@ -1151,7 +1151,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     skip n
   takeParRi dest, n, procStart
   swap dst, dest
-  # A `dynlib` importc proc IS declared unless the runtime loader is taking it
+  # A `dynlib` importc proc is declared unless the runtime loader is taking it
   # over: that lowering replaces the declaration by a function-pointer global
   # *of the same symbol*, so emitting both would collide. Where the symbol is a
   # static import instead — the native image's own import table, or a linker
@@ -1300,7 +1300,7 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineI
       # Reference a static LongString const, named by *content* via the
       # `strlit.0.I<hash>.<module>` instantiation form. Two properties matter:
       #
-      # 1. The disambiguator is a hash of the string, NOT a per-module counter.
+      # 1. The disambiguator is a hash of the string, not a per-module counter.
       #    A counter makes the symbol's number depend on every other literal in
       #    the module, so editing an unrelated literal (or recompiling a module
       #    on its own) renumbers consts that *other* modules' inline-proc copies
@@ -1789,7 +1789,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       if isAddrOfAconstrUarray(n):
         trAddrAconstrUarray(c, dest, n)
       else:
-        # Keep the two apart: `(haddr x)` is the compiler binding x's LOCATION
+        # Keep the two apart: `(haddr x)` is the compiler binding x's location
         # for a `var`/`out` parameter, `(addr x)` is the user turning it into a
         # value. They lower identically, but a back end that can bind a location
         # without materialising a pointer needs to know which it is looking at.
@@ -1856,7 +1856,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       #skip n
     of NilX:
       # `(nil T)` — the frontend types every `nil` (see `trNil` in derefs.nim)
-      # and the type slot is a TYPE, not an expression. Keep it: it is what
+      # and the type slot is a type, not an expression. Keep it: it is what
       # tells `intramodinliner`, which substitutes a literal argument at each
       # use, what the pointer it splices actually is.
       takeInto dest, n:
@@ -1962,7 +1962,7 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
 
     let typAt = n
     trType c, dest, n
-    # Type queries during traversal walk INPUT trees, which carry the
+    # Type queries during traversal walk input trees, which carry the
     # original name — register that; the renamed symbol answers queries
     # against the emitted tree (the hoisted decl itself).
     c.typeCache.registerLocal(s0, symKind, typAt, n)
@@ -2552,7 +2552,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         trTypeDecl c, dest, n, mode
     of ContinueS, WhenS:
       error c, "unreachable: ", n
-    of PragmasS, AssumeS, AssertS:
+    of PragmasS, AssumeS, AssertS, InvariantS:
       skip n, SkipFull
   else:
     assert n.hasMore
@@ -2638,13 +2638,13 @@ proc emitDynlibLoad(dest: var TokenBuf; loadSym, stepSym: SymId;
 proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
                 rootInfo: NifLineInfo) =
   ## Emit the `dynlib` bindings: one handle global per library plus one
-  ## function-pointer global per proc pulled from it. Resolving either is CODE
+  ## function-pointer global per proc pulled from it. Resolving either is code
   ## (`nimLoadLibrary` / `nimGetProcAddr`), so the declaration goes to `dest` with
-  ## NO value and the resolution to `initDest` as an assignment — the same split
+  ## no value and the resolution to `initDest` as an assignment — the same split
   ## `trToplevel` makes for a module-level `var` with a non-static initializer, and
   ## the reason no backend needs a rule for when a global's initializer runs.
   ##
-  ## `initDest` is spliced into the module's init proc BEFORE the module's own
+  ## `initDest` is spliced into the module's init proc before the module's own
   ## top-level code, so the bindings are resolved before anything can call through
   ## one. (They used to live in the initializer so that a library nothing pulls
   ## from would die with its globals in DCE; as statements they are roots, and the
@@ -2853,7 +2853,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
 
     # (gvar :nimEnviron (pragmas (exportc "nimEnviron")) (ptr (ptr cchar)) .)
     # The environment block (`char **`), written by `main` from its 3rd parameter.
-    # Distinct from libc's `environ` ON PURPOSE: this same gvar is emitted for the C
+    # Distinct from libc's `environ` on purpose: this same gvar is emitted for the C
     # backend too (codegen is shared), and an exportc `environ` would clash with
     # libc's. The libc-free backend has no `environ`, so std/envvars + std/posix read
     # `nimEnviron` instead under `nimNoLibc` (on the C backend it's dead — those
@@ -2968,7 +2968,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   dest.addSymUse(initSym, rootInfo)
   dest.addParRi() # call
   if c.nativeBackend and not c.crtEntry:
-    # Native image: terminate through system's `cExit(0)` — a DECLARED
+    # Native image: terminate through system's `cExit(0)` — a declared
     # cross-module call that flushes the std streams and then reaches
     # `ExitProcess` (windows) / `_exit` (linux) via the ordinary import
     # path. The backend synthesizes no process-exit of its own, so it needs
@@ -3007,7 +3007,7 @@ proc isTopLevelDecl(n: Cursor): bool {.inline.} =
 const RuntimeVarKinds = {VarY, LetY, ResultY, CursorY, PatternvarY, GvarY, GletY, TvarY, TletY}
 
 proc isStaticInitValue(c: var EContext; n: var Cursor): bool =
-  ## Can the single tree/token at `n` be laid out as STATIC DATA — bytes (plus
+  ## Can the single tree/token at `n` be laid out as static data — bytes (plus
   ## link-time addresses) the loader has in place before any code runs? Advances
   ## past it.
   ##
@@ -3018,7 +3018,7 @@ proc isStaticInitValue(c: var EContext; n: var Cursor): bool =
   ## exactly this predicate (`isStaticConstInit`) and rejects a violation, and the
   ## C/LLVM ones stop needing their hoist into a constructor.
   ##
-  ## An arithmetic node is deliberately NOT static even when both operands are
+  ## An arithmetic node is deliberately not static even when both operands are
   ## literals: C would take `40 + 2` at file scope, but a machine-code backend has
   ## to fold it to emit bytes, and constant folding belongs upstream (nimsem), not
   ## in three backends.
@@ -3027,8 +3027,8 @@ proc isStaticInitValue(c: var EContext; n: var Cursor): bool =
     result = true
     inc n
   of Symbol:
-    # A proc (or another compile-time constant) is a link-time ADDRESS. A runtime
-    # variable would have to be READ, which only code can do.
+    # A proc (or another compile-time constant) is a link-time address. A runtime
+    # variable would have to be read, which only code can do.
     result = c.typeCache.fetchSymKind(n.symId) notin RuntimeVarKinds
     inc n
   of TagLit:
@@ -3043,7 +3043,7 @@ proc isStaticInitValue(c: var EContext; n: var Cursor): bool =
       skip n
     elif n.exprKind in {AddrX, HaddrX}:
       # The address of a global or proc is fixed at link time whatever it holds, so
-      # only the ROOT of the lvalue matters — but a COMPUTED one (`addr a[i]`) is
+      # only the root of the lvalue matters — but a computed one (`addr a[i]`) is
       # not something a linker can bake, so require a bare symbol.
       result = false
       n.into:
@@ -3159,7 +3159,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     error c, "expected (stmts) but got: ", n
   swap cdest, toplevels
 
-  # The dynlib bindings' RESOLUTION goes into the init proc ahead of the module's
+  # The dynlib bindings' resolution goes into the init proc ahead of the module's
   # own top-level code (`c.initBody`), so nothing can call through an unresolved
   # function pointer; their declarations stay at top level, in `cdest`.
   var dynlibInit = createTokenBuf(64)

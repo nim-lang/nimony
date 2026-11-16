@@ -4,8 +4,6 @@
 # out of the `try`. Every claim here is false, and every read of `y` unset,
 # on some run. The proven side is `contracts/texitjoins_ok.nim`.
 
-{.feature: "staticContracts".}
-
 proc risky(x: int) {.raises.} =
   if x > 3: raise Failure
 
@@ -102,6 +100,16 @@ proc callerTrustsEnsures() =
   {.assert: k < 8.}               # rests on the `.ensures` above
   discard k
 
+type Box = object
+  f: int
+
+proc returnObjectThroughFinally(): Box {.ensures: result.f == 0.} =
+  try:
+    return Box(f: 0)
+  finally:
+    result.f = 100
+
 discard breakThroughFinally()
 discard returnThroughFinally()
 callerTrustsEnsures()
+discard returnObjectThroughFinally()

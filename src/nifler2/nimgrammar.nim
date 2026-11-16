@@ -279,7 +279,7 @@ grammar:
                                       ^cmd[ commandParam(mode) ]"""
   # GRAMMAR.TXT: `commandStart expr ...` reads like a repetition and was
   # transcribed as `commandParam+`. parser.nim's `commandExpr` takes exactly
-  # ONE parameter and then breaks out of `primarySuffix`'s loop: `echo a b c`
+  # one parameter and then breaks out of `primarySuffix`'s loop: `echo a b c`
   # is `(cmd echo (cmd a (cmd b c)))`, not a flat command -- which is why it
   # is not a `primarySuffix` but the optional last one. Inside the loop,
   # `x = 3 proc p() = discard` made `p()` a second parameter of `3`. The `+` also made
@@ -311,7 +311,7 @@ grammar:
   identVisDot "plainSymbol ."
   # GRAMMAR.TXT: `symbol '.' optInd symbolOrKeyword OPR?` -- the dot is not
   # optional there and an OPR may follow it. parser.nim's `identVis(allowDot)`
-  # is an if/elif on ONE of the two: an `OPR` wins, a `'.'` is the other
+  # is an if/elif on one of the two: an `OPR` wins, a `'.'` is the other
   # branch, and a bare symbol is the fallthrough. So `type T = object` never
   # reached the `=`.
 
@@ -520,7 +520,7 @@ grammar:
   primaryPragma(mode: PrimaryMode) """primary(mode)
                 (&pragmaOnPrimary(mode) validInd ^pragmax[ pragma ])?"""
   # GRAMMAR.TXT: `simpleExpr = ... pragma?`, unguarded. `simpleExprAux` takes
-  # the pragma only when it is `NO_IND` or a real indent AND the mode is
+  # the pragma only when it is `NO_IND` or a real indent and the mode is
   # `pmNormal`. Without the guard a `{.noSideEffect.}:` block on the line
   # after `var a = 1` became the *value's* pragma and then took the `:` block
   # that belonged to it.

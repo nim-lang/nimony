@@ -25,7 +25,7 @@
 ## one, moving the last child to the front -- all are pointer assignments that
 ## touch a constant number of cells, whatever the size of the subtree.
 ##
-## What does NOT change is the atoms. A `payload` is a `nifcore.NifToken`
+## What does not change is the atoms. A `payload` is a `nifcore.NifToken`
 ## built by nifcore's own constructors, so a tag is still a `TagId` and a name
 ## is still a `StrId` interned in the same `Pool`: only the wiring is local to
 ## nifler2. The one thing that does not fit in a token's 28-bit payload is a

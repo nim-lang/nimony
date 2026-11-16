@@ -1311,7 +1311,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
           {ClosureP, PassiveP} * crucial.flags == {}:
         # Under `autoclosures`, `iterator(): T` means the closure-iterator
         # type. Writing the pragma out here is what makes the two spellings the
-        # same TREE — every `procHasPragma(typ, ClosureP)` downstream (typenav's
+        # same tree — every `procHasPragma(typ, ClosureP)` downstream (typenav's
         # closure projection, hexer's `isClosure`, the iter-value trampoline)
         # tests for it, and none of them should have to know about the feature.
         # Without the feature the annotation is required, as for proc types
@@ -1350,7 +1350,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     of InvokeT:
       semInvoke c, dest, n, context
     of PluginCallT:
-      # A deferred plugin call in a TYPE slot. `context` is forwarded so a
+      # A deferred plugin call in a type slot. `context` is forwarded so a
       # value-returning plugin deferred into a value-allowing slot (an
       # `array[binomial(N, K), T]` length, say) re-checks under `AllowValues`
       # and its ordinal result is accepted as a length rather than misread as

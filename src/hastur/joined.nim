@@ -42,7 +42,7 @@ proc joinable*(file: string; cat: Category): bool =
 # runs. That is a dozen-odd process creations per test — cheap on Unix, brutal
 # on Windows, and paid ~500 times over.
 #
-# So a directory's plain tests are compiled into ONE program: a generated
+# So a directory's plain tests are compiled into a single program: a generated
 # driver imports each of them, and module initialization (which is where a test
 # file's top-level code lives) runs in import order. The program's output is
 # therefore the members' outputs concatenated, which is exactly what the

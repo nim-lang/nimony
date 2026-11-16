@@ -1,8 +1,8 @@
 # illumos event ports: one-shot FD readiness plus SIGEV_PORT AIO completion.
 # Positioned regular-file operations use private staging buffers and duplicated
-# descriptors, so the CALLER'S buffer is never touched by libc. A cancelled or
-# timed-out READ therefore completes at once: its late data lands in staging
-# and is dropped. A WRITE does not: it may still reach the file after the
+# descriptors, so the caller's buffer is never touched by libc. A cancelled or
+# timed-out read therefore completes at once: its late data lands in staging
+# and is dropped. A write does not: it may still reach the file after the
 # caller was told it failed, and a retry at the same offset could then be
 # overwritten by the stale one. A write is completed only by its port event,
 # with what really happened (`completeFromKernel`), exactly like io_uring.

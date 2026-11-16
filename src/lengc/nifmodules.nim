@@ -23,7 +23,7 @@ when defined(nimony):
   {.feature: "lenientnils".}
 
 import std / [assertions, tables, syncio] # syncio: `quit`
-from std / os import fileExists           # NOT a whole `os` import: it exports a
+from std / os import fileExists           # not a whole `os` import: it exports a
                                           # `FileId` that collides with nifcore's
 import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
 import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
@@ -149,7 +149,7 @@ proc tracebackTypeC*(c: var MainModule; n: Cursor): Cursor =
 
 proc canLoadForeign*(c: var MainModule; s: SymId): bool =
   ## True when `getDeclOrNil` would find a declaration for `s` — i.e. the owning
-  ## module's file exists AND its embedded index names `s`. `getDeclOrNil`
+  ## module's file exists and its embedded index names `s`. `getDeclOrNil`
   ## *asserts* on either failure, which is right for a consumer that needs the
   ## declaration to proceed; a consumer that is merely ASKING (an optimizer
   ## looking for a function summary) needs "no" to be an answer. Warms the
@@ -247,7 +247,7 @@ proc detectToplevelDecls(c: var MainModule) =
 type
   DensifyRemap = object
     ## Id translation for densifying a buffer whose pools differ from `dest`'s
-    ## (the `.bif` load path: bif mints fresh pools — its INVARIANT — while the
+    ## (the `.bif` load path: bif mints fresh pools — its invariant — while the
     ## backends need the canonical Leng tag pool for `stmtKind` & co to decode).
     ## Inactive (empty `tagMap`) when source and dest share pools: densify's
     ## string-based re-adds (`strVal`/`symName` resolve against the *cursor's*
@@ -322,7 +322,7 @@ proc load*(filename: string; pool: Pool = nil; tags: TagPool = nil): MainModule 
   ## filenames stay `.nif` throughout the pipeline, the content decides.
   ## Text is parsed with a canonical Leng tag pool so interned TagIds equal the
   ## master ordinals that `stmtKind`/`typeKind`/`symKind` decode against; a
-  ## `.bif` is loaded zero-copy with its own fresh pools (the bif INVARIANT)
+  ## `.bif` is loaded zero-copy with its own fresh pools (the bif invariant)
   ## and translated to the canonical pools during the densify copy below.
   ##
   ## `pool`/`tags`: intern into these instead of fresh ones, so the module's

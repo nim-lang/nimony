@@ -9,7 +9,7 @@
 import std / [memfiles, parseutils, assertions]
 import stringviews
 import vfs
-import nifcore  # the ONE token-kind enum, shared with the binary token model
+import nifcore  # the single token-kind enum, shared with the binary token model
 export NifKind
 
 const StringLit* = StrLit
@@ -247,7 +247,7 @@ proc decodeStr*(r: Reader; t: ExpandedToken): string =
 
 proc needsDecoding*(t: ExpandedToken): bool {.inline.} =
   ## Whether `decodeStr` would do anything but copy `t.data`: an escape to
-  ## expand, or a module suffix to append. When it is false the bytes ARE the
+  ## expand, or a module suffix to append. When it is false the bytes are the
   ## value, so a client that interns them (`getOrInclFromView`) can skip
   ## building a string at all.
   TokenHasEscapes in t.flags or TokenHasModuleSuffixExpansion in t.flags
@@ -552,7 +552,7 @@ proc splitSymbols*(r: var Reader; enable = true) {.inline.} =
   ## client as one string is what makes the rest of the compiler take it
   ## apart again, over and over.
   ##
-  ## In split mode the reader takes it apart ONCE, while it still has the
+  ## In split mode the reader takes it apart once, while it still has the
   ## raw bytes: a `Symbol`/`SymbolDef` token carries only `<name>`, and its
   ## `suffixes` field says how many `ExtendedSuffix` tokens follow — one per
   ## remaining component, in order, each tagged with its `part`. So
@@ -585,10 +585,10 @@ proc splitSymbol(r: var Reader; result: var ExpandedToken) =
   ## follow it, which subsequent `next` calls hand out as `ExtendedSuffix`
   ## tokens. `result.data` is shortened to the name.
   ##
-  ## Same grammar as `nifcore.splitSpelling`, applied to the RAW bytes, where
+  ## Same grammar as `nifcore.splitSpelling`, applied to the raw bytes, where
   ## an escaped dot (`\2E`) is still three bytes and so cannot be mistaken for
   ## a separator: the module is the last dot-separated component unless it
-  ## STARTS with a digit (`p.0h107` is a local symbol, not one from a module
+  ## starts with a digit (`p.0h107` is a local symbol, not one from a module
   ## called `0h107`), and the name ends at the last `.` followed by a digit,
   ## because a name may contain dots itself (`a.b.c.23`).
   let origLen = result.data.len
@@ -632,7 +632,7 @@ proc splitSymbol(r: var Reader; result: var ExpandedToken) =
 
   r.pendingHasModule = moduleStart >= 0
   # `result.data.len` is the name by now; the components run from `start` to the
-  # symbol's ORIGINAL end.
+  # symbol's original end.
   r.pending = StringView(p: result.data.p +! start, len: origLen - start)
   var comps = 1'i32
   for j in 0 ..< r.pending.len:
@@ -1023,7 +1023,7 @@ proc offset*(r: var Reader): int {.inline.} =
 proc jumpTo*(r: var Reader; offset: int) {.inline.} =
   r.p = cast[pchar](r.f.data) +! offset
   assert cast[pointer](r.p) >= r.f.data and r.p < r.eof
-  # `offset` is the position AFTER the whole symbol, so a jump abandons the
+  # `offset` is the position after the whole symbol, so a jump abandons the
   # components of a split symbol that were not asked for.
   r.pendingLeft = 0
   r.pending = StringView(p: nil, len: 0)
@@ -1131,7 +1131,7 @@ when isMainModule and not defined(nimony):
   # An operator definition has no dot to split on and is left whole.
   assert tokens("foo.bar", true) == @["sym1:foo", "SymModule:bar"]
   assert tokens(":\\5B\\5D=", true) == @["def0:[]="]
-  # A disambiguator the inliner minted is NOT a module, however non-numeric it
+  # A disambiguator the inliner minted is not a module, however non-numeric it
   # looks after its first character.
   assert tokens("p.0h107", true) == @["sym1:p", "SymDisamb:0h107=0"]
   # ...and one with no numeric part at all (arkham's legacy syproc names) still

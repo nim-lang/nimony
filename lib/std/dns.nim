@@ -317,7 +317,7 @@ proc nextToken(s: string; i: var int): string =
 # to read.
 
 proc hostsFile(): string =
-  ## Where the machine keeps its static name table. The FORMAT is the same
+  ## Where the machine keeps its static name table. The format is the same
   ## everywhere — that is what the file is for — so only the path is split.
   when defined(windows):
     var root = getEnv("SystemRoot")
@@ -379,7 +379,7 @@ when defined(windows):
     ##
     ## Not a ring read and not `.passive`: this asks the local TCP/IP stack
     ## for its own settings, which is a memory lookup and not I/O. Only the
-    ## hosts FILE goes through the ring.
+    ## hosts file goes through the ring.
     r.servers = @[]
     var size = 0'u32
     if getNetworkParams(nil, addr size) != ErrorBufferOverflow: return

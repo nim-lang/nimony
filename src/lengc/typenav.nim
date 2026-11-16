@@ -103,7 +103,7 @@ proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
   of AtomicThreadFenceOp: "__atomic_thread_fence"
   of AtomicSignalFenceOp: "__atomic_signal_fence"
   # Not a `__builtin_*` but a PRELUDE macro, and it has to be: which spelling a
-  # spin hint has is a property of the C compiler's TARGET, and this side does
+  # spin hint has is a property of the C compiler's target, and this side does
   # not know it. `__builtin_ia32_pause` does not exist off x86 and there is no
   # portable ARM equivalent to name instead, so the choice belongs in the `#if`
   # the C compiler itself evaluates (`cprelude.NIM_CPU_RELAX`). The call shape is
@@ -285,7 +285,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(c, "(bool)")
     of CallC, InstrC:
-      # `(instr SYM …)` is typed EXACTLY like `(call SYM …)` — the callee's
+      # `(instr SYM …)` is typed exactly like `(call SYM …)` — the callee's
       # signature drives everything. Only the *cost* differs, which is what the
       # separate tag exists to make visible.
       var procType = navigateToObjectBody(c, getTypeImpl(c, firstChild(n)))

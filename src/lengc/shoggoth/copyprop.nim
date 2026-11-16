@@ -78,16 +78,16 @@ proc child0(c: Cursor): Cursor {.inline.} =
 
 proc addrRootOf(c: Cursor): SymId =
   ## The *storage* root of an `addr` operand — the local whose address is actually
-  ## taken. Unlike the deref-blind `rootOf`, it STOPS at a through-pointer step
-  ## (`deref`/`pat`): `addr((*p).f)` addresses the POINTEE — a heap location computed
-  ## from `p`'s value — so it does NOT take the address of `p`'s own storage; `p` is
-  ## only READ. Returns the base symbol of the leftmost projection spine, or
+  ## taken. Unlike the deref-blind `rootOf`, it stops at a through-pointer step
+  ## (`deref`/`pat`): `addr((*p).f)` addresses the pointee — a heap location computed
+  ## from `p`'s value — so it does not take the address of `p`'s own storage; `p` is
+  ## only read. Returns the base symbol of the leftmost projection spine, or
   ## `SymId(0)` when that spine crosses a `deref`/`pat` (⇒ no local is address-taken).
   ## Mirrors the analyser's DerefC context reset / mover's `CannotFollowDerefs`. Any
   ## spine shape it does not model falls back to the conservative `rootOf` (which still
   ## marks something address-taken), so the relaxation is one-directional: it can only
   ## un-mark a pointer whose pointee — never its storage — is addressed. That copy is
-  ## still sound to propagate because the pointer VALUE is what a substitution carries.
+  ## still sound to propagate because the pointer value is what a substitution carries.
   var n = c
   while true:
     case n.kind
@@ -124,7 +124,7 @@ proc isLeafLit(n: Cursor): bool {.inline.} =
 
 proc isStableAddrExpr(c: Cursor; deps: var seq[SymId]): bool =
   ## `(haddr L)` / `(addr L)` over a *stable spine*: a projection chain whose
-  ## address is computed from slot VALUES alone — symbols, field offsets,
+  ## address is computed from slot values alone — symbols, field offsets,
   ## constant or symbol indices, a `deref`/`pat` step through a pointer symbol.
   ## Evaluating such an expression reads no memory beyond the named slots in
   ## `deps`, so the address stays valid exactly as long as none of `deps` is
@@ -186,7 +186,7 @@ proc isStableAddrExpr(c: Cursor; deps: var seq[SymId]): bool =
 
 proc isPureValueExpr(c: Cursor): bool =
   ## True for an expression whose evaluation has no effect and cannot fault:
-  ## symbols, literals, field reads of NAMED slots, conversions and non-trapping
+  ## symbols, literals, field reads of named slots, conversions and non-trapping
   ## arithmetic. False for a call, a `deref`/index (may fault), `div`/`mod` (may
   ## trap), a constructor, an `ovf` — anything whose evaluation is itself an
   ## observable event.
@@ -214,7 +214,7 @@ proc isPureValueExpr(c: Cursor): bool =
             if not walk(n): result = false
       of AddC, SubC, MulC, NegC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC,
          ConvC, CastC:
-        # all of these carry their result TYPE as the first child
+        # all of these carry their result type as the first child
         result = true
         n.into:
           if n.hasMore: skip n
@@ -238,7 +238,7 @@ proc isPureValueExpr(c: Cursor): bool =
   result = walk(n)
 
 proc writtenRoot(c: Cursor): SymId =
-  ## The local whose STORAGE this lvalue writes. A through-pointer store
+  ## The local whose storage this lvalue writes. A through-pointer store
   ## (`(*p).f = v`, `p[i] = v`) writes the pointee, not `p` — `p` is only
   ## read, so copies of `p` stay valid. Mirrors `addrRootOf`.
   var n = c
@@ -263,16 +263,18 @@ type
     litOf: Tracker[SymId, int]         ## y -> (litPos+1): y currently holds that leaf
     addrOf: Tracker[SymId, int]        ## p -> (addrPos+1): p holds that stable `(haddr …)`
     addrDeps: Table[int, seq[SymId]]   ## addrPos -> spine symbols the address depends on
+    addrDepth: Table[int, int]         ## addrPos -> loop depth of its definition
+    loopDepth: int                     ## loops enclosing the current position
     pinned: HashSet[SymId]             ## spine symbols a snapshot may splice: never delete
     addrTaken: HashSet[SymId]          ## syms whose address is taken anywhere
-    stableAT: HashSet[SymId]           ## addr-taken syms proven READ-ONLY for the
+    stableAT: HashSet[SymId]           ## addr-taken syms proven read-only for the
                                        ## whole body (see `computeStableAT`): they
                                        ## participate in copy prop like any other
-                                       ## local, and a copy OF such a frozen local
+                                       ## local, and a copy of such a frozen local
                                        ## may even be substituted on an addr spine
     scalarHomed: HashSet[SymId]        ## locals declared with a register-sized
                                        ## type (int/float/char/bool/ptr): eliding
-                                       ## their copy on an ADDR spine would move
+                                       ## their copy on an addr spine would move
                                        ## the addr-taken-ness onto the source and
                                        ## pin a register-homed value to the stack
                                        ## — a measured pessimization (bif's
@@ -298,6 +300,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           litOf: initTracker[SymId, int](),
           addrOf: initTracker[SymId, int](),
           addrDeps: initTable[int, seq[SymId]](),
+          addrDepth: initTable[int, int](),
           pinned: initHashSet[SymId](),
           addrTaken: initHashSet[SymId](),
           stableAT: initHashSet[SymId](),
@@ -345,7 +348,7 @@ proc invalidate(c: var Context; s: SymId) =
   for k in toClear:
     c.copyOf[k] = SymId(0)
   # An address snapshot is a value computed from its spine symbols' slots;
-  # a write to any of them recomputes to a DIFFERENT address, so unlike a
+  # a write to any of them recomputes to a different address, so unlike a
   # literal snapshot it does not survive.
   toClear.setLen 0
   for k, v in c.addrOf.pairs:
@@ -356,7 +359,7 @@ proc invalidate(c: var Context; s: SymId) =
 proc isEligible(c: Context; s: SymId): bool {.inline.} =
   ## A local can participate in copy prop when nothing can mutate it behind the
   ## pass's back: either its address is never taken (only direct assignments —
-  ## which `trAsgn` sees — change it), or it is `stableAT` — its address IS
+  ## which `trAsgn` sees — change it), or it is `stableAT` — its address is
   ## taken but the whole-body classification proved it is never written at all.
   s != SymId(0) and s in c.localDefs and
     (s notin c.addrTaken or s in c.stableAT)
@@ -402,6 +405,7 @@ proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
         let pos = cursorToPosition(c.orig[], src)
         c.addrOf[dest] = pos + 1
         c.addrDeps[pos] = deps
+        c.addrDepth[pos] = c.loopDepth
         # The spliced copies keep reading the spine symbols, but `useCount`
         # was taken before splicing — never delete their decls.
         for d in deps: c.pinned.incl d
@@ -443,8 +447,14 @@ proc substituteLit(c: var Context; n: Cursor; litPos: int) =
   c.patchset.addSubst(pos, cursorAt(c.orig[], litPos))
   c.substCount.mgetOrPut(symId(n), 0) += 1
 
-proc trySubstitute(c: var Context; n: Cursor) =
+proc trySubstitute(c: var Context; n: Cursor; derefBase = false) =
   ## Prefer a snapshotted literal, then a snapshotted address, then a symbol copy.
+  ## An address snapshot is spliced where it folds — as the operand of a `deref`
+  ## (`derefBase`), which the rewriter's `deref_addr` rule turns back into the
+  ## plain lvalue — or at the loop depth it was defined at. Into a deeper loop
+  ## a non-folding splice (`(pat p j)`, a call argument) re-evaluates the
+  ## address every iteration, which undoes the hoisting `induction_variables`
+  ## did: `` `iv.q `` is exactly such a loop-invariant `(addr …)` binding.
   let s = symId(n)
   let root = resolve(c, s)
   var lp = c.litOf[s]
@@ -454,7 +464,11 @@ proc trySubstitute(c: var Context; n: Cursor) =
   if lp != 0:
     substituteLit(c, n, lp - 1)
   elif ap != 0:
-    substituteLit(c, n, ap - 1)     # splices the whole `(haddr …)` subtree
+    if derefBase or c.loopDepth <= c.addrDepth.getOrDefault(ap - 1):
+      substituteLit(c, n, ap - 1)   # splices the whole `(haddr …)` subtree
+    # Otherwise the use stays as it is. Falling through to the symbol copy
+    # would rename it to the snapshot's own binding — a read `useCount` never
+    # saw, of a decl the deletion pass then considers dead.
   elif root != s:
     substituteSym(c, n, root)
 
@@ -487,15 +501,24 @@ proc trExpr(c: var Context; n: var Cursor) =
   of TagLit:
     case n.exprKind
     of AddrC, HaddrC:
-      # `addr x`: the *address* of `x`, not its value. On the leftmost STORAGE spine
+      # `addr x`: the *address* of `x`, not its value. On the leftmost storage spine
       # `&y` and `&x` differ even when `y == x` (distinct storage), so the base local
       # is not substituted. But a `deref` breaks the spine: `&((*p).f)` addresses the
-      # POINTEE — a location computed from p's VALUE — so `p` (and anything below the
-      # deref) is an ordinary value use and IS substitutable. `trAddrOperand` walks the
+      # pointee — a location computed from p's value — so `p` (and anything below the
+      # deref) is an ordinary value use and is substitutable. `trAddrOperand` walks the
       # spine with that distinction; this is what collapses an inlined pointer param
       # copy `p2 = p` whose only uses are `&((*p2)…)`.
       n.into:
         while n.hasMore: trAddrOperand(c, n)
+    of DerefC:
+      n.into:
+        if n.hasMore:
+          if n.kind == Symbol:
+            trySubstitute(c, n, derefBase = true)
+            inc n
+          else:
+            trExpr(c, n)
+        while n.hasMore: trExpr(c, n)
     of CallC, InstrC:
       n.into:
         if n.hasMore: skip n             # callee
@@ -504,7 +527,7 @@ proc trExpr(c: var Context; n: var Cursor) =
       # nothing to invalidate.
     of DotC:
       # `(dot OBJ FIELD inheritance)`: only OBJ is a value expression. FIELD is a
-      # field-selector symbol — NEVER a value read. A local var can share a field's
+      # field-selector symbol — never a value read. A local var can share a field's
       # symbol name (e.g. a `f.0` temp alongside a `:f.0` object field), so blindly
       # substituting it would rewrite genuine field selectors and produce accesses
       # to a non-existent member.
@@ -528,8 +551,8 @@ proc trExpr(c: var Context; n: var Cursor) =
 proc trAddrOperand(c: var Context; n: var Cursor) =
   ## Traverse the operand of `(addr …)` on the storage spine: the leftmost projection
   ## chain whose base local's address is being formed. A bare local here is the storage
-  ## root and is NOT substituted (`&x.f` ≠ `&y.f` for a value-copy). A `deref`/`pat`
-  ## breaks the spine — below it we address the POINTEE, so the pointer is a value use
+  ## root and is not substituted (`&x.f` ≠ `&y.f` for a value-copy). A `deref`/`pat`
+  ## breaks the spine — below it we address the pointee, so the pointer is a value use
   ## and normal substitution (`trExpr`) resumes. Array indices are values too.
   case n.kind
   of Symbol:
@@ -542,7 +565,7 @@ proc trAddrOperand(c: var Context; n: var Cursor) =
     # address instead is observationally equivalent. This is what deletes the
     # inliner's defensive by-value string copies
     # (`var s2 = s; … readRawData(haddr s2) …` → reads `s` directly).
-    # `scalarHomed` copies are exempt: for them the copy IS the optimization
+    # `scalarHomed` copies are exempt: for them the copy is the optimization
     # (the source stays register-homed; see the field's doc).
     let s = symId(n)
     if s in c.stableAT and s notin c.scalarHomed:
@@ -744,7 +767,9 @@ proc trLoop(c: var Context; n: var Cursor) =
   closeBranch c
   openBranch c
   for s in writes: invalidate(c, s)
+  inc c.loopDepth
   trLoopBody(c, n)
+  dec c.loopDepth
   closeBranch c
   closeBranches c
 
@@ -770,10 +795,10 @@ proc trLab(c: var Context; n: var Cursor) =
   skip n
 
 proc trBreakOrRet(c: var Context; n: var Cursor) =
-  ## `(ret x)` / `(raise x)` carry a VALUE, and it is read like any other — an
+  ## `(ret x)` / `(raise x)` carry a value, and it is read like any other — an
   ## inlined body's result temp is very often returned straight back, so skipping
   ## the operand left the pass blind to exactly the shape inlining produces.
-  ## `(break L)` carries a LABEL, which must never be substituted.
+  ## `(break L)` carries a label, which must never be substituted.
   if n.stmtKind in {RetS, RaiseS}:
     n.into:
       if n.hasMore and n.kind != DotToken: trExpr(c, n)
@@ -833,7 +858,7 @@ proc preScan(c: var Context; n: Cursor) =
            t.typeKind in {IT, UT, FT, CT, BoolT, PtrT, AptrT}:
           c.scalarHomed.incl symId(nameCur)
     if n.exprKind in AddrKinds:
-      # Only a local whose OWN storage is addressed is excluded from copy prop. An
+      # Only a local whose own storage is addressed is excluded from copy prop. An
       # `addr((*p).f)` addresses the pointee (computed from p's value), so `p` stays
       # propagatable — `addrRootOf` stops at the `deref`/`pat` and returns SymId(0).
       let s = addrRootOf(child0(n))
@@ -849,24 +874,24 @@ proc preScan(c: var Context; n: Cursor) =
 # An addr-taken local is normally poisoned for copy prop: a call or a
 # through-pointer store could rewrite it invisibly. But the hot shapes the
 # inliner leaves behind — `var s2 = s; … readRawData(haddr s2) …` — take the
-# address only to READ through it. When we can prove the local's storage is
+# address only to read through it. When we can prove the local's storage is
 # never written after its initializer, its bytes are frozen for the whole body
 # and it is as safe as a never-addressed local ("reads of addr-taken read-only
 # locals are stable").
 #
-# The proof is fully static, no flow needed, because it accounts for EVERY
+# The proof is fully static, no flow needed, because it accounts for every
 # pointer that could reach the local:
 #  * The local is never the storage root of an `asgn`/`store` — including a
 #    `(deref (haddr s))`-shaped LHS.
 #  * Every `(addr/haddr s…)` occurrence is a direct argument of a call whose
 #    summary says that param is not written (`paramMayWrite`). If the summary
-#    also says the param ESCAPES, the pointer may leave the callee — but
+#    also says the param escapes, the pointer may leave the callee — but
 #    `escapes` (funcsummary) means "stored into a global or passed to an
-#    unknown callee", and either of those would ALSO set `writesGlobal` /
+#    unknown callee", and either of those would also set `writesGlobal` /
 #    `callsUnknown` on the summary. So for a known callee with neither flag
-#    (nor `resultEscapes`), the address can leave ONLY through the result
+#    (nor `resultEscapes`), the address can leave only through the result
 #    value: if that result is discarded, nothing survives; if it is bound
-#    directly to a local `p`, `p` is recorded as a DERIVED pointer.
+#    directly to a local `p`, `p` is recorded as a derived pointer.
 #  * A derived pointer must only ever be consumed as the base of a load
 #    (`deref`/`pat`/`at`/`dot`): appearing inside a store LHS, escaping as a
 #    bare value (assignment RHS, unknown call arg, `ret`, arithmetic, cast) or
@@ -927,10 +952,10 @@ proc scanStabExpr(c: var Context; sc: var StabScan; n: var Cursor)  # forward
 
 proc pointerCompRoots(c: var Context; sc: var StabScan; n: Cursor;
                       roots: var seq[SymId]): bool =
-  ## True when `n` is a pure pointer COMPUTATION: `addr`/`haddr` leaves glued
+  ## True when `n` is a pure pointer computation: `addr`/`haddr` leaves glued
   ## together by `conv`/`cast`/`add`/`sub` with value operands — the inlined
   ## `readRawData` computes `cast[aptr](cast[u64](addr s.bytes) + 1)`. A cast
-  ## or an offset only re-types/moves the pointer; the derived-pointer USE
+  ## or an offset only re-types/moves the pointer; the derived-pointer use
   ## judgment still provides the safety, so a binding position treats the
   ## whole computation like a bare addr. `roots` collects every local whose
   ## own storage the result may point into (an addr over a `deref`-crossing
@@ -953,7 +978,7 @@ proc pointerCompRoots(c: var Context; sc: var StabScan; n: Cursor;
         roots.add root
       else:
         # The spine crosses a `deref`/`pat`: the result points into the
-        # pointee, so it is computed from the base pointer's VALUE, which now
+        # pointee, so it is computed from the base pointer's value, which now
         # has a second name. A derived pointer used here is no longer a mere
         # load base (`(haddr (dot (deref p) f))` then a store through the new
         # pointer writes p's origin), so it must taint its origins like any
@@ -1031,9 +1056,9 @@ proc scanStabCall(c: var Context; sc: var StabScan; n: var Cursor;
       inc idx
 
 proc scanStabExpr(c: var Context; sc: var StabScan; n: var Cursor) =
-  ## Value-position expression walk. A bare Symbol consumed as the BASE of a
+  ## Value-position expression walk. A bare Symbol consumed as the base of a
   ## load (`deref`/`pat`/`at`/`dot`) is a plain read; every other bare-Symbol
-  ## use lets the VALUE escape to another name (only relevant for derived
+  ## use lets the value escape to another name (only relevant for derived
   ## pointers, so over-flagging integers is free).
   case n.kind
   of Symbol:
@@ -1220,12 +1245,14 @@ proc registerParams(c: var Context; params: Cursor) =
 
 proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
                   summaries: ptr FunctionSummaryTable = nil;
-                  m: ptr MainModule = nil) =
+                  m: ptr MainModule = nil): bool {.discardable.} =
   ## In-place copy propagation + dead-binding elimination for a single proc body.
   ## `params` is the enclosing proc's `(params …)` node (empty for a bare body);
   ## its parameters become eligible copy sources (see `registerParams`).
   ## `summaries`/`m` feed the read-only addr-taken classification (nil ⇒ every
   ## call taking an address taints conservatively, the pre-extension behavior).
+  ## Returns whether it changed `buf`.
+  result = false
   var ctx = createContext(addr buf)
   registerParams(ctx, params)
   block:
@@ -1257,6 +1284,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
+    result = true
 
 # ---- self-tests -----------------------------------------------------------
 
@@ -1447,7 +1475,7 @@ when isMainModule:
       "(call use.0.M p.0.M))")
 
   block scope_does_not_leak_inner_name:
-    # Outer `y = inner x` is a valid copy INSIDE the scope, but substituting
+    # Outer `y = inner x` is a valid copy inside the scope, but substituting
     # the inner name into a use after the `(scope)` closes would outlive x's
     # lifetime (arkham then reuses the register). Keep the outer name.
     chk(
@@ -1461,7 +1489,7 @@ when isMainModule:
       "(call outer.0.M y.0.M))")
 
   block addr_snapshot_inlined_inc:
-    # The inliner's by-address residue for a COMPOUND lvalue: `inc st.tags`
+    # The inliner's by-address residue for a compound lvalue: `inc st.tags`
     # splices as a pointer temp. Substitute the address into both derefs
     # (the rewriter later folds `(deref (haddr …))`) and delete the temp.
     chk(
@@ -1471,6 +1499,24 @@ when isMainModule:
       "(stmts (var :st.0.M . . (call f.0.M)) . " &
       "(asgn (deref (haddr (dot (deref st.0.M) tags.0.M 0))) " &
       "(add (i 64) (deref (haddr (dot (deref st.0.M) tags.0.M 0))) 1)))")
+
+  block addr_snapshot_kept_out_of_loop:
+    # An invariant address used as a plain value inside a loop (what
+    # `induction_variables` hoists) is not spliced back into it — neither
+    # directly nor through a copy, which must not be renamed to `p` either:
+    # `p`'s decl is only deletable while its reads are all spliced away.
+    # (`y`'s initializer sits at `p`'s own depth and does get the address.)
+    chk(
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(var :y.0.M . (ptr (i 64)) p.0.M) " &
+      "(loop (stmts (call use.0.M y.0.M) (call use.0.M p.0.M)) " &
+      "(continue c.0.M)))",
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(var :y.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(loop (stmts (call use.0.M y.0.M) (call use.0.M p.0.M)) " &
+      "(continue c.0.M)))")
 
   block addr_snapshot_spine_write_blocks:
     # The spine symbol is reassigned between binding and use: the address
@@ -1502,7 +1548,7 @@ when isMainModule:
       "(asgn (deref (haddr (deref q.0.M))) 1))")
 
   block inlined_callee_with_early_returns:
-    # THE miscompile the literal snapshots were disabled for. An inlined callee
+    # This is the miscompile the literal snapshots were disabled for. An inlined callee
     # with early `return`s lowers to `… (jmp ret) … (lab ret) …` *inside* one
     # branch; the `lab` revives that branch. `(asgn r x)` after it is a branch
     # write like any other and must not survive the join with the else arm's
@@ -1527,7 +1573,7 @@ when isMainModule:
 
   # ---- read-only addr-taken extension -------------------------------------
   # These need callee summaries: parse a module carrying `(smry …)` pragma
-  # procs SHARING the body buffer's pool/tags so SymIds line up, then collect.
+  # procs sharing the body buffer's pool/tags so SymIds line up, then collect.
 
   proc summariesFor(buf: var TokenBuf; modSrc: string): FunctionSummaryTable =
     var mb = parseFromBuffer(modSrc, "M", 100, sharedPool = buf.pool,
@@ -1539,7 +1585,7 @@ when isMainModule:
       "(stmts (proc :ro.0.M (params (param p.0.M (ptr (i 64)))) . " &
       "(pragmas (smry (param 0 0 reads))) (stmts)))"
     EscDecl =                      # reads through param 0, pointer into it
-                                   # leaves via the RESULT (no global store)
+                                   # leaves via the result (no global store)
       "(stmts (proc :esc.0.M (params (param p.0.M (ptr (i 64)))) (ptr (c 8)) " &
       "(pragmas (smry (param 0 0 reads escapes))) (stmts)))"
     WrDecl =                       # writes through param 0
@@ -1562,7 +1608,7 @@ when isMainModule:
     doAssert toString(buf) == before, "expected unchanged:\n  " & input
 
   block readonly_addr_taken_copy_elided:
-    # THE target shape: an inliner's defensive copy whose address only feeds a
+    # The target shape itself: an inliner's defensive copy whose address only feeds a
     # non-writing, non-escaping callee. The copy folds away entirely — even
     # the `(haddr y)` storage use is redirected to the source.
     chkS(
@@ -1649,7 +1695,7 @@ when isMainModule:
 
   block rederived_pointer_store_blocks:
     # The inlined `=wasMoved` of a `sink` param's nested field: `d` points into
-    # x, `d2` is formed from d's VALUE, and the store through d2 writes x. x is
+    # x, `d2` is formed from d's value, and the store through d2 writes x. x is
     # not read-only, so the copy taken before the store must stay (substituting
     # x for y moved the cleared field into `use` — std/tables' `rawPut` stored
     # nil refs under `--opt:speed`).
@@ -1679,7 +1725,7 @@ when isMainModule:
       WrDecl)
 
   block cast_addr_binding_tracked:
-    # The inlined `readRawData` SHORT branch: a cast only re-types the pointer,
+    # The inlined `readRawData` short branch: a cast only re-types the pointer,
     # so `var p = (conv (aptr (c 8)) (haddr y))` is a tracked derived binding;
     # with p read-only-used the copy still folds.
     chkS(
@@ -1706,7 +1752,7 @@ when isMainModule:
 
   block scalar_copy_keeps_storage:
     # A register-sized copy is stable, but rewriting its `(haddr y)` would pin
-    # the SOURCE to the stack — value uses substitute, the storage use stays.
+    # the source to the stack — value uses substitute, the storage use stays.
     chkS(
       "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :y.0.M . (u 64) x.0.M) " &
@@ -1720,7 +1766,7 @@ when isMainModule:
 
   block written_source_keeps_haddr:
     # y is frozen, but its source x is reassigned later: the storage
-    # substitution must NOT happen (the derived reads would see NEW x bytes).
+    # substitution must not happen (the derived reads would see the new x bytes).
     assertUnchangedS(
       "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(var :y.0.M . . x.0.M) " &

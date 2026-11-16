@@ -41,6 +41,27 @@ proc semStmtBody(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScop
   semStmtBranch c, dest, it, isNewScope
   n = it.n
 
+proc semLoopBody(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## The body of a `while` or `for`: `semStmtBody`, except that the pragma
+  ## lines it starts with, comments aside, may hold `{.invariant: cond.}`. That
+  ## is the one place an invariant may stand, because it is the claim about the
+  ## head of every iteration. Anywhere else it would read as an `{.assert.}`.
+  var list = createTokenBuf(0)
+  let orig = n
+  var body = bodyAsList(orig, list)
+  var loopHead = true
+  copyInto dest, body:
+    while body.hasMore:
+      if loopHead and body.stmtKind == PragmasS and c.phase != SemcheckTopLevelSyms:
+        var it = Item(n: body, typ: c.types.voidType)
+        semPragmasLine c, dest, it, loopHead
+        body = it.n
+      else:
+        if body.stmtKind != CommentS: loopHead = false
+        semStmt c, dest, body, false
+  n = orig
+  skip n
+
 proc semConv(c: var SemContext; dest: var TokenBuf; it: var Item)
 proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false): bool =
   template checkBranch(branch) =
@@ -168,7 +189,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
      ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
      AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, AlwaysS, PragmasS,
      PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
-     ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, StaticstmtS,
+     ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, InvariantS, StaticstmtS,
      BindS, MixinS, UsingS, AsmS, DeferS:
     result = false
 
@@ -616,7 +637,7 @@ proc discardCallExplicitly(dest: var TokenBuf; exPos: int; info: NifLineInfo) =
   ## (`{.discardable.}` proc returning a `string`) was bound to a temp whose
   ## symbol was then left behind as a statement.
   var one = cursorAt(dest, exPos)
-  # Only a CALL: a statement `if`/`case` is `void` and its branches were
+  # Only a call: a statement `if`/`case` is `void` and its branches were
   # discarded one by one (`semStmt`). One that still arrives typed, as an
   # `untyped` template's expansion does, is not wrapped: that would turn a
   # statement without an `else` into an expression that has no value.
@@ -1100,7 +1121,7 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
       result = ObjField(level: -1)
 
 proc visibilityModule(c: SemContext; info: NifLineInfo): string =
-  ## The module the code at `info` was WRITTEN in — what private field
+  ## The module the code at `info` was written in — what private field
   ## visibility is judged against.
   ##
   ## Inside an expansion the tree mixes two provenances: the expanded routine's
@@ -1163,7 +1184,7 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
         if owner == SymId(0):
           visible = true
         else:
-          # Judge against the module this code was WRITTEN in, not the module
+          # Judge against the module this code was written in, not the module
           # being compiled: a template/macro body or a `{.untyped.}` generic
           # body reaches sem in the consumer's module but belongs to its own.
           # `c.routine.inInst` used to disable the check here instead, which
@@ -1417,7 +1438,7 @@ proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
       inc c.routine.inLoop
       c.routine.breakTargets.add SymId(0)
       withNewScope c:
-        semStmtBody c, dest, it.n, true
+        semLoopBody c, dest, it.n
       discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
   producesVoid c, dest, info, it.typ
@@ -1638,7 +1659,7 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
       if n.isTagLit:
         result = true
         # ^ export marker position has a `(`? If so, it is a magic!
-        # The trailing symbol occupies its token PLUS any line-info suffix:
+        # The trailing symbol occupies its token plus any line-info suffix:
         # find the atom's head so the whole atom is replaced.
         var atomStart = dest.len-1
         # Raw token reads for the scan: `readonlyCursorAt` mints a CursorOwner
@@ -1906,7 +1927,7 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
           break
       let insertPos = cursorToPosition(dest, n)
       let before = dest.len
-      # NOT `insert fromBuffer(...)`: the raw array is unsealed, and the
+      # Not `insert fromBuffer(...)`: the raw array is unsealed, and the
       # Cursor overload splices `subtreeWidth(src)` tokens of a *sealed* subtree.
       # The openArray overload normalizes (seals + elides) first.
       dest.insert varargsParam, insertPos
@@ -2091,7 +2112,7 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         semExprSym c, dest, it, fetchSym(c, sym), start, flags
         return
       else:
-        # the choice goes INTO the error, as the undeclared identifier above
+        # the choice goes into the error, as the undeclared identifier above
         # does: an error next to it would be one child too many for whatever
         # slot the name was in -- a parameter's default value, say, which
         # phase 3 then walked past its end
@@ -2448,7 +2469,7 @@ proc errorCodeValueName(c: var SemContext; orig: Cursor): string =
         result = pool.strings[symToIdent(e.symId)]
 
 proc semExceptionType(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  ## Emits exactly ONE node for the arm's type, an error or not: the arm is
+  ## Emits exactly one node for the arm's type, an error or not: the arm is
   ## `(except <type> <body>)` and every later pass reads it by position.
   let info = it.n.info
   let orig = it.n
@@ -2497,7 +2518,7 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
           decl.addEmpty() # export marker
           decl.addEmpty() # pragmas
           # the type as emitted, an error included, and not as interned: the
-          # type cache would hand back the FIRST such error and its position
+          # type cache would hand back the first such error and its position
           decl.addSubtree readonlyCursorAt(dest, start)
           dest.shrink start
           decl.addEmpty() # value
@@ -3308,7 +3329,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
 
   # `of`* `else`? is the whole grammar this pass implements, but nifler parses
   # every branch form Nim's `case` admits — including the `elif` chain Nim allows
-  # after the `of`s. Anything still unconsumed here used to be dropped WITHOUT a
+  # after the `of`s. Anything still unconsumed here used to be dropped without a
   # diagnostic: the `of` loop stopped at the first `elif`, the `else` test then
   # saw an `elif` and declined, and the close below sealed a `case` missing every
   # branch from the `elif` onwards. That is a compiler silently deleting code —
@@ -3413,7 +3434,7 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
 include semfields
 
 proc returnsIterType(c: var SemContext; dest: var TokenBuf; callee: Cursor): bool =
-  ## A `for`-head callee that is not a plain symbol but a resolved CALL:
+  ## A `for`-head callee that is not a plain symbol but a resolved call:
   ## `for x in take(it, 2)():`, `for x in relay()():` — the chained form of
   ## composing iterator factories. Sem has no type navigator, but it does not
   ## need one here: the inner call's routine declares the `itertype` it hands
@@ -3553,7 +3574,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       skip it.n
     inc c.routine.inLoop
     c.routine.breakTargets.add SymId(0)
-    semStmtBody c, vb, it.n, true
+    semLoopBody c, vb, it.n
     discard c.routine.breakTargets.pop()
     dec c.routine.inLoop
   it.n = forStart; skip it.n # skip the for's closing ')'
@@ -3705,7 +3726,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     else:
       inc c.routine.inLoop
       c.routine.breakTargets.add SymId(0)
-      semStmtBody c, dest, it.n, true
+      semLoopBody c, dest, it.n
       discard c.routine.breakTargets.pop()
       dec c.routine.inLoop
 
@@ -3740,8 +3761,8 @@ proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
-  # A template's body is checked where it is DECLARED, but whether it may
-  # raise is a property of where it is EXPANDED: the expansion is checked again
+  # A template's body is checked where it is declared, but whether it may
+  # raise is a property of where it is expanded: the expansion is checked again
   # in that routine. An error written into the stored body here would be copied
   # into every expansion as an extra child of the `raise`.
   let inTemplate = c.routine.kind == TemplateY
@@ -4521,7 +4542,7 @@ proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
   if setFields.hasKey(fieldSym):
     dest.addSubtree setFields.getOrQuit(fieldSym)
   elif isUnion:
-    # A union has ONE active member: filling the unset members with
+    # A union has a single active member: filling the unset members with
     # defaults emits sibling designated initializers, and C's
     # last-initializer-wins semantics zero out the member the user
     # actually set (black-clear-color class of bug). Emit nothing.
@@ -4973,7 +4994,7 @@ proc asksForNil(typ: TypeCursor): bool =
 proc nilableAllocResult(c: var SemContext; typ, expected: TypeCursor;
                         info: NifLineInfo): TypeCursor =
   ## An allocation panics on out-of-memory (`doc/internals/failure_modes.md`)
-  ## unless the DESTINATION asked to be handed the `nil` instead by declaring
+  ## unless the destination asked to be handed the `nil` instead by declaring
   ## itself `nil T`. Stamping the marker onto the constructed type here is what
   ## carries that request to `trNewobj`, which reads it off the `newobj`'s type to
   ## choose between panicking and guarding its stores, and to `wantNotNilDeref`,
@@ -5598,7 +5619,7 @@ proc semToClosure(c: var SemContext; dest: var TokenBuf; it: var Item) =
   ## tree — so it has to be able to sem this node instead of `bug`ging out
   ## (issues #2143, #2175, #2176, #2177).
   ##
-  ## Reporting the CLOSURE-ified type is the load-bearing part: the wrapped
+  ## Reporting the closure-ified type is the load-bearing part: the wrapped
   ## argument gets re-matched against the same `.closure.` formal, and only a
   ## type that already says `.closure.` stops `procTypeMatch` from wrapping the
   ## wrapper. That keeps the single wrap site in the matcher, which is the one
@@ -6017,7 +6038,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of IncS, DecS:
         toplevelGuard c:
           semIncDec c, dest, it
-      of AssumeS, AssertS:
+      of AssumeS, AssertS, InvariantS:
         pragmaGuard c:
           semAssumeAssert c, dest, it, it.n.stmtKind
       of UsingS:

@@ -385,13 +385,13 @@ proc compileProgram(c: var CmdOptions) =
   # injects bound/range-check calls); without this it always used DefaultSettings.
   c.config.checkFlags = genFlags(c.checkModes)
 
-  # The libc-free stdlib is the DEFAULT for every backend: the native allocator
+  # The libc-free stdlib is the default for every backend: the native allocator
   # (`nimNativeAlloc`, a ported region allocator over mmap) and the stdlib's own
   # IO layer over `read`/`write`/`open` (the only IO layer there is; libc stdio
   # is not supported). Opt back into mimalloc with `-d:useLibc` or
   # `-d:useMimalloc`. On illumos the native allocator is mandatory and explicit
   # `useMimalloc` is rejected.
-  # The native backend links no libc at all, so it ALWAYS uses the native
+  # The native backend links no libc at all, so it always uses the native
   # allocator regardless of those opt-outs. The `when defined(...)` gates live in nimsem,
   # which only sees defines forwarded on its command line (config.defines is the
   # cache key but not enough on its own) — so inject them the same way a user's
@@ -404,9 +404,9 @@ proc compileProgram(c: var CmdOptions) =
     # (appended last, so it also wins over a contradictory explicit
     # --cpu/--os).
     #
-    # `--os:standalone`, NOT `embedded`. Both are freestanding and it is easy to
+    # `--os:standalone`, not `embedded`. Both are freestanding and it is easy to
     # read them as the same target, but they pick different stdlib arms and only
-    # one of them is this one's. `embedded` is BARE METAL: `syncio`'s arm writes
+    # one of them is this one's. `embedded` is bare metal: `syncio`'s arm writes
     # through ARM semihosting and `osalloc`'s takes the heap from nifasm's
     # `(heapstart)`/`(heapsize)` board-layout constants — neither exists here.
     # `standalone` falls into the raw-`write`/`read`/`open` arm instead, and
@@ -436,7 +436,7 @@ proc compileProgram(c: var CmdOptions) =
   # libc symbol where the freestanding implementation is impossible (`futex` — no libc symbol of that name) or merely
   # approximate (`strtod`). Only the native backend sets it.
   #
-  # On Linux `-d:useLibc` is the exception: libc IS linked then — the system
+  # On Linux `-d:useLibc` is the exception: libc is linked then — the system
   # linker finishes the program (see `deps.nim`, `nativeSysLink`), which is what
   # a program linking foreign objects (`.compile`/`.link`) needs. The runtime is
   # then the C backend's default one: the native allocator and IO, with libc

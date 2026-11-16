@@ -173,7 +173,7 @@ type
     ## looking, rather than a protocol spread over three variables and a
     ## rebuild-if-stale test on the hot path.
     pool*: TagPool
-      ## Deliberately has NO `escapeTag`: with one, ids past 511 stay legal at
+      ## Deliberately has no `escapeTag`: with one, ids past 511 stay legal at
       ## the cost of a second token and there is no wall to detect, so any cap
       ## would be a number we invented. Without one, `MaxHttpTags` is
       ## structural and "the pool is full" is a real condition that
@@ -212,7 +212,7 @@ proc rebuildIndex(t: HttpTags) =
 
 proc newHttpTags*(): HttpTags =
   ## A fresh tag space, seeded with the built-in vocabulary. An application
-  ## makes ONE during init and threads it: into every `HttpMsg` it builds, into
+  ## makes a single one during init and threads it: into every `HttpMsg` it builds, into
   ## every `HttpConn` it serves, and into `registerHeader` for the headers it
   ## indexes on. An id only means anything against the space it came from, so
   ## passing it is what makes "the same id everywhere" a property you can see

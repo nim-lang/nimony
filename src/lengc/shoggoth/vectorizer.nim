@@ -25,7 +25,7 @@
 ##   `(asgn P (haddr (pat BASE I)))`, `BASE` an invariant lvalue path;
 ## * value locals `(var :E (f W) rhs)` with `rhs` a pure tree over
 ##   `(deref P)`, invariant scalars and float literals with `add`/`sub`/`mul`;
-## * exactly ONE store `(asgn (pat BASE I) src)`, and/or accumulator updates
+## * exactly one store `(asgn (pat BASE I) src)`, and/or accumulator updates
 ##   `(asgn S (add [T] S tree))` — S a scalar float local of the enclosing proc
 ##   (declared by a `(var …)` in this body, its address never taken, verified
 ##   by a whole-body scan) and `tree` a pure lane tree not mentioning S;
@@ -42,7 +42,7 @@
 ## if vecok:
 ##   <pointer inits, broadcasts>
 ##   while iv + (VF-1) < n:  <vector body>;  iv += VF
-## <the ORIGINAL loop, untouched>
+## <the original loop, untouched>
 ## ```
 ##
 ## The scalar original serves as both the remainder loop and the fallback, so
@@ -52,15 +52,15 @@
 ## and an aliased store (`mmIkj(s, s, s)`-style calls) simply fails the
 ## disjointness test and runs the scalar loop.
 ##
-## Emitted vector VALUES have type `(f 128)`: an opaque SIMD-register bag of
+## Emitted vector values have type `(f 128)`: an opaque SIMD-register bag of
 ## bits whose lane meaning lives in the opcode's trailing lane-bits literal —
 ## see `lib/intrinsics.nim`. `vfmla` accumulates in place (`tie: 0`), so it is
 ## only fused onto an iteration-fresh accumulator and spelled
 ## `(asgn acc (instr vfmla acc a b bits))`.
 ##
-## An accumulator update gets an `(f 128)` PARTIAL-SUM local per unroll slot,
+## An accumulator update gets an `(f 128)` partial-sum local per unroll slot,
 ## started at all-zero lanes; the scalar S is untouched by the vector loop and
-## receives the lane sums ONCE at its end, via `vaddv` (horizontal add):
+## receives the lane sums once at its end, via `vaddv` (horizontal add):
 ## `S = S + vaddv(acc)`. This is the one deliberate semantic deviation of the
 ## pass: lane-splitting a float sum reorders its additions, so the rounding
 ## can differ from the scalar loop's left-to-right order. The remainder still
@@ -86,8 +86,8 @@ type
     idx: int                ## index into `indexes`
 
   GuardKind = enum
-    gLtLen                  ## `(lt I len)` — worst case at the LAST iteration
-    gLeZero                 ## `(le 0 I)` — worst case at the FIRST iteration
+    gLtLen                  ## `(lt I len)` — worst case at the last iteration
+    gLeZero                 ## `(le 0 I)` — worst case at the first iteration
 
   VecGuard = object
     kind: GuardKind
@@ -176,7 +176,7 @@ proc sameTree(a, b: Cursor): bool =
 
 proc collectAssigned(n: Cursor; assigned: var HashSet[SymId]) =
   ## Every symbol the subtree writes: `asgn` targets and every `var`
-  ## declaration. Anything in this set is NOT loop-invariant.
+  ## declaration. Anything in this set is not loop-invariant.
   if n.hasMore and n.kind == TagLit:
     if n.stmtKind == AsgnS:
       var lhs = n
@@ -222,7 +222,7 @@ proc floatLeafBits(n: Cursor): int =
 
 type
   LocalKind = enum
-    ## Every local the loop grammar admits plays exactly ONE role.
+    ## Every local the loop grammar admits plays exactly one role.
     lkNone            ## not a loop-body local
     lkPtrPending      ## `(var :P (ptr (f W)) .)` — declared, not yet bound
     lkPtrBound        ## … after its `(asgn P (haddr (pat BASE I)))`
@@ -389,7 +389,7 @@ proc matchGuardCmp(m: Matcher; nc: Cursor; g: var VecGuard): bool =
 proc matchGuard(m: Matcher; n: Cursor; g: var VecGuard): bool =
   ## `(if (elif (not COND) (stmts (call sym …))))` where COND is
   ## `(lt I len)` or `(le 0 I)` over a known index local. The action's contents
-  ## are irrelevant: the vector path only runs when the condition is FALSE for
+  ## are irrelevant: the vector path only runs when the condition is false for
   ## every iteration it covers, so the call can never fire there.
   result = false
   if n.stmtKind == IfS:
@@ -537,7 +537,7 @@ proc matchPtrBind(m: var Matcher; a0: Cursor; p: SymId): bool =
         result = true
 
 proc matchStore(m: var Matcher; a0: Cursor): bool =
-  ## `(asgn (pat BASE I) pure-lane-tree)` — the ONE store.
+  ## `(asgn (pat BASE I) pure-lane-tree)` — the single store.
   result = false
   var a = a0
   var acc = VecAccess(ptrSym: SymId(0))
@@ -552,7 +552,7 @@ proc matchStore(m: var Matcher; a0: Cursor): bool =
 proc matchReduction(m: var Matcher; a0: Cursor; s: SymId): bool =
   ## The rhs of `(asgn S rhs)` for an outer scalar S: `(add [T] S tree)` or
   ## `(add [T] tree S)` with `tree` a pure lane tree — a sum accumulation.
-  ## Every OTHER use of S in the loop rejects on its own: S is in `assigned`,
+  ## Every other use of S in the loop rejects on its own: S is in `assigned`,
   ## so it is not an invariant leaf, not an index and not part of a base.
   result = false
   var a = a0
@@ -614,7 +614,7 @@ proc scanAccUses(n: Cursor; s: SymId; bits: int;
 
 proc accSafeLocal(c: var Context; s: SymId; bits: int): bool =
   ## The vector loop keeps a reduction's partial sums in registers and writes
-  ## the scalar ONCE, after — so nothing may observe or alias the scalar
+  ## the scalar once, after — so nothing may observe or alias the scalar
   ## through memory mid-loop. Sufficient and checkable: S is declared by a
   ## `(var :S … (f bits) …)` in this body (a proc-local — not a param, not a
   ## global another module could point into) and no `(haddr S)`/`(addr S)`
@@ -626,7 +626,7 @@ proc accSafeLocal(c: var Context; s: SymId; bits: int): bool =
 
 proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
   ## Match the whole canonical loop; fill `plan`. Any unexpected statement
-  ## rejects — the pass must understand EVERYTHING it vectorizes.
+  ## rejects — the pass must understand everything it vectorizes.
   when defined(vecDbg): echo "vectorizer: trying a while loop"
   result = false
   var m = Matcher()
@@ -697,7 +697,7 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
             echo "vectorizer reject at stmt ", si, ": ", toString(db)
         inc si
 
-      # literal leaves imply a width too (the zero-fill loop has ONLY
+      # literal leaves imply a width too (the zero-fill loop has only
       # literals); unify it with the access-implied one
       var litConflict = false
       for v in m.plan.values:
@@ -710,7 +710,7 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
                (m.sawStore or m.plan.reductions.len > 0) and m.sawInc and
                (m.plan.elemBits == 32 or m.plan.elemBits == 64) and
                m.pendingPtrs == 0
-      # every accumulator must still be an OUTER scalar (no later `(var :S …)`
+      # every accumulator must still be an outer scalar (no later `(var :S …)`
       # in the body claimed it a role) and provably register-private
       var ri = 0
       while result and ri < m.plan.reductions.len:
@@ -876,9 +876,9 @@ type
     unrolled: bool
 
 proc freshName(e: var Emitter; kind: string): string =
-  ## A broadcast or accumulator slot is a LOCAL of the loop being vectorized,
+  ## A broadcast or accumulator slot is a local of the loop being vectorized,
   ## so its name is a local's: `<ident>.<disamb>`. (The module-level intrinsic
-  ## DECLS are the ones that need a module suffix; `vecSuffix` names those.)
+  ## decls are the ones that need a module suffix; `vecSuffix` names those.)
   inc e.tempCounter
   result = "vec." & kind & "." & $e.tempCounter
 
@@ -934,7 +934,7 @@ proc collectBroadcasts(e: var Emitter; n: Cursor) =
     if isSuf:
       let key = cast[int64](floatVal(sinner))
       if key notin e.bcLits:
-        let nm = addBroadcastDecl(e, n)       # the WHOLE (suf …), typed f32
+        let nm = addBroadcastDecl(e, n)       # the whole (suf …), typed f32
         e.bcLits[key] = nm
     elif n.exprKind in {AddC, SubC, MulC}:
       var cc = sub(n)
@@ -1178,7 +1178,7 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
   ## Build the whole replacement `(stmts …)` tree.
   var plan = plan0
 
-  # ── a single-use value local that IS a reduction's whole tree is inlined ──
+  # ── a single-use value local that is a reduction's whole tree is inlined ──
   # (the hexer materializes `s += a[i]*b[i]` as `e = a*b; s += e`; inlining
   # exposes the mul to the fmla fusion and keeps the dead `e` out of the slot)
   for ri in 0 ..< plan.reductions.len:
@@ -1296,8 +1296,8 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
     conds.add CondSpec(isDj: true, gv: dj)
 
   # the nested chain: if C1: if C2: … vecok = true. Every worst-case index is
-  # an inlined expression: `lt` guards peak at the LAST covered iteration
-  # (index = inv + (n-1)), `le 0` guards at the FIRST (index = inv + iv).
+  # an inlined expression: `lt` guards peak at the last covered iteration
+  # (index = inv + (n-1)), `le 0` guards at the first (index = inv + iv).
   for spec in conds:
     e.b.openTag tid(IfTagId)
     e.b.openTag tid(ElifTagId)
@@ -1354,10 +1354,10 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
   for ri in 0 ..< plan.reductions.len:
     e.accNames.add [e.freshName("acc"), e.freshName("acc")]
 
-  # ── unroll decision, from EXACT per-slot register pressure ──
+  # ── unroll decision, from exact per-slot register pressure ──
   # Dry-run one slot into a throwaway buffer: every `(f 128)` local a slot
   # mints (loads and op temps alike) goes through `freshName`, so the counter
-  # delta IS the slot's vector-local count — no duplicate of the fusion logic
+  # delta is the slot's vector-local count — no duplicate of the fusion logic
   # to keep in sync. Vector locals home in the callee-saved SIMD pool
   # (v8–v15, 8 wide); unroll only when two slots plus the broadcasts leave
   # headroom for the proc's scalar float locals, since a vec local that fails
@@ -1387,7 +1387,7 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
   # mid-remainder when unrolled
   emitVecLoop(e, 1)
 
-  # fold each reduction's lanes into its scalar, ONCE:
+  # fold each reduction's lanes into its scalar, once:
   # `(asgn S (add (f W) S (instr vaddv acc bits)))`
   for ri in 0 ..< plan.reductions.len:
     if e.unrolled:
@@ -1413,7 +1413,7 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
   e.b.closeTag()                              # elif
   e.b.closeTag()                              # if vecok
 
-  # the ORIGINAL loop: remainder + fallback, untouched
+  # the original loop: remainder + fallback, untouched
   e.b.addSubtree loopCur
 
   e.b.closeTag()                              # the replacement (stmts …)
@@ -1424,7 +1424,7 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
 # ── main traversal ──────────────────────────────────────────────────────────
 
 proc containsSub(n: Cursor): bool =
-  ## Any `sub` anywhere in the loop. Checked BEFORE planning rather than inside
+  ## Any `sub` anywhere in the loop. Checked before planning rather than inside
   ## the lane-tree predicates: a refusal has to leave the original loop exactly
   ## as it was, and the cheapest place to be sure of that is before a plan
   ## exists. Coarse on purpose — an index computation's `sub` also blocks the
@@ -1508,7 +1508,7 @@ proc addVecIntrinsicDecls*(dest: var TokenBuf; vecSuffix: string) =
       dest.addDotToken()                      # void result
     else:
       dest.openTag tid(FTagId)
-      # `vaddv` is the one row that produces a SCALAR (the lane sum)
+      # `vaddv` is the one row that produces a scalar (the lane sum)
       dest.addIntLit (if tag == "vaddv": 64 else: 128)
       dest.closeTag()
     dest.openTag tid(PragmasTagId)
@@ -1616,7 +1616,7 @@ when isMainModule:
     # single-width mid-remainder + the scalar original
     doAssert s.count("(while") == 3, s
     doAssert s.count("(instr fldrq.vec.M") == 3, s
-    # the lanes fold into the scalar exactly ONCE
+    # the lanes fold into the scalar exactly once
     doAssert s.count("(instr vaddv.vec.M") == 1, s
 
   block dot_reduction:
@@ -1648,8 +1648,8 @@ when isMainModule:
     doAssert s.count("(instr vfmla.vec.M") == 3, s
 
   block reject_undeclared_acc:
-    # s = s + b[i] with NO `(var :s.0 …)` in the body: a param or global —
-    # not provably register-private, must NOT vectorize
+    # s = s + b[i] with no `(var :s.0 …)` in the body: a param or global —
+    # not provably register-private, must not vectorize
     var buf = parse("""
 (stmts
  (while (lt i.0 n.0)

@@ -40,12 +40,12 @@ const JorogumoSource = NativenifDir & "/src/jorogumo/jorogumo.nim"
 var bootJorogumo = false
   ## Does this boot also compile the web back end (`jorogumo`: JS + wasm, from
   ## the sibling `../nativenif`) at every stage? It is not part of the
-  ## toolchain the NEXT stage drives with, but it compiles with Nimony and
+  ## toolchain the next stage drives with, but it compiles with Nimony and
   ## nothing else would notice when it stops doing so. Set by `bootCmd`.
 
 proc bootStageTools(): seq[string] =
   ## What `compileBootStage` compiles: the self-tools, plus jorogumo when the
-  ## nativenif checkout is there. jorogumo goes FIRST so it overlaps with the
+  ## nativenif checkout is there. jorogumo goes first so it overlaps with the
   ## self-tools instead of trailing them.
   result = @[]
   if bootJorogumo: result.add "jorogumo"
@@ -75,20 +75,20 @@ proc useNativeBoot*(): bool =
   ## missing, and say so (`bootBackendLine`) rather than let a missing sibling
   ## look like a slow C boot.
   ##
-  ## linux/arm64 is IN, as of 2026-08-22. `hastur tiers native --forward:-d:release`
+  ## linux/arm64 is in, as of 2026-08-22. `hastur tiers native --forward:-d:release`
   ## is 27/27 and `--boot-backend:native` reaches a byte-identical
   ## stage1==stage2==stage3 fixed point in ~405s, against ~650s through the C backend.
   ##
   ## What had held it back was never the syscall/ABI layer. In order of discovery, and
   ## each one attributed by the tier ladder rather than by staring at a boot stage:
   ## arkham's ">8 integer params (stack TODO)"; a stack-marshalled by-value aggregate
-  ## whose home is a register PAIR, which has no address to marshal from; a spilled
+  ## whose home is a register pair, which has no address to marshal from; a spilled
   ## `nil` declared `(s) (nil)` where the slot is storage and wants `(ptr void)`; a
   ## word-sized set constant `desugar` emitted unsuffixed, so `xelim` typed its temp
   ## `u64` and the native backend rejected the narrowing the C one performs silently;
-  ## the emitter's last-resort register draws handing out live PARAMETER homes, which
+  ## the emitter's last-resort register draws handing out live parameter homes, which
   ## are never `rb`-bound and so were invisible to the liveness test they use; and
-  ## finally nifasm encoding an element STRIDE into AArch64's register-offset scale
+  ## finally nifasm encoding an element stride into AArch64's register-offset scale
   ## bit, which can only mean "the access width" — `(dot (at arrayOfTuples i) fld)`
   ## read `arr[i div 2]`.
   ##
@@ -96,7 +96,7 @@ proc useNativeBoot*(): bool =
   ## inliner supplies the register pressure that reaches them; neither was the
   ## inliner's fault. `SHOGGOTH_DISABLE=<pass,…>` is what separated those questions.
   ##
-  ## macOS/arm64 is IN, as of 2026-09-08. What had kept it out was one nifasm bug:
+  ## macOS/arm64 is in, as of 2026-09-08. What had kept it out was one nifasm bug:
   ## `extprocLib` read the token after an `(extproc :name "extname")` without
   ## checking the decl had one, and the Darwin form has none — so every stage-1
   ## tool died in `resolveForeignSym` ("advancing past end of scope"). With that
@@ -219,7 +219,7 @@ proc compileBootStage*(stage: int; cacheBase, args: string; withValgrind: bool):
   ## Build stage `stage` of the toolchain. Returns the stage's bin
   ## directory. Driver of stage N is the stage-(N-1) nimony.
   ##
-  ## The stage's tools (`BootSelfTools`) are compiled CONCURRENTLY.
+  ## The stage's tools (`BootSelfTools`) are compiled concurrently.
   ## They are independent: each gets its own `--nimcache` and its own `--out`,
   ## and the only shared input — the previous stage's `bin/` — is read-only for
   ## the duration. Serially this was the single longest stretch of the Windows
@@ -369,10 +369,10 @@ proc bootCmd*(args: string; withValgrind: bool; release = true) =
       quit "boot: " & exe & " not found; run `hastur build all` first"
   # valgrind cannot see the native backend's static, libc-free `mmap` heap, so
   # `--valgrind` (and thus `selfcheck`) always boots through the C backend.
-  # `--boot-backend:native` FORCES: the only thing that can stop it is not having
+  # `--boot-backend:native` forces: the only thing that can stop it is not having
   # arkham and nifasm to run. It used to defer to `useNativeBoot` as well, which
   # made the flag useless on exactly the hosts it is needed on — a host where the
-  # native path is off is a host where someone is trying to turn it ON, and
+  # native path is off is a host where someone is trying to turn it on, and
   # "not available here" told them nothing they could act on. `--valgrind` still
   # wins, because memcheck cannot see the native heap at all.
   if bootBackend == bbNative:

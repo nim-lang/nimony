@@ -33,15 +33,15 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
                         atToplevel: bool) =
   ## Expands a single tree/token of the template body into `dest`.
   ##
-  ## `atToplevel` says that what lands here lands at MODULE scope: the call site
+  ## `atToplevel` says that what lands here lands at module scope: the call site
   ## is toplevel and nothing between the body root and this node opened a scope.
   ## It decides the layout of a name the body declares. A template's own body is
   ## semchecked in the template's scope, so everything it declares that is not
-  ## routine-like got a LOCAL name there (`identToSym`), and `newSymId` keeps
+  ## routine-like got a local name there (`identToSym`), and `newSymId` keeps
   ## whatever layout it copies — so `template t() = (let x = 1)` expanded at
   ## module scope produced `x.1`, a local-layout name on a module-level `gvar`.
   ## Such a decl is not indexed (`nifcoreparse.toModuleString` indexes by the
-  ## name's shape), so the module compiles and cannot be IMPORTED: nifasm reads
+  ## name's shape), so the module compiles and cannot be imported: nifasm reads
   ## a foreign module's decls through that index and fails with "Unknown symbol"
   ## on the module init that reads it.
   var body = body
@@ -112,7 +112,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
     else:
       dest.addParLe(body.cursorTagId, body.info)
       # Module scope survives a `(stmts …)` list, the branches of a `when` (only
-      # one survives, and it declares into the enclosing scope), and the NAME of
+      # one survives, and it declares into the enclosing scope), and the name of
       # a declaration sitting in one. Everything else — a routine body, a
       # `block`, the branches of an `if` — is a scope of its own in `identToSym`'s
       # eyes, so a name declared under it keeps the local layout it already has.
@@ -123,7 +123,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
       # A local declared in the body may have been typed `untyped` when the
       # template's own body was checked — `let n = call` can be nothing else
       # there. That type must not travel into the expansion: here the
-      # initializer IS typed, and a local claiming `untyped` over a real value
+      # initializer is typed, and a local claiming `untyped` over a real value
       # makes the next thing to read it (`return n`, an assignment, a call that
       # has to pick an overload) report a mismatch nobody can act on. Blanking
       # the slot is what the source said, and the expansion is semchecked
@@ -397,9 +397,9 @@ proc pluginCallToCall*(n: var Cursor; info: NifLineInfo): TokenBuf =
 
 proc pluginReturnsType*(fnId: SymId): bool =
   ## True when the routine `fnId` declares a `typedesc` result. A plugin
-  ## template that stands for a TYPE has to say so -- `std/typetraits` spells
+  ## template that stands for a type has to say so -- `std/typetraits` spells
   ## `distinctBase` as `[T](t: typedesc[T]): typedesc`. Anything else, `untyped`
-  ## included, stands for a VALUE: `untyped` is the result category a template
+  ## included, stands for a value: `untyped` is the result category a template
   ## body would have resolved on expansion, and a plugin may not quietly widen
   ## it to "maybe a typedesc".
   let res = tryLoadSym(fnId)
@@ -412,12 +412,12 @@ proc pluginReturnsType*(fnId: SymId): bool =
     result = rt.typeKind == TypedescT
 
 proc addTemplFormalsToScope(c: var SemContext; buf: TokenBuf; at: int) =
-  ## Put a promoted template's OWN typevars and params on the parameter scope.
+  ## Put a promoted template's own typevars and params on the parameter scope.
   ##
   ## `semTemplBody` resolves a body `Ident` through `getIdentReplaceParams`,
   ## which asks `buildSymChoice` (`InnerMost`) for a symbol and substitutes it
-  ## only when that SymId is a formal of THIS template (`isTemplParam`, i.e.
-  ## `ctx.params`). Lazy promotion runs inside the CALLER's live scope, so
+  ## only when that SymId is a formal of this template (`isTemplParam`, i.e.
+  ## `ctx.params`). Lazy promotion runs inside the caller's live scope, so
   ## without this the innermost `T` is the caller's homonymous typevar — not one
   ## of our formals, so the ident stays an `Ident`, is re-sem'd at the expansion
   ## site against yet another `T`, and yields the bogus `got: T but wanted: T`

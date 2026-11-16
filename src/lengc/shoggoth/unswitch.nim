@@ -7,14 +7,14 @@
 #    distribution, for details about the copyright.
 #
 
-## Hoists a loop-INVARIANT `if` condition out of a `while` by duplicating the
+## Hoists a loop-invariant `if` condition out of a `while` by duplicating the
 ## loop — classic loop unswitching. The motivating shape is an inlined string
 ## accessor inside a per-char loop:
 ##
 ##   (while (lt i len)
 ##     … (if (elif (le SSO-TEST 14) (stmts SHORT)) (else LONG)) …)
 ##
-## `s[i]`'s "is this string short?" test is re-evaluated EVERY iteration — in
+## `s[i]`'s "is this string short?" test is re-evaluated every iteration — in
 ## nifbuilder's `addSymbol` the same test runs four times per character — while
 ## gcc -O3 evaluates it once and splits the whole path. After unswitching:
 ##
@@ -26,18 +26,18 @@
 ## executed once before the loop.
 ##
 ## Soundness gates:
-##  * the condition is a PURE, trap-free expression: symbols, literals, field
+##  * the condition is a pure, trap-free expression: symbols, literals, field
 ##    reads of named slots, conversions, comparisons and non-trapping arithmetic
 ##    — no calls, no deref/indexing, no div/mod (it is evaluated unconditionally
 ##    now, even when the loop body would never have reached it);
-##  * every symbol the condition reads is INVARIANT across the loop: never
+##  * every symbol the condition reads is invariant across the loop: never
 ##    assigned inside it, and — when the symbol is address-taken anywhere in the
 ##    proc, or is a global — the loop body must additionally contain no call and
 ##    no store the scan cannot attribute to a named local slot (nothing can
 ##    write memory behind the scan's back);
 ##  * the loop is small enough to duplicate (`MaxUnswitchSpan` tokens).
 ##
-## The second copy's declarations (labels AND locals) are freshened
+## The second copy's declarations (labels and locals) are freshened
 ## (`` `us.<n> ``, locals of the body being duplicated). Fixpoint driver:
 ## one loop per round; iterated rounds hoist a condition out of nested loops
 ## level by level (the inner unswitch leaves `(if C (while…)…)` directly in the
@@ -53,7 +53,7 @@ const
   MaxUnswitchSpan = 600   ## max tokens of a `while` we are willing to duplicate
   MaxRounds = 16
   MaxSubstDepth = 8       ## how deep the loop-local temp chase goes
-  SingleTestMinCost = 3   ## what a ONCE-tested condition must cost to qualify
+  SingleTestMinCost = 3   ## what a condition tested once must cost to qualify
 
   ControlStmts = {IfS, CaseS, WhileS, TryS, IteS, LoopS, OnerrS}
     ## statements a definition can hide inside: a def under one of these does
@@ -70,7 +70,7 @@ type
     procAddrTaken: HashSet[SymId]
     defs: Table[SymId, int]
       ## the loop currently under consideration: every loop-local symbol with
-      ## exactly ONE straight-line definition, mapped to the position of the
+      ## exactly one straight-line definition, mapped to the position of the
       ## defining expression. See `scanLoopDefs`.
 
 proc child0(c: Cursor): Cursor {.inline.} =
@@ -137,7 +137,7 @@ proc pureCondImpl(n: var Cursor; syms: var seq[SymId]): bool =
         while n.hasMore:
           if not pureCondImpl(n, syms): result = false
     of AddC, SubC, MulC, NegC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC:
-      # arithmetic carries its result TYPE as the first operand — `(bitand
+      # arithmetic carries its result type as the first operand — `(bitand
       # (u 64) x 255u)` — and a type subtree is metadata, not a value. Walking
       # it as one made every inlined accessor's mask look impure, which is why
       # the SSO shape never reached the invariance test at all.
@@ -208,7 +208,7 @@ proc scanEffects(c: Cursor; assigned: var HashSet[SymId];
     if s == SymId(0): opaque = true
     else: assigned.incl s
   of VarS, ConstS, GvarS, TvarS, MflagS, VflagS:
-    # A declaration INSIDE the loop re-initializes its symbol every iteration —
+    # A declaration inside the loop re-initializes its symbol every iteration —
     # a loop-local existence is per-iteration by construction, so its value can
     # never be loop-invariant. (Missing this hoisted an enum-range check whose
     # `ii` was the loop body's own conversion temp: the hoisted condition read
@@ -252,9 +252,9 @@ proc scanLoopDefs(orig: ptr TokenBuf; n: Cursor; straight: bool;
   ##   (if (elif (lt 14 `x) …))
   ##
   ## `x` is written every iteration, so the plain "never assigned in the loop"
-  ## test rejects it although its VALUE is loop-invariant. This collects the
+  ## test rejects it although its value is loop-invariant. This collects the
   ## temps whose definition may be substituted back into the condition: exactly
-  ## ONE definition, on the loop's straight-line path — not under an `if`, a
+  ## one definition, on the loop's straight-line path — not under an `if`, a
   ## `case` or an inner `while` — so the value the test reads is always that
   ## expression, evaluated from that expression's symbols.
   if n.kind != TagLit: return
@@ -312,7 +312,9 @@ proc collectLoopDefs(c: var Context; whileCur: Cursor) =
   var blocked = false
   var body = whileCur
   body.into:
-    if body.hasMore: skip body                   # the loop condition
+    # `(while COND BODY)` leads with its condition; `(loop BODY (continue
+    # COND))` leads with the body, which is exactly what must be scanned.
+    if whileCur.stmtKind == WhileS and body.hasMore: skip body
     while body.hasMore:
       scanLoopDefs(c.orig, body, true, c.defs, multi, blocked)
       skip body
@@ -325,7 +327,7 @@ proc expandCond(c: Context; dest: var TokenBuf; n: Cursor; bound: int;
                 depth: int; active: var HashSet[SymId]) =
   ## Copy the expression at `n` into `dest`, replacing every chaseable symbol by
   ## its defining expression, so the result speaks only of symbols that exist
-  ## OUTSIDE the loop. `bound` is the position of the condition being
+  ## outside the loop. `bound` is the position of the condition being
   ## canonicalized: a definition that comes after it did not produce the value
   ## the test reads, so it is not substituted.
   case n.kind
@@ -361,7 +363,7 @@ proc expandCond(c: Context; dest: var TokenBuf; n: Cursor; bound: int;
 
 proc canonCond(c: Context; condPos: int): TokenBuf =
   ## The condition at `condPos` with every chaseable temp substituted away.
-  ## This is what gets hoisted, and what conditions are compared BY: two tests
+  ## This is what gets hoisted, and what conditions are compared by: two tests
   ## reading two different inlined copies of the same accessor are the same
   ## test, and only the canonical form says so.
   result = createTokenBuf(32, c.orig[].pool, c.orig[].tags)
@@ -381,7 +383,7 @@ proc condCost(n: Cursor): int =
   case n.exprKind
   of DotC, DerefC, PatC, AtC: result = 2
   of ConvC, CastC:
-    result = 0                                # the first child is the TYPE
+    result = 0                                # the first child is the type
     skipFirst = true
   of AddC, SubC, MulC, NegC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC:
     result = 1                                # ditto: `(bitand (u 64) x 255u)`
@@ -408,7 +410,7 @@ proc considerCond(c: var Context; cond: Cursor; assigned: HashSet[SymId];
                   opaque: bool; conds: var seq[int]) =
   ## Record `cond` (an `elif`'s or an `ite`'s) when it is pure and invariant.
   if cond.kind == TagLit and cond.exprKind in {TrueC, FalseC}: return
-  # Purity and invariance are asked of the CANONICAL condition — the one with
+  # Purity and invariance are asked of the canonical condition — the one with
   # the loop's own temps substituted away — because that is the expression that
   # will be evaluated before the loop.
   var canon = canonAt(c, cond)
@@ -459,17 +461,17 @@ proc scanWhiles(c: var Context; n: Cursor; cands: var seq[Candidate]) =
       while body.hasMore:
         invariantConds(c, body, assigned, opaque, conds)
         skip body
-    # PROFITABILITY. Two ways to qualify, and both are about what the loop pays
+    # Profitability. Two ways to qualify, and both are about what the loop pays
     # per iteration for the test itself:
-    #  * tested at least TWICE — unswitching deletes every repeat (the SSO test
+    #  * tested at least twice — unswitching deletes every repeat (the SSO test
     #    runs four times per character in nifbuilder's `addSymbol`);
-    #  * tested once but EXPENSIVE — a load plus arithmetic plus the branch,
+    #  * tested once but expensive — a load plus arithmetic plus the branch,
     #    which is what an inlined `s[i]` costs (`SingleTestMinCost`). A bare
     #    `(elif flag …)` costs 0 by `condCost` and is left alone: hoisting it
     #    would trade one `cmp` for a duplicated loop, and doing that
     #    indiscriminately tripled `addSymbol`'s loop count when the pass was
     #    first written.
-    # Conditions are grouped by their CANONICAL form, so two tests reading two
+    # Conditions are grouped by their canonical form, so two tests reading two
     # different inlined copies of the same accessor count as the same test.
     var canons: seq[TokenBuf] = @[]
     for pos in conds: canons.add canonCond(c, pos)
@@ -498,7 +500,7 @@ proc scanWhiles(c: var Context; n: Cursor; cands: var seq[Candidate]) =
 # ── specialized duplication ──────────────────────────────────────────────────
 
 proc collectDefs(n: Cursor; c: var Context; rename: var Table[SymId, string]) =
-  ## Mint a fresh symbol NAME for every SymbolDef in the subtree (labels +
+  ## Mint a fresh symbol name for every SymbolDef in the subtree (labels +
   ## locals of the second copy must not collide with the first); the name is
   ## interned by `addSymDef`/`addSymUse` at emission.
   var it = n
@@ -554,7 +556,7 @@ proc emitSpec(c: var Context; dest: var TokenBuf; n: Cursor; cond: Cursor;
         var it = n
         it.loopInto:
           if it.substructureKind == ElifU and matchIdx < 0:
-            # `cond` is the CANONICAL (substituted) hoisted condition, so every
+            # `cond` is the canonical (substituted) hoisted condition, so every
             # elif is canonicalized too before the comparison: the copies of an
             # inlined accessor each test their own temp, and only the canonical
             # form makes those the same test.
@@ -665,7 +667,7 @@ proc emitSpec(c: var Context; dest: var TokenBuf; n: Cursor; cond: Cursor;
 
 proc applyCandidate(c: var Context; cand: Candidate): TokenBuf =
   let whileCur = cursorAt(c.orig[], cand.whilePos)
-  # The hoisted test is the CANONICAL condition: the loop's own temps do not
+  # The hoisted test is the canonical condition: the loop's own temps do not
   # exist in front of the loop, so what is emitted there is the expression they
   # were computed from. `collectLoopDefs` re-establishes this loop's def map —
   # `scanWhiles` left `c.defs` on whatever loop it looked at last.
@@ -699,12 +701,12 @@ proc applyCandidate(c: var Context; cand: Candidate): TokenBuf =
 
 # ── public entry ─────────────────────────────────────────────────────────────
 
-proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
+proc runUnswitch*(buf: var TokenBuf; minted: var int): int {.discardable.} =
   ## Fixpoint: unswitch one loop per round (the innermost candidate), rebuild,
-  ## rescan. Returns the number of loops unswitched.
+  ## rescan. Returns the number of loops unswitched. `minted` is the body's
+  ## `` `us `` counter, kept across pipeline rounds.
   result = 0
   var rounds = 0
-  var minted = 0
   while rounds < MaxRounds:
     inc rounds
     var c = Context(orig: addr buf, counter: minted,
@@ -722,6 +724,10 @@ proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
     minted = c.counter
     buf = ensureMove(newBuf)
     inc result
+
+proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
+  var minted = 0
+  result = runUnswitch(buf, minted)
 
 # ── self-tests ───────────────────────────────────────────────────────────────
 
@@ -782,7 +788,7 @@ when isMainModule:
     doAssert unswitched(src) == canon(src)
 
   block call_in_loop_ok_for_plain_local:
-    # same loop, but the condition symbol is a LOCAL (single-dot name) whose
+    # same loop, but the condition symbol is a local (single-dot name) whose
     # address is never taken: a call cannot touch it, so the unswitch is legal.
     let got = unswitched(
       "(stmts (while (lt i.0 n.0) (stmts " &
@@ -794,7 +800,7 @@ when isMainModule:
     doAssert got.count("(while") == 2, got
 
   block call_in_loop_blocks_global_cond:
-    # a GLOBAL condition symbol (module-suffixed name) with a call in the loop:
+    # a global condition symbol (module-suffixed name) with a call in the loop:
     # the callee may assign the global directly, so decline.
     let src =
       "(stmts (while (lt i.0.M n.0.M) (stmts " &
@@ -816,7 +822,7 @@ when isMainModule:
     doAssert "`us" in got, got
 
   block loop_local_condition_left_alone:
-    # the condition reads a symbol DECLARED inside the loop (per-iteration
+    # the condition reads a symbol declared inside the loop (per-iteration
     # existence): never invariant, even though nothing `asgn`s it
     let src =
       "(stmts (while (lt i.0 n.0) (stmts " &
@@ -827,7 +833,7 @@ when isMainModule:
     doAssert unswitched(src) == canon(src)
 
   block repeated_condition_deduped:
-    # the SAME test twice in the body: unswitching once removes both
+    # the same test twice in the body: unswitching once removes both
     let got = unswitched(
       "(stmts (while (lt i.0.M n.0.M) (stmts " &
       "(if (elif (le k.0.M 14) (stmts (asgn a.0.M 1))) (else (stmts (asgn a.0.M 2)))) " &
@@ -836,9 +842,9 @@ when isMainModule:
     doAssert got.count("(le k.0.M 14)") == 1, got
 
   block chased_temp_hoisted:
-    # THE MOTIVATING SHAPE, as `nimony c`/`n` actually produce it: the test does
+    # The motivating shape, as `nimony c`/`n` actually produce it: the test does
     # not read an outer symbol, it reads a temp the loop computes from one —
-    # an inlined `s[i]`'s "is this string short?" test. Tested ONCE, but a load
+    # an inlined `s[i]`'s "is this string short?" test. Tested once, but a load
     # plus a mask plus a compare, so the cost rule qualifies it.
     let got = unswitched(
       "(stmts (while (lt i.0 n.0) (stmts " &
@@ -850,8 +856,20 @@ when isMainModule:
     doAssert got.count("(elif") == 1, got      # the hoisted one; both ifs folded
     doAssert "(dot b.0.M" in got, got          # hoisted in terms of `b`, not `x.1`
 
+  block chased_temp_hoisted_loop_form:
+    # The same shape in the rotated `(loop BODY (continue COND))` form, whose
+    # first child is the body, not a condition: the temps are defined there.
+    let got = unswitched(
+      "(stmts (loop (stmts " &
+      "(var :bytes.1 . (u 64) (dot b.0.M bytes.0.M 0)) " &
+      "(var :x.1 . (i 64) (conv (i 64) (bitand (u 64) bytes.1 255u))) " &
+      "(ite (lt 14 x.1) (stmts (asgn a.0 1)) (stmts (asgn a.0 2))) " &
+      "(asgn i.0 (add (i 64) i.0 1))) (continue (lt i.0 n.0))))")
+    doAssert got.count("(loop") == 2, got
+    doAssert "(dot b.0.M" in got, got          # hoisted in terms of `b`, not `x.1`
+
   block chased_temps_dedup_across_copies:
-    # two tests reading two DIFFERENT temps with the same defining expression:
+    # two tests reading two different temps with the same defining expression:
     # the same test, and only the canonical form says so
     let got = unswitched(
       "(stmts (while (lt i.0 n.0) (stmts " &

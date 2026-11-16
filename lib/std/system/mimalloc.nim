@@ -1,4 +1,4 @@
-# NOTE: valgrind tracking (`-DMI_TRACK_VALGRIND=1`) is deliberately NOT baked in
+# Note: valgrind tracking (`-DMI_TRACK_VALGRIND=1`) is deliberately not baked in
 # here. It would force `static.c` to `#include <valgrind/valgrind.h>`, making the
 # valgrind dev headers a hard build dependency for *every* nimony program on Linux
 # (reported as "nimony does not build without valgrind installed"). The test/boot

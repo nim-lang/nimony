@@ -233,7 +233,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     dest.addParRi()
   of AssemblerP:
     # `{.assembler.}` — every construct in the body maps one-to-one to assembler.
-    # The CHECKING is delegated to the back end (arkham), which is where the
+    # The checking is delegated to the back end (arkham), which is where the
     # machine model lives; NIF carries precise line info, so its diagnostics are
     # as good as a front-end pass would give. Sem only records the flag.
     crucial.flags.incl pk
@@ -265,7 +265,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       if hasParRi:
         while n.hasMore: skip n
   of InterruptP:
-    # `{.interrupt: "SysTick".}` — this routine handles the named vector. WHICH
+    # `{.interrupt: "SysTick".}` — this routine handles the named vector. Which
     # names a part has is a target question, arkham's exactly as for `register`
     # below; what sem owns is the shape, checked in `interruptSignatureError`
     # once the params and the return type are known.
@@ -289,7 +289,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     # exist, and whether the annotation is consistent with the proc's ABI, is a
     # target question — arkham's, not sem's.
     crucial.flags.incl pk
-    let pinfo = n.info                 # the pragma NAME's info: `toPragmaArgs` moves
+    let pinfo = n.info                 # the pragma name's info: `toPragmaArgs` moves
     dest.addParLe(pk, pinfo)           # `n` past it, and a bare `{.register.}` has
     toPragmaArgs()                     # nothing after it to report against
     if hasParRi and n.hasMore:
@@ -304,9 +304,9 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     toPragmaArgs()
   of InstructionP, IntrinsicP:
     # `{.instruction: "bsf".}` / `{.intrinsic: "Ctz".}` — the argument is an opcode
-    # NAME from `lib/intrinsics`, spelled as a string literal like every other
+    # name from `lib/intrinsics`, spelled as a string literal like every other
     # pragma that names a thing (`importc`, `register`). A string rather than an
-    # ident because the name is DATA: it is resolved by a table lookup here, never
+    # ident because the name is data: it is resolved by a table lookup here, never
     # by scope or overload resolution, so an ident would only look like a symbol
     # without being one — and would additionally have to dodge Nim's keywords,
     # which is why the machine's `of`/`and`/`shl` needed cover names.
@@ -366,7 +366,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       let idx = lastValueStart(dest)
       if dest[idx].isStringLit:
         # Read through a Cursor, never `dest[idx].strId`: a string of at most
-        # `StrInlineMaxLen` bytes (`"x.h"`!) is stored INSIDE the token, and the
+        # `StrInlineMaxLen` bytes (`"x.h"`!) is stored inside the token, and the
         # token-level `strId` would decode those packed bytes as a pool id.
         let raw = pool.strings[readonlyCursorAt(dest, idx).strId]
         let name = resolveHeaderPath(raw, info.getFile(), c.g.config)
@@ -601,7 +601,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         inc n
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
-  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
+  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, InvariantP, PragmaP, PushP, PopP, PassLP, PassCP:
     if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0) and
         not isPreservedCustomPragma(n):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
@@ -769,7 +769,7 @@ proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: 
 # ── intrinsic declarations ──────────────────────────────────────────────────
 # The declaration is the typing contract: what a proc signature already
 # expresses stays in the signature, and the one thing it cannot express — the
-# operand model — is unified against the row HERE, once. After this check the
+# operand model — is unified against the row here, once. After this check the
 # symbol is an ordinary typed proc, so no later pass (sigmatch, getType, hexer,
 # arkham) needs a rule per opcode.
 
@@ -792,22 +792,22 @@ proc floatBitsOf(typ: Cursor): int =
 
 proc matchAtomicCell(c: var SemContext; typ: Cursor;
                      w: var int; widths: set[uint8]): bool =
-  ## The type an atomic operates ON: `ptValW`, and the pointee of `ptPtrW`.
+  ## The type an atomic operates on: `ptValW`, and the pointee of `ptPtrW`.
   ##
   ## Three shapes, and the third is the interesting one:
   ##
-  ## * an INTEGER — binds `W` to its width, exactly like `ptAnyIntW`;
-  ## * a POINTER (or `bool`, an 8-bit cell) — a machine word, so it binds 64.
+  ## * an integer — binds `W` to its width, exactly like `ptAnyIntW`;
+  ## * a pointer (or `bool`, an 8-bit cell) — a machine word, so it binds 64.
   ##   These are real atomic cells that no integer pattern would admit: a
   ##   lock-free list head, an `AtomicFlag`;
-  ## * a TYPE VARIABLE — binds nothing, and that is the point. The atomics are
+  ## * a type variable — binds nothing, and that is the point. The atomics are
   ##   generic over the cell type (one `atomicLoadN[T]`, not one row per width),
-  ##   so the width is a property of the INSTANTIATION and is not knowable here.
-  ##   For a generic declaration this check is therefore a SHAPE check — arity,
+  ##   so the width is a property of the instantiation and is not knowable here.
+  ##   For a generic declaration this check is therefore a shape check — arity,
   ##   pointer-ness, which operand is `var`, where a memory order goes — and the
   ##   width is read off the pointee at the call site by whichever back end lowers
   ##   it (arkham's `atomicBits`, and the C compiler for `cBuiltinFor`). A
-  ##   CONCRETE declaration still gets the full check, because `W` does bind then.
+  ##   concrete declaration still gets the full check, because `W` does bind then.
   result = false
   if typ.kind == Symbol:
     result = true                  # a type variable: nothing to bind, nothing to check
@@ -867,7 +867,7 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
   of ptWeak:
     result = typ.kind == TagLit and typ.typeKind == BoolT
   of ptMemOrder:
-    # v1 accepts ANY type here because v1 reads none: both back ends emit every
+    # v1 accepts any type here because v1 reads none: both back ends emit every
     # atomic sequence at sequential-consistency strength, so the argument is
     # evaluated for its side effects and discarded. The two declaration sites
     # already spell it differently — a plain `cint` in `std/atomics`, a distinct
@@ -892,17 +892,17 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
     # `aptr` is a Leng-level spelling; the frontend's pointer kinds are these two.
     result = typ.kind == TagLit and typ.typeKind in {PtrT, PointerT}
   of ptLaneBits:
-    # An int the back end reads as a LITERAL (32/64) at the call site; the
+    # An int the back end reads as a literal (32/64) at the call site; the
     # declared parameter type is any integer.
     result = intBitsOf(c, typ) > 0
   of ptLoc:
-    # A location of ANY type: `zeroMemIns[T](x: var T)` is generic, and what the
+    # A location of any type: `zeroMemIns[T](x: var T)` is generic, and what the
     # op does to it is decided by the type's size, not by a pattern.
     result = true
   of ptOptSize:
     result = intBitsOf(c, typ) > 0
   of ptImmLit:
-    # Same shape as `ptLaneBits` and checked the same way: the DECLARATION only
+    # Same shape as `ptLaneBits` and checked the same way: the declaration only
     # has to say "an integer". That the argument must be a literal is a fact
     # about the instruction's encoding, so it is checked where the encoding is —
     # at the call site, by the back end.
@@ -911,7 +911,7 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
 proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
                               paramsAt: int; op: IntrinsicOp): string =
   ## The mismatch message, or "" when the declaration matches the row. Reads
-  ## `dest` through cursors ONLY — the caller emits any error afterwards, once
+  ## `dest` only through cursors — the caller emits any error afterwards, once
   ## every cursor is gone (appending to `dest` may reallocate it), and into the
   ## routine's `effects` slot, the one slot that already accepts an `(err …)`.
   let row = IntrinsicRows[op]
@@ -928,7 +928,7 @@ proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
         break
       let param = asLocal(p)
       # §4.1: the roles dictate the spelling, with no author choice. An `inout`
-      # operand is read AND written, which only `var` expresses — and the `var` is
+      # operand is both read and written, which only `var` expresses — and the `var` is
       # what makes the call site emit `(haddr d)`, the tag that tells the back end
       # to bind d's location instead of materialising a pointer to it.
       var ptyp = param.typ
@@ -1061,7 +1061,7 @@ proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   ## command (e.g. `"nimony c"`, `"nim c"`, `"nimony c --path:…"`; the first
   ## token is the compiler, the rest is passed through verbatim, so neither the
   ## builder nor its subcommand is hardcoded). The optional `linkflags` are
-  ## per-file link flags scoped to THIS module's output: `deps.nim` attaches them
+  ## per-file link flags scoped to this module's own output: `deps.nim` attaches them
   ## as a `(flags …)` child on the module's object in the link manifest, so they
   ## are passed to the linker together with that file (cf. `passL`, which is
   ## global). The whole link step is *not* overridden here — that is what the
@@ -1079,7 +1079,7 @@ proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   if not semos.fileExists(tool):
     buildErr c, dest, info, "build: cannot find tool source: " & tool
   if not inStdcache(c.g.config, info.getFile): tool = tool.toRelativePath(curWorkDir)
-  # Link flags are passed through verbatim (with `${path}` substitution), NOT a
+  # Link flags are passed through verbatim (with `${path}` substitution), not a
   # file path — they end up on the linker command line next to this module's `.o`.
   let linkFlags = replaceSubs(rawLinkFlags, currentDir, c.g.config)
   c.toBuild.buildTree TupX, info:
@@ -1203,7 +1203,10 @@ proc semLinkPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: N
   elif path notin c.toLink:
     c.toLink.add path
 
-proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
+proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool;
+                    loopHead: var bool) =
+  ## `loopHead`: the line starts a loop body, the one place an `invariant` may
+  ## stand (`semLoopBody`). It stays true only while every pragma is one.
   # A statement pragma arrives either wrapped — `(call build "a")` /
   # `(kv assume expr)` with the pragma name as first child — or as a bare
   # ident / tag-form node. For wrapped forms the wrapper's scope is entered
@@ -1225,6 +1228,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     if hasScope:
       it.n = start; skip it.n
     else: skipParRi it.n # degenerate bare-ident form; historical behavior
+  if it.n.pragmaKind != InvariantP: loopHead = false
   if c.phase == SemcheckSignatures and not isPragmaBlock and
       it.n.pragmaKind in {CompileP, LinkP, PassCP, PassLP}:
     # These evaluate their arguments as constant expressions, which needs the
@@ -1256,7 +1260,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
   case it.n.pragmaKind
   of BuildP:
     # Repurposed: `{.build(builder, tool[, args]).}` routes this module's Leng IR
-    # through a custom backend `tool` (built by `builder`). NOT the old foreign-
+    # through a custom backend `tool` (built by `builder`). Not the old foreign-
     # source `.build` — that single use (mimalloc) moved to the standard
     # `.compile`.
     let info = it.n.info
@@ -1302,9 +1306,12 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     toPragmaArgs()
     semEmit c, dest, it
     closePragmaLine()
-  of AssumeP, AssertP:
-    let kind = if it.n.pragmaKind == AssumeP: AssumeS else: AssertS
+  of AssumeP, AssertP, InvariantP:
+    let pk = it.n.pragmaKind
+    let kind = if pk == AssumeP: AssumeS elif pk == AssertP: AssertS else: InvariantS
     let info = it.n.info
+    if pk == InvariantP and not loopHead:
+      buildErr c, dest, info, "an `invariant` must be the first statement of a loop body"
     toPragmaArgs()
     dest.addParLe(kind, info)
     semBoolExpr c, dest, it.n
@@ -1524,13 +1531,17 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       skip it.n
       while it.n.hasMore: skip it.n
 
-proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item; loopHead: var bool) =
   let info = it.n.info
   it.n.into:
     while it.n.hasMore:
       # kv/call wrappers around a pragma line are entered by `semPragmaLine`
-      semPragmaLine c, dest, it, false
+      semPragmaLine c, dest, it, false, loopHead
   producesVoid c, dest, info, it.typ # in case it was not already produced
+
+proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  var loopHead = false
+  semPragmasLine c, dest, it, loopHead
 
 proc hasCastUncheckedAccess(n: Cursor): bool =
   ## Scan the first pragma of the `(pragmas ...)` list at `n` to see if it
@@ -1554,8 +1565,9 @@ proc semPragmaExpr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     assert it.n.stmtKind == PragmasS
     hasUncheckedAccess = hasCastUncheckedAccess(it.n)
     copyInto dest, it.n: # (pragmas
+      var loopHead = false
       while it.n.hasMore:
-        semPragmaLine c, dest, it, true
+        semPragmaLine c, dest, it, true, loopHead
     if hasUncheckedAccess:
       inc c.inUncheckedAccess
     var list = createTokenBuf(0)

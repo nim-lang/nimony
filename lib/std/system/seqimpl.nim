@@ -137,7 +137,7 @@ template default*[T](x: typedesc[seq[T]]): seq[T] = newSeqUninit[T](0)
 
 func `=dup`*[T](a: seq[T]): seq[T] {.nodestroy.} =
   result = newSeqUninit[T](a.len)
-  # Bounded by the RESULT's length: a refused allocation leaves `result` empty
+  # Bounded by the result's length: a refused allocation leaves `result` empty
   # with no buffer (and `oomHandler` called), and then nothing is copied.
   var i = 0
   while i < result.len:
@@ -259,7 +259,7 @@ func `@`*[I, T](a: sink array[I, T]): seq[T] {.nodestroy, semantics: "arrayToSeq
   ## array constructors); the copies, if any, happen at the call site.
   result = newSeqUninit[T](a.len)
   if result.data != nil:
-    # The bound is the ARRAY's length, not the seq's: `a.len` is a compile-time
+    # The bound is the array's length, not the seq's: `a.len` is a compile-time
     # constant and bounds `a[i]`, where `result.len` says nothing about the
     # array's index range. The two are equal on this path — `data != nil` means
     # the allocation of `a.len` elements succeeded — so this is the same loop,
@@ -326,7 +326,7 @@ func grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
   growUnsafeImpl(s, newLen)
   # `growUnsafe` leaves the length alone when it could not allocate, and the
   # seq keeps its old (smaller) buffer -- so the refusal must be read off the
-  # LENGTH. Testing `s.data == nil` instead would see a perfectly good buffer
+  # length. Testing `s.data == nil` instead would see a perfectly good buffer
   # and fill `newLen` slots into storage that never grew.
   if s.len >= newLen:
     while i < newLen:

@@ -13,7 +13,7 @@ Implements "pass by const" by introducing more hidden pointers.
 We do this right before inlining and before codegen as it interacts with the
 codegen's `maybeByConstRef` logic — and, unlike the raise lowering that used to
 share this file, it cannot move ahead of `cps`: the state procs and init
-wrappers `cps` GENERATES have const-ref params of their own and need the same
+wrappers `cps` generates have const-ref params of their own and need the same
 derefs as everyone else's. See `eraiser.nim`, which absorbed the half that left.
 
 ]##
@@ -69,7 +69,7 @@ proc nextArgRole*(w: var ArgWalker; ptrSize: int; cache: var SizeofCache): ArgRo
   ## past the formal it consumed.
   ##
   ## Answers "how does this actual reach the callee?" — and `argConstRef` is
-  ## the interesting one: the callee gets an ADDRESS, so the actual needs
+  ## the interesting one: the callee gets an address, so the actual needs
   ## storage to have an address of.
   ##
   ## Two walkers need this and must agree exactly, because both walk formals
@@ -150,7 +150,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.needsXelim = c2.needsXelim
 
 proc yieldsAddress(n: Cursor): bool =
-  ## Does this expression already EVALUATE to an address? Not the same question
+  ## Does this expression already evaluate to an address? Not the same question
   ## as "is its head an `addr`": `coro_transform`'s lifetime extension hands us
   ## `(expr (stmts (var tmp ...)) (haddr tmp))`, whose value is an address even
   ## though the tree it sits in is an `expr`.
@@ -164,7 +164,7 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   if yieldsAddress(n):
     # Already carries an address: this call is inside a coroutine, and
-    # `coro_transform` gave the argument storage in the FRAME rather than let
+    # `coro_transform` gave the argument storage in the frame rather than let
     # us put it on a state proc's stack, which dies at the next suspension.
     tr c, dest, n
   elif constructsValue(n):
@@ -324,7 +324,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
          YldS, StmtsS, AlwaysS,
          PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS,
          ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
-         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS,
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
          AsmS, DeferS, LabS, JmpS, NoStmt:
         # generic container: copy the head and recurse into the children

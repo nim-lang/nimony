@@ -154,7 +154,7 @@ proc slotTarget(fn: SymId): SymId =
   ## method's own arguments plus the caller's continuation. Dispatch has to
   ## reach the wrapper — every passive call site is lowered to call it — so
   ## that is what the slot holds, in every module that builds this vtable.
-  ## The slot's KEY stays the method's frontend key, the one sem writes into
+  ## The slot's key stays the method's frontend key, the one sem writes into
   ## the class's `(methods)` pragma, so a foreign module that only sees the
   ## pragma arrives at the same slot. A foreign wrapper is published here so
   ## the vtable constant can name it.
@@ -415,7 +415,7 @@ proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassI
     var x = x
     if class.ptrKind == RefT:
       # past duplifier, so need to do the deref transform here.
-      # Do NOT cast the outer IAref wrapper to the base IAref type: the two
+      # Do not cast the outer IAref wrapper to the base IAref type: the two
       # IAref structs can have different d.00 offsets on 32-bit ARM when the
       # derived object has int64/float64 fields that require 8-byte alignment,
       # introducing padding between r.00 and d.00 that the base IAref lacks.
@@ -703,7 +703,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of NoStmt, CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS,
          ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, AlwaysS, PragmasS, PragmaxS,
          InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
-         ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+         ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS,
          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
          DeferS:
         # generic container: copy the head and recurse into the children
@@ -768,7 +768,7 @@ proc processMethods(c: var Context) =
           # The synthesized virtual `=destroy`/`=trace` object hooks are named
           # `=destroy_<mangledType>` / `=trace_<mangledType>`. Normalize to the
           # bare hook name so `methodKey` routes them through the canonical
-          # destroy/trace signature — the SAME key the frontend writes into the
+          # destroy/trace signature — the same key the frontend writes into the
           # exported `(methods)` pragma (see derefs.trType). Otherwise the
           # collected method (per-type name key) and the pragma entry (canonical
           # key) land in different vtable slots, and a foreign consumer — which
@@ -864,7 +864,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
      BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS,
      PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
      FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
-     DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+     DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS,
      InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
      DeferS, LabS, JmpS, NoStmt:
     skip n

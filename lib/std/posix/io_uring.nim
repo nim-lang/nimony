@@ -566,7 +566,7 @@ const
 
 # ---------------------------------------------------- the three syscalls ---
 #
-# io_uring has NO libc wrapper — glibc exposes no `io_uring_enter` — so the two
+# io_uring has no libc wrapper — glibc exposes no `io_uring_enter` — so the two
 # backends reach the kernel by different routes and this is the only place that
 # knows it. Everything below calls `sysSetup`/`sysEnter`/`sysRegister` and each
 # result still goes through `pcall`, which already hides which convention
@@ -607,7 +607,7 @@ else:
   proc sysEnter(fd, toSubmit, minComplete, flags: cint; arg: nil pointer;
                 sz: cint): cint =
     # `argsz` is a size_t in the kernel: a 64-bit register. Through the
-    # variadic `syscall()` a `cint` only defines the LOW 32 bits of that
+    # variadic `syscall()` a `cint` only defines the low 32 bits of that
     # register; the high half is whatever the C compiler left there. gcc
     # happened to zero it, clang did not, and the kernel compares the full
     # value against sizeof(io_uring_getevents_arg): every timed wait came
@@ -898,8 +898,8 @@ proc hasExtArg*(queue: var Queue): bool {.inline.} =
 
 proc submitAndWait*(queue: var Queue; waitNr: uint; ts: nil ptr Timespec): int
     {.raises, tags: [], discardable.} =
-  ## Submit, then WAIT in the kernel for `waitNr` completions, giving up after
-  ## `ts` (a RELATIVE duration; `nil` waits indefinitely). One syscall for both
+  ## Submit, then wait in the kernel for `waitNr` completions, giving up after
+  ## `ts` (a relative duration; `nil` waits indefinitely). One syscall for both
   ## halves — which is the point: `submit` never blocks, so a caller that wants
   ## to sleep until something happens otherwise sleeps somewhere else, and a
   ## completion arriving a microsecond into that nap waits out the rest of it.
@@ -1377,7 +1377,7 @@ proc socket*(sqe: ptr Sqe; domain: Domain; `type`: SockType; protocol: Protocol;
   ## `fd`/`off`/`len` exactly as the kernel's `io_socket_prep` reads them
   ## (verified against v6.8/6.10/master). `flags` are the type word's own high
   ## bits: `io_socket_prep` extracts them with `type & ~SOCK_TYPE_MASK`. They
-  ## do NOT go into `rw_flags`: a non-zero `rw_flags` (or `addr`) is EINVAL
+  ## do not go into `rw_flags`: a non-zero `rw_flags` (or `addr`) is EINVAL
   ## there.
   const
     SockNonBlockBit = 0o4000'i32     # SOCK_NONBLOCK (= O_NONBLOCK)

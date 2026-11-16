@@ -335,7 +335,7 @@ else:
   elif defined(arm64):
     type
       SysLockObj {.pure, final, byref.} = object ## pthread_mutex_t: 48 B on
-        abi: array[6, int64]                     ## aarch64 glibc (NOT x86_64's
+        abi: array[6, int64]                     ## aarch64 glibc (not x86_64's
                                                  ## 40; musl's 40 fits inside)
       SysCondObj {.pure, final, byref.} = object ## pthread_cond_t (48 B)
         abi: array[6, int64]

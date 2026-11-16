@@ -26,7 +26,7 @@ import cse                                     # runCSE + collectFunctionSummari
 import scalarizer                              # runScalarize (object → field scalars / SROA)
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import unswitch                                # runUnswitch (loop unswitching)
-import imi_bridge                             # runImi/parseModule (inter-module inliner)
+import imi_bridge                             # runImiOn/parseModule (inter-module inliner)
 import vectorizer                             # runVectorizer (map loops -> (instr ...))
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
@@ -69,7 +69,8 @@ let disabledPasses = block:
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## memidioms, vectorize, sinkret, tailcall.
+  ## memidioms (both stages), memloops (only the loop idioms before the
+  ## inliner), vectorize, sinkret, tailcall.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -102,6 +103,77 @@ proc extractModuleSuffix(filename: string): string =
     elif not skip:
       result.add c
 
+const
+  MaxCleanupRounds = 3
+    ## Bound of the cleanup fixpoint. Most bodies converge in two rounds (the
+    ## second confirms); a third catches the chains the second exposes. More
+    ## buys nothing measurable on the benchmarks and costs compile time.
+
+type
+  CleanupStage = enum
+    ## The cleanup pipeline's stages, in round order.
+    stRewrite, stCtorProj, stScalarize, stCopyProp, stUnswitch, stRefold, stCse
+
+  Fixpoint = object
+    ## State of one body's cleanup fixpoint.
+    clean: set[CleanupStage]
+      ## Stages whose last run is still current: nothing changed the body since.
+    changed: bool             ## the current round changed the body
+    sroa, us, iv, cse: int
+      ## The temp counters of the passes that mint locals. A pass that runs
+      ## again in a later round continues its own numbering, so it never
+      ## declares a name an earlier round already declared.
+
+const
+  IdempotentStages = {stRewrite, stCtorProj, stScalarize, stUnswitch, stRefold, stCse}
+    ## Stages whose run on their own output is a no-op, so they are skipped
+    ## when nothing changed the body since. The rewriter and unswitching are
+    ## fixpoints themselves. Copy propagation is the exception: one run deletes
+    ## only the last link of a dead-store chain (`x = bytes and 255` over
+    ## `bytes = b.bytes`), so it runs every round.
+
+proc mutated(f: var Fixpoint) {.inline.} =
+  ## The body changed: every stage has something new to look at.
+  f.changed = true
+  f.clean = {}
+
+template stage(f: var Fixpoint; s: CleanupStage; enabled: bool; pass: untyped) =
+  ## Runs `pass`, which returns whether it changed the body, unless the stage
+  ## is idempotent and the body is still what its last run left behind.
+  if enabled and s notin f.clean:
+    if pass: mutated(f)
+    if s in IdempotentStages: f.clean.incl s
+
+proc runPipelineRound(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
+                      summaries: ptr FunctionSummaryTable; m: ptr MainModule;
+                      params: Cursor; eng: Engine) =
+  ## One round of the cleanup pipeline. Each pass leaves work for the next:
+  ## the rewriter's `deref_addr` folds un-poison locals for SROA, SROA's scalar
+  ## copies are what copy propagation deletes, copy propagation makes the
+  ## conditions unswitching compares structurally identical, the unswitched
+  ## copies hand CSE and the rewriter known conditions, and CSE's temps are
+  ## bindings copy propagation can see through on the next round.
+  f.changed = false
+  let rw = eng != nil and passOn("rewrite")
+  stage(f, stRewrite, rw): runRewritesFix(eng, buf) > 0
+  stage(f, stCtorProj, passOn("ctorproj")): runConstructorProjection(buf)
+  stage(f, stScalarize, passOn("scalarize")): runScalarize(buf, m, f.sroa)
+  stage(f, stCopyProp, passOn("copyprop")): runCopyProp(buf, params, summaries, m)
+  stage(f, stUnswitch, passOn("unswitch")): runUnswitch(buf, f.us) > 0
+  # Copy propagation and unswitching substitute values into expressions;
+  # `(add T x 0)` and `(lt 14 14)` that only now became foldable fold here,
+  # before CSE keys on them.
+  stage(f, stRefold, rw): runRewritesFix(eng, buf) > 0
+  stage(f, stCse, passOn("cse")):
+    runCSE(buf, summaries, m, params, f.cse, st.checksRemoved)
+
+proc cleanupFixpoint(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
+                     summaries: ptr FunctionSummaryTable; m: ptr MainModule;
+                     params: Cursor; eng: Engine) =
+  for round in 1 .. MaxCleanupRounds:
+    runPipelineRound(buf, f, st, summaries, m, params, eng)
+    if not f.changed: break
+
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                   params: Cursor = default(Cursor); eng: Engine = nil;
@@ -109,54 +181,30 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported.
   ##
-  ## The temps these passes mint are LOCALS of the body, so they are named like
+  ## The temps these passes mint are locals of the body, so they are named like
   ## locals -- `` `sroa.1 ``, `` `cse.1 `` -- and two bodies' first temps do
-  ## share a pool symbol. That is what a local name IS: every proc in the module
+  ## share a pool symbol. That is what a local name is: every proc in the module
   ## already has its own `result.0`, and both backends scope a local to its
   ## function. This used to paste a per-body `<module>.<n>` after the counter to
-  ## avoid the sharing, which made the module suffix a MIDDLE segment of the
+  ## avoid the sharing, which made the module suffix a middle segment of the
   ## symbol (nimony#2457) -- a global's spelling for something that is not one.
-  # The structural rewriter runs FIRST so its `deref_addr` rules fold the
+  # The structural rewriter runs first so its `deref_addr` rules fold the
   # inliner's by-address residue — `inc i` splices as `(deref (haddr i))` — before
   # anything else looks at the body. Removing those `addr` nodes un-poisons the
   # locals for every later pass (SROA and copyprop treat address-taken locals as
   # untouchable) and for both backends' register allocation.
-  if eng != nil and passOn("rewrite"):
-    runRewritesFix(eng, buf)
-  # SROA first: fold field projections off inline constructors (`T(f: a).f` → `a`),
-  # then explode non-escaping local objects into per-field scalars; copy
-  # propagation then cleans up the resulting scalar copies and dead stores, so the
-  # later passes see simpler, scalar code.
-  if passOn("ctorproj"): runConstructorProjection(buf)
-  if passOn("scalarize"): runScalarize(buf, m)
-  if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
-  # Hoist loop-invariant `if` conditions out of small loops by duplicating them
-  # (loop unswitching): an inlined string accessor's SSO test runs once instead
-  # of per character. AFTER copyprop so propagated copies make structurally
-  # identical conditions actually identical.
-  if passOn("unswitch") and runUnswitch(buf) > 0 and passOn("copyprop"):
-    # A specialized copy no longer READS the temps that fed the hoisted test —
-    # but it still computes them, once per iteration, which is most of what the
-    # unswitch was meant to remove. Copy propagation's dead-store elimination is
-    # what actually deletes them, so it has to see the loop again. They come in
-    # CHAINS (`x = bytes and 255` over `bytes = b.bytes`) and one round only
-    # deletes the last link, so run until the body stops shrinking.
-    for _ in 0 ..< 3:
-      let before = buf.len
-      runCopyProp(buf, params, summaries, m)
-      if buf.len >= before: break
-  # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
-  # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
-  # after those substitutions actually fold. Cheap: the DFA walk is linear
-  # and a miss is a no-op.
-  if eng != nil and passOn("rewrite"):
-    runRewritesFix(eng, buf)
-  if passOn("indvars"): runInductionVariables(buf, m, target.scaledIndex)
-  # CSE also deletes index checks a dominating identical check already made:
-  # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
-  if passOn("cse"):
-    st.checksRemoved += runCSE(buf, summaries, m, params)
-  # The vectorizer runs last of the passes that OPTIMIZE: its emitted
+  var f = Fixpoint()
+  cleanupFixpoint(buf, f, st, summaries, m, params, eng)
+  # Strength reduction is a lowering, not a cleanup: it is not idempotent (a
+  # second run reduces its own pointer IVs again), so it runs exactly once, on
+  # the cleaned-up loops. What it leaves behind is cleanup work again —
+  # `` `x = haddr (pat `iv.q `iv.j) `` is a binding copy propagation can
+  # substitute into `(deref `x)` and the rewriter then folds — so the fixpoint
+  # resumes when it changed anything.
+  if passOn("indvars") and runInductionVariables(buf, m, target.scaledIndex, f.iv):
+    mutated(f)
+    cleanupFixpoint(buf, f, st, summaries, m, params, eng)
+  # The vectorizer runs last of the passes that optimize: its emitted
   # `(instr ...)` applications are final (selection-final by the tag's contract)
   # and no later pass needs to look at them; the scalar remainder loop it leaves
   # behind was already optimized by everything above. Only the encoding passes
@@ -166,12 +214,17 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # same loop into vector stores. `target.mem.intrinsics` is false for a back end
   # without a lowering for the rows (AVR); `target.mem.mergeWordBytes` enables
   # merging adjacent constant field stores, native back end only.
-  if (target.mem.intrinsics or target.mem.mergeWordBytes > 0) and passOn("memidioms"):
-    discard runMemIdioms(buf, m, params, target.mem, "mem." & suffix, st.memOps)
+  # The loop idioms ran before the inliner (`recognizeMemLoops`); what is left
+  # to do here is merging adjacent constant field stores, which wants the
+  # inlined, scalarized code.
+  if target.mem.mergeWordBytes > 0 and passOn("memidioms"):
+    var late = target.mem
+    late.intrinsics = false
+    discard runMemIdioms(buf, m, params, late, "mem." & suffix, st.memOps)
   if target.vecMode != vecOff and passOn("vectorize"):
     if runVectorizer(buf, "vec." & suffix):
       inc st.vectorized
-  # The tail-call encoding runs after EVERYTHING, the vectorizer included.
+  # The tail-call encoding runs after everything, the vectorizer included.
   # `(ret (call …))` deliberately violates the Leng rule that calls are bound and
   # do not nest: it is a directive to the backend ("do the tail call"), not an
   # expression. Minting it last is what keeps every pass above from having to
@@ -198,15 +251,33 @@ proc isAssemblerProc(pragmas: Cursor): bool =
       result = true
     skip p
 
+type
+  Stage = enum
+    stLoopIdioms   ## before the inliner: only the memory-loop idioms
+    stOptimize     ## after it: the whole per-body pipeline
+
+proc recognizeMemLoopsInBody(buf: var TokenBuf; suffix: string; st: var Stats;
+                             m: ptr MainModule; params: Cursor; target: Target) =
+  ## Zero-fill and copy loops become `zeroMemIns`/`copyMemIns` BEFORE the
+  ## inliner gets to the module. It runs first so that no later pass can hide a
+  ## loop from it: the induction-variable pass rewrites a counted loop into the
+  ## pointer walk the matcher does not know. The price is the loops that only
+  ## appear by inlining a callee, which stay loops; a fill or a copy is written
+  ## where the data lives, rarely in a helper small enough to be spliced.
+  var early = target.mem
+  early.mergeWordBytes = 0
+  discard runMemIdioms(buf, m, params, early, "mem." & suffix, st.memOps)
+
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                 eng: Engine = nil; target = Target(mem: MemOpts(intrinsics: true))) =
+                 eng: Engine = nil; target = Target(mem: MemOpts(intrinsics: true));
+                 stage = stOptimize) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
   if n.kind == TagLit:
     if n.stmtKind == ProcS:
-      inc st.procs
+      if stage == stOptimize: inc st.procs
       let tag = n.cursorTagId
       let li = rawLineInfo(n)
       let d = takeProcDecl(n)            # advances n past the whole proc
@@ -217,7 +288,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       dest.addSubtree d.returnType
       dest.addSubtree d.pragmas
       if d.body.kind == TagLit and not isAssemblerProc(d.pragmas):
-        inc st.bodies
+        if stage == stOptimize: inc st.bodies
         # Open a typenav scope for this proc and register its params, so the
         # alias pass's `getType` can resolve param/local types (mirrors how the C
         # backend's `genProcDecl` drives the scopes).
@@ -226,7 +297,11 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m, d.params, eng, target)
+        case stage
+        of stOptimize:
+          optimizeBody(body, suffix, st, summaries, m, d.params, eng, target)
+        of stLoopIdioms:
+          recognizeMemLoopsInBody(body, suffix, st, m, d.params, target)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb
@@ -240,7 +315,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st, summaries, m, eng, target)
+          rebuildTree(dest, n, suffix, st, summaries, m, eng, target, stage)
       dest.closeTag()
   else:
     dest.addSubtree n
@@ -260,7 +335,7 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
   var n = src.beginRead()
   if n.kind == TagLit and n.stmtKind == StmtsS:
     # Open the root by hand so the intrinsic declarations the vectorizer and
-    # memidioms need can be appended INSIDE it once every body is processed.
+    # memidioms need can be appended inside it once every body is processed.
     let tag = n.cursorTagId
     let li = rawLineInfo(n)
     result.openTag tag
@@ -276,6 +351,18 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
   else:
     rebuildTree(result, n, suffix, st, addr summaries, m, eng, target)
 
+proc recognizeMemLoops(src: var TokenBuf; suffix: string; st: var Stats;
+                       m: ptr MainModule; target: Target) =
+  ## `recognizeMemLoopsInBody` over every proc of the module. The intrinsic
+  ## declarations the rows need are added by `optimizeModule`, from `st.memOps`.
+  var dest = createTokenBuf(src.len + src.len div 32, src.pool, src.tags)
+  var noSummaries = default(FunctionSummaryTable)  # the stage reads none
+  var n = src.beginRead()
+  while n.hasMore:
+    rebuildTree(dest, n, suffix, st, addr noSummaries, m, nil, target, stLoopIdioms)
+  endRead n
+  src = ensureMove(dest)
+
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
   ## malformed (jump-inconsistent) buffer.
@@ -288,25 +375,26 @@ proc processFile*(input, output: string; verify = false;
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
   var st = Stats()
-  # 1. Whole-module inter-module inlining runs first (via the bridge, which
-  #    owns the nifpools surface the inliner is written against).
-  var imiChanged = false
-  var src = block:
-    var inlined =
-      if passOn("imi"): runImi(input, suffix, splitFile(input).dir, imiChanged)
-      else: parseModule(input)
-    # The inliner works on dense line info; the per-body passes were calibrated
-    # on the sparse form a plain parse stores (unswitch bounds loops in raw
-    # tokens, suffixes included), and CSE's temp order follows token positions.
-    # An in-memory copy keeps them seeing exactly the tokens they always saw.
-    withSparseLineInfo(inlined)
-  if imiChanged: inc st.intermodChanged
-  # 2. Load the module as a typenav context (for type-precise aliasing), in the
-  #    SAME pools as `src`, so symbol ids line up between the type context and
+  # 1. Load the module as a typenav context (for type-precise aliasing), in the
+  #    same pools as `src`, so symbol ids line up between the type context and
   #    the optimization buffer. This used to serialize the inliner's result to
   #    NIF text and re-parse it into the context's pools: on `sem.nim` that
   #    round trip was 9.7 % of the whole run.
+  var src = parseModule(input)
   var typeCtx = load(input, src.pool, src.tags)
+  # 2. Memory-loop idioms, before anything can reshape the loops they match
+  #    (see `recognizeMemLoopsInBody`).
+  if target.mem.intrinsics and passOn("memidioms") and passOn("memloops"):
+    recognizeMemLoops(src, suffix, st, addr typeCtx, target)
+  # 3. Whole-module inter-module inlining (via the bridge, which owns the
+  #    nifpools surface the inliner is written against).
+  if passOn("imi") and runImiOn(src, suffix, splitFile(input).dir):
+    inc st.intermodChanged
+  # The inliner works on dense line info; the per-body passes were calibrated
+  # on the sparse form a plain parse stores (unswitch bounds loops in raw
+  # tokens, suffixes included), and CSE's temp order follows token positions.
+  # An in-memory copy keeps them seeing exactly the tokens they always saw.
+  src = withSparseLineInfo(src)
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)

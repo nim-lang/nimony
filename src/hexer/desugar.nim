@@ -227,7 +227,7 @@ proc emitRequiresGuard(c: var Context; dest: var TokenBuf; cond: Cursor;
 
 proc emitRequires(c: var Context; dest: var TokenBuf; cond: Cursor;
                   where: string; info: NifLineInfo) =
-  ## `.requires: a and b` becomes TWO guards, not one guard on a conjunction.
+  ## `.requires: a and b` becomes two guards, not one guard on a conjunction.
   ##
   ## `panic` does not return, so `if not a: panic` followed by `if not b: panic`
   ## is exactly equivalent — but it costs a compare and a branch each, where the
@@ -235,7 +235,7 @@ proc emitRequires(c: var Context; dest: var TokenBuf; cond: Cursor;
   ## builds `x` in a diamond (`setle`, `and 1`, `jmp`, `mov 0`) and then
   ## re-tests it (`cmp x, 0; jne`). Measured on the x64 back end that is 11
   ## instructions on the fast path against gcc's 2, and it is on the fast path
-  ## of EVERY `seq[int]` index check — the single biggest item in the 44 % of
+  ## of every `seq[int]` index check — the single biggest item in the 44 % of
   ## the hot loop these checks cost
   ## ([[destination_measured_bounds_checks_not_inlining]]).
   ##
@@ -480,7 +480,7 @@ proc hoistConstSet(c: var Context; n: Cursor; info: NifLineInfo): SymId =
   # global symbol — same as `lengcgen`'s `Dl.<lib>.<n>.<main>`. Spelling the
   # suffix out is not optional just because the writer elides it again for the
   # module that owns the symbol: a reader expands a trailing-dot name with the
-  # suffix of the file IT is reading, so the elided form is only ever a
+  # suffix of the file it itself is reading, so the elided form is only ever a
   # serialization of a name that was complete in the pool. Interning the elided
   # form instead would collide with any other module's `setlit.0.` that a later
   # `tryLoadSym` pulls into the same pool.
@@ -887,8 +887,8 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # not constant
     genSetConstrRuntime(c, dest, n)
   of 1, 2, 4, 8:
-    # A word-sized set IS its bit pattern, so the constant folds to one unsigned
-    # literal — SUFFIXED with the set's own width. Unsuffixed, the literal is
+    # A word-sized set is its bit pattern, so the constant folds to one unsigned
+    # literal — suffixed with the set's own width. Unsuffixed, the literal is
     # polymorphic and everything downstream has to guess: `xelim`'s `declareTemp`
     # asks `getType` for the type of the `if` expression it is hoisting, gets `u64`
     # off a bare `2u`, and declares a `u64` temp for a `set[RoutineProp]` that is one
@@ -1139,7 +1139,7 @@ proc tryFoldFloatExpr(dest: var TokenBuf; exprStart: int; targetBits: int) =
     dest.addParRi()
 
 proc tryClosureCompare(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
-  ## `(eq|neq <closure> a b)` -> compare the fn slots AND the env slots.
+  ## `(eq|neq <closure> a b)` -> compare the fn slots and the env slots.
   ##
   ## Both halves, because two closures are equal when they are the same
   ## function over the same environment — the same `proc` captured twice is
@@ -1533,12 +1533,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       of ProcS, FuncS, MethodS, ConverterS:
         trProc c, dest, n
       of IteratorS:
-        # An INLINE iterator's decl is dead by the time desugar runs —
+        # An inline iterator's decl is dead by the time desugar runs —
         # `elimForLoops` spliced its body into each caller before this pass, and
         # what is left reaches no back end — so lowering it would be wasted work,
         # which is why iterators sat with the macros and templates below.
         #
-        # A COROUTINE iterator is not that. `.closure` (and `.passive`) survive as
+        # A coroutine iterator is not that. `.closure` (and `.passive`) survive as
         # real routines: lambdalifting and cps turn the body into a state machine
         # and it goes all the way to `lengcgen`. Skipping it meant nothing ever
         # lowered the constructs desugar owns, so a `set` literal in a closure
@@ -1582,7 +1582,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         if c.inPassiveIter: emitCancelCheck(c, dest, info)
       of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CoroforS, RetS,
           PragmaxS, ImportasS, ExportexceptS, DiscardS,
-          TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+          TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS,
           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
           BindS, MixinS, UsingS, AsmS, DeferS:
         trSons(c, dest, n)
@@ -1616,7 +1616,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       # A `.closure` value is an (fn, env) pair, so C's `==` cannot compare it:
       # the operands are structs. Project the halves and compare those instead.
       #
-      # This belongs HERE, on the typed `(eq <type> a b)` node, because the type
+      # This belongs here, on the typed `(eq <type> a b)` node, because the type
       # is right there — no need to guess from the shape of the operand
       # expression. An earlier attempt did exactly that, in coro_transform,
       # by intercepting the `(hconv (pointer …) g)` that sem used to emit for
@@ -1661,7 +1661,7 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]; lifter: ref LiftingC
                   pre: createTokenBuf(), lifter: lifter)
   c.typeCache.openScope()
   # Process the root `(stmts` manually (mirroring trSons' copyInto) but
-  # keep it OPEN until `pending` has been appended: an emitted close
+  # keep it open until `pending` has been appended: an emitted close
   # cannot be rolled back under `-d:virtualParRi` (it seals the tag and
   # is elided), so the old "close, shrink away, re-close" dance is
   # impossible.

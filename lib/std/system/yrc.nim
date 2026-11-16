@@ -2,7 +2,7 @@
 # that runs concurrently with the mutators and with other collecting threads.
 # Selected by `--mm:yrc` via `include "$MM"` in `system.nim`.
 #
-# The collector IS Nim's `lib/system/yrc.nim` (and its `cellseqs_v2.nim`),
+# The collector is Nim's `lib/system/yrc.nim` (and its `cellseqs_v2.nim`),
 # copied into `system/upstream/` by `hastur` at the commit
 # `system/upstream.commit` pins; its header has the full story and
 # the Lean/TLA+ proofs of the invariants live next to it in the Nim
@@ -53,7 +53,7 @@ proc increment(c: Cell) {.inline.} =
   discard atomicAddFetch(addr c.rc, rcIncrement, ATOMIC_ACQ_REL)
 
 # ---------------- the three primitives every strategy supplies ----------------
-# Only refs that CANNOT form a cycle use them for decrements.
+# Only refs that cannot form a cycle use them for decrements.
 
 func arcInc*(memLoc: var int) {.inline.} =
   ## Atomically increments the reference count.

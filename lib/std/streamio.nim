@@ -30,7 +30,7 @@
 ## * `Reader` and `Writer` are concrete, move-only values. A pair returned by
 ##   one constructor shares a `Core`, a `ref` to the descriptor and the TLS
 ##   engine if any, which closes the descriptor when the last end is gone.
-## * Each end has ONE adapter slot, `adapter` (compression, HTTP framing, …),
+## * Each end has a single adapter slot, `adapter` (compression, HTTP framing, …),
 ##   set with `setAdapter`. Encryption is not an adapter: a `TlsEngine` lives in
 ##   the core, because TLS is a property of the connection, not of a direction.
 ##   So the write path is caller -> adapter -> TLS -> descriptor and the read path
@@ -832,7 +832,7 @@ proc close*(w: var Writer) {.passive, raises.} =
   w.core = nil
 
 proc abort*(w: var Writer) =
-  ## Ends the writer WITHOUT a clean finish: no adapter trailer, no
+  ## Ends the writer without a clean finish: no adapter trailer, no
   ## `close_notify`. For error paths, where a clean finish would hand the peer
   ## a complete-looking, truncated stream.
   if w.core != nil:
@@ -1008,7 +1008,7 @@ proc connect*(address: string; request: string; tls: nil TlsEngine = nil;
               dl = never): (Reader, Writer) {.
     passive, raises.} =
   ## For a protocol where we speak first (HTTP, Redis): `request` is written
-  ## and FLUSHED before this returns, so the next step is reading the reply —
+  ## and flushed before this returns, so the next step is reading the reply —
   ## the forgotten flush that hangs both sides cannot be written.
   ## One `dl` covers DNS, TCP, TLS and that flush; the returned streams start
   ## with `never`. A failed request write aborts rather than cleanly finishing.
@@ -1041,7 +1041,7 @@ proc connectWriter*(address: string; tls: nil TlsEngine = nil;
   result = initWriter(c)
 
 proc detachWriter*(w: var Writer) =
-  ## Drops a writer WITHOUT ending its direction: no adapter trailer, no
+  ## Drops a writer without ending its direction: no adapter trailer, no
   ## `close_notify`, no `shutdown`. For a protocol layer that has written
   ## its request and keeps only the reader (`std/httpclient`), where ending
   ## the direction would make many servers drop the connection.

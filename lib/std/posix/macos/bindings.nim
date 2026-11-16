@@ -2,7 +2,7 @@
 
 proc open*(a1: cstring; a2: cint; mode: Mode = 0): cint {.importc: "open", sideEffect.}
 proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate".}
-# `Stat` is the 64-bit-inode layout. On x86_64 the PLAIN stat symbols are the
+# `Stat` is the 64-bit-inode layout. On x86_64 the plain stat symbols are the
 # legacy 32-bit-inode ABI (see dirs.nim); arm64 has only the 64-bit one.
 const
   FstatName = when defined(amd64): "fstat$INODE64" else: "fstat"

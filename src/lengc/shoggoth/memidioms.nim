@@ -7,8 +7,8 @@
 #    distribution, for details about the copyright.
 #
 
-## Replaces element-wise ZERO-fill loops with one `zeroMemIns` intrinsic and puts
-## a `copyMemIns` in front of element-wise COPY loops (nimony#2350). Both are
+## Replaces element-wise zero-fill loops with one `zeroMemIns` intrinsic and puts
+## a `copyMemIns` in front of element-wise copy loops (nimony#2350). Both are
 ## `(instr …)` applications of declarations this pass adds to the module
 ## (`addMemIntrinsicDecl`): an intrinsic has no body, so unlike a call to
 ## `c_memset` there is no definition DCE (which ran before us) could have
@@ -22,22 +22,26 @@
 ## The C compiler finds some of them on its own; arkham finds none, and on the
 ## native backend each stays a loop of one store per element.
 ##
-## The shape matched is the one hexer's `for` lowering produces, after the rest
-## of the pipeline has cleaned it up:
+## The shape matched is the one hexer's `for` lowering produces once loop
+## rotation (#2995) has moved the test to the back-edge:
 ##
-##   (while (true)
-##     (if (elif (lt IV HI)               ; or `le`
-##            STORE                       ; (asgn (at B IV) V) / (asgn (pat P IV) V)
-##            (asgn IV (add T IV 1)))
-##         (else (jmp L))))
-##   (lab L)
+##   (ite (lt IV HI)                      ; or `le`
+##     (stmts (loop (stmts
+##       STORE                            ; (asgn (at B IV) V) / (asgn (pat P IV) V)
+##       (asgn IV (add T IV 1))
+##       (continue (lt IV HI)))))         ; the same test again
+##     .)
 ##
 ## seen through the `(scope …)`/`(stmts …)` wrappers and the labels nobody jumps
-## to that inlining leaves behind. It becomes
+## to that inlining leaves behind. The unrotated forms — `(while (true) (if
+## (elif COND …) (else (jmp L))))` and `(loop (stmts (ite COND … (stmts (jmp
+## L))) (continue .)))`, each followed by `(lab L)` — are matched too. It
+## becomes
 ##
-##   (if (elif (lt IV HI)
+##   (ite (lt IV HI)
 ##     (stmts (instr zeroMemIns (haddr (at B IV)) (mul (i -1) COUNT (sizeof E)))
-##            (asgn IV HI))))             ; the value the loop left behind
+##            (asgn IV HI))              ; the value the loop left behind
+##     .)
 ##
 ## so nothing after the loop can tell the difference, the induction variable
 ## included.
@@ -46,7 +50,7 @@
 ## iteration and `zeroMemIns` evaluates them once, so the rewrite is valid only
 ## when no element store can change them. A value rooted at a local whose
 ## address is never taken cannot be reached by a store through a pointer. A
-## LOAD in them (a field behind a `deref`, a global) is protected by type-based
+## load in them (a field behind a `deref`, a global) is protected by type-based
 ## aliasing, the same rule the C backend's output is already compiled under
 ## (`gcc -O3` without `-fno-strict-aliasing`): a store of the element's scalar
 ## leaves cannot modify a location of a different scalar type. A one-byte store
@@ -55,10 +59,10 @@
 ## the original loop would never have terminated.
 ##
 ## The value stored must be all-zero bits — an all-zero object constructor
-## included, which is what makes the `setLen` tails match. The row is a ZERO fill
+## included, which is what makes the `setLen` tails match. The row is a zero fill
 ## (it takes no byte), so a loop storing any other constant stays a loop.
 ##
-## The row's operands are LOCATIONS — the written one spelled `(haddr L)`, the
+## The row's operands are locations — the written one spelled `(haddr L)`, the
 ## read one the bare element — where the span starts, plus the span's byte count
 ## (the optional size operand).
 ##
@@ -72,7 +76,7 @@
 ## bases, and one more thing: `memcpy` is only a forward element loop when the
 ## two ranges do not overlap. Two different local arrays whose addresses are
 ## never taken cannot (nor can such an array and anything behind a pointer); the
-## loop is then replaced like a fill. Otherwise the copy goes IN FRONT of the
+## loop is then replaced like a fill. Otherwise the copy goes in front of the
 ## untouched loop, guarded by a runtime test that the byte ranges are disjoint:
 ##
 ##   (if (elif (and (lt IV HI) DISJOINT)
@@ -110,7 +114,7 @@ type
   MemSite = object
     pos: int                         ## the loop / the store
     start: int                       ## what replaces it, or goes before it
-    insert: bool                     ## a guarded fast path IN FRONT of the loop
+    insert: bool                     ## a guarded fast path in front of the loop
 
   MemOpts* = object
     ## What the target allows. The driver fills it from the command line.
@@ -121,7 +125,7 @@ type
                                      ## reorder by type — never the C backend)
 
   MemScan = object
-    ## The match side. It also BUILDS each replacement into `scratch` as soon as
+    ## The match side. It also builds each replacement into `scratch` as soon as
     ## a site matches: the element type is a `typenav` answer, and typenav's
     ## scopes only describe the site while the walk is standing on it.
     buf: ptr TokenBuf
@@ -304,7 +308,7 @@ proc constBits(s: MemScan; n: Cursor; bits: var uint64; depth = 0): bool =
   ## `for` loop's bound temp alone). A
   ## float only as `0.0` (not `-0.0`): the width of any other is the
   ## context's. An object constructor only when it is made of nothing but
-  ## zeros: an `oconstr` is TOTAL (it names every field) and lengc renders it
+  ## zeros: an `oconstr` is total (it names every field) and lengc renders it
   ## as a C designated initializer, so the bytes it leaves unnamed — padding,
   ## the other members of a union — are not promised anything a zero would
   ## break.
@@ -372,7 +376,7 @@ proc byteValue(s: MemScan; v: Cursor; elemType: Cursor; b: var int64): bool =
 
 proc invariantValue(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool
 proc invariantLoc(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool =
-  ## The ADDRESS of location `n` is the same in every iteration.
+  ## The address of location `n` is the same in every iteration.
   case n.kind
   of Symbol: n.symId != iv
   of TagLit:
@@ -393,7 +397,7 @@ proc invariantLoc(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool =
   else: false
 
 proc invariantValue(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool =
-  ## The VALUE of `n` is the same in every iteration: nothing in it is the
+  ## The value of `n` is the same in every iteration: nothing in it is the
   ## induction variable, and no element store can change what it reads.
   case n.kind
   of IntLit, UIntLit, CharLit, FloatLit: true
@@ -423,7 +427,7 @@ proc invariantValue(s: MemScan; n: Cursor; iv: SymId; stored: Leaves): bool =
       res
     of AddrC, HaddrC: invariantLoc(s, n.childCursor, iv, stored)
     of DotC, AtC, DerefC, PatC:
-      # A LOAD. Its address must not move, and the stores must not be able to
+      # A load. Its address must not move, and the stores must not be able to
       # write what it reads — unless it reads a local's own storage, which no
       # store through a pointer reaches.
       let r = rootLocal(n)
@@ -450,6 +454,10 @@ type
     srIncrement                      ## `(asgn IV (add T IV 1))`
     srExit                           ## `(jmp L)`, `L` the label after the loop
     srRepeat                         ## `(continue .)`, a `(loop)`'s back-edge
+    srRepeatCond                     ## `(continue COND)`, a rotated loop's
+                                     ## back-edge testing the entry's COND
+    srRotatedLoop                    ## `(loop (stmts STORE INCREMENT
+                                     ## (continue COND)))`
 
 proc isOne(n: Cursor): bool =
   case n.kind
@@ -563,6 +571,13 @@ proc matchRole(s: var MemScan; n: Cursor; role: StmtRole; lm: var LoopMatch): bo
   of srIncrement: matchIncrement(n, lm.iv, lm.incTyp, lm.one)
   of srRepeat:
     n.kind == TagLit and n.stmtKind == ContinueS and n.childCursor.kind == DotToken
+  of srRepeatCond:
+    n.kind == TagLit and n.stmtKind == ContinueS and
+      subtreeEqual(n.childCursor, lm.cond)
+  of srRotatedLoop:
+    n.kind == TagLit and n.stmtKind == LoopS and n.childCursor.kind == TagLit and
+      matchStmts(s, n.childCursor.childCursor,
+                 [srStore, srIncrement, srRepeatCond], lm)
   of srExit:
     n.kind == TagLit and n.stmtKind == JmpS and
       n.childCursor.kind == Symbol and n.childCursor.symId == lm.exitLab
@@ -571,7 +586,7 @@ proc matchRun(s: var MemScan; first: Cursor; roles: openArray[StmtRole];
               next: var int; lm: var LoopMatch): bool =
   ## Match the statements of the sibling run starting at `first` against
   ## `roles[next..]`, seen through `(stmts …)`/`(scope …)` and past `.` holes
-  ## and labels nobody jumps to. A label somebody DOES jump to is control flow
+  ## and labels nobody jumps to. A label somebody does jump to is control flow
   ## we do not model: no match.
   result = true
   var it = first
@@ -593,7 +608,19 @@ proc matchLoop(s: var MemScan; w: Cursor; lm: var LoopMatch): bool =
   ## The loop grammar of the module comment, up to the store: everything a
   ## fill and a copy have in common.
   var c = w.childCursor
-  if w.stmtKind == LoopS:
+  if w.stmtKind == IteS:
+    # The rotated form loop rotation leaves (`leng`'s `for` lowering since
+    # #2995): the entry test guards a `(loop)` whose back-edge repeats it,
+    #   (ite COND (stmts (loop (stmts STORE INCREMENT (continue COND)))) .)
+    # The exit is falling out of the `ite`, so no label is involved.
+    result = matchCond(s, c, lm)
+    if result:
+      skip c
+      let thenArm = c
+      skip c
+      result = thenArm.kind == TagLit and (not c.hasMore or c.kind == DotToken) and
+        matchStmts(s, thenArm.childCursor, [srRotatedLoop], lm)
+  elif w.stmtKind == LoopS:
     # `(loop (stmts (ite …) (continue .)))`
     result = c.kind == TagLit and matchStmts(s, c.childCursor, [srIf, srRepeat], lm)
   else:
@@ -681,7 +708,7 @@ proc emitAddr(b: var TokenBuf; elem: Cursor) =
   b.closeTag()
 
 proc emitLoc(b: var TokenBuf; elem: Cursor) =
-  ## A block-memory row's WRITTEN location operand: `(haddr ELEM)`, the spelling
+  ## A block-memory row's written location operand: `(haddr ELEM)`, the spelling
   ## of every intrinsic's `var` operand — the element itself, not a pointer value
   ## (`intrinsics.ptLoc`). A read location is the bare element.
   b.openTag TagId(HaddrC)
@@ -746,7 +773,7 @@ proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
   ##   (if (elif COND (stmts MEMSTMT (asgn IV FINAL))))
   ##
   ## With `guardDisjoint` the condition also demands that the two ranges do
-  ## not overlap, and the original loop stays BEHIND it: on the fast path it
+  ## not overlap, and the original loop stays behind it: on the fast path it
   ## finds `IV` already at its final value and exits at once, otherwise it
   ## runs as it always did. Leaving it in place rather than copying it into
   ## an `else` keeps every label in it defined exactly once.
@@ -778,10 +805,11 @@ proc emitReplacement(b: var TokenBuf; lm: LoopMatch; name: string; isCopy: bool;
   b.closeTag()
 
 proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
-  ## Match the loop `w` (its exit label `exitLab` follows it) and, when it is a
+  ## Match the loop `w` (its exit label `exitLab` follows it; none for the
+  ## rotated `(ite COND (stmts (loop …)) .)`) and, when it is a
   ## fill or a copy, build its replacement. A copy is `D[IV] = S[IV]` (the
   ## assignment says the element types agree); unless its two ranges are
-  ## disjoint by construction, it becomes a guarded fast path IN FRONT of the
+  ## disjoint by construction, it becomes a guarded fast path in front of the
   ## loop.
   var lm = LoopMatch(exitLab: exitLab)
   if matchLoop(s, w, lm):
@@ -797,12 +825,12 @@ proc tryLoop(s: var MemScan; w: Cursor; exitLab: SymId) =
       s.used.incl op
       let start = s.scratch.len
       emitReplacement(s.scratch, lm, memIntrinsicName(op, s.suffix), isCopy,
-                      guarded, asIte = w.stmtKind == LoopS)
+                      guarded, asIte = w.stmtKind in {LoopS, IteS})
       s.sites.add MemSite(pos: s.posOf(w), start: start, insert: guarded)
 
 # ---- adjacent field stores ------------------------------------------------
 #
-# `o.a = 1; o.b = 2` with `a`, `b` adjacent one-byte fields becomes ONE 16-bit
+# `o.a = 1; o.b = 2` with `a`, `b` adjacent one-byte fields becomes a single 16-bit
 # store of `0x0201` — fewer stores, and on a modern core the store buffer and
 # the store ports are what such init sequences are bound by. Object
 # initializations are full of these: constant fields, mostly zeros.
@@ -1014,9 +1042,9 @@ proc mergeRun(s: var MemScan; base: Cursor; run: seq[StoreEntry];
       var value = 0'u64
       for m in members:
         value = value or (run[m].value shl ((run[m].off - e.off) * 8))
-      # The merged store takes the place of the FIRST member in program
+      # The merged store takes the place of the first member in program
       # order; the members are disjoint, so the order among them is free. Its
-      # ADDRESS is that of the member at the start of the window, `e` — not
+      # address is that of the member at the start of the window, `e` — not
       # of whichever member came first: in `o.d = 4; o.c = 3` those differ.
       var first = members[0]
       for m in members:
@@ -1100,6 +1128,8 @@ proc scanList(s: var MemScan; list: Cursor) =
     if it.kind == TagLit and it.stmtKind in {WhileS, LoopS}:
       var lab = SymId(0)
       if s.opts.intrinsics and exitLabelAfter(list, it, lab): tryLoop(s, it, lab)
+    elif it.kind == TagLit and it.stmtKind == IteS and s.opts.intrinsics:
+      tryLoop(s, it, SymId(0))
     scan(s, it)
     skip it
 

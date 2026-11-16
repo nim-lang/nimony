@@ -429,7 +429,7 @@ proc fromGeneric(dest: var TokenBuf; i: int): SymId =
     result = NoSymId
 
 proc findOrigin(dest: var TokenBuf; origin: SymId): int =
-  ## Position of the decl HEAD whose name is `origin` — the insert point.
+  ## Position of the decl head whose name is `origin` — the insert point.
   ## Not `SymbolDef pos - 1`: the head may carry a line-info suffix token
   ## and inserting between them would split head and suffix.
   var i = 0
@@ -794,7 +794,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
     modules[i].c.cycleGroup = cycleGroup
     modules[i].c.typeHooks = modules[0].c.typeHooks
 
-  # Phase 1: Register toplevel symbols for ALL modules
+  # Phase 1: Register toplevel symbols for all modules
   for i in 0..<modules.len:
     var (buf1, lineInfo) = phase1(modules[i].c, modules[i].dest, modules[i].n0)
     modules[i].buf1 = ensureMove buf1
@@ -806,7 +806,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
     if modules[i].c.deferredCyclicImports.len > 0:
       resolveCyclicImports(modules[i].c)
 
-  # Phase 2: Check signatures for ALL modules
+  # Phase 2: Check signatures for all modules
   # This publishes proc symbols to prog.mem via publishSignature
   for i in 0..<modules.len:
     var buf2 = phase2(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
@@ -818,7 +818,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
     if modules[i].c.deferredCyclicImports.len > 0:
       resolveCyclicImports(modules[i].c)
 
-  # Phase 3: Check bodies for ALL modules
+  # Phase 3: Check bodies for all modules
   for i in 0..<modules.len:
     modules[i].dest = phase3(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
 

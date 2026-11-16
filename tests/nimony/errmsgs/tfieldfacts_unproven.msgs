@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tfieldfacts_unproven.nim(13, 1) Error: cannot prove postcondition: 0 <= result.thing and result.thing < 3 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tfieldfacts_unproven.nim(17, 1) Error: cannot prove postcondition: 0 <= result.thing and result.thing < 3 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tfieldfacts_unproven.nim(23, 1) Error: cannot prove postcondition: 0 <= result and result < 3 [pass --verbose for the Final IR]

@@ -114,7 +114,7 @@ proc rollbackTo*(x: var Inits; cp: int) =
   x.journal.setLen cp
 
 proc addedSince(x: Inits; cp: int): HashSet[SymId] =
-  ## The net keys gained since `cp`: those added in the interval AND still
+  ## The net keys gained since `cp`: those added in the interval and still
   ## present now. Baseline keys are never removed (definite-assignment is
   ## monotone; nested confluences only ever drop keys they themselves added),
   ## so a currently-present key added since `cp` is exactly a delta key — even

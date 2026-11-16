@@ -194,10 +194,10 @@ type
 
 proc ruleTok(e: Engine; c: Cursor): RuleTok =
   ## Map a cursor's tag to the DSL enum. An 11-entry scan instead of the old
-  ## contiguous-id cast: with a SHARED tag pool (the production pipeline hands
+  ## contiguous-id cast: with a shared tag pool (the production pipeline hands
   ## the module's Leng pool in, see `newEngine`) a DSL name that already exists
   ## as a Leng tag — `pure` is one — gets its pre-existing id, so the DSL ids
-  ## are not contiguous. Only consulted on RULE-file cursors (parse + DO
+  ## are not contiguous. Only consulted on rule-file cursors (parse + DO
   ## templates), never in the hot matching path.
   if c.kind != TagLit: return rtOther
   let t = cursorTagId(c)
@@ -630,7 +630,7 @@ proc litNeqPred(args: openArray[Cursor]): bool =
   litOrder(args[0], args[1]) in {loLess, loGreater}
 
 proc newEngine*(rulesSrc: string; pool: Pool = nil; tags: TagPool = nil): Engine =
-  ## Build an engine from a rules source. Pass the MODULE's `pool`/`tags` (e.g.
+  ## Build an engine from a rules source. Pass the module's `pool`/`tags` (e.g.
   ## the typenav context's, as `optdriver` does) so the compiled patterns' tag
   ## ids line up with the buffers the engine will rewrite; with no pool given
   ## (tests, fuzzing) the engine owns a private one and inputs go through
@@ -973,7 +973,7 @@ when isMainModule:
     check buf, "(stmts (asgn x.0.M 0))"
 
   block sub_same_float_blocked:
-    # x - x is NOT 0.0 under IEEE (NaN/Inf), and the `0` template would be
+    # x - x is not 0.0 under IEEE (NaN/Inf), and the `0` template would be
     # ill-typed for a float sub — the rule is gated to `(i W)`.
     var buf = e.parseInput("(stmts (asgn x.0.M (sub (f 64) y.0.M y.0.M)))")
     discard runRewrites(e, buf)
@@ -996,7 +996,7 @@ when isMainModule:
   # express correctly until it grows computed captures.)
 
   block deref_addr_lvalue:
-    # The fold must also fire in LVALUE position — this is the inliner residue
+    # The fold must also fire in lvalue position — this is the inliner residue
     # of `inc(addr i)` after addr-argument substitution.
     var buf = e.parseInput(
       "(stmts (asgn (deref (addr i.0.M)) (add (i 64) (deref (addr i.0.M)) 1)))")
@@ -1055,7 +1055,7 @@ when isMainModule:
         wantInfo c, 4, 2
         skip c
 
-    # A SYNTHESIZED template token (the `x - x → 0` rule's `0`) is stamped with
+    # A synthesized template token (the `x - x → 0` rule's `0`) is stamped with
     # the matched node's info.
     var b2 = createTokenBuf(16, e.pool, e.tags)
     b2.openTag tg("sub");  b2.appendLineInfo li(f, 7, 3)
@@ -1098,7 +1098,7 @@ when isMainModule:
     doAssert sameTokens(a, exp), "canon globals:\n" & toString(a)
 
   block canon_distinct_after_rename:
-    # Differently-structured procs must NOT collapse: different proc names stay.
+    # Differently-structured procs must not collapse: different proc names stay.
     var a = e.parseInput("(proc :p.0.M (params (param :x.1.M (i 32))) (i 32) (stmts (ret x.1.M)))")
     var b = e.parseInput("(proc :q.0.M (params (param :x.1.M (i 32))) (i 32) (stmts (ret x.1.M)))")
     e.canon(a); e.canon(b)

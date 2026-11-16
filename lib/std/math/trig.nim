@@ -187,7 +187,7 @@ func productBit(a: array[53, uint64], bit: int): uint64 {.inline.} =
   (a[bit div 24] shr (bit mod 24)) and 1'u64
 
 func fractionValue(a: array[53, uint64], bits: int): tuple[hi, lo: float64] =
-  ## The fraction as a double-double of 106 SIGNIFICANT bits: leading zero
+  ## The fraction as a double-double of 106 significant bits: leading zero
   ## bits are skipped first, because an argument near a multiple of pi/2
   ## leaves a remainder with ~60 of them, and a fixed window would keep only
   ## the rest. The omitted tail is below 2^-106 of the value.

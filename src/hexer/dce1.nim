@@ -45,7 +45,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
       if n.substructureKind == PragmasU:
         # Check if this pragma section contains exportc or interrupt.
         # If so, mark the owner as a root: both name entry points nothing in the
-        # program calls. An `{.interrupt.}` handler is reached ONLY through the
+        # program calls. An `{.interrupt.}` handler is reached only through the
         # interrupt table, which the back end builds after this pass runs — so
         # without this it is unreachable by construction, gets deleted, and the
         # failure is a device that silently never responds to the interrupt.

@@ -205,7 +205,7 @@ type
     globals*, locals*: Table[string, int]
     fieldCounts*: Table[string, int]
       ## Per-name field counts for the object type currently being declared.
-      ## Unlike `globals`/`locals` this is NOT a monotonic counter: a field is
+      ## Unlike `globals`/`locals` this is not a monotonic counter: a field is
       ## numbered `.0` within its owning type, bumped only when an ancestor type
       ## already declares the same name (so a field's SymId is independent of the
       ## global counter / semcheck order). `semObjectType` saves/restores it so
@@ -221,7 +221,7 @@ type
     visOwner*: seq[VisOwner]
       ## Stack of expansions currently being semchecked. Private field
       ## visibility must be judged against the module the accessing code was
-      ## WRITTEN in, and an expansion mixes two provenances in one tree:
+      ## written in, and an expansion mixes two provenances in one tree:
       ## the body comes from the expanded routine's module, while the
       ## arguments substituted into it come from the call site. `file`
       ## discriminates the two — a token whose line info names the routine's
@@ -230,14 +230,14 @@ type
       ##
       ## Pushed at `untyped` template expansion, macro plugin expansion and
       ## generic instantiation: the three places where a body's field accesses
-      ## resolve for the FIRST time in a module other than their own. A typed
+      ## resolve for the first time in a module other than their own. A typed
       ## template body instead carries the `"x"` access token from its owner
       ## module and takes the `bypassVis` path.
       ##
       ## `c.routine.inInst` cannot answer this: it conflates "this is an
       ## expansion" with "this was already checked in its owner module", and
       ## the latter is false for an `untyped` template argument (semchecked
-      ## here for the FIRST time, at a call site that may not see the field)
+      ## here for the first time, at a call site that may not see the field)
       ## and for `{.untyped.}` generics (whose bodies are published unresolved
       ## and only resolve at the instantiation site). See issue #1988.
     moduleFlags*: set[ModuleFlag]
@@ -252,7 +252,7 @@ type
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.
     hostCommandLineArgs*: string # the same minus the target triple, for the
-                                 # compile-time-eval processes we build and RUN
+                                 # compile-time-eval processes we build and run
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
@@ -306,7 +306,7 @@ type
       ## Sources of the plugins this module ran. Their imports join the program
       ## (`semimport.importPluginImports`): a plugin's `bindSym` refers to them.
     fileDeps*: seq[string]
-      ## Absolute paths of the files this module's semchecking READ outside
+      ## Absolute paths of the files this module's semchecking read outside
       ## its own source: what a `.plugin` reported via `plugins.dependsOn` and
       ## what `slurp`/`staticRead` folded. `semmain.writeNewDepsFile` writes
       ## them as `(dependency …)` into `.s.deps.nif`, and `deps.nim` turns them
@@ -341,7 +341,7 @@ type
     inGenericDefinition*: int
       ## > 0 while semchecking a generic (or template) definition that has not
       ## been instantiated yet. Unlike `c.routine.inGeneric` this is a property
-      ## of the CONTEXT, not of one routine: a nested proc, lambda or do-block
+      ## of the context, not of one routine: a nested proc, lambda or do-block
       ## closure inside a generic body gets a fresh `c.routine` whose
       ## `inGeneric` is 0, so code keyed off that would eagerly instantiate and
       ## eagerly report unresolved overloads inside a body whose typevars are

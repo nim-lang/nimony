@@ -19,7 +19,7 @@ func arcDec*(memLoc: var int): bool {.inline.} =
   ##
   ## Contract: a caller must free the cell when this returns true, or must
   ## already know the count is non-zero. The fast path below answers "you are
-  ## the last one" WITHOUT writing the decrement back -- there is no point
+  ## the last one" without writing the decrement back -- there is no point
   ## storing into a cell that is about to be freed -- so a caller that
   ## discards a `true` leaves the count untouched rather than at -1.
   {.cast(noSideEffect).}:
@@ -43,7 +43,7 @@ func arcDec*(memLoc: var int): bool {.inline.} =
       # which is exactly the case this argument rules out; a strategy that
       # gains one must not inherit this fast path.
       #
-      # The load must be ACQUIRE: the count may have reached zero because
+      # The load must be acquire: the count may have reached zero because
       # another thread's decrement got there first, and its writes to the
       # object have to be visible before we destroy it.
       #

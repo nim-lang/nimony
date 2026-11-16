@@ -48,7 +48,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
         # ExprX with exactly one son might be harmless:
         result = isComplex(inner, goal)
     elif n.exprKind in {AndX, OrX}:
-      # `and`/`or` are short-circuit CONTROL FLOW, not expressions, and
+      # `and`/`or` are short-circuit control flow, not expressions, and
       # `controlflow.nim` models them as such: it emits the operand evaluation
       # into the enclosing statement stream *before* whatever the surrounding
       # expression has accumulated so far. Every xelim run must therefore lower
@@ -488,7 +488,7 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     trExprLoop c, dest, n, tar
 
 proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # IMPORTANT: Stores into `tar` helper!
+  # Important: Stores into `tar` helper!
   var tar = initTarget(IsAppend)
   tar.t.copyInto n:
     while n.hasMore:
@@ -509,7 +509,7 @@ proc condNodeSafe(n: Cursor): bool =
       # consumers lower one only on a condition's spine.
       return false
     if n.exprKind == CastX:
-      # A passthrough copies the subtree VERBATIM, so it also skips whatever
+      # A passthrough copies the subtree verbatim, so it also skips whatever
       # else the current goal rewrites. `LowerCasts` binds a cast's source and
       # result to variables (`trCast`) and the NIFC backends rely on it — a
       # `cast[float64](x)` that slips through unlowered reaches arkham as a
@@ -655,7 +655,7 @@ proc mayBindToTemp(n: Cursor): bool =
 # duplicated arms, which is what keeps `(a or b) and c` linear instead of
 # exponential.
 #
-# This replaces `trAnd`/`trOr`'s bool temp for CONDITIONS. That lowering built
+# This replaces `trAnd`/`trOr`'s bool temp for conditions. That lowering built
 #
 #   (var `x bool)
 #   (if (elif a (stmts … (asgn `x …))) (else (stmts (asgn `x false))))
@@ -795,7 +795,7 @@ proc trCondJump(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
       # Always evaluated: emit exactly what the plain `trIf` path emitted.
       trExpr c, dest, n, t0
     else:
-      # Behind a guard. A `let` written INSIDE such an operand — `if k and (let
+      # Behind a guard. A `let` written inside such an operand — `if k and (let
       # cc = f(); cc != 0): use(cc)` — stays visible in the arm bodies, so its
       # declaration has to leave the operand. `hoistDeclsFromExprX` splits it
       # into an uninitialised decl emitted at this level and an `(asgn …)` left
@@ -813,7 +813,7 @@ proc trCondJump(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
       # result at the end of the *proc*. The scope is also the region the
       # destroyer unwinds when the guard below jumps out of it.
       #
-      # `mayBindToTemp`: the temporary is usually NOT produced here — the
+      # `mayBindToTemp`: the temporary is usually not produced here — the
       # duplifier mints it later and hoists it in front of the guard statement.
       # The scope has to be in place by then for it to land inside.
       scoped = pre.len > 0 or mayBindToTemp(leafStart)
@@ -848,7 +848,7 @@ proc ifNeedsCondJumps(c: Context; n: Cursor): bool =
 
 proc trBranchBody(c: var Context; dest: var TokenBuf; n: var Cursor;
                   tar: Target; tmp: SymId) =
-  ## One arm's body, emitted WITHOUT a scope of its own — the caller has
+  ## One arm's body, emitted without a scope of its own — the caller has
   ## already opened one that spans the arm's condition *and* its body (see
   ## `trIfFlat`).
   if tar.m != IsIgnored:
@@ -889,7 +889,7 @@ proc trIfFlat(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
   # its `(scope …)` into `(jmp endLab)`, and the arm after it starts at the
   # false label the guard jumped to. The one thing an arm needs to know about
   # its successors is whether it *has* any: a last arm with no `else` falls
-  # straight out of the `if`, so its false edge IS the end — it can share
+  # straight out of the `if`, so its false edge is the end — it can share
   # `endLab` instead of planting a second label right next to it, and it needs
   # no `(jmp endLab)` either. One `skip` answers that, and `skip` is O(1) (the
   # tag token carries the subtree's jump), so the arms need neither a pre-pass
@@ -1084,14 +1084,14 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.copyInto n:
-    # `mayBindToTemp(n)`: an IMPURE condition becomes
+    # `mayBindToTemp(n)`: an impure condition becomes
     # `while true: <cond stmts>; if cond: body else: break` — the Final-IR
     # "loop has no condition, the condition is a leading body guard" shape
     # (`doc/final_ir.md`). It is not cosmetic: it is what makes "hoist a
     # sub-expression to the statement in front of it" unconditionally sound for
     # every later pass. With the condition left in the slot, a pass that needs a
     # temp for part of it (the duplifier's `bindToTemp`, the eraiser's
-    # `canRaise` temp) would have to hoist that temp OUT of the loop, where it
+    # `canRaise` temp) would have to hoist that temp out of the loop, where it
     # is evaluated once instead of once per iteration — which is why those
     # passes used to wrap it into an `(expr (stmts ...) tmp)` and leave the
     # flattening to a follow-up xelim run instead.
@@ -1101,7 +1101,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
         if wantsCondJumps(c, n):
           # Same deal as `trIfFlat`: a short-circuit guard compiles against a
           # jump target instead of a bool the `if` below would immediately
-          # re-test. The exit is the FALL-THROUGH and the body is behind the
+          # re-test. The exit is the fall-through and the body is behind the
           # jump, because the only way out of a loop is `(break)` and a label
           # cannot be placed after the body without the fall-off-the-body edge
           # landing on it too:
@@ -1203,7 +1203,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   let kind = n.symKind
-  # An `{.assembler.}` body is a transliteration: source order IS the contract,
+  # An `{.assembler.}` body is a transliteration: source order is the contract,
   # so no pass may hoist a subexpression into a temporary or otherwise reorder
   # it — the whole point is that every construct maps one-to-one to an
   # instruction. Take such a body verbatim and let the back end check it (see
@@ -1334,7 +1334,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of CallKindsS, InclS, ExclS, IncS, DecS:
     trStmtCall c, dest, n
   of AsgnS:
-    # IMPORTANT: Stores into `tar` helper!
+    # Important: Stores into `tar` helper!
     var tar = initTarget(IsAppend)
     # Peek at the LHS: if it is the `result` variable, do not extract a
     # call on the RHS to a temporary.  nj.nim's trAsgn handles the call
@@ -1358,7 +1358,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of AsmS, DeferS, EmitS:
     # `(emit Expr+)`: its pieces are expressions too, a checked operation
     # among them included.
-    # IMPORTANT: Stores into `tar` helper!
+    # Important: Stores into `tar` helper!
     var tar = initTarget(IsAppend)
     tar.t.copyInto n:
       while n.hasMore:
@@ -1373,10 +1373,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trBlock c, dest, n, tar
   of MacroS, TemplateS, TypeS, BreakS, ContinueS,
      IncludeS, ImportS, FromimportS, ImportexceptS,
-     ExportS, CommentS, AssumeS, AssertS,
+     ExportS, CommentS, AssumeS, AssertS, InvariantS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      LabS, JmpS:
-    # `lab`/`jmp` are atoms for xelim: it PRODUCES them (`trCondJmp`) and never
+    # `lab`/`jmp` are atoms for xelim: it produces them (`trCondJmp`) and never
     # has to look inside one — the operand is a label symbol.
     takeTree dest, n
   of ScopeS, StaticstmtS:
@@ -1568,7 +1568,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
-         AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+         AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
          StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
          LabS, JmpS, NoStmt:
         trExprLoop c, dest, n, tar
@@ -1603,7 +1603,7 @@ proc preRegisterRoutines(c: var Context; n: Cursor) =
 proc lowerExprs*(pass: var Pass; goal: Goal; bitCastsInBackend = false) =
   ## `bitCastsInBackend`: a cast between an integer and a float type is a bit
   ## reinterpretation that only the C backend has to spell as `copyMem` — a C
-  ## cast would CONVERT the value. A backend with its own bit-cast keeps the
+  ## cast would convert the value. A backend with its own bit-cast keeps the
   ## `cast`, instead of a memory round trip it would have to optimize away.
   var n = pass.n  # Extract cursor locally
   # Inherit the temp counter via `pass.nextTemp`: `lowerExprs` runs for

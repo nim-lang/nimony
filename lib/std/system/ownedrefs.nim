@@ -17,7 +17,7 @@ func arcDecOwned*(memLoc: var int): bool {.inline.} =
   ## without holding a reference. The compiler only emits this call for cells
   ## that cannot form a cycle, which the collector therefore never holds.
   ##
-  ## `arcIsUnique` is an ACQUIRE load where the strategy is atomic: the count
+  ## `arcIsUnique` is an acquire load where the strategy is atomic: the count
   ## may have reached zero via another thread's decrement. The slow path frees
   ## on the value its own read-modify-write returned, never on the load, which
   ## keeps this out of the nim-lang/threading#45 bug class. Do not "simplify"

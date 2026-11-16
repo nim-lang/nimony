@@ -49,7 +49,7 @@ else:
       importc: "sched_getaffinity".}
       ## Bare name: glibc's wrapper where libc is linked, and under `nimNoLibc`
       ## arkham lowers it to the raw syscall. The wrapper returns 0 on success,
-      ## the syscall the number of BYTES written; both are negative on failure.
+      ## the syscall the number of bytes written; both are negative on failure.
 
   when defined(windows):
     type

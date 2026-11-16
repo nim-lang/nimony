@@ -13,7 +13,7 @@ import ".." / leng_model
 import ".." / ".." / models / tags   # `*TagId` enumerators for genRewriter
 import nifrender
 import copy_propagation, constant_folding, cse, induction_variables_legacy
-# NOTE: arcopt moved to `hexer/arcopt.nim` (BasicBlock design) and is no longer
+# Note: arcopt moved to `hexer/arcopt.nim` (BasicBlock design) and is no longer
 # part of the Shoggoth fuzz set.
 
 # ---- rewriter instantiation ----------------------------------------------
@@ -36,7 +36,7 @@ proc copyBuf(src: var TokenBuf): TokenBuf =
 
 proc wellFormed(buf: var TokenBuf): bool =
   ## A pass over every top-level tree via `skip`; trips an assertion on a
-  ## malformed buffer (unbalanced / overrun). We do NOT catch that assertion:
+  ## malformed buffer (unbalanced / overrun). We do not catch that assertion:
   ## a malformed buffer is a pass bug and must surface loudly.
   result = true
   var n = beginRead(buf)
@@ -74,7 +74,7 @@ var totalCrashes = 0
 var totalMalformed = 0
 
 template guard(label: string; body: untyped) =
-  ## Runs one pass. Crashes are NOT swallowed: a pass that raises is a bug
+  ## Runs one pass. Crashes are not swallowed: a pass that raises is a bug
   ## and aborts the fuzz run so the failure is impossible to miss. `label`
   ## is kept so the surrounding echo trail shows which pass was in flight.
   discard label

@@ -445,7 +445,7 @@ proc mangleSym(c: var GeneratedCode; s: SymId): string =
   let x = c.m.getDeclOrNil(s)
   if x != nil and x.extern != StrId(0):
     if x.kind == ProcY and x.bareImport:
-      # A bare-importc proc keeps its MANGLED C identifier; its prototype
+      # A bare-importc proc keeps its mangled C identifier; its prototype
       # carries an `__asm__` label binding it to the real symbol (see
       # `genProcDecl`). Using the libc identifier here would collide with a
       # header prototype whenever a splice moves the reference into a module

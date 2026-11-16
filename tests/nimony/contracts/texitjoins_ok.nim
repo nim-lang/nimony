@@ -177,6 +177,15 @@ proc returnFromResult(): int {.ensures: result == 1.} =
   finally:
     discard
 
+type Box = object
+  f: int
+
+proc returnObject(v: range[0..5]): Box {.ensures: result.f >= 0.} =
+  try:
+    return Box(f: v)
+  finally:
+    echo "finally"
+
 echo sumUntil3(@[1, 2, 3, 4]), " ", firstAt(@[5, 6, 7], 6), " ", firstAt(@[5], 9)
 echo guarded(@[1, 2, 3], 1)
 echo guarded(@[1, 2, 3, 4, 5], 4)
@@ -198,3 +207,4 @@ echo eachReturn(9)
 echo returnSum(@[1], 2)
 echo returnProduct(2)
 echo returnFromResult()
+echo returnObject(3).f

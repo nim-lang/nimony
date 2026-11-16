@@ -1,4 +1,4 @@
-## What the native backend (`nimony n`: arkham + nifasm) is RECORDED as
+## What the native backend (`nimony n`: arkham + nifasm) is recorded as
 ## compiling correctly, and the two questions the rest of hastur asks that
 ## list: does `native.nim`'s own suite run this test, and does the Windows
 ## tree walk compile it with `nimony n` instead of `nimony c`?
@@ -18,7 +18,7 @@ when defined(windows):
   import context
 
 # ── native-backend regression set ────────────────────────────────────────────
-# The C-FREE native path (`nimony n` → arkham + nifasm, sibling `../nativenif`) is
+# The C-free native path (`nimony n` → arkham + nifasm, sibling `../nativenif`) is
 # still incomplete, so we can't run the whole suite through it. Instead this is an
 # explicit whitelist of what is known to run correctly natively — a regression
 # guard: a native miscompile that diverges from the (spec-pinned) result is caught.
@@ -38,15 +38,15 @@ const
   NativeTestDirsWindows* = [
     # Windows grew a native target later than the other hosts, so what it is known
     # to run correctly is recorded separately until a run elsewhere confirms the
-    # same — the whole point of this file is that it states OBSERVED results, and
+    # same — the whole point of this file is that it states observed results, and
     # these were observed on Windows. Fold an entry into `NativeTestDirs` once it
     # has been seen green on Linux/macOS too.
     #
     # Every entry below was established the same way, under Wine against the real
     # MinGW bundle (`tools/wine_test.sh`, see `doc/wine_testing.md`): each of the
-    # directory's tests run through `nimony n` on its own AND the whole directory
+    # directory's tests run through `nimony n` on its own and the whole directory
     # run as one native joined program, which is the shape the tree walk actually
-    # compiles it in and NOT the same question: five of these directories passed
+    # compiles it in and not the same question: five of these directories passed
     # test-by-test and failed as a group, on three backend bugs that only a
     # module compiled as an import can reach (see `NativeJoinSkip`).
     #
@@ -104,12 +104,12 @@ const
 
   NativeJoinSkip*: array[0, string] = [
     # Directories whose tests each compile and run correctly through `nimony n`
-    # — they are in the lists above — but whose JOINED program does not, so the
+    # — they are in the lists above — but whose joined program does not, so the
     # group keeps the C backend while the same directory's standalone tests
     # stay native.
     #
     # Empty, and worth keeping empty: the tree walk compiles a group's members
-    # as IMPORTS of a generated driver, and no other runner does — `hastur
+    # as imports of a generated driver, and no other runner does — `hastur
     # native` compiles every test as a MAIN module — so this list is the only
     # place a native gap in that shape can be recorded. Five directories were
     # here when it was written (arc, strings, consteval, templates, untyped)
@@ -121,11 +121,11 @@ const
 
   NativeTestSkip* = [
     # Files a `NativeTestDir` does not cover yet, with the reason each fails. All
-    # but the last PASS through the C backend, so each of those is a gap in the
+    # but the last pass through the C backend, so each of those is a gap in the
     # native path rather than in the test — which is what makes them worth naming
     # individually instead of dropping the directory.
     #
-    # A libc math/stdio extern with a FLOAT parameter. Win64 indexes its SSE
+    # A libc math/stdio extern with a float parameter. Win64 indexes its SSE
     # argument registers positionally (an xmm slot burns the GPR of the same
     # position), which arkham's ABI planner does not model — `emitWinExtproc`
     # rejects it rather than guess. Moot until the freestanding target has a libc
@@ -137,7 +137,7 @@ const
     # int→int only, so a bool source is a type error. Arch-neutral.
     "tests/nimony/stdlib/thashes",
     # Compiles and links, but the result diverges from the spec-pinned output —
-    # a native MISCOMPILE (all three are green on the C backend). Undiagnosed.
+    # a native miscompile (all three are green on the C backend). Undiagnosed.
     "tests/nimony/stdlib/tbitops",
     "tests/nimony/stdlib/tencodings",
     "tests/nimony/stdlib/trandom",
@@ -162,37 +162,37 @@ const
     # The one test on Windows that drives the ring on real sockets — every other
     # test in `tests/nimony/threads` either stubs itself out here or never
     # reaches `rawthreads.create`. Three native gaps have been found through it;
-    # the first two are fixed in arkham/nifasm (a `stdcall` proc DEFINITION is
+    # the first two are fixed in arkham/nifasm (a `stdcall` proc definition is
     # entered under the Win64 ABI, and `nil` is a legal proc value), and so is
     # the third:
     #
-    #   `{.threadvar.}` USED TO BE A PLAIN GLOBAL in a native Windows build.
+    #   `{.threadvar.}` used to be a plain global in a native Windows build.
     #
     # arkham collected thread-locals as ordinary globals on win_x64 on the
     # premise that the PE image is single-threaded. `std/rawthreads` calls
     # `CreateThread`, so every thread shared one copy of every thread-local —
     # `threadpool.threadIdx` included, which made `ioLane()` answer the same lane
-    # for the main thread AND every worker: 32 threads on one unlocked slot
+    # for the main thread and every worker: 32 threads on one unlocked slot
     # arena, hence the double `complete()` that surfaced as
     #   lib/std/system/seqimpl.nim(167, 41): i < s.len
     # It is fixed with real PE static TLS (nativenif `4dc7e7a`).
     #
     # It stays skipped for a FOURTH problem, which only became reachable once the
-    # lanes were finally distinct: the native build now HANGS instead. The main
+    # lanes were finally distinct: the native build now hangs instead. The main
     # thread spins in `waitCompletions` while all 31 workers sleep in their
     # completion wait, i.e. a completion it is waiting for never arrives. What
     # says this is code generation and not the ring: the same library built with
     # `nimony c` passes 10 runs out of 10 under Wine while the native build hangs
-    # 6 out of 6, and ANY perturbation of `waitCompletions` — adding two locals
+    # 6 out of 6, and any perturbation of `waitCompletions` — adding two locals
     # and a branch — makes the native build pass 10 out of 10 too. The obvious
     # suspect is register pressure: `&threadvar` went from one FS-relative load
     # to a five-instruction walk through the TEB, and `ioLane()` does two of them.
     "tests/nimony/threads/tioringwin",
-    # The odd one out: NOT a native gap. Its `std/typetraits` compile-time plugin
+    # The odd one out: not a native gap. Its `std/typetraits` compile-time plugin
     # fails to run ("vfs: open failed"), and the C backend fails it identically,
     # so nothing here would fix it.
     "tests/nimony/stdlib/ttypetraits",
-    # `tall` imports EVERY stdlib module, which is the point of it: that they
+    # `tall` imports every stdlib module, which is the point of it: that they
     # still compile together, and that `dagon` can document them. Nothing about
     # it is a native assertion, and running it as one asks a much larger question
     # than the file was written to ask — it reaches `threadpool`, `parfor`,
@@ -226,14 +226,14 @@ const
     # the Nimony-built native lengc crashed destroying a garbage `seq`.
     "tests/nimony/object/tcaseobj_branchdefaults",
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
-    # x86-64 `bsf`, AArch64 `rbit`+`clz` — so this is the one test whose POINT is
+    # x86-64 `bsf`, AArch64 `rbit`+`clz` — so this is the one test whose point is
     # that the C and native backends agree on results they reach by different
     # instructions.
     "tests/nimony/intrinsics/tintrinsics",
     # The atomics are intrinsic rows too, and the backends reach them from even
     # further apart: C emits the `__atomic_*` builtins, x86-64 a `lock`-prefixed
     # sequence, AArch64 an `ldaxr`/`stlxr` retry loop. Running it here is what says
-    # the three agree — including the compare-exchange FAILURE path, which a wrong
+    # the three agree — including the compare-exchange failure path, which a wrong
     # lowering still "passes" single-threaded unless the test reads back the value
     # the CAS observed.
     "tests/nimony/intrinsics/tatomics",
@@ -248,7 +248,7 @@ const
     # by nature: under `nimony c` the C compiler owns that rewrite, so only a
     # backend doing its own can round the wrong way on a negative dividend.
     "tests/nimony/basicarith/tdivmodpow2",
-    # ... and by any OTHER constant, which arkham turns into a multiplication by
+    # ... and by any other constant, which arkham turns into a multiplication by
     # the reciprocal: the magic constants, the 65-bit "add" fixup and the signed
     # high half all go wrong quietly. Also two divisions in one expression.
     "tests/nimony/basicarith/tdivmodconst",
@@ -273,40 +273,40 @@ const
     # backend gets the widths from C's own type system, so this only ever fails on
     # a backend that has to derive them itself.
     "tests/nimony/types/tfloat32",
-    # Indexing an array of AGGREGATES and reading one field of the element: the
+    # Indexing an array of aggregates and reading one field of the element: the
     # element stride and the access width are different numbers, which AArch64's
     # register-offset addressing cannot express (`[Xn, Xm, LSL #k]` scales by the
-    # ACCESS width, not by an arbitrary amount). Native-relevant by nature — the C
+    # access width, not by an arbitrary amount). Native-relevant by nature — the C
     # compiler owns addressing under `nimony c`. It read `arr[i div 2]` for a 4-byte
     # field, which is what kept `-d:release` off the native self-host.
     "tests/nimony/calls/tindexednarrowfield",
     # More arguments than the ABI has argument registers, with the parameter shapes
-    # that give a stack-passed one a stack HOME (a `var seq` written through, an
+    # that give a stack-passed one a stack home (a `var seq` written through, an
     # object read after a call). Native-relevant by nature: the C compiler owns
     # argument passing under `nimony c`, so only a backend that marshals arguments
     # itself can fail this — arkham's AArch64 prologue used to abort on it outright
     # (">8 integer params (stack TODO)"), which is what kept `nimony.nim` off the
     # native bootstrap ladder.
     "tests/nimony/calls/tstackparams",
-    # A `{.union.}` type, which lowers to a TOP-LEVEL `(union (fld …)*)` rather
+    # A `{.union.}` type, which lowers to a top-level `(union (fld …)*)` rather
     # than to an object with a union part. arkham emitted union members only
-    # from inside `ObjectT` — the object-VARIANT shape — so a standalone one hit
+    # from inside `ObjectT` — the object-variant shape — so a standalone one hit
     # "type not supported: union" and took every module that imported
     # `std/ioring` (whose io_uring SQE is nothing but these) with it. nifasm had
     # always laid the shape out; only the declaration was missing.
     "tests/nimony/object/tunionconstr",
-    # `{.packed.}` — the layout the OTHER side of an ABI already uses, stated as
+    # `{.packed.}` — the layout the other side of an ABI already uses, stated as
     # constants because only a backend that lays types out itself can get it
     # wrong. arkham ignored the pragma entirely (and nifasm had no tag for it),
     # which surfaced as `std/ioring`'s epoll backend HANGING: `epoll_event` is 12
     # bytes and every entry past the first was read from the wrong address.
     "tests/nimony/types/tpacked",
-    # The I/O ring, on the DEFAULT backend (io_uring) — the whole of `std/ioring`
+    # The I/O ring, on the default backend (io_uring) — the whole of `std/ioring`
     # plus `std/posix/io_uring` through the freestanding syscall path. Native by
     # nature: these reach the kernel with structs whose layout the C compiler
     # owns under `nimony c`, so only a backend that lays them out itself can get
     # them wrong — which it did, in four separate ways (`{.packed.}`, a
-    # top-level `(union …)`, a union CONSTANT, and a union field that
+    # top-level `(union …)`, a union constant, and a union field that
     # `default()` left unzeroed, each of which the C backend hides).
     "tests/nimony/threads/tioringhello",
     "tests/nimony/threads/tioringrw",
@@ -344,16 +344,16 @@ const
     "tests/nimony/cps/tsuspend_resume",
     "tests/nimony/cps/tparkstate",
     "tests/nimony/cps/ttry",
-    # The native backend is the only one that HAS a stack trace: it walks nifasm's
+    # The native backend is the only one that has a stack trace: it walks nifasm's
     # own per-proc table, seeded by a `{.naked.}` proc. Running it here is what
     # checks the three halves agree — the table nifasm lays down, the two
     # intrinsics arkham lowers, and the walk in `lib/std/stacktraces`.
     "tests/nimony/stacktraces/tstacktrace",
     # A `const` set is read straight out of read-only data, so its membership
-    # test is an indexed load from a GLOBAL — a shape the C backend never sees a
+    # test is an indexed load from a global — a shape the C backend never sees a
     # register problem in and arkham got wrong twice. Native-only by nature.
     "tests/nimony/sets/tconstsetscan",
-    # The one test here whose point is WHERE its code is compiled rather than
+    # The one test here whose point is where its code is compiled rather than
     # what it does: everything it checks lives in `deps/mimportshapes`, so this
     # is the suite's only native compile of a non-main module. Every other test
     # arrives as `--isMain`, and three bugs lived in that gap — see the test.
@@ -364,9 +364,9 @@ const
     # maps itself, and a futex on the kernel's `CLONE_CHILD_CLEARTID` word. None
     # of that exists under `nimony c`, where the same source is pthreads.
     "tests/nimony/threads/threads1",
-    # `{.threadvar.}` through its ADDRESS — an array element, an object field. A
+    # `{.threadvar.}` through its address — an array element, an object field. A
     # different lowering from a scalar read (the block's base has to become a
-    # value first), and the one that is silently the MAIN thread's if the base is
+    # value first), and the one that is silently the main thread's if the base is
     # a link-time address instead of a per-thread one.
     "tests/nimony/threads/tthreadlocals",
     # The pool on top of them: worker threads, work stealing, and the per-worker
@@ -382,7 +382,7 @@ const
 # module and the link that follow it, each a process creation the platform
 # charges dearly for (see the `joined tests` note below — same cause, different
 # lever). `nimony n` has no such tail: arkham and nifasm consume the same front
-# end and write the PE themselves. So for a test the native backend is KNOWN to
+# end and write the PE themselves. So for a test the native backend is known to
 # compile correctly, the walk takes that path on Windows and pays a fraction of
 # the time, asserting exactly what it asserted before — the same program's
 # output against the same `.output` file, only the code generator differs.

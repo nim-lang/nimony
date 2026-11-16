@@ -232,7 +232,7 @@ type
     plugins: HashSet[string] ## exe basenames of the `{.plugin.}`s this module may
                              ## run: the ones it declares plus, after
                              ## `propagatePlugins`, those of its import closure
-    fileDeps: seq[string] ## the `(dependency …)` list the PREVIOUS build's nimsem
+    fileDeps: seq[string] ## the `(dependency …)` list the previous build's nimsem
                           ## left in `.s.deps.nif`: files a plugin or a `slurp`
                           ## read while semchecking this module
     semmedRole: SemmedRole ## the `(ismainmodule …)` entry of the same file
@@ -613,7 +613,7 @@ proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
   ## `{.plugin: "name".}` pragma. The name resolves relative to the declaring
   ## file exactly as `semos.runPlugin` resolves it.
   ##
-  ## Not scheduled for building when this build IS a plugin build
+  ## Not scheduled for building when this build is a plugin build
   ## (`-d:nimonyPlugin`, set by `semos.pluginCompileCmd`): plugins are leaves of
   ## the build graph. A plugin whose source imports its declaring module would
   ## otherwise require itself, and the nested builds would recurse without end.
@@ -674,7 +674,7 @@ proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
           c.toBuild.add CFile(name: path, objStem: objStem, customArgs: args)
         else:
           # `{.build(builder, tool, args[, linkflags]).}` — a custom backend routes
-          # THIS module's Leng IR through `tool`. The first field is the generic
+          # this module's Leng IR through `tool`. The first field is the generic
           # builder command (e.g. `"nimony c"`), distinct from a `.compile`
           # language token above.
           c.backendTools.add BackendTool(builder: typ, toolSrc: path,
@@ -742,7 +742,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
         while n.hasMore:
           assert n.isStringLit
           # A single `{.passL.}` value may hold several flags (e.g.
-          # `-framework Foundation`). nifmake quotes each StringLit as ONE argv
+          # `-framework Foundation`). nifmake quotes each StringLit as a single argv
           # token, so split into whitespace-separated flags here — otherwise the
           # linker sees `-framework Foundation` as a single unknown argument.
           for flag in splitWhitespace(pool.strings[n.strId]):
@@ -1145,7 +1145,7 @@ proc wantTool(name, src, builder, nifcachePath: string;
 type
   ManifestFile = object
     ## One `(file …)` entry of the link manifest. `flags` are link flags scoped to
-    ## THIS file (from a `.build` module's 4th slot), passed to the linker next to
+    ## this file (from a `.build` module's 4th slot), passed to the linker next to
     ## it — distinct from the manifest's global `(flags …)` (`passL`).
     path: string
     kind: string          ## "obj" | "artifact"
@@ -1160,7 +1160,7 @@ proc writeLinkManifest(path, exe, apptype, linker: string;
   ## `obj`s, embed or ignore the backend `artifact`s).
   ##
   ## Written only when it changed: the manifest is written by the driver before
-  ## the graph runs, not by a node, so to nifmake it is a SOURCE, an input of
+  ## the graph runs, not by a node, so to nifmake it is a source, an input of
   ## the link node. Rewriting it with a fresh mtime on every `nimony c` would
   ## re-fire the link even on a no-op build.
   var b = nifbuilder.open(path, writeMode = OnlyIfChanged)
@@ -1190,13 +1190,13 @@ proc writeLinkManifest(path, exe, apptype, linker: string;
   result = path
 
 proc addInlineSourceInputs(b: var Builder; optimized: bool) =
-  ## Declare the Leng INTERFACE of every module in the program as an input of
+  ## Declare the Leng interface of every module in the program as an input of
   ## a `lengc` or `arkham` node, written as the one phase reference
   ## `(inputsof <cmd> ".idx.nif")` rather than N filenames per node.
   ##
   ## Both resolve a foreign symbol by loading the module that *defines* it, on
   ## demand, and `lengc` emits imported `.inline` bodies out of it. The defining
-  ## module is NOT restricted to this module's imports. A long string literal
+  ## module is not restricted to this module's imports. A long string literal
   ## is deduplicated across the whole program by content hash and emitted once,
   ## in whichever module got there first, so any module can carry a reference
   ## like `strlit.0.I16690852185662743073.lifwoge6a` to a literal owned by a
@@ -1205,7 +1205,7 @@ proc addInlineSourceInputs(b: var Builder; optimized: bool) =
   ## not by the import graph, so it cannot be predicted from a module's `deps`.
   ##
   ## Hence the whole module list. Naming only the direct imports under-states
-  ## the input set in both directions that matter: ORDERING, since nifmake
+  ## the input set in both directions that matter: ordering, since nifmake
   ## starts a node as soon as its own declared inputs are done -- `lengc` on
   ## `system` then races the `optimize` node that writes `lifter`'s Leng file --
   ## and FRESHNESS, since without the edge a changed callee body leaves this
@@ -1216,7 +1216,7 @@ proc addInlineSourceInputs(b: var Builder; optimized: bool) =
   ## something these tools read from another module changes, so a changed
   ## non-inline proc body re-runs its own module's codegen and nothing else.
   ##
-  ## `optimized` picks WHICH phase produces that Leng file. Under the optimizer
+  ## `optimized` picks which phase produces that Leng file. Under the optimizer
   ## the whole module set switches to `.oc.nif` together -- exactly as
   ## `wholeProgInput` does for jorogumo -- so `lengc` and `arkham` wait on
   ## `optimize`.
@@ -1342,13 +1342,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # are byte-for-byte unaffected.
     let wasm = c.config.backend == backendWasm
     let js = c.config.backend == backendJs
-    # "Whole program" is the shape wasm and JS share: one tool is codegen AND
-    # linker, it reads the MAIN module's `.c.nif` and pulls every dependent
+    # "Whole program" is the shape wasm and JS share: one tool is both codegen and
+    # linker, it reads the main module's `.c.nif` and pulls every dependent
     # module from disk through the embedded index, and there is exactly one
     # command for it, running once, with only input[0] on its command line.
     # No per-module codegen command, no object files, no link step.
     let wholeProgram = wasm or js
-    # ONE binary for both: jorogumo is the web back end, and its first argument
+    # A single binary for both: jorogumo is the web back end, and its first argument
     # picks the renderer (`j` JavaScript, `w` wasm32). Everything up to the web
     # IR is the same code generator, so a target is a word on the command line,
     # not a second tool to build, pin and keep in step.
@@ -1357,7 +1357,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     if wasm: webRenderer = "w"
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
-    # A native program that uses the `.compile`/`{.build…}` pragma (in ANY module)
+    # A native program that uses the `.compile`/`{.build…}` pragma (in any module)
     # is finished by the system linker, so nifasm's relocatable object can be
     # combined with the foreign `.o`s (e.g. Objective-C) and any frameworks. Plain
     # native programs keep the static, libc-free "nifasm is the linker" path.
@@ -1403,7 +1403,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addStrLit "--os:" & platform.OS[c.config.targetOS].name
         b.addStrLit "--cpu:" & platform.CPU[c.config.targetCPU].name
         # The board, when one was given. A bare-metal image has no OS to ask how
-        # much RAM it may have, so the layout file IS that answer — and arkham
+        # much RAM it may have, so the layout file is that answer — and arkham
         # forwards it into the asm-NIF so nifasm places segments from the same
         # description rather than reading the file a second time.
         if c.config.layoutFile.len > 0:
@@ -1703,7 +1703,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           b.withTree "output":
             b.addStrLit lengInterfaceFile(c.config.lengcFile(n.files[0], backend))
 
-      # Custom-backend nodes: build each tool once (depth 0) — routing tools AND
+      # Custom-backend nodes: build each tool once (depth 0) — routing tools and
       # the custom linker (every entry in `backendToolBuild`) — then route every
       # `.build` module's Leng IR through its routing tool (depth 1, parallel).
       # nifmake orders the tool build before its uses via the exe output->input
@@ -1742,7 +1742,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           proc wholeProgInput(c: DepContext; f: FilePair; backend: string;
                               useOptimizer: bool): string =
             # under the optimizer the whole module set switches to `.oc.nif`
-            # together — the generator derives sibling filenames from the MAIN
+            # together — the generator derives sibling filenames from the main
             # input's extension, exactly like arkham's native chain.
             if useOptimizer: result = c.config.optimizedFile(f, backend)
             else: result = c.config.lengcFile(f, backend)
@@ -1779,7 +1779,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           # `nimcache_static/static.o`) can be contributed by several modules'
           # `toBuild`, and linking the same `.o` twice yields duplicate-symbol
           # errors. The manifest niflink actually links is built from `objs`, so
-          # the dedup must happen here (not only on the DO-node ordering inputs).
+          # the dedup must happen here (not only on the `do`-node ordering inputs).
           var seenObjs = initHashSet[string]()
           for cfile in c.toBuild:
             let o = sharedObjFile(cfile, ccKey)
@@ -1944,7 +1944,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             # Shoggoth's inter-module inliner and its function summaries read
             # the other modules' pre-optimization `.c.nif` -- any proc body,
             # not just their interface -- so all of those are this node's
-            # inputs: for ORDERING, since nifmake starts a node as soon as its
+            # inputs: for ordering, since nifmake starts a node as soon as its
             # own inputs are done, and for FRESHNESS, since without the edge a
             # changed callee body leaves this node's output untouched and the
             # splice inside it stale (nim-lang/nimony#1897).
@@ -2042,7 +2042,7 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     for p in plugins:
       b.withTree "input":
         b.addStrLit c.pluginExe(p)
-    # Input: the files last build's sem READ — what `plugins.dependsOn`
+    # Input: the files last build's sem read — what `plugins.dependsOn`
     # reported and what `slurp` folded. Nothing in the module's own source
     # names them, so without this a changed data file leaves the `.s.nif`
     # looking current.
@@ -2248,12 +2248,12 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
 
 proc addFrontendKey(b: var Builder; config: NifConfig) =
   ## Every option nimsem's results depend on: what `isDefined` answers from and
-  ## what reaches nimsem's command line. The ROOT MODULE is deliberately NOT
+  ## what reaches nimsem's command line. The root module is deliberately not
   ## part of it: `executeExpr`'s const-eval sub-compile is a second build in the
   ## same nimcache with the same options but a generated root
   ## (`nim<checksum>.p.nif`). With the root in the key the two invalidated each
   ## other on every run, so each re-semmed everything the other had just done.
-  ## The OPTIONS do belong here: the `.s.nif` artifacts are keyed by module
+  ## The options do belong here: the `.s.nif` artifacts are keyed by module
   ## name and shared between all roots.
   b.withTree "frontend":
     # a later `-d:key` replaces an earlier one (`addDefine`), so the defines
@@ -2331,12 +2331,12 @@ proc memoDiffers(c: DepContext; path, memo: string): bool =
   ## stage it describes were made under another configuration and have to be
   ## produced again.
   ##
-  ## A memo is something nimony keeps for itself, NOT an `(input)` of any
+  ## A memo is something nimony keeps for itself, not an `(input)` of any
   ## node. It used to be one, and that was the wrong model twice over: no tool
   ## reads it, and an mtime cannot express "already built against this". Once
   ## the file was newer than outputs that a re-run had legitimately left
   ## untouched (interface files that come out the same keep their old mtime),
-  ## every node stayed stale against it on every later build — for good. "The options changed" means RE-RUN THE STAGE, which is what the
+  ## every node stayed stale against it on every later build — for good. "The options changed" means re-run the stage, which is what the
   ## caller says to nifmake outright.
   result = c.forceRebuild or not semos.fileExists(path) or
            onRaiseQuit(readFile(path)) != memo
@@ -2427,7 +2427,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addStrLit findTool("nimsem")
       if config.baseDir.len > 0:
         b.addStrLit "--base:" & quoteShell(config.baseDir)
-      # Match the OUTER frontend build file's `--cc:VAL` so nifmake's
+      # Match the outer frontend build file's `--cc:VAL` so nifmake's
       # per-cmd staleness check sees the same argv on both sides — without
       # this the static-eval helper's nifmake decides the existing
       # sysvq0asl.s.nif is stale and tries to rewrite it, and on Windows
@@ -2609,10 +2609,13 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   exec(nifmakeCmd)
   exec(exeFile)
 
-proc progArg(flags: set[BuildFlag]; lo, hi: int): string =
+proc progArg(flags: set[BuildFlag]; lo, hi: int; closes = true): string =
   # nifmake itself routes the bar (terminal-only); we only suppress it where
-  # nimony asked for silence or machine-readable output.
+  # nimony asked for silence or machine-readable output. `closes` picks
+  # `--done`, the project's own run that ends the line with `[100%] done`;
+  # the stdlib's runs only draw into the same range.
   if SilentMake in flags or Report in flags: ""
+  elif closes: "--done:" & $lo & "," & $hi & " "
   else: "--progress:" & $lo & ":" & $hi & " "
 
 proc buildGraph*(config: sink NifConfig; project: string;
@@ -2669,16 +2672,16 @@ proc buildGraph*(config: sink NifConfig; project: string;
     (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "") &
     " --lock:" & quoteShell(config.stdcachePath / "lock") & jobsArg(config) & " run "
 
-  # `nimony c` drives nifmake once for the frontend and once more for the
-  # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
-  # a slice of the 0..100% range so nifmake's live bar reads as one continuous
-  # indicator across the separate processes instead of restarting per phase.
-  let twoPhase = cmd != DoCheck
+  # `nimony c` drives nifmake for the frontend (0..50%) and the backend or
+  # docs (51..100%); `DoCheck` stops after the frontend (0..100%). Within a
+  # phase the stdlib's run and the project's run share the range, and only
+  # the project's run (`--done`) closes the line.
+  let frontHi = if cmd != DoCheck: 50 else: 100
 
   if c.hasStdNodes:
-    exec stdCommand & progArg(flags, 0, if twoPhase: 50 else: 100) &
+    exec stdCommand & progArg(flags, 0, frontHi, closes = false) &
       quoteShell(generateFrontendBuildFile(c, commandLineArgs, cmd, std = true))
-  exec nifmakeCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
+  exec nifmakeCommand & progArg(flags, 0, frontHi) & quoteShell(buildFilename)
 
   if cmd == DoDoc:
     c = initDepContext(config, project, true, forceRebuild, moduleFlags, cmd)
@@ -2697,7 +2700,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
       if parent.len > 0 and parent != docOut:
         onRaiseQuit createDir(path(parent))
     let buildDocFilename = generateDocBuildFile(c)
-    exec nifmakeCommand & progArg(flags, 50, 100) & quoteShell(buildDocFilename)
+    exec nifmakeCommand & progArg(flags, 51, 100) & quoteShell(buildDocFilename)
     return
 
   if cmd != DoCheck:
@@ -2710,10 +2713,9 @@ proc buildGraph*(config: sink NifConfig; project: string;
     onRaiseQuit createDir(path(sharedObjDir()))
     if c.hasStdNodes:
       onRaiseQuit createDir(path(c.config.stdBackendDir))
-      exec stdCommand & progArg(flags, 50, 100) &
+      exec stdCommand & progArg(flags, 51, 100, closes = false) &
         quoteShell(generateStdBackendBuildFile(c))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsLengc, passC, passL)
-    # second (backend) phase: 50..100%
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
     # `bin/` here. Nim does the same in `prepareToWriteOutput`.
@@ -2729,7 +2731,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let beMemo = backendMemo(c, passC, passL)
     let backendChanged = memoDiffers(c, beMemoFile, beMemo)
     execBackend nifmakeBase & (if backendChanged: " --rerun" else: "") &
-        jobsArg(config) & " run " & progArg(flags, 50, 100) & quoteShell(buildFinalFilename),
+        jobsArg(config) & " run " & progArg(flags, 51, 100) & quoteShell(buildFinalFilename),
       beMemoFile, beMemo, backendChanged
 
   if Stats in flags:
@@ -2769,12 +2771,12 @@ proc buildGraph*(config: sink NifConfig; project: string;
       if c.config.backend == backendWasm:
         # A .wasm module needs a host; run it under node with the standard
         # shim (tests/ithaqua/run_wasm.js provides env.nim_write/nim_exit).
-        # The `j` renderer needs none: its preamble IS the host face.
+        # The `j` renderer needs none: its preamble is the host face.
         let shim = compilerDir() / "tests" / "ithaqua" / "run_wasm.js"
         exec "node " & quoteShell(shim) & " " &
              quoteShell(c.config.wasmFile(c.rootNode.files[0], backend)) & executableArgs
       elif c.config.backend == backendJs:
-        # The .js program IS host-native: the preamble defines its own
+        # The .js program is host-native: the preamble defines its own
         # `nim_write`/`nim_exit`/memory face, so unlike wasm it needs no shim
         # around it — node runs the file as it stands.
         exec "node " &

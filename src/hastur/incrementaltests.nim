@@ -75,7 +75,7 @@ proc incrementalTests*() =
     quit "incremental: " & nimony & " not found; run `hastur build nimony` first"
   removeDir cache
 
-  # `-r` so every phase also RUNS the result: a rebuild that nifmake skipped
+  # `-r` so every phase also runs the result: a rebuild that nifmake skipped
   # when it should not have leaves a stale binary behind, and a report count
   # alone would not notice (see the `inline-dep` phase).
   let baseCmd = nimony.quoteShell & " c -r --silentMake --report --nimcache:" &
@@ -154,7 +154,7 @@ proc incrementalTests*() =
     writeFile(src, originalSrc)
     discard run("resettle")
 
-  # Phase 5: edit an IMPORTED module's `.inline` proc and nothing else. The
+  # Phase 5: edit an imported module's `.inline` proc and nothing else. The
   # importer's own `.c.nif` still says only "call bump"; the body is spliced
   # in one stage later, by lengc, out of the callee's `.c.nif`. So the
   # importer's codegen depends on a file that is not its own input unless
@@ -163,7 +163,7 @@ proc incrementalTests*() =
   # symbol the splice names, and a silently stale binary when it does not
   # (nim-lang/nimony#1897). Two `.c` files must be regenerated here — the
   # callee's, because its body changed, and the importer's, because of the
-  # splice — and the program has to print the NEW value.
+  # splice — and the program has to print the new value.
   block:
     writeFile(dep, originalDep.replace("x + 1", "x + 1000"))
     let r = run("inline-dep")
@@ -177,7 +177,7 @@ proc incrementalTests*() =
   restoreSources()
   discard run("inline-dep-settle")
 
-  # Phase 5b: edit the body of an imported proc that is NOT `.inline`. No
+  # Phase 5b: edit the body of an imported proc that is not `.inline`. No
   # other module reads it — the importer's code only calls it — so the
   # callee's `.c.idx.nif` stays as it was and exactly one translation unit is
   # regenerated and compiled (doc/internals/ic.md).
@@ -310,8 +310,8 @@ proc incrementalTests*() =
   # Phase 6: switch backends without touching a source file. `nimony c` and
   # `nimony n` do not produce the same artifacts from the same input — hexer
   # alone runs with or without `--native`, which changes the main module's
-  # `.x.nif` — and nifmake reruns a node only when its input or output FILES
-  # changed, never when a tool's FLAGS did. So sharing one directory would not
+  # `.x.nif` — and nifmake reruns a node only when its input or output files
+  # changed, never when a tool's flags did. So sharing one directory would not
   # make the second backend overwrite the first: it would make it reuse the
   # first one's artifacts, silently, for as long as the sources hold still.
   # `deps.backendDirName` keeps the two populations apart; assert that both
@@ -344,7 +344,7 @@ proc incrementalTests*() =
         expect cBefore.len == 1 and cBefore[0][1] == before[0][1],
                "backend-switch: the native build rewrote the C backend's main .x.nif"
 
-  # Phases 7-11: files read at COMPILE TIME that no source file mentions —
+  # Phases 7-11: files read at compile time that no source file mentions —
   # what a `.plugin` reports through `plugins.dependsOn` and what `slurp`
   # folds (nim-lang/nimony#1378). Nothing in the module's own inputs changes
   # when such a file is edited, so without the `(dependency …)` bookkeeping
@@ -393,7 +393,7 @@ proc incrementalTests*() =
         expect reportField(r[1], "total") == 0,
                "dep-noop: backend re-ran " & $reportField(r[1], "total") & " commands"
 
-    # Phase 9: edit the file the PLUGIN reads. Two caches have to give way —
+    # Phase 9: edit the file the plugin reads. Two caches have to give way —
     # nifmake's (the module is re-semmed at all) and `runPlugin`'s memo of the
     # plugin output, which is keyed on the input tree and so did not change.
     block:

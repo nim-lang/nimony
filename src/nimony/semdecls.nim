@@ -269,7 +269,7 @@ proc semDefineOverride(c: var SemContext; dest: var TokenBuf; it: var Item;
   if pk == NoPragma: return false
   if it.n.exprKind == ErrX:
     # A const declaration is sem'd twice (signatures, then bodies) and the
-    # second pass reads the first pass's OUTPUT. If that output is an error --
+    # second pass reads the first pass's output. If that output is an error --
     # the value did not fit the declared type -- overriding again would `skip`
     # the error node away and the diagnostic with it. Leave it to the ordinary
     # path, which reports it exactly as it does for a written literal.
@@ -304,7 +304,7 @@ proc semDefineOverride(c: var SemContext; dest: var TokenBuf; it: var Item;
     lit.addParRi()
 
   skip it.n # the written initializer is replaced, not evaluated
-  # Drive the ORIGINAL `Item` over the synthesized literal rather than a copy:
+  # Drive the original `Item` over the synthesized literal rather than a copy:
   # `it.typ` is a cursor, and a copy of it does not take part in the buffer's
   # refcounting the same way, which silently turned the expected type into
   # `auto` and let an out-of-range value through.
@@ -678,7 +678,13 @@ proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): 
         dest.addUIntLit(valU, info)
   c.phase = oldPhase
 
-proc takeExplicitValue(state: var EnumTypeState; value: xint) =
+proc takeExplicitValue(c: var SemContext; dest: var TokenBuf; state: var EnumTypeState;
+                       value: xint; valueStart: int; info: NifLineInfo) =
+  # `state.thisValue` is the previous field's value + 1. The spec requires the
+  # ordinal values in ascending order; an equal value is "value already handled".
+  if state.hasPrevField and value < state.thisValue - createXint(1'i64):
+    dest.shrink valueStart
+    c.buildErr dest, info, "enum field values must be in ascending order"
   # A hole is a gap between a field and the field before it. The first field
   # has no predecessor, so its explicit value, `1` or any other, is no hole.
   if state.hasPrevField and value != state.thisValue:
@@ -743,8 +749,10 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
     else:
       if n.isTagLit and n.exprKind == TupX:
         takeInto dest, n:
+          let valueStart = dest.len
+          let info = n.info
           let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
-          takeExplicitValue state, explicitValue
+          takeExplicitValue c, dest, state, explicitValue, valueStart, info
           dest.add evalExpr(c, n)
       else:
         var ec = initEvalContext(addr c)
@@ -758,8 +766,10 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
           n = valueCursor
         else:
           dest.addParLe(TupX, n.info)
+          let valueStart = dest.len
+          let info = n.info
           let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
-          takeExplicitValue state, explicitValue
+          takeExplicitValue c, dest, state, explicitValue, valueStart, info
           dest.addStrLit(delayed.lit, n.endInfo)
           dest.addParRi()
     dest.addParRi(n.endInfo)
@@ -1368,7 +1378,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     c.routine.sym = symId
     # Save/restore rather than a matching `dec`: both the template case below
     # and `semGenericParams` bump `inGenericDefinition`, and an error path must
-    # not leak either increment into the enclosing definition. Captured BEFORE
+    # not leak either increment into the enclosing definition. Captured before
     # this routine's own increments.
     let outerGenericDefinition = c.inGenericDefinition
     # Likewise for the origin-module stack: `semGenericParams` pushes on the
@@ -1408,7 +1418,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       if isAnon and kind == IteratorY and AutoClosuresFeature in c.features and
           ClosureP notin crucial.flags:
         # `autoclosures` covers the iterator literal too: an anonymous iterator
-        # can only be a CLOSURE iterator (an inline one is inlined at the `for`
+        # can only be a closure iterator (an inline one is inlined at the `for`
         # that names it, and this one has no name to be named by), so the
         # feature marks it exactly as it marks a nested proc literal. Without
         # the feature the annotation is required.

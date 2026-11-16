@@ -73,7 +73,7 @@ proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo
 proc addRaisedCode*(dest: var TokenBuf; loweredRetType: Cursor; code, resultSym: SymId;
                     info: NifLineInfo) =
   ## The operand of a `(raise ...)` emitted into a routine whose signature has
-  ## ALREADY been through `addSuccessTupleType`: a bare `ErrorCode` when the
+  ## already been through `addSuccessTupleType`: a bare `ErrorCode` when the
   ## routine returns nothing, else `(code, result[1])` — the code paired with
   ## whatever the result slot holds so far.
   ##
@@ -97,7 +97,7 @@ proc addRaisedCode*(dest: var TokenBuf; loweredRetType: Cursor; code, resultSym:
 
 proc addLengReturnType*(dest: var TokenBuf; retType, pragmas: Cursor;
                         info: NifLineInfo) =
-  ## THE mapping from a routine's Nimony return type to its Leng one, and the
+  ## The mapping from a routine's Nimony return type to its Leng one, and the
   ## only place it is decided.
   ##
   ## Hexer keeps asking the Nimony type system what things are, and that answer
@@ -122,7 +122,7 @@ proc addLengReturnType*(dest: var TokenBuf; retType, pragmas: Cursor;
 
 proc addPragmasWithoutRaises*(dest: var TokenBuf; pragmas: Cursor) =
   ## Copy a pragma list minus `(raises)`. Used on the procs `cps` generates
-  ## FOR a coroutine, which return a `Continuation` and never fail: the error
+  ## for a coroutine, which return a `Continuation` and never fail: the error
   ## travels through the result slot instead.
   if pragmas.isDotToken or not pragmas.isTagLit:
     dest.addDotToken()

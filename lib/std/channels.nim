@@ -17,7 +17,7 @@
 ##   submit(delay(worker(r)))
 ##   discard s.send Job(id: 1)
 ##
-## A `Sender[T]` and a `Receiver[T]` are copyable; all copies share ONE end, a
+## A `Sender[T]` and a `Receiver[T]` are copyable; all copies share a single end, a
 ## `Writer` or `Reader`, so a stream never has more than one of each and its
 ## lifecycle stays that of a connection: the last copy gone is the end gone.
 

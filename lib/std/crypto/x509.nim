@@ -343,7 +343,7 @@ func parseExtension(d: openArray[byte]; ext: Tlv; c: var Certificate): bool =
 
 func parseCertificate*(der: openArray[byte]; c: var Certificate): bool =
   ## Parses one DER certificate. Checks structure only — nothing here says
-  ## whether to TRUST it; that is `verifyChain`.
+  ## whether to trust it; that is `verifyChain`.
   result = false
   c = Certificate(der: @[], tbsStart: 0, tbsLen: 0, sigAlg: saUnknown,
                   signature: @[], issuer: @[], subject: @[], notBefore: 0,

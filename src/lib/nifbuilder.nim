@@ -27,7 +27,7 @@ type
                     ## (real disk, in-memory cache, sandbox-rejected, …) is
                     ## decided by the active VFS relays at close time.
     buffer: string
-      ## Storage, NOT the result: `buffer.len` is the *capacity*, `offs` is how
+      ## Storage, not the result: `buffer.len` is the *capacity*, `offs` is how
       ## much of it is written. `finish` truncates it back to `offs`.
     raw: ptr UncheckedArray[char]
       ## Write cursor into `buffer`'s payload. Kept in the object because the
@@ -136,7 +136,7 @@ proc put(b: var Builder; s: string) =
     b.offs += n
 
 template put(b: var Builder; s: char) =
-  ## A TEMPLATE, not an `{.inline.}` proc: at ~5.7M calls per emitted module
+  ## A template, not an `{.inline.}` proc: at ~5.7M calls per emitted module
   ## this is the most executed routine in the builder, and a call costs 28
   ## instructions around a body of three. Nothing here evaluates `b` in a way
   ## that repeating it could matter — every call site passes the builder

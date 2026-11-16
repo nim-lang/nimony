@@ -1,9 +1,9 @@
 # Windows file ops for the ring backends.
 #
-# asyncio's file surface is served BY the ring on Windows, exactly as on
+# asyncio's file surface is served by the ring on Windows, exactly as on
 # POSIX: open, read and write are ring ops performed on the polling thread
 # rather than kernel32 calls made by the caller. A regular file never blocks —
-# on Windows no less than on POSIX — so its transfer IS its own readiness:
+# on Windows no less than on POSIX — so its transfer is its own readiness:
 # the handle is a plain `CreateFileW` one (deliberately no FILE_FLAG_OVERLAPPED),
 # reads/writes run synchronously against the Win32 *file pointer* (so position
 # needs no OVERLAPPED offset and `SetFilePointerEx` stays the seek), and the op

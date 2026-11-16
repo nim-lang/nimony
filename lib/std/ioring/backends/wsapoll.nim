@@ -100,7 +100,7 @@ when defined(windows):
           discard completeCommand(s, buf[i])
     # Build this lane's set from its arena. Collect before dispatching:
     # `processFd` frees slots, which mutates the fd index the set comes from.
-    # A FILE fd is its own readiness: WSAPoll cannot watch a HANDLE
+    # A file fd is its own readiness: WSAPoll cannot watch a HANDLE
     # (WSAENOTSOCK), so it never enters the set and its transfers run after
     # the collection loop (completing also frees slots — the same rule).
     var fileFds: seq[cint] = @[]
@@ -124,7 +124,7 @@ when defined(windows):
     let waitMs = waitMillis(lane, timeoutMs)
     if pollSets[lane].len == 0:
       # Nothing armed on this lane: honour the idle timeout here, or the worker
-      # loop spins (it only sleeps when nothing fired AND it ran no task). A
+      # loop spins (it only sleeps when nothing fired and it ran no task). A
       # lane holding nothing but timers takes this path on every poll, so the
       # sleep is the deadline-bounded one and the expiry below is what
       # completes them.

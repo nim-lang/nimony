@@ -414,7 +414,7 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
         ", size: " & $totalSize & ")")
       while n.hasMore: skip n
   of EnumT:
-    let enumSize = typeSizeBits(c, n) # capture BEFORE n.into
+    let enumSize = typeSizeBits(c, n) # capture before n.into
     n.into:
       let base = genDIType(c, n) # underlying integer type
       var enumerators: seq[int] = @[]

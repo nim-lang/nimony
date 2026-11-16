@@ -8,7 +8,7 @@
 #
 
 ## Fixed-capacity unsigned big integers and Montgomery arithmetic, for
-## SIGNATURE VERIFICATION.
+## signature verification.
 ##
 ## Everything a verifier computes is public — the signature, the message
 ## digest, the public key — so this module is deliberately *not* constant
@@ -37,7 +37,7 @@ type
     n*: LimbCount
 
   Mont* = object
-    ## A Montgomery context for an ODD modulus `m`: `R = 2^(32*n)`.
+    ## A Montgomery context for an odd modulus `m`: `R = 2^(32*n)`.
     m*: BigNum
     m0inv: uint32       ## `-m^-1 mod 2^32`
     r2: Limbs           ## `R^2 mod m`

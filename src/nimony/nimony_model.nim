@@ -303,7 +303,7 @@ proc isAtom*(n: Cursor): bool {.inline.} = n.hasMore and not n.isTagLit
 proc isChildless*(n: Cursor): bool {.inline.} =
   ## True for a sealed `TagLit` with an empty body, like the bare `proc`
   ## typeclass `(proctype)` written as `[T: proc]`. `hasMore` on the node
-  ## ITSELF answers a different question -- "are there more tokens left in
+  ## itself answers a different question -- "are there more tokens left in
   ## this scope" -- and is true of every node that is there at all; only the
   ## body cursor carries the child count.
   n.isTagLit and not sub(n).hasMore
@@ -519,12 +519,12 @@ proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
 proc calleeEffect*(calleeType: Cursor; pragmas: Cursor): Effect =
   ## The effect of CALLING something of type `calleeType`. `calleeType` is
   ## what `getType` answers for the callee: a routine decl tag
-  ## (`proc`/`func`/`iterator`/…) or a routine TYPE form
+  ## (`proc`/`func`/`iterator`/…) or a routine type form
   ## (`proctype`/`itertype`). `iterator` is `noSideEffect` by default
   ## (doc/language.md), and the itertype of a first-class closure-iterator
   ## value says the same thing about the routine behind it — otherwise a
-  ## `for` loop over an iter VALUE would be rejected inside any `func` or
-  ## iterator body, while the same loop over the iter SYM is accepted.
+  ## `for` loop over an iter value would be rejected inside any `func` or
+  ## iterator body, while the same loop over the iter sym is accepted.
   if calleeType.typeKind == ItertypeT:
     whichEffect(IteratorS, pragmas)
   else:

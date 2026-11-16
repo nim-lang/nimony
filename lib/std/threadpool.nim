@@ -63,7 +63,7 @@ var
   gReactor*: proc(timeoutMs: int): bool {.nimcall.} = poolPollIo
 var gReactorState*: int = 0
   ## 0 until `gReactor`/`gReactorWaits` — and everything they reach — are fully
-  ## set up. It has to be PUBLISHED rather than merely assigned: `initPool`
+  ## set up. It has to be published rather than merely assigned: `initPool`
   ## starts the workers, and only then does `ioring.setupRing` allocate the
   ## per-lane arenas the reactor indexes and finally point `gReactor` at itself.
   ## Nothing orders those plain stores against each other, so on a weakly
@@ -97,14 +97,14 @@ proc tryEnqueue(s: int; t: Task): bool {.inline.} =
 
 var
   inTrampoline {.threadvar.}: bool
-    ## True while THIS thread executes a drained task's body (drainOnce's
+    ## True while this thread executes a drained task's body (drainOnce's
     ## trampoline or `submit`'s caller-runs path). Gates the foreign-submit
     ## rotation in `submit`: a foreign thread that is *helping* must keep the
     ## old single-stripe targeting (see parSubmit's comment in parfor.nim);
     ## a foreign thread running its own code is a fan-out and rotates.
   foreignRR: int
     ## Round-robin stripe target for hint-less submits from a foreign thread
-    ## that is NOT currently trampolining a task. Without rotation every such
+    ## that is not currently trampolining a task. Without rotation every such
     ## submit lands on stripe 0 (`threadIdx` defaults to 0 on foreign threads),
     ## so ceil(N/BulkSize) bulk claims cap the engaged lanes regardless of
     ## pool size, and one claim can hold a contiguous run of expensive chunks
@@ -206,8 +206,8 @@ proc submit*(c: Continuation; hint = -1) {.inline.} =
       if isWorker or inTrampoline:
         hint = threadIdx
       else:
-        # Foreign thread running its OWN code = a fan-out: rotate. A foreign
-        # thread INSIDE a trampoline (helping via poolHelp/passiveWait) keeps
+        # Foreign thread running its own code = a fan-out: rotate. A foreign
+        # thread inside a trampoline (helping via poolHelp/passiveWait) keeps
         # the old single-stripe targeting: concentrating a helper's
         # resubmissions is what makes nested `||` cheap (see parSubmit's
         # comment in parfor.nim -- the hinted-from-non-workers variant of
@@ -274,7 +274,7 @@ proc poolHelp*(): bool {.inline.} =
 
 when defined(useMimalloc):
   proc miCollect(force: bool) {.importc: "mi_collect".}
-    ## mimalloc heap collection for the CALLING thread. Continuation-based
+    ## mimalloc heap collection for the calling thread. Continuation-based
     ## scheduling constantly allocates on one worker and frees on another;
     ## those cross-thread frees land on the allocating heap's remote list and
     ## are only reclaimed when its owner thread collects. Without a periodic
@@ -378,7 +378,7 @@ proc initPool*(count = 0) =
   ## `countProcessors()` when `count` is 0. Idempotent: once a pool is up,
   ## later calls return at once and their `count` is ignored. Workers are not
   ## pinned to CPUs; the scheduler places them within the process's affinity.
-  # Only `poolState` gates this; `workerCount` must NOT, because the CAS winner
+  # Only `poolState` gates this; `workerCount` must not, because the CAS winner
   # publishes it *before* allocating `workerMetrics`/`localQueues`/`injectQueue`.
   # A second caller that returned on `workerCount > 0` would race ahead and index
   # those still-empty seqs on its next `submit`.

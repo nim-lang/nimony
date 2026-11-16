@@ -60,7 +60,7 @@
 ## analysis: a canonical key per expression, a branch-scoped `Tracker`, and
 ## "has anything since invalidated this?" — answered by the alias classes and
 ## function summaries above, which is strictly more precise than a standalone
-## pass could afford. The one thing it needs that the load cache must NOT have is
+## pass could afford. The one thing it needs that the load cache must not have is
 ## `provenKey`, which resolves a symbol to the expression it was defined from
 ## (see the comment there).
 
@@ -81,7 +81,7 @@ import intrinsiceffects                       # is this `(instr …)` a pure val
 
 const AddressCSE = false
   ## Address-CSE caches `&location` (as a held pointer temp) so repeated read/write
-  ## of one lvalue reuses the address. DISABLED: on the arkham targets a memory
+  ## of one lvalue reuses the address. Disabled: on the arkham targets a memory
   ## address is folded into the load/store addressing mode (`or [base+idx*8], m`)
   ## for free, so caching it saves no work and instead ties up a pointer register
   ## across the whole live range — measured as the dominant register-pressure source
@@ -91,7 +91,7 @@ const AddressCSE = false
 
 const
   PathStoreInvalidation* = not defined(cseTypeInvalidation)
-    ## Invalidate on a store by comparing ACCESS PATHS (`doc/cse.md`), not by
+    ## Invalidate on a store by comparing access paths (`doc/cse.md`), not by
     ## comparing the alias classes of every symbol the entry mentions.
   PathCallInvalidation* = not defined(cseTypeInvalidation)
     ## The same for the clobber step of a call whose summary is known.
@@ -112,7 +112,7 @@ type
     cls*: uint32
     reads*, writes*, slotWritten*, escapes*: bool
     constRef*: bool                  ## `(constref)`: the parameter is a pointer
-                                     ## `lengcgen` introduced for a BY-VALUE
+                                     ## `lengcgen` introduced for a by-value
                                      ## source parameter. Nothing can write
                                      ## through it — the precondition that
                                      ## licensed the pointer, not an analysis
@@ -121,7 +121,7 @@ type
   FunctionSummary* = object
     writesGlobal*, readsGlobal*, callsUnknown*, raises*: bool
     noReturn*: bool                  ## `(attr "noreturn")` — control never comes
-                                     ## back, so NOTHING after the call observes
+                                     ## back, so nothing after the call observes
                                      ## anything it wrote. Not part of `(smry …)`;
                                      ## read off the same pragmas node.
     resultCls*: uint32
@@ -151,7 +151,7 @@ when defined(cseSummaryStats):
   var gClearUnknown*, gClearGlobal*: int
   var gEntriesKept*: int
   var gPathTests*, gPathSavedStore*, gPathSavedCall*: int
-    ## How often the PATH rule kept a cache entry the alias partition alone
+    ## How often the path rule kept a cache entry the alias partition alone
     ## would have dropped — i.e. how much work `doc/cse.md`'s rule 1 is doing on
     ## real input. Zero here means the two analyses agree everywhere, which is a
     ## result about the input (SROA has already scalarized the local objects
@@ -161,7 +161,7 @@ proc paramMayWrite*(s: FunctionSummary; idx: int): bool {.inline.} =
   ## `constRef` survives `callsUnknown`: that blanket is there because an
   ## unseen callee might write through a pointer it was handed, but a by-value
   ## source parameter can only be passed onwards by value (again `(constref)`)
-  ## or copied. It says nothing about the POINTEE — another argument may alias
+  ## or copied. It says nothing about the pointee — another argument may alias
   ## the same object and be written through, which is why callers ask about
   ## every argument position separately. See `hexer/funcsummary`.
   if idx < 0 or idx >= s.params.len: return true
@@ -203,7 +203,7 @@ type
     writes: HashSet[SymId]      ## symbols assigned in the loop
     memStoreRoots: HashSet[SymId] ## `rootOf` of through-pointer stores;
                                   ## `SymId(0)` = indeterminate store
-    memStorePaths: seq[AccessPath] ## the same stores as PATHS, in the same
+    memStorePaths: seq[AccessPath] ## the same stores as paths, in the same
                                    ## order they were seen. Invariance asks the
                                    ## question `invalidateForStore` asks, so it
                                    ## gets the same two answers intersected
@@ -218,10 +218,10 @@ type
 
   CachedEntry = object
     hasFirst: bool       # a first occurrence has been recorded
-    firstExprPos: int    # position in `orig` of the first occurrence's LVALUE `L`
+    firstExprPos: int    # position in `orig` of the first occurrence's lvalue `L`
                          # (for an `(addr L)` occurrence this is `L`, the child) —
                          # it is what the decl caches (`L` or `addr L`)
-    firstUsePos: int     # position of the NODE to rewrite for the first occurrence:
+    firstUsePos: int     # position of the node to rewrite for the first occurrence:
                          # `L` for a load/write, the whole `(addr L)` node for an
                          # address-of. Usually == firstExprPos (differs only for
                          # an address-of first occurrence).
@@ -237,7 +237,7 @@ type
 
   PendingDecl = object   # a materialized temp; its decl is emitted at flush time
     tempName: string
-    exprPos: int         # the first occurrence's LVALUE position (what the decl caches)
+    exprPos: int         # the first occurrence's lvalue position (what the decl caches)
     addrMode: bool       # the temp holds `addr L` (a pointer); loads/writes of `L`
                          # rewrite to `(deref t)`, address-of occurrences to bare `t`
     hoistPos: int        # = first occurrence's `firstStmtPos` (dominates every
@@ -247,8 +247,8 @@ type
                            # occurrence positions to rewrite to the temp, each with
                            # its rewrite form: `deref` ⇒ `(deref t)` (an lvalue load/
                            # write under address-CSE), else the bare temp `t` (a value-
-                           # CSE use, or an address-of occurrence whose value IS the
-                           # cached address). Applied at flush (NOT eagerly) so a temp
+                           # CSE use, or an address-of occurrence whose value is the
+                           # cached address). Applied at flush (not eagerly) so a temp
                            # whose hoist position turns out unsound can be dropped
                            # without leaving dangling uses
 
@@ -264,19 +264,19 @@ type
                                        # CSE'd (`(deref t)`), not value-CSE'd
     addrTaken: HashSet[SymId]
     guardDepth: int                 ## >0 while walking an operand of `(and …)`/`(or …)`
-                                    ## that the FIRST operand guards. Such a
+                                    ## that the first operand guards. Such a
                                     ## sub-expression does not run whenever its enclosing
                                     ## statement does, so it may not define a hoist point
                                     ## — see `handleCandidate`.
-    bodyLocals: HashSet[SymId]      ## symbols declared by a `(var …)` in THIS body —
+    bodyLocals: HashSet[SymId]      ## symbols declared by a `(var …)` in this body —
                                     ## strictly less than `localDefPos`, which also holds
-                                    ## `gvar`/`tvar` (globals a callee CAN reach)
+                                    ## `gvar`/`tvar` (globals a callee can reach)
     patchset: Patchset
     synth: seq[TokenBuf]
     stmtStack: seq[int]
-    curStmt: int                ## position of the innermost block's CURRENT child
+    curStmt: int                ## position of the innermost block's current child
                                 ## statement — the decl-insertion point that
-                                ## dominates the first occurrence and sits AFTER
+                                ## dominates the first occurrence and sits after
                                 ## every store/decl preceding it in that block
     tempCounter: int
     resolver: SummaryResolver       ## module table + foreign-module fallback,
@@ -285,10 +285,10 @@ type
     pathScratch: seq[AccessPath]    ## reused by the path invalidator so that
                                     ## describing an entry allocates nothing
     paramSyms: HashSet[SymId]       ## this proc's parameters. For the path rules
-                                    ## they count as locals: a DIRECT path rooted
+                                    ## they count as locals: a direct path rooted
                                     ## at a by-value param names the callee's own
                                     ## copy, and a `var`/`out` param is a pointer,
-                                    ## so a read through it is an INDIRECT path
+                                    ## so a read through it is an indirect path
                                     ## and never takes the direct branch anyway
     m: ptr MainModule           ## module type context; nil ⇒ no type-based skips
     localDefPos: Table[SymId, int]  ## local symbol → position of its `(var …)` decl,
@@ -297,18 +297,18 @@ type
     symReads: Table[SymId, int]     ## per-symbol count of every `Symbol` occurrence in
                                     ## the body — the profitability gate for cheap-arith
                                     ## CSE: fold `a op b` only when its operands appear
-                                    ## NOWHERE else (so folding kills their live ranges
+                                    ## nowhere else (so folding kills their live ranges
                                     ## instead of adding the temp on top). See flushPending.
     # ---- redundant index-check elimination (shares everything above) --------
     proven: Tracker[string, int]    ## canonical guard condition → 1-based index into
                                     ## `provenRoots`. `hexer` lowers a `.requires`
                                     ## contract to `if COND: panic`, and `panic` does
                                     ## not return — so reaching a second identical
-                                    ## guard PROVES the first one's condition was
+                                    ## guard proves the first one's condition was
                                     ## false, and the second is dead. The fact is
                                     ## branch-scoped and invalidated by exactly the
                                     ## machinery the load cache uses.
-    provenRoots: seq[seq[SymId]]    ## per fact: the RESOLVED symbols it reads
+    provenRoots: seq[seq[SymId]]    ## per fact: the resolved symbols it reads
     defExpr: Table[SymId, int]      ## single-def local → position of its RHS
     defCount: Table[SymId, int]
     tainted: HashSet[SymId]         ## address taken, or defined by an impure RHS
@@ -398,7 +398,7 @@ proc hashExpr(c: Cursor): string =
   hashExpr(c, result)
 
 # ---- single-def resolution (for the guard facts only) ---------------------
-# `hashExpr` above is the LOAD CACHE's notion of "the same expression" and must
+# `hashExpr` above is the load cache's notion of "the same expression" and must
 # stay purely structural: collapsing two temps there would let one temp's value
 # be reused for another's. A guard fact wants the opposite — two inlined copies
 # of `[]` bind `s.len` to their own fresh `sroa` temp each, so without resolving
@@ -412,8 +412,8 @@ proc isPureExpr(cur: Cursor; m: ptr MainModule): bool =
   ## No call, no `addr`: a value that depends only on the memory its symbols
   ## name, so the root set below fully describes when it can change.
   ##
-  ## An `(instr …)` is pure only if its ROW says so. This used to fall through to
-  ## the `else` and answer TRUE for every intrinsic, which made two
+  ## An `(instr …)` is pure only if its row says so. This used to fall through to
+  ## the `else` and answer true for every intrinsic, which made two
   ## `volatileLoad`s of one address a common subexpression — and a status
   ## register read once and then polled forever. `efPure` is what buys the old
   ## answer back for `Ctz`/`Clz`/`Popcount`/`Bswap`, where it was always right.
@@ -493,7 +493,7 @@ proc matchShortCircuit(c: var Context; n: Cursor) =
                             cursorToPosition(c.orig[], eRhs), false)
 
 proc preScanDefs(c: var Context; start: Cursor) =
-  ## One walk recording, per local, how many times it is DEFINED and by what.
+  ## One walk recording, per local, how many times it is defined and by what.
   if not start.hasMore or start.kind != TagLit: return
   let sk = start.stmtKind
   if sk == VarS:
@@ -509,7 +509,7 @@ proc preScanDefs(c: var Context; start: Cursor) =
       inc i
       skip n
     if nameSym != SymId(0):
-      # `(var :x . T .)` is a DECLARATION, not a definition: the value arrives in
+      # `(var :x . T .)` is a declaration, not a definition: the value arrives in
       # a later `(asgn x …)`, which hexer emits for every scope-lowered temp. To
       # count the decl would make all of them look multiply-defined.
       if have and rhs.hasMore and rhs.kind != DotToken:
@@ -548,7 +548,7 @@ proc isDiamond(c: Context; s: SymId): bool {.inline.} =
     c.defCount.getOrDefault(s) == 2
 
 proc provenKey(c: var Context; cur: Cursor; result: var string; depth = 0) =
-  ## `hashExpr`, but a symbol normalizes to the expression it was DEFINED from.
+  ## `hashExpr`, but a symbol normalizes to the expression it was defined from.
   case cur.kind
   of Symbol:
     let s = symId(cur)
@@ -584,7 +584,7 @@ proc provenKey(c: var Context; cur: Cursor): string =
 
 proc collectResolvedRoots(c: var Context; cur: Cursor; acc: var seq[SymId];
                           depth = 0) =
-  ## The symbols the NORMALIZED key reads — invalidation must track those, not
+  ## The symbols the normalized key reads — invalidation must track those, not
   ## the temps the resolution saw through.
   if not cur.hasMore: return
   case cur.kind
@@ -671,7 +671,7 @@ proc dropProvenMentioning(c: var Context; target: SymId) =
 proc invalidateMentioning(c: var Context; target: SymId; exempt = "") =
   ## Drop every cached entry whose expression mentions `target` (its value/address
   ## may have changed). `exempt` keeps one key alive: taking `&L` marks `L`'s root
-  ## addr-taken but does NOT change `&L` itself, so `L`'s own address entry survives
+  ## addr-taken but does not change `&L` itself, so `L`'s own address entry survives
   ## (mirrors `invalidateForStore`'s exempt of the written location's address temp).
   var toClear: seq[string] = @[]
   for key, entry in c.cache.pairs:
@@ -703,8 +703,8 @@ proc expressionTouchesClass(c: var Context; cur: Cursor;
     return false
 
 proc escapedClassReps(c: var Context): HashSet[SymId] =
-  ## Alias-class representatives of every symbol whose ADDRESS has escaped so far.
-  ## Incremental on purpose: an `addr x` that appears LATER in the body cannot have
+  ## Alias-class representatives of every symbol whose address has escaped so far.
+  ## Incremental on purpose: an `addr x` that appears later in the body cannot have
   ## reached a callee we are invalidating for now.
   result = initHashSet[SymId]()
   for s in c.addrTaken: result.incl c.aa.find(s)
@@ -722,14 +722,14 @@ proc rootsUnreachableByCallee(c: var Context; roots: seq[SymId];
 
 proc unreachableByCallee(c: var Context; exprCur: Cursor;
                          escaped: HashSet[SymId]): bool =
-  ## True when NO callee — not even one that writes globals or calls unknown code
+  ## True when no callee — not even one that writes globals or calls unknown code
   ## — can reach the memory `exprCur` reads.
   ##
   ## A callee reaches exactly three things: globals (and their graphs), the graphs
   ## of the arguments it was passed, and addresses that escaped to it earlier. A
-  ## local declared in THIS body whose address has never been taken is in none of
+  ## local declared in this body whose address has never been taken is in none of
   ## them: not a global, not reachable through any pointer (none can point at it),
-  ## and passable only BY VALUE, which copies it. Arguments therefore need no
+  ## and passable only by value, which copies it. Arguments therefore need no
   ## separate test — an argument that could expose the local would have had to take
   ## its address, which `addrTaken` records.
   ##
@@ -763,7 +763,7 @@ proc clearCacheReachable(c: var Context) =
   for key in dropFacts: c.proven[key] = 0
 
 proc dropFactsInClasses(c: var Context; reps: HashSet[SymId]) =
-  ## The guard facts carry resolved ROOTS, not paths, so they keep the
+  ## The guard facts carry resolved roots, not paths, so they keep the
   ## alias-class rule in both modes — identical to `master` either way.
   var dropFacts: seq[string] = @[]
   for key, idx in c.proven.pairs:
@@ -813,7 +813,7 @@ proc mayOverlap(c: var Context; p, w: AccessPath;
                 escaped: HashSet[SymId]): bool =
   ## Can a write to `w` change what a read of `p` reads?
   ##
-  ## Two independent over-approximations, and an entry only dies when BOTH say
+  ## Two independent over-approximations, and an entry only dies when both say
   ## it may: the path rule (this proc) and the alias partition
   ## (`classesMayAlias`). Intersecting two sound answers stays sound, and it is
   ## what keeps this at least as precise as `master` everywhere — the partition
@@ -842,7 +842,7 @@ proc mayOverlap(c: var Context; p, w: AccessPath;
 
 proc expressionOverlaps(c: var Context; cur: Cursor; w: AccessPath;
                         escaped: HashSet[SymId]): bool =
-  ## Does any path the expression READS overlap the written path?
+  ## Does any path the expression reads overlap the written path?
   c.pathScratch.setLen 0
   collectReadPaths(cur, c.pathScratch)
   if c.pathScratch.len == 0: return true      # described nothing → conservative
@@ -858,7 +858,7 @@ proc callClobbersEntry(c: var Context; cur: Cursor; written: seq[AccessPath];
                        reps: HashSet[SymId]; escaped: HashSet[SymId]): bool =
   ## Rule 4 of `doc/cse.md`, for a call whose summary is known and which writes
   ## neither a global nor through an unknown callee. What it can still write is
-  ## the written arguments' own locations, and the memory reachable THROUGH them
+  ## the written arguments' own locations, and the memory reachable through them
   ## — which is indirect memory this analysis does not name. So a read survives
   ## when it is direct, rooted where no pointer can reach, and disjoint from
   ## every written argument.
@@ -942,7 +942,7 @@ proc invalidateForStore(c: var Context; lhs: Cursor) =
     return
   let s = rootOf(lhs)
   if s == SymId(0):
-    # Indeterminate store target: it goes THROUGH a pointer, and no pointer can
+    # Indeterminate store target: it goes through a pointer, and no pointer can
     # point at a local whose address was never taken. Same reasoning as a call.
     clearCacheReachable c
     return
@@ -965,7 +965,7 @@ proc invalidateForStore(c: var Context; lhs: Cursor) =
 # ---- summary loader: read `(smry …)` pragmas from the buffer ---------------
 # A nifcore reader for the wire format produced by hexer/funcsummary (which
 # runs on the older nifcursors API). Keying by this buffer's own nifcore SymIds
-# keeps the table consistent with the code cse is optimizing. NOTE: never
+# keeps the table consistent with the code cse is optimizing. Note: never
 # `return` out of an `into`/`loopInto` body — that skips cursor restoration.
 
 proc readParamSummary(n: var Cursor; s: var FunctionSummary) =
@@ -1021,7 +1021,7 @@ proc readSummary(n: var Cursor; outSummary: var FunctionSummary) =
     outSummary.resultCls = uint32(outSummary.params.len)
 
 proc readSummaryPragma*(pragmas: Cursor; outSummary: var FunctionSummary): bool =
-  ## Reads a proc's `(smry …)` AND its `(attr "noreturn")`, which is a separate
+  ## Reads a proc's `(smry …)` and its `(attr "noreturn")`, which is a separate
   ## pragma but the same question: what can this callee do to memory we cached?
   ## True when either was present — a bare `noreturn` proc still deserves a table
   ## entry, since it is the one callee that provably clobbers nothing.
@@ -1049,7 +1049,7 @@ proc readSummaryPragma*(pragmas: Cursor; outSummary: var FunctionSummary): bool 
 
 proc resolveCallee*(r: var SummaryResolver; key: SymId;
                     summary: var FunctionSummary): bool =
-  ## The module's own table first; then the callee's OWN module.
+  ## The module's own table first; then the callee's own module.
   ##
   ## `collectFunctionSummaries` only sees procs declared in the buffer being
   ## optimized, so every cross-module call used to fall through to "unknown
@@ -1057,7 +1057,7 @@ proc resolveCallee*(r: var SummaryResolver; key: SymId;
   ## and `panic` (in every bounds check) among them. But the summary is not
   ## missing, only elsewhere: it is a pragma on the callee's `(proc …)` in its own
   ## `.c.nif`, and `MainModule` already resolves foreign symbols through an
-  ## embedded index, parsing exactly that one declaration into THIS module's pool
+  ## embedded index, parsing exactly that one declaration into this module's pool
   ## — so the SymIds line up and nothing else is read. `canLoadForeign` keeps a
   ## symbol we cannot resolve (an intrinsic, a syscall, a module built without an
   ## index) an answer rather than an assertion.
@@ -1119,15 +1119,15 @@ proc invalidateForCall(c: var Context; call: Cursor) =
   var summary = FunctionSummary()
   if not callSummary(c, call, summary):
     when defined(cseSummaryStats): inc gClearUnknown
-    clearCacheReachable c        # unknown callee: assume it writes any memory IT
-    return                       # CAN REACH — which is not a non-escaped local
+    clearCacheReachable c        # unknown callee: assume it writes any memory it
+    return                       # can reach — which is not a non-escaped local
   if summary.noReturn:
     when defined(cseSummaryStats): inc gNoReturnSaved
     return                       # control never comes back: nothing after this
                                  # call can observe anything it wrote
   if summary.writesGlobal or summary.callsUnknown:
     when defined(cseSummaryStats): inc gClearGlobal
-    clearCacheReachable c        # may write through a global → any REACHABLE memory
+    clearCacheReachable c        # may write through a global → any reachable memory
     return
 
   # Pass 1: per-actual root symbol, the partition classes the callee may write,
@@ -1169,11 +1169,11 @@ proc invalidateForCall(c: var Context; call: Cursor) =
     if cls in writtenClasses:
       reps.incl c.aa.find(argSyms[i])
   when PathCallInvalidation:
-    # The same summary, read as paths: which ARGUMENTS the callee may write.
+    # The same summary, read as paths: which arguments the callee may write.
     # A parameter the callee placed in a written partition class counts too —
     # it may have aliased them internally — which is the class information doing
     # the job it is actually good at (relating parameters to each other), while
-    # the paths decide what in THIS body those arguments can reach.
+    # the paths decide what in this body those arguments can reach.
     var written: seq[AccessPath] = @[]
     for i in 0 ..< argPaths.len:
       let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
@@ -1365,7 +1365,7 @@ proc emitTempType(c: var Context; buf: var TokenBuf; valueExpr: Cursor; ptrWrap:
   ## based var-type inference (`codegen.genVarDecl`) fails — yielding `(err)` in a
   ## type position — when the initializer is a load through a field of an
   ## inter-module-inlined *foreign* object, whose type the backend cannot navigate
-  ## in this module's context. The optimizer's own type context CAN resolve it, so
+  ## in this module's context. The optimizer's own type context can resolve it, so
   ## we bake the result in here. `ptrWrap` wraps it as `(ptr T)` for the
   ## address-cache form (`var t = addr L`). Without a type context (the self-tests)
   ## the slot is left empty.
@@ -1401,7 +1401,7 @@ proc addSymUseSynth(c: var Context; tempName: string): int =
 
 proc addAddrVarDecl(c: var Context; tempName: string; expr: Cursor;
                     info: NifLineInfo): int =
-  ## Synthesize `(var :tempName . . (addr <expr>))` — caches the ADDRESS of an
+  ## Synthesize `(var :tempName . . (addr <expr>))` — caches the address of an
   ## lvalue that is also a write target, so reads and writes can share it.
   result = c.synth.len
   var buf = synthBuf(c, 16)
@@ -1470,8 +1470,8 @@ type
 
 const
   ValueTypes = {IT, UT, FT, CT, BoolT, PtrT, AptrT, EnumT, ProctypeT}
-    ## The type kinds a temp can HOLD: everything that fits in a register and
-    ## whose spelling is a complete type. This is an ALLOW-list on purpose.
+    ## The type kinds a temp can hold: everything that fits in a register and
+    ## whose spelling is a complete type. This is an allow-list on purpose.
     ## It used to be a deny-list of `{ObjectT, UnionT, ArrayT}`, and what a
     ## deny-list does when a kind is missing from it is not "miss an
     ## optimization" but "emit a temp that cannot exist": `FlexarrayT` was
@@ -1531,8 +1531,8 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   ## valid, while the decl is hoisted at the deepest hoist-anchor common to all
   ## occurrences (the emitted scope that encloses them) — placed at the end so it
   ## can move up as further occurrences appear. An lvalue that is also an
-  ## assignment target OR whose address is taken (in `writeTargets`) is cached by
-  ## ADDRESS (`var t = addr L`; every load/write becomes `(deref t)` and every
+  ## assignment target or whose address is taken (in `writeTargets`) is cached by
+  ## address (`var t = addr L`; every load/write becomes `(deref t)` and every
   ## `(addr L)` becomes bare `t`); everything else by value.
   ##
   ## `isAddrOf`: `n` is an `(addr L)` node; the caller has verified `L` (its child)
@@ -1551,12 +1551,12 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     return false
   let addrMode = key in c.writeTargets
   when not AddressCSE:
-    # `addrMode`/`isAddrOf` means we'd cache an ADDRESS (`&L`) as a held pointer temp.
+    # `addrMode`/`isAddrOf` means we'd cache an address (`&L`) as a held pointer temp.
     # Don't: on the arkham targets the address folds into the load/store addressing mode
     # for free, so caching it saves nothing and ties up a register across the live range.
-    # Leave the lvalue inline (no temp) — NOT value-CSE'd (unsound across its own writes).
+    # Leave the lvalue inline (no temp) — not value-CSE'd (unsound across its own writes).
     #
-    # This also blocks VALUE-CSE of every lvalue that is written anywhere in the
+    # This also blocks value-CSE of every lvalue that is written anywhere in the
     # body, which is the compiler's dominant idiom: the fields of a `var`
     # parameter. `enterScope` reads `c.p` seven times and assigns it once at the
     # end, and all seven reads are refused because of that one assignment. That
@@ -1568,7 +1568,7 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     # `nimony n -d:danger`). Narrowing the refusal to the addr-of'd subset — a
     # plain store target is invalidated precisely by `invalidateForStore`, which
     # is strictly sharper than refusing it body-wide — does eliminate the loads,
-    # and LOSES:
+    # and loses:
     #
     #     loads          75.63M -> 73.02M   -2.61M
     #     frame push/pop 50.36M -> 52.82M   +2.46M
@@ -1579,7 +1579,7 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     # register across its whole range. A load here is a single `ldr` with the
     # offset folded in, so eliminating one saves exactly one instruction; a range
     # that straddles a call can only be homed callee-saved, and arkham charges a
-    # whole prologue/epilogue PAIR for that on every entry to the proc. Refusing
+    # whole prologue/epilogue pair for that on every entry to the proc. Refusing
     # ranges that straddle a call turns the loss into a 0.35M win (-0.08%) —
     # still not worth the machinery, because arkham's volatile local pool is five
     # registers (x9-x13; x0-x7 are withheld) so even a call-free temp lands in a
@@ -1595,9 +1595,9 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   let entry = c.cache[key]
   let derefThis = addrMode and not isAddrOf
   if not entry.hasFirst:
-    # A guarded occurrence may not become the FIRST: every hoist site below is
+    # A guarded occurrence may not become the first: every hoist site below is
     # derived from it (the enclosing statement, or a loop pre-header) and neither
-    # dominates a short-circuited operand. Reusing an ALREADY dominating temp from
+    # dominates a short-circuited operand. Reusing an already dominating temp from
     # inside a guard stays fine, which is why this only rejects the first.
     if c.guardDepth > 0: return false
     let invHoist = licmHoistPos(c, lvalueCur)
@@ -1660,9 +1660,9 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   result = true
 
 proc isPureRegArith(n: Cursor): bool =
-  ## True if `n` is a CHEAP arithmetic binop/unop whose operands are only
+  ## True if `n` is a cheap arithmetic binop/unop whose operands are only
   ## symbols, literals, or nested pure arithmetic — a pure *register* computation
-  ## with NO memory load or call inside. Such a value depends solely on its
+  ## with no memory load or call inside. Such a value depends solely on its
   ## operand symbols, so the existing operand-write invalidation
   ## (`invalidateMentioning` / `clobberClasses`, which scan the whole expression)
   ## already covers it with no memory/alias reasoning — no load/aggregate/aliasing
@@ -1676,7 +1676,7 @@ proc isPureRegArith(n: Cursor): bool =
     var m = n
     var idx = 0
     m.loopInto:
-      # idx 0 is the result-TYPE child (typed ops carry it first); only operands
+      # idx 0 is the result-type child (typed ops carry it first); only operands
       # need the purity check.
       if idx > 0:
         case m.kind
@@ -1704,7 +1704,7 @@ proc computeSymReads(c: var Context) =
   ## One linear pass over the body counting every `Symbol` occurrence per symbol.
   ## Used only as the cheap-arith CSE profitability gate — an over-count (it also
   ## tallies write targets and non-folded occurrences) only makes the gate more
-  ## conservative (reject a marginal CSE), never unsound. Run LAZILY (only when a
+  ## conservative (reject a marginal CSE), never unsound. Run lazily (only when a
   ## cheap-arith temp actually needs gating), so bodies with no arith CSE — the
   ## overwhelming majority — pay nothing.
   for i in 0 ..< c.orig[].len:
@@ -1714,13 +1714,13 @@ proc computeSymReads(c: var Context) =
 
 proc flushPending(c: var Context) =
   ## Emit each materialized temp's decl at its final (shallowest) hoist position,
-  ## then rewrite its occurrences. A temp is DROPPED (decl + all rewrites) when its
+  ## then rewrite its occurrences. A temp is dropped (decl + all rewrites) when its
   ## hoist position would precede the declaration of a local its expression reads:
   ## the cached expression's free locals must all be in scope at the decl site.
   ## Because the rewrites are applied here (not eagerly), dropping leaves the
   ## original expressions untouched and correct.
   var symReadsReady = false
-  # In SOURCE order, never the table's. Two temps can hoist to the same spot,
+  # In source order, never the table's. Two temps can hoist to the same spot,
   # and their decls come out in the order this loop visits them; hash order
   # made that depend on how `Table` happens to be implemented — a shoggoth
   # built by Nimony and one built by Nim disagreed on 24 of nimsem's modules —
@@ -1739,9 +1739,9 @@ proc flushPending(c: var Context) =
         computeSymReads(c); symReadsReady = true
       # Cheap-arith profitability gate (the tweak's "`a` only used in `binop(a,b)`/
       # `unop(a)` or unused after these"). A cheap op is only worth a temp when
-      # folding its duplicates KILLS the operands' live ranges rather than adding
+      # folding its duplicates kills the operands' live ranges rather than adding
       # the temp on top of them. Sufficient & checkable: every non-literal operand
-      # appears NOWHERE outside this expression's folded occurrences — i.e. its
+      # appears nowhere outside this expression's folded occurrences — i.e. its
       # total `Symbol` count equals (occurrences × its multiplicity in one copy).
       # If any operand is used elsewhere it stays live regardless, so the temp is
       # pure register pressure (this is exactly what regressed rawAlloc's
@@ -1769,8 +1769,8 @@ proc trExpr(c: var Context; n: var Cursor) =
       let inner = child0(n)
       # `(addr L)` where `L` is an address-CSE'd memory lvalue: unify with loads/
       # writes of `L`. Cache `addr L` once; this whole node rewrites to the bare
-      # temp (its value IS the address). `markAddrTaken` still fires for the value-
-      # entry soundness of OTHER cached loads through the root, but EXEMPTS `L`'s
+      # temp (its value is the address). `markAddrTaken` still fires for the value-
+      # entry soundness of other cached loads through the root, but exempts `L`'s
       # own address entry — taking `&L` does not change `&L`.
       if inner.kind == TagLit and inner.exprKind in {DotC, AtC, DerefC, PatC} and
          hashExpr(inner) in c.writeTargets:
@@ -1799,10 +1799,10 @@ proc trExpr(c: var Context; n: var Cursor) =
         n.loopInto:
           trExpr(c, n)
     of AndC, OrC:
-      # SHORT-CIRCUIT. Only the first operand is unconditional; the rest run just
+      # Short-circuit. Only the first operand is unconditional; the rest run just
       # when it decides they do. Walking them like ordinary children let a load in
       # the second operand become a CSE candidate whose decl was then hoisted to
-      # the enclosing STATEMENT — i.e. above the very test that guards it.
+      # the enclosing statement — i.e. above the very test that guards it.
       # `c.owner != nil and c.owner.p != nil` turned into "load c.owner.p; if
       # c.owner != nil and that load was non-nil", which dereferences nil.
       var first = true
@@ -1819,7 +1819,7 @@ proc trExpr(c: var Context; n: var Cursor) =
       # Cheap pure arithmetic. A repeated `a op b` is CSE'd on its 2nd occurrence
       # (the same lazy/flow-sensitive path as loads); `handleCandidate` hoists the
       # temp no higher than the first occurrence, so a trapping `div`/checked op
-      # keeps its original fault ordering. Only PURE register arithmetic qualifies
+      # keeps its original fault ordering. Only pure register arithmetic qualifies
       # (`isPureRegArith`): a load/call inside would need memory reasoning we leave
       # to load-CSE. On the first occurrence (or a non-pure tree) fall through and
       # recurse so nested loads / sub-expressions still get their own chance.
@@ -1885,9 +1885,9 @@ proc trAsgn(c: var Context; n: var Cursor) =
     # still a valid assignment target. Then invalidate the aliasing class; the
     # address temp of this exact location survives (its address didn't move).
     #
-    # The `when` is load-bearing, not tidiness. This call is sound ONLY in
+    # The `when` is load-bearing, not tidiness. This call is sound only in
     # address mode, where the rewrite `L` → `(deref t)` is still an assignment
-    # target. A VALUE temp is not: rewriting an LHS to a bare symbol turns
+    # target. A value temp is not: rewriting an LHS to a bare symbol turns
     # `p.pos = p.pos + 1` into `t = p.pos; t = t + 1` and drops the store. With
     # `AddressCSE` off nothing reaches here today only because `handleCandidate`
     # refuses every `writeTargets` key outright — so the guard is invisible until
@@ -2043,7 +2043,7 @@ proc callIsNoReturn(c: var Context; call: Cursor): bool =
 proc guardCondition(c: var Context; n: Cursor; cond: var Cursor): bool =
   ## `n` is `(if (elif COND (stmts (call NORETURN …))))` or `(ite COND (stmts
   ## (call NORETURN …)) .)` — one branch, no `else`,
-  ## the arm a single call that never returns. Such a statement ASSERTS `not COND`
+  ## the arm a single call that never returns. Such a statement asserts `not COND`
   ## for everything it dominates. Yields COND.
   var got, body, elseArm = default(Cursor)
   if not twoWayParts(n, got, body, elseArm) or hasArm(elseArm): return false
@@ -2065,11 +2065,11 @@ proc guardCondition(c: var Context; n: Cursor; cond: var Cursor): bool =
 proc isHoistAnchor(sk: LengStmt): bool {.inline.} =
   # An anchor is a statement that forms a nested lexical scope — a C `{…}` block:
   # a temp hoisted at the first occurrence's statement must not be reused by an
-  # occurrence OUTSIDE that block, so the block must appear on the anchor stack.
+  # occurrence outside that block, so the block must appear on the anchor stack.
   # `(scope)`/`(if)`/`(case)`/`(while)`/`(loop)`/`(try)`/`(onerr)` qualify.
-  # `(stmts)` is transparent, and LEAF statements (asgn/call/var/ret/…) form
+  # `(stmts)` is transparent, and leaf statements (asgn/call/var/ret/…) form
   # no block of their own — anchoring them would give two sibling statements
-  # DIFFERENT anchor stacks and defeat all cross-statement CSE (which is the whole
+  # different anchor stacks and defeat all cross-statement CSE (which is the whole
   # point of hoisting a shared load/address to a dominating decl). Unknown/other
   # statements stay anchored (the safe, CSE-suppressing default).
   sk notin {NoStmt, StmtsS,
@@ -2144,11 +2144,11 @@ proc collectFunctionSummaries*(buf: var TokenBuf): FunctionSummaryTable =
 # ---- write-target pre-pass -----------------------------------------------
 
 proc collectWriteTargets(c: var Context; n: var Cursor) =
-  ## Record the hash of every memory lvalue that should be ADDRESS-CSE'd rather
+  ## Record the hash of every memory lvalue that should be address-CSE'd rather
   ## than value-CSE'd: an assignment target (its value can't be value-cached, but
-  ## its address is stable across the write) OR an lvalue whose address is taken
+  ## its address is stable across the write) or an lvalue whose address is taken
   ## (`(addr L)`) — so a cached `addr L` unifies the `(addr L)` node with plain
-  ## loads/writes of `L` (which become `(deref t)`). Recurses into ALL children,
+  ## loads/writes of `L` (which become `(deref t)`). Recurses into all children,
   ## including assignment RHS, since `(addr L)` most often sits there.
   if not n.hasMore: return
   if n.kind != TagLit:
@@ -2185,9 +2185,9 @@ proc registerParams(c: var Context; params: Cursor) =
     skip p
 
 proc runCSE*(buf: var TokenBuf;
-             summaries: ptr FunctionSummaryTable = nil;
-             m: ptr MainModule = nil;
-             params: Cursor = default(Cursor)): int {.discardable.} =
+             summaries: ptr FunctionSummaryTable;
+             m: ptr MainModule;
+             params: Cursor; temps, checksRemoved: var int): bool {.discardable.} =
   ## Two-phase CSE for a single proc `buf` (a Leng body has no nested procs).
   ## `summaries` is the module-level table from `collectFunctionSummaries` run
   ## once on the whole module; nil ⇒ every call conservatively clears. `m` is the
@@ -2195,7 +2195,12 @@ proc runCSE*(buf: var TokenBuf;
   ## nil falls back to the coarse, type-agnostic alias partition.
   # `m`: type context (skips value-CSE of aggregates); the resolver's
   # foreign-summary fallback resolves through it too.
+  ## `temps` is the body's `` `cse `` counter, kept across pipeline rounds.
+  ## Adds the bounds/nil checks it removed to `checksRemoved`; returns whether
+  ## it changed `buf`.
+  result = false
   var ctx = createContext(addr buf, summaries, m)
+  ctx.tempCounter = temps
   ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
   registerParams(ctx, params)
   block:
@@ -2210,7 +2215,17 @@ proc runCSE*(buf: var TokenBuf;
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
-  result = ctx.checksRemoved
+    result = true
+  checksRemoved += ctx.checksRemoved
+  temps = ctx.tempCounter
+
+proc runCSE*(buf: var TokenBuf;
+             summaries: ptr FunctionSummaryTable = nil;
+             m: ptr MainModule = nil;
+             params: Cursor = default(Cursor)): int {.discardable.} =
+  var temps = 0
+  result = 0
+  discard runCSE(buf, summaries, m, params, temps, result)
 
 # ---- self-tests ----------------------------------------------------------
 
@@ -2259,7 +2274,7 @@ when isMainModule:
 
   block index_write_prevents_cse:
     # `i = 5` reassigns the index the load mentions → the `at` is not reused.
-    # The base pointer `(deref (deref pp))` does not mention `i`, so it IS
+    # The base pointer `(deref (deref pp))` does not mention `i`, so it is
     # CSE'd (walking the base of a failed `at` candidate).
     chk(
       "(stmts (asgn y.0.M (at (deref (deref pp.0.M)) i.0.M)) (asgn i.0.M 5) (asgn z.0.M (at (deref (deref pp.0.M)) i.0.M)))",
@@ -2461,7 +2476,7 @@ when isMainModule:
       "(asgn (dot o.0.M a.0.M) 7))))")
 
   block loop_pointer_field_store_not_hoisted:
-    # The loop advances the POINTER `t.p` the load goes through — an inlined
+    # The loop advances the pointer `t.p` the load goes through — an inlined
     # cursor `inc`. The load reads `t.p` itself, so it is not invariant even
     # though `*(t.p)` and `t.p` never name the same storage (`collectReadPaths`
     # must report the pointer operand of a `deref`). Measured: hoisting it
@@ -2566,7 +2581,7 @@ when isMainModule:
 
   when AddressCSE:   # these validate address-CSE, which is disabled on the arkham path
     block addr_and_load_shared:
-      # `a.arr[i]` is loaded, then its ADDRESS is taken (into a pointer local). The
+      # `a.arr[i]` is loaded, then its address is taken (into a pointer local). The
       # address arithmetic is shared: cache `addr(a.arr[i])` once; the load becomes
       # `(deref t)`, the `(addr …)` becomes bare `t`. (The rawDealloc
       # `freeSmallChunks[s div 16]` case — inlined `listAdd` takes the address.)
@@ -2620,7 +2635,7 @@ when isMainModule:
       "(asgn p.0.M (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))))")
 
   block arith_dead_after_is_csed:
-    # `a + b` computed twice; `a` and `b` appear NOWHERE else, so folding the
+    # `a + b` computed twice; `a` and `b` appear nowhere else, so folding the
     # duplicate into one temp kills their live ranges — the gate lets it through.
     chk(
       "(stmts (asgn y.0.M (add (i 64) a.0.M b.0.M)) (asgn z.0.M (add (i 64) a.0.M b.0.M)))",
@@ -2628,7 +2643,7 @@ when isMainModule:
       "(asgn y.0.M `cse.1) (asgn z.0.M `cse.1))")
 
   block arith_operand_used_elsewhere_not_csed:
-    # Same duplicate `a + b`, but `a` is ALSO read in `(asgn w a)` → it stays live
+    # Same duplicate `a + b`, but `a` is also read in `(asgn w a)` → it stays live
     # regardless, so a temp would be pure register pressure. The gate rejects it
     # (this is the `alignment - 1` rawAlloc regression, prevented) → unchanged.
     assertUnchanged(

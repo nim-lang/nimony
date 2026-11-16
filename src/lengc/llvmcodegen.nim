@@ -632,11 +632,11 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         result.flags.incl NodeclP
         skip n
       of DynlibP:
-        # Static-import library annotation for the NATIVE backend (arkham);
+        # Static-import library annotation for the native backend (arkham);
         # meaningless for LLVM output — the linker resolves the symbol.
         skip n
       of ConstrefP:
-        # A PARAMETER pragma; never legal on a proc.
+        # A parameter pragma; never legal on a proc.
         error c.m, "invalid proc pragma: ", n
       of ImportjsP:
         # As in codegen.parseProcPragmas: the splice template is jorogumo's

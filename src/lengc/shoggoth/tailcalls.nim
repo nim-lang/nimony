@@ -16,14 +16,14 @@
 ## * `trFold` folds every `(var :t T (call …)) (ret t)` pair — the ones that
 ##   were always there and the ones the sinking just made — into the encoding.
 ##
-## They are two rewrite ROUNDS in that order, because the fold matches on
+## They are two rewrite rounds in that order, because the fold matches on
 ## ADJACENCY and so has to see the buffer the sinking produced. They are two
 ## `SHOGGOTH_DISABLE` names for the same reason they are one pass: sinking
 ## changes control-flow shape and folding changes stack discipline, so the two
 ## want separate answers to "which one broke it", but nothing else about them is
 ## separate — one walker, one grammar, one emitter, run twice.
 ##
-## The pass runs at the very END of `optimizeBody`, after the vectorizer.
+## The pass runs at the very end of `optimizeBody`, after the vectorizer.
 ## `(ret (call …))` deliberately violates the Leng rule that calls are bound and
 ## do not nest — it is a directive to the backend ("do the tail call"), not an
 ## expression — so no other pass should have to tolerate it. Running last
@@ -38,15 +38,15 @@
 ## Implementation. This is the only shoggoth pass that matches on statement
 ## ADJACENCY rather than within a subtree, which is what makes the `.` holes
 ## copyprop leaves behind visible here and nowhere else. The walk is therefore a
-## PEEPHOLE: one forward pass per statement list carrying the last two real
+## Peephole: one forward pass per statement list carrying the last two real
 ## statements (`ListCtx`) — no materialized child list, no index arithmetic, and
 ## no hole-skipping beyond the one `if` that declines to shift the window. The
 ## sink rule's "the `ret` must end the list" then costs nothing to enforce: at
-## the end of the walk `prev` IS the last real statement.
+## the end of the walk `prev` is the last real statement.
 ##
 ## The two sides are split the way `vectorizer.nim` splits them: a `TailScan`
-## threads the MATCH side, a `RetEmitter` the BUILD side. What crosses between
-## them is POSITIONS, never cursors — a cursor does not survive the patch round
+## threads the match side, a `RetEmitter` the build side. What crosses between
+## them is positions, never cursors — a cursor does not survive the patch round
 ## that rewrites the buffer.
 
 import std / [tables]
@@ -59,7 +59,7 @@ type
   TailRule* = enum
     ## The two rewrites. The driver passes the enabled ones in; each round then
     ## collects with the single rule it is about, gathering nothing the round
-    ## will not use. One `collect`, but a WALK PER ROUND, not one walk for both:
+    ## will not use. One `collect`, but a walk per round, not one walk for both:
     ## the fold's input is the buffer the sink round rebuilt, and no position
     ## survives a `patch.apply()`.
     trSink        ## `… (if …) (ret r)` -> a `(ret E)` in every arm
@@ -84,7 +84,7 @@ type
     arms: seq[SunkArm]
 
   ListCtx = object
-    ## What the walk of ONE statement list carries: the peephole window, and
+    ## What the walk of a single statement list carries: the peephole window, and
     ## where each symbol declared in this list was declared.
     prev, prev2: Cursor   ## the last two real statements; valid once `seen` says so
     seen: int             ## real statements passed so far
@@ -106,7 +106,7 @@ proc posOf(s: TailScan; n: Cursor): int {.inline.} =
 
 proc declaredSym(n: Cursor; sym: var SymId): bool =
   ## The symbol a `(var :s …)` declares, malformed decls included: a caller
-  ## looking for `s`'s decl must SEE a broken one rather than walk past it and
+  ## looking for `s`'s decl must see a broken one rather than walk past it and
   ## adopt a later homonym.
   result = false
   if n.kind == TagLit and n.stmtKind == VarS:
@@ -180,7 +180,7 @@ proc tailStmtOf(n: Cursor; res: var Cursor): bool =
   if result: res = cur
 
 proc matchTotalIf(n: Cursor; bodies: var seq[Cursor]): bool =
-  ## Every arm's body of a TOTAL `if`/`ite` — one that has an `else`. Without an
+  ## Every arm's body of a total `if`/`ite` — one that has an `else`. Without an
   ## `else` a path leaves the `if` having assigned nothing, and sinking would
   ## delete the `ret` that path still needed. A malformed arm answers false too.
   result = false
@@ -237,12 +237,12 @@ proc matchSunkArms(s: TailScan; ifNode: Cursor; sym: SymId;
 # ---- the peephole walk -----------------------------------------------------
 
 proc rememberDecl(s: TailScan; lc: var ListCtx; n: Cursor) =
-  ## Record the FIRST decl this list makes of each symbol: its position when it
+  ## Record the first decl this list makes of each symbol: its position when it
   ## is the initializer-free `(var :sym T .)` the sink rewrite can delete, and -1
   ## for any other decl of that symbol. First-wins is the point — a later
   ## homonym must not be adopted in place of a decl that disqualified the site.
   ##
-  ## The decl has to be a SIBLING of the `ret`: that is what makes this statement
+  ## The decl has to be a sibling of the `ret`: that is what makes this statement
   ## list the symbol's whole scope, so counting mentions in it is complete — and
   ## it is what lets the decl go with the rewrite. Recording it during the walk
   ## is all that requirement costs.
@@ -261,7 +261,7 @@ proc matchFold(s: var TailScan; list: Cursor; lc: ListCtx; cur: Cursor) =
   ## stepped over the `.` holes copyprop left where it deleted bindings, which
   ## are not statements.
   ##
-  ## The last conjunct is the temp's read count: the `ret` must be its ONLY
+  ## The last conjunct is the temp's read count: the `ret` must be its only
   ## read, since folding the call into it drops the temp entirely and a second
   ## reader would be left without one. It is tested last because it is the one
   ## test that walks a subtree.
@@ -280,8 +280,8 @@ proc matchSink(s: var TailScan; list: Cursor; lc: ListCtx) =
   ## Runs once the list is exhausted, so the window holds its last two real
   ## statements: `(if …)` then `(ret r)`.
   ##
-  ## That the `ret` ENDS the list is the reason to match here rather than in the
-  ## walk. The rewrite DELETES that `ret`; deleting it in front of live code
+  ## That the `ret` ends the list is the reason to match here rather than in the
+  ## walk. The rewrite deletes that `ret`; deleting it in front of live code
   ## would let control run on. Matching at the end makes the requirement
   ## structural instead of a lookahead.
   ##
@@ -340,7 +340,7 @@ proc collect(buf: var TokenBuf; want: TailRule): TailScan =
 
 type
   RetEmitter = object
-    ## The build side. Every replacement goes into ONE scratch buffer and no
+    ## The build side. Every replacement goes into a single scratch buffer and no
     ## cursor is taken from it until they all have: `cursorAt` marks a buffer
     ## shared, so a cursor taken early makes each later `add` copy the whole
     ## thing — one copy per site instead of one in total.
@@ -380,7 +380,7 @@ proc sinkReturns(buf: var TokenBuf) =
   ##
   ## Two things come of it. `r` disappears — one local and one copy per site, the
   ## same shape of win as forwarding a callee's result through its tail copy. And
-  ## a call that was the arm's own tail becomes ADJACENT to a `ret`, which is
+  ## a call that was the arm's own tail becomes adjacent to a `ret`, which is
   ## exactly the condition the fold needs, so the tail-call encoding reaches a
   ## shape it otherwise never sees: in nimsem that is 339 sites and 111 arms,
   ## against the 10 tail calls the adjacent form finds on its own.

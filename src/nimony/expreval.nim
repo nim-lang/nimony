@@ -870,7 +870,7 @@ proc typeBits(typ: Cursor): int =
       if result <= 0: result = 64
 
 proc floatWidthOf(n: Cursor): int =
-  ## The bit width of the float expression `n` BEFORE evaluation, or -1. The
+  ## The bit width of the float expression `n` before evaluation, or -1. The
   ## evaluated value is a plain `FloatLit` and has lost it: `0.25'f32` and
   ## `0.25` evaluate alike, but their bit patterns do not.
   case n.kind
@@ -1139,6 +1139,15 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = charValue(c, char(ch), nOrig.info)
+      elif targetType.typeKind == BoolT:
+        # `bool(1)`: what `low`/`high` of an `array[bool, T]` index fold to
+        let x = getConstOrdinalValue(val)
+        if x == createXint(0'i64):
+          result = c.getFalseValue()
+        elif x == createXint(1'i64):
+          result = c.getTrueValue()
+        else:
+          cannotEval nOrig
       elif targetType.typeKind in {EnumT, HoleyEnumT, AnumT}:
         let x = getConstOrdinalValue(val)
         if isNaN(x):

@@ -61,7 +61,7 @@ when defined(posix):
     ## operations such as open/stat/fork; linux/arm64/raw implements them
     ## using the available *at/*2/clone calls.
     ##
-    ## `nimNoLibc`: the C backend still LINKS libc, so there open/stat are
+    ## `nimNoLibc`: the C backend still links libc, so there open/stat are
     ## real symbols. Raw bindings there would emit newfstatat calls, which
     ## glibc does not export under that name.
 
@@ -145,13 +145,13 @@ when defined(posix):
   proc realpath*(path, resolved: cstring): cstring {.importc: "realpath", sideEffect.}
 
   # Platform operations depend on the shared pcall/errno helpers above.
-  # A single FIXED-ARITY `open` with a defaulted `mode`. A `varargs` form would
+  # A single fixed-arity `open` with a defaulted `mode`. A `varargs` form would
   # be monomorphized by sem into separate 2- and 3-argument variants that both
-  # `importc "open"` — and `nimony n` lowers each importc syscall to ONE
+  # `importc "open"` — and `nimony n` lowers each importc syscall to a single
   # register-signature stub keyed by the C name, so two different arities would
   # collapse to a single stub and the shorter call would leave a declared arg
   # unbound. With a default, `open(fc, flags)` and `open(fc, flags, mode)` are
-  # the SAME 3-arg call (the kernel ignores `mode` unless O_CREAT is set).
+  # the same 3-arg call (the kernel ignores `mode` unless O_CREAT is set).
   #
   # On i386 every symbol that touches a 64-bit `Off` binds the glibc LFS
   # variant (`open64`/`stat64`/...): the plain names there speak the legacy

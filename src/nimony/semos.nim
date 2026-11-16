@@ -116,7 +116,7 @@ proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
   # Keep the compiler-internal `src/lib` modules (nifbuilder/nifreader, pulled
   # in by `std/macros`) on the search path unconditionally. Macro-plugin and
-  # CTFE sub-compiles always inject `--path:<repo>/src/lib`; the OUTER build did
+  # CTFE sub-compiles always inject `--path:<repo>/src/lib`; the outer build did
   # not (unless a per-directory `nimony.paths` supplied it), so the two disagreed
   # on module suffixes and a macro used outside the repo failed to compile its
   # plugin (`cannot open <mod>.s.deps.nif`). Adding it here makes the suffixes
@@ -199,7 +199,7 @@ proc execArgs*(exe: string; args: openArray[string]) =
   ## through `cmd.exe /c` on Windows (`/bin/sh -c` elsewhere), an extra
   ## process per call that buys nothing here — no redirection, no globbing,
   ## and the quoting it forces on the caller is a bug surface of its own.
-  ## Arguments travel as an argv array, so callers pass them RAW: no
+  ## Arguments travel as an argv array, so callers pass them raw: no
   ## `quoteShell`, the spawner does its own quoting.
   var code = -1
   try:
@@ -648,7 +648,10 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   # Do not forward the raw command line: it can contain `--base`, which would
   # make plugin child compiles read caller-local nimony.paths files.
   #
-  # `-d:nimonyPlugin` marks the sub-compile as the build OF a plugin. The
+  # `--silentmake`: the sub-compile shares the outer build's terminal, and its
+  # own progress bar would be drawn over the outer one.
+  #
+  # `-d:nimonyPlugin` marks the sub-compile as the build of a plugin. The
   # dependency scanner then schedules no plugin builds of its own: a plugin is
   # a leaf of the build graph. Without this, a plugin whose source imports the
   # module declaring it (`lib/std/deps/smartcli.nim` imports `std/smartcli`)
@@ -658,6 +661,7 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   let srcLibPath = nimonyDir() / "src" / "lib"
   result = quoteShell(nimonyExe) &
     " --nimcache:" & quoteShell(cacheDir) &
+    " --silentmake" &
     " -d:nimonyPlugin" &
     " --path:" & quoteShell(srcLibPath) &
     " --path:" & quoteShell(pluginDir)
@@ -669,7 +673,7 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   # the same stdlib variant as the module that uses it (nim-lang/nimony#2155's
   # follow-up: `-d:useLibc` did not reach plugins). An explicit allow-list, not
   # raw command-line forwarding, for the same reason `--base` is not forwarded
-  # above. The derived define (`nimNativeAlloc`) is NOT forwarded: the child
+  # above. The derived define (`nimNativeAlloc`) is not forwarded: the child
   # re-derives it from these opt-outs.
   for d in ["useLibc", "useMimalloc"]:
     if config.isDefined(d):
@@ -858,7 +862,7 @@ proc loadPluginOutput(outputFile: string; info: NifLineInfo): PluginOutput =
     result.buf = move m.buf
   else:
     # Text output (hand-written or third-party plugins): the gensym hint is
-    # the `.unusedname` directive. `parse` reads ONE tree per call, so each
+    # the `.unusedname` directive. `parse` reads a single tree per call, so each
     # sidecar costs a call of its own before the output proper is reached.
     result.buf = createTokenBuf(30)
     var r = rd.open(outputFile)
@@ -881,7 +885,7 @@ const GlobalLayoutDecls = {TypeY, ProcY, FuncY, ConverterY, MethodY,
 proc collectGlobalDecls(c: var SemContext; n: Cursor;
                         renames: var Table[SymId, SymId]) =
   ## `genSym()` hands out local names (`tmp.N`), but a type, a routine or a
-  ## const gets a GLOBAL name wherever it is written: the backends lift it to module
+  ## const gets a global name wherever it is written: the backends lift it to module
   ## scope, where a local name is neither indexed (#2644) nor unique (#2645).
   var n = n
   if n.kind == TagLit:

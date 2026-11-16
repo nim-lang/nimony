@@ -481,7 +481,7 @@ proc genInstrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   # A portable row lowers exactly like the GCC builtin it stands for, and
   # `genGccBuiltinCall` already emits those: the `llvm.cttz`/`ctlz`/`ctpop`/
   # `bswap` call, the `i1 is_zero_poison` operand, and the i64→i32 truncation.
-  # It is keyed on the builtin NAME, which is what `cBuiltinFor` returns, so
+  # It is keyed on the builtin name, which is what `cBuiltinFor` returns, so
   # `(instr …)` needs no lowering of its own — resolve the row and reuse it.
   # A target-pinned row has no portable spelling by construction, so there
   # `cBuiltinFor` yields "" and this rejects rather than substituting.
@@ -618,6 +618,26 @@ proc isLengFloat(tk: LengType): bool {.inline.} =
 proc isLengPtr(tk: LengType): bool {.inline.} =
   tk in {PtrT, AptrT, ProctypeT}
 
+proc wrapInt(x: uint64; bits: int; unsigned: bool): uint64 =
+  ## `x` truncated to `bits`, then zero- or sign-extended back to 64 bits.
+  result = x
+  if bits < 64:
+    let mask = (1'u64 shl bits) - 1'u64
+    if unsigned or ((x shr (bits - 1)) and 1'u64) == 0'u64: result = x and mask
+    else: result = x or not mask
+
+proc foldIntConst(text: string; srcBits: int; srcUnsigned: bool;
+                  destTyp: LLType; destUnsigned: bool): LLValue =
+  ## The decimal integer constant `text` of a `srcBits` wide type, converted to
+  ## `destTyp` as `trunc`, `zext` or `sext` would convert it.
+  let neg = text.len > 0 and text[0] == '-'
+  var x = 0'u64
+  for i in (if neg: 1 else: 0) ..< text.len:
+    x = x * 10'u64 + uint64(ord(text[i]) - ord('0'))
+  if neg: x = 0'u64 - x
+  x = wrapInt(wrapInt(x, srcBits, srcUnsigned), destTyp.intBits, destUnsigned)
+  result = llIntTextC(if destUnsigned: $x else: $cast[int64](x), destTyp)
+
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
                      result: var LLValue) =
   let destTyp = genTypeLLVMReadOnly(c, destTypeCursor)
@@ -674,7 +694,8 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
   elif isLengInt(srcTK) and isLengInt(destTK):
     # Constant integer casts fold to the target type with no instruction.
     if val.kind == llvInt:
-      result = val.withType(destTyp)
+      result = foldIntConst(val.intText, val.typ.intBits, srcTK in {UT, CT, BoolT},
+                            destTyp, destTK in {UT, CT, BoolT})
       return
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
@@ -1035,8 +1056,12 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     var typ: LLType
     var val = LLValue()
     n.into:
+      let typCursor = n
       typ = genTypeLLVM(c, n)
+      let srcType = getType(c.m, n)
       genExprLLVM(c, n, val)
+      if not typeEq(val.typ, typ):
+        coerceInPlace(c, val, srcType, typCursor)
       while n.hasMore: skip n
     let t = c.nextTemp()
     let res = llReg(t, typ)
@@ -1242,6 +1267,10 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       else: discard
       if typeEq(val.typ, targetTyp):
         result = val
+      elif val.kind == llvInt and not isFloatType(targetTyp):
+        # A suffixed integer literal is a constant of its suffix type.
+        result = foldIntConst(val.intText, 64, value.kind == UIntLit, targetTyp,
+                              suffixStr.startsWith("u"))
       else:
         let t = c.nextTemp()
         let res = llReg(t, targetTyp)
