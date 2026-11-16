@@ -11,3 +11,5 @@ tests/nimony/errmsgs/twrongpragmas.nim(17, 16) Error: final pragma is only allow
 tests/nimony/errmsgs/twrongpragmas.nim(17, 23) Error: union pragma is only allowed on object types
 tests/nimony/errmsgs/twrongpragmas.nim(17, 30) Error: packed pragma is only allowed on object types
 tests/nimony/errmsgs/twrongpragmas.nim(18, 16) Error: view pragma is only allowed on object types
+tests/nimony/errmsgs/twrongpragmas.nim(21, 63) Trace: instantiation from here
+tests/nimony/errmsgs/twrongpragmas.nim(21, 56) Error: undeclared identifier: result

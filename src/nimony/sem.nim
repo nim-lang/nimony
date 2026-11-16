@@ -315,8 +315,10 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
 
 proc declareResult*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo): SymId =
   let returnType = c.routine.returnType
+  # While the routine's parameters and return type are checked it has no
+  # `result` yet (a proc type's `ensures` there names none).
   if c.routine.kind in {ProcY, FuncY, ConverterY, MethodY, MacroY} and
-      classifyType(c, returnType) != VoidT:
+      not cursorIsNil(returnType) and classifyType(c, returnType) != VoidT:
     let name = pool.strings.getOrIncl("result")
     result = identToSym(c, name, ResultY)
     let s = Sym(kind: ResultY, name: result,
