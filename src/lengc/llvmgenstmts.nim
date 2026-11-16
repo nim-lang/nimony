@@ -113,8 +113,11 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
       let thenLabel = c.nextLabel()
       let elseLabel = c.nextLabel()
       let endLabel = c.nextLabel()
+      var elsePart = n
+      skip elsePart
+      let hasElse = elsePart.kind != DotToken
 
-      if n.kind != DotToken:
+      if hasElse:
         c.setLoc(iteInfo)
         c.emit LLInstr(kind: llCondBr, condBrCond: cond,
                        condBrTrue: thenLabel, condBrFalse: elseLabel)
@@ -130,7 +133,7 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
         c.setLoc(iteInfo)
         c.emit LLInstr(kind: llBr, brTarget: endLabel)
 
-      if n.kind != DotToken:
+      if hasElse:
         discard c.startBlock(elseLabel)
         genStmtLLVM c, n
         if not c.currentProc.needsTerminator:
