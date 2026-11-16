@@ -28,12 +28,13 @@ iterator `..`*[T: Ordinal and Comparable and Orderable](a, b: T): T {.inline,
   ## `for i in 0..10` are fine, `for i in 0..high(int)` is a compile-time
   ## error. (`ord(high(uint64))` does not fold, so a `uint64` loop up to
   ## `high` is not caught.)
+  when T is bool:
+    {.error: "`..` does not iterate over bool".}
   var i = a
-  when T is range or T is bool:
+  when T is range:
     # A `range` value past `b` is not one: `inc` on it owes the range
-    # (nim-lang/nimony#2855), and `inc(true)` stays `true` (a C `_Bool`), so
-    # the step is only taken below `b`, and the test that says so is fresh
-    # on every round.
+    # (nim-lang/nimony#2855), so the step is only taken below `b`, and the
+    # test that says so is fresh on every round.
     var more = i <= b
     while more:
       yield i
@@ -88,18 +89,12 @@ iterator countup*[T: Ordinal and Comparable and Orderable](a, b: T; step: Positi
   ## unless `T` has bits to spare. **Note**: with a `step > 1` that is not
   ## enough: this fails if `b + step > high(T)` for efficiency reasons and
   ## it is a rare case.
-  var res = a
   when T is bool:
-    # `inc(true)` stays `true` (a C `_Bool`): step only below `b`, like `..`.
-    var more = res <= b
-    while more:
-      yield res
-      if res < b: inc(res, step)
-      else: more = false
-  else:
-    while res <= b:
-      yield res
-      inc(res, step)
+    {.error: "`countup` does not iterate over bool".}
+  var res = a
+  while res <= b:
+    yield res
+    inc(res, step)
 
 # RootObj is replaced with untyped for now:
 
