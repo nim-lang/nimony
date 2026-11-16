@@ -44,3 +44,17 @@ assert cast[int](cast[float](rx)) == crt
 # cast[ptr int](nil) should work at compile time
 const np = cast[nil ptr int](nil)
 assert np == nil
+
+# A cast to a larger type zeroes the remaining memory: a signed source is not
+# sign-extended (planetis-m/nimony-bugs-llms#203).
+type Neg = enum
+  nm = -2, nz = 0
+var i8 = -2'i8
+var i32 = -1'i32
+var en = nm
+proc notI8(x: int8): uint16 = cast[uint16](not x)
+assert notI8(1) == 254'u16
+assert cast[int16](i8) == 254'i16
+assert cast[uint64](i32) == 0xFFFF_FFFF'u64
+assert cast[int](i32) == 0xFFFF_FFFF
+assert cast[uint64](en) == 0xFFFF_FFFE'u64 # an enum with a negative value is 32 bits
