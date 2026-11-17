@@ -252,27 +252,29 @@ not by the length that was asked for.
 The asymmetry with `new` is condition 1 again: `seq` and `string` have a valid
 empty-ish representation, a not-nil `ref` does not.
 
-**A Table refuses the insert.** A `Table` grows two seqs -- `data` for the pairs
-and `hashes` for the open-addressing index -- and the probe loops in
+**A Table refuses the insert.** A `Table` grows two seqs -- `data` for the
+pairs and `hashes` for the open-addressing index -- and the probe loops in
 `tables.nim` (`rawGet`, `emptySlot`) walk until they find a free slot, which is
-sound only while the index has one. `mustRehash` guarantees that in normal
-operation; an index that cannot be *resized* breaks it, and `data` growing on
-past it used to fill the index completely, at which point a lookup for an absent
-key never terminated. So `rawPut` refuses the insert when the index cannot
-absorb it: an allocation failure like any other, leaving a table that is short of
-what was asked for but wholly consistent. Two related rules fall out:
+sound only while the index has one. `indexNeedsGrowth` keeps at least four
+slots free in normal operation; an index that cannot be *resized* breaks that,
+and `data` growing on past it used to fill the index completely, at which point
+a lookup for an absent key never terminated. So `rawPut` refuses the insert
+when the index cannot absorb it: an allocation failure like any other, leaving
+a table that is short of what was asked for but wholly consistent. Two related
+rules fall out:
 
 - `fillHashPart` is the only thing that builds an index from `data`, and it
-  sizes for what `data` already holds. `resize` only grows an existing index, so
-  using it to create one would leave an index that is non-empty and yet missing
-  every key already stored -- which `rawGet` would trust.
+  sizes for what `data` already holds. `resize` only grows an existing
+  index, so using it to create one would leave an index that is non-empty and
+  yet missing every key already stored -- which `rawGet` would trust.
 - `rawGet` falls back to a linear scan when there is no index at all. Slow, but
   answering "absent" for a key that is present would make `[]=` store a second
   copy of it.
 
-`mgetOrPut` has to notice the refusal too: it takes `data.len-1` as the index of
-what it just inserted, which on a refusal names the *previous* pair and would
-hand back a `var V` into someone else's value.
+Callers must notice the refusal. `[]=` leaves the table unchanged. `mgetOrPut`
+checks whether `data` actually grew and terminates with an out-of-memory
+assertion instead of taking `data.len-1` as the index of the value it meant to
+insert and handing back a `var` into someone else's slot.
 
 ## The fatal class
 

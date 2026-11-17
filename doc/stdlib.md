@@ -334,9 +334,13 @@ it, so `hash` is found in `std/hashes` even where it is not imported.
 Import `std/hashes` when you write a `hash` for your own key type, or
 need `Hash`, `!&` and `!$` by name.
 
-The table uses a hybrid strategy: **linear scan for ≤ 4 entries**,
-hash table with open addressing for larger sizes. This means small
-tables have no hashing overhead at all.
+`Table` uses a hybrid strategy: **linear scan for ≤ 4 entries**, and a
+hash table with open addressing for larger sizes. Small tables have no
+hashing overhead at all. The dense pair sequence keeps iteration in
+insertion order, while the optional index maps hashes to pair positions.
+`Table` equality compares contents regardless of insertion order;
+`OrderedTable` also makes order part of equality and supports sorting, and
+`CountTable` maps keys to counts.
 
 - `[]` raises `KeyError` on missing keys. Use `getOrDefault` for
   a safe fallback, or `contains` to check first.

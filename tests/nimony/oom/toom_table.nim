@@ -3,10 +3,9 @@
 # A Table grows two seqs: `data` (the pairs) and `hashes` (the open-addressing
 # index). Under `-d:nimMaxHeap=1 -d:nimHardenOutOfMem` (see `nimony.args`) the
 # index runs out of room to grow partway through filling a big table, which is
-# the interesting case: the
-# probe loops assume a free slot exists, so `data` must not be allowed to run
-# ahead of an index that can no longer be resized. It used to be, and a lookup
-# for an absent key then spun forever.
+# the interesting case: the probe loops assume a free slot exists, so `data`
+# must not be allowed to run ahead of an index that can no longer be resized.
+# It used to be, and a lookup for an absent key then spun forever.
 #
 # What this asserts is not WHERE the table stops -- that depends on the
 # allocator -- but that whatever it ends up holding is consistent.
