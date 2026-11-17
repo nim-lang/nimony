@@ -18,10 +18,23 @@ func mustRehash(length, counter: int): bool {.inline.} =
 
 func isIndexed(a: HashEntry): bool {.inline.} = a.position > 0
 
+func probeStart(h: Hash): Hash {.inline.} =
+  ## Where `h`'s linear probe sequence starts. The integer `hash`es are the
+  ## identity, so dense keys (pool ids, positions) would otherwise occupy one
+  ## run of adjacent slots, and every probe that lands in the run -- a miss, or
+  ## a key displaced by an earlier one -- walks to its end. Scrambling the start
+  ## spreads them; `fullhash` stays the plain hash.
+  var x = h
+  when sizeof(Hash) == 8:
+    x = x xor (x shr 32)
+  x = (x xor (x shr 16)) * 0x45d9f3b'u
+  x = (x xor (x shr 16)) * 0x45d9f3b'u
+  result = x xor (x shr 16)
+
 func emptySlot(s: seq[HashEntry]; h: Hash): int {.requires: s.len > 0,
     ensures: 0 <= result and result < s.len, inline.} =
   ## The first unfilled slot on `h`'s linear probe sequence.
-  var i = h
+  var i = probeStart(h)
   while isIndexed(s[i and high(s).uint]): inc i
   result = int(i and high(s).uint)
 
@@ -90,7 +103,7 @@ func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int {.
     for i in 0 ..< t.data.len:
       if t.data[i][0] == k: return i
   else:
-    var h = kh
+    var h = probeStart(kh)
     while isIndexed(t.hashes[h and high(t.hashes).uint]):
       let d = t.hashes[h and high(t.hashes).uint]
       # `position` points into `data` for every filled entry; an entry that
