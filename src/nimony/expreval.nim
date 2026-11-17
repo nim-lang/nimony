@@ -872,7 +872,7 @@ proc typeBits(typ: Cursor): int =
 proc floatWidthOf(n: Cursor): int =
   ## The bit width of the float expression `n` before evaluation, or -1. The
   ## evaluated value is a plain `FloatLit` and has lost it: `0.25'f32` and
-  ## `0.25` evaluate alike, but their bit patterns do not.
+  ## `0.25` evaluate alike, but their bit patterns do not. Integers too.
   case n.kind
   of FloatLit: result = 64
   of Symbol:
@@ -889,8 +889,10 @@ proc floatWidthOf(n: Cursor): int =
       skip x
       if x.kind == StrLit:
         let sfx = pool.strings[x.strId]
-        result = (if sfx == "f32": 32 elif sfx in ["f64", "f"]: 64 else: -1)
-    of ConvX, CastX, HconvX, AddX, SubX, MulX, DivX, NegX:
+        result = (if sfx in ["i8", "u8"]: 8 elif sfx in ["i16", "u16"]: 16
+          elif sfx in ["f32", "i32", "u32"]: 32 elif sfx in ["f64", "f", "i64", "u64"]: 64 else: -1)
+    of ConvX, CastX, HconvX, AddX, SubX, MulX, DivX, NegX, ModX, ShlX, ShrX,
+       AshrX, BitandX, BitorX, BitxorX, BitnotX:
       var x = n
       inc x                                     # typed node: its type comes first
       result = typeBits(toTypeImpl(x))
@@ -938,8 +940,20 @@ proc evalCast(c: var EvalContext; typ, val, opnd, nOrig: Cursor): Cursor =
         cannotEval nOrig
     else:
       let x = getConstOrdinalValue(val)
+      let sb = floatWidthOf(opnd)
+      let tb = typeBits(targetType)
       if isNaN(x):
         cannotEval nOrig
+      elif sb > 0 and sb <= tb:
+        # The source's bit pattern; a wider target's remaining bits are zeroed.
+        var err = false
+        var bits = if x.isNegative: cast[uint64](asSigned(x, err)) else: asUnsigned(x, err)
+        if sb < 64: bits = bits and ((1'u64 shl sb) - 1'u64)
+        if err: cannotEval nOrig
+        elif dtk == UIntT: result = uintValue(c, bits, nOrig.info)
+        else:
+          if tb < 64 and (bits shr (tb - 1)) != 0'u64: bits = bits or not ((1'u64 shl tb) - 1'u64)
+          result = intValue(c, cast[int64](bits), nOrig.info)
       else:
         var err = false
         if dtk == IntT:
