@@ -189,9 +189,11 @@ proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) 
       # The sub-compile runs under a synthesized module suffix, so a private
       # field's access token can no longer name a module the check would
       # recognise. Replace it with `AlreadyChecked`: this access was validated
-      # before serialization and must stay accepted.
+      # before serialization and must stay accepted. The token follows the
+      # object and the field, so a string literal object (`"ab".f`) stays.
       newDest.addParLe(n.cursorTagId, n.info)
       n.into:
+        rewriteTreeToIdents(newDest, n, thisMod)
         while n.hasMore:
           if n.isStringLit:
             newDest.addStrLit(AlreadyChecked, n.info)
