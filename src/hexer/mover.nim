@@ -40,6 +40,8 @@ once per module:
 - `(corofor call body…)`     — `call` once, then `body` zero or more times;
                                `cps` lowers it, so it is still here for the
                                duplifier and the destroyer
+- `(for call vars body)`     — the same; the prover runs before `elimForLoops`,
+                               and `vars` (re)declares the loop variables
 
 Reasoning about the same tree the duplifier rewrites also removes a whole class
 of bug: the goto form could impose an evaluation order that a later pass then
@@ -268,6 +270,7 @@ const
     ## enters it past the pragma list.
   RoutineKinds = {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS}
   BranchKinds = {OfU, ElseU, ExceptU, FinU}
+  UnpackKinds = {UnpackflatU, UnpacktupU}
   SelectorOnlyExprs = {DotX, DdotX, TupatX, BaseobjX}
     ## Accessors whose trailing operands are a field name, a tuple index or an
     ## inheritance depth — never a read. `containsRoot` skips them for the same
@@ -286,6 +289,7 @@ proc classify(n: Cursor): NodeClass =
     of LoopV: result = ncLoop
     else:
       if n.substructureKind in BranchKinds: result = ncBranch
+      elif n.substructureKind in UnpackKinds: result = ncStmtList
       else: result = ncOther
   of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS,
      CursorS, PatternvarS, TypeS, EmitS, AsgnS, ContinueS, LabS, JmpS, YldS,
@@ -296,8 +300,8 @@ proc classify(n: Cursor): NodeClass =
     # statement. `jmp`/`lab`/`continue` are transfers `execStmt` resolves by
     # name, not by where they sit, so they need no class of their own.
     result = ncOther
-  of CoroforS: result = ncCorofor
-  of IfS, WhenS, WhileS, ForS, BlockS, BreakS, AsmS, DeferS:
+  of CoroforS, ForS: result = ncCorofor
+  of IfS, WhenS, WhileS, BlockS, BreakS, AsmS, DeferS:
     # `finalir.nim` lowered all of these; `execStmt` `bug`s on one, and until
     # then it is a node like any other.
     result = ncOther
@@ -329,7 +333,7 @@ proc enclosingLoop(m: MoverContext; base: Cursor; pos: int32): int32 =
     let par = m.parents[child]
     if par < 0: break
     let p = at(base, par)
-    if p.finalIrKind == LoopV or p.stmtKind == CoroforS:
+    if p.finalIrKind == LoopV or p.stmtKind in {CoroforS, ForS}:
       result = par
       break
     if p.stmtKind in RoutineKinds: break
@@ -525,7 +529,7 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
     let loop = enclosingLoop(m, base, pc)
     if loop < 0:
       result = true
-    elif at(base, loop).stmtKind == CoroforS:
+    elif at(base, loop).stmtKind in {CoroforS, ForS}:
       # the iterator steps: the body runs again, or the loop ends
       let bodyPos = endOf(base, firstChild(base, loop))
       if bodyPos < endOf(base, loop): pcs.add bodyPos
@@ -593,6 +597,10 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
       if n.substructureKind in BranchKinds:
         pcs.add lastChild(base, pc) # `of`/`else`/`except`/`fin`: run the body
         result = true
+      elif n.substructureKind in UnpackKinds and
+          firstChild(base, pc) < endOf(base, pc):
+        pcs.add firstChild(base, pc) # a `for`'s loop variables, declared anew
+        result = true
       elif scanAt(base, pc, x, otherUsage): # a bare expression statement
         result = false
       else:
@@ -611,21 +619,20 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
      MixinS, UsingS}:
     # declarative junk we don't care about: it evaluates nothing
     result = afterNode(m, base, pc, x, pcs, otherUsage)
-  of CoroforS:
+  of CoroforS, ForS:
     # The iterator call runs first; `afterNode` schedules the body from there.
     let callPos = firstChild(base, pc)
     if scanAt(base, callPos, x, otherUsage):
       result = false
     else:
       result = afterNode(m, base, callPos, x, pcs, otherUsage)
-  of IfS, WhenS, WhileS, ForS, BlockS, BreakS, AsmS, DeferS:
+  of IfS, WhenS, WhileS, BlockS, BreakS, AsmS, DeferS:
     # `finalir.nim` lowered all of these; seeing one means a pass regressed the
     # normal form (see `doc/final_ir.md`).
     bug "statement not eliminated: " & $n.stmtKind
 
-proc isLastReadImpl(m: MoverContext; buf: TokenBuf; xPos: int32; x: Cursor;
+proc isLastReadImpl(m: MoverContext; base: Cursor; xPos: int32; x: Cursor;
                     otherUsage: var Cursor): bool =
-  let base = readonlyCursorAt(buf, 0)
   let root = rootOf(x)
   var pcs: seq[int32] = @[]
   # The rest of the statement `x` sits in is evaluated right after it; from
@@ -639,16 +646,16 @@ proc isLastReadImpl(m: MoverContext; buf: TokenBuf; xPos: int32; x: Cursor;
     if not execStmt(m, base, pc, x, root, pcs, otherUsage): return false
   result = true
 
-proc build(m: var MoverContext; buf: TokenBuf) =
+proc build(m: var MoverContext; base: Cursor; len: int) =
   ## One scan over the module recording each token's enclosing tag. nifcore
   ## materialises no closing token, so a tag's extent comes from `subtreeWidth`
   ## and is tracked on a stack of last-content indexes.
-  m.parents = newSeq[int32](buf.len)
+  m.parents = newSeq[int32](len)
   # The stack of tags still open at `i`, as two parallel columns: where the tag
   # sits and the index of its last content token.
   var openAt: seq[int32] = @[]
   var openLast: seq[int32] = @[]
-  for i in 0 ..< buf.len:
+  for i in 0 ..< len:
     while openLast.len > 0 and openLast[openLast.len-1] < int32(i):
       discard openAt.pop()
       discard openLast.pop()
@@ -656,8 +663,8 @@ proc build(m: var MoverContext; buf: TokenBuf) =
       m.parents[i] = openAt[openAt.len-1]
     else:
       m.parents[i] = -1'i32
-    if buf[i].kind == TagLit:
-      let c = readonlyCursorAt(buf, i)
+    let c = base +! i
+    if c.kind == TagLit:
       openAt.add int32(i)
       openLast.add int32(i + subtreeWidth(c) - 1)
   m.built = true
@@ -666,16 +673,30 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf;
                 otherUsage: var NifLineInfo;
                 mover: var MoverContext): bool =
   if not mover.built:
-    build(mover, buf)
+    build(mover, readonlyCursorAt(buf, 0), buf.len)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
   var other = default Cursor
-  result = isLastReadImpl(mover, buf, int32(idx), n, other)
+  result = isLastReadImpl(mover, readonlyCursorAt(buf, 0), int32(idx), n, other)
   if other.cursorIsNil or not other.hasCurrentToken:
     # `other` can sit at a scope's end; there is no token to read info from.
     otherUsage = NoLineInfo
   else:
     otherUsage = other.info
+
+proc isReadAfter*(s: SymId; pos, base: Cursor; len: int;
+                  mover: var MoverContext): bool =
+  ## Can the variable `s` be read after the subtree at `pos` of the module
+  ## starting at `base` (`len` tokens) has been evaluated?
+  if not mover.built:
+    build(mover, base, len)
+  var x = createTokenBuf(1)
+  x.addSymUse(s, NoLineInfo)
+  var xc = beginRead(x)
+  var other = default Cursor
+  result = not isLastReadImpl(mover, base, int32(cursorToPosition(base, pos)),
+                              xc, other)
+  endRead(xc)
 
 when isMainModule:
   proc findX(n: Cursor): Cursor =
