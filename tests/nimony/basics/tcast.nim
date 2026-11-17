@@ -45,6 +45,19 @@ assert cast[int](cast[float](rx)) == crt
 const np = cast[nil ptr int](nil)
 assert np == nil
 
+# A compile-time cast keeps the bit pattern and zeroes the remaining memory
+# too (planetis-m/nimony-bugs-llms#226).
+const ck = cast[int16](-2'i8)
+const cm = cast[int](-1'i32)
+const cu = cast[uint16](-2'i8)
+const cneg = cast[int8](254'u8) < 0
+const cnot = cast[int16](not 1'i8)
+assert ck == 254'i16
+assert cm == 0xFFFF_FFFF
+assert cu == 254'u16
+assert cneg
+assert cnot == 254'i16
+
 # A cast to a larger type zeroes the remaining memory: a signed source is not
 # sign-extended (planetis-m/nimony-bugs-llms#203).
 type Neg = enum
