@@ -6,4 +6,7 @@ B finally
 Object initialized
 Destructor called for MyObj(value=123)
 Inside finally block
+C finally
+caught outside
+D inner finally
 Program end
