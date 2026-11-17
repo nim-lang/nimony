@@ -74,7 +74,7 @@ proc addSuffixedZero(dest: var TokenBuf; impl: Cursor; info: NifLineInfo;
 proc addNil(dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
   ## `(nil T)`. The type slot is not decoration: `derefs.nim` types every
   ## `nil` the frontend produces and `lengcgen` keeps it, because that is
-  ## what tells `intramodinliner` which pointer it is splicing.
+  ## what tells `inliner` which pointer it is splicing.
   dest.addParLe(NilX, info)
   dest.addSubtree typ
   dest.addParRi()

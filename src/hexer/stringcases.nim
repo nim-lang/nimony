@@ -24,7 +24,7 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
 
     # Hoist the `nimStrAtLe` probe into a `(var :tmp (bool) (call …))` instead
     # of nesting it in the `elif` condition. `nimStrAtLe` is `.inline`, but the
-    # inliner (shoggoth's `intermodinliner`) only splices calls at statement /
+    # inliner (`inliner`) only splices calls at statement /
     # var-init position — a call buried in the `elif` condition is opaque to it
     # (the same pipeline-ordering issue the array bound checks had). The bound
     # form below is exactly what the inliner's `trySpliceVarInit` recognises.

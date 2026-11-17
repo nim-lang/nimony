@@ -1106,7 +1106,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     dest.addKey genPragmas, "alwaysInline", pinfo
 
   if NoinlineP in prag.flags:
-    # Must reach the `.c.nif`: `intramodinliner.computeInlineInfo` derives the
+    # Must reach the `.c.nif`: `inliner.computeInlineInfo` derives the
     # whole policy from the NIFC proc decl, so a `.noinline` that stops here is
     # a silent no-op — and worse than a no-op, because the cold half of a
     # deliberate hot/cold split gets spliced back into the hot wrapper, leaving
@@ -1868,7 +1868,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     of NilX:
       # `(nil T)` — the frontend types every `nil` (see `trNil` in derefs.nim)
       # and the type slot is a type, not an expression. Keep it: it is what
-      # tells `intramodinliner`, which substitutes a literal argument at each
+      # tells `inliner`, which substitutes a literal argument at each
       # use, what the pointer it splices actually is.
       takeInto dest, n:
         if n.hasMore:
