@@ -88,4 +88,21 @@ proc localSumType(): int =
 
 assert localSumType() == 3
 
+# A branch that binds fields is typed like any other branch: it can give the
+# value of a `case` expression, before or after a branch that binds nothing
+# (planetis-m/nimony-bugs-llms#107):
+proc evalExpr(n: Node): int =
+  result = case n
+    of Value(val): val
+    of AddOpr(a, b): evalExpr(a) + evalExpr(b)
+    of SubOpr(a, b):
+      let d = evalExpr(a)
+      d - evalExpr(b)
+
+assert evalExpr(nested) == 35
+let leafVal = case v
+  of AddOpr(), SubOpr(): -1
+  of Value(val): val
+assert leafVal == 42
+
 echo "tsumtype: OK"

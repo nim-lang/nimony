@@ -3331,11 +3331,10 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
             let objDecl = getTypeSection(stInfo.objTypeSym)
             typeBindings = bindInvokeArgs(objDecl, stInfo.invokeArgs)
           withNewScope c:
-            var list = createTokenBuf(0)
-            let bodyStart = it.n
-            it.n = bodyAsList(bodyStart, list)
-            dest.addParLe(it.n.cursorTagId, it.n.info)
-            it.n = sub(it.n)
+            # The bindings precede the branch body, which is typed like any
+            # other branch: it can be the value of a `case` expression.
+            let bodyStart = dest.len
+            dest.addParLe(StmtsS, it.n.info)
             for b in bindings:
               var bindName = pool.strings[b.ident]
               c.makeLocalSym(bindName)
@@ -3366,10 +3365,10 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
               let s = Sym(kind: PatternvarY, name: bindSym, pos: declStart)
               if addNonOverloadable(c.currentScope, b.ident, s) == Conflict:
                 buildErr c, dest, b.info, "attempt to redeclare: " & pool.strings[b.ident]
-            while it.n.hasMore:
-              semStmt c, dest, it.n, false
-            dest.addParRi(it.n.endInfo)
-            it.n = bodyStart; skip it.n
+            semStmtBranch c, dest, it, false
+            dest.addParRi()
+            if classifyType(c, it.typ) notin {VoidT, AutoT}:
+              setTagAt(dest, bodyStart, TagId(ExprTagId))
         else:
           withNewScope c:
             semStmtBranch c, dest, it, true
