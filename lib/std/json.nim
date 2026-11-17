@@ -27,10 +27,10 @@
 ## * **parse / read** — `parseJson` / `parseFile` build a `JsonTree`; navigate
 ##   with `kind`, `getStr`/`getInt`/…, `len`, `items`, `pairs`, `{}`.
 ## * **typed map** — `toJson` (typed Nim → JSON) and `fromJson` (JSON → typed
-##   Nim), the JSON siblings of `nifply`'s `toNif`/`fromNif`. Same reflection
-##   magics (`internalFieldPairs` / `internalTypeName`), same `oconstr`/`kv`/
-##   `aconstr` tag vocabulary — differing only where idiomatic JSON differs
-##   (string keys, enums as name-strings, optional `"type"` discriminator).
+##   Nim), the JSON siblings of `nifply`'s `toNif`/`fromNif`. Same
+##   `oconstr`/`kv`/`aconstr` tag vocabulary — differing only where idiomatic
+##   JSON differs (fields keyed by their source name, enums as name-strings,
+##   optional `"type"` discriminator).
 ## * **line info** — `parseJson` takes a `LineInfoMode`; under `KeepLineInfo`
 ##   each node carries a `nifcore.LineInfoLit`, the same cheap source-position
 ##   token NIF uses. Building (`toJson`) carries none — there is no source.
@@ -39,17 +39,10 @@ when defined(nimony):
   {.feature: "untyped".}      # generic bodies sem-checked at instantiation
   {.feature: "lenientnils".}  # nifcore returns nil pools for ownerless cursors
 
-import std / [parsejson, streams, parseutils, assertions, formatfloat, syncio]
+import std / [parsejson, streams, parseutils, assertions, formatfloat, syncio, typetraits]
 import ../../src/lib/nifcore
 
 export parsejson  # callers may want JsonParser, getTok, etc.
-
-# ── Reflection magics (shared with nifply) ───────────────────────────────────
-
-func internalTypeName*[T](x: typedesc[T]): string {.magic: "InternalTypeName", noSideEffect.}
-
-iterator internalFieldPairs*[T: tuple|object](x: T): tuple[key: string, val: untyped] {.
-  magic: "InternalFieldPairs", noSideEffect.}
 
 # ── Types ────────────────────────────────────────────────────────────────────
 
@@ -620,13 +613,12 @@ proc `$`*(t: var JsonTree): string =
 # Siblings of nifply's `toNif`. Every overload takes `opts` in the same
 # position so the composite walkers can recurse with `toJson(t, field, opts)`.
 
-proc bareName(mangled: string): string =
-  ## `internalFieldPairs` / `internalTypeName` yield names with a NIF
-  ## disambiguation suffix (`x.0`, `Box.0.<module>`); JSON keys and the `"type"`
-  ## discriminator want the bare source name before the first `.`.
+proc typeKey(name: string): string =
+  ## The `"type"` discriminator: the type's name without its generic
+  ## arguments (`Gen[int]` → `Gen`).
   result = ""
-  for c in mangled:
-    if c == '.': break
+  for c in name:
+    if c == '[': break
     result.add c
 
 proc toJson*(t: var JsonTree; x: int; opts: JsonOptions) =
@@ -652,10 +644,10 @@ proc toJson*[O: object](t: var JsonTree; x: O; opts: JsonOptions) =
   if opts.typeFieldName.len > 0:
     t.buf.buildTree JKKv.tagId:
       t.buf.addStrLit opts.typeFieldName
-      t.buf.addStrLit bareName(internalTypeName(O))
-  for name, f in internalFieldPairs(x):
+      t.buf.addStrLit typeKey($O)
+  for name, f in fieldPairs(x):
     t.buf.buildTree JKKv.tagId:
-      t.buf.addStrLit bareName(name)
+      t.buf.addStrLit name
       toJson(t, f, opts)                   # opts threads down
   t.buf.closeTag()
 
@@ -667,7 +659,7 @@ proc toJson*[T](x: T; opts = JsonOptions()): JsonTree =
 
 # ── Typed map: fromJson (JSON → typed Nim) ───────────────────────────────────
 # Siblings of nifply's `fromNif`. A mutating `var T` overload (used by the
-# object walker via internalFieldPairs) delegates to the typedesc overloads.
+# object walker via fieldPairs) delegates to the typedesc overloads.
 
 proc fromJson*(c: var JsonNode; t: typedesc[int]; opts: JsonOptions): int =
   assert rawKind(c) == IntLit, "expected int"
@@ -713,16 +705,26 @@ proc skipTypeField(c: var JsonNode; opts: JsonOptions) =
       if strVal(probe) == opts.typeFieldName:
         c.skip                       # drop the whole kv pair
 
+proc readField[T](m: var JsonNode; name: string; f: var T; opts: JsonOptions): bool =
+  ## Reads the member at `m` into `f` if its key is the field `name`; moves past it.
+  m.into:
+    result = strVal(m) == name
+    m.inc
+    if result: fromJson(m, f, opts) else: m.skip
+
 proc fromJson*[O: object](c: var JsonNode; t: typedesc[O]; opts: JsonOptions): O {.noinit.} =
   assert kind(c) == JObject, "expected object"
   c.into:
     skipTypeField(c, opts)
-    for name, f in internalFieldPairs(result):
-      assert rawKind(c) == TagLit and jsonKind(c.cursorTagId) == JKKv,
-             "expected object member"
-      c.into:
-        c.inc                        # skip key (fields assumed in declared order)
-        fromJson(c, f, opts)
+    let members = c
+    var m = members
+    for name, f in fieldPairs(result):
+      var found = m.hasMore and readField(m, name, f, opts)
+      if not found:
+        m = members                  # JSON members are unordered: find by key
+        while not found and m.hasMore: found = readField(m, name, f, opts)
+      assert found, "expected object member"
+      c.skip                         # one member per field; extras stay for `into`'s check
 
 proc fromJson*[T](t: var JsonTree; tt: typedesc[T]; opts = JsonOptions()): T =
   ## Entry point: deserialise the root of `t` into a `T`.

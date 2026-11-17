@@ -2,6 +2,7 @@ when defined(nimony):
   {.feature: "untyped".}   # so the `check` template's `xx != b` resolves to bool
 
 import std/[json, streams, syncio]
+import mjson_private
 
 type Color = enum red, green, blue
 type Point = object
@@ -10,6 +11,8 @@ type Point = object
   shade: Color
 type Box = object
   v: int
+type Gen[T] = object
+  a: T
 
 template check(a, b) =
   let xx = a
@@ -60,10 +63,24 @@ proc main() =
     check back.x, 3
     check back.label, "hi"
     check back.shade, green
+    var shuffled = parseJson("""{"shade":"red","label":"lo","y":2,"x":1}""")
+    let q = fromJson(shuffled, Point)    # members match fields by key, not position
+    check q.x, 1
+    check q.y, 2
+    check q.label, "lo"
+    check q.shade, red
+    var priv = toJson(initSecret(5, "s"))  # private fields of another module
+    check $priv, """{"id":5,"hidden":"s"}"""
+    var privIn = parseJson("""{"hidden":"t","id":6}""")
+    let sec = fromJson(privIn, Secret)
+    check sec.id, 6
+    check sec.hidden, "t"
 
   block typed_with_discriminator:
     var tree = toJson(Box(v: 7), JsonOptions(typeFieldName: "type"))
     check $tree, """{"type":"Box","v":7}"""
+    var gen = toJson(Gen[int](a: 1), JsonOptions(typeFieldName: "type"))
+    check $gen, """{"type":"Gen","a":1}"""   # without its generic arguments
 
   block raw_numbers:
     var small = parseJson("[1,2]", rawIntegers = true)
