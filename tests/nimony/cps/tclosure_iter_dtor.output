@@ -6,3 +6,10 @@ valueFull done
   destroy vf
 valueBreak done
   destroy vb
+inExcept 1
+untaken 1
+untaken 2
+taken 1
+  in except
+  destroy except
+taken 2

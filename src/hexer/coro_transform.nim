@@ -1837,17 +1837,20 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
                 trGoto c, dest, n
             dest.addParRi()
         of StmtsS, ScopeS:
-          # FLATTEN. The Final IR wraps every body — an `ite` arm, a loop body,
-          # a `block` — in its own `(stmts ...)`, and the scope ends are already
-          # spelled out as `kill` instructions. The state machine's `(lab k)`
-          # closes the current state proc and opens the next one, so it can only
-          # live at the top level of the body: a label emitted inside a nested
-          # list would close that list's parens instead of the proc's. `nj.nim`
-          # never produced the nesting (its guard lowering flattens by
-          # construction), which is why this had no counterpart before.
-          n.into:
-            while n.hasMore:
-              trGoto c, dest, n
+          # FLATTEN. The state machine's `(lab k)` closes the current state
+          # proc and opens the next one, so it can only live at the top level
+          # of the body: a label emitted inside a nested list would close that
+          # list's parens instead of the proc's. A `(scope ...)` with no
+          # suspension point gets no state label and stays: the destroyer,
+          # which runs after this pass, destroys its locals at its end. Once
+          # flattened they would be destroyed at the end of the state proc,
+          # even where a `jmp` skipped their declaration.
+          if n.stmtKind == ScopeS and not containsSuspensionPoint(c, n):
+            trGotoScoped c, dest, n
+          else:
+            n.into:
+              while n.hasMore:
+                trGoto c, dest, n
       else:
         dest.takeTree n
 
