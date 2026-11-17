@@ -285,6 +285,8 @@ type
     localDefs: HashSet[SymId]          ## syms declared by a local `(var …)`
     useCount: Table[SymId, int]        ## every `Symbol` (read) token per sym
     substCount: Table[SymId, int]      ## uses we rewrote away per sym
+    substPos: HashSet[int]             ## positions of the reads rewritten away
+    addedReads: Table[SymId, int]      ## reads a rewrite introduced: `y` → `x` adds one to `x`
     writeSites: Table[SymId, seq[int]] ## pure (leaf/symbol RHS) write positions
     names: Table[SymId, string]        ## sym -> its textual name (for synthesis)
     delCandidates: Table[SymId, int]   ## deletable local binding -> its decl pos
@@ -308,6 +310,8 @@ proc createContext(orig: ptr TokenBuf): Context =
           localDefs: initHashSet[SymId](),
           useCount: initTable[SymId, int](),
           substCount: initTable[SymId, int](),
+          substPos: initHashSet[int](),
+          addedReads: initTable[SymId, int](),
           writeSites: initTable[SymId, seq[int]](),
           names: initTable[SymId, string](),
           delCandidates: initTable[SymId, int](),
@@ -437,12 +441,15 @@ proc substituteSym(c: var Context; n: Cursor; root: SymId) =
   c.synth.add ensureMove(buf)
   c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
   c.substCount.mgetOrPut(symId(n), 0) += 1
+  c.substPos.incl pos
+  c.addedReads.mgetOrPut(root, 0) += 1
 
 proc substituteLit(c: var Context; n: Cursor; litPos: int) =
   ## Rewrite the `Symbol` token at `n` to the snapshotted leaf at `litPos`.
   let pos = cursorToPosition(c.orig[], n)
   c.patchset.addSubst(pos, cursorAt(c.orig[], litPos))
   c.substCount.mgetOrPut(symId(n), 0) += 1
+  c.substPos.incl pos
 
 proc trySubstitute(c: var Context; n: Cursor; derefBase = false) =
   ## Prefer a snapshotted literal, then a snapshotted address, then a symbol copy.
@@ -1240,6 +1247,59 @@ proc registerParams(c: var Context; params: Cursor) =
         c.scopeDecls[0].add s
     skip p
 
+proc dropValueReads(c: var Context; stmtPos: int; removed: var Table[SymId, int];
+                    work: var seq[SymId]) =
+  ## `stmtPos` is a `(var …)` or `(asgn …)` that is being deleted: the reads its
+  ## value makes go with it. A read already rewritten away is in `substCount`;
+  ## every other one is a use its symbol no longer has, which can leave that
+  ## symbol dead too.
+  var n = cursorAt(c.orig[], stmtPos)
+  let isDecl = n.stmtKind == VarS
+  inc n
+  skip n                               # name / target
+  if isDecl:
+    skip n                             # pragmas
+    skip n                             # type
+  if n.kind == ParRi: return           # no value
+  let first = cursorToPosition(c.orig[], n)
+  skip n
+  let last = cursorToPosition(c.orig[], n)
+  for pos in first ..< last:
+    let t = cursorAt(c.orig[], pos)
+    if t.kind == Symbol and pos notin c.substPos:
+      let s = symId(t)
+      removed.mgetOrPut(s, 0) += 1
+      if s in c.delCandidates: work.add s
+
+proc deleteDeadLocals(c: var Context) =
+  ## Delete every candidate decl whose every read was rewritten away (or which
+  ## had no reads) and which has no impure writes left. Pure `y = x` / `y = 5`
+  ## assignments to a now-dead local go with it. Deleting them removes their
+  ## values' reads, so a dead-store chain (`x = bytes and 255` over
+  ## `bytes = b.bytes`) goes in one run, not one link per run: that is what
+  ## makes the pass idempotent.
+  var removed = initTable[SymId, int]()
+  var deleted = initHashSet[SymId]()
+  var work: seq[SymId] = @[]
+  for s in c.delCandidates.keys: work.add s
+  while work.len > 0:
+    let s = work.pop()
+    if s in deleted or s in c.pinned: continue   # pinned: an address snapshot's spliced copies read it
+    let sites = c.writeSites.getOrDefault(s)
+    # The rewritten reads of other symbols that now read `s` keep it alive
+    # however many of its own reads went away.
+    if c.addedReads.getOrDefault(s) > 0 or
+       c.substCount.getOrDefault(s) + sites.len + removed.getOrDefault(s) !=
+       c.useCount.getOrDefault(s):
+      continue
+    deleted.incl s
+    let defPos = c.delCandidates.getOrDefault(s)   # every worklist entry is a candidate
+    c.patchset.addDelete(defPos)
+    dropValueReads(c, defPos, removed, work)
+    for pos in sites:
+      c.patchset.addDelete(pos)
+      dropValueReads(c, pos, removed, work)
+
 proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
                   summaries: ptr FunctionSummaryTable = nil;
                   m: ptr MainModule = nil): bool {.discardable.} =
@@ -1266,18 +1326,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
     computeStableAT(ctx, sc)
   var n = beginRead(buf)
   tr(ctx, n)
-  # Delete every candidate decl whose every read was rewritten away (or which
-  # had no reads) and which has no impure writes left. Pure `y = x` / `y = 5`
-  # assignments to a now-dead local go with it.
-  for s, defPos in ctx.delCandidates:
-    if s in ctx.pinned: continue   # an address snapshot's spliced copies read it
-    let uses = ctx.useCount.getOrDefault(s)
-    let subst = ctx.substCount.getOrDefault(s)
-    let sites = ctx.writeSites.getOrDefault(s)
-    if subst + sites.len == uses:
-      ctx.patchset.addDelete(defPos)
-      for pos in sites:
-        ctx.patchset.addDelete(pos)
+  deleteDeadLocals(ctx)
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
@@ -1323,6 +1372,25 @@ when isMainModule:
       "(call use.0.M z.0.M))",
       "(stmts (var :x.0.M . . (call f.0.M)) " &
       "(call use.0.M x.0.M))")
+
+  block dead_store_chain_in_one_run:
+    # `x` is never read, so its store goes; that store was `b`'s only read,
+    # so `b` goes in the same run rather than on the next one.
+    chk(
+      "(stmts (var :b.0.M . (u 64) (bitand (u 64) a.0.M 15u)) " &
+      "(var :x.0.M . (u 64) (bitand (u 64) b.0.M 255u)) " &
+      "(call side.0.M))",
+      "(stmts (call side.0.M))")
+
+  block copy_root_survives_its_copys_deletion:
+    # `y` is a copy of `r` and goes; deleting it drops a read of `r`, but the
+    # rewritten `use y` now reads `r`, which must stay.
+    chk(
+      "(stmts (var :r.0.M . (u 64) (bitand (u 64) a.0.M 15u)) " &
+      "(var :y.0.M . (u 64) r.0.M) " &
+      "(call use.0.M y.0.M))",
+      "(stmts (var :r.0.M . (u 64) (bitand (u 64) a.0.M 15u)) " &
+      "(call use.0.M r.0.M))")
 
   block store_back_through_alias:
     # #2689: `y = x; x = y` is `x = x`; it must not turn `x` into a copy of
