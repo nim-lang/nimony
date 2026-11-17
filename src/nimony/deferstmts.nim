@@ -14,7 +14,7 @@ include nif_annotations
 type
   ActionItem = object
     id: int
-      ## The enclosing scope, identified by the position its body starts at.
+      ## The enclosing scope's id (`Context.scopeCounter` at its opening).
     pos: int
       ## Where this `defer`'s `try` begins: the position the statement after it
       ## will be written to. A `defer` protects what follows it, not what
@@ -24,6 +24,10 @@ type
     scopeStack: seq[int]
     actionStack: seq[ActionItem]
     retSym: SymId
+    scopeCounter: int
+      ## Scope ids come from a counter, not from buffer positions: a `defer`
+      ## body is translated into a buffer of its own, so a position inside it
+      ## can equal the position of an enclosing scope in the proc's buffer.
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
@@ -87,14 +91,15 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # each branch's value to the expression's temp found no value to assign.
     trStmt c, dest, n
     return
-  let beforeBody = dest.len+1
+  inc c.scopeCounter
+  let scopeId = c.scopeCounter
   let blockInfo = n.info
-  c.scopeStack.add beforeBody
+  c.scopeStack.add scopeId
   dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       trStmt c, dest, n
-  wrapScopeDefers(c, dest, beforeBody, blockInfo)
+  wrapScopeDefers(c, dest, scopeId, blockInfo)
   dest.addParRi()
   discard c.scopeStack.pop
 
@@ -217,20 +222,12 @@ proc transformDefer*(dest: var TokenBuf; procBody: int) =
   let topInfo = n.info
   var c = Context()
   var buf = createTokenBuf(50)
-  # The scope id is an index into `buf` (where `trStmt`/`trDefer` build), not into
-  # `dest`. It must be the position of the first body statement — i.e. right after
-  # the `(stmts` opener `buf.takeTree` copies below — mirroring `trBlock`'s
-  # `beforeBody = dest.len+1`. Seeding it with the `dest`-absolute `procBody`
-  # corrupted the tree whenever enough tokens preceded a top-level `defer` (the
-  # bad insert position only landed correctly while it happened to exceed `buf`'s
-  # length and clamp to an append).
-  let beforeBody = buf.len + 1
-  c.scopeStack.add beforeBody
+  c.scopeStack.add 0
   buf.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       trStmt c, buf, n
-  wrapScopeDefers(c, buf, beforeBody, topInfo)
+  wrapScopeDefers(c, buf, 0, topInfo)
   buf.addParRi()
 
   dest.shrink procBody
