@@ -71,6 +71,7 @@ import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import patchsets
+import countedloops                           # detectGuardedLoop
 
 include ".." / ".." / "lib" / compat2   # getOrQuit (host Nim)
 
@@ -242,51 +243,10 @@ type
     assigned: HashSet[SymId]
     locals: Table[SymId, LocalInfo]
     pendingPtrs: int  ## how many locals are still lkPtrPending
-    sawStore, sawInc: bool
+    sawStore: bool
 
 proc roleOf(m: Matcher; s: SymId): LocalKind =
   getOrDefault(m.locals, s).kind              # absent → lkNone
-
-proc matchWhileHead(loop: Cursor; ivSym: var SymId; bound: var Cursor): bool =
-  ## `(while (lt [T] iv n) body)` — `n` a symbol or int literal.
-  result = false
-  var c = sub(loop)
-  if c.hasMore and c.kind == TagLit and c.exprKind == LtC:
-    var e = sub(c)
-    skipOptType e
-    if e.kind == Symbol:
-      ivSym = symId(e)
-      skip e
-      if e.hasMore and e.kind in {Symbol, IntLit}:
-        bound = e
-        skip e
-        result = not e.hasMore
-
-proc matchIvInc(n: Cursor; ivSym: SymId): bool =
-  ## `(asgn iv (add T iv 1))`, the `1` possibly `(conv T 1)`-wrapped.
-  result = false
-  if n.stmtKind == AsgnS:
-    var c = sub(n)
-    if c.kind == Symbol and symId(c) == ivSym:
-      skip c
-      if c.hasMore and c.kind == TagLit and c.exprKind == AddC:
-        var e = sub(c)
-        skipOptType e
-        if e.kind == Symbol and symId(e) == ivSym:
-          skip e
-          if e.hasMore:
-            var isOne = false
-            if e.kind == TagLit and e.exprKind in {ConvC, CastC}:
-              var one = sub(e)
-              skip one                        # the target type
-              if one.hasMore and one.kind == IntLit and intVal(one) == 1:
-                skip one
-                isOne = not one.hasMore
-            elif e.kind == IntLit and intVal(e) == 1:
-              isOne = true
-            if isOne:
-              skip e
-              result = not e.hasMore
 
 proc matchIndexExpr(m: Matcher; e0: Cursor; ix: var VecIndex): bool =
   ## `iv` | `(add T inv iv)` | `(add T iv inv)` — inv an invariant symbol or
@@ -349,8 +309,22 @@ proc knownIndex(plan: LoopPlan; isym: SymId): int =
   for i in 0 ..< plan.indexes.len:
     if plan.indexes[i].sym == isym: result = i
 
-proc matchPatLval(m: Matcher; n: Cursor; acc: var VecAccess): bool =
-  ## `(pat BASE I)` with invariant BASE and known index local I.
+proc indexSlot(m: var Matcher; n: Cursor): int =
+  ## The `plan.indexes` slot of the index `n`: a known index local, or the
+  ## same `iv` / `inv + iv` expression spelled inline, as it arrives when the
+  ## index argument was substituted into an inlined accessor. -1 otherwise.
+  if n.kind == Symbol:
+    result = knownIndex(m.plan, symId(n))
+  else:
+    var ix = VecIndex(sym: SymId(0))
+    if matchIndexExpr(m, n, ix):
+      result = m.plan.indexes.len
+      m.plan.indexes.add ix
+    else:
+      result = -1
+
+proc matchPatLval(m: var Matcher; n: Cursor; acc: var VecAccess): bool =
+  ## `(pat BASE I)` with invariant BASE and a known index I (`indexSlot`).
   result = false
   if n.kind == TagLit and n.exprKind == PatC:
     var pc = sub(n)
@@ -358,62 +332,56 @@ proc matchPatLval(m: Matcher; n: Cursor; acc: var VecAccess): bool =
       acc.baseCur = pc
       if invariantBase(pc, m.assigned):
         skip pc
-        if pc.hasMore and pc.kind == Symbol:
-          acc.idx = knownIndex(m.plan, symId(pc))
+        if pc.hasMore:
+          acc.idx = indexSlot(m, pc)
           skip pc
           result = acc.idx >= 0 and not pc.hasMore
 
-proc matchGuardCmp(m: Matcher; nc: Cursor; g: var VecGuard): bool =
-  ## `(lt I len)` (len an invariant path) or `(le 0 I)` over a known index
-  ## local I.
+proc matchGuardCmp(m: var Matcher; nc: Cursor; g: var VecGuard): bool =
+  ## `(lt I len)` (len an invariant path) or `(le 0 I)` over a known index I
+  ## (`indexSlot`).
   result = false
   if nc.hasMore and nc.kind == TagLit and nc.exprKind in {LtC, LeC}:
     var cc = sub(nc)
     skipOptType cc
     if nc.exprKind == LtC:
-      if cc.hasMore and cc.kind == Symbol:
-        let isym = symId(cc)
+      if cc.hasMore:
+        let idx = indexSlot(m, cc)
         skip cc
         if cc.hasMore:
-          g = VecGuard(kind: gLtLen, idx: knownIndex(m.plan, isym), lenCur: cc)
+          g = VecGuard(kind: gLtLen, idx: idx, lenCur: cc)
           let invariantLen = invariantBase(cc, m.assigned)
           skip cc
           result = invariantLen and g.idx >= 0 and not cc.hasMore
     elif cc.hasMore and cc.kind == IntLit and intVal(cc) == 0:
       skip cc
-      if cc.hasMore and cc.kind == Symbol:
-        g = VecGuard(kind: gLeZero, idx: knownIndex(m.plan, symId(cc)))
+      if cc.hasMore:
+        g = VecGuard(kind: gLeZero, idx: indexSlot(m, cc))
         skip cc
         result = g.idx >= 0 and not cc.hasMore
 
-proc matchGuard(m: Matcher; n: Cursor; g: var VecGuard): bool =
-  ## `(if (elif (not COND) (stmts (call sym …))))` where COND is
-  ## `(lt I len)` or `(le 0 I)` over a known index local. The action's contents
-  ## are irrelevant: the vector path only runs when the condition is false for
-  ## every iteration it covers, so the call can never fire there.
+proc matchGuard(m: var Matcher; n: Cursor; g: var VecGuard): bool =
+  ## `(ite (not COND) (stmts (call sym …)) .)` (or its `if`/`elif` spelling)
+  ## where COND is `(lt I len)` or `(le 0 I)` over a known index. The
+  ## action's contents are irrelevant: the vector path only runs when the
+  ## condition is false for every iteration it covers, so the call can never
+  ## fire there.
   result = false
-  if n.stmtKind == IfS:
-    var c = sub(n)
-    if c.hasMore and c.kind == TagLit and c.substructureKind == ElifU:
-      var e = sub(c)
-      skip c
-      # a single `elif`, no `else`; the condition is `(not CMP)`
-      if not c.hasMore and e.hasMore and e.kind == TagLit and e.exprKind == NotC:
-        var nc = sub(e)
-        if matchGuardCmp(m, nc, g):
-          skip nc
-          if not nc.hasMore:                  # the `(not …)` has one child
-            skip e                            # past the condition
-            if e.hasMore and e.kind == TagLit and e.stmtKind == StmtsS:
-              var act = sub(e)
-              var nCalls = 0
-              var onlyCalls = true
-              while act.hasMore:
-                if act.kind == TagLit and act.stmtKind == CallS: inc nCalls
-                else: onlyCalls = false
-                skip act
-              skip e
-              result = onlyCalls and nCalls == 1 and not e.hasMore
+  var e, act, elseArm = default(Cursor)
+  if twoWayParts(n, e, act, elseArm) and not hasArm(elseArm) and
+     e.kind == TagLit and e.exprKind == NotC:
+    var nc = sub(e)
+    if matchGuardCmp(m, nc, g):
+      skip nc
+      if not nc.hasMore and act.kind == TagLit and act.stmtKind == StmtsS:
+        var a = sub(act)
+        var nCalls = 0
+        var onlyCalls = true
+        while a.hasMore:
+          if a.kind == TagLit and a.stmtKind == CallS: inc nCalls
+          else: onlyCalls = false
+          skip a
+        result = onlyCalls and nCalls == 1
   when defined(vecDbg):
     if not result:
       var db = createTokenBuf(16, n.pool, n.tags)
@@ -451,17 +419,6 @@ proc pureLaneTree(m: Matcher; n: Cursor): bool =
         if arity != 2: result = false
       else: result = false
   else: result = false
-
-proc flattenStmts(n: Cursor; stmts: var seq[Cursor]) =
-  if n.kind == TagLit and n.stmtKind in {StmtsS, ScopeS}:
-    var m = n
-    m.loopInto:
-      flattenStmts(m, stmts)
-      skip m
-  elif n.kind == DotToken:
-    discard
-  else:
-    stmts.add n
 
 proc scanLitBits(n: Cursor; bits: var int; conflict: var bool) =
   ## Unify `bits` with the element width every literal leaf of `n` implies.
@@ -624,24 +581,24 @@ proc accSafeLocal(c: var Context; s: SymId; bits: int): bool =
   scanAccUses(cursorAt(c.orig[], 0), s, bits, declOk, addrTaken)
   result = declOk and not addrTaken
 
-proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
-  ## Match the whole canonical loop; fill `plan`. Any unexpected statement
-  ## rejects — the pass must understand everything it vectorizes.
-  when defined(vecDbg): echo "vectorizer: trying a while loop"
+proc isI64(t: Cursor): bool =
+  t.kind == TagLit and t.typeKind == IT and t.childCursor.kind == IntLit and
+    intVal(t.childCursor) == 64
+
+proc matchLoop(c: var Context; d: DetectedLoop; plan: var LoopPlan): bool =
+  ## Match the whole counted loop `d` (`countedloops`); fill `plan`. Any
+  ## unexpected statement rejects — the pass must understand everything it
+  ## vectorizes.
+  when defined(vecDbg): echo "vectorizer: trying a loop"
   result = false
   var m = Matcher()
-  var bound = default(Cursor)
-  if matchWhileHead(loop, m.plan.ivSym, bound):
-    m.plan.boundCur = bound
-    var body = loop
-    inc body                                  # past `(while`
-    skip body                                 # past the condition
-
-    collectAssigned(body, m.assigned)
-    m.assigned.incl m.plan.ivSym
-    if not (bound.kind == Symbol and symId(bound) in m.assigned):
-      var stmts: seq[Cursor] = @[]
-      flattenStmts(body, stmts)
+  if d.kind == CountUpExclusive and d.isUnitStep and isI64(d.typ) and
+     d.stop.kind in {Symbol, IntLit}:
+    m.plan.ivSym = d.counterSym
+    m.plan.boundCur = d.stop
+    collectAssigned(d.loop, m.assigned)
+    if not (d.stop.kind == Symbol and symId(d.stop) in m.assigned):
+      let stmts = bodyStmts(d)                # all but the step and the test
 
       # the iv itself is a valid access index (`c[iv]` — the fill loops); its
       # displacement is zero
@@ -654,35 +611,29 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
         let n = stmts[si]
         if n.kind != TagLit:
           ok = false
-        elif m.sawInc:
-          # only inert labels may trail the increment (inliner returnLabels)
-          ok = n.stmtKind == LabS
         else:
           case n.stmtKind
           of VarS:
             ok = matchVarStmt(m, n)
           of AsgnS:
-            if matchIvInc(n, m.plan.ivSym):
-              m.sawInc = true
+            var a = sub(n)
+            if not a.hasMore:
+              ok = false
+            elif a.kind == Symbol and m.roleOf(symId(a)) == lkPtrPending:
+              let p = symId(a)
+              skip a
+              ok = matchPtrBind(m, a, p)
+            elif a.kind == TagLit and a.exprKind == PatC:
+              ok = not m.sawStore and matchStore(m, a)
+              m.sawStore = ok
+            elif a.kind == Symbol and m.roleOf(symId(a)) == lkNone:
+              # an outer scalar: only a sum accumulation is admitted
+              let s = symId(a)
+              skip a
+              ok = matchReduction(m, a, s)
             else:
-              var a = sub(n)
-              if not a.hasMore:
-                ok = false
-              elif a.kind == Symbol and m.roleOf(symId(a)) == lkPtrPending:
-                let p = symId(a)
-                skip a
-                ok = matchPtrBind(m, a, p)
-              elif a.kind == TagLit and a.exprKind == PatC:
-                ok = not m.sawStore and matchStore(m, a)
-                m.sawStore = ok
-              elif a.kind == Symbol and m.roleOf(symId(a)) == lkNone:
-                # an outer scalar: only a sum accumulation is admitted
-                let s = symId(a)
-                skip a
-                ok = matchReduction(m, a, s)
-              else:
-                ok = false
-          of IfS:
+              ok = false
+          of IfS, IteS:
             var g = VecGuard(idx: -1)
             ok = matchGuard(m, n, g)
             if ok: m.plan.guards.add g
@@ -707,7 +658,7 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
         scanLitBits(r.treeCur, m.plan.elemBits, litConflict)
       m.plan.hasStore = m.sawStore
       result = ok and not litConflict and
-               (m.sawStore or m.plan.reductions.len > 0) and m.sawInc and
+               (m.sawStore or m.plan.reductions.len > 0) and
                (m.plan.elemBits == 32 or m.plan.elemBits == 64) and
                m.pendingPtrs == 0
       # every accumulator must still be an outer scalar (no later `(var :S …)`
@@ -722,20 +673,13 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
       when defined(vecDbg):
         if ok and not result:
           echo "vectorizer reject: final (store=", m.sawStore, " reds=",
-               m.plan.reductions.len, " inc=", m.sawInc, " bits=",
+               m.plan.reductions.len, " bits=",
                m.plan.elemBits, " pending=", m.pendingPtrs, " litConflict=",
                litConflict, ")"
     else:
       when defined(vecDbg): echo "vectorizer reject: bound assigned in loop"
   else:
-    when defined(vecDbg):
-      var wc = sub(loop)
-      if wc.hasMore:
-        var db = createTokenBuf(8, wc.pool, wc.tags)
-        db.addSubtree wc
-        echo "vectorizer reject: while head: ", toString(db)
-      else:
-        echo "vectorizer reject: while head (empty)"
+    when defined(vecDbg): echo "vectorizer reject: not a `<` count by one"
 
 # ── synthesis ───────────────────────────────────────────────────────────────
 
@@ -1174,8 +1118,8 @@ proc emitVecLoop(e: var Emitter; unrollCount: int) =
   e.b.closeTag()                              # stmts (vector body)
   e.b.closeTag()                              # while
 
-proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf =
-  ## Build the whole replacement `(stmts …)` tree.
+proc emitReplacement(c: var Context; plan0: LoopPlan; d: DetectedLoop): TokenBuf =
+  ## Build the whole replacement `(stmts …)` tree for the guarded loop `d`.
   var plan = plan0
 
   # ── a single-use value local that is a reduction's whole tree is inlined ──
@@ -1230,7 +1174,7 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
   let okName = e.freshName("ok")
 
   e.b.openTag tid(StmtsTagId)
-  let info = rawLineInfo(loopCur)
+  let info = rawLineInfo(d.guard)
   if info.isValid: e.b.appendLineInfo info
 
   # ── vecok = false ──
@@ -1413,8 +1357,16 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
   e.b.closeTag()                              # elif
   e.b.closeTag()                              # if vecok
 
-  # the original loop: remainder + fallback, untouched
-  e.b.addSubtree loopCur
+  # the original loop: remainder + fallback, untouched. It tests at its end,
+  # so it is guarded again, by its own back-edge test: the original guard may
+  # read the counter's entry value instead (copy propagation substitutes it).
+  e.b.openTag tid(IteTagId)
+  e.b.addSubtree d.cond
+  e.b.openTag tid(StmtsTagId)
+  e.b.addSubtree d.loop
+  e.b.closeTag()                              # stmts
+  e.b.addDotToken()
+  e.b.closeTag()                              # ite
 
   e.b.closeTag()                              # the replacement (stmts …)
   c.tempCounter = e.tempCounter
@@ -1441,11 +1393,13 @@ proc tr(c: var Context; n: var Cursor) =
   if n.hasMore:
     if n.kind == TagLit:
       var matched = false
-      if n.stmtKind == WhileS:
+      if n.stmtKind == IteS:
         var plan = LoopPlan()
-        if (c.allowSub or not containsSub(n)) and matchLoop(c, n, plan):
+        let d = detectGuardedLoop(n)
+        if d.kind != NoLoop and (c.allowSub or not containsSub(d.loop)) and
+           matchLoop(c, d, plan):
           let pos = cursorToPosition(c.orig[], n)
-          var nb = emitReplacement(c, plan, n)
+          var nb = emitReplacement(c, plan, d)
           let idx = c.synth.len
           c.synth.add ensureMove(nb)
           c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
@@ -1544,12 +1498,12 @@ when isMainModule:
     # a[i] = a[i] + s * b[i] — the mmIkj inner-loop shape, distilled
     var buf = parse("""
 (stmts
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (var :p.0 . (ptr (f 64)) .)
    (var :ix.0 . (i 64) (add (i 64) k.0 i.0))
-   (if (elif (not (lt ix.0 (dot b.0 len.0 0))) (stmts (call panic.0))))
-   (if (elif (not (le 0 ix.0)) (stmts (call panic.0))))
+   (ite (not (lt ix.0 (dot b.0 len.0 0))) (stmts (call panic.0)) .)
+   (ite (not (le 0 ix.0)) (stmts (call panic.0)) .)
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (var :q.0 . (ptr (f 64)) .)
    (var :ix.1 . (i 64) (add (i 64) j.0 i.0))
@@ -1557,8 +1511,9 @@ when isMainModule:
    (var :e.0 . (f 64) (add (f 64) (deref q.0) (mul (f 64) s.0 (deref p.0))))
    (var :ix.2 . (i 64) (add (i 64) j.0 i.0))
    (asgn (pat (dot (deref a.0) data.0 0) ix.2) e.0)
-   (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert runVectorizer(buf, "vec.M")
     let s = toString(buf)
     doAssert s.contains("(instr fldrq.vec.M"), s
     doAssert s.contains("(instr vfmla.vec.M") or s.contains("vfmla.vec.M"), s
@@ -1566,7 +1521,7 @@ when isMainModule:
     doAssert s.contains("(instr vdup.vec.M"), s
     # 2 vec locals per slot + 1 broadcast fits the pool → 2x-unrolled main
     # loop + single-width mid-remainder + the scalar original
-    doAssert s.count("(while") == 3,
+    doAssert s.count("(while") == 2 and s.count("(loop") == 1,
       "unrolled loop + single-width loop + scalar remainder expected: " & s
     # unrolled: 2 slots x 2 loads + mid-loop 2 loads = 6; slot 1 loads at +16
     doAssert s.count("(instr fldrq.vec.M") == 6, s
@@ -1574,39 +1529,62 @@ when isMainModule:
     # the disjointness check exists (b vs a ranges)
     doAssert s.contains("vec.dj."), s
 
+  block inline_indexes:
+    # the same loop as the inliner leaves it: the index arguments substituted
+    # into the accessors, so no index locals — `(add (i 64) k.0 i.0)` inline
+    var buf = parse("""
+(stmts
+ (ite (lt i.0 n.0) (stmts (loop
+  (stmts
+   (var :p.0 . (ptr (f 64)) .)
+   (ite (not (lt (add (i 64) k.0 i.0) (dot b.0 len.0 0))) (stmts (call panic.0)) .)
+   (asgn p.0 (haddr (pat (dot b.0 data.0 0) (add (i 64) k.0 i.0))))
+   (var :q.0 . (ptr (f 64)) .)
+   (asgn q.0 (haddr (pat (dot (deref a.0) data.0 0) (add (i 64) j.0 i.0))))
+   (var :e.0 . (f 64) (add (f 64) (deref q.0) (mul (f 64) s.0 (deref p.0))))
+   (asgn (pat (dot (deref a.0) data.0 0) (add (i 64) j.0 i.0)) e.0)
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert runVectorizer(buf, "vec.M")
+    let s = toString(buf)
+    doAssert s.contains("(instr vfmla.vec.M"), s
+    doAssert s.contains("vec.dj."), s
+
   block store_of_literal:
     # the zeroing loop: c[i] = 0.0
     var buf = parse("""
 (stmts
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (var :ix.0 . (i 64) i.0)
    (if (elif (not (lt ix.0 (dot (deref c.0) len.0 0))) (stmts (call panic.0))))
    (asgn (pat (dot (deref c.0) data.0 0) ix.0) 0.0)
-   (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert runVectorizer(buf, "vec.M")
     let s = toString(buf)
     doAssert s.contains("(instr vdup.vec.M"), s
     doAssert s.contains("(instr fstrq.vec.M"), s
     doAssert not s.contains("fldrq"), "no loads expected: " & s
     # zero per-slot locals → unrolls: 2 stores in the main loop + 1 in the mid
     doAssert s.count("(instr fstrq.vec.M") == 3, s
-    doAssert s.count("(while") == 3, s
+    doAssert s.count("(while") == 2 and s.count("(loop") == 1, s
 
   block sum_reduction:
     # s = s + b[i] — a loop-carried scalar accumulator, no store
     var buf = parse("""
 (stmts
  (var :s.0 . (f 64) 0.0)
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (var :p.0 . (ptr (f 64)) .)
    (var :ix.0 . (i 64) i.0)
    (if (elif (not (lt ix.0 (dot b.0 len.0 0))) (stmts (call panic.0))))
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (add (f 64) s.0 (deref p.0)))
-   (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert runVectorizer(buf, "vec.M")
     let s = toString(buf)
     doAssert s.contains("(instr vaddv.vec.M"), s
     doAssert s.contains("(instr vdup.vec.M"), "zero-lane start expected: " & s
@@ -1614,7 +1592,7 @@ when isMainModule:
     doAssert not s.contains("vec.dj."), "no disjointness check expected: " & s
     # 1 load per slot + 2 partial sums fits the pool → unrolled main loop +
     # single-width mid-remainder + the scalar original
-    doAssert s.count("(while") == 3, s
+    doAssert s.count("(while") == 2 and s.count("(loop") == 1, s
     doAssert s.count("(instr fldrq.vec.M") == 3, s
     # the lanes fold into the scalar exactly once
     doAssert s.count("(instr vaddv.vec.M") == 1, s
@@ -1625,7 +1603,7 @@ when isMainModule:
     var buf = parse("""
 (stmts
  (var :s.0 . (f 64) 0.0)
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (var :p.0 . (ptr (f 64)) .)
    (var :ix.0 . (i 64) i.0)
@@ -1635,15 +1613,16 @@ when isMainModule:
    (asgn q.0 (haddr (pat (dot b.0 data.0 0) ix.1)))
    (var :e.0 . (f 64) (mul (f 64) (deref p.0) (deref q.0)))
    (asgn s.0 (add (f 64) s.0 e.0))
-   (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert runVectorizer(buf, "vec.M")
     let s = toString(buf)
     doAssert s.contains("(instr vfmla.vec.M"), "fused multiply-add expected: " & s
     doAssert not s.contains("(instr vfmul.vec.M"),
       "the mul must fold into the fmla: " & s
     doAssert s.count("(instr vaddv.vec.M") == 1, s
     # 2 loads per slot + 2 partial sums → still unrolls
-    doAssert s.count("(while") == 3, s
+    doAssert s.count("(while") == 2 and s.count("(loop") == 1, s
     doAssert s.count("(instr fldrq.vec.M") == 6, s
     doAssert s.count("(instr vfmla.vec.M") == 3, s
 
@@ -1652,14 +1631,15 @@ when isMainModule:
     # not provably register-private, must not vectorize
     var buf = parse("""
 (stmts
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (var :p.0 . (ptr (f 64)) .)
    (var :ix.0 . (i 64) i.0)
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (add (f 64) s.0 (deref p.0)))
-   (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert not runVectorizer(buf, "vec.M")
 
   block reject_addr_taken_acc:
     # the accumulator's address escapes — memory could observe it mid-loop
@@ -1667,46 +1647,50 @@ when isMainModule:
 (stmts
  (var :s.0 . (f 64) 0.0)
  (call sink.0 (haddr s.0))
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (var :p.0 . (ptr (f 64)) .)
    (var :ix.0 . (i 64) i.0)
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (add (f 64) s.0 (deref p.0)))
-   (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert not runVectorizer(buf, "vec.M")
 
   block reject_product_reduction:
     # s = s * b[i] — not a sum; no lane-fold instruction carries it
     var buf = parse("""
 (stmts
  (var :s.0 . (f 64) 1.0)
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (var :p.0 . (ptr (f 64)) .)
    (var :ix.0 . (i 64) i.0)
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (mul (f 64) s.0 (deref p.0)))
-   (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert not runVectorizer(buf, "vec.M")
 
   block reject_call:
     var buf = parse("""
 (stmts
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (call f.0 i.0)
-   (asgn i.0 (add (i 64) i.0 1)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 1))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert not runVectorizer(buf, "vec.M")
 
   block reject_nonunit_iv:
     var buf = parse("""
 (stmts
- (while (lt i.0 n.0)
+ (ite (lt i.0 n.0) (stmts (loop
   (stmts
    (var :ix.0 . (i 64) i.0)
    (asgn (pat (dot b.0 data.0 0) ix.0) 0.0)
-   (asgn i.0 (add (i 64) i.0 2)))))""")
-    doAssert not runVectorizer(buf, "M", "vec.M")
+   (asgn i.0 (add (i 64) i.0 2))
+   (continue (lt i.0 n.0))))) .))""")
+    doAssert not runVectorizer(buf, "vec.M")
 
   echo "vectorizer.nim: all self-tests passed"

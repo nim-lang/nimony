@@ -195,6 +195,15 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # anything else looks at the body. Removing those `addr` nodes un-poisons the
   # locals for every later pass (SROA and copyprop treat address-taken locals as
   # untouchable) and for both backends' register allocation.
+  # The vectorizer runs first, on the inliner's output: there an element access
+  # is still a pointer temp bound once per iteration, `(asgn p (haddr (pat a i)))`
+  # read as `(deref p)`, which is the shape it matches and which copy
+  # propagation folds away. Its `(instr ...)` rows are final (selection-final by
+  # the tag's contract), and the cleanup below optimizes the scalar remainder
+  # loop it leaves behind like any other loop.
+  if target.vecMode != vecOff and passOn("vectorize"):
+    if runVectorizer(buf, "vec." & suffix):
+      inc st.vectorized
   var f = Fixpoint()
   cleanupFixpoint(buf, f, st, summaries, m, params, eng)
   # Strength reduction is a lowering, not a cleanup: it is not idempotent (a
@@ -206,27 +215,17 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   if passOn("indvars") and runInductionVariables(buf, m, target.scaledIndex, f.iv):
     mutated(f)
     cleanupFixpoint(buf, f, st, summaries, m, params, eng)
-  # The vectorizer runs last of the passes that optimize: its emitted
-  # `(instr ...)` applications are final (selection-final by the tag's contract)
-  # and no later pass needs to look at them; the scalar remainder loop it leaves
-  # behind was already optimized by everything above. Only the encoding passes
-  # below follow it, and they rewrite `ret`s, which it never emits.
-  # Zero-fill loops become a `zeroMemIns` intrinsic after CSE, so the loop it inspects is
-  # the cleaned-up one, and before the vectorizer, which would otherwise turn the
-  # same loop into vector stores. `target.mem.intrinsics` is false for a back end
-  # without a lowering for the rows (AVR); `target.mem.mergeWordBytes` enables
-  # merging adjacent constant field stores, native back end only.
-  # The loop idioms ran before the inliner (`recognizeMemLoops`); what is left
+  # `target.mem.mergeWordBytes` enables merging adjacent constant field
+  # stores, native back end only. The loop idioms ran before the inliner
+  # (`recognizeMemLoops`), so a fill or copy loop is a `zeroMemIns`/`copyMemIns`
+  # row by the time the vectorizer looks, not vector stores; what is left
   # to do here is merging adjacent constant field stores, which wants the
   # inlined, scalarized code.
   if target.mem.mergeWordBytes > 0 and passOn("memidioms"):
     var late = target.mem
     late.intrinsics = false
     discard runMemIdioms(buf, m, params, late, "mem." & suffix, st.memOps)
-  if target.vecMode != vecOff and passOn("vectorize"):
-    if runVectorizer(buf, "vec." & suffix):
-      inc st.vectorized
-  # The tail-call encoding runs after everything, the vectorizer included.
+  # The tail-call encoding runs after everything.
   # `(ret (call …))` deliberately violates the Leng rule that calls are bound and
   # do not nest: it is a directive to the backend ("do the tail call"), not an
   # expression. Minting it last is what keeps every pass above from having to
@@ -406,6 +405,16 @@ proc processFile*(input, output: string; verify = false;
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
+  # The vectorizer runs before the cleanup passes, which ask the type context
+  # about every call they see: its intrinsics must be known by then. They are
+  # appended to the module only if something was vectorized (`optimizeModule`).
+  var vecDecls = createTokenBuf(256, src.pool, src.tags)
+  if target.vecMode != vecOff:
+    addVecIntrinsicDecls(vecDecls, "vec." & suffix)
+    var d = beginRead(vecDecls)
+    while d.hasMore:
+      typeCtx.registerProcDecl(d)
+      skip d
   var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, target)
   checkWellFormed(optimized)
   onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
