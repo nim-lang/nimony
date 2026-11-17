@@ -67,4 +67,14 @@ proc returnInOuterFin() =
     return
 
 returnInOuterFin()
+
+# `return x` stores `x` in `result` before the `finally` runs.
+proc returnThroughFin(): int =
+  try:
+    return 1
+  finally:
+    echo "E finally sees ", result
+    result = result + 10
+
+echo returnThroughFin()
 echo "Program end"
