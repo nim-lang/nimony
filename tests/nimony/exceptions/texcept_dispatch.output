@@ -3,3 +3,6 @@ code: KeyError
 ref: from ref
 passed on: KeyError
 re-raised: IOError
+1 3
+caught zero, 7
+4 9

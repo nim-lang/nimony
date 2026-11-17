@@ -1189,6 +1189,12 @@ proc emitDispatcher(c: var Context; arms: seq[ExceptArm]; frame: TryFrame;
   ## A `ref` raise signals `Failure` and leaves the exception in `exc`; an
   ## `ErrorCode` raise leaves `exc` nil. That is all it takes to tell them apart,
   ## so a plain code never reaches an `of` test (#2679).
+  ##
+  ## In a `try` expression sem tags an arm that yields the value `(expr …)`;
+  ## such an arm, and the dispatcher around it, stay `(expr …)` so that xelim
+  ## assigns their value to the `try`'s temporary.
+  proc bodyTag(arm: ExceptArm): TagId =
+    TagId(if arm.bodyStart.exprKind == ExprX: ExprTagId else: StmtsTagId)
   inc c.tmpCounter
   let errSym = pool.symId("`err." & $c.tmpCounter)
   let codeSym = pool.symId("`code." & $c.tmpCounter)
@@ -1203,7 +1209,10 @@ proc emitDispatcher(c: var Context; arms: seq[ExceptArm]; frame: TryFrame;
     c.dest.addDotToken()
     c.dest.addSubtree errorCode
     c.dest.addDotToken()
-  c.dest.addParLe StmtsS, info
+  var outerTag = TagId(StmtsTagId)
+  for arm in arms:
+    if arm.bodyTag == TagId(ExprTagId): outerTag = arm.bodyTag
+  c.dest.addParLe outerTag, info
 
   # `let err = exc` followed by `exc = nil` — equivalent to a move but
   # expressed without `(emove ...)` so the duplifier does not have to reason
@@ -1223,26 +1232,40 @@ proc emitDispatcher(c: var Context; arms: seq[ExceptArm]; frame: TryFrame;
   c.handlerStack.add (errSym: errSym, eSym: NoSymId)
 
   var catchAll = -1
+  var lastArm = -1
+  for i in 0 ..< arms.len:
+    if arms[i].isCatchAll:
+      if catchAll < 0: catchAll = i
+    elif raisesFamily(arms[i].declType) in {RefRaises, CodeRaises}:
+      lastArm = i
+  # What no typed arm takes: the catch-all, or on to the next handler. Without
+  # one to reach — no enclosing `try` and a routine that does not raise — the
+  # checks at the raise sites have proven this path dead, so the last typed
+  # arm takes it: a `try` expression has a value on every path.
+  let reraise = catchAll < 0 and
+    (c.r.tries.len > 0 or c.r.armRaises.len > 0 or not cursorIsNil(c.r.raisesType))
+  let hasElse = catchAll >= 0 or reraise
   var branches = 0
   for i in 0 ..< arms.len:
     let arm = arms[i]
-    if arm.isCatchAll:
-      if catchAll < 0: catchAll = i
-      continue
-    let fam = raisesFamily(arm.declType)
+    let fam = if arm.isCatchAll: NotRaisable else: raisesFamily(arm.declType)
     if fam notin {RefRaises, CodeRaises}: continue
-    if branches == 0: c.dest.addParLe IfS, info
-    inc branches
-    c.dest.addParLe ElifU, info
-    if fam == RefRaises:
-      c.dest.copyIntoKind AndX, info:
-        errIsNil(c, NeqX, errSym, info)
-        c.dest.copyIntoKind InstanceofX, info:
-          c.dest.addSymUse errSym, info
-          c.dest.addSubtree arm.declType
+    let takesRest = i == lastArm and not hasElse
+    if branches == 0 and not takesRest: c.dest.addParLe IfS, info
+    if takesRest:
+      if branches > 0: c.dest.addParLe ElseU, info
     else:
-      errIsNil(c, EqX, errSym, info)
-    c.dest.addParLe StmtsS, info
+      inc branches
+      c.dest.addParLe ElifU, info
+      if fam == RefRaises:
+        c.dest.copyIntoKind AndX, info:
+          errIsNil(c, NeqX, errSym, info)
+          c.dest.copyIntoKind InstanceofX, info:
+            c.dest.addSymUse errSym, info
+            c.dest.addSubtree arm.declType
+      else:
+        errIsNil(c, EqX, errSym, info)
+    c.dest.addParLe arm.bodyTag, info
     if arm.bindSym != NoSymId:
       if fam == RefRaises:
         # `cursor e = (hconv T err)` — non-owning view of `err` typed as the
@@ -1272,17 +1295,13 @@ proc emitDispatcher(c: var Context; arms: seq[ExceptArm]; frame: TryFrame;
     trArmBody c, arm.bodyStart
     discard c.r.armRaises.pop()
     c.dest.addParRi() # stmts
-    c.dest.addParRi() # elif
+    if branches > 0: c.dest.addParRi() # elif or else
 
-  # What no typed arm took: the catch-all, or on to the next handler. Without
-  # one to reach — no enclosing `try` and a routine that does not raise — the
-  # checks at the raise sites have proven this path dead.
-  let reraise = catchAll < 0 and
-    (c.r.tries.len > 0 or c.r.armRaises.len > 0 or not cursorIsNil(c.r.raisesType))
-  if catchAll >= 0 or reraise:
+  if hasElse:
     if branches > 0:
       c.dest.addParLe ElseU, info
-    c.dest.addParLe StmtsS, info
+    let elseTag = if catchAll >= 0: arms[catchAll].bodyTag else: TagId(StmtsTagId)
+    c.dest.addParLe elseTag, info
     if catchAll >= 0:
       c.r.armRaises.add armRaise(arms[catchAll], frame)
       trArmBody c, arms[catchAll].bodyStart

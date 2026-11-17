@@ -50,3 +50,30 @@ proc reraise() {.raises.} =
 
 try: reraise()
 except ErrorCode as c: echo "re-raised: ", c
+
+# The dispatcher of a `try` expression yields the value of the arm it takes.
+proc refOrValue(x: int): int {.raises: ParseError.} =
+  if x == 0: raise ParseError(msg: "zero")
+  result = x
+
+proc catchAll(v: int): int =
+  result = (try: refOrValue(v) except: v + 3)
+
+proc typedArms(v: int): string {.raises: ParseError.} =
+  let s = try: $refOrValue(v)
+          except OtherError: "other"
+          except ParseError as e:
+            let prefix = "caught "
+            prefix & e.msg
+  result = s
+
+# Every raise is caught (#2678): the last typed arm takes what is left.
+proc onlyArm(v: int): int =
+  result = (try: refOrValue(v) except ParseError as e: e.msg.len)
+
+proc main() {.raises: ParseError.} =
+  echo catchAll(1), " ", catchAll(0)
+  echo typedArms(0), ", ", typedArms(7)
+  echo onlyArm(0), " ", onlyArm(9)
+
+try: main() except: echo "unreachable"
