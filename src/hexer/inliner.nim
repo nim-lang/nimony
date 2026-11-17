@@ -701,11 +701,13 @@ proc isStableDerefArg(c: Cursor): bool =
   ## as `(deref ptrParam)`, and binding that to a fresh `(var :p T (deref S))`
   ## copies the whole object (24 bytes for `Cursor`) before an inlined
   ## `tokenWidth`/`cursorJump` reads two fields. Substituting instead turns
-  ## those uses into `(dot (deref S) f)` — one load, no copy. Safe for the
-  ## same reason `isStableAddrArg` is: the inlined body cannot assign the
-  ## caller's pointer (that would have put the param in `assigned`).
+  ## those uses into `(dot (deref S) f)` — one load, no copy. That passes the
+  ## parameter by reference, which the language allows, as long as `S` keeps
+  ## pointing at the same location: `bindingsFor` checks the body cannot
+  ## change `S`. A global `S` is left to the path-argument case.
   if not c.isTagLit or c.exprKind != DerefC: return false
-  result = c.childCursor.isSymbol
+  let s = c.childCursor
+  result = s.isSymbol and pool.symIsLocal(s.symId)
 
 proc isStableAddrArg(c: Cursor): bool =
   ## `(haddr L)` / `(addr L)` for a bare symbol `L`. The argument is an address,
@@ -740,12 +742,12 @@ proc isLocalOrIntLit(c: Cursor): bool =
 
 proc isLocalAffineArg(c: Cursor): bool =
   ## `(add T x y)` / `(sub T x y)` whose operands are caller locals or integer
-  ## literals: `a[i + j]`'s index. Substituted, not bound to a temp, for the
-  ## reason a bare local is: the inlined body never assigns a caller local, so
-  ## the operands cannot change across the splice. Re-evaluating it at each use
-  ## is one `add`, which CSE folds back; binding it hid the affine index from
-  ## the induction-variable pass, and the second `c[i + j]` of `c[i + j] += x`
-  ## got a temp of its own. The plain `add`/`sub` wrap: they never trap.
+  ## literals: `a[i + j]`'s index. Substituted, not bound to a temp, when
+  ## `bindingsFor` finds the body cannot write a caller local (through a
+  ## pointer, or in a call), so the operands cannot change across the
+  ## splice. Re-evaluating it at each use is one `add`, which CSE folds back;
+  ## binding it hid the affine index from the induction-variable pass, and
+  ## the second `c[i + j]` of `c[i + j] += x` got a temp of its own. The plain `add`/`sub` wrap: they never trap.
   result = false
   if c.isTagLit and c.exprKind in {AddC, SubC}:
     var n = c.childCursor                  # the type
@@ -1301,13 +1303,17 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
       continue                               # else: address observed → copy
     # A read-only param (value-stable per `scanParamUsage`) may be replaced by
     # its argument at every use instead of bound to a fresh `(var)` copy.
-    # Pool are always stable. A bare *local* symbol is stable too: the
-    # inlined body only ever assigns fresh-renamed locals, never a caller local,
-    # so the substituted symbol's value cannot change across the body. Globals
+    # Constants are always stable. A bare *local* symbol is passed by
+    # reference, which the language allows for a by-value parameter. Globals
     # are excluded — a nested call in the body could mutate one between uses,
-    # whereas the copy captured its entry value.
-    if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
-       (arg.isSymbol and pool.symIsLocal(arg.symId)) or isLocalAffineArg(arg):
+    # whereas the copy captured its entry value. `(deref S)` and `i + j` are
+    # re-evaluated at each use, so they need the caller locals they read to
+    # stay unchanged: the body writes no pointer and makes no call, or writes
+    # nothing the caller can observe.
+    if isSubstitutableArg(arg) or isStableAddrArg(arg) or
+       (arg.isSymbol and pool.symIsLocal(arg.symId)) or
+       ((not opaqueEffects or callerReadOnly) and
+        (isStableDerefArg(arg) or isLocalAffineArg(arg))):
       result.subst[pSyms[i]] = arg
     elif callerReadOnly and isPurePathArg(arg) and
          uses.getOrDefault(pSyms[i]) <= MaxPathSubstUses:
