@@ -138,6 +138,25 @@ type
   ProofKind = enum
     ProvenIndex, ProvenCall
 
+  LoopWrites = object
+    kinds: Table[VarId, IvKind]
+    nonNeg: HashSet[VarId]
+      ## Locals the body declares with a non-negative `range` type. `o = o + k`
+      ## is monotone whenever `k` is one of them, and the temp holding a
+      ## `Positive`-returning call is exactly that — declared inside the body,
+      ## so no fact about it exists yet when this scan runs.
+    opaque: bool          ## a write we could not attribute to any location
+    barriers: int         ## how many barriers the body has (`forgetShared`) ...
+    namedBy: Table[SymId, int] ## ... and how many of them write each variable
+                          ## by name; one that all of them name keeps its facts
+    preserved: seq[VarId] ## derived locations the call just scanned promises
+                          ## to leave alone (`s.len == old(s.len)`); holds
+                          ## for the `(unknown …)` that follows it too
+    assumed: HashSet[VarId] ## stepped by a wrapping step taken as monotone
+    pendingStep: VarId    ## the `(unknown v)` a step call emits right after
+                          ## itself is that call's own doing, not a second,
+                          ## unclassified write
+
   ProcCon = object
     ## What is known inside the routine being analysed. `traverseProc` swaps
     ## in a fresh one and restores the enclosing routine's on the way out; the
@@ -162,6 +181,8 @@ type
                                        # parameters: shared
     destroysAtExit: bool               # a local whose `=destroy` is a barrier
                                        # was declared: `return` runs it
+    fins: seq[LoopWrites]              # what the `fin`s a `return` here
+                                       # leaves through may write
     ownEnsures: Cursor
       ## The `.ensures` of the routine being analysed, proven at every exit
       ## (`verifyEnsures`); nil when it has none.
@@ -5242,25 +5263,10 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
 # and `b` may only go up. That is the whole rule, and it is what makes strict
 # contract checking usable on hand-written loops.
 
-type
-  LoopWrites = object
-    kinds: Table[VarId, IvKind]
-    nonNeg: HashSet[VarId]
-      ## Locals the body declares with a non-negative `range` type. `o = o + k`
-      ## is monotone whenever `k` is one of them, and the temp holding a
-      ## `Positive`-returning call is exactly that — declared inside the body,
-      ## so no fact about it exists yet when this scan runs.
-    opaque: bool          ## a write we could not attribute to any location
-    barriers: int         ## how many barriers the body has (`forgetShared`) ...
-    namedBy: Table[SymId, int] ## ... and how many of them write each variable
-                          ## by name; one that all of them name keeps its facts
-    preserved: seq[VarId] ## derived locations the call just scanned promises
-                          ## to leave alone (`s.len == old(s.len)`); holds
-                          ## for the `(unknown …)` that follows it too
-    assumed: HashSet[VarId] ## stepped by a wrapping step taken as monotone
-    pendingStep: VarId    ## the `(unknown v)` a step call emits right after
-                          ## itself is that call's own doing, not a second,
-                          ## unclassified write
+proc initLoopWrites(): LoopWrites =
+  LoopWrites(kinds: initTable[VarId, IvKind](), nonNeg: initHashSet[VarId](),
+             namedBy: initTable[SymId, int](), assumed: initHashSet[VarId](),
+             pendingStep: InvalidVarId)
 
 proc joinIv(a, b: IvKind): IvKind =
   ## What two writes in the same body jointly guarantee. Raising a non-negative
@@ -5718,11 +5724,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor; iterBarrier = false;
     # and the stale fact would be back in force *after* the loop — which is
     # where `var colon = -1; while …: colon = i; …; if colon >= 0:` went wrong.
     block:
-      var w = LoopWrites(kinds: initTable[VarId, IvKind](),
-                         nonNeg: initHashSet[VarId](), opaque: false,
-                         namedBy: initTable[SymId, int](),
-                         assumed: initHashSet[VarId](),
-                         pendingStep: InvalidVarId)
+      var w = initLoopWrites()
       var scan = n
       c.prescanning = true
       scanLoopWrites(c, scan, w)
@@ -5880,6 +5882,17 @@ proc traverseJmp(c: var FirContext; n: var Cursor) =
     inc n # symuse
   leaveToLabel(c, label)
 
+proc verifyEnsuresPastFins(c: var FirContext; resultVar: VarId; info: NifLineInfo;
+                           resultSym: SymId) =
+  ## A `return` runs the `fin`s it leaves through before the routine is left:
+  ## its `.ensures` is judged without what they may write.
+  let here = c.p.flow.checkpoint()
+  for i in 0 ..< c.p.fins.len:
+    let w = c.p.fins[i]
+    forgetWrites(c, w)
+  verifyEnsures c, resultVar, info, resultSym
+  c.p.flow.rollbackTo here
+
 proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `(ret .X)` — primitive return, bound by the proc root. A `return value`
   ## with a non-`result` operand *provides* the result directly (the NJVL path
@@ -5889,13 +5902,15 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
   if c.p.destroysAtExit: forgetShared(c)
   n.into:
     if n.isDotToken:
-      verifyEnsures c, (if c.p.resultSym != NoSymId: getVarId(c, c.p.resultSym) else: InvalidVarId), info, c.p.resultSym
+      verifyEnsuresPastFins c, (if c.p.resultSym != NoSymId: getVarId(c, c.p.resultSym) else: InvalidVarId), info, c.p.resultSym
       inc n
     else:
       let res = c.p.resultSym
+      let providesResult = res != NoSymId and
+        not (n.isSymbol and n.symId == res)
       var retLoc = plainLocationVarId(c, n)
       var retSym = if n.isSymbol: n.symId else: NoSymId
-      if retLoc == InvalidVarId and not cursorIsNil(c.p.ownEnsures):
+      if retLoc == InvalidVarId and (c.p.fins.len > 0 or not cursorIsNil(c.p.ownEnsures)):
         if res != NoSymId and peelExpr(c, n).exprKind == OconstrX:
           # `return T(f: v)` stores into `result`, whose paths the `.ensures`
           # names; the path ends here, so nothing else sees the facts.
@@ -5909,9 +5924,15 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
           retLoc = derivedIdOf(c, "#ret", NoSymId)
           invalidateFactsAbout(c.facts, retLoc)
           stateValue c, retLoc, n
-      verifyEnsures c, retLoc, info, retSym
-      let providesResult = res != NoSymId and
-        not (n.isSymbol and n.symId == res)
+      if c.p.fins.len > 0 and providesResult and retLoc != InvalidVarId and
+          retSym != res:
+        # the value is `result`'s, which a `fin` may change; `projectOut`
+        # keeps what `return result + 1` said about the old `result`
+        let resVar = getVarId(c, res)
+        projectOut(c.facts, resVar)
+        addAsgnFact c, query(resVar, retLoc, zero())
+        retLoc = resVar
+      verifyEnsuresPastFins c, retLoc, info, retSym
       if providesResult:
         # `return toOpenArray(a)` returns the value directly rather than storing
         # it into `result` first, so `traverseAsgn`'s escape check never sees it.
@@ -6042,20 +6063,28 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
   ## `(try body (except ...)* (fin ...)?)`. A handler is entered as
   ## `enterAfterRaise` says. A `fin` runs on every way out of the `try`, so it
   ## is reached whenever the `try` is, and it is entered as a raise from the
-  ## body or a handler leaves it. Its inits are the fall-through's, and are
-  ## not propagated onto exit paths (sound, since that only withholds
-  ## knowledge).
+  ## body or a handler leaves it. Its inits are the join of the fall-through
+  ## and of every recorded exit (`ret`, `jmp`, a `raise` statement) leaving
+  ## through it; a call to a `.raises` routine records no exit, so a raise
+  ## there is not part of that join. The fall-through past the `fin` has its
+  ## own inits back, and the exits lose the facts about what the `fin` may
+  ## write. The `fin`'s inits are not propagated onto exit paths (sound, since
+  ## that only withholds knowledge).
   var call = freshCall()
   let tryStart = n # skip 'try'
   n = sub(n)
   let cp = c.p.flow.checkpoint()
+  let outerExits = stashExits(c.p.tr)
   let baseLive = c.p.tr.live
-  var w = LoopWrites(kinds: initTable[VarId, IvKind](),
-                     nonNeg: initHashSet[VarId](), opaque: false,
-                     namedBy: initTable[SymId, int](),
-                     assumed: initHashSet[VarId](),
-                     pendingStep: InvalidVarId)
+  var w = initLoopWrites()
   scanWrites(c, n, w)
+  var fin = n
+  skip fin
+  while fin.substructureKind == ExceptU: skip fin
+  if fin.substructureKind == FinU:
+    var wFin = initLoopWrites()
+    scanWrites(c, fin, wFin)
+    c.p.fins.add wFin
 
   traverseStmt c, n, call # try body
   # A handler may run after any point of the body, so it starts with what was
@@ -6095,19 +6124,37 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
         haveMerged = true
 
   if n.substructureKind == FinU:
+    let wFin = c.p.fins.pop()
+    var entry = merged
+    var haveEntry = haveMerged
+    # The exits the `try` took run the `fin` on the way out.
+    var taken = stashExits(c.p.tr)
+    for e in taken.mitems:
+      entry = if haveEntry: joinSnap(entry, e[1]) else: e[1]
+      haveEntry = true
+      let here = c.p.flow.checkpoint()
+      setTo(c.p.flow, here, e[1])
+      forgetWrites(c, wFin)
+      e[1] = snapshot(c.p.flow)
+      c.p.flow.rollbackTo here
+    restoreExits(c.p.tr, taken)
     enterAfterRaise(c, cp, baseLive, wAll, bodyBorrows)
-    if haveMerged:
-      c.p.flow.inclInits merged
-      c.p.flow.inclBorrows borrowsOf(merged)
+    if haveEntry: c.p.flow.inclInits entry
+    # An exit's borrows end with the scopes it leaves.
+    if haveMerged: c.p.flow.inclBorrows borrowsOf(merged)
     n.into:
       traverseStmt c, n, call # finally body
     if not haveMerged: c.p.tr.live = false
+    elif c.p.tr.live:
+      # Past the `fin` only the fall-through goes on, with its own inits.
+      c.p.flow.inclInits merged
   elif haveMerged:
     c.p.tr.live = true
     setTo(c.p.flow, cp, merged)
   else:
     c.p.tr.live = false
     c.p.flow.rollbackTo cp
+  restoreExits(c.p.tr, outerExits)
   n = tryStart; skip n # close 'try'
 
 proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =

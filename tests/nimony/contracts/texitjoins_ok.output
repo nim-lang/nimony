@@ -3,3 +3,38 @@
 4
 5
 10
+defer 3
+3
+defer 5
+5
+defer 6
+6
+finally 4
+4
+finally 7
+0
+defer 1
+1
+finally 4
+4
+finally 7
+0
+defer 2
+2
+finally
+7
+finally
+7
+3
+4
+finally
+1
+finally
+2
+finally
+3
+finally
+4
+1
+finally
+3

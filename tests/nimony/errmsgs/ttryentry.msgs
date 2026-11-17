@@ -3,3 +3,8 @@ tests/nimony/errmsgs/ttryentry.nim(28, 7) Error: cannot prove assertion: y == 0 
 tests/nimony/errmsgs/ttryentry.nim(38, 7) Error: cannot prove assertion: y == 0 [pass --verbose for the Final IR]
 tests/nimony/errmsgs/ttryentry.nim(46, 7) Error: cannot prove assertion: y == 0 [pass --verbose for the Final IR]
 tests/nimony/errmsgs/ttryentry.nim(58, 7) Error: cannot prove assertion: y == 0 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(67, 14) Error: cannot prove that y has been initialized [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(84, 5) Error: cannot prove assertion: i == 0 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(90, 5) Error: cannot prove postcondition: result == 0 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(94, 1) Error: cannot prove postcondition: 0 <= result and result < 8 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/ttryentry.nim(108, 5) Error: cannot prove postcondition: result.f == 0 [pass --verbose for the Final IR]
