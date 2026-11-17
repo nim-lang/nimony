@@ -256,47 +256,6 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
     result.inlinable = true
 
 type
-  VarInfo = object
-    ## How a callee body uses one symbol.
-    uses: int              ## reads and writes: not its decl, not a field that
-                           ## shares its name (`vector(x, y, z)` building
-                           ## `Vec3(x: x, …)`, `fieldSlot`)
-    inLoop: bool           ## one of them inside a `loop`/`while` of the body
-    assigned: bool         ## its own slot is written, `p = …` or `p.f = …`; a
-                           ## write through it (`(*p).f = …`) leaves the slot
-                           ## alone (`slotRootOf`)
-    addrTaken: bool        ## its own slot's address is taken, `addr p`
-
-  FlatKind = enum
-    fkOther, fkAsgn, fkRet, fkJmp, fkLab
-
-  FlatStmt = object
-    ## A statement of the body in execution order, through `stmts`/`scope`.
-    kind: FlatKind
-    sym: SymId             ## fkAsgn: the target when it is a bare symbol;
-                           ## fkJmp/fkLab: the label
-
-  BodyFacts = object
-    ## Everything a splice asks about the callee's body, from one walk
-    ## (`bodyFacts`) and kept per callee (`InlinerCtx.facts`): the body is the
-    ## same at every call site, only the arguments differ.
-    vars: Table[SymId, VarInfo]
-    defs: seq[SymId]       ## every `SymbolDef` in body order: what a splice renames
-    locals: seq[SymId]     ## the body's `(var …)`s and, of those and the
-    exposed: seq[SymId]    ## parameters, the ones `lengaa` calls exposed
-    opaqueEffects: bool    ## a store the walk cannot attribute to a named slot
-                           ## (through a pointer, an unmodelled lvalue) or a call:
-                           ## the body may write what an address it takes reaches
-    callerReadOnly: bool   ## every store goes to a plain slot of a local and every
-                           ## call does not return: nothing the caller can observe
-                           ## changes, so a pure path argument is stable across it
-    resultLocal: SymId     ## the local every `(ret X)` returns, else 0
-    tailCopy: SymId        ## `L` of an `(asgn resultLocal L) (ret resultLocal)`
-                           ## tail, else 0 (`finishTailCopy`)
-    writtenLast: bool      ## `resultLocal` is stored once, after everything else
-                           ## ran (`finishWrittenLast`)
-
-
   InlinerCtx* = object
     moduleSuffix*: string
     counter: int                            # fresh-name suffix
@@ -306,8 +265,6 @@ type
     src: ptr TokenBuf                       # the module's parsed buffer
     xnifDir: string                         # directory holding the `.c.nif`s
     maxDepth*: int                          # 0 = unlimited; cross-module mode sets a cap
-    facts: seq[BodyFacts]                   # per callee, on its first splice;
-    factsOf: Table[SymId, int]              # callee → its entry in `facts`
     callerFacts: LocalFacts                 # `lengaa` owned-ness of the proc being
                                             # walked, splices included (`emitSplice`)
     growthLeft*: int
@@ -369,8 +326,6 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
              foreign: initTable[string, ForeignModule](),
              noForeign: initHashSet[string](),
              foreignInfo: initTable[SymId, InlineInfo](),
-             facts: @[],
-             factsOf: initTable[SymId, int](),
              inProgress: initHashSet[SymId]())
 
 proc growthBudget*(bodySize: int): int =
@@ -672,7 +627,7 @@ type
                                      ## `(asgn result L) (ret result)` tail — renamed
                                      ## to the destination as well, so its decl folds
                                      ## away too and the copy becomes a self-assign
-                                     ## that `emitRenamed` drops. See `finishTailCopy`.
+                                     ## that `emitRenamed` drops. See `tailCopySource`.
 
 proc isForwarded(bnd: Bindings; nameSlot: Cursor): bool {.inline.} =
   ## Is `nameSlot` (a `(var :NAME …)`'s name slot) one of the callee locals whose
@@ -829,7 +784,7 @@ proc slotRootOf(c: Cursor): SymId =
 const PathArgSubstitution* = not defined(inlinerNoPathSubst)
   ## Substitute a compound-lvalue or global argument into the splice when the
   ## callee body provably writes nothing the caller can observe
-  ## (`BodyFacts.callerReadOnly`). `-d:inlinerNoPathSubst` restores the older, purely
+  ## (`bodyIsCallerReadOnly`). `-d:inlinerNoPathSubst` restores the older, purely
   ## shape-based rule (literals, `(haddr S)`, `(deref S)`, bare locals) as the
   ## A/B reference.
 
@@ -840,11 +795,32 @@ const MaxPathSubstUses = 2
   ## win — the `var`-parameter case is one or two uses — without that trade.
   ## (`cse` would re-fold the repeats, but it only runs under `--opt`.)
 
+proc countParamUses(c: Cursor; params: HashSet[SymId]; uses: var Table[SymId, int];
+                    inLoop = false) =
+  ## Uses of each parameter; one inside a loop counts as two, it runs repeatedly.
+  ## A field that shares the parameter's symbol — `vector(x, y, z)` building
+  ## `Vec3(x: x, …)` — is not a use (`fieldSlot`).
+  case c.kind
+  of Symbol:
+    if c.symId in params:
+      uses[c.symId] = uses.getOrDefault(c.symId) + (if inLoop: 2 else: 1)
+  of TagLit:
+    let loop = inLoop or c.stmtKind in {LoopS, WhileS}
+    let f = fieldSlot(c)
+    var i = 0
+    var n = c
+    n.into:
+      while n.hasMore:
+        if i != f: countParamUses(n, params, uses, loop)
+        skip n
+        inc i
+  else: discard
+
 proc isPurePathArg(c: Cursor): bool =
   ## Is the argument an lvalue path — symbols, fields, indices, derefs, casts —
   ## with no call and no constructor in it? Such an expression can be spliced at
   ## a use site and re-evaluated there, provided nothing writes what it reads;
-  ## that second half is `BodyFacts.callerReadOnly`'s job.
+  ## that second half is `bodyIsCallerReadOnly`'s job.
   case c.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     result = true
@@ -864,9 +840,7 @@ proc isPurePathArg(c: Cursor): bool =
 
 proc isPureValueArg(c: Cursor): bool =
   ## A pure path, or non-trapping arithmetic over pure values: `a.x - b.x`.
-  ## Evaluating it reads the same memory a path does and nothing else, and it
-  ## cannot fault beyond what its paths can. `div`/`mod` are excluded (they
-  ## trap on zero), so is anything with a call or a constructor.
+  ## `div`/`mod` are excluded (they trap on zero), so is any call or constructor.
   if isPurePathArg(c): return true
   result = false
   if c.isTagLit and c.exprKind in {AddC, SubC, MulC, NegC}:
@@ -884,6 +858,101 @@ proc writeTargetIsLocalSlot(dst: Cursor): bool =
   ## a *local* name, since assigning a global is visible to the caller.
   let s = slotRootOf(dst)
   result = s != SymId(0) and pool.symIsLocal(s)
+
+proc scanParamUsage(c: Cursor; params: HashSet[SymId];
+                    assigned, addrTaken: var HashSet[SymId];
+                    opaqueEffects: var bool) =
+  ## Record which parameters have their *slot* reassigned (a bare `p = …`) or
+  ## their *slot* address taken (`addr p`) anywhere in the body — those cannot
+  ## be replaced by their argument value. Writes and address-of that go
+  ## *through* the pointer (`(*p).f = …`, `addr (*p)`) leave the slot's value
+  ## and address intact, so `slotRootOf` deliberately ignores them.
+  ##
+  ## `opaqueEffects` reports whether the body could write memory the scan
+  ## cannot attribute to a named local slot: a store whose destination root is
+  ## a through-pointer/unmodelled lvalue (`slotRootOf` = 0), or any call
+  ## (whose callee may write through captured pointers). While it stays false,
+  ## the body provably reads — never writes — everything reachable through an
+  ## address it takes, which is what lets an address-taken read-only param
+  ## still be substituted by a caller lvalue (see `bindingsFor`).
+  if not c.isTagLit: return
+  if c.stmtKind == AsgnS:
+    let s = slotRootOf(c.childCursor)
+    if s in params: assigned.incl s
+    elif s == SymId(0): opaqueEffects = true # through-pointer / unmodelled store
+  elif c.exprKind in AddrKinds:
+    let s = slotRootOf(c.childCursor)
+    if s in params: addrTaken.incl s
+  elif c.exprKind == CallC or c.stmtKind == CallS:
+    opaqueEffects = true                     # callee may write through pointers
+  var n = c
+  n.into:
+    while n.hasMore:
+      scanParamUsage(n, params, assigned, addrTaken, opaqueEffects)
+      skip n
+
+proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
+  ## The callee's result local for destination forwarding: every `(ret X)` in
+  ## the body returns the same bare, body-local, non-param symbol (nimsem's
+  ## implicit `result` after lowering). SymId(0) when the pattern doesn't hold.
+  result = returnedLocal(body)
+  if result == SymId(0): return
+  if result in pSyms: return SymId(0)             # a param: bound to its arg
+  if not pool.symIsLocal(result): return SymId(0)
+
+proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
+  ## The local `L` in a body whose last two statements are
+  ##
+  ##   (asgn resultSym L)
+  ##   (ret resultSym)
+  ##
+  ## and which mentions `resultSym` nowhere else. `L`'s storage can then be the
+  ## splice destination just as `resultSym`'s is: it is written where `L` is
+  ## written and read only to feed the return.
+  ##
+  ## This shape is not exotic, it is what every one-expression accessor lowers to
+  ## — nimsem binds the expression to a temp and assigns that to the implicit
+  ## `result`, so `nifcore.kind` arrives as `(var :x …) (asgn x <expr>) (asgn result
+  ## x) (ret result)`. Forwarding only `result` leaves the copy, and the copy is a
+  ## whole extra register: `c.kind` reached its `case` through `and3 x24, …` /
+  ## `mov x22, x24`, in every inlined accessor in the program.
+  ##
+  ## Deliberately narrow. Requiring the copy to be the tail — with the ret its only
+  ## other mention — is what makes the substitution provable without dataflow: on
+  ## that shape `resultSym` is written exactly once and read exactly once, and both
+  ## statements disappear into the destination.
+  if not body.isTagLit or body.stmtKind != StmtsS: return SymId(0)
+  var prev = default(Cursor)
+  var last = default(Cursor)
+  var n = 0
+  var b = body
+  b.into:
+    while b.hasMore:
+      prev = last
+      last = b
+      inc n
+      skip b
+  if n < 2: return SymId(0)                  # no `(asgn …)` before the `(ret …)`
+  # last must be `(ret resultSym)`
+  if not last.isTagLit or last.stmtKind != RetS: return SymId(0)
+  var r = last.childCursor
+  if not r.isSymbol or r.symId != resultSym: return SymId(0)
+  skip r
+  if r.hasMore: return SymId(0)
+  # the one before must be `(asgn resultSym L)`
+  if not prev.isTagLit or prev.stmtKind != AsgnS: return SymId(0)
+  var a = prev.childCursor
+  if not a.isSymbol or a.symId != resultSym: return SymId(0)
+  skip a
+  if not a.isSymbol: return SymId(0)
+  let src = a.symId
+  skip a
+  if a.hasMore: return SymId(0)
+  if src == resultSym or src in pSyms: return SymId(0)
+  if not pool.symIsLocal(src): return SymId(0)
+  # `resultSym` must be mentioned nowhere but those two statements.
+  if countUses(body, resultSym) != 2: return SymId(0)
+  result = src
 
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
                  bnd: Bindings) =
@@ -1150,241 +1219,74 @@ proc calleeIsNoReturn(c: var InlinerCtx; calleeSym: SymId): bool =
       skip pr
   result = false
 
-# ---- what a callee body is: one walk per callee -----------------------------
-
-type
-  FactsWalk = object
-    f: BodyFacts
-    locals: LocalFacts
-    pSyms: seq[SymId]
-    loopDepth: int
-    retSym: SymId          ## the symbol the `ret`s seen so far return
-    retsOk: bool           ## all of them return `retSym`
-    flat: seq[FlatStmt]
-    tail: array[2, Cursor] ## the body's last two statements, when it has two
-    tailLen: int
-
-proc note(w: var FactsWalk; s: SymId; assigned = false; addrTaken = false) =
-  var v = w.f.vars.getOrDefault(s)
-  if assigned: v.assigned = true
-  elif addrTaken: v.addrTaken = true
-  else:
-    inc v.uses
-    if w.loopDepth > 0: v.inLoop = true
-  w.f.vars[s] = v
-
-proc flatStmt(n: Cursor): FlatStmt =
-  result = FlatStmt(kind: fkOther, sym: SymId(0))
-  if not n.isTagLit: return
-  case n.stmtKind
-  of AsgnS:
-    let lhs = n.childCursor
-    if lhs.isSymbol: result = FlatStmt(kind: fkAsgn, sym: lhs.symId)
-  of RetS: result.kind = fkRet
-  of JmpS, LabS:
-    result.kind = if n.stmtKind == JmpS: fkJmp else: fkLab
-    let l = n.childCursor
-    if l.kind in {Symbol, SymbolDef}: result.sym = l.symId
-  else: discard
-
-proc noteEffects(c: var InlinerCtx; w: var FactsWalk; n: Cursor) =
-  ## What the tag node `n` writes, calls or exposes, its children aside.
-  noteNode(w.locals, n)
-  if n.stmtKind == AsgnS:
-    let dst = n.childCursor
-    let s = slotRootOf(dst)
-    if s != SymId(0): w.note(s, assigned = true)
-    else: w.f.opaqueEffects = true           # through-pointer / unmodelled store
-    if not writeTargetIsLocalSlot(dst): w.f.callerReadOnly = false
-  elif n.exprKind in AddrKinds:
-    let s = slotRootOf(n.childCursor)
-    if s != SymId(0): w.note(s, addrTaken = true)
-  elif n.exprKind == CallC or n.stmtKind == CallS:
-    w.f.opaqueEffects = true                 # the callee may write through pointers
-    if w.f.callerReadOnly:
-      # `panic`, in every lowered bounds check, is the call that matters:
-      # control never comes back, so what it writes no later use observes.
-      let callee = n.childCursor
-      if callee.kind != Symbol or not calleeIsNoReturn(c, callee.symId):
-        w.f.callerReadOnly = false
-  elif n.stmtKind == RetS:
-    let v = n.childCursor
-    if not v.hasMore or v.kind != Symbol: w.retsOk = false
-    elif w.retSym == SymId(0): w.retSym = v.symId
-    elif w.retSym != v.symId: w.retsOk = false
-
-proc walkFacts(c: var InlinerCtx; w: var FactsWalk; n: Cursor; flat: bool;
-               root = false) =
-  ## `flat`: `n` is a statement of the body's own statement list, reached
-  ## through `stmts`/`scope` only. `root`: `n` is the body.
-  let list = flat and n.isTagLit and n.stmtKind in {StmtsS, ScopeS}
-  if flat and not list and not n.isDotToken: w.flat.add flatStmt(n)
-  case n.kind
-  of Symbol:
-    w.note(n.symId)
-  of SymbolDef:
-    w.f.defs.add n.symId
-  of TagLit:
-    noteEffects(c, w, n)
-    let loop = n.stmtKind in {LoopS, WhileS}
-    if loop: inc w.loopDepth
-    let f = fieldSlot(n)
-    let tail = root and n.stmtKind == StmtsS
-    var i = 0
-    var it = n
-    it.into:
-      while it.hasMore:
-        if tail:
-          w.tail[0] = w.tail[1]
-          w.tail[1] = it
-          inc w.tailLen
-        if i != f: walkFacts(c, w, it, list)
-        skip it
-        inc i
-    if loop: dec w.loopDepth
-  else: discard
-
-proc finishTailCopy(w: FactsWalk): SymId =
-  ## The local `L` in a body whose last two statements are
+proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
+  ## Can this body change any memory its caller can observe?
   ##
-  ##   (asgn resultLocal L)
-  ##   (ret resultLocal)
+  ## It cannot when every write goes to a plain slot of one of its own locals
+  ## (never through a pointer, never to a global) and every call it makes is one
+  ## that does not return. Such a body leaves every caller-side expression
+  ## exactly as it found it — so an argument that is a pure path
+  ## (`isPurePathArg`) has the same value at every use site inside the splice,
+  ## and can be substituted instead of copied into a parameter.
   ##
-  ## and which mentions `resultLocal` nowhere else. `L`'s storage can then be
-  ## the splice destination just as `resultLocal`'s is: it is written where
-  ## `L` is written and read only to feed the return.
-  ##
-  ## This shape is not exotic, it is what every one-expression accessor lowers
-  ## to — nimsem binds the expression to a temp and assigns that to the
-  ## implicit `result`, so `nifcore.kind` arrives as `(var :x …) (asgn x
-  ## <expr>) (asgn result x) (ret result)`. Forwarding only `result` leaves the
-  ## copy, and the copy is a whole extra register: `c.kind` reached its `case`
-  ## through `and3 x24, …` / `mov x22, x24`, in every inlined accessor in the
-  ## program.
-  ##
-  ## Deliberately narrow. Requiring the copy to be the tail — with the ret its
-  ## only other mention — is what makes the substitution provable without
-  ## dataflow: on that shape `resultLocal` is written exactly once and read
-  ## exactly once, and both statements disappear into the destination.
-  result = SymId(0)
-  let res = w.f.resultLocal
-  if res == SymId(0) or w.tailLen < 2: return
-  let prev = w.tail[0]
-  let last = w.tail[1]
-  if not last.isTagLit or last.stmtKind != RetS: return
-  var r = last.childCursor                   # `res`: every `ret` returns it
-  skip r
-  if r.hasMore or not prev.isTagLit or prev.stmtKind != AsgnS: return
-  var a = prev.childCursor
-  if not a.isSymbol or a.symId != res: return
-  skip a
-  if not a.isSymbol: return
-  let src = a.symId
-  skip a
-  if a.hasMore: return
-  if src == res or src in w.pSyms or not pool.symIsLocal(src): return
-  if w.f.vars.getOrDefault(res).uses != 2: return
-  result = src
-
-proc finishWrittenLast(w: FactsWalk): bool =
-  ## Is `resultLocal` written once — by a whole `(asgn res E)` that runs after
-  ## every other statement of the body, with only jumps, labels and the `ret`s
-  ## behind it? Then everything the body reads, its arguments included, is
-  ## read before or while `E` is evaluated, and the result may live in a
-  ## destination an argument mentions: `c = mul(c, d)` reads `c` for `E` and
-  ## stores into `c` last, exactly as the call did.
-  result = false
-  let res = w.f.resultLocal
-  if res == SymId(0): return
-  var writeAt = -1
-  var rets = 0
-  for i in 0 ..< w.flat.len:
-    let s = w.flat[i]
-    if s.kind == fkAsgn and s.sym == res:
-      if writeAt >= 0: return                # written twice
-      writeAt = i
-    elif s.kind == fkRet:
-      if writeAt < 0: return                 # a return before the write
-      inc rets
-    elif writeAt >= 0 and s.kind notin {fkJmp, fkLab}:
-      return                                 # something runs after the write
-  if writeAt < 0: return
-  # The write and the `ret`s are its only uses: `E` does not read it, and it
-  # is written no other way.
-  if w.f.vars.getOrDefault(res).uses != 1 + rets: return
-  # No jump from before the write lands behind it.
-  var after = initHashSet[SymId]()
-  for i in writeAt + 1 ..< w.flat.len:
-    if w.flat[i].kind == fkLab: after.incl w.flat[i].sym
-  for i in 0 ..< writeAt:
-    if w.flat[i].kind == fkJmp and w.flat[i].sym in after: return
+  ## This is the fact the two "cannot prove it without alias info" refusals in
+  ## `isSubstitutableArg` / `isStableAddrArg` were missing. It is answered from
+  ## the body about to be spliced — no summaries, no types, no alias partition.
   result = true
+  if not body.isTagLit: return               # a leaf writes nothing
+  var n = body
+  if n.stmtKind == AsgnS:
+    if not writeTargetIsLocalSlot(n.childCursor): return false
+  elif n.stmtKind == CallS or n.exprKind == CallC:
+    var callee = n.childCursor
+    if callee.kind != Symbol: return false
+    if not calleeIsNoReturn(c, callee.symId): return false
+  var m = n
+  m.into:
+    while m.hasMore:
+      if not bodyIsCallerReadOnly(c, m): return false
+      skip m
 
-proc bodyFacts(c: var InlinerCtx; calleeSym: SymId; body: Cursor;
-               pSyms: seq[SymId]): int =
-  ## The facts of `calleeSym`'s body, walked on the first splice of it: their
-  ## index in `c.facts`.
-  result = c.factsOf.getOrDefault(calleeSym, -1)
-  if result >= 0: return
-  var w = FactsWalk(f: BodyFacts(vars: initTable[SymId, VarInfo](),
-                                 callerReadOnly: true),
-                    locals: initLocalFacts(),
-                    pSyms: pSyms, retsOk: true)
-  walkFacts(c, w, body, true, root = true)
-  # The callee's result local for destination forwarding: what every `(ret X)`
-  # returns — nimsem's implicit `result` after lowering — if it is a local of
-  # the body and not a parameter (that one is bound to its argument).
-  let r = if w.retsOk: w.retSym else: SymId(0)
-  if r != SymId(0) and r notin pSyms and pool.symIsLocal(r):
-    w.f.resultLocal = r
-    w.f.tailCopy = finishTailCopy(w)
-    w.f.writtenLast = finishWrittenLast(w)
-  for s in w.locals.localSyms: w.f.locals.add s
-  for s in w.locals.exposedSyms: w.f.exposed.add s
-  result = c.facts.len
-  c.facts.add ensureMove(w.f)
-  c.factsOf[calleeSym] = result
-
-type
-  SpliceSite = object
-    ## What `prepareSplice` resolved about one inlinable call: the callee, its
-    ## decl, its parameters and the cursors of the call's actual arguments.
-    ## Resolving is split from emitting because a caller may have to write
-    ## something of its own ahead of the splice (`trySpliceVarInit` re-emits the
-    ## `(var …)` first) and must be able to refuse without having emitted
-    ## anything.
-    calleeSym: SymId
-    pd: ProcDecl
-    pSyms: seq[SymId]
-    pTypes: seq[Cursor]
-    argCursors: seq[Cursor]
-    facts: int                             ## the callee body's, in `InlinerCtx.facts`
-
-proc bindingsFor(c: var InlinerCtx; site: SpliceSite;
-                 rename: Table[SymId, SymId]): Bindings =
+proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
+                 body: Cursor; rename: Table[SymId, SymId]): Bindings =
   ## Bundle the param→fresh-sym rename with the set of params that can be
   ## replaced by their argument value (read-only, not addr-taken, substitutable
   ## argument) — those need no `(var :p = arg)` copy.
-  ##
-  ## Two different "this body cannot disturb the caller" facts serve two
-  ## different substitutions, and neither implies the other:
-  ##
-  ## - `opaqueEffects` is about writes *through pointers*. It tolerates a write
-  ##   to a named global slot, so the address-taken substitution below is
-  ##   restricted to caller locals.
-  ## - `callerReadOnly` is about caller-observable memory at large: it forbids
-  ##   the global write, but tolerates calls that do not return. That is what a
-  ##   pure path argument needs to be stable across the splice.
   result = Bindings(rename: rename, subst: initTable[SymId, Cursor]())
-  let fi = site.facts
-  for i in 0 ..< site.pSyms.len:
-    let p = c.facts[fi].vars.getOrDefault(site.pSyms[i])
-    if p.assigned:
+  var paramSet = initHashSet[SymId]()
+  for s in pSyms: paramSet.incl s
+  var assigned = initHashSet[SymId]()
+  var addrTaken = initHashSet[SymId]()
+  var opaqueEffects = false
+  scanParamUsage(body, paramSet, assigned, addrTaken, opaqueEffects)
+  # Two different "this body cannot disturb the caller" facts, for two
+  # different substitutions — neither implies the other:
+  #
+  # - `opaqueEffects` (above, free: it rides the same walk) is about writes
+  #   *through pointers*. It tolerates a write to a named global slot, so the
+  #   address-taken substitution below is restricted to caller locals.
+  # - `bodyIsCallerReadOnly` is about caller-observable memory at large: it
+  #   forbids the global write, but tolerates calls that do not return. That is
+  #   what a pure path argument needs to be stable across the splice.
+  var uses = initTable[SymId, int]()
+  var callerReadOnly = false
+  when PathArgSubstitution:
+    var anyPathArg = false
+    for i in 0 ..< pSyms.len:
+      if pSyms[i] notin assigned and pSyms[i] notin addrTaken and
+         not argCursors[i].isSymbol and isPureValueArg(argCursors[i]):
+        anyPathArg = true
+        break
+    if anyPathArg:
+      callerReadOnly = bodyIsCallerReadOnly(c, body)
+      if callerReadOnly: countParamUses(body, paramSet, uses)
+  for i in 0 ..< pSyms.len:
+    if pSyms[i] in assigned:
       continue                               # slot mutated → copy
-    let arg = site.argCursors[i]
-    if p.addrTaken:
+    let arg = argCursors[i]
+    if pSyms[i] in addrTaken:
       # The body takes the param's address — but if it provably never writes
-      # through any pointer (`opaqueEffects` false: no store the walk can't
+      # through any pointer (`opaqueEffects` false: no store the scan can't
       # attribute to a named local slot, and no call), everything reachable
       # through that address is only read, so the copy and the caller's own
       # slot are indistinguishable and the copy can go. This is the SSO string
@@ -1395,37 +1297,58 @@ proc bindingsFor(c: var InlinerCtx; site: SpliceSite;
       # spliced verbatim, so a literal or compound is unusable, and a global
       # is excluded because the body may assign a global directly (that write
       # targets a named slot, so it does not set `opaqueEffects`) — a local
-      # cannot be written by any means the walk admits.
-      if not c.facts[fi].opaqueEffects and arg.isSymbol and pool.symIsLocal(arg.symId):
-        result.subst[site.pSyms[i]] = arg
+      # cannot be written by any means the scan admits.
+      if not opaqueEffects and arg.isSymbol and pool.symIsLocal(arg.symId):
+        result.subst[pSyms[i]] = arg
       continue                               # else: address observed → copy
-    # A read-only param (value-stable: its slot is neither written nor
-    # addressed) may be replaced by its argument at every use instead of bound
-    # to a fresh `(var)` copy. Literals are always stable. A bare *local*
-    # symbol is stable too: the inlined body only ever assigns fresh-renamed
-    # locals, never a caller local, so the substituted symbol's value cannot
-    # change across the body. Globals are excluded — a nested call in the body
-    # could mutate one between uses, whereas the copy captured its entry value.
+    # A read-only param (value-stable per `scanParamUsage`) may be replaced by
+    # its argument at every use instead of bound to a fresh `(var)` copy.
+    # Pool are always stable. A bare *local* symbol is stable too: the
+    # inlined body only ever assigns fresh-renamed locals, never a caller local,
+    # so the substituted symbol's value cannot change across the body. Globals
+    # are excluded — a nested call in the body could mutate one between uses,
+    # whereas the copy captured its entry value.
     if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
        (arg.isSymbol and pool.symIsLocal(arg.symId)) or isLocalAffineArg(arg):
-      result.subst[site.pSyms[i]] = arg
-    elif not PathArgSubstitution or not c.facts[fi].callerReadOnly:
-      discard
-    elif isPurePathArg(arg) and p.uses <= MaxPathSubstUses:
+      result.subst[pSyms[i]] = arg
+    elif callerReadOnly and isPurePathArg(arg) and
+         uses.getOrDefault(pSyms[i]) <= MaxPathSubstUses:
       # A compound lvalue (`(haddr (dot o f))`, `(at a i)`) or a global: stable
       # here because this body writes nothing the caller can observe. Splicing
       # it leaves `(deref (haddr (dot o f)))` at the use, which the rewrite
       # engine's `deref_addr` rule folds back to `(dot o f)` — the same reason
       # `isStableAddrArg` exists, now without the bare-symbol restriction.
-      result.subst[site.pSyms[i]] = arg
-    elif isPureValueArg(arg) and p.uses == 1 and not p.inLoop:
-      # `vector(a.x - b.x, …)`: arithmetic over pure paths, used once. Spliced
-      # at its one use it is still evaluated at most once, reads what it read
-      # at the call (the body writes nothing the caller sees), and leaves no
-      # parameter local behind. A local would sit between the computation and
-      # its consumer — after scalar replacement, a `dest.x = p` copy out of a
-      # `scope` that copy propagation cannot see through.
-      result.subst[site.pSyms[i]] = arg
+      result.subst[pSyms[i]] = arg
+    elif callerReadOnly and isPureValueArg(arg) and uses.getOrDefault(pSyms[i]) == 1:
+      # `vector(a.x - b.x, …)`: arithmetic used once, outside a loop, is still
+      # evaluated once at its use and needs no parameter local.
+      result.subst[pSyms[i]] = arg
+
+proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
+                    rename: var Table[SymId, SymId]) =
+  ## Descend one ParLe subtree, minting a fresh sym for each SymbolDef,
+  ## advancing `n` past the subtree. `into` makes this bound-safe whether
+  ## the closing `)` is real or virtual (`virtualParRi`).
+  n.into:
+    while n.hasMore:
+      case n.kind
+      of SymbolDef:
+        if not rename.hasKey(n.symId):
+          rename[n.symId] = c.freshSym(n.symId)
+        inc n
+      of TagLit:
+        seedRenameWalk(c, n, rename)
+      else:
+        inc n
+
+proc seedRenameFromBody(c: var InlinerCtx; body: Cursor;
+                       rename: var Table[SymId, SymId]) =
+  ## Walk every token in the body and mint a fresh sym for each
+  ## SymbolDef found, so local var declarations don't collide between
+  ## inline copies in the same scope.
+  if not body.isTagLit: return
+  var n = body
+  seedRenameWalk(c, n, rename)
 
 when defined(inlinerStats):
   import std / [algorithm, syncio]
@@ -1446,6 +1369,20 @@ when defined(inlinerStats):
     stderr.writeLine "--- inliner stats " & label & " ---"
     for (t, cnt, k) in rows:
       stderr.writeLine $t & "\t" & $cnt & "\t" & k
+
+type
+  SpliceSite = object
+    ## What `prepareSplice` resolved about one inlinable call: the callee, its
+    ## decl, its parameters and the cursors of the call's actual arguments.
+    ## Resolving is split from emitting because a caller may have to write
+    ## something of its own ahead of the splice (`trySpliceVarInit` re-emits the
+    ## `(var …)` first) and must be able to refuse without having emitted
+    ## anything.
+    calleeSym: SymId
+    pd: ProcDecl
+    pSyms: seq[SymId]
+    pTypes: seq[Cursor]
+    argCursors: seq[Cursor]
 
 proc prepareSplice(c: var InlinerCtx; call: Cursor; site: var SpliceSite): bool =
   ## Every refusal a call position has in common: the cycle and depth guards,
@@ -1486,12 +1423,10 @@ proc prepareSplice(c: var InlinerCtx; call: Cursor; site: var SpliceSite): bool 
   for i in 0 ..< site.pSyms.len:
     site.argCursors.add ac
     skip ac
-  site.facts = bodyFacts(c, calleeSym, site.pd.body, site.pSyms)
   result = true
 
 proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
-                target: SymId; forwardResult: bool; info: NifLineInfo;
-                tailCopyOk = true) =
+                target: SymId; forwardResult: bool; info: NifLineInfo) =
   ## The splice itself, identical whatever call position asked for it:
   ##
   ##   (scope
@@ -1508,38 +1443,30 @@ proc emitSplice(c: var InlinerCtx; dest: var TokenBuf; site: SpliceSite;
   ## nowhere else, exactly as the call would have.
   ##
   ## Charges the caller's growth budget: every commit point goes through here.
-  # Fresh names for the parameters and for everything the body declares, so
-  # its locals don't collide between inline copies in the same scope.
-  let fi = site.facts
   var rename = initTable[SymId, SymId]()
   for s in site.pSyms:
     rename[s] = c.freshSym(s)
-  for k in 0 ..< c.facts[fi].defs.len:      # by index: `freshSym` mutates `c`
-    let s = c.facts[fi].defs[k]
-    if not rename.hasKey(s): rename[s] = c.freshSym(s)
+  seedRenameFromBody(c, site.pd.body, rename)
 
   var resultLocal = SymId(0)
   var tailCopy = SymId(0)
   if forwardResult:
-    resultLocal = c.facts[fi].resultLocal
+    resultLocal = resultLocalOf(site.pd.body, site.pSyms)
     if resultLocal != SymId(0):
-      rename[resultLocal] = target         # overrides its fresh sym
-      if tailCopyOk: tailCopy = c.facts[fi].tailCopy
+      rename[resultLocal] = target         # overrides the seed walk's fresh sym
+      tailCopy = tailCopySource(site.pd.body, resultLocal, site.pSyms)
       if tailCopy != SymId(0):
         rename[tailCopy] = target
 
   # The callee's locals now live in the caller under their new names: carry
   # over which of them are exposed, so a later splice into one of them (the
   # cascade re-walks this content) asks the right question.
-  for k in 0 ..< c.facts[fi].locals.len:
-    let s = c.facts[fi].locals[k]
-    c.callerFacts.addLocal rename.getOrDefault(s, s)
+  let calleeFacts = analyseLocals(site.pd.body)
+  for s in calleeFacts.localSyms: c.callerFacts.addLocal rename.getOrDefault(s, s)
   for s in site.pSyms: c.callerFacts.addLocal rename.getOrDefault(s, s)
-  for k in 0 ..< c.facts[fi].exposed.len:
-    let s = c.facts[fi].exposed[k]
-    c.callerFacts.expose rename.getOrDefault(s, s)
+  for s in calleeFacts.exposedSyms: c.callerFacts.expose rename.getOrDefault(s, s)
 
-  var bnd = bindingsFor(c, site, rename)
+  var bnd = bindingsFor(c, site.pSyms, site.argCursors, site.pd.body, rename)
   bnd.dropDecl = resultLocal
   bnd.dropDecl2 = tailCopy
 
@@ -1639,8 +1566,7 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## local (`lengaa`) that no argument mentions. A substituted argument is
   ## evaluated inside the body, after the result was first written; a local
   ## whose address is taken can be read through the pointer; a global by the
-  ## body itself. Those keep the copy — except an argument that mentions
-  ## `lhs` of a body that writes its result last (`BodyFacts.writtenLast`).
+  ## body itself. Those keep the copy.
   if not n.isTagLit or n.stmtKind != AsgnS: return 0
   let entry = n
   var probe = n
@@ -1655,15 +1581,8 @@ proc trySpliceAsgn*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   inc lhsCur                               # the lhs symbol
   var rhsCur = lhsCur
   skip rhsCur                              # the call
-  if not destMayBeObserved(c.callerFacts, lhsCur, rhsCur):
-    emitSplice(c, dest, site, lhsSym, true, entry.info)
-  elif c.callerFacts.isOwned(lhsSym) and c.facts[site.facts].writtenLast:
-    # An argument mentions `lhs`, but the body reads all of them before its
-    # one store into the result (`finishWrittenLast`). Not the local a tail
-    # `result = L` copies from: `L` may be written before an argument is read.
-    emitSplice(c, dest, site, lhsSym, true, entry.info, tailCopyOk = false)
-  else:
-    emitSplice(c, dest, site, lhsSym, false, entry.info)
+  let forward = not destMayBeObserved(c.callerFacts, lhsCur, rhsCur)
+  emitSplice(c, dest, site, lhsSym, forward, entry.info)
 
   n = entry
   skip n
@@ -1855,12 +1774,12 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
 
   # Bind params; require *every* param substitutable so the whole inline
   # collapses to `X` with no `(var :p = arg)` prologue to emit before the if.
-  # No renaming of the body's defs and no `emitSplice`: a body of this shape
-  # has no locals to rename and nothing to emit but `X` itself.
+  # No `seedRenameFromBody` and no `emitSplice`: a body of this shape has no
+  # locals to rename and nothing to emit but `X` itself.
   var rename = initTable[SymId, SymId]()
   for s in site.pSyms:
     rename[s] = c.freshSym(s)
-  let bnd = bindingsFor(c, site, rename)
+  let bnd = bindingsFor(c, site.pSyms, site.argCursors, site.pd.body, rename)
   for i in 0 ..< site.pSyms.len:
     if not bnd.subst.hasKey(site.pSyms[i]): return 0
 

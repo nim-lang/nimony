@@ -1,8 +1,7 @@
-# The inliner builds a callee's result directly in the call's destination
-# (`resultWrittenLast`), substitutes single-use arithmetic arguments at their
-# use (`isPureValueArg`), and sem no longer appends an unreachable
-# `return result` behind `return expr`. Each case below is one the forwarding
-# must get right even though an argument mentions the destination.
+# The inliner substitutes single-use arithmetic arguments at their use
+# (`isPureValueArg`), and sem no longer appends an unreachable `return result`
+# behind `return expr`, so a callee's result is built in the destination.
+# Each case below must stay correct when an argument mentions the destination.
 import std/syncio
 
 type
