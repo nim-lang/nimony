@@ -33,7 +33,34 @@ proc valueBreak() =
   for x in it("vb", 5):
     if x == 1: break
   echo "valueBreak done"
+
+# A local declared in an `except` after a `yield` is destroyed at the end of
+# its branch: the branch's `scope` must survive the state machine, or the
+# destructor runs at the end of the state proc, where the `jmp` past the
+# untaken branch left the local uninitialized.
+iterator inExcept(): int {.closure, sideEffect.} =
+  yield 1
+  try:
+    discard
+  except:
+    var s: seq[int]
+
+proc mayFail(fail: bool) {.raises.} =
+  if fail: raise Failure
+
+iterator inTakenExcept(fail: bool): int {.closure, sideEffect.} =
+  yield 1
+  try:
+    mayFail(fail)
+  except:
+    var t = Tracked(name: "except")
+    echo "  in except"
+  yield 2
+
 directFull()
 directBreak()
 valueFull()
 valueBreak()
+for x in inExcept(): echo "inExcept ", x
+for x in inTakenExcept(false): echo "untaken ", x
+for x in inTakenExcept(true): echo "taken ", x
