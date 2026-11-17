@@ -38,7 +38,8 @@ include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
 import lifter, mover, hexer_context, passes, closuretypes, defaultvalues
 import ".." / finalir / finalir_model
-import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
+import ".." / nimony / [nimony_model, programs, decls, typenav, typeprops,
+  expreval, xints, renderer, reporters, builtintypes, typekeys]
 include ".." / nimony / nif_annotations
 
 type
@@ -1226,7 +1227,116 @@ proc hasStaticPayload(n: Cursor): bool =
       break
     skip n
 
-proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
+proc constructorFieldValue(constr: Cursor; field: SymId): Cursor =
+  ## `constr` is an `oconstr` or the field list of a hexer-synthesized
+  ## `newobj` payload. Find the value of `field`, including a field living in
+  ## a nested constructor for an inherited base object.
+  var n = constr
+  if n.exprKind == OconstrX:
+    inc n # tag
+    skip n # type
+  while n.hasMore:
+    if n.substructureKind == KvU:
+      var v = n
+      inc v # kv
+      if v.kind == Symbol and v.symId == field:
+        inc v # field
+        return v
+      skip n
+    elif n.exprKind == OconstrX:
+      let val = constructorFieldValue(n, field)
+      if not cursorIsNil(val):
+        return val
+      skip n
+    else:
+      skip n
+  result = default(Cursor)
+
+proc caseSelectorIsRuntime(c: var Context; body: Cursor; constr: Cursor): bool =
+  ## Does any case section in this object's own field list have a selector
+  ## whose value is not a compile-time ordinal? Such a constructor cannot name
+  ## a branch at all, so its union storage starts uninitialized.
+  var body = body
+  var iter = initObjFieldIter()
+  while nextField(iter, body, keepCase = true):
+    if body.substructureKind == CaseU:
+      var branch = sub(body)
+      let selector = takeLocal(branch, SkipFinalParRi)
+      let value = constructorFieldValue(constr, selector.name.symId)
+      if cursorIsNil(value) or tryEvalOrdinal(c.lifter.bits, value).isNaN:
+        return true
+      skip body
+    else:
+      skip body
+  result = false
+
+proc objectNeedsZeroedConstr(c: var Context; impl: Cursor; constr: Cursor): bool =
+  let obj = asObjectDecl(impl)
+  var body = sub(obj.body)
+  skip body # inheritance
+  if caseSelectorIsRuntime(c, body, constr):
+    return true
+  if not obj.parentType.isDotToken:
+    let parentImpl = skipModifierAndOwned(toTypeImpl(obj.parentType))
+    if parentImpl.typeKind == ObjectT and
+        objectNeedsZeroedConstr(c, parentImpl, constr):
+      return true
+  result = false
+
+proc needsZeroedConstr(c: var Context; typ: Cursor; constr: Cursor): bool =
+  ## A case object's `oconstr` cannot name a branch when sem only knows its
+  ## discriminator at run time. C's compound literal zeroes the omitted storage
+  ## by accident; the native back end stores exactly what it is given. Make the
+  ## zero explicit before the constructor's stores, so both back ends agree.
+  ## A union object is always partial: only its active member is named.
+  let impl = skipModifierAndOwned(toTypeImpl(typ))
+  if impl.typeKind == ObjectT:
+    if typ.isSymbol:
+      let decl = getTypeSection(typ.symId)
+      if decl.kind == TypeY and hasPragma(decl.pragmas, UnionP):
+        return true
+    result = objectNeedsZeroedConstr(c, impl, constr)
+  else:
+    result = false
+
+proc bindZeroedConstr(c: var Context; typ: Cursor; start: int; info: NifLineInfo;
+                       kind: StmtKind): SymId =
+  ## `c.dest[start ..< ^0]` is a complete constructor expression. Bind it to
+  ## a temporary, zero that storage first, then let the constructor overwrite
+  ## the fields it names. The setup is ordinary statements moved in front of
+  ## the current statement, so no backend has to infer the missing stores.
+  var value = createTokenBuf()
+  var it = cursorAt(c.dest, start)
+  takeTree value, it
+  endRead it
+  c.dest.shrink start
+
+  let tmp = pool.symId("`tmp." & $c.tmpCounter)
+  inc c.tmpCounter
+
+  c.dest.addParLe(kind, info)
+  addSymDef c.dest, tmp, info
+  c.dest.addEmpty2 info # export marker, pragmas
+  copyTree c.dest, c.tempType(typ)
+  c.dest.addDotToken(info)
+  c.dest.addParRi()
+
+  copyIntoKind c.dest, CallS, info:
+    copyIntoSymUse c.dest, pool.symId("zeroMem.0." & SystemModuleSuffix), info
+    copyIntoKind c.dest, AddrX, info:
+      copyIntoSymUse c.dest, tmp, info
+    copyIntoKind c.dest, SizeofX, info:
+      copyTree c.dest, typ
+
+  copyIntoKind c.dest, AsgnS, info:
+    copyIntoSymUse c.dest, tmp, info
+    c.dest.add value
+
+  hoistTail c, start
+  copyIntoSymUse c.dest, tmp, info
+  result = tmp
+
+proc trObjConstrImpl(c: var Context; n: var Cursor; e: Expects; bindNonOwner: bool) =
   var ow = owningTempDefault()
   let typ = n.childCursor
   if hasDestructor(c, typ) and hasStaticPayload(n):
@@ -1243,7 +1353,7 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
     else:
       takeTree c.dest, n
     return
-  if hasDestructor(c, typ) and e == WantNonOwner:
+  if bindNonOwner and hasDestructor(c, typ) and e == WantNonOwner:
     ow = bindToTemp(c, typ, n.info)
   copyInto c.dest, n:
     takeTree c.dest, n
@@ -1267,6 +1377,20 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
           # optional inheritance
           takeTree c.dest, n
   finishOwningTemp c, ow
+
+proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
+  let typ = n.childCursor
+  if hasDestructor(c, typ) and hasStaticPayload(n):
+    # The value already lives in fully initialized static storage; copying it
+    # into a temp would make the temp own (and later destroy) that storage.
+    trObjConstrImpl c, n, e, bindNonOwner = true
+  elif needsZeroedConstr(c, typ, n):
+    let start = c.dest.len
+    trObjConstrImpl c, n, e, bindNonOwner = false
+    let kind = if e in {WillBeOwned, WantOwner}: CursorS else: VarS
+    discard bindZeroedConstr(c, typ, start, n.info, kind)
+  else:
+    trObjConstrImpl c, n, e, bindNonOwner = true
 
 proc trNewobjFields(c: var Context; n: var Cursor; objType: Cursor) =
   # drains the constructor fields; the enclosing scope's close is consumed
@@ -1402,9 +1526,13 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         if kind == NewobjX:
           skip n, SkipType
           if n.hasMore:
+            let zeroPayload = needsZeroedConstr(c, baseType, n)
+            let payloadStart = c.dest.len
             copyIntoKind c.dest, OconstrX, info:
               c.dest.addSubtree baseType
               trNewobjFields(c, n, baseType)
+            if zeroPayload:
+              discard bindZeroedConstr(c, baseType, payloadStart, info, CursorS)
           else:
             # A `newobj` that a hexer pass synthesized for a type it invented (a
             # closure environment, a coroutine frame) names no fields. The payload
@@ -1412,7 +1540,11 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
             # (`doc/tags.md`): the native back end stores exactly what is listed,
             # so an empty one left the frame's fields holding whatever the stack
             # temp it is built in held.
+            let zeroPayload = needsZeroedConstr(c, baseType, n)
+            let payloadStart = c.dest.len
             addDefaultValue(c.dest, baseType, info, c.lifter.bits div 8)
+            if zeroPayload:
+              discard bindZeroedConstr(c, baseType, payloadStart, info, CursorS)
         else:
           skip n, SkipType
           tr c, n, WantOwner # process default(T) call

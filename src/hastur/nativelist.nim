@@ -225,6 +225,11 @@ const
     # compound literal zeroed and arkham, storing only what is listed, did not:
     # the Nimony-built native lengc crashed destroying a garbage `seq`.
     "tests/nimony/object/tcaseobj_branchdefaults",
+    # The same invariant when the discriminator is a RUNTIME value: no branch is
+    # named at all, so the front end must zero a variant aggregate's whole extent
+    # before the partial constructor stores its fields. Found while porting
+    # `std/xmltree`, whose element branch owns a `seq` of the same node.
+    "tests/nimony/object/tcaseobj_runtime_discriminator",
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
     # x86-64 `bsf`, AArch64 `rbit`+`clz` — so this is the one test whose point is
     # that the C and native backends agree on results they reach by different
