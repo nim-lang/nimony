@@ -133,3 +133,36 @@ proc selfReslice =
   discard a[0]
 
 selfReslice()
+
+# 12. A location passed to a `sink` parameter is not to be used afterwards, and
+# a view of it read later is such a use: the callee may free the payload.
+proc consume(s: sink seq[int]): int = s.len
+
+proc viewReadAfterSink =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  discard consume(s)
+  discard view[0]
+
+viewReadAfterSink()
+
+# 13. The same for a `lent` call result the tuple still has to read: it is
+# hoisted before `consume(h.items)` runs.
+proc itemsOf(h: var Holder): lent seq[int] = h.items
+
+proc lentReadAfterSink =
+  var h = Holder(items: @[1, 2])
+  let t = (itemsOf(h), consume(h.items))
+  discard t
+
+lentReadAfterSink()
+
+# 14. In a loop the next iteration reads the view again.
+proc viewReadInNextIteration =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  for i in 0 ..< 2:
+    discard view[0]
+    discard consume(s)
+
+viewReadInNextIteration()

@@ -200,3 +200,35 @@ proc testCopiedViewAndReslice =
   assert r.len == 3
 
 testCopiedViewAndReslice()
+
+# A location may go to a `sink` parameter once the views of it are read for the
+# last time, also when a view lives in the loop body, and a view of a sibling
+# field does not hold it.
+proc consume(s: sink seq[int]): int = s.len
+
+type
+  Two = object
+    a, b: seq[int]
+
+proc testSinkAfterLastViewRead(c: bool) =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  assert view[0] == 1
+  assert consume(s) == 3
+  var r = @[4, 5]
+  for i in 0 ..< 2:
+    let v = toOpenArray(r)
+    assert v[0] == 4
+    assert consume(r) == 2
+  var t = @[6]
+  let w = toOpenArray(t)
+  if c:
+    assert consume(t) == 1
+  else:
+    assert w[0] == 6
+  var o = Two(a: @[7], b: @[8])
+  let x = toOpenArray(o.a)
+  assert consume(o.b) == 1
+  assert x[0] == 7
+
+testSinkAfterLastViewRead(true)

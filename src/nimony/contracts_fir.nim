@@ -61,7 +61,7 @@ import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof,
   aliasing
-import ".." / hexer / lifter
+import ".." / hexer / [lifter, mover]
 
 type
   BorrowableCheck = enum
@@ -225,6 +225,8 @@ type
     obligationOpen: bool               # a range obligation is being judged;
                                        # cleared when it is not discharged
     root: Cursor                       # the lowered module, for token positions
+    rootLen: int                       # ... and its length in tokens
+    mover: MoverContext                # asks whether a borrower is read later
     dischargedIndexes: HashSet[int]    # positions of proven `(arrat …)` nodes
     provenCalls: HashSet[int]          # positions of callees whose `.requires`
                                        # was proven
@@ -664,6 +666,31 @@ proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo) =
       break
   if conflict:
     buildErr c, info, "'" & asNimCode(locRootSym(c, mut)) & "' is borrowed and cannot be mutated"
+
+proc checkSinkBorrow(c: var FirContext; arg: Cursor) =
+  ## A location passed to a `sink` parameter is not to be used afterwards
+  ## (doc/language.md, "Sink parameters"), and a borrow of it read later is
+  ## such a use: `let v = toOpenArray(s); consume(s); echo v[0]` reads freed
+  ## memory. The borrower is a named view or a hoisted `var`/`lent`/view call
+  ## result, as `(borrow(x), drop(x))` keeps `borrow(x)` for the tuple.
+  ## Only a location the analysis of sink parameters is concerned with counts:
+  ## one reached through a pointer, such as a `var` parameter or a `seq`
+  ## element, is copied instead.
+  if rootOf(arg, CannotFollowDerefs) == NoSymId or not borrowMode(c, arg).isTracked:
+    return
+  var borrowers: seq[SymId] = @[]
+  for b in c.p.flow.borrows:
+    if overlaps(c, arg, true, b.loc, true): borrowers.add b.borrower
+  var temps: seq[(SymId, Cursor)] = @[] # asking about one changes `c`
+  for s, init in pairs(c.p.inlineVars): temps.add (s, init)
+  for t in temps:
+    if canCarryBorrow(c, t[1]) and overlaps(c, arg, true, t[1], true):
+      borrowers.add t[0]
+  for s in borrowers:
+    if isReadAfter(s, arg, c.root, c.rootLen, c.mover):
+      buildErr c, arg.info, "'" & asNimCode(locRootSym(c, arg)) &
+        "' is borrowed and cannot be passed to a 'sink' parameter"
+      return
 
 proc localInfoOf(c: var FirContext; s: SymId): LocalInfo =
   ## `getLocalInfo` only knows the locals of the proc under analysis; a global
@@ -4564,6 +4591,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
         mutatedRoots.add viaResult
       else:
         mutatesUnknown = true
+    if pk == SinkT: checkSinkBorrow c, n
     checkNilMatch c, n, param.typ
     # Binding an argument to a `range[lo..hi]` parameter is the same narrowing
     # as an assignment to one; the callee is proven from the declared type, so
@@ -6914,6 +6942,7 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
   block:
     var fin = beginRead(finalBuf)
     c.root = fin
+    c.rootLen = finalBuf.len
     traverseToplevel c, fin
     endRead(fin)
 
