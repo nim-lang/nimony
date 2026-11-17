@@ -3194,7 +3194,9 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
         savedSelector.add dest[i]
       dest.shrink selectorStart
       var needsExprClose = false
-      if savedSelector.len != 1 or savedSelector[0].kind != Symbol:
+      # A symbol may carry line-info/extended suffix tokens. Those are not part
+      # of the selector expression, so they must not force a `case` temp.
+      if lastValueStart(savedSelector) != 0 or savedSelector[0].kind != Symbol:
         dest.addParLe(ExprX, info)
         needsExprClose = true
         var tmpName = "`case"

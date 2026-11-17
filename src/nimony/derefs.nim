@@ -263,6 +263,15 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   var n = n
   var someIndirection = false
   while true:
+    if n.isSymbol:
+      # A sum-type field bound by a `case` pattern is a `PatternvarY` whose
+      # local info stores the field path it aliases. See through it so that
+      # returning such a field as `var T` follows the same rules as returning
+      # the field directly (#3008).
+      let local = c.typeCache.getLocalInfo(n.symId)
+      if local.kind == PatternvarY and not cursorIsNil(local.val):
+        n = local.val
+        continue
     case n.exprKind
     of DotX, AtX, ArratX, TupatX, ParX:
       inc n
