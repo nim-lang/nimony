@@ -21,6 +21,20 @@ func pairCmp(x, y: (string, int)): int =
   else: 0
 
 block:
+  # The size argument is a capacity hint; the table still starts empty.
+  var t = initTable[int, string](0)
+  assert t.len == 0
+  t[1] = "one"
+  assert t.getOrQuit(1) == "one"
+
+  var reserved = initTable[int, int](64)
+  assert reserved.len == 0
+  for i in 0 ..< 64:
+    reserved[i] = i
+  assert reserved.len == 64
+  assert reserved.getOrQuit(63) == 63
+
+block:
   var t = initTable[int, int]()
   assert not t.contains(123)
   assert not t.hasKey(123)

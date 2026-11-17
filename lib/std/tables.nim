@@ -284,9 +284,12 @@ func take*[K: Keyable, V](t: var Table[K, V]; key: K; val: var V): bool {.inline
   pop(t, key, val)
 
 func initTable*[K, V](initialSize = defaultInitialSize): Table[K, V] =
-  ## Creates an empty table.
-  discard initialSize
-  Table[K, V](data: @[], hashes: @[])
+  ## Creates an empty table, reserving room for `initialSize` entries.
+  ##
+  ## The dense pair sequence can reserve capacity without exposing empty
+  ## entries; the hash index is built lazily once the table outgrows the
+  ## linear-scan threshold.
+  Table[K, V](data: newSeqOfCap[(K, V)](initialSize), hashes: @[])
 
 func toTable*[K: Keyable, V](pairs: openArray[(K, V)]): Table[K, V] =
   ## Creates a table containing `pairs`.
