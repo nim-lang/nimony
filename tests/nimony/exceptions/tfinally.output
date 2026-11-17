@@ -9,4 +9,6 @@ Inside finally block
 C finally
 caught outside
 D inner finally
+E finally sees 1
+11
 Program end

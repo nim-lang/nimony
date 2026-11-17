@@ -2543,6 +2543,9 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
         dec c.routine.inExcept
       closeScope(c)
     if it.n.hasMore and it.n.substructureKind == FinU:
+      # `return x` must store `x` in `result` before the `finally` runs, as it
+      # does under a `defer`: `transformDefer` spells out that sugar.
+      c.routine.hasDefer = true
       takeInto dest, it.n:
         withNewScope c:
           semStmtBody c, dest, it.n, true
