@@ -2,6 +2,8 @@
 # (`isPureValueArg`), and sem no longer appends an unreachable `return result`
 # behind `return expr`, so a callee's result is built in the destination.
 # Each case below must stay correct when an argument mentions the destination.
+# An argument re-evaluated at its uses (`i + j`, `p[]`) must keep its value
+# when the callee writes what it reads.
 import std/syncio
 
 type
@@ -25,6 +27,23 @@ proc twice(x: float64): float64 {.inline.} =
   for i in 0 ..< 2:
     result = result + x
 
+proc bumpThenAdd(z: int; p: ptr int): int {.inline.} =
+  p[] = 100
+  result = z + p[]
+
+var ga = 5
+var gb = 7
+var gp: ptr int = addr ga
+
+proc repointGlobal(z: int): int {.inline.} =
+  {.cast(assumeSync).}:
+    gp = addr gb
+  result = z
+
+proc repointLocal(z: int; pp: ptr ptr int; b: ptr int): int {.inline.} =
+  pp[] = b
+  result = z
+
 proc main =
   var c = vec(1.0, 2.0, 3.0)
   let d = vec(2.0, 3.0, 4.0)
@@ -41,5 +60,14 @@ proc main =
   var s = 1.5
   s = twice(s - 0.5)
   echo s
+  var i = 5
+  var j = 1
+  echo bumpThenAdd(i + j, addr i)     # `i + j` is 6 at the call
+  {.cast(assumeSync).}:
+    echo repointGlobal(gp[])          # `gp[]` is 5 at the call
+  var a = 5
+  var b = 7
+  var p = addr a
+  echo repointLocal(p[], addr p, addr b)
 
 main()
