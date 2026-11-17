@@ -100,6 +100,7 @@ import std/rex
 import std/rawthreads
 import std/result
 import std/rlocks
+import std/ropes
 import std/sequtils
 import std/sets
 import std/setutils
