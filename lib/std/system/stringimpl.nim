@@ -1124,13 +1124,40 @@ func fromCString*(s: cstring): string =
 template `$`*(x: string): string = x
 
 when defined(wasm32) and defined(standalone):
-  # Used by the JS backend's `importjs` string bridge (nativenif's `jsToNimStr`).
+  # The JS back end's `importjs` string bridge reaches strings only through these (none overloaded).
   proc nimStrBeginStore(s: var string; newLen: int): ptr UncheckedArray[char]
       {.exportc: "nimStrBeginStore", noSideEffect, raises: [], tags: [].} =
-    ## `nil` if the allocation failed.
+    ## JS bridge entry point: makes the uninitialized slot `s` (never read) a
+    ## string of `newLen` bytes and returns where to write them; call
+    ## `nimStrEndStore` afterwards. `nil` if the allocation failed, and `s` is
+    ## then the OOM marker.
+    `=wasMoved`(s)
     result = beginStore(s, newLen)
     if isOom(s): result = nil
 
   proc nimStrEndStore(s: var string)
       {.exportc: "nimStrEndStore", noSideEffect, raises: [], tags: [].} =
+    ## JS bridge entry point: ends a `nimStrBeginStore` write.
     endStore(s)
+
+  proc nimStrBridgeDestroy(s: var string)
+      {.exportc: "nimStrBridgeDestroy", noSideEffect, raises: [], tags: [].} =
+    ## JS bridge entry point: runs `=destroy` on `s`.
+    `=destroy`(s)
+
+  proc nimStrBridgeCstr(s: var string): cstring
+      {.exportc: "nimStrBridgeCstr", noSideEffect, raises: [], tags: [].} =
+    ## JS bridge entry point: `s`'s bytes followed by a NUL, valid while `s`
+    ## lives and is not modified (see `toCString`).
+    result = toCString(s)
+
+  proc nimStrBridgeData(s {.byref.}: string): pointer
+      {.exportc: "nimStrBridgeData", noSideEffect, raises: [], tags: [].} =
+    ## JS bridge entry point: the address of `s`'s first byte; read
+    ## `nimStrBridgeLen(s)` bytes from it.
+    result = rawData(s)
+
+  proc nimStrBridgeLen(s: string): int
+      {.exportc: "nimStrBridgeLen", noSideEffect, raises: [], tags: [].} =
+    ## JS bridge entry point: the number of bytes in `s`.
+    result = len(s)
