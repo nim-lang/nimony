@@ -263,6 +263,9 @@ type
                                        # assignment target → those are address-
                                        # CSE'd (`(deref t)`), not value-CSE'd
     addrTaken: HashSet[SymId]
+    escaped: HashSet[SymId]         ## alias-class representatives of `addrTaken`,
+                                    ## kept in step by `markAddrTaken` (the partition
+                                    ## is fixed for the walk, so a rep never moves)
     guardDepth: int                 ## >0 while walking an operand of `(and …)`/`(or …)`
                                     ## that the first operand guards. Such a
                                     ## sub-expression does not run whenever its enclosing
@@ -358,10 +361,10 @@ proc hashExpr(c: Cursor; result: var string) =
   case c.kind
   of Symbol, SymbolDef:
     result.add 'S'
-    result.add symName(c)
+    result.addInt int(symId(c))   # the pool id names the symbol; no string copy
   of IntLit:
     result.add 'I'
-    result.add $intVal(c)
+    result.addInt intVal(c)
   of UIntLit:
     result.add 'U'
     result.add $uintVal(c)
@@ -562,7 +565,7 @@ proc provenKey(c: var Context; cur: Cursor; result: var string; depth = 0) =
       var d = cursorAt(c.orig[], c.defExpr.getOrQuit(s))
       provenKey(c, d, result, depth + 1)
     else:
-      result.add 'S'; result.add symName(cur)
+      result.add 'S'; result.addInt int(s)
   of TagLit:
     result.add '('
     result.addInt int cursorTagId(cur)
@@ -699,26 +702,17 @@ proc expressionTouchesClass(c: var Context; cur: Cursor;
   else:
     return false
 
-proc escapedClassReps(c: var Context): HashSet[SymId] =
-  ## Alias-class representatives of every symbol whose address has escaped so far.
-  ## Incremental on purpose: an `addr x` that appears later in the body cannot have
-  ## reached a callee we are invalidating for now.
-  result = initHashSet[SymId]()
-  for s in c.addrTaken: result.incl c.aa.find(s)
-
-proc rootsUnreachableByCallee(c: var Context; roots: seq[SymId];
-                              escaped: HashSet[SymId]): bool =
+proc rootsUnreachableByCallee(c: var Context; roots: seq[SymId]): bool =
   ## The root-list form of `unreachableByCallee` — the guard facts carry their
   ## resolved roots directly, so they answer the same question without a cursor.
   if roots.len == 0: return false          # nothing to reason about → conservative
   for s in roots:
     if s notin c.bodyLocals: return false  # a param/global/unknown: assume reachable
     if s in c.addrTaken: return false
-    if c.aa.find(s) in escaped: return false
+    if c.aa.find(s) in c.escaped: return false
   result = true
 
-proc unreachableByCallee(c: var Context; exprCur: Cursor;
-                         escaped: HashSet[SymId]): bool =
+proc unreachableByCallee(c: var Context; exprCur: Cursor): bool =
   ## True when no callee — not even one that writes globals or calls unknown code
   ## — can reach the memory `exprCur` reads.
   ##
@@ -735,17 +729,16 @@ proc unreachableByCallee(c: var Context; exprCur: Cursor;
   ## the local's class has escaped, we must assume the local has too.
   var roots: seq[SymId] = @[]
   accessRoots(exprCur, roots, c.m)
-  result = rootsUnreachableByCallee(c, roots, escaped)
+  result = rootsUnreachableByCallee(c, roots)
 
 proc clearCacheReachable(c: var Context) =
   ## The blanket `clearCache` a call used to do, minus the entries the callee
   ## provably cannot reach. This is the difference between "a call happened, drop
   ## everything" and using the summaries we compute.
   var toClear: seq[string] = @[]
-  let escaped = escapedClassReps(c)
   for key, entry in c.cache.pairs:
     if not entry.hasFirst: continue
-    if not unreachableByCallee(c, cursorAt(c.orig[], entry.firstExprPos), escaped):
+    if not unreachableByCallee(c, cursorAt(c.orig[], entry.firstExprPos)):
       toClear.add key
     else:
       when defined(cseSummaryStats): inc gEntriesKept
@@ -754,7 +747,7 @@ proc clearCacheReachable(c: var Context) =
   var dropFacts: seq[string] = @[]
   var provenRoots = move c.provenRoots # moved out: `c` is passed alongside
   for key, idx in c.proven.pairs:
-    if idx > 0 and not rootsUnreachableByCallee(c, provenRoots[idx-1], escaped):
+    if idx > 0 and not rootsUnreachableByCallee(c, provenRoots[idx-1]):
       dropFacts.add key
   c.provenRoots = move provenRoots
   for key in dropFacts: c.proven[key] = 0
@@ -788,8 +781,7 @@ proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
 
 # ---- path-based invalidation (doc/cse.md) ---------------------------------
 
-proc reachableByPointer(c: var Context; root: SymId;
-                        escaped: HashSet[SymId]): bool =
+proc reachableByPointer(c: var Context; root: SymId): bool =
   ## Can any pointer in this body name `root`'s storage? Only if the address of
   ## `root` (or of something its alias class was merged with) has been taken, or
   ## if it is not a local of this body at all — a global or a parameter is
@@ -798,7 +790,7 @@ proc reachableByPointer(c: var Context; root: SymId;
   if root == SymId(0): return true
   if root notin c.bodyLocals and root notin c.paramSyms: return true
   if root in c.addrTaken: return true
-  result = c.aa.find(root) in escaped
+  result = c.aa.find(root) in c.escaped
 
 proc classesMayAlias(c: var Context; a, b: SymId): bool {.inline.} =
   ## `master`'s answer: the intra-proc alias partition, which is what the type
@@ -806,8 +798,7 @@ proc classesMayAlias(c: var Context; a, b: SymId): bool {.inline.} =
   if a == SymId(0) or b == SymId(0): return true
   result = c.aa.find(a) == c.aa.find(b)
 
-proc mayOverlap(c: var Context; p, w: AccessPath;
-                escaped: HashSet[SymId]): bool =
+proc mayOverlap(c: var Context; p, w: AccessPath): bool =
   ## Can a write to `w` change what a read of `p` reads?
   ##
   ## Two independent over-approximations, and an entry only dies when both say
@@ -827,18 +818,17 @@ proc mayOverlap(c: var Context; p, w: AccessPath;
     else:
       # `p` reads through a pointer; it can only land on `w`'s storage if that
       # storage is something a pointer can name at all.
-      byPath = reachableByPointer(c, w.root, escaped)
+      byPath = reachableByPointer(c, w.root)
   else:
     if p.isDirect:
-      byPath = reachableByPointer(c, p.root, escaped)
+      byPath = reachableByPointer(c, p.root)
     else:
       # Two indirect paths: nothing in the path distinguishes two pointers
       # (`doc/cse.md`, lesson 4), so this is where the partition answers.
       byPath = true
   result = byPath and classesMayAlias(c, p.root, w.root)
 
-proc expressionOverlaps(c: var Context; cur: Cursor; w: AccessPath;
-                        escaped: HashSet[SymId]): bool =
+proc expressionOverlaps(c: var Context; cur: Cursor; w: AccessPath): bool =
   ## Does any path the expression reads overlap the written path?
   c.pathScratch.setLen 0
   collectReadPaths(cur, c.pathScratch)
@@ -846,13 +836,13 @@ proc expressionOverlaps(c: var Context; cur: Cursor; w: AccessPath;
   var paths = move c.pathScratch # moved out: `c` is passed alongside
   result = false
   for i in 0 ..< paths.len:
-    if mayOverlap(c, paths[i], w, escaped):
+    if mayOverlap(c, paths[i], w):
       result = true
       break
   c.pathScratch = move paths
 
 proc callClobbersEntry(c: var Context; cur: Cursor; written: seq[AccessPath];
-                       reps: HashSet[SymId]; escaped: HashSet[SymId]): bool =
+                       reps: HashSet[SymId]): bool =
   ## Rule 4 of `doc/cse.md`, for a call whose summary is known and which writes
   ## neither a global nor through an unknown callee. What it can still write is
   ## the written arguments' own locations, and the memory reachable through them
@@ -869,19 +859,18 @@ proc callClobbersEntry(c: var Context; cur: Cursor; written: seq[AccessPath];
     # escaped ones); as in `mayOverlap`, a kill needs both analyses to agree.
     if p.root != SymId(0) and c.aa.find(p.root) notin reps: continue
     if p.isIndirect: return true
-    if reachableByPointer(c, p.root, escaped): return true
+    if reachableByPointer(c, p.root): return true
     for w in written:
-      if mayOverlap(c, p, w, escaped): return true
+      if mayOverlap(c, p, w): return true
   result = false
 
 proc clobberForCall(c: var Context; written: seq[AccessPath];
                     reps: HashSet[SymId]) =
   var toClear: seq[string] = @[]
-  let escaped = escapedClassReps(c)
   for key, entry in c.cache.pairs:
     if not entry.hasFirst: continue
     let exprCur = cursorAt(c.orig[], entry.firstExprPos)
-    let killed = callClobbersEntry(c, exprCur, written, reps, escaped)
+    let killed = callClobbersEntry(c, exprCur, written, reps)
     when defined(cseSummaryStats):
       if not killed and expressionTouchesClass(c, exprCur, reps):
         inc gPathSavedCall
@@ -894,7 +883,6 @@ proc clobberForCall(c: var Context; written: seq[AccessPath];
 proc clobberPath(c: var Context; w: AccessPath; exempt = "") =
   ## Drop every cached load a write to `w` may have changed.
   var toClear: seq[string] = @[]
-  let escaped = escapedClassReps(c)
   when defined(cseSummaryStats):
     var reps = initHashSet[SymId]()
     reps.incl c.aa.find(w.root)
@@ -902,7 +890,7 @@ proc clobberPath(c: var Context; w: AccessPath; exempt = "") =
     if not entry.hasFirst: continue
     if key == exempt: continue
     let exprCur = cursorAt(c.orig[], entry.firstExprPos)
-    let killed = expressionOverlaps(c, exprCur, w, escaped)
+    let killed = expressionOverlaps(c, exprCur, w)
     when defined(cseSummaryStats):
       inc gPathTests
       if not killed and expressionTouchesClass(c, exprCur, reps):
@@ -1158,8 +1146,7 @@ proc invalidateForCall(c: var Context; call: Cursor) =
   # — those whose parameter shares a written summary class — plus the classes of
   # any escaped symbol. Using the class (not just the actual symbol) closes the
   # gap where a cached load is rooted at a local that aliases the actual.
-  var reps = initHashSet[SymId]()
-  for s in c.addrTaken: reps.incl c.aa.find(s)
+  var reps = c.escaped
   for i in 0 ..< argSyms.len:
     if argSyms[i] == SymId(0): continue
     let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
@@ -1214,10 +1201,10 @@ proc callWouldClobber(c: var Context; call, expr: Cursor): bool =
   result = false
   var summary = FunctionSummary()
   if not callSummary(c, call, summary):
-    return not unreachableByCallee(c, expr, escapedClassReps(c))
+    return not unreachableByCallee(c, expr)
   if summary.noReturn: return false
   if summary.writesGlobal or summary.callsUnknown:
-    return not unreachableByCallee(c, expr, escapedClassReps(c))
+    return not unreachableByCallee(c, expr)
   var argSyms: seq[SymId] = @[]
   var argPaths: seq[AccessPath] = @[]
   var writtenClasses = initHashSet[uint32]()
@@ -1236,8 +1223,7 @@ proc callWouldClobber(c: var Context; call, expr: Cursor): bool =
       skip ca
       inc argIndex
   if writtenClasses.len == 0: return false
-  var reps = initHashSet[SymId]()
-  for s in c.addrTaken: reps.incl c.aa.find(s)
+  var reps = c.escaped
   for i in 0 ..< argSyms.len:
     if argSyms[i] == SymId(0): continue
     let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
@@ -1250,7 +1236,7 @@ proc callWouldClobber(c: var Context; call, expr: Cursor): bool =
     for i in 0 ..< argPaths.len:
       let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
       if cls in writtenClasses: written.add argPaths[i]
-    result = callClobbersEntry(c, expr, written, reps, escapedClassReps(c))
+    result = callClobbersEntry(c, expr, written, reps)
   else:
     result = expressionTouchesClass(c, expr, reps)
 
@@ -1260,7 +1246,7 @@ proc storeInLoopClobbersByClass(c: var Context; expr: Cursor;
   ## root's alias class touches it, at root granularity.
   for s in frame.memStoreRoots:
     if s == SymId(0):
-      if not unreachableByCallee(c, expr, escapedClassReps(c)): return true
+      if not unreachableByCallee(c, expr): return true
     else:
       var one = initHashSet[SymId]()
       one.incl c.aa.find(s)
@@ -1271,12 +1257,11 @@ proc storeInLoopClobbers(c: var Context; expr: Cursor; frame: LoopFrame): bool =
   ## Does any store in the loop reach `expr`? The path answer, intersected with
   ## the alias classes inside `mayOverlap` — the same rule the cache uses for a
   ## store, so a loop that writes `o.b` stops holding a load of `o.a` down.
-  let escaped = escapedClassReps(c)
   for i in 0 ..< frame.memStorePaths.len:
     let w = frame.memStorePaths[i]
     if not w.known:
-      if not unreachableByCallee(c, expr, escaped): return true
-    elif expressionOverlaps(c, expr, w, escaped):
+      if not unreachableByCallee(c, expr): return true
+    elif expressionOverlaps(c, expr, w):
       return true
   result = false
 
@@ -1445,6 +1430,7 @@ proc clearCache(c: var Context) = (c.cache.clearAll(); c.proven.clearAll())
 proc markAddrTaken(c: var Context; s: SymId; exempt = "") =
   if s in c.addrTaken: return
   c.addrTaken.incl s
+  c.escaped.incl c.aa.find(s)
   invalidateMentioning(c, s, exempt)
 
 # ---- main traversal -------------------------------------------------------
@@ -1537,6 +1523,10 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   ## loads/writes of `L`) but rewrite the whole `(addr L)` node to the bare temp.
   let lvalueCur = if isAddrOf: child0(n) else: n
   let key = hashExpr(lvalueCur)
+  let addrMode = key in c.writeTargets
+  when not AddressCSE:
+    # Refused below whatever its type: decide it before the (costly) `getType`.
+    if addrMode or isAddrOf: return false
   # Don't *value*-CSE an aggregate load: it copies the whole object/array. An
   # lvalue that is also a write target / addr-of'd is address-CSE'd (caches a cheap
   # pointer), so it stays eligible — only plain value loads are skipped here. A load
@@ -1544,9 +1534,8 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   # temp's inferred type would be `(err)` and break the C backend.
   let cls = classifyLoad(c, lvalueCur)
   if cls == ltcUnknown: return false
-  if key notin c.writeTargets and cls == ltcAggregate:
+  if not addrMode and cls == ltcAggregate:
     return false
-  let addrMode = key in c.writeTargets
   when not AddressCSE:
     # `addrMode`/`isAddrOf` means we'd cache an address (`&L`) as a held pointer temp.
     # Don't: on the arkham targets the address folds into the load/store addressing mode
