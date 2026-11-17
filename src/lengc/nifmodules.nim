@@ -221,6 +221,13 @@ proc processToplevelDecl(c: var MainModule; n: var Cursor; kind: LengSym;
   c.defs[s] = Definition(pos: decl, kind: kind, extern: extern,
                          isImport: isImport, bareImport: bareImport)
 
+proc registerProcDecl*(c: var MainModule; decl: Cursor) =
+  ## Make a `(proc …)` a pass synthesizes known before it is part of the
+  ## module, so `getDeclOrNil` finds it. `decl` must stay valid as long as `c`
+  ## is used.
+  var n = decl
+  processToplevelDecl(c, n, ProcY, 3)
+
 proc detectToplevelDecls(c: var MainModule) =
   var n = cursorAt(c.src, 0)
   if n.kind != TagLit: return
