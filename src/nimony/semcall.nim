@@ -1048,10 +1048,13 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   # `c.compiledMacros`. A macro imported from another module has its
   # declaration semchecked in the *defining* module's run, not here, so it is
   # absent from this run's `compiledMacros` — but the dependency build already
-  # compiled its plugin into the shared nifcache. Accept that on-disk plugin so
-  # imported macros (e.g. an importable `{.async.}`) expand too.
-  if finalFn in c.compiledMacros or
-     macroPluginExists(c.g.config.nifcachePath, finalFn):
+  # compiled its plugin into the shared nifcache (or the stdlib cache, for a
+  # stdlib module). Accept that on-disk plugin so imported macros expand too.
+  let pluginPath =
+    if finalFn in c.compiledMacros: c.compiledMacros.getOrDefault(finalFn)
+    else: findMacroPluginPath(c.g.config.nifcachePath,
+                              c.g.config.stdcachePath, finalFn)
+  if pluginPath.len > 0:
     # Serialize arguments to NIF. Prefer `arg.orig` (raw, pre-sem AST) so
     # macros that walk their bodies aren't tripped by sem-attached `(err
     # …)` diagnostics or other sem rewrites the user never wrote.
@@ -1066,8 +1069,8 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
 
     # Run the macro plugin
     var expandedInto = createTokenBuf(30)
-    let success = runMacroPlugin(c.g.config.nifcachePath, expandedInto,
-                                  cs.callNodeInfo, finalFn, argsBuf)
+    let success = runMacroPlugin(pluginPath, c.g.config.nifcachePath,
+                                  expandedInto, cs.callNodeInfo, finalFn, argsBuf)
     if success:
       # Shrink dest to before the call and semcheck the expanded output
       dest.shrink cs.beforeCall

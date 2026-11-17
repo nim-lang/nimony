@@ -281,13 +281,18 @@ proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
   when defined(windows):
     result.add ".exe"
 
-proc macroPluginExists*(nifcachePath: string; macroSym: SymId): bool =
-  ## True when a compiled plugin binary for `macroSym` already sits in the
-  ## shared nifcache. Used to recognise a macro imported from another module:
-  ## its declaration is never re-semchecked in the importer (so it is absent
-  ## from `SemContext.compiledMacros`), but the dependency build compiled its
-  ## plugin into the same nifcache we read here.
-  fileExists(getMacroPluginPath(nifcachePath, macroSym))
+proc findMacroPluginPath*(nifcachePath, stdcachePath: string;
+                          macroSym: SymId): string =
+  ## Finds the plugin of a macro imported from another module. A macro from
+  ## the main build lives in `nifcachePath`; a stdlib macro's plugin lives in
+  ## the shared stdlib cache instead, because that is where the stdlib module
+  ## was semchecked.
+  result = getMacroPluginPath(nifcachePath, macroSym)
+  if fileExists(result): return
+  result = ""
+  if stdcachePath.len > 0:
+    let stdPath = getMacroPluginPath(stdcachePath, macroSym)
+    if fileExists(stdPath): result = stdPath
 
 proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymId;
                          info: NifLineInfo;
@@ -399,17 +404,16 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
 
   result = exePath
 
-proc runMacroPlugin*(nifcachePath: string; dest: var TokenBuf;
+proc runMacroPlugin*(exePath, workCache: string; dest: var TokenBuf;
                      info: NifLineInfo;
                      macroSym: SymId; args: TokenBuf): bool =
-  let exePath = getMacroPluginPath(nifcachePath, macroSym)
   if not fileExists(exePath):
     echo "Macro plugin not found: ", exePath
     return false
 
   let stem = macroFileStem(macroSym)
-  let inputPath = nifcachePath / stem & ".in.nif"
-  let outputPath = nifcachePath / stem & ".out.nif"
+  let inputPath = workCache / stem & ".in.nif"
+  let outputPath = workCache / stem & ".out.nif"
   try:
     writeFile(inputPath, toString(args))
   except:
