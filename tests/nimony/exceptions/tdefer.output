@@ -9,3 +9,10 @@ ac
 release 1
 1
 caught
+c
+outer defer
+not c
+outer defer
+body
+nested
+outer

@@ -112,7 +112,8 @@ proc trDefer(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # capture the (transformed) defer body; the wrap happens at scope end
   var deferBody = createTokenBuf(50)
   n.into: # enter (defer
-    trStmt c, deferBody, n
+    # a scope of its own: a `defer` in this body is wrapped in `deferBody`
+    trBlock c, deferBody, n
   c.actionStack.add ActionItem(id: mine, pos: startsAt, action: ensureMove deferBody)
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.retSym != NoSymId and not (n.childCursor.isSymbol and n.childCursor.symId == c.retSym):

@@ -64,3 +64,34 @@ try:
   echo g(-1)
 except:
   echo "caught"
+
+# a branch scope inside a `defer` body must not be mistaken for the enclosing
+# block: the block's first `defer` was wrapped around the `if c` branch only
+proc branchInDefer(c: bool) =
+  var v0 = 0
+  var v1 = 1
+  discard 0
+  block:
+    defer:
+      echo "outer defer"
+    defer:
+      if c:
+        echo "c"
+      else:
+        echo "not c"
+
+branchInDefer(true)
+branchInDefer(false)
+
+# a `defer` directly inside a `defer` body
+proc deferInDefer() =
+  var x = 0
+  discard 0
+  defer:
+    echo "outer"
+  defer:
+    defer:
+      echo "nested"
+    echo "body"
+
+deferInDefer()
