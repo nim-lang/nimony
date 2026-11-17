@@ -350,14 +350,18 @@ proc emitFinCopy(c: var Context; dest: var TokenBuf; fin: Cursor) =
   endRead n
 
 proc replicateFin(c: var Context; dest: var TokenBuf; idx: int) =
-  ## `emitFinCopy` for an exit scope, with its `fin` DETACHED for the
-  ## duration: a `raise` inside the copy unwinds this very stack, and would
-  ## otherwise replicate the same body forever.
-  if cursorIsNil(c.exits[idx].fin): return
-  let saved = c.exits[idx].fin
-  c.exits[idx].fin = default(Cursor)
-  emitFinCopy c, dest, saved
-  c.exits[idx].fin = saved
+  ## `emitFinCopy` for an exit scope, with frames `idx..^1` taken off the
+  ## stack for the duration: the copy runs once they have been left, so a
+  ## `raise`/`return`/`break` inside it unwinds only the frames outside them.
+  ## Frame `idx` still on the stack would catch a raise in its own handler and
+  ## replicate its own body forever; an inner frame would run its `finally`
+  ## twice.
+  let fin = c.exits[idx].fin
+  if cursorIsNil(fin): return
+  var left: seq[ExitScope] = @[]
+  while c.exits.len > idx: left.add c.exits.pop()
+  emitFinCopy c, dest, fin
+  while left.len > 0: c.exits.add left.pop()
 
 proc emitFinsDownTo(c: var Context; dest: var TokenBuf; stopAt: int) =
   ## Replicate the `finally` of every exit scope from the innermost down to

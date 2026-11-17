@@ -38,4 +38,33 @@ proc main() =
     echo "Inside finally block"
 
 main()
+
+# A raise in the `finally` a `return` runs leaves the `try`: its own `except`
+# does not catch it.
+proc finRaisesOnReturn() {.raises.} =
+  try:
+    return
+  except:
+    echo "own except: must not run"
+  finally:
+    echo "C finally"
+    raise SyntaxError
+
+try:
+  finRaisesOnReturn()
+except:
+  echo "caught outside"
+
+# A `return` in an outer `finally` does not rerun the inner `finally` that the
+# first `return` already ran.
+proc returnInOuterFin() =
+  try:
+    try:
+      return
+    finally:
+      echo "D inner finally"
+  finally:
+    return
+
+returnInOuterFin()
 echo "Program end"
