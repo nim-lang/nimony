@@ -14,8 +14,8 @@
 import std / [assertions, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
-import passes
+import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes, sizeof, xints]
+import passes, defaultvalues
 import ".." / finalir / finalir_model
 import ".." / models / tags
 include ".." / nimony / nif_annotations
@@ -97,6 +97,7 @@ type
     goal: Goal
     bitCastsInBackend: bool  ## the backend reinterprets a cross-family `cast`
                              ## itself (arkham: `movq`), so it stays a `cast`
+    ptrSize: int
 
 proc initTarget(m: Mode): Target {.inline.} =
   ## Every `Target` buffer is bound to the global pools up front: a `Target`
@@ -1440,7 +1441,9 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     return
 
   # Cross-family value type cast (e.g. int↔float):
-  # lower to copyMem(addr dest, addr src, sizeof(DstType))
+  # lower to copyMem(addr dest, addr src, sizeof(SmallerType)). A larger dest
+  # starts zeroed: "the remaining memory is zeroed" (doc/language.md, "Type casts").
+  let widens = getSize(srcType, c.ptrSize) < getSize(destType, c.ptrSize)
   var srcTarget = initTarget(IsEmpty)
   trExpr c, dest, n, srcTarget
   n = castStart; skip n
@@ -1474,9 +1477,12 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     dest.copyIntoKind PragmasS, info:
       dest.copyIntoKind InlineP, info: discard
     dest.addSubtree destType
-    dest.addDotToken() # no initializer
+    if widens:
+      dest.addDefaultValue destType, info, c.ptrSize
+    else:
+      dest.addDotToken() # no initializer
 
-  # Emit: copyMem(addr dstSym, addr srcSym, sizeof(DstType))
+  # Emit: copyMem(addr dstSym, addr srcSym, sizeof(SmallerType))
   let copyMemSym = pool.symId("copyMem.0." & SystemModuleSuffix)
   copyIntoKind dest, CallX, info:
     dest.addSymUse copyMemSym, info
@@ -1485,7 +1491,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     dest.copyIntoKind AddrX, info:
       dest.addSymUse srcSym, info
     dest.copyIntoKind SizeofX, info:
-      dest.addSubtree destType
+      dest.addSubtree(if widens: srcType else: destType)
 
   tar.t.addSymUse dstSym, info
 
@@ -1610,7 +1616,7 @@ proc lowerExprs*(pass: var Pass; goal: Goal; bitCastsInBackend = false) =
   # `finalir` and again as `xelim_final`, and restarting from 0 would mint
   # colliding `\`x.<n>` names within one function.
   var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, goal: goal,
-                  bitCastsInBackend: bitCastsInBackend)
+                  bitCastsInBackend: bitCastsInBackend, ptrSize: pass.bits div 8)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   preRegisterRoutines(c, n)

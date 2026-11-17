@@ -71,3 +71,12 @@ assert cast[int16](i8) == 254'i16
 assert cast[uint64](i32) == 0xFFFF_FFFF'u64
 assert cast[int](i32) == 0xFFFF_FFFF
 assert cast[uint64](en) == 0xFFFF_FFFE'u64 # an enum with a negative value is 32 bits
+
+# A cast between an integer and a float of a larger size copies only the
+# source's bytes and zeroes the rest (planetis-m/nimony-bugs-llms#230).
+# `nb` and `na` put non-zero bytes next to the sources.
+var nb = -1'i64
+var bo = true
+var na = -1'i64
+assert cast[uint64](cast[float](bo)) == 1'u64
+assert cast[uint64](cast[float](i32)) == 0xFFFF_FFFF'u64
