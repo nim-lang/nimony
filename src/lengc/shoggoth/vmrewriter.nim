@@ -798,26 +798,30 @@ proc rewriteNode(e: Engine; src: var Cursor; dest: var TokenBuf;
     skip src
     return
   let tagId = cursorTagId(src)
-  let li = rawLineInfo(src)
   let isList = tagId == e.stmtsTag or tagId == e.scopeTag
-  var tmp = createTokenBuf(16, e.pool, e.tags)
-  tmp.openTag tagId
-  tmp.appendLineInfo li
+  # The children are rewritten straight into `dest`, and the rules are tried on
+  # the node right where it landed. Building every node in a buffer of its own
+  # and copying it into its parent's copied each node once per ancestor, and
+  # cost two buffers per node, rules or not.
+  let start = dest.len
+  dest.openTag tagId
+  dest.appendLineInfo rawLineInfo(src)
   src.into:
     while src.hasMore:
-      rewriteNode(e, src, tmp, fired, isList)
-  tmp.closeTag()
-  var tc = tmp.beginRead()
+      rewriteNode(e, src, dest, fired, isList)
+  dest.closeTag()
+  if e.dispatch.getOrDefault(tagId, -1) < 0: return   # no rule has this head
+  var node = cursorAt(dest, start)
   var res = createTokenBuf(16, e.pool, e.tags)
-  if tryRulesAt(e, tc, res):
+  let hit = tryRulesAt(e, node, res)
+  endRead node            # before `dest` changes again (no copy-on-write)
+  if hit:
     fired = true
+    dest.shrink start
     var rc = res.beginRead()
     if not (inList and rc.kind == DotToken):
       dest.addSubtree rc
     endRead rc
-  else:
-    var tc2 = tmp.beginRead()
-    dest.addSubtree tc2
 
 proc runRewrites*(e: Engine; buf: var TokenBuf): bool =
   var fired = false
