@@ -208,11 +208,24 @@ proc revertFrom[K: Keyable, V](t: var Tracker[K, V]; start: int) =
   ## Restore `base` to its state at log index `start` by walking the slice
   ## backward and replaying `prev` values. Does not shrink the log.
   for i in countdown(t.log.high, start):
-    let e = t.log[i]
-    if e.prev == default(V):
-      t.base.del e.key
+    if t.log[i].prev == default(V):
+      t.base.del t.log[i].key
     else:
-      t.base[e.key] = e.prev
+      t.base[t.log[i].key] = t.log[i].prev
+
+type
+  MergeCell[V] = object
+    v: V
+    writers: int
+    lastSib: int
+    conflict: bool
+
+proc noteWrite[V](cell: var MergeCell[V]; sib: int; v: V) {.inline.} =
+  if cell.lastSib == sib: return   # superseded by a later write of this sibling
+  cell.lastSib = sib
+  if cell.writers == 0: cell.v = v
+  elif cell.v != v: cell.conflict = true
+  inc cell.writers
 
 proc finalValues[K: Keyable, V](t: Tracker[K, V]; lo, hi: int): Table[K, V] =
   ## Last-write-wins map for log[lo ..< hi]. Computed by a backward walk.
@@ -357,6 +370,8 @@ proc closeBranches*[K: Keyable, V](t: var Tracker[K, V]) =
     # but defensively shrink.
     t.log.setLen groupLogStart
     return
+  if groupLogStart == t.log.len:
+    return  # no sibling wrote anything: the join is the pre-group state
 
   # End boundary for each sibling slice.
   var ends = newSeq[int](n)
@@ -369,36 +384,28 @@ proc closeBranches*[K: Keyable, V](t: var Tracker[K, V]) =
       # (no further entries were added after its closeBranch).
       t.log.len
 
-  # Gather every key touched in any sibling.
-  var touched = initHashSet[K]()
-  for i in groupLogStart ..< t.log.len:
-    touched.incl t.log[i].key
-
-  # For each sibling, build its final-values view and intersect by equality.
-  var merged = initTable[K, V]()
-  var disagreed = initHashSet[K]()
+  # One cell per key touched in any sibling: the value its writers agree on,
+  # how many siblings wrote it, and whether two of them disagreed. A sibling's
+  # slice is walked backward, so its first sighting of a key is its last write
+  # (`lastSib` makes the earlier writes of the same sibling no-ops).
+  var cells = initTable[K, MergeCell[V]]()
   for s in 0 ..< n:
-    let sibFinal = t.finalValues(grp.sibStarts[s], ends[s])
-    let sibBaseFallback = t.base  # pre-group base (we have fully reverted)
-    for k in touched:
-      if k in disagreed: continue
-      let v = sibFinal.getOrDefault(k, sibBaseFallback.getOrDefault(k))
-      if s == 0:
-        merged[k] = v
-      elif merged.getOrDefault(k) != v:
-        disagreed.incl k
-        merged.del k
+    for i in countdown(ends[s] - 1, grp.sibStarts[s]):
+      noteWrite(cells.mgetOrPut(t.log[i].key, MergeCell[V](lastSib: -1)), s,
+                t.log[i].next)
 
   # Drop the entire group slice; we are about to replay the merged delta
-  # against the enclosing scope.
+  # against the enclosing scope (whose `base` is the pre-group state: every
+  # sibling was fully reverted). A sibling that did not write a key holds the
+  # pre-group value there, so the key survives iff the writers agree and either
+  # every sibling wrote it or the pre-group value is the agreed one too. On no
+  # agreement it goes to `default(V)`.
   t.log.setLen groupLogStart
-
-  for k, v in merged.pairs:
-    t[k] = v
-  for k in disagreed:
-    # Pre-group base may have held a non-default value here; clear it so
-    # the post-join state matches "no agreement → default".
-    if t.base.getOrDefault(k) != default(V):
+  for k, cell in cells.pairs:
+    let pre = t.base.getOrDefault(k)
+    if not cell.conflict and (cell.writers == n or pre == cell.v):
+      t[k] = cell.v
+    elif pre != default(V):
       t[k] = default(V)
 
 # ---- additive join (set-union for HashSet values) -------------------------
@@ -523,8 +530,8 @@ proc landLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1
   assert L notin t.landed,
     "landLabel: label " & $uint32(L) & " landed twice"
   t.landed.incl L
-  var incomings = t.labels.getOrDefault(L)
-  t.labels.del L
+  var incomings: seq[LabelIncoming[K, V]] = @[]
+  discard t.labels.pop(L, incomings)
   let here = t.currentPath()
   for incoming in incomings:
     # A `jmp` may leave nested statements, never enter them: this `lab` must be
@@ -536,6 +543,10 @@ proc landLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1
   if arity >= 0:
     assert incomings.len == arity,
       "landLabel: expected " & $arity & " jumps, got " & $incomings.len
+  # Intersect by equality. A key absent from any incoming state is `default(V)`
+  # there, so only the keys of ONE incoming can survive: walk those and keep a
+  # key iff every other incoming holds the same value.
+  #
   # The current straight-line state is itself one incoming path — unless the
   # path already diverged (we got here right after a `jmp`/`ret`/`raise`), in
   # which case the fall-through edge does not exist and its state is stale.
@@ -543,39 +554,39 @@ proc landLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1
   # (lab L)` pair that ends every inlined callee, the "fall-through" is the
   # pre-jump state that `gotoLabel` has already rewound.
   if not t.pathDiverged:
-    incomings.add LabelIncoming[K, V](state: t.snapshotCurrent(), path: here)
-
-  # Keys touched by any incoming.
-  var touched = initHashSet[K]()
-  for incoming in incomings:
-    for k in incoming.state.keys: touched.incl k
-  # Plus keys currently set (so they can be cleared on disagreement).
-  for k in t.base.keys: touched.incl k
-
-  # Intersect by equality.
-  var merged = initTable[K, V]()
-  var disagreed = initHashSet[K]()
-  for i, incoming in incomings:
-    for k in touched:
-      if k in disagreed: continue
-      let v = incoming.state.getOrDefault(k)
-      if i == 0:
-        merged[k] = v
-      elif merged.getOrDefault(k) != v:
-        disagreed.incl k
-        merged.del k
-
-  # Apply the merged state. Keys present in `base` but absent from `merged`
-  # must be cleared.
-  var toClear: seq[K] = @[]
-  for k in t.base.keys:
-    if k notin merged or merged.getOrDefault(k) == default(V):
-      toClear.add k
-  for k in toClear:
-    t[k] = default(V)
-  for k, v in merged.pairs:
-    if v != default(V) and t.base.getOrDefault(k) != v:
-      t[k] = v
+    # The fall-through is `base` itself: the result is `base` minus every key
+    # some jump disagrees on. No snapshot of `base` is needed.
+    if incomings.len > 0:
+      var toClear: seq[K] = @[]
+      for k, v in t.base.pairs:
+        for incoming in incomings:
+          if incoming.state.getOrDefault(k) != v:
+            toClear.add k
+            break
+      for k in toClear:
+        t[k] = default(V)
+  elif incomings.len == 0:
+    # Nothing reaches the label (dead code): no fact holds there.
+    t.clearAll()
+  else:
+    var merged = move incomings[0].state
+    if incomings.len > 1:
+      var drop: seq[K] = @[]
+      for k, v in merged.pairs:
+        for i in 1 ..< incomings.len:
+          if incomings[i].state.getOrDefault(k) != v:
+            drop.add k
+            break
+      for k in drop: merged.del k
+    # Apply the merged state. Keys present in `base` but absent from `merged`
+    # must be cleared.
+    var toClear: seq[K] = @[]
+    for k in t.base.keys:
+      if k notin merged: toClear.add k
+    for k in toClear:
+      t[k] = default(V)
+    for k, v in merged.pairs:
+      t[k] = v                    # a no-op (no log entry) where `base` agrees
   # A landed label is a reachable join (incoming jumps target it), so the path
   # is live again even if the fall-through into it had diverged.
   t.pathDiverged = false
