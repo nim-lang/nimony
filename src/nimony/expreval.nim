@@ -1383,7 +1383,7 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
       if n.cursorTagId == nifpools.ErrT:
         result = n
         skip n
-      elif (n.stmtKind == BlockS or n.stmtKind == StmtsS) and
+      elif n.stmtKind in {BlockS, StmtsS, IfS, CaseS} and
            not cursorIsNil(c.expectedType) and c.c != nil and
            c.c.executeExpr != nil and not c.noExecute:
         # Const initialisers such as
