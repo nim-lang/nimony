@@ -60,6 +60,15 @@ proc pairs() =
   a.other = b
   b.other = a
 
+# the store is the last use of `p`: the cell must still become a candidate root
+proc selfLink() =
+  var p = Pair(name: "self")
+  p.other = p
+
+proc linkThroughConstr() =
+  var p = Pair(name: "outer")
+  p.other = Pair(name: "inner", other: p)
+
 proc tree() =
   var root = Tree()
   for i in 0..<10:
@@ -121,6 +130,13 @@ proc main() =
     discard Leaf(x: i, s: "leaf")
   GC_fullCollect()
   echo "classes and closures leaked: ", getOccupiedMem() - before
+
+  destroyed = 0
+  for i in 0..<100:
+    selfLink()
+    linkThroughConstr()
+  GC_fullCollect()
+  echo "last-use self links freed: ", destroyed
 
   assert alive[0].describe == "derived 1"
   assert alive[0].other.describe == "base 2"

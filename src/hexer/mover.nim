@@ -464,6 +464,14 @@ proc afterNode(m: MoverContext; base: Cursor; pos: int32; x: Cursor;
     of ncBranch:
       child = par                     # a branch body finished
     of ncOther:
+      let lhsPos = firstChild(base, par)
+      if p.stmtKind == AsgnS and child != lhsPos:
+        # The store runs after its RHS: in `x.f = x` the partial write through
+        # `x` follows the read, like a later `x.f = v` (see `execStmt`).
+        var lhs = at(base, lhsPos)
+        if lhs.kind != Symbol and not sameTrees(lhs, x) and containsRoot(lhs, x):
+          otherUsage = at(base, lhsPos)
+          return false
       if p.exprKind notin SelectorOnlyExprs:
         var q = childEnd
         while q < parEnd:
