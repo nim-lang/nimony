@@ -148,7 +148,7 @@ proc getProperties(thing: int, pos: Vec3): Properties {.requires: thing >= 0 and
   return Properties(diffuse: Black, specular: White,
     reflect: 0.7, roughness: 150.0)
 
-proc intersections(ray: Ray): Intersection {.
+proc intersections(ray: Ray): Intersection {.alwaysInline,
     ensures: result.thing >= -1 and result.thing < 3.} =
   ## Finds the nearest intersection before the original far plane.
   var

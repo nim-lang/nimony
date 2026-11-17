@@ -64,11 +64,13 @@ import std / [tables, sets, hashes, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
 import trackers, patchsets
+import accesspaths                            # indexesVariably
 import cse                                    # FunctionSummary + SummaryResolver:
                                               # the read-only addr-taken
                                               # classification consults callee
                                               # summaries (see `scanStab`)
 import ".." / nifmodules                      # MainModule (foreign summary lookup)
+import ".." / typenav                         # navigateToObjectBody: is a pointee an aggregate?
 
 # ---- nifcore helpers ------------------------------------------------------
 
@@ -283,7 +285,11 @@ type
     writtenEver: HashSet[SymId]        ## storage roots of every direct or
                                        ## deref-of-addr store in the body
     localDefs: HashSet[SymId]          ## syms declared by a local `(var …)`
-    useCount: Table[SymId, int]        ## every `Symbol` (read) token per sym
+    pointees: Table[SymId, Cursor]     ## local `(var :p . (ptr T) …)` → `T`
+    m: ptr MainModule                  ## type context; nil ⇒ every pointee is opaque
+    useCount: Table[SymId, int]        ## every `Symbol` token per sym,
+                                       ## `asgn` targets included
+    asgnTargets: Table[SymId, int]     ## of those, the plain `(asgn sym …)` targets
     substCount: Table[SymId, int]      ## uses we rewrote away per sym
     substPos: HashSet[int]             ## positions of the reads rewritten away
     addedReads: Table[SymId, int]      ## reads a rewrite introduced: `y` → `x` adds one to `x`
@@ -295,8 +301,9 @@ type
     patchset: Patchset
     synth: seq[TokenBuf]
 
-proc createContext(orig: ptr TokenBuf): Context =
-  result = Context(orig: orig,
+proc createContext(orig: ptr TokenBuf; m: ptr MainModule = nil): Context =
+  result = Context(orig: orig, m: m,
+          pointees: initTable[SymId, Cursor](),
           copyOf: initTracker[SymId, SymId](),
           litOf: initTracker[SymId, int](),
           addrOf: initTracker[SymId, int](),
@@ -309,6 +316,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           writtenEver: initHashSet[SymId](),
           localDefs: initHashSet[SymId](),
           useCount: initTable[SymId, int](),
+          asgnTargets: initTable[SymId, int](),
           substCount: initTable[SymId, int](),
           substPos: initHashSet[int](),
           addedReads: initTable[SymId, int](),
@@ -365,6 +373,23 @@ proc isEligible(c: Context; s: SymId): bool {.inline.} =
   s != SymId(0) and s in c.localDefs and
     (s notin c.addrTaken or s in c.stableAT)
 
+proc keepsScaledAddress(c: Context; dest: SymId; src: Cursor): bool =
+  ## `var p = addr a[i].f` is worth keeping, not splicing back into its uses,
+  ## when `p` points at an aggregate, is read more than once and the address
+  ## scales a variable index: an aggregate's stride is rarely an addressing
+  ## mode's scale (1, 2, 4, 8), so every spliced `(deref p)` would pay a
+  ## multiply and an add for the address `p` holds — SROA's per-field loads
+  ## of `var o = a[i]` are this, nine of them for one object. A single use or
+  ## a scalar pointee folds as before: `inc a[i]` indexes for free.
+  result = false
+  if c.m == nil: return
+  let reads = c.useCount.getOrDefault(dest) - c.asgnTargets.getOrDefault(dest)
+  if reads < 2: return
+  if dest notin c.pointees: return
+  if not indexesVariably(child0(src)): return
+  let t = navigateToObjectBody(c.m[], c.pointees.getOrDefault(dest))
+  result = t.kind == TagLit and t.typeKind in {ObjectT, UnionT, ArrayT}
+
 proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
   ## Record that `dest` now holds `src`'s value. A leaf literal is snapshotted
   ## (survives a later write to a symbol that happened to hold the same bits);
@@ -396,7 +421,7 @@ proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
     # into `(deref p)` re-forms `(deref (haddr LVAL))`, which the rewrite
     # engine's `deref_addr` rule then folds back to the plain lvalue.
     var deps: seq[SymId] = @[]
-    if isStableAddrExpr(src, deps):
+    if isStableAddrExpr(src, deps) and not keepsScaledAddress(c, dest, src):
       var ok = true
       for d in deps:
         if not c.isEligible(d):
@@ -851,6 +876,10 @@ proc preScan(c: var Context; n: Cursor) =
   of SymbolDef:
     c.names[symId(n)] = symName(n)
   of TagLit:
+    if n.stmtKind == AsgnS:
+      let target = child0(n)
+      if target.kind == Symbol:
+        c.asgnTargets.mgetOrPut(symId(target), 0) += 1
     if n.stmtKind == VarS:
       let nameCur = child0(n)
       if nameCur.kind == SymbolDef:
@@ -861,6 +890,8 @@ proc preScan(c: var Context; n: Cursor) =
         if t.kind == TagLit and
            t.typeKind in {IT, UT, FT, CT, BoolT, PtrT, AptrT}:
           c.scalarHomed.incl symId(nameCur)
+        if t.kind == TagLit and t.typeKind == PtrT:
+          c.pointees[symId(nameCur)] = child0(t)
     if n.exprKind in AddrKinds:
       # Only a local whose own storage is addressed is excluded from copy prop. An
       # `addr((*p).f)` addresses the pointee (computed from p's value), so `p` stays
@@ -1310,7 +1341,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
   ## call taking an address taints conservatively, the pre-extension behavior).
   ## Returns whether it changed `buf`.
   result = false
-  var ctx = createContext(addr buf)
+  var ctx = createContext(addr buf, m)
   registerParams(ctx, params)
   block:
     let pn = beginRead(buf)

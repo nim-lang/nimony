@@ -294,7 +294,7 @@ that writes `o.b` no longer holds a load of `o.a` down. Its call test
 be stricter than invalidation, or a load stays in the loop that the cache would
 have kept across the same call.
 
-**The inliner** (`hexer/intramodinliner`) was blocked on this question by name:
+**The inliner** (`hexer/inliner`) was blocked on this question by name:
 `isSubstitutableArg` excluded symbol arguments because "the inliner cannot prove
 the caller's variable is unmodified during the body without alias info", and
 `isStableAddrArg` excluded compound lvalues because "the body could write through

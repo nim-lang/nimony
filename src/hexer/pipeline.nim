@@ -14,7 +14,7 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
   constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
-  funcsummary, intramodinliner, arcopt
+  funcsummary, inliner, arcopt
 import ".." / finalir / finalir
 # `arcopt` runs on the final NIFC (try/finally already lowered to explicit
 # control flow). It is the BasicBlock-based pass ported from the battle-tested
@@ -158,4 +158,4 @@ proc optimizeLengOutput*(buf: var TokenBuf; moduleSuffix: string; bits: int) =
   ## such as try/finally.
   runArcopt(buf, moduleSuffix, bits)
   annotateFunctionSummaries(buf)
-  intraModuleInline(moduleSuffix, buf)
+  discard inlineModule(buf, moduleSuffix, hexerStage)

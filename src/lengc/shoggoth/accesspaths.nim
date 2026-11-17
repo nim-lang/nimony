@@ -64,6 +64,22 @@ proc firstChild(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
 
+proc indexesVariably*(n: Cursor): bool =
+  ## Does the lvalue `n` select an element by an index that is not a literal?
+  ## Its address then scales a variable, which an element of an aggregate pays
+  ## for with a multiply wherever the address is recomputed.
+  if n.kind != TagLit: return false
+  case n.exprKind
+  of AtC, PatC:
+    var m = firstChild(n)
+    let base = m
+    skip m
+    result = m.kind notin {IntLit, UIntLit, CharLit} or indexesVariably(base)
+  of DotC, DerefC:
+    result = indexesVariably(firstChild(n))
+  else:
+    result = false
+
 proc unknownPath*(): AccessPath {.inline.} =
   AccessPath(root: SymId(0), known: false, truncated: false, len: 0)
 
