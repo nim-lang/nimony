@@ -116,9 +116,10 @@ func hasKeyOrPut*[K: Keyable, V](t: var Table[K, V]; key: K; val: V): bool =
   let hc = writeHash(t, key)
   let index = rawGet(t, key, hc)
   if index >= 0:
-    return true
-  rawPut(t, key, val, hc)
-  false
+    result = true
+  else:
+    rawPut(t, key, val, hc)
+    result = false
 
 func getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
   let hc = readHash(t, k)
@@ -273,10 +274,11 @@ func pop*[K: Keyable, V](t: var Table[K, V]; key: K; val: var V): bool =
   let hc = readHash(t, key)
   let index = rawGet(t, key, hc)
   if index < 0:
-    return false
-  val = move(t.data[index][1])
-  del(t, key)
-  true
+    result = false
+  else:
+    val = move(t.data[index][1])
+    del(t, key)
+    result = true
 
 func take*[K: Keyable, V](t: var Table[K, V]; key: K; val: var V): bool {.inline.} =
   pop(t, key, val)
