@@ -297,23 +297,23 @@ proc smoothStep*[T: SomeFloat, C: Broadcastable[T]](edge0, edge1, v: C): C =
 
 func abs*[T: HasAbs, C: Broadcastable[T]](v: C): C =
   ## Component-wise absolute value.
-  map(v, (proc (x: T): T)(abs))
+  v |>. ((proc (x: T): T)(abs))
 
 func floor*[T: HasFloor, C: Broadcastable[T]](v: C): C =
   ## Component-wise floor.
-  map(v, (proc (x: T): T)(floor))
+  v |>. ((proc (x: T): T)(floor))
 
 func ceil*[T: HasCeil, C: Broadcastable[T]](v: C): C =
   ## Component-wise ceil.
-  map(v, (proc (x: T): T)(ceil))
+  v |>. ((proc (x: T): T)(ceil))
 
 func round*[T: HasRound, C: Broadcastable[T]](v: C): C =
   ## Component-wise round to nearest integer.
-  map(v, (proc (x: T): T)(round))
+  v |>. ((proc (x: T): T)(round))
 
 func fract*[T: HasFloor and SomeNumber, C: Broadcastable[T]](v: C): C =
   ## Component-wise fractional part: v - floor(v). Each result in [0, 1).
-  @. v -. map(v, (proc (x: T): T)(floor))
+  @. v -. v |>. ((proc (x: T): T)(floor))
 
 proc min*[T: HasMin, C: Broadcastable[T]](a, b: C): C =
   ## Component-wise minimum.
@@ -344,7 +344,7 @@ func clamp*[T: SomeNumber, C: Broadcastable[T]](v: C): C =
 
 func sign*[T: HasSign, C: Broadcastable[T]](v: C): C =
   ## Component-wise round to nearest integer.
-  map(v, (proc (x: T): T)(sgn))
+  `|>.`(v, (proc (x: T): T)(sgn))
 
 func sum*[T: Arithmetic, C: Broadcastable[T]](v: C): T {.requires: v.len > 0.} =
   ## Sum of all components. Useful for computing averages.

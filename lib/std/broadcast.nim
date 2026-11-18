@@ -98,7 +98,7 @@ func `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: C, b: T): C =
     result[i] = a[i] / b
 
 func inv[T: ArithmeticAndDiv](v: T): T {.untyped.} = 1/v
-template `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = map(b, inv) *! a
+template `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = b |>. inv *! a
 
 # --- Power operators ---
 func `^.`*[T: HasPower, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
@@ -217,15 +217,17 @@ func `%!`*[T: HasDivMod, C:Broadcastable[T]](a: C, b: T): C =
     result[i] = a[i] mod b
 template `mod`*[T: HasDivMod, C:Broadcastable[T]](a:C, b: T): C = a %! b
 
+proc `|>`*[T](a: T, f: Mapper[T]): T {.untyped.} =
+  result= f(a)
 
-proc map*[T; C:Broadcastable[T]](a: C, f: Mapper[T]): C {.untyped.} =
+proc `|>.`*[T; C:Broadcastable[T]](a: C, f: Mapper[T]): C {.untyped.} =
   result = similar(a)
   for i in 0..<result.len:
-    result[i] = f(a[i])
+    result[i] = a[i] |> f
 
   result
 
-template `-`*[T; C:Broadcastable[T]](a: C): C {.untyped.} = map(a, `-`)
+template `-`*[T; C:Broadcastable[T]](a: C): C {.untyped.} = a |>. `-`
 
 proc fill*[T; C: Broadcastable[T]](v: var C, val: T) {.untyped.} =
   for i in 0..<v.len:

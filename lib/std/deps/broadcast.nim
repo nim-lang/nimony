@@ -21,7 +21,7 @@ proc scalarOpName(op: string): string =
   else: discard
 
 proc isScalarBroadcast(op: string): bool =
-  op.len > 1 and op[op.len - 1] == '!'
+  op.len > 1 and (op[^1] == '!' or op[0..<op.len-1] == "|>")
 
 proc hasContainer(containers: seq[NifCursor], n: NifCursor): bool =
   for c in containers:
@@ -67,20 +67,16 @@ proc collectContainers(n: NifCursor, containers: var seq[NifCursor]) =
         skip c
     elif tag == "call":
       var c = firstChild(n)
-      if c.kind == Symbol and c.symId.symBasename == "map":
-        skip c # skip map
-        collectContainers(c, containers)
+      let fnName = c.symId.symBasename
+      let isSc = isScalarBroadcast(fnName)
+      skip c # skip callee
+      if isSc:
+        if c.hasMore:
+          collectContainers(c, containers)
       else:
-        let fnName = if c.kind == Symbol: c.symId.symBasename else: c.identText
-        let isSc = isScalarBroadcast(fnName)
-        skip c # skip callee
-        if isSc:
-          if c.hasMore:
-            collectContainers(c, containers)
-        else:
-          while c.hasMore:
-            collectContainers(c, containers)
-            skip c
+        while c.hasMore:
+          collectContainers(c, containers)
+          skip c
     elif tag == "dot" or tag == "at":
       if not hasContainer(containers, n):
         containers.add n
@@ -134,23 +130,10 @@ proc toScalarOp(result: var NifBuilder, n: NifCursor, idx: SymId, info: LineInfo
       result.closeTree()
     elif tag == "call":
       var c = firstChild(n)
-      if c.kind == Symbol and c.symId.symBasename == "map":
-        # map(a, f) -> f(a[idx])
-        skip c
-        var cont = c
-        skip c
-        var fn = c
-        result.openTree("call", info)
-        result.addSubtree(fn)
-        result.openTree("at", info)
-        result.addSubtree(cont)
-        result.addSymUse(idx, info)
-        result.closeTree() # /at
-        result.closeTree() # /call
-      else:
-        let fnName = if c.kind == Symbol: c.symId.symBasename else: c.identText
-        result.addTree errorTree("Unknown call in `@.`: `" & fnName & "`.", c)
-        result.closeTree()
+      
+      let fnName = if c.kind == Symbol: c.symId.symBasename else: c.identText
+      result.addTree errorTree("Unknown call in `@.`: `" & fnName & "`.", c)
+      result.closeTree()
     else:
       # e.g. dot or already indexed
       result.openTree("at", info)

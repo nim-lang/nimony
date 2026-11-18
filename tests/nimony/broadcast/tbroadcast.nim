@@ -31,7 +31,7 @@ proc double(x: int): int = x * 2
 proc t4() =
   let a = @[1, 2, 3]
   let b = @[4, 5, 6]
-  let c = @. (map(a, double) +. b)
+  let c = @. (a |>. double +. b)
   assert c == @[6, 9, 12]
 
 proc t5() =
