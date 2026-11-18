@@ -4602,6 +4602,9 @@ proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
                          bindings: Table[SymId, Cursor]; depth: int;
                          isUnion = false) =
   let fieldSym = field.name.symId
+  if c.objInit.recording:
+    # the parameter type `lowerToObjInit` gives this field, uninstantiated
+    c.objInit.fieldTypes[fieldSym] = field.typ
   if setFields.hasKey(fieldSym):
     dest.addSubtree setFields.getOrQuit(fieldSym)
   elif isUnion:
@@ -4683,21 +4686,29 @@ proc getValueInKv(n: Cursor): Cursor =
 
 proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor; selector: Local;
                 selectorVal: xint; setFields: Table[SymId, Cursor]; info: NifLineInfo;
-                bindings: Table[SymId, Cursor]; depth: int) =
+                bindings: Table[SymId, Cursor]; depth: int): int =
   ## `selectorVal` is the constructor's value for the selector (the value
   ## set, the declared default or `default(T)`), NaN when not constant. The
   ## branch it selects is filled, its omitted fields with their defaults.
+  ## Returns the index of the branch filled (`else` counts as the last), -1
+  ## for none. A selector in `c.objInit.forced` takes the branch named there
+  ## instead: in an arm of a hidden init proc (`lowerToObjInit`) the value is
+  ## a parameter, but the arm knows which branch it is.
+  result = -1
   var lastFieldSymId = SymId(0)
   var isBranchSelected = false
   let selectorSymId = selector.name.symId
   let selectorSet = setFields.hasKey(selectorSymId)
+  let forcedIdx = c.objInit.forced.getOrDefault(selectorSymId, -2)
+  var bi = 0
 
   block matched:
     while n.hasMore:
       case n.substructureKind
       of OfU:
         n.into:
-          let selected = rangesContain(n, selectorVal, c.g.config.bits)
+          let selected = if forcedIdx != -2: bi == forcedIdx
+                         else: rangesContain(n, selectorVal, c.g.config.bits)
           if selected:
             isBranchSelected = true
           skip n
@@ -4711,14 +4722,17 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
+            result = bi
           elif selected:
             # The constructor selects this branch but sets none of its fields:
             # they still get their defaults. `oconstr` is total (doc/tags.md),
             # and the native back end stores exactly what is listed.
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
+            result = bi
           else:
             skip n
+        inc bi
       of ElseU:
         n.into:
           let (hasField, presentFieldSymId) = fieldsPresentInInitExpr(c, n, setFields)
@@ -4730,14 +4744,17 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
-          elif not isBranchSelected and lastFieldSymId == SymId(0) and
-              not selectorVal.isNaN:
+            result = bi
+          elif forcedIdx == bi or (forcedIdx == -2 and not isBranchSelected and
+              lastFieldSymId == SymId(0) and not selectorVal.isNaN):
             # A constant discriminator no `of` matched selects the `else`
             # branch; its fields get their defaults (see the `of` arm above).
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
+            result = bi
           else:
             skip n
+        inc bi
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU, TypevarU, StaticTypevarU, EfldU, FldU,
          WhenU, ElifU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
          EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
@@ -4760,12 +4777,20 @@ proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let field = takeLocal(body, SkipFinalParRi)
       let selectorKv = dest.len
       buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
-      var selectorKvCursor = cursorAt(dest, selectorKv)
-      let selectorVal = getValueInKv(selectorKvCursor)
-      let value = if selectorVal.exprKind == ErrX: createNaN()
-                  else: tryEvalOrdinal(c.g.config.bits, selectorVal)
-      endRead selectorKvCursor
-      fieldsPresentInBranch(c, dest, body, field, value, setFields, info, bindings, depth)
+      let selectorSym = field.name.symId
+      var value = createNaN()
+      if not c.objInit.forced.hasKey(selectorSym):
+        var selectorKvCursor = cursorAt(dest, selectorKv)
+        let selectorVal = getValueInKv(selectorKvCursor)
+        if selectorVal.exprKind != ErrX:
+          value = tryEvalOrdinal(c.g.config.bits, selectorVal)
+        endRead selectorKvCursor
+        if c.objInit.recording and value.isNaN:
+          # no branch can be named: `lowerToObjInit` dispatches on it at run time
+          c.objInit.runtimeCases.add RuntimeCase(selector: selectorSym, branches: body)
+      let filled = fieldsPresentInBranch(c, dest, body, field, value, setFields, info, bindings, depth)
+      if c.objInit.recording and not value.isNaN:
+        c.objInit.branchOf[selectorSym] = filled
       skip n
     else:
       let field = takeLocal(n, SkipFinalParRi)
@@ -4789,9 +4814,9 @@ proc fieldDefaultsTyped(c: var SemContext; dest: var TokenBuf; s: SymId; info: N
       c.buildErr dest, info, "cannot construct '" & pool.symBasename(owner) &
         "' in a default value of its own fields"
 
-proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
-                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
-                           prebuiltBindings = initTable[SymId, Cursor]()) =
+proc buildObjConstrImpl(c: var SemContext; dest: var TokenBuf; typ: Cursor;
+                        setFields: Table[SymId, Cursor]; info: NifLineInfo;
+                        prebuiltBindings: Table[SymId, Cursor]) =
   var constrKind = NoExpr
   var objImpl = typ
   if objImpl.typeKind == RefT:
@@ -4870,6 +4895,185 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
     let isUnion = objDecl.kind == TypeY and hasPragma(objDecl.pragmas, UnionP)
     buildObjConstrFields(c, dest, currentField, setFields, info, bindings, isUnion = isUnion)
   dest.addParRi()
+
+type
+  ObjInitParam = object
+    field, param: SymId
+    depth: Cursor ## the kv's inheritance depth, or nil
+
+proc paramOfField(params: seq[ObjInitParam]; field: SymId): SymId =
+  result = SymId(0)
+  for p in params:
+    if p.field == field:
+      result = p.param
+      break
+
+proc genObjInitArms(c: var SemContext; dest: var TokenBuf; objType: Cursor;
+                    rec: ObjInitState; params: seq[ObjInitParam];
+                    setFields: Table[SymId, Cursor]; bindings: Table[SymId, Cursor];
+                    level: int; resultSym: SymId; info: NifLineInfo) =
+  ## One `case` per run-time selector, nested in field order; the innermost
+  ## arm knows every branch and assigns a total constructor to `result`.
+  if level == rec.runtimeCases.len:
+    dest.addParLe(AsgnS, info)
+    dest.addSymUse(resultSym, info)
+    buildObjConstrImpl(c, dest, objType, setFields, info, bindings)
+    dest.addParRi()
+  else:
+    let rc = rec.runtimeCases[level]
+    dest.addParLe(CaseS, info)
+    dest.addSymUse(paramOfField(params, rc.selector), info)
+    var b = rc.branches
+    var bi = 0
+    while b.hasMore:
+      let isOf = b.substructureKind == OfU
+      dest.addParLe(if isOf: OfU else: ElseU, info)
+      if isOf:
+        var ranges = sub(b)
+        dest.addSubtree ranges
+      dest.addParLe(StmtsS, info)
+      c.objInit.forced[rc.selector] = bi
+      genObjInitArms(c, dest, objType, rec, params, setFields, bindings,
+                     level + 1, resultSym, info)
+      dest.addParRi() # stmts
+      dest.addParRi() # of / else
+      skip b
+      inc bi
+    c.objInit.forced.del rc.selector
+    dest.addParRi() # case
+
+proc lowerToObjInit(c: var SemContext; dest: var TokenBuf; start: int; typ: Cursor;
+                    rec: ObjInitState; bindings: Table[SymId, Cursor]; info: NifLineInfo) =
+  ## `dest[start..]` is a constructor whose case selector(s) are only known at
+  ## run time, so it names no field of their branches: it is not total
+  ## (doc/tags.md). Replace it by a call of a hidden init proc that takes the
+  ## fields it does name and dispatches on the selector to one total
+  ## constructor per branch, with that branch's defaults.
+  ##
+  ## The proc is named like a generic instance, `objinit.0.I<key>.<module>`,
+  ## the key hashed from the object type and the fields it takes: every module
+  ## that constructs that shape arrives at the same name and DCE folds the
+  ## copies into one.
+  let isRef = typ.typeKind == RefT
+  let objType = if isRef: typ.childCursor else: typ
+  var args = createTokenBuf(dest.len - start)
+  var params: seq[ObjInitParam] = @[]
+  var keyBuf = createTokenBuf(16)
+  block collect:
+    var n = cursorAt(dest, start)
+    var kvs = sub(n)
+    skip kvs # type
+    keyBuf.addParLe(InvokeT, info)
+    keyBuf.addSubtree objType
+    while kvs.hasMore:
+      var kv = sub(kvs)
+      let field = kv.symId
+      inc kv
+      args.addSubtree kv
+      skip kv
+      let depth = if kv.hasMore: kv else: default(Cursor)
+      var name = pool.symBasename(field)
+      c.makeLocalSym(name)
+      params.add ObjInitParam(field: field, param: pool.symId(name), depth: depth)
+      keyBuf.addSymUse(field, info)
+      skip kvs
+    keyBuf.addParRi()
+    endRead n
+  let sym = pool.symId("objinit.0.I" & instToSuffix(keyBuf, 0) & "." & c.thisModuleSuffix)
+
+  if not c.objInitProcs.containsOrIncl(sym):
+    var kvBuf = createTokenBuf(params.len * 5)
+    var kvPos = newSeq[int](params.len)
+    for i, p in params:
+      kvPos[i] = kvBuf.len
+      kvBuf.addParLe(KvU, info)
+      kvBuf.addSymUse(p.field, info)
+      kvBuf.addSymUse(p.param, info)
+      if not cursorIsNil(p.depth):
+        kvBuf.addSubtree p.depth
+      kvBuf.addParRi()
+    var setFields = initTable[SymId, Cursor]()
+    for i, p in params:
+      setFields[p.field] = cursorAt(kvBuf, kvPos[i])
+    var resultName = "result"
+    c.makeLocalSym(resultName)
+    let resultSym = pool.symId(resultName)
+
+    var decl = createTokenBuf(64)
+    decl.addParLe(ProcS, info)
+    decl.addSymDef(sym, info)
+    decl.addDotToken() # not exported
+    decl.addDotToken() # pattern
+    decl.addDotToken() # typevars
+    decl.addParLe(ParamsU, info)
+    for p in params:
+      decl.addParLe(ParamY, info)
+      decl.addSymDef(p.param, info)
+      decl.addDotToken() # export marker
+      decl.addDotToken() # pragmas
+      # `sink`: the arms move the arguments into the object, as the
+      # constructor they replace does
+      decl.addParLe(SinkT, info)
+      let ftyp = rec.fieldTypes.getOrQuit(p.field)
+      decl.addSubtree(if bindings.len != 0: instantiateType(c, ftyp, bindings) else: ftyp)
+      decl.addParRi()
+      decl.addDotToken() # default value
+      decl.addParRi()
+    decl.addParRi() # params
+    decl.addSubtree objType
+    decl.addDotToken() # pragmas
+    decl.addDotToken() # effects
+    decl.addParLe(StmtsS, info)
+    decl.addParLe(ResultS, info)
+    decl.addSymDef(resultSym, info)
+    decl.addDotToken() # export marker
+    decl.addDotToken() # pragmas
+    decl.addSubtree objType
+    decl.addDotToken() # value
+    decl.addParRi()
+    let savedForced = move c.objInit.forced
+    c.objInit.forced = rec.branchOf
+    genObjInitArms(c, decl, objType, rec, params, setFields, bindings, 0, resultSym, info)
+    c.objInit.forced = savedForced
+    decl.addParLe(RetS, info)
+    decl.addSymUse(resultSym, info)
+    decl.addParRi()
+    decl.addParRi() # stmts
+    decl.addParRi() # proc
+    publish sym, decl, 0
+    c.pendingObjInits.add decl
+
+  dest.shrink start
+  if isRef:
+    dest.addParLe(NewrefX, info)
+    dest.addSubtree typ
+  dest.addParLe(CallX, info)
+  dest.addSymUse(sym, info)
+  dest.add args
+  dest.addParRi()
+  if isRef:
+    dest.addParRi()
+
+proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
+                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
+                           prebuiltBindings = initTable[SymId, Cursor]()) =
+  let start = dest.len
+  let saved = move c.objInit
+  c.objInit = ObjInitState(recording: true)
+  buildObjConstrImpl(c, dest, typ, setFields, info, prebuiltBindings)
+  var rec = move c.objInit
+  c.objInit = saved
+  rec.recording = false
+  if rec.runtimeCases.len > 0 and c.routine.inGeneric == 0 and
+      c.inGenericDefinition == 0 and not hasErrorSince(dest, start) and
+      not containsGenericParams(typ):
+    var bindings = prebuiltBindings
+    if bindings.len == 0:
+      var objImpl = if typ.typeKind == RefT: typ.childCursor else: typ
+      let invokeArgs = skipInvoke(objImpl)
+      if objImpl.isSymbol:
+        bindings = bindInvokeArgs(getTypeSection(objImpl.symId), invokeArgs)
+    lowerToObjInit(c, dest, start, typ, rec, bindings, info)
 
 proc getAnumOwnerType(efldSym: SymId): SymId =
   ## Given an efld symbol, trace efld → anum type → owning type. The owner is

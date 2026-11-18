@@ -178,6 +178,22 @@ type
 
   Classes* = Table[SymId, ClassEntry]
 
+  RuntimeCase* = object
+    selector*: SymId
+    branches*: Cursor ## the `of`/`else` list of the case section in the type
+
+  ObjInitState* = object
+    ## What `buildDefaultObjConstr` learns while it builds a constructor, so a
+    ## run-time case selector can be lowered to a hidden init proc
+    ## (`lowerToObjInit`). `forced` is the reverse direction: building that
+    ## proc's arms, it names the branch every selector takes.
+    recording*: bool
+    runtimeCases*: seq[RuntimeCase]
+    branchOf*: Table[SymId, int]
+      ## selector -> index of the branch it filled; -1 for none
+    fieldTypes*: Table[SymId, Cursor]
+    forced*: Table[SymId, int]
+
   SemContext* = object
     #dest*: TokenBuf
     routine*: SemRoutine
@@ -188,6 +204,11 @@ type
       ## syms of type instantiations to add their declarations to module
     pendingSumtypes*: TokenBuf
       ## synthesized oneof type declarations to emit at module end
+    objInit*: ObjInitState
+    pendingObjInits*: TokenBuf
+      ## hidden init procs for constructors with a run-time case selector,
+      ## emitted at module end (`lowerToObjInit`)
+    objInitProcs*: HashSet[SymId]
     refObjOwners*: Table[SymId, SymId]
       ## `T.Obj` → `T` for every `type T = ref|ptr object` split off by
       ## `semTypeSection`. The split runs in `SemcheckTopLevelSyms`, but the

@@ -1,0 +1,17 @@
+kText txt 1
+kText txt 0
+kElement div 0 1
+kElement div 0 0
+kComment txt 1
+kComment txt 0
+kPi 77 1
+kPi 77 0
+1 txt
+kElement div 0 0
+empty
+0
+1 z
+1 w
+2 z
+2 w
+c 3 r 2 2
