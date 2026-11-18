@@ -24,11 +24,13 @@ type
   JOp = enum jAdd, jMod, jDel
   JEntry = object
     op: JOp
+    nils: bool          ## the entry is about `Facts.nils`
     idx: int            ## slot index (jMod/jDel)
     val: LeXplusC       ## previous value at `idx` (jMod) / removed value (jDel)
 
   Facts* = object
     x: seq[LeXplusC]
+    nils: seq[LeXplusC]    ## nilability, apart from the integers: `isNotNil`/`isNil`
     journal: seq[JEntry]   ## append-only undo log; populated only when `journaling`
     journaling: bool       ## opt-in: enables O(writes) checkpoint/rollback
 
@@ -37,6 +39,11 @@ type
 
 const
   InvalidVarId* = VarId(-1)
+  NilVarId* = VarId(high(int32))
+    ## `nil` as a comparison operand. A fact that mentions it is about
+    ## nilability and is kept in `Facts.nils`, never among the integer facts:
+    ## there a not-nil fact landing on a number (`x = 0'i32`) contradicted its
+    ## range facts and "proved" every index.
 
 # --- Journaled checkpoint / rollback (an undo log, not a whole-state copy) ---
 #
@@ -55,7 +62,7 @@ proc checkpoint*(f: Facts): int {.inline.} =
 proc snapshotFacts*(f: Facts): Facts =
   ## A plain (non-journaling) copy of the fact set — used only where two branch
   ## states must coexist (the `merge` at a real confluence), never per frame.
-  Facts(x: f.x)
+  Facts(x: f.x, nils: f.nils)
 
 proc isValid*(x: LeXplusC): bool {.inline.} =
   result = x.a != InvalidVarId and x.b != InvalidVarId and not isNaN(x.c)
@@ -71,32 +78,37 @@ proc `$`*(f: LeXplusC): string =
 proc shrink*(f: var Facts; newLen: int) {.inline.} =
   f.x.shrink newLen
 
-#[
-
-We use the same inference engine for not-nil checking. We map nil to 0 and then
-x != 0 is x > 0 which is x >= 1 which becomes 0 <= x - 1. This is convoluted
-but it works.
-
-]#
-
-proc jAppend(f: var Facts; v: LeXplusC) {.inline.} =
-  if f.journaling: f.journal.add JEntry(op: jAdd)
-  f.x.add v
+proc jAppend(f: var Facts; v: LeXplusC; nils = false) {.inline.} =
+  if f.journaling: f.journal.add JEntry(op: jAdd, nils: nils)
+  if nils: f.nils.add v
+  else: f.x.add v
 
 proc jSet(f: var Facts; i: int; v: LeXplusC) {.inline.} =
   if f.journaling: f.journal.add JEntry(op: jMod, idx: i, val: f.x[i])
   f.x[i] = v
 
-proc jSwapRemove(f: var Facts; i: int) =
+proc swapRemove(s: var seq[LeXplusC]; i: int) =
+  let last = s.len - 1
+  if i != last:
+    let lastVal = s[last]   # copy out before the in-place overwrite (borrow-clean)
+    s[i] = lastVal
+  s.setLen last
+
+proc unremove(s: var seq[LeXplusC]; i: int; v: LeXplusC) =
+  if i < s.len:
+    let swapped = s[i] # copy out before growing `s` (borrow-clean)
+    s.add swapped      # move the swapped-in element back to the end
+    s[i] = v           # ... and restore the removed value
+  else:
+    s.add v            # idx had been the last slot; nothing was moved
+
+proc jSwapRemove(f: var Facts; i: int; nils = false) =
   ## Order-independent removal (facts are a set): move the last element into
   ## the hole. Reversible from the logged `(idx, removed)` alone.
-  let removed = f.x[i]
-  if f.journaling: f.journal.add JEntry(op: jDel, idx: i, val: removed)
-  let last = f.x.len - 1
-  if i != last:
-    let lastVal = f.x[last]   # copy out before the in-place overwrite (borrow-clean)
-    f.x[i] = lastVal
-  f.x.setLen last
+  let removed = if nils: f.nils[i] else: f.x[i]
+  if f.journaling: f.journal.add JEntry(op: jDel, idx: i, val: removed, nils: nils)
+  if nils: swapRemove(f.nils, i)
+  else: swapRemove(f.x, i)
 
 proc rollbackTo*(f: var Facts; cp: int) =
   ## Undo every mutation logged since `cp` (a `checkpoint`). O(writes-since).
@@ -104,15 +116,13 @@ proc rollbackTo*(f: var Facts; cp: int) =
   while i >= cp:
     let e = f.journal[i]
     case e.op
-    of jAdd: f.x.setLen(f.x.len - 1)
+    of jAdd:
+      if e.nils: f.nils.setLen(f.nils.len - 1)
+      else: f.x.setLen(f.x.len - 1)
     of jMod: f.x[e.idx] = e.val
     of jDel:
-      if e.idx < f.x.len:
-        let swapped = f.x[e.idx] # copy out before growing `f.x` (borrow-clean)
-        f.x.add swapped          # move the swapped-in element back to the end
-        f.x[e.idx] = e.val       # ... and restore the removed value
-      else:
-        f.x.add e.val           # idx had been the last slot; nothing was moved
+      if e.nils: unremove(f.nils, e.idx, e.val)
+      else: unremove(f.x, e.idx, e.val)
     dec i
   f.journal.setLen cp
 
@@ -131,14 +141,47 @@ proc clearJournaled*(f: var Facts) =
     else:
       f.jSwapRemove(i)          # element swapped into `i` still needs checking
 
-proc add*(f: var Facts; elem: LeXplusC) =
-  f.jAppend elem
-
 proc isNotNil*(a: VarId): LeXplusC =
-  LeXplusC(a: VarId(0), b: a, c: createXint(-1'i64))
+  LeXplusC(a: NilVarId, b: a, c: createXint(-1'i64)) # nil < a
 
 proc isNil*(a: VarId): LeXplusC =
-  LeXplusC(a: a, b: VarId(0), c: createXint(0'i64)) # a <= 0
+  LeXplusC(a: a, b: NilVarId, c: createXint(0'i64)) # a <= nil
+
+proc nilFact(v: LeXplusC): LeXplusC =
+  ## `v`, a comparison with `nil`, as `isNotNil`/`isNil`, or invalid when it
+  ## says neither.
+  result = LeXplusC(a: InvalidVarId, b: InvalidVarId, c: createXint(0'i64))
+  if v.a == NilVarId and v.b notin [NilVarId, VarId(0)] and v.c < createXint(0'i64):
+    result = isNotNil(v.b)
+  elif v.b == NilVarId and v.a notin [NilVarId, VarId(0)] and v.c == createXint(0'i64):
+    result = isNil(v.a)
+
+proc nilFactAt(f: Facts; v: LeXplusC): int =
+  result = f.nils.len - 1
+  while result >= 0 and not (f.nils[result].a == v.a and f.nils[result].b == v.b):
+    dec result
+
+proc add*(f: var Facts; elem: LeXplusC) =
+  if elem.a != NilVarId and elem.b != NilVarId:
+    f.jAppend elem
+  else:
+    let n = nilFact(elem)
+    if n.isValid and nilFactAt(f, n) < 0: f.jAppend(n, nils = true)
+
+proc dropNilFact*(f: var Facts; v: LeXplusC) =
+  let i = nilFactAt(f, v)
+  if i >= 0: f.jSwapRemove(i, nils = true)
+
+iterator nilFacts*(f: Facts): LeXplusC =
+  for n in f.nils: yield n
+
+proc setNilsTo*(f: var Facts; target: Facts) =
+  ## Journaled `f.nils := target.nils`.
+  var i = 0
+  while i < f.nils.len:
+    if nilFactAt(target, f.nils[i]) < 0: f.jSwapRemove(i, nils = true)
+    else: inc i
+  for n in target.nils: f.add n
 
 proc save*(f: Facts): RestorePoint = RestorePoint(snapshot: f.x)
 
@@ -225,13 +268,20 @@ proc variableMovedWithin*(f: var Facts; x: VarId; lo, hi: xint) =
     else:
       inc i
 
+proc spreadNils*(f: var Facts; about = InvalidVarId)
+
 proc invalidateFactsAbout*(f: var Facts; x: VarId) =
+  spreadNils(f, x)  # what was known about `x`'s value stays true of its equals
   var i = 0
   while i < f.x.len:
     if f.x[i].a == x or f.x[i].b == x:
       f.jSwapRemove i        # order-independent; element swapped into i rechecked
     else:
       inc i
+  i = 0
+  while i < f.nils.len:
+    if f.nils[i].a == x or f.nils[i].b == x: f.jSwapRemove(i, nils = true)
+    else: inc i
 
 proc simpleImplies(facts: Facts; v: LeXplusC): bool =
   for f in facts.x:
@@ -275,9 +325,50 @@ proc complexImplies(facts: Facts; v: LeXplusC): bool =
   let dist = boundsFrom(facts, v.a)
   result = v.b in dist and dist.getOrDefault(v.b) <= v.c
 
+proc intImplies(facts: Facts; v: LeXplusC): bool =
+  simpleImplies(facts, v) or complexImplies(facts, v)
+
+proc nilLoc(n: LeXplusC): VarId = (if n.a == NilVarId: n.b else: n.a)
+proc nilOn(n: LeXplusC; y: VarId): LeXplusC = (if n.a == NilVarId: isNotNil(y) else: isNil(y))
+
+proc equated(f: Facts; x: VarId): seq[VarId] =
+  ## The locations the integer facts prove equal to `x`.
+  result = @[]
+  let up = boundsFrom(f, x)
+  let down = boundsFrom(f, x, reverse = true)
+  for y, c in up:
+    if y notin [x, VarId(0)] and c <= createXint(0'i64) and y in down and
+        down.getOrDefault(y) <= createXint(0'i64):
+      result.add y
+
+proc spreadNils*(f: var Facts; about = InvalidVarId) =
+  ## Files each nil fact (about `about` only, if given) for every location the
+  ## integer facts equate with its own: after `var q = p; if q == nil: return`
+  ## that is `p`, which keeps it when `q` moves on. Integer facts are never
+  ## derived from nil facts.
+  var spread: seq[LeXplusC] = @[]
+  for n in f.nils:
+    if about == InvalidVarId or nilLoc(n) == about:
+      for y in equated(f, nilLoc(n)): spread.add nilOn(n, y)
+  for n in spread: f.add n
+
 proc implies*(facts: Facts; v: LeXplusC): bool =
   assert v.isValid
-  result = simpleImplies(facts, v) or complexImplies(facts, v)
+  if v.a == NilVarId or v.b == NilVarId:
+    # held for `v` itself or for a location the integer facts equate with it,
+    # or read off its integer bounds (`b == true`)
+    let n = nilFact(v)
+    result = n.isValid and nilFactAt(facts, n) >= 0
+    if n.isValid and not result:
+      let x = nilLoc(n)
+      let eq = equated(facts, x)
+      for m in facts.nils:
+        if (m.a == NilVarId) == (n.a == NilVarId) and nilLoc(m) in eq: result = true
+      if not result:
+        result = if n.a == NilVarId: intImplies(facts, query(VarId(0), x, createXint(-1'i64)))
+                 else: intImplies(facts, query(x, VarId(0)))
+  else:
+    result = intImplies(facts, v)
 
 proc chainsThrough*(f: Facts; x: VarId): seq[LeXplusC] =
   ## The one-step chains `a <= x + c1`, `x <= b + c2` give past `x`:
@@ -341,6 +432,13 @@ proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
   result = Facts()
   for key, c in best:
     result.x.add LeXplusC(a: key[0], b: key[1], c: c)
+  if not negate:
+    var cx = x
+    var cy = y
+    spreadNils(cx)
+    spreadNils(cy)
+    for n in cx.nils:
+      if nilFactAt(cy, n) >= 0: result.nils.add n
 
 proc tightest(f: Facts): Table[(VarId, VarId), xint] =
   result = initTable[(VarId, VarId), xint]()
@@ -367,6 +465,12 @@ proc join*(x, y: Facts): Facts =
   ## at the weaker of the stated and the derived constant: `r = 0` in one arm
   ## and `r = x` under `x <= 2` in the other still leave `r <= 2`.
   result = Facts()
+  var cx = x
+  var cy = y
+  spreadNils(cx) # each side's nil facts as its integer equalities spread them
+  spreadNils(cy)
+  for n in cx.nils:
+    if nilFactAt(cy, n) >= 0: result.nils.add n
   let bx = tightest(x)
   let by = tightest(y)
   var chainsX = initTable[VarId, Table[VarId, xint]]()

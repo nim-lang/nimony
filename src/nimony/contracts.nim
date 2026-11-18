@@ -514,8 +514,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     result = true
     inc pc
   elif pc.exprKind == NilX:
-    fact.b = VarId(0)
-    fact.c = fact.c + createXint(0'i32)
+    fact.b = NilVarId
     result = true
     skip pc
   else:
@@ -557,7 +556,7 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     result.a = getVarId(c, r.symId)
     inc r
   elif r.exprKind == NilX:
-    result.a = VarId(0)
+    result.a = NilVarId
     skip r
   else:
     analyseExpr c, pc

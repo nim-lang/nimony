@@ -30,7 +30,14 @@ proc narrowedOnlyInTheOtherBranch(): int =
   else:
     result = 0
 
+# A suffixed number is no address: `0'i32` cast to a pointer is nil.
+proc castOfSuffixedZero(): int =
+  var p: nil ptr int = nil
+  p = cast[nil ptr int](0'i32)
+  result = p[]
+
 discard unnarrowedDeref()
 discard unnarrowedArgument()
 discard unnarrowedField()
 discard narrowedOnlyInTheOtherBranch()
+discard castOfSuffixedZero()

@@ -1353,6 +1353,9 @@ proc forgetShared(c: var FirContext; spared: openArray[SymId] = []) =
   for i in 0 ..< c.facts.len:
     for v in [c.facts[i].a, c.facts[i].b]:
       if int(v) > 0 or int(v) <= FirstDerivedVarId: vars.incl v
+  for n in c.facts.nilFacts:
+    let v = if n.a == NilVarId: n.b else: n.a
+    if int(v) > 0 or int(v) <= FirstDerivedVarId: vars.incl v
   for v in vars:
     let root = if int(v) > 0: SymId(int(v))
                else: c.derivedRoots[FirstDerivedVarId - int(v)]
@@ -2864,8 +2867,7 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC;
     result = true
     inc pc
   elif pc.exprKind == NilX:
-    fact.b = VarId(0)
-    fact.c = fact.c + createXint(0'i32)
+    fact.b = NilVarId
     result = true
     skip pc
   else:
@@ -2993,7 +2995,7 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind;
     # nothing at all about `i`.
     skip r
   elif r.exprKind == NilX:
-    result.a = VarId(0)
+    result.a = NilVarId
     skip r
   elif xk in {LeX, LtX} and r.exprKind in {BitandX, ShrX, AshrX} and
       (var leftLo = zero(); var leftHi = zero(); valueBounds(c, r, leftLo, leftHi)):
@@ -3027,6 +3029,9 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind;
       kind = ckImplied
     else:
       result.a = InvalidVarId
+  if xk == EqX and result.a == NilVarId and kind != ckImplied:
+    result = result.geXplusC  # `nil == p` is `p == nil`
+    kind = ckPlain
   # a < b  --> a <= b - 1:
   if xk == LtX:
     result.c = result.c - createXint(1'i32)
@@ -3335,8 +3340,8 @@ proc isNonNilExpr(c: var FirContext; n: Cursor): bool =
     skip inner # skip inheritance-depth intlit
     result = markedAs(getType(c.typeCache, inner), NotnilU) or isNonNilExpr(c, inner)
   of SufX:
-    # suffixed literal, e.g. (suf "abc" "R") — still a literal value
-    result = true
+    # a suffixed string literal, e.g. (suf "abc" "R"); `0'i32` is a number
+    result = sub(n).isStringLit
   else:
     if n.isStringLit:
       result = true
@@ -3513,7 +3518,7 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
   ## One side of a comparison as `v + cnst`: an integer literal, a compile-time
   ## constant, `nil`, a symbol, or `sym +/- k`. `v` is `VarId(0)` for a pure
   ## constant — the engine's convention is that variable zero *is* the number
-  ## zero, which is also what makes `nil` and `0` the same operand.
+  ## zero — and `NilVarId` for `nil`.
   v = VarId(0)
   cnst = createXint(0'i32)
   if rd.results.len > 0:
@@ -3540,6 +3545,7 @@ proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
     return true
   else: discard
   if m.exprKind == NilX:
+    v = NilVarId
     return true
   var folded = createXint(0'i32)
   if constOrdinal(c, m, folded):
@@ -4680,6 +4686,10 @@ proc addAsgnFact(c: var FirContext; fact: LeXplusC) =
   if fact.isValid:
     c.facts.add fact
     c.facts.add fact.geXplusC
+    # `x = y`: `x` is as nil as `y`
+    if fact.c != zero(): discard "not a copy"
+    elif implies(c.facts, isNotNil(fact.b)): c.facts.add isNotNil(fact.a)
+    elif implies(c.facts, isNil(fact.b)): c.facts.add isNil(fact.a)
     if c.declaredRange.hasKey(fact.b):
       # `var n = c.bufLen` of a `range[0..63]` field: `n` starts out in that
       # range, as a flow fact of its own that a join can keep
@@ -5612,6 +5622,8 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   # `0 <= y` and `y <= b` after `var b = y` — and the chain it hangs on is not
   # itself an invariant (`b = b shr 1` breaks `y <= b`). So ask the question
   # while the answer is still there, and record it as a fact of its own.
+  # Likewise a nil fact on a location the body moves holds for its equals.
+  spreadNils(c.facts)
   var keepNonNeg: seq[VarId] = @[]
   for v, kind in w.kinds:
     if kind == ivNonNegative and implies(c.facts, query(VarId(0), v, zero())):
@@ -5629,6 +5641,10 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
       inc i
     else:
       removeFactAt(c.facts, i)   # journaled; the swapped-in slot is rechecked
+  var gone: seq[LeXplusC] = @[]
+  for n in c.facts.nilFacts:
+    if not isLoopInvariant(c, w, n): gone.add n
+  for n in gone: dropNilFact(c.facts, n)
   for v in keepNonNeg:
     c.facts.add query(VarId(0), v, zero())
   for ch in bypasses:
