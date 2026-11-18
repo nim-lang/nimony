@@ -26,33 +26,45 @@
 
 {.feature: "staticContracts".}
 
-func `+`*[I: SomeInteger, F: SomeFloat](i: I, f: F): F {.inline, untyped.} =
+# Nimony checks generic bodies eagerly; naming the operations in a concept
+# keeps the bodies checkable without `{.untyped.}`.
+type
+  LenientFloat = concept
+    ## Operators the mixed integer/float operations below need.
+    func `+`(x, y: Self): Self
+    func `-`(x, y: Self): Self
+    func `*`(x, y: Self): Self
+    func `/`(x, y: Self): Self
+    func `<`(x, y: Self): bool
+    func `<=`(x, y: Self): bool
+
+func `+`*[I: SomeInteger, F: SomeFloat and LenientFloat](i: I, f: F): F {.inline.} =
   F(i) + f
-func `+`*[I: SomeInteger, F: SomeFloat](f: F, i: I): F {.inline, untyped.} =
+func `+`*[I: SomeInteger, F: SomeFloat and LenientFloat](f: F, i: I): F {.inline.} =
   f + F(i)
 
-func `-`*[I: SomeInteger, F: SomeFloat](i: I, f: F): F {.inline, untyped.} =
+func `-`*[I: SomeInteger, F: SomeFloat and LenientFloat](i: I, f: F): F {.inline.} =
   F(i) - f
-func `-`*[I: SomeInteger, F: SomeFloat](f: F, i: I): F {.inline, untyped.} =
+func `-`*[I: SomeInteger, F: SomeFloat and LenientFloat](f: F, i: I): F {.inline.} =
   f - F(i)
 
-func `*`*[I: SomeInteger, F: SomeFloat](i: I, f: F): F {.inline, untyped.} =
+func `*`*[I: SomeInteger, F: SomeFloat and LenientFloat](i: I, f: F): F {.inline.} =
   F(i) * f
-func `*`*[I: SomeInteger, F: SomeFloat](f: F, i: I): F {.inline, untyped.} =
+func `*`*[I: SomeInteger, F: SomeFloat and LenientFloat](f: F, i: I): F {.inline.} =
   f * F(i)
 
-func `/`*[I: SomeInteger, F: SomeFloat](i: I, f: F): F {.inline, untyped.} =
+func `/`*[I: SomeInteger, F: SomeFloat and LenientFloat](i: I, f: F): F {.inline.} =
   F(i) / f
-func `/`*[I: SomeInteger, F: SomeFloat](f: F, i: I): F {.inline, untyped.} =
+func `/`*[I: SomeInteger, F: SomeFloat and LenientFloat](f: F, i: I): F {.inline.} =
   f / F(i)
 
-func `<`*[I: SomeInteger, F: SomeFloat](i: I, f: F): bool {.inline, untyped.} =
+func `<`*[I: SomeInteger, F: SomeFloat and LenientFloat](i: I, f: F): bool {.inline.} =
   F(i) < f
-func `<`*[I: SomeInteger, F: SomeFloat](f: F, i: I): bool {.inline, untyped.} =
+func `<`*[I: SomeInteger, F: SomeFloat and LenientFloat](f: F, i: I): bool {.inline.} =
   f < F(i)
-func `<=`*[I: SomeInteger, F: SomeFloat](i: I, f: F): bool {.inline, untyped.} =
+func `<=`*[I: SomeInteger, F: SomeFloat and LenientFloat](i: I, f: F): bool {.inline.} =
   F(i) <= f
-func `<=`*[I: SomeInteger, F: SomeFloat](f: F, i: I): bool {.inline, untyped.} =
+func `<=`*[I: SomeInteger, F: SomeFloat and LenientFloat](f: F, i: I): bool {.inline.} =
   f <= F(i)
 
 # Note that we must not defined `>=` and `>`, because system.nim already has a
