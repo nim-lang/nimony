@@ -1,1 +1,3 @@
 tests/nimony/ownedrefs/townedrefs_seq.nim(4, 13) Error: 'owned' is only valid for 'ref' and closure types, but got 'seq[int64]'
+tests/nimony/ownedrefs/townedrefs_seq.nim(7, 14) Error: 'owned' is only valid for 'ref' and closure types, but got 'tuple[int64, int64]'
+tests/nimony/ownedrefs/townedrefs_seq.nim(8, 9) Error: expected tuple but got: owned tuple[int64, int64]

@@ -5696,7 +5696,10 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
       it.n = tupatStart; skip it.n
       it.typ = c.types.untypedType
     else:
-      c.buildErr dest, tupInfo, "expected tuple but got: " & typeToString(tupleType)
+      let msg = "expected tuple but got: " & typeToString(tupleType)
+      dest.shrink exprStart # the open tag and the operand
+      c.buildErr dest, tupInfo, msg
+      it.n = tupatStart; skip it.n
     return
   var idx = tup.n
   let idxStart = dest.len

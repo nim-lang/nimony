@@ -3,3 +3,6 @@
 type
   S = owned seq[int]
 var x: S
+# a subscript of the rejected `owned` tuple must not crash nimsem
+var t: owned (int, int)
+discard t[1]
