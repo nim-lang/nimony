@@ -34,6 +34,7 @@ when not defined(nimony):
 
 proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
+proc addFieldsAccessToken(buf: var TokenBuf; info: NifLineInfo; ownerSym: SymId)
 
 proc semStmtBody(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) =
   ## The body of a loop, `finally` or `defer`: a branch that produces nothing.
@@ -3358,7 +3359,10 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
               for i in 0 ..< savedSelector.len:
                 dest.add savedSelector[i]
               dest.addSymUse(b.fieldSym, b.info)
-              dest.addIntLit(0, b.info)
+              # Like `fields()`, the binding names the field for the code
+              # that matched the branch: the type's module authorizes it.
+              addFieldsAccessToken(dest, b.info,
+                genericRootSym(getTypeSection(stInfo.objTypeSym)))
               dest.addParRi()
               dest.addParRi()
               publish c, dest, bindSym, declStart
