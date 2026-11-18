@@ -26,7 +26,7 @@ import ".." / models / nifindex_tags
 import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptcache,
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
-  contracts_fir, exprexec, semimport, module_plugins, sem, templates
+  contracts_fir, features, exprexec, semimport, module_plugins, sem, templates
 import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
@@ -487,21 +487,28 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
 
 func hasPendingPlugins(c: SemContext): bool {.inline.} = c.pendingTypePlugins.len != 0 or c.pendingModulePlugins.len != 0
 
+proc addProverFeatures(c: var SemContext; dest: var TokenBuf) =
+  ## `(pragmas (feature "name" …))` at the module's end: the prover runs in
+  ## hexer, which reads the module's features from here.
+  let proverFeatures = c.features * ProverFeatures
+  if proverFeatures != {}:
+    dest.addParLe PragmasS, NoLineInfo
+    for f in proverFeatures:
+      dest.addParLe FeatureP, NoLineInfo
+      dest.addStrLit featureName(f)
+      dest.addParRi()
+    dest.addParRi()
+
 proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
-  ## Lower the module to the Final IR (`doc/internals/final_ir.md`), prove its
-  ## contracts and publish the lowered tree without the prover's facts.
+  ## Lower the module to the Final IR (`doc/internals/final_ir.md`) and split
+  ## its `.requires` routines. The prover's facts stay in the tree: hexer runs
+  ## the prover once hooks and exceptions are lowered, and strips them then.
   if c.g.config.keepSemTree:
     # The structured tree, for the sem validator; the compiler never reads it.
     onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif")
   var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
-  when true: #defined(enableContracts):
-    let hooks = c.typeHooks
-    assert hooks != nil # `semdata` is a `lenientnils` module
-    var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
-                                    c.g.config.bits, hooks, c.g.config.verbose)
-    if reporters.reportErrors(moreErrors) > 0:
-      quit 1
-  dest = stripAnalysisFacts(ensureMove fir)
+  splitRequiresRoutines(fir)
+  dest = ensureMove fir
 
 proc runPhases(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   ## The three sem phases. Each phase's buffer is consumed by the next one and
@@ -606,6 +613,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   dest.add c.pendingSumtypes
   instantiateGenericHooks c, dest
   checkDestroysHaveWasMoved c, dest
+  if not c.hasPendingPlugins: addProverFeatures c, dest
   dest.addParRi()
   dbgCheckSeals(dest, "phase3")
   when defined(dumpPhases):
@@ -711,6 +719,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   dest.add c.pendingSumtypes
   instantiateGenericHooks c, dest
   checkDestroysHaveWasMoved c, dest
+  if not c.hasPendingPlugins: addProverFeatures c, dest
   dest.addParRi()
 
   if reportErrors(dest) == 0:
@@ -736,7 +745,12 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
   ## `validatePassesFlag`).
   when not defined(nimony) and not defined(skipPostSemValidator):
     let phase = postFinalIrPhase()
-    let violations = validate(dest, phase)
+    # the prover's `kill`/`unknown` facts are hexer's input, not published IR
+    var published = createTokenBuf(dest.len)
+    var r = beginRead(dest)
+    while r.hasMore: stripAnalysisFactsInto published, r
+    endRead(r)
+    let violations = validate(published, phase)
     if violations.len > 0:
       stderr.writeLine "[" & moduleName & "] post-sem validator found " &
         $violations.len & " violation(s)" &

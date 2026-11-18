@@ -73,6 +73,20 @@ proc normalizeFeatureName(s: string): string =
     elif ch >= 'A' and ch <= 'Z': result.add chr(ord(ch) + (ord('a') - ord('A')))
     else: result.add ch
 
+const
+  ProverFeatures* = {RuntimeContractsFeature, StaticContractsFeature,
+                     AssumeSyncFeature, LenientAliasingFeature}
+    ## The features the prover reads. nimsem hands them to hexer, which runs it.
+
+proc featureName*(f: Feature): string =
+  ## The name `parseFeatures` reads back, for the features in `ProverFeatures`.
+  case f
+  of RuntimeContractsFeature: "runtimecontracts"
+  of StaticContractsFeature: "staticcontracts"
+  of AssumeSyncFeature: "assumesync"
+  of LenientAliasingFeature: "lenientaliasing"
+  else: ""
+
 proc parseFeatures*(s: string): set[Feature] =
   case normalizeFeatureName(s)
   # No "resemchoice": re-resolving an `ochoice` against the expansion site is

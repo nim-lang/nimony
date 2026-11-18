@@ -7,7 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [assertions, tables, hashes, sets, syncio]
+import std / [assertions, tables, hashes, sets, syncio, os]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
@@ -16,6 +16,9 @@ import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
   constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
   funcsummary, inliner, arcopt
 import ".." / finalir / finalir
+from ".." / nimony / contracts_fir import analyzeFinalIr
+from ".." / nimony / reporters import reportErrors, infoToStr
+import ".." / nimony / features
 # `arcopt` runs on the final NIFC (try/finally already lowered to explicit
 # control flow). It is the BasicBlock-based pass ported from the battle-tested
 # `nim/compiler/optimizer.nim`: a stack of basic blocks each owning a pending
@@ -44,11 +47,73 @@ proc publishHooks*(n: var Cursor) =
   else:
     inc n
 
-proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
+proc proverFeatures(buf: var TokenBuf): set[Feature] =
+  ## The features nimsem left for the prover: `(pragmas (feature "name" …))`
+  ## among the module's top-level statements.
+  result = {}
+  var n = beginRead(buf)
+  if n.stmtKind == StmtsS:
+    n.into:
+      while n.hasMore:
+        if n.stmtKind == PragmasS:
+          var p = n
+          p.into:
+            while p.hasMore:
+              if p.pragmaKind == FeatureP:
+                var a = p
+                a.into:
+                  while a.hasMore:
+                    if a.kind == StrLit: result.incl parseFeatures(pool.strings[a.strId])
+                    skip a
+              skip p
+        skip n
+  endRead(n)
+
+proc prove(pass: var Pass; bits: int) =
+  ## The prover (`contracts_fir`), on the module once its hooks are injected
+  ## and its exceptions lowered. Its errors end the compilation.
+  let features = proverFeatures(pass.dest)
+  when not defined(nimony):
+    if existsEnv("NIMONY_PROVER_DUMP"):
+      writeFile(getEnv("NIMONY_PROVER_DUMP") & "/" & pass.moduleSuffix & ".prover.nif",
+                toString(pass.dest, false))
+  var errors = analyzeFinalIr(pass.dest, pass.moduleSuffix, features, bits,
+                              (ref Table[SymId, HooksPerType])(), existsEnv("NIMONY_PROVER_VERBOSE"))
+  when not defined(nimony):
+    if existsEnv("NIMONY_PROVER_LOG"):
+      # measurement mode: record the diagnostics, keep compiling
+      var lines = ""
+      var e = beginRead(errors)
+      while e.hasMore:
+        if e.isTagLit:
+          let info = e.info
+          var m = e
+          var msg = ""
+          m.into:
+            while m.hasMore:
+              if m.kind == StrLit: msg = pool.strings[m.strId]
+              skip m
+          lines.add infoToStr(info) & " Error: " & msg & "\n"
+        skip e
+      endRead(e)
+      if lines.len > 0:
+        var f = open(getEnv("NIMONY_PROVER_LOG"), fmAppend)
+        f.write lines
+        f.close()
+      return
+  if reportErrors(errors) > 0:
+    quit 1
+
+proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int;
+                runProver = false): TokenBuf =
   # The input is already the Final IR (`doc/final_ir.md`): nimsem lowers a
   # module before publishing it. Every pass here reads and writes that form.
   var input = createTokenBuf(300)
   input.addSubtree n
+  when not defined(nimony):
+    if runProver and existsEnv("NIMONY_PROVER_DUMP"):
+      writeFile(getEnv("NIMONY_PROVER_DUMP") & "/" & moduleSuffix & ".input.nif",
+                toString(input, false))
   var pass = initPass(ensureMove input, moduleSuffix, "iterinliner", bits)
 
   # Pass 1: inline the inline iterators
@@ -88,6 +153,12 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # `xelim2` run that used to sit between this pass and the destroyer.
   pass.prepareForNext("duplifier")
   injectDups(pass, c.liftingCtx)
+
+  # The prover reads the `kill`/`unknown` facts nimsem's lowering left in the
+  # tree; nothing after it does.
+  if runProver:
+    prove(pass, bits)
+  pass.dest = stripAnalysisFacts(move pass.dest)
 
   # Pass 6: Inject Destructors (RAII/Cleanup)
   pass.prepareForNext("destroyer")

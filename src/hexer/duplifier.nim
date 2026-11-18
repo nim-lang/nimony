@@ -1634,11 +1634,13 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
   if wrapDup:
     c.dest.addParLe CallS, info
     c.dest.addSymUse(dupHook, info)
+  # a hidden deref stays one: the prover tells `var` access from pointer access
+  let tag = n.exprKind
   n.into:
     let isRef = derefsBoxedRef(c, n)
     if isRef:
       c.dest.addParLe DotX, info
-    c.dest.addParLe DerefX, info
+    c.dest.addParLe tag, info
     tr c, n, WantNonOwner
     if isRef:
       c.dest.addParRi() # close deref
@@ -1852,6 +1854,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         of LoopV:
           forgetMentions c, n # the back-edge
           trSons c, n, WantNonOwner
+        of KillV, UnknownV:
+          takeTree c.dest, n # the prover's facts, not code
         else:
           trSons c, n, WantNonOwner
 

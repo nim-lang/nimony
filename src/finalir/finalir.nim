@@ -874,7 +874,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         stderr.writeLine "FIR-FALLBACK " & globalTags.tags[n.cursorTagId]
       trExpr c, dest, n
 
-proc stripAnalysisFactsInto(dest: var TokenBuf; n: var Cursor) =
+proc stripAnalysisFactsInto*(dest: var TokenBuf; n: var Cursor) =
   if n.isTagLit:
     if n.finalIrKind in {KillV, UnknownV}:
       skip n

@@ -4099,6 +4099,10 @@ proc analyseOconstr(c: var FirContext; n: var Cursor) =
   n.into:
     let objType = n
     skip n # type
+    if objType.isSymbol and tryLoadSym(objType.symId).status != LacksNothing:
+      # The duplifier's boxed `ref` cell (`trNewobj`): its type is declared by
+      # lengcgen, later. The cell's fields are the refcount and the payload.
+      while n.hasMore: skip n
     while n.hasMore:
       assert n.substructureKind == KvU
       n.into:
@@ -4480,6 +4484,8 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip fnPragmas # return type
   let effect = calleeEffect(tt, fnPragmas)
   let isSync = hasPragma(fnPragmas, SyncP)
+  let wasMovedHook = n.kind == Symbol and
+    pool.symBasename(n.symId).toLowerAscii.startsWith("=wasmoved")
   traverseExpr c, n, call # the `fn` itself
   let paramsStart = fnType
   var byRefFirst = firstParamPassedByRef(fnType)
@@ -4517,7 +4523,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       var inner = n
       inc inner # skip haddr tag
       needsBorrowCheck = true
-    if pk == OutT:
+    if pk == OutT or (isMut and wasMovedHook):
+      # `=wasMoved` puts its argument into the moved-from state: like an
+      # `out` parameter, it need not be initialized before
       let s = extractSymId(n)
       if s != NoSymId:
         markInit(c, s)
@@ -6374,6 +6382,10 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
       isAsm = hasPragma(n, AssemblerP)
       isNoReturn = hasPragma(n, NoreturnP)
       ownContract = extractPragma(n, RequiresP)
+      if cursorIsNil(ownContract):
+        # the guard-free half of a split routine: its `.requires` became an
+        # `(assume …)` (`emitRequiresBody`), which every caller discharged
+        ownContract = extractPragma(n, AssumeP)
       # An iterator's `.ensures` is about what it yields, not about an exit.
       if decl.symKind != IteratorY:
         ownEnsures = extractPragma(n, EnsuresP)
@@ -6922,11 +6934,24 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     endRead(fin)
 
   c.typeCache.closeScope()
-  # Only this module's routines are split here; imported ones were split by
-  # their own module.
-  if c.dischargedIndexes.len > 0 or c.provenCalls.len > 0 or ownSplits.len > 0:
-    applyVerdicts(finalBuf, c.dischargedIndexes, c.provenCalls, ownSplits)
+  # The routines were split by nimsem (`splitRequiresRoutines`); what is left
+  # is to send each proven call to the guard-free body.
+  if c.dischargedIndexes.len > 0 or c.provenCalls.len > 0:
+    applyVerdicts(finalBuf, c.dischargedIndexes, c.provenCalls,
+                  initHashSet[SymId]())
   result = ensureMove c.errors
+
+proc splitRequiresRoutines*(finalBuf: var TokenBuf) =
+  ## Split each of the module's own routines with a `.requires` into a guarded
+  ## wrapper and a guard-free body (`splitsOnRequires`). It does not depend on
+  ## any proof, so it runs before hexer's `desugar` emits the guards; the
+  ## prover later sends the proven calls to the body.
+  var splits = initHashSet[SymId]()
+  var scan = beginRead(finalBuf)
+  collectSplitRoutines(scan, splits)
+  endRead(scan)
+  if splits.len > 0:
+    applyVerdicts(finalBuf, initHashSet[int](), initHashSet[int](), splits)
 
 proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
   ## Lower `input` and analyze it. nimsem lowers once and calls

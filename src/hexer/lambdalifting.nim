@@ -2125,7 +2125,11 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
         KvX, PluginCallX, NoExpr:
-        if isLiftedClosureTuple(n):
+        if n.finalIrKind in {KillV, UnknownV}:
+          # the prover's facts: their symbols may be out of the type cache's
+          # scope here (prototype: a captured local stays unrenamed)
+          takeTree dest, n
+        elif isLiftedClosureTuple(n):
           # An iter-value tuple or closure-proc tuple emitted by an earlier
           # pass — don't recurse into it, otherwise treProcType would fire
           # again on the inner ProctypeT and wrap it in another tuple. The
