@@ -1056,6 +1056,28 @@ func strVal*(c: Cursor; pool: Pool): string =
   else:
     pool.strings[StrId(combinedPayload(c) shr 1)]
 
+func encodeInlineStrView(s: openArray[char]): uint32 {.inline.} =
+  result = StrInlineFlag or (uint32(s.len) shl StrLengthShift)
+  for i in 0 ..< s.len:
+    result = result or (uint32(byte(s[i])) shl (StrDataShift + uint32(i) * 8))
+
+func sameChars(a, b: openArray[char]): bool =
+  if a.len != b.len: return false
+  for i in 0 ..< a.len:
+    if a[i] != b[i]: return false
+  result = true
+
+func strEquals*(c: Cursor; pool: Pool; s: openArray[char]): bool {.inline.} =
+  ## The StrLit/Ident at `c` equals `s`. Compared in place: an inline literal
+  ## as its packed payload, a pooled one against the borrowed pool entry, so
+  ## no `string` is built.
+  checkKind c.kind in {StrLit, Ident}, "strEquals on ", c.kind
+  let payload = c.load.uoperand
+  if (payload and StrInlineFlag) != 0'u32:
+    result = inlineStrLen(payload) == s.len and payload == encodeInlineStrView(s)
+  else:
+    result = sameChars(pool.strings[StrId(combinedPayload(c) shr 1)], s)
+
 # The one-argument accessors below spell the pool lookup out rather than calling
 # `pool(c)`. `pool` returns the pool by value, and a `ref` returned by value is an
 # owned temporary — ARC pairs the call with an incRef and a decRef, and the decRef
@@ -1071,6 +1093,15 @@ proc strVal*(c: Cursor): string {.inline.} =
     assert c.owner != nil and c.owner.pool != nil,
       "strVal on a cursor with no literals pool"
     strVal(c, c.owner.pool)
+
+proc strEquals*(c: Cursor; s: openArray[char]): bool {.inline.} =
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: strEquals(c, c.owner.pool, s)
+    else: strEquals(c, fallbackPool, s)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "strEquals on a cursor with no literals pool"
+    strEquals(c, c.owner.pool, s)
 
 proc strId*(c: Cursor; pool: Pool): StrId =
   ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
@@ -1708,11 +1739,6 @@ template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped)
 proc addStrLit*(b: var TokenBuf; s: string) {.nifEmits: "LIT".} =
   ## Appends a string literal, using inline storage when possible.
   addStringLike(b, StrLit, s, b.pool.strings)
-
-func encodeInlineStrView(s: openArray[char]): uint32 {.inline.} =
-  result = StrInlineFlag or (uint32(s.len) shl StrLengthShift)
-  for i in 0 ..< s.len:
-    result = result or (uint32(byte(s[i])) shl (StrDataShift + uint32(i) * 8))
 
 proc addStrLit*(b: var TokenBuf; s: openArray[char]) {.nifEmits: "LIT".} =
   ## Appends a string literal taken straight from a byte view. For a parser
