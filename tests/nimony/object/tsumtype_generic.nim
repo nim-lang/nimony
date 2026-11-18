@@ -153,4 +153,13 @@ assert okOr(ok[int, string](5), 0) == 5
 assert okOr(err[int, string]("x"), 9) == 9
 assert errLen(err[int, string]("bad")) == 3
 
+# A pattern names a branch of the selector's own type, not the branch of
+# that name of another sum type in scope, `Res` here:
+proc flipMsg(f: Flip): string =
+  case f
+  of Ok(n): result = $n
+  of {Err}(msg): result = msg
+
+assert flipMsg(flipErr("flip")) == "flip"
+
 echo "tsumtype_generic: OK"
