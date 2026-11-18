@@ -656,14 +656,15 @@ proc overlaps(c: var FirContext; a: Cursor; followA: bool;
     x = nextSelector(c, x.childCursor, followA)
     y = nextSelector(c, y.childCursor, followB)
 
-proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo) =
+proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo;
+                         action = "mutated") =
   var conflict = false
   for b in c.p.flow.borrows:
     if overlaps(c, mut, true, b.loc, true):
       conflict = true
       break
   if conflict:
-    buildErr c, info, "'" & asNimCode(locRootSym(c, mut)) & "' is borrowed and cannot be mutated"
+    buildErr c, info, "'" & asNimCode(locRootSym(c, mut)) & "' is borrowed and cannot be " & action
 
 proc localInfoOf(c: var FirContext; s: SymId): LocalInfo =
   ## `getLocalInfo` only knows the locals of the proc under analysis; a global
@@ -4564,6 +4565,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
         mutatedRoots.add viaResult
       else:
         mutatesUnknown = true
+    elif pk == SinkT and borrowMode(c, n).isTracked:
+      # The callee may free what it is given, like an assignment to `n` would.
+      checkBorrowConflict(c, n, n.info, "passed to a 'sink' parameter")
     checkNilMatch c, n, param.typ
     # Binding an argument to a `range[lo..hi]` parameter is the same narrowing
     # as an assignment to one; the callee is proven from the declared type, so

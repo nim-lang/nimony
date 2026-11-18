@@ -133,3 +133,15 @@ proc selfReslice =
   discard a[0]
 
 selfReslice()
+
+# 12. A location passed to a `sink` parameter is not to be used afterwards, and
+# a live view of it is such a use: the callee may free the payload.
+proc consume(s: sink seq[int]): int = s.len
+
+proc viewReadAfterSink =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  discard consume(s)
+  discard view[0]
+
+viewReadAfterSink()
