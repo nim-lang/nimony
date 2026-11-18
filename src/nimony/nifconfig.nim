@@ -179,12 +179,13 @@ type
                          # in every template expansion and only a debug build
                          # reads it.
 
-proc executableName*(config: NifConfig; name: string): string =
+proc executableName*(config: NifConfig; name: string; native: bool): string =
   ## The file the backend writes for an executable. nifasm's PE writer always
   ## uses `.exe` (`writeExe` calls `changeFileExt("exe")`), even when `--out`
   ## already has another extension; the other backends keep the path they are
-  ## given.
-  if config.backend == backendNative and config.targetOS == osWindows:
+  ## given. `native` names the backend actually used, which can differ from
+  ## `config.backend` in a CTFE sub-build.
+  if native and config.targetOS == osWindows:
     name.changeFileExt("exe")
   else:
     name.addFileExt(ExeExt)

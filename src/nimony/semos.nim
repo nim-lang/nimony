@@ -1148,7 +1148,7 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
     let nativeEval = c.g.config.isDefined("nimNativeBackend")
     if nativeEval:
       evalArgs.add " --native"
-    let exeName = c.g.config.executableName(splitFile(progfile).name)
+    let exeName = c.g.config.executableName(splitFile(progfile).name, nativeEval)
     let (output, exitCode) = runProgram(progfile, evalCache,
                                         (if isStd: evalCache else: ""), usedModules,
                                         evalArgs, nativeEval, exeName, sourceDir)
