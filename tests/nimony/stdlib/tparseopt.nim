@@ -15,6 +15,14 @@ block:
   assert p.kind == cmdEnd
 
 block:
+  # An explicit empty list is an empty command line, never the process argv.
+  var p = initOptParser(newSeq[string]())
+  next(p)
+  assert p.kind == cmdEnd
+  for kind, key, val in getopt(newSeq[string]()):
+    assert false
+
+block:
   var p = initOptParser(@["a"])
   next(p)
   assert p.kind == cmdArgument

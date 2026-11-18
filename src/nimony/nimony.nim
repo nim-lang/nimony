@@ -224,8 +224,8 @@ proc createCmdOptions(baseDir: sink string): CmdOptions =
     executableArgs: ""
   )
 
-proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
-  for kind, key, val in getopt(cmdLineArgs):
+proc handleCmdLine(c: var CmdOptions; p: var OptParser; mode: CmdMode) =
+  for kind, key, val in getopt(p):
     case kind
     of cmdArgument:
       if c.cmd == None:
@@ -494,7 +494,11 @@ when isMainModule:
     var args: seq[string] = @[]
     processArgsFile argsFile, args
     if args.len > 0:
-      handleCmdLine(c, args, FromArgsFile)
+      # Guarded because host Nim's `parseopt` reads the process argv for an
+      # empty list; ours does not.
+      var argsParser = initOptParser(args)
+      handleCmdLine(c, argsParser, FromArgsFile)
 
-  handleCmdLine(c, @[], FromCmdLine)
+  var osParser = initOptParser()
+  handleCmdLine(c, osParser, FromCmdLine)
   compileProgram(c)
