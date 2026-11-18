@@ -149,7 +149,7 @@ template errLen(r: Result[int, string]): int =
   of Err(e): n = e.len
   n
 
-assert okOr(ok[int, string](5), 0) == 5
+assert okOr(result.ok[int, string](5), 0) == 5
 assert okOr(err[int, string]("x"), 9) == 9
 assert errLen(err[int, string]("bad")) == 3
 
