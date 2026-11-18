@@ -4597,14 +4597,31 @@ proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLi
   var it = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
   semCall c, dest, it, {}
 
-proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
+type
+  RuntimeCase = object
+    selector: SymId
+    branches: Cursor ## the `of`/`else` list of the case section in the type
+
+  ObjInitState = object
+    ## Threaded through the constructor builder. Recording, it collects what
+    ## `lowerToObjInit` needs to replace a constructor with a run-time case
+    ## selector by a hidden init proc; building that proc's arms, `forced`
+    ## names the branch every selector takes.
+    recording: bool
+    runtimeCases: seq[RuntimeCase]
+    branchOf: Table[SymId, int]
+      ## selector -> index of the branch it filled; -1 for none
+    fieldTypes: Table[SymId, Cursor]
+    forced: Table[SymId, int]
+
+proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; st: var ObjInitState; field: Local;
                          setFields: Table[SymId, Cursor]; info: NifLineInfo;
                          bindings: Table[SymId, Cursor]; depth: int;
                          isUnion = false) =
   let fieldSym = field.name.symId
-  if c.objInit.recording:
+  if st.recording:
     # the parameter type `lowerToObjInit` gives this field, uninstantiated
-    c.objInit.fieldTypes[fieldSym] = field.typ
+    st.fieldTypes[fieldSym] = field.typ
   if setFields.hasKey(fieldSym):
     dest.addSubtree setFields.getOrQuit(fieldSym)
   elif isUnion:
@@ -4638,7 +4655,7 @@ proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
       dest.addIntLit(depth, info)
     dest.addParRi()
 
-proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; st: var ObjInitState; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
                           bindings: Table[SymId, Cursor]; depth = 0;
                           isUnion = false)
@@ -4684,14 +4701,15 @@ proc getValueInKv(n: Cursor): Cursor =
   inc result
   skip result
 
-proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor; selector: Local;
+proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; st: var ObjInitState;
+                n: var Cursor; selector: Local;
                 selectorVal: xint; setFields: Table[SymId, Cursor]; info: NifLineInfo;
                 bindings: Table[SymId, Cursor]; depth: int): int =
   ## `selectorVal` is the constructor's value for the selector (the value
   ## set, the declared default or `default(T)`), NaN when not constant. The
   ## branch it selects is filled, its omitted fields with their defaults.
   ## Returns the index of the branch filled (`else` counts as the last), -1
-  ## for none. A selector in `c.objInit.forced` takes the branch named there
+  ## for none. A selector in `st.forced` takes the branch named there
   ## instead: in an arm of a hidden init proc (`lowerToObjInit`) the value is
   ## a parameter, but the arm knows which branch it is.
   result = -1
@@ -4699,7 +4717,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   var isBranchSelected = false
   let selectorSymId = selector.name.symId
   let selectorSet = setFields.hasKey(selectorSymId)
-  let forcedIdx = c.objInit.forced.getOrDefault(selectorSymId, -2)
+  let forcedIdx = st.forced.getOrDefault(selectorSymId, -2)
   var bi = 0
 
   block matched:
@@ -4720,7 +4738,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             elif selectorSet and not selected:
               wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
             n.into: # stmt
-              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
+              buildObjConstrFields(c, dest, st, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
             result = bi
           elif selected:
@@ -4728,7 +4746,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             # they still get their defaults. `oconstr` is total (doc/tags.md),
             # and the native back end stores exactly what is listed.
             n.into: # stmt
-              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
+              buildObjConstrFields(c, dest, st, n, setFields, info, bindings, depth)
             result = bi
           else:
             skip n
@@ -4742,7 +4760,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             elif isBranchSelected and setFields.hasKey(selectorSymId):
               wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
             n.into: # stmt
-              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
+              buildObjConstrFields(c, dest, st, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
             result = bi
           elif forcedIdx == bi or (forcedIdx == -2 and not isBranchSelected and
@@ -4750,7 +4768,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             # A constant discriminator no `of` matched selects the `else`
             # branch; its fields get their defaults (see the `of` arm above).
             n.into: # stmt
-              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
+              buildObjConstrFields(c, dest, st, n, setFields, info, bindings, depth)
             result = bi
           else:
             skip n
@@ -4764,7 +4782,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   if not selectorSet and lastFieldSymId != SymId(0):
     badDiscriminatorError(c, dest, info, lastFieldSymId, selectorSymId)
 
-proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; st: var ObjInitState; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
                           bindings: Table[SymId, Cursor]; depth = 0;
                           isUnion = false) =
@@ -4776,25 +4794,25 @@ proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       # selector
       let field = takeLocal(body, SkipFinalParRi)
       let selectorKv = dest.len
-      buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
+      buildObjConstrField(c, dest, st, field, setFields, info, bindings, depth)
       let selectorSym = field.name.symId
       var value = createNaN()
-      if not c.objInit.forced.hasKey(selectorSym):
+      if not st.forced.hasKey(selectorSym):
         var selectorKvCursor = cursorAt(dest, selectorKv)
         let selectorVal = getValueInKv(selectorKvCursor)
         if selectorVal.exprKind != ErrX:
           value = tryEvalOrdinal(c.g.config.bits, selectorVal)
         endRead selectorKvCursor
-        if c.objInit.recording and value.isNaN:
+        if st.recording and value.isNaN:
           # no branch can be named: `lowerToObjInit` dispatches on it at run time
-          c.objInit.runtimeCases.add RuntimeCase(selector: selectorSym, branches: body)
-      let filled = fieldsPresentInBranch(c, dest, body, field, value, setFields, info, bindings, depth)
-      if c.objInit.recording and not value.isNaN:
-        c.objInit.branchOf[selectorSym] = filled
+          st.runtimeCases.add RuntimeCase(selector: selectorSym, branches: body)
+      let filled = fieldsPresentInBranch(c, dest, st, body, field, value, setFields, info, bindings, depth)
+      if st.recording and not value.isNaN:
+        st.branchOf[selectorSym] = filled
       skip n
     else:
       let field = takeLocal(n, SkipFinalParRi)
-      buildObjConstrField(c, dest, field, setFields, info, bindings, depth, isUnion)
+      buildObjConstrField(c, dest, st, field, setFields, info, bindings, depth, isUnion)
 
 proc fieldDefaultsTyped(c: var SemContext; dest: var TokenBuf; s: SymId; info: NifLineInfo): bool =
   ## A constructor copies the type's typed field defaults (`buildObjConstrField`);
@@ -4814,7 +4832,7 @@ proc fieldDefaultsTyped(c: var SemContext; dest: var TokenBuf; s: SymId; info: N
       c.buildErr dest, info, "cannot construct '" & pool.symBasename(owner) &
         "' in a default value of its own fields"
 
-proc buildObjConstrImpl(c: var SemContext; dest: var TokenBuf; typ: Cursor;
+proc buildObjConstrImpl(c: var SemContext; dest: var TokenBuf; st: var ObjInitState; typ: Cursor;
                         setFields: Table[SymId, Cursor]; info: NifLineInfo;
                         prebuiltBindings: Table[SymId, Cursor]) =
   var constrKind = NoExpr
@@ -4882,7 +4900,7 @@ proc buildObjConstrImpl(c: var SemContext; dest: var TokenBuf; typ: Cursor;
       if parent.kind == ObjectT:
         skip currentField  # parent type / inheritance slot
       if currentField.hasMore and not currentField.isDotToken:
-        buildObjConstrFields(c, dest, currentField, setFields, info, bindings, depth)
+        buildObjConstrFields(c, dest, st, currentField, setFields, info, bindings, depth)
       parentType = parent.parentType
       inc depth
     # bring back original bindings:
@@ -4893,7 +4911,7 @@ proc buildObjConstrImpl(c: var SemContext; dest: var TokenBuf; typ: Cursor;
     skip currentField  # parent type / inheritance slot
   if currentField.hasMore and not currentField.isDotToken:
     let isUnion = objDecl.kind == TypeY and hasPragma(objDecl.pragmas, UnionP)
-    buildObjConstrFields(c, dest, currentField, setFields, info, bindings, isUnion = isUnion)
+    buildObjConstrFields(c, dest, st, currentField, setFields, info, bindings, isUnion = isUnion)
   dest.addParRi()
 
 type
@@ -4908,19 +4926,19 @@ proc paramOfField(params: seq[ObjInitParam]; field: SymId): SymId =
       result = p.param
       break
 
-proc genObjInitArms(c: var SemContext; dest: var TokenBuf; objType: Cursor;
-                    rec: ObjInitState; params: seq[ObjInitParam];
+proc genObjInitArms(c: var SemContext; dest: var TokenBuf; st: var ObjInitState; objType: Cursor;
+                    cases: seq[RuntimeCase]; params: seq[ObjInitParam];
                     setFields: Table[SymId, Cursor]; bindings: Table[SymId, Cursor];
                     level: int; resultSym: SymId; info: NifLineInfo) =
   ## One `case` per run-time selector, nested in field order; the innermost
   ## arm knows every branch and assigns a total constructor to `result`.
-  if level == rec.runtimeCases.len:
+  if level == cases.len:
     dest.addParLe(AsgnS, info)
     dest.addSymUse(resultSym, info)
-    buildObjConstrImpl(c, dest, objType, setFields, info, bindings)
+    buildObjConstrImpl(c, dest, st, objType, setFields, info, bindings)
     dest.addParRi()
   else:
-    let rc = rec.runtimeCases[level]
+    let rc = cases[level]
     dest.addParLe(CaseS, info)
     dest.addSymUse(paramOfField(params, rc.selector), info)
     var b = rc.branches
@@ -4932,14 +4950,14 @@ proc genObjInitArms(c: var SemContext; dest: var TokenBuf; objType: Cursor;
         var ranges = sub(b)
         dest.addSubtree ranges
       dest.addParLe(StmtsS, info)
-      c.objInit.forced[rc.selector] = bi
-      genObjInitArms(c, dest, objType, rec, params, setFields, bindings,
+      st.forced[rc.selector] = bi
+      genObjInitArms(c, dest, st, objType, cases, params, setFields, bindings,
                      level + 1, resultSym, info)
       dest.addParRi() # stmts
       dest.addParRi() # of / else
       skip b
       inc bi
-    c.objInit.forced.del rc.selector
+    st.forced.del rc.selector
     dest.addParRi() # case
 
 proc lowerToObjInit(c: var SemContext; dest: var TokenBuf; start: int; typ: Cursor;
@@ -5031,10 +5049,8 @@ proc lowerToObjInit(c: var SemContext; dest: var TokenBuf; start: int; typ: Curs
     decl.addSubtree objType
     decl.addDotToken() # value
     decl.addParRi()
-    let savedForced = move c.objInit.forced
-    c.objInit.forced = rec.branchOf
-    genObjInitArms(c, decl, objType, rec, params, setFields, bindings, 0, resultSym, info)
-    c.objInit.forced = savedForced
+    var st = ObjInitState(forced: rec.branchOf)
+    genObjInitArms(c, decl, st, objType, rec.runtimeCases, params, setFields, bindings, 0, resultSym, info)
     decl.addParLe(RetS, info)
     decl.addSymUse(resultSym, info)
     decl.addParRi()
@@ -5058,12 +5074,8 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
                            setFields: Table[SymId, Cursor]; info: NifLineInfo;
                            prebuiltBindings = initTable[SymId, Cursor]()) =
   let start = dest.len
-  let saved = move c.objInit
-  c.objInit = ObjInitState(recording: true)
-  buildObjConstrImpl(c, dest, typ, setFields, info, prebuiltBindings)
-  var rec = move c.objInit
-  c.objInit = saved
-  rec.recording = false
+  var rec = ObjInitState(recording: true)
+  buildObjConstrImpl(c, dest, rec, typ, setFields, info, prebuiltBindings)
   if rec.runtimeCases.len > 0 and c.routine.inGeneric == 0 and
       c.inGenericDefinition == 0 and not hasErrorSince(dest, start) and
       not containsGenericParams(typ):
