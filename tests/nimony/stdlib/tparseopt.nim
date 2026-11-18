@@ -1,4 +1,4 @@
-import std/[assertions, parseopt]
+import std/[assertions, os, parseopt]
 
 # The parsing rules are exercised through `initOptParser(seq[string])`, which
 # takes an explicit argument list. Poking the process argv the entry point
@@ -7,6 +7,7 @@ import std/[assertions, parseopt]
 # arguments, goes through the real process vector.
 
 block:
+  # `std/os` and `std/parseopt` export the same `paramCount`: not ambiguous.
   assert paramCount() == 0
 
   var p = initOptParser()

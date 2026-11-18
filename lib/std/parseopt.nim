@@ -4,29 +4,9 @@
 when defined(nimony):
   import strutils
 
-  when defined(windows):
-    # Windows hands a process entry point no `argv` at all — the command line
-    # sits behind `GetCommandLineW` as one unsplit UTF-16 string. `std/cmdline`
-    # is what asks for it and applies the OS's documented splitting rules, so
-    # take the arguments from there: this parser and `paramStr`/`paramCount`
-    # must not disagree about where the arguments are.
-    import cmdline
-    export paramStr, paramCount
-  else:
-    # Everywhere else the entry point receives a C-style `argv`, which the
-    # generated `main` parks in the `cmdCount`/`cmdLine` globals.
-    let
-      nifcArgc {.importc: "cmdCount".}: int32
-      nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
-
-    proc paramStr*(i: int): string =
-      if i < nifcArgc and i >= 0:
-        result = borrowCStringUnsafe(nifcArgv[i])
-      else:
-        result = ""
-
-    proc paramCount*(): int =
-      result = nifcArgc-1
+  # `std/cmdline` owns these, so `std/os` (which exports it) offers the same procs.
+  import cmdline
+  export paramStr, paramCount
 
 else:
   from os import paramStr, paramCount
