@@ -1043,7 +1043,9 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     skip n
     result = llIntTextC("1", c.prim.i8)
   of DefinedC:
-    raiseAssert "unresolved `(defined ...)` reached the LLVM code generator"
+    # a platform test outside an `ite` condition: just its value
+    result = llIntTextC(if platformTestHolds(n, c.m.facts): "1" else: "0", c.prim.i8)
+    skip n
   of NilC:
     skip n
     result = llNull(c.prim.ptrT)

@@ -60,7 +60,17 @@ proc pointerBytes(): int =
   # a platform `when` as an expression is an `if` expression
   result = when defined(amd64) or defined(arm64): 8 else: 8
 
+proc GetTickCount(): uint32 {.importc.} # kernel32: exists on Windows only
+
+proc ticksWork(): bool =
+  # only the taken arm is generated: elsewhere `GetTickCount` would not link
+  when defined(windows):
+    result = GetTickCount() > 0'u32
+  else:
+    result = true
+
 echo os() == classicOs()
 echo cpu() == classicCpu()
 echo counted()
 echo pointerBytes()
+echo ticksWork()

@@ -99,6 +99,21 @@ proc genIte(c: var GeneratedCode; n: var Cursor) =
         c.add Colon
         c.add Semicolon
       skip n      # else-part is always ignored
+    elif isPlatformTest(n):
+      # `(ite (defined "linux" "bsd") T E)`: only the arm the platform facts
+      # pick is generated. The other may name what does not exist here.
+      let holds = platformTestHolds(n, c.m.facts)
+      skip n
+      if holds:
+        c.add CurlyLe
+        c.genStmt n
+        c.add CurlyRi
+      else:
+        skip n
+        if n.kind != DotToken:
+          c.add CurlyLe
+          c.genStmt n
+          c.add CurlyRi
     else:
       c.add IfKeyword
       c.add Space

@@ -449,7 +449,9 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     c.add "NIM_TRUE"
     skip n
   of DefinedC:
-    raiseAssert "unresolved `(defined ...)` reached the C code generator"
+    # a platform test outside an `ite` condition: just its value
+    c.add(if platformTestHolds(n, c.m.facts): "NIM_TRUE" else: "NIM_FALSE")
+    skip n
   of NilC:
     # A bare `NIM_NIL`, not a cast to the `(nil T)` type the frontend attaches.
     # `NIM_NIL` is assignment-compatible with every pointer type, and casting

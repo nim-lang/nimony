@@ -415,15 +415,17 @@ plain strings and are not validated against any list.
 - `--os:x` and `--cpu:x` make `x` a fact; `--plat:x` adds the fact `x` and may
   be repeated. The Nimony driver passes every platform name `defined()` holds
   for on the target (`posix`, `bsd`, ...) as `--plat`.
-- Only the backend (lengc, arkham, jorogumo) evaluates it, right after parsing
-  a module and before anything else looks at it: every `defined` becomes
-  `(true)` or `(false)`, and an `ite` whose condition is then a constant
-  (`true`/`false` under `and`/`or`/`not`) is replaced by its taken branch. The
-  dead branch is gone before code generation, so it may refer to things that
-  do not exist on the target. Foreign declarations loaded on demand get the
-  same treatment.
+- Only the code generator evaluates it (lengc's C and LLVM generators,
+  arkham, jorogumo). There is no pre-pass: the generator's `ite` handler
+  collapses an `ite` whose condition **is** a `(defined ...)` to the arm the
+  facts pick, and every walk over a body that precedes code generation
+  (arkham's analyser and planner, its callee collection) visits only that arm.
+  The other arm may refer to things that do not exist on the target.
+  `and`/`or`/`not` over `defined` are not evaluated; the frontend never emits
+  them. A `(defined ...)` outside an `ite` condition is not produced either;
+  lengc gives it its value.
 - Every pass in between, `shoggoth opt` included, treats it as an opaque
-  constant `bool` without side effects: both branches of its `ite` stay live.
+  constant `bool` without side effects: both arms of its `ite` stay live.
 
 Nimony emits it under `.feature: "totalWhens"`: `when defined(linux) or
 defined(bsd): A elif defined(windows): B else: C` becomes

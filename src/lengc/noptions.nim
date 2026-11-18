@@ -36,6 +36,8 @@ type
   State* = object
     config*: ConfigRef
     bits*: int
+    facts*: seq[string]   ## platform facts (`--os`/`--cpu`/`--plat`) for
+                          ## Leng's `(defined "a" ...)`
 
   ActionTable* = OrderedTable[Action, seq[string]]
 

@@ -935,6 +935,7 @@ proc traverseCodeLLVM(c: var LLVMCode; n: var Cursor) =
 proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag]) =
   var m = load(inp)
   m.config = s.config
+  m.facts = s.facts
   var c = initLLVMCode(m, flags, s.bits)
   c.m.openScope()
 

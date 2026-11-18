@@ -48,7 +48,7 @@ type
     CallC = (ord(CallTagId), "call")  ## call operation
     HaddrC = (ord(HaddrTagId), "haddr")  ## hidden address: an address the COMPILER took to bind a location, not one the user asked for. `derefs.nim` inserts it wherever a `var`/`out` parameter needs the argument's location. It survives into Leng — where `(addr X)` is the user's `addr` — because the two mean different things to a consumer: `(addr x)` says "x's address is a value now", so x must have one, while `(haddr x)` says only "the callee wants x's *location*". An `(instr …)` operand slot whose row is `inout` can therefore bind the local's home directly instead of forcing it to memory. Everywhere else it lowers exactly like `(addr X)`
     BaseobjC = (ord(BaseobjTagId), "baseobj")  ## object conversion to base type
-    DefinedC = (ord(DefinedTagId), "defined")  ## `defined(x)`; in Leng (and in Nimony under `.feature: "totalWhens"`) `(defined "linux" "bsd")`: true if one of the string literals is a platform fact (`--os`, `--cpu`, `--plat`). Only the backend folds it
+    DefinedC = (ord(DefinedTagId), "defined")  ## `defined(x)`; in Leng (and in Nimony under `.feature: "totalWhens"`) `(defined "linux" "bsd")`: true if one of the string literals is a platform fact (`--os`, `--cpu`, `--plat`). The code generator collapses an `ite` over it to the taken arm
     ErrvC = (ord(ErrvTagId), "errv")  ## error flag for Leng
     InstrC = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
 

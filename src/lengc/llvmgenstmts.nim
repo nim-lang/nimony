@@ -108,6 +108,16 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
         c.emit LLInstr(kind: llBr, brTarget: labelName)
         discard c.startBlock(labelName)
       skip n
+    elif isPlatformTest(n):
+      # `(ite (defined "linux" "bsd") T E)`: only the arm the platform facts
+      # pick is generated. The other may name what does not exist here.
+      let holds = platformTestHolds(n, c.m.facts)
+      skip n
+      if holds:
+        genStmtLLVM c, n
+      else:
+        skip n
+        if n.kind != DotToken: genStmtLLVM c, n
     else:
       var cond = LLValue(); genCondLLVM(c, n, cond)
       let thenLabel = c.nextLabel()

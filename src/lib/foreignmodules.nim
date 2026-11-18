@@ -26,7 +26,6 @@ import std / [tables]
 import nifcore, nifcoreparse
 import nifreader, stringviews
 import bif
-import platfacts
 
 type
   ForeignModule* = ref object
@@ -144,10 +143,6 @@ proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil;
   # when `declBufs` later grows and relocates its elements. Doing `beginRead` on
   # the already-stored seq element instead corrupts the heap once a second decl
   # forces the seq to reallocate.
-  if gResolvePlatformFacts:
-    # a backend reads this decl: its `(defined ...)` tests are folded like
-    # the main module's (`lib/platfacts.nim`)
-    resolvePlatformFacts(buf, gPlatformFacts)
   result = beginRead(buf)
   m.declBufs.add ensureMove(buf)
   m.decls[name] = result

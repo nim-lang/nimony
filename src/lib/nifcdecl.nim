@@ -54,6 +54,35 @@ proc exprKind*(c: Cursor): LengExpr {.inline.} =
   let e = tagEnumOf(c)
   if rawTagIsLengExpr(e): cast[LengExpr](e) else: NoExpr
 
+proc isPlatformTest*(c: Cursor): bool {.inline.} =
+  ## `(defined "linux" "bsd")`: Leng's platform test (see leng-spec.md,
+  ## "Platform facts"). An `ite` whose condition is one is collapsed by the
+  ## code generator to the arm `platformTestHolds` picks.
+  c.kind == TagLit and c.exprKind == DefinedC
+
+proc platformTestHolds*(c: Cursor; facts: openArray[string]): bool =
+  ## Is one of the string literals of `(defined ...)` a platform fact?
+  var r = sub(c)
+  while r.hasMore:
+    if r.kind == StrLit:
+      let s = r.strVal
+      for f in facts:
+        if f == s: return true
+    skip r
+  result = false
+
+proc platformArm*(ite: Cursor; facts: openArray[string]; arm: var Cursor): bool =
+  ## `(ite (defined "a" ...) T E|.)`: the platform facts decide the `ite`, and
+  ## only `arm` (T or E; `.` for a missing else) is code. The other arm may
+  ## name what does not exist on this target. False for any other `ite`.
+  var x = sub(ite)
+  if not isPlatformTest(x): return false
+  let holds = platformTestHolds(x, facts)
+  skip x                                  # the condition
+  if not holds: skip x                    # then
+  arm = x
+  result = true
+
 proc pragmaKind*(c: Cursor): LengPragma {.inline.} =
   let e = tagEnumOf(c)
   if rawTagIsLengPragma(e): cast[LengPragma](e) else: NoPragma

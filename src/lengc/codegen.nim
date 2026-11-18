@@ -845,6 +845,7 @@ proc writeLineDir(f: var CppFile, c: var GeneratedCode) =
 proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   var m = load(inp)
   m.config = s.config
+  m.facts = s.facts
   var c = initGeneratedCode(m, flags, s.bits)
   c.m.openScope()
 
