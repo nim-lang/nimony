@@ -45,6 +45,7 @@ import std/crypto/sha2
 import std/crypto/sysrand
 import std/crypto/x25519
 import std/crypto/x509
+import std/cstrutils
 import std/deques
 import std/dirs
 import std/dns
