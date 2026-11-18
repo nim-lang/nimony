@@ -572,9 +572,6 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       while n.hasMore: skip n
   of JtrueS: genJtrue c, n
   of CaseS: genSwitch c, n
-  of WhenplatS:
-    # `nifmodules.load` resolves every `whenplat` against the platform facts
-    raiseAssert "unresolved `whenplat` reached the C code generator"
   of LabS: genLabel c, n
   of JmpS: genGoto c, n
   of RetS:

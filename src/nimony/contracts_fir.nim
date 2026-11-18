@@ -6033,39 +6033,6 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
     c.p.tr.live = false
     c.p.flow.rollbackTo cp
 
-proc traverseWhenplat(c: var FirContext; n: var Cursor) =
-  ## `(whenplat (of (ranges "a"...) body)+ (else body)?)`: `traverseCase`
-  ## without a selector. The backend picks one arm, and without an `else` a
-  ## target no arm names is a compile-time error, so there is no fall-through.
-  var call = freshCall()
-  let start = n
-  n = sub(n)
-  var bodies: seq[Cursor] = @[]
-  while n.substructureKind in {OfU, ElseU}:
-    n.into:
-      if n.substructureKind == RangesU: skip n
-      bodies.add n
-      skip n
-  n = start; skip n
-  let cp = c.p.flow.checkpoint()
-  let baseLive = c.p.tr.live
-  var merged = default(FlowSnap)
-  var haveMerged = false
-  for body in bodies:
-    c.p.flow.rollbackTo cp
-    c.p.tr.live = baseLive
-    var bc = body
-    traverseStmt c, bc, call
-    if c.p.tr.live:
-      merged = if haveMerged: joinSnap(merged, snapshot(c.p.flow)) else: snapshot(c.p.flow)
-      haveMerged = true
-  if haveMerged:
-    c.p.tr.live = true
-    setTo(c.p.flow, cp, merged)
-  else:
-    c.p.tr.live = false
-    c.p.flow.rollbackTo cp
-
 proc scanWrites(c: var FirContext; n: Cursor; w: var LoopWrites) =
   ## Adds what `n` may write to `w`, as `scanLoopWrites` finds it for a loop
   ## body, but without a direction: a point in the middle of `n` has seen only
@@ -6614,8 +6581,6 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       traverseFor c, n
     of CaseS:
       traverseCase c, n
-    of WhenplatS:
-      traverseWhenplat c, n
     of TryS:
       traverseTry c, n
     of RetS:

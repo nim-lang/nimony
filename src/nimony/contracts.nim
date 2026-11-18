@@ -794,7 +794,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of EmitS, InclS, ExclS, IncS, DecS:
           # not of interest for contract analysis:
           skip pc
-        of IfS, WhenS, WhileS, ForS, CaseS, WhenplatS, TryS, RaiseS, ExportS,
+        of IfS, WhenS, WhileS, ForS, CaseS, TryS, RaiseS, ExportS,
            IncludeS, ImportS, FromimportS, ImportexceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackdeclS, StaticstmtS, AsmS, DeferS, CoroforS:
@@ -936,7 +936,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      ExportS,
      IncludeS, ImportS, FromimportS, ImportexceptS:
     skip n
-  of IfS, WhenS, WhileS, CoroforS, ForS, CaseS, WhenplatS, TryS, YldS, RaiseS,
+  of IfS, WhenS, WhileS, CoroforS, ForS, CaseS, TryS, YldS, RaiseS,
      UnpackdeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,

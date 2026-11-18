@@ -1,4 +1,4 @@
-# `.feature: "totalWhens"`: a platform `when` becomes a Leng `whenplat` that the
+# `.feature: "totalWhens"`: a platform `when` becomes an `if` over Leng `(defined ...)` that the
 # backend resolves, and sem checks every branch. The branch the backend takes
 # must be the one the classic `when` of `mclassicplat` takes on this target.
 import std/syncio
@@ -56,6 +56,11 @@ proc counted(): int =
   else:
     result = 5
 
+proc pointerBytes(): int =
+  # a platform `when` as an expression is an `if` expression
+  result = when defined(amd64) or defined(arm64): 8 else: 8
+
 echo os() == classicOs()
 echo cpu() == classicCpu()
 echo counted()
+echo pointerBytes()

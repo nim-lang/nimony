@@ -16,7 +16,7 @@ import noptions
 import ".." / lib / symparser
 import ".." / lib / vfs
 import ".." / lib / nimversion
-import ".." / lib / whenplat
+import ".." / lib / platfacts
 
 include ".." / lib / compat2
 
@@ -136,7 +136,7 @@ proc handleCmdLine() =
         of "16": s.bits = 16
         else: quit "invalid value for --bits"
       of "os", "cpu", "plat":
-        # platform facts for `whenplat`: `--os:x`/`--cpu:x` imply `x`
+        # platform facts for `(defined "a" ...)`: `--os:x`/`--cpu:x` imply `x`
         facts.add val
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()

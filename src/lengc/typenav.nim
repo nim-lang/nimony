@@ -282,7 +282,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
       result = createIntegralType(c, "(i +8)")
     of InfC, NeginfC, NanC:
       result = createIntegralType(c, "(f +64)")
-    of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
+    of TrueC, FalseC, DefinedC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(c, "(bool)")
     of CallC, InstrC:
       # `(instr SYM …)` is typed exactly like `(call SYM …)` — the callee's

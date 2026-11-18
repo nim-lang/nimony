@@ -1514,13 +1514,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         genInclExcl(c, dest, n)
       of IncS, DecS:
         genIncDec(c, dest, n)
-      of CaseS, WhenplatS:
+      of CaseS:
         copyInto dest, n:
           while n.hasMore:
             case n.substructureKind
             of OfU:
               copyInto dest, n:
-                takeTree dest, n # keep set constructor / `whenplat` labels
+                takeTree dest, n # keep set constructor
                 tr(c, dest, n)
             of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, StaticParamU,
                 TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, ElseU,

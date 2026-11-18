@@ -68,10 +68,10 @@ type
     TotalWhensFeature
       ## A `when` whose conditions test platform names (`defined(linux)`,
       ## `defined(windows)`, `defined(amd64)`, ...) is not resolved here but
-      ## emitted as a Leng `(whenplat ...)` that the backend resolves from its
-      ## `--os`/`--cpu`/`--plat` facts; every branch is checked, like `if`.
-      ## Picky: only `defined(a) or defined(b) ...` conditions over platform
-      ## names, and only inside routine bodies, as statements.
+      ## becomes an `if` over `(defined "a" "b")`, an opaque `bool` that only
+      ## the backend folds, from its `--os`/`--cpu`/`--plat` facts; every
+      ## branch is checked, like `if`. Picky: only `defined(a) or defined(b) ...`
+      ## conditions over platform names, and only inside routine bodies.
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)

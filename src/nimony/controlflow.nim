@@ -515,33 +515,6 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
         endings.add c.jmpForw(n.endInfo) # this is crucial if we use the graph to compute basic blocks
   for e in endings: c.patch e
 
-proc trWhenplat(c: var ControlFlow; n: var Cursor) =
-  ## `(whenplat (of (ranges "a" ...) S)+ (else S)?)`: which branch runs is
-  ## only known to the backend, so each `of` becomes an `ite` on an opaque
-  ## condition (its first label, a string literal no analysis can decide).
-  var endings: FixupList = @[]
-  n.into:
-    while n.hasMore and n.substructureKind == OfU:
-      n.into:
-        let info = n.info
-        var label = n
-        label = sub(label) # first string literal of `(ranges ...)`
-        c.dest.addParLe(IteF, info)
-        c.dest.takeTree label
-        let tjmp = c.jmpForw(info)
-        let fjmp = c.jmpForw(info)
-        c.dest.addParRi() # IteF
-        skip n # ranges
-        c.patch tjmp
-        trStmt c, n
-        endings.add c.jmpForw(n.endInfo)
-        c.patch fjmp
-    if n.hasMore and n.substructureKind == ElseU:
-      n.into:
-        trStmt c, n
-        endings.add c.jmpForw(n.endInfo)
-  for e in endings: c.patch e
-
 proc trTry(c: var ControlFlow; n: var Cursor; tar: var Target) =
   var thisBlock = BlockOrLoop(kind: IsTryStmt, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
@@ -684,7 +657,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
         trIfCaseTryBlockExpr c, n, BlockExpr, tar
       of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
          LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
-         MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS, WhenplatS,
+         MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
          BreakS, ContinueS, JmpS, LabS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS,
          PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
@@ -1122,8 +1095,6 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of CaseS:
     var aa = initTarget(IsIgnored)
     trCase c, n, aa
-  of WhenplatS:
-    trWhenplat c, n
   of TryS:
     var aa = initTarget(IsIgnored)
     trTry c, n, aa

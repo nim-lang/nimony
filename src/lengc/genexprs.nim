@@ -448,6 +448,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
   of TrueC:
     c.add "NIM_TRUE"
     skip n
+  of DefinedC:
+    raiseAssert "unresolved `(defined ...)` reached the C code generator"
   of NilC:
     # A bare `NIM_NIL`, not a cast to the `(nil T)` type the frontend attaches.
     # `NIM_NIL` is assignment-compatible with every pointer type, and casting

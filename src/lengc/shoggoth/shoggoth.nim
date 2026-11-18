@@ -33,7 +33,6 @@ from ".." / ".." / nimony / programs import prog
 import ".." / ".." / hexer / hexer
 import ".." / ".." / lib / [vfs, nimversion]
 import optdriver    # processFile / Stats — keeps its nifcore world isolated
-import ".." / ".." / lib / whenplat  # setPlatformFacts
 import patextract   # patMain — likewise nifcore-isolated
 when defined(cseSummaryStats):
   import cse
@@ -181,12 +180,7 @@ proc optimizeMain(args: seq[string]) =
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
     elif a == "--verify": verify = true
     elif a == "--stats": stats = true
-    elif a.startsWith("--cpu:"):
-      let cpu = a["--cpu:".len .. ^1]
-      target.scaledIndex = hasScaledIndex(cpu)
-      target.facts.add cpu        # `--cpu:x` implies the platform fact `x`
-    elif a.startsWith("--os:"): target.facts.add a["--os:".len .. ^1]
-    elif a.startsWith("--plat:"): target.facts.add a["--plat:".len .. ^1]
+    elif a.startsWith("--cpu:"): target.scaledIndex = hasScaledIndex(a["--cpu:".len .. ^1])
     elif a == "--vectorize": target.vecMode = vecNeon
     elif a == "--vectorize:sse": target.vecMode = vecSse
     elif a == "--no-mem-intrinsics": target.mem.intrinsics = false   # a back end without the zeroMemIns/copyMemIns rows
@@ -201,9 +195,8 @@ proc optimizeMain(args: seq[string]) =
     elif a.startsWith("-"): quit "unknown option: " & a
     else: positional.add a
 
-  setPlatformFacts(target.facts) # foreign decls (the inliner's) resolve too
   if positional.len == 0:
-    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] [--os:NAME] [--plat:FACT]* [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
     onRaiseQuit createDir(path(outdir))

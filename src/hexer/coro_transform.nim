@@ -1728,14 +1728,12 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.takeTree n                       # pragmas
               trGotoScoped c, dest, n
             dest.addParRi()
-        of CaseS, WhenplatS:
-          # (`whenplat` is a `case` without a selector: same lowering.)
+        of CaseS:
           # `finalir` keeps `case` as a construct ("Format as existing"), so
           # unlike `nj.nim` — which lowered every branch to an `ite` chain —
           # the state machine meets it head on. A branch that suspends gets
           # the same treatment as an `ite` arm: the dispatch keeps only the
           # jumps, and each body is laid out flat behind its own label.
-          let hasSelector = n.stmtKind == CaseS
           if containsSuspensionPoint(c, n):
             let caseStart = n
             let lend = c.currentProc.labelCounter
@@ -1744,7 +1742,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             var hasElse = false
             dest.addParLe(n.cursorTagId, info)      # the dispatch: jumps only
             n.into:
-              if hasSelector: trGotoValue c, dest, n # selector
+              trGotoValue c, dest, n                # selector
               while n.hasMore:
                 let subK = n.substructureKind
                 if subK in {OfU, ElseU}:
@@ -1766,7 +1764,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
               emitJump dest, lend, info             # no branch matched
             var b = caseStart
             b = sub(b)
-            if hasSelector: skip b                  # past the selector
+            skip b                                  # past the selector
             var i = 0
             while b.hasMore:
               if b.substructureKind in {OfU, ElseU}:
@@ -1784,7 +1782,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           else:
             dest.addParLe(n.cursorTagId, info)
             n.into:
-              if hasSelector: trGotoValue c, dest, n # selector
+              trGotoValue c, dest, n                # selector
               while n.hasMore:
                 let subK = n.substructureKind
                 if subK in {OfU, ElseU}:
@@ -2699,7 +2697,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.closeScope()
     of CoroforS:
       trCoroFor c, dest, n
-    of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS, WhenplatS,
+    of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS,
         StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
         ExportexceptS, DiscardS, TryS, UnpackdeclS,
         AssumeS, AssertS, InvariantS, CallstrlitS, InfixS, PrefixS,

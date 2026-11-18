@@ -454,9 +454,6 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
             result = brType
             break
           skip n
-      of WhenplatS:
-        # a platform `when` is always a statement
-        result = c.builtins.voidType
       of TryS:
         # Like `if`: a body that ends in `return`/`raise` is void, so the
         # first non-void `except` arm decides.

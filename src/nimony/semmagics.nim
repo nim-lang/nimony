@@ -74,6 +74,16 @@ proc getDottedIdent(n: var Cursor): string =
     result = getDottedIdentAux(n)
 
 proc semDefined*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  if sub(it.n).isStringLit:
+    # `(defined "linux" "bsd")`, as `.feature: "totalWhens"` emits it (and a
+    # generic body brings it back here): a platform test that stays opaque
+    # until the backend folds it from its platform facts. It is a `bool`.
+    let beforeExpr = dest.len
+    takeTree dest, it.n
+    let expected = it.typ
+    it.typ = c.types.boolType
+    commonType c, dest, it, beforeExpr, expected
+    return
   var info = NoLineInfo
   var orig = default(Cursor)
   var name = ""

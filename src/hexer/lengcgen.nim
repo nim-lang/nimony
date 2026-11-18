@@ -1883,7 +1883,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           trExpr c, dest, n
         dest.addParRi(n.endInfo)
     of ErrX, NewobjX, NewrefX, SetconstrX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
-       InsetX, CardX, SuccX, PredX, BracketX, CurlyX, TupX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
+       InsetX, CardX, SuccX, PredX, BracketX, CurlyX, TupX, CompilesX, StaticX, DeclaredX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX,
@@ -1905,6 +1905,11 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trExpr c, dest, n
       dest.addParRi()
+    of DefinedX:
+      # `(defined "linux" "bsd")` (`.feature: "totalWhens"`): Leng's own
+      # platform test, folded by the backend. Its labels are raw string
+      # literals, not Nimony `string` values.
+      takeTree dest, n
     of CanFormCyclesX, SupportsCopyMemX:
       bug "`canFormCycles`/`supportsCopyMem` is folded by derefs"
     of SizeofX, AlignofX, OffsetofX:
@@ -2420,21 +2425,6 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         error c, "expected (of) or (else) but got: ", n
 
-proc trWhenplat(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## Leng's `whenplat` has the Nimony shape: string labels, branch bodies.
-  takeInto dest, n:
-    while n.hasMore:
-      let k = n.substructureKind
-      if k == OfU:
-        takeInto dest, n:
-          takeTree dest, n # `(ranges "a" ...)`
-          trStmtList c, dest, n
-      elif k == ElseU:
-        takeInto dest, n:
-          trStmtList c, dest, n
-      else:
-        error c, "expected (of) or (else) in `whenplat` but got: ", n
-
 proc trKeepovf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
     trExpr c, dest, n # (add ...)
@@ -2557,7 +2547,6 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         trExpr c, dest, n
         takeParRi dest, n, discardStart
     of CaseS: trCase c, dest, n
-    of WhenplatS: trWhenplat c, dest, n
     of WhileS, BreakS:
       if c.inAsmBody:
         # An `{.assembler.}` body's loop is the machine's: Leng has the same

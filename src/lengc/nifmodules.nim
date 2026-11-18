@@ -31,7 +31,7 @@ import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
 import ".." / "lib" / symparser             # splitModulePath
 import ".." / "lib" / foreignmodules         # shared lazy loader (ForeignModule)
 import ".." / "lib" / bif                    # binary NIF: isBifFile probe + load
-import ".." / "lib" / whenplat               # resolveWhenplats (platform facts)
+import ".." / "lib" / platfacts              # resolvePlatformFacts (`defined`)
 import noptions                              # ConfigRef
 
 type
@@ -374,10 +374,9 @@ proc load*(filename: string; pool: Pool = nil; tags: TagPool = nil): MainModule 
   var rc = beginRead(raw)
   var curInfo = NoNifLineInfo
   densify(result.src, rc, curInfo, remap)
-  if gResolveWhenplat:
-    # `whenplat` is the backend's to resolve; codegen never sees it
-    let err = resolveWhenplats(result.src, gPlatformFacts)
-    if err.len > 0: quit err
+  if gResolvePlatformFacts:
+    # `(defined "a" ...)` is the backend's to fold; codegen never sees it
+    resolvePlatformFacts(result.src, gPlatformFacts)
   result.pool = result.src.pool
   result.tags = result.src.tags
   detectToplevelDecls(result)

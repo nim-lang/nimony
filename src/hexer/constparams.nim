@@ -320,7 +320,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
       of CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS,
-         ContinueS, ForS, WhileS, CoroforS, CaseS, WhenplatS, RetS, RaiseS, TryS,
+         ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, RaiseS, TryS,
          YldS, StmtsS, AlwaysS,
          PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS,
          ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,

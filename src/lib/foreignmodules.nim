@@ -22,11 +22,11 @@
 ## 400 KB module is never parsed whole. The per-decl buffers are owned by the
 ## `ForeignModule` so the cursors into them stay valid for its lifetime.
 
-import std / [tables, syncio] # syncio: `quit`
+import std / [tables]
 import nifcore, nifcoreparse
 import nifreader, stringviews
 import bif
-import whenplat
+import platfacts
 
 type
   ForeignModule* = ref object
@@ -144,11 +144,10 @@ proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil;
   # when `declBufs` later grows and relocates its elements. Doing `beginRead` on
   # the already-stored seq element instead corrupts the heap once a second decl
   # forces the seq to reallocate.
-  if gResolveWhenplat:
-    # a backend reads this decl: its `whenplat`s are resolved like the main
-    # module's (`lib/whenplat.nim`)
-    let err = resolveWhenplats(buf, gPlatformFacts)
-    if err.len > 0: quit err
+  if gResolvePlatformFacts:
+    # a backend reads this decl: its `(defined ...)` tests are folded like
+    # the main module's (`lib/platfacts.nim`)
+    resolvePlatformFacts(buf, gPlatformFacts)
   result = beginRead(buf)
   m.declBufs.add ensureMove(buf)
   m.decls[name] = result

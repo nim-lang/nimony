@@ -405,7 +405,7 @@ const
 proc isPlatformName*(symbol: string): bool =
   ## True for a name whose `defined()` is a fact about the target OS or CPU.
   ## Under `.feature: "totalWhens"` a `when` over such names is not resolved
-  ## by sem but becomes a Leng `(whenplat ...)`.
+  ## by sem but becomes a Leng `(defined "a" ...)`.
   let s = symbol.normalize
   if s in PlatformAliases: return true
   for os in OS:
@@ -417,7 +417,7 @@ proc isPlatformName*(symbol: string): bool =
 proc platformFacts*(config: NifConfig): seq[string] =
   ## Every platform name `defined()` holds for on the configured target, in
   ## normalized spelling. The driver passes them to the backend as `--plat:x`
-  ## so `whenplat` labels mean what `defined()` means in the frontend.
+  ## so `(defined "a")` in Leng means what `defined()` means in the frontend.
   result = @[]
   var names = newSeq[string]()
   for os in OS: names.add os.name.normalize

@@ -110,6 +110,7 @@ Expr ::= Number | CharLiteral | StringLiteral |
          (par Expr) | # wraps the expression in parentheses
          (addr Lvalue (cppref)?) | # "address of" operation
          (nil) | (false) | (true) |
+         (defined StringLiteral+) | # a platform test, see "Platform facts"
          (inf) | (neginf) | (nan) |
          (and Expr Expr) | # "&&"
          (or Expr Expr) | # "||"
@@ -156,7 +157,6 @@ WhileStmt ::= (while Expr StmtList) # legacy, see "Control flow"
 LoopStmt ::= (loop (stmts Stmt* ContinueStmt))
 ContinueStmt ::= (continue [Empty | Expr]) # the back-edge; only as a loop's last statement
 CaseStmt ::= (case Expr (of BranchRanges StmtList)* (else StmtList)?)
-WhenplatStmt ::= (whenplat (of (ranges StringLiteral+) StmtList)+ (else StmtList)?) # see "Platform facts"
 LabelStmt ::= (lab SymbolDef)
 JumpStmt ::= (jmp Symbol)
 ScopeStmt ::= (scope StmtList)
@@ -181,7 +181,6 @@ Stmt ::= Call |
          LoopStmt |
          (break) |
          CaseStmt |
-         WhenplatStmt |
          LabelStmt |
          JumpStmt |
          ScopeStmt |
@@ -405,27 +404,31 @@ after its `keepovf`; a call in between may be inlined and bring a `keepovf` of
 its own. Native code generation relies on this: there the flag is the CPU's.
 
 
-Platform facts: whenplat
-------------------------
+Platform facts: defined
+-----------------------
 
-`(whenplat (of (ranges "linux" "bsd") S1) (of (ranges "windows") S2) (else S3))`
-is platform-specific code that survives into Leng, so that one set of `.nif`
-files can be compiled for different targets. It is a `case` without a
-selector, and the backend (lengc, `shoggoth opt`, arkham) always resolves it at
-compile time against a set of **platform facts**: plain strings.
+`(defined "linux" "bsd")` is a platform test that survives into Leng, so that
+one set of `.nif` files can be compiled for different targets. It is a `bool`
+that is true when one of its string literals is a **platform fact**; facts are
+plain strings and are not validated against any list.
 
 - `--os:x` and `--cpu:x` make `x` a fact; `--plat:x` adds the fact `x` and may
   be repeated. The Nimony driver passes every platform name `defined()` holds
   for on the target (`posix`, `bsd`, ...) as `--plat`.
-- A branch is taken when one of its labels is a fact. The branches are tried in
-  order and the first match wins, so labels may overlap (`"posix"` and
-  `"linux"`).
-- No match and no `else` is a compile-time error.
-- Labels are not validated against any list.
+- Only the backend (lengc, arkham, jorogumo) evaluates it, right after parsing
+  a module and before anything else looks at it: every `defined` becomes
+  `(true)` or `(false)`, and an `ite` whose condition is then a constant
+  (`true`/`false` under `and`/`or`/`not`) is replaced by its taken branch. The
+  dead branch is gone before code generation, so it may refer to things that
+  do not exist on the target. Foreign declarations loaded on demand get the
+  same treatment.
+- Every pass in between, `shoggoth opt` included, treats it as an opaque
+  constant `bool` without side effects: both branches of its `ite` stay live.
 
-Passes between the frontend and the backend treat `whenplat` like a `case`
-whose selector is unknown: every branch is live. It is a statement, never an
-expression. Nimony emits it under `.feature: "totalWhens"`.
+Nimony emits it under `.feature: "totalWhens"`: `when defined(linux) or
+defined(bsd): A elif defined(windows): B else: C` becomes
+`(ite (defined "linux" "bsd") A (ite (defined "windows") B C))`. A missing
+`else` is no error: if no branch is taken, nothing is.
 
 
 NJ instructions

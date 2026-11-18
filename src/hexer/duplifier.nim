@@ -937,7 +937,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         c.typeCache.closeScope()
       of CallS, CmdS, IteratorS, TemplateS, TypeS, BlockS,
           EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS, ForS,
-          WhileS, CoroforS, CaseS, WhenplatS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
+          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
           PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
           FromimportS, ImportexceptS, ExportS, ExportexceptS,
           CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
@@ -1650,7 +1650,6 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
 proc trCoroFor(c: var Context; n: var Cursor)
 proc trTry(c: var Context; n: var Cursor)
 proc trBranches(c: var Context; n: var Cursor)
-proc trWhenplatBranches(c: var Context; n: var Cursor)
 
 proc trStmts(c: var Context; n: var Cursor) {.ensuresNif: addedAny(c.dest).} =
   ## Statement position is where a deferred move goes when the expression it
@@ -1846,8 +1845,6 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trTry c, n
       of CaseS:
         trBranches c, n
-      of WhenplatS:
-        trWhenplatBranches c, n
       else:
         case n.finalIrKind
         of IteV:
@@ -1875,14 +1872,6 @@ proc trBranches(c: var Context; n: var Cursor) =
     let cond = n
     tr c, n, WantNonOwner
     forgetMentions c, cond
-    let before = c.unassigned
-    while n.hasMore:
-      c.unassigned = before
-      tr c, n, WantNonOwner
-
-proc trWhenplatBranches(c: var Context; n: var Cursor) =
-  ## `(whenplat (of ...)+ (else ...)?)`: like `trBranches` without a selector.
-  takeInto c.dest, n:
     let before = c.unassigned
     while n.hasMore:
       c.unassigned = before

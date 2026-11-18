@@ -48,11 +48,12 @@ type
     CallC = (ord(CallTagId), "call")  ## call operation
     HaddrC = (ord(HaddrTagId), "haddr")  ## hidden address: an address the COMPILER took to bind a location, not one the user asked for. `derefs.nim` inserts it wherever a `var`/`out` parameter needs the argument's location. It survives into Leng — where `(addr X)` is the user's `addr` — because the two mean different things to a consumer: `(addr x)` says "x's address is a value now", so x must have one, while `(haddr x)` says only "the callee wants x's *location*". An `(instr …)` operand slot whose row is `inout` can therefore bind the local's home directly instead of forcing it to memory. Everywhere else it lowers exactly like `(addr X)`
     BaseobjC = (ord(BaseobjTagId), "baseobj")  ## object conversion to base type
+    DefinedC = (ord(DefinedTagId), "defined")  ## `defined(x)`; in Leng (and in Nimony under `.feature: "totalWhens"`) `(defined "linux" "bsd")`: true if one of the string literals is a platform fact (`--os`, `--cpu`, `--plat`). Only the backend folds it
     ErrvC = (ord(ErrvTagId), "errv")  ## error flag for Leng
     InstrC = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
 
 proc rawTagIsLengExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, HaddrTagId, BaseobjTagId, ErrvTagId, InstrTagId}
+  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, HaddrTagId, BaseobjTagId, DefinedTagId, ErrvTagId, InstrTagId}
 
 type
   LengStmt* = enum
@@ -73,7 +74,6 @@ type
     ContinueS = (ord(ContinueTagId), "continue")  ## `continue` statement. In Leng and the multi-join IR it is a `(loop)` body's last statement, its sole back-edge: `(continue .)` always repeats, `(continue X)` repeats while `X` holds and otherwise leaves the loop. `X` has no effect: no call, no write, no flag read (`ovf`); a load is fine
     WhileS = (ord(WhileTagId), "while")  ## `while` statement
     CaseS = (ord(CaseTagId), "case")  ## `case` statement
-    WhenplatS = (ord(WhenplatTagId), "whenplat")  ## platform `when`: a `case` without a selector, resolved by the backend at compile time. A branch is taken when one of its string labels is a platform fact (`--os:x`/`--cpu:x` imply fact `x`, `--plat:x` adds one); the first matching branch wins; no match and no `else` is a compile-time error. Emitted by `.feature: "totalWhens"`
     LabS = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/internals/multi_join_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
     JmpS = (ord(JmpTagId), "jmp")  ## jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals
     RetS = (ord(RetTagId), "ret")  ## `return` instruction
@@ -91,7 +91,7 @@ type
     AlwaysS = (ord(AlwaysTagId), "always")  ## the statements of one replicated `finally` section: the eraiser emits one `(always …)` per way out of a `try`, so each copy stays recognizable as "runs on every path" after the `try` itself is gone. Like `stmts`, it opens no scope. Currently pure meta information: `lengcgen` emits its statements unwrapped, so `lengc`/`arkham` never see it. It is meant for checking that every path destroys a value and, later, for precise stack unwinding that runs custom logic
 
 proc rawTagIsLengStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, ContinueTagId, WhileTagId, CaseTagId, WhenplatTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, AlwaysTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, ContinueTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, AlwaysTagId}
 
 type
   LengType* = enum

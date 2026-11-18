@@ -97,7 +97,6 @@
 | `(while X S)` | LengStmt, NimonyStmt, NiflerKind| `while` statement |
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
 | `(case X (of (ranges...) S)+ (else X)?)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
-| `(whenplat (of (ranges STR_LIT+) S)+ (else S)?)` | LengStmt, NimonyStmt | platform `when`: a `case` without a selector, resolved by the backend at compile time. A branch is taken when one of its string labels is a platform fact (`--os:x`/`--cpu:x` imply fact `x`, `--plat:x` adds one); the first matching branch wins; no match and no `else` is a compile-time error. Emitted by `.feature: "totalWhens"` |
 | `(of (ranges ...) S)`; `(of (ranges ...) .T)` | LengOther, NimonyOther, NiflerKind | `of` branch within a `case` statement, or of a Leng discriminated `union` |
 | `(lab D)` | LengStmt, LengSym, NimonyStmt, NimonySym, FinalIrKind | label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/internals/multi_join_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge |
 | `(jmp Y)` | LengStmt, NimonyStmt, FinalIrKind | jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals |
@@ -261,7 +260,7 @@
 | `(hcall X*)` | NimonyExpr, NimonyStmt | hidden converter call |
 | `(compiles X)` | NimonyExpr | |
 | `(declared X)` | NimonyExpr | |
-| `(defined X)` | NimonyExpr | |
+| `(defined X+)` | NimonyExpr, LengExpr | `defined(x)`; in Leng (and in Nimony under `.feature: "totalWhens"`) `(defined "linux" "bsd")`: true if one of the string literals is a platform fact (`--os`, `--cpu`, `--plat`). Only the backend folds it |
 | `(astToStr X)` | NimonyExpr | converts AST to string |
 | `(bindSym X)` | NimonyExpr | hygienic symbol reference inside a macro body: at sem time, resolves the string-literal argument in the macro's *definition* scope and replaces the call with a `(call newSymNode "<full-sym-name>")` so the plugin emits a NIF Symbol token that bypasses call-site lookup |
 | `(bindSymName X)` | NimonyExpr | plugin-side cousin of `bindSym`: at sem time, resolves the string-literal argument in the surrounding module's *definition* scope and replaces the call with a `StringLit` carrying the fully-qualified symbol name. Plugin authors feed the resulting string to `addSymUse(builder, name)` so the emitted NIF contains a resolved `Symbol` token. |

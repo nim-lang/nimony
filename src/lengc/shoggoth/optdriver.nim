@@ -21,7 +21,6 @@ import std / [os, assertions, strutils, syncio, sets, envvars]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import ".." / ".." / "lib" / lengiface       # writeLengInterface (`.oc.idx.nif`)
-import ".." / ".." / "lib" / whenplat        # resolveWhenplats (platform facts)
 import induction_variables                     # runInductionVariables (live pass)
 import cse                                     # runCSE + collectFunctionSummaries
 import scalarizer                              # runScalarize (object → field scalars / SROA)
@@ -52,8 +51,6 @@ type
     scaledIndex*: bool        ## `base + index*size` is one addressing mode, so
                               ## `a[i]` costs no more than `p[]` (see
                               ## `induction_variables`)
-    facts*: seq[string]       ## platform facts (`--os:`/`--cpu:`/`--plat:`) that
-                              ## resolve `whenplat` before any pass runs
 
 proc hasScaledIndex*(cpu: string): bool =
   ## x86 and ARM address `[base + index*size]` in one operand (Thumb-2 as
@@ -391,9 +388,6 @@ proc processFile*(input, output: string; verify = false;
   #    NIF text and re-parse it into the context's pools: on `sem.nim` that
   #    round trip was 9.7 % of the whole run.
   var src = parseModule(input)
-  # `whenplat` is the backend's to resolve, and the passes below never see it.
-  let platErr = resolveWhenplats(src, target.facts)
-  if platErr.len > 0: quit platErr
   var typeCtx = load(input, src.pool, src.tags)
   # 2. Memory-loop idioms, before anything can reshape the loops they match
   #    (see `recognizeMemLoopsInBody`).
@@ -403,9 +397,6 @@ proc processFile*(input, output: string; verify = false;
   #    nifpools surface the inliner is written against).
   if passOn("imi") and runImiOn(src, suffix, splitFile(input).dir):
     inc st.intermodChanged
-    # an inlined foreign body may carry a `whenplat` of its own
-    let imiErr = resolveWhenplats(src, target.facts)
-    if imiErr.len > 0: quit imiErr
   # The inliner works on dense line info; the per-body passes were calibrated
   # on the sparse form a plain parse stores (unswitch bounds loops in raw
   # tokens, suffixes included), and CSE's temp order follows token positions.

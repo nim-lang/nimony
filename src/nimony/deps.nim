@@ -1404,7 +1404,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # and errors on an unsupported combination (no silent host fallback).
         b.addStrLit "--os:" & platform.OS[c.config.targetOS].name
         b.addStrLit "--cpu:" & platform.CPU[c.config.targetCPU].name
-        # The platform facts `whenplat` is resolved with: every platform name
+        # The platform facts `(defined "a" ...)` is folded with: every platform name
         # `defined()` holds for (`posix`, `bsd`, ...), as the frontend knows them.
         for fact in platformFacts(c.config):
           b.addStrLit "--plat:" & fact
@@ -1447,8 +1447,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         let cpuName = platform.CPU[c.config.targetCPU].name
         # what the passes may assume about addressing (`Target.scaledIndex`)
         b.addStrLit "--cpu:" & cpuName
-        for fact in platformFacts(c.config):
-          b.addStrLit "--plat:" & fact
         if native and cpuName in ["arm64", "amd64"]:
           # the 128-bit loop vectorizer: emits (instr ...) rows only the native
           # back ends lower — AArch64 via AdvSIMD, x86-64 via SSE2 — so it stays

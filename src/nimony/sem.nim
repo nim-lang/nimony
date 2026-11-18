@@ -187,7 +187,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     result = true
   of NoStmt, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS, CursorS, PatternvarS,
      ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
-     AsgnS, ScopeS, WhenS, WhenplatS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, AlwaysS, PragmasS,
+     AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, AlwaysS, PragmasS,
      PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
      ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, InvariantS, StaticstmtS,
      BindS, MixinS, UsingS, AsmS, DeferS:
@@ -663,7 +663,7 @@ proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: 
   # produce nothing, so each of its branches is a statement and gets the
   # discard rule (`semStmtBranch`), whatever the order of the branches.
   let expected =
-    if n.stmtKind in {IfS, CaseS, TryS, BlockS, WhenS, WhenplatS, StmtsS, ScopeS}: c.types.voidType
+    if n.stmtKind in {IfS, CaseS, TryS, BlockS, WhenS, StmtsS, ScopeS}: c.types.voidType
     else: c.types.autoType
   var it = Item(n: n, typ: expected)
   let exPos = dest.len
@@ -2567,7 +2567,7 @@ proc semUnresolvedWhenBranch(c: var SemContext; dest: var TokenBuf; it: var Item
     semObjectComponent c, dest, it.n, state
     dest.addParRi(it.n.endInfo)
 
-# ---------------- `.feature: "totalWhens"`: platform `when` -> `whenplat` ----------------
+# ---------------- `.feature: "totalWhens"`: platform `when` -> `if (defined "a" ...)` ----------------
 
 proc definedPlatformName(c: var SemContext; n: Cursor): string =
   ## `defined(x)` / `defined x` (unsemchecked) or `(defined x)` (semchecked)
@@ -2639,62 +2639,20 @@ proc isPlatformWhen(c: var SemContext; n: Cursor): bool =
     skip x
   result = false
 
-proc semWhenplat(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  ## `(whenplat (of (ranges "a" ...) S)+ (else S)?)`: a `case` without a
-  ## selector that the backend resolves. Every branch is checked, as for an
-  ## `if`, and each is a statement: a platform `when` produces nothing.
-  let info = it.n.info
-  let expected = it.typ
-  takeInto dest, it.n:
-    if not (it.n.hasMore and it.n.substructureKind == OfU):
-      buildErr c, dest, it.n.info, "illformed AST: `of` inside `whenplat` expected"
-    while it.n.hasMore and it.n.substructureKind == OfU:
-      takeInto dest, it.n:
-        var labelsOk = it.n.substructureKind == RangesU
-        if labelsOk:
-          var r = sub(it.n)
-          labelsOk = r.hasMore
-          while r.hasMore:
-            if not r.isStringLit: labelsOk = false
-            skip r
-        if labelsOk:
-          takeTree dest, it.n
-        else:
-          buildErr c, dest, it.n.info, "`whenplat` labels must be string literals"
-          skip it.n
-        var branch = Item(n: it.n, typ: c.types.voidType)
-        withNewScope c:
-          semStmtBranch c, dest, branch, true
-        it.n = branch.n
-    if it.n.hasMore and it.n.substructureKind == ElseU:
-      takeInto dest, it.n:
-        var branch = Item(n: it.n, typ: c.types.voidType)
-        withNewScope c:
-          semStmtBranch c, dest, branch, true
-        it.n = branch.n
-  let expectedKind = typeKind(expected)
-  if expectedKind == AutoT:
-    producesVoid c, dest, info, it.typ
-  elif expectedKind != VoidT:
-    buildErr c, dest, info, "a platform `when` cannot be used as an expression"
-
 proc semPlatformWhen(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode) =
   ## Rewrites `when defined(a) or defined(b): x elif defined(c): y else: z`
-  ## into `(whenplat (of (ranges "a" "b") x) (of (ranges "c") y) (else z))`
-  ## and checks that.
+  ## into `if (defined "a" "b"): x elif (defined "c"): y else: z` and checks
+  ## that as an `if`: every branch is checked. `(defined "a" "b")` is an
+  ## opaque `bool` that only the backend folds, from its platform facts.
   let info = it.n.info
   let whenStart = it.n
   if mode == ObjectWhen or c.routine.kind == NoSym:
     buildErr c, dest, info,
-      "under `.feature: \"totalWhens\"` a platform `when` is only allowed as a statement inside a routine body"
-    it.n = whenStart; skip it.n
-    return
-  if typeKind(it.typ) notin {AutoT, VoidT}:
-    buildErr c, dest, info, "a platform `when` cannot be used as an expression"
+      "under `.feature: \"totalWhens\"` a platform `when` is only allowed inside a routine body"
     it.n = whenStart; skip it.n
     return
   var buf = createTokenBuf(64)
-  buf.addParLe(WhenplatS, info)
+  buf.addParLe(IfS, info)
   var n = sub(it.n)
   while n.hasMore and n.substructureKind == ElifU:
     let elifInfo = n.info
@@ -2706,20 +2664,20 @@ proc semPlatformWhen(c: var SemContext; dest: var TokenBuf; it: var Item; mode: 
         asNimCode(x)
       it.n = whenStart; skip it.n
       return
-    skip x
-    buf.addParLe(OfU, elifInfo)
-    buf.addParLe(RangesU, elifInfo)
+    buf.addParLe(ElifU, elifInfo)
+    buf.addParLe(DefinedX, x.info)
     for l in labels: buf.addStrLit(l, elifInfo)
     buf.addParRi()
+    skip x
     takeTree buf, x
     buf.addParRi()
     skip n
   if n.hasMore and n.substructureKind == ElseU:
     takeTree buf, n
   buf.addParRi()
-  var wp = Item(n: beginRead(buf), typ: it.typ)
-  semWhenplat c, dest, wp
-  it.typ = wp.typ
+  var ifIt = Item(n: beginRead(buf), typ: it.typ)
+  semIf c, dest, ifIt
+  it.typ = ifIt.typ
   it.n = whenStart; skip it.n
 
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
@@ -6189,9 +6147,6 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
           semIf c, dest, it
       of WhenS:
         semWhen c, dest, it
-      of WhenplatS:
-        toplevelGuard c:
-          semWhenplat c, dest, it
       of RetS:
         toplevelGuard c:
           semReturn c, dest, it

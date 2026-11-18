@@ -935,7 +935,7 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       skip n
       genLvalueLLVM(c, n, result)
       while n.hasMore: skip n
-  of SufC, ParC, AddrC, HaddrC, NilC, InfC, NeginfC, NanC, FalseC, TrueC,
+  of SufC, ParC, AddrC, HaddrC, NilC, InfC, NeginfC, NanC, FalseC, TrueC, DefinedC,
      AndC, OrC, NotC, NegC, SizeofC, AlignofC, OffsetofC,
      OconstrC, AconstrC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
@@ -1042,6 +1042,8 @@ proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   of TrueC:
     skip n
     result = llIntTextC("1", c.prim.i8)
+  of DefinedC:
+    raiseAssert "unresolved `(defined ...)` reached the LLVM code generator"
   of NilC:
     skip n
     result = llNull(c.prim.ptrT)
