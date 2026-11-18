@@ -45,11 +45,10 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   ## Returns true if the option was recognized and handled.
   ## Sets forwardArg to true if the option should be forwarded to sub-tools.
   ## Sets forwardArgLengc to true if the option should be forwarded to lengc.
-  ## Sets forwardArgHost to false if the option must not reach a
-  ## compile-time-eval process: a macro plugin is built for and run on the
-  ## host, so the target triple (`--cpu`, `--os`, `--bits`) of the outer
-  ## compile is wrong for it. Everything else that is forwarded at all is
-  ## forwarded there too.
+  ## Sets forwardArgHost to false if the option must not reach a macro-plugin
+  ## host compile: a macro plugin is built for and run on the host, so the
+  ## target triple (`--cpu`, `--os`, `--bits`) of the outer compile is wrong
+  ## for it. Everything else that is forwarded at all is forwarded there too.
   ## Optional helpMsg and versionMsg provide custom help/version text.
   forwardArg = true
   forwardArgLengc = false
@@ -124,6 +123,9 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "app":
     forwardArg = true  # Must forward to nimsem for defines to work!
     forwardArgLengc = true
+    # Plugin host programs are always executables; an outer `--app:lib` must
+    # not turn them into libraries.
+    forwardArgHost = false
     case normalize(val)
     of "console":
       config.appType = appConsole

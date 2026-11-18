@@ -187,6 +187,34 @@ proc shellArgs*(args: string): string =
       result.add ' '
       result.add quoteShell(arg)
 
+## Whether a macro-plugin host program can be built by arkham + nifasm. Kept
+## to the targets arkham implements; other hosts fall back to the C backend
+## rather than failing to find the native toolchain.
+const HostNativeBackend =
+  when defined(android):
+    defined(amd64) or defined(arm64)
+  elif defined(linux):
+    defined(amd64) or defined(arm64)
+  elif defined(windows):
+    defined(amd64)
+  elif defined(macosx):
+    defined(arm64)
+  elif defined(freebsd):
+    defined(amd64)
+  else:
+    false
+
+func nativeHostArgs*(): string =
+  ## The extra `nimony` flags for a macro-plugin host compile. Plugins are
+  ## host programs and do not need libc even when the outer target uses the C
+  ## backend, so build them with the native backend where it is available.
+  ## Arkham has no Android target; Termux is a Linux userland, and its static
+  ## syscall binary is what the host runs.
+  when HostNativeBackend:
+    result = " --native"
+    when defined(android):
+      result.add " --os:linux"
+
 proc renderCmd(exe: string; args: openArray[string]): string =
   ## Diagnostics only. `execArgs` never hands this string to a shell.
   result = quoteShell(exe)
@@ -1032,7 +1060,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   runPlugin(c, dest, info, pluginName, input, noAdditional)
 
 proc runProgram(file: string; nimcachePath, stdcachePath: string; usedModules: HashSet[string];
-                commandLineArgs: string;
+                commandLineArgs: string; native: bool;
                 sourceDir = ""): tuple[output: string, exitCode: int] =
   # Compile the .p.nif through the full pipeline, then run the resulting
   # binary. Compilation must keep the outer cwd (nimcache paths are relative
@@ -1051,7 +1079,8 @@ proc runProgram(file: string; nimcachePath, stdcachePath: string; usedModules: H
   if result.exitCode != 0: return
 
   let modname = extractModuleSuffix(file)
-  let exe = nimcachePath / BackendDirC / modname / splitFile(file).name.addFileExt(ExeExt)
+  let backendDir = if native: BackendDirNative else: BackendDirC
+  let exe = nimcachePath / backendDir / modname / splitFile(file).name.addFileExt(ExeExt)
   # The child may start in `sourceDir`; keep the exe path absolute so it
   # still resolves against the outer compile's cwd, not the module dir.
   var exeToRun = exe
@@ -1111,9 +1140,17 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
     deps.addParRi()
     let depsFile = evalCache / srcName & ".p.deps.nif"
     writeFile(depsFile, toString(deps, true))
+    # A native target's evaluator is a host program too: build it with the
+    # native backend so it is libc-free like the target. Keep the target
+    # command line, though: constant evaluation follows the target's word size
+    # and OS/CPU semantics.
+    var evalArgs = c.commandLineArgs
+    let nativeEval = c.g.config.isDefined("nimNativeBackend")
+    if nativeEval:
+      evalArgs.add " --native"
     let (output, exitCode) = runProgram(progfile, evalCache,
                                         (if isStd: evalCache else: ""), usedModules,
-                                        c.commandLineArgs, sourceDir)
+                                        evalArgs, nativeEval, sourceDir)
     if exitCode != 0:
       result = ensureMove(output)
     else:

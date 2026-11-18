@@ -310,10 +310,11 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           of "native":
             # Select the libc-free native backend (arkham + nifasm) for this build,
             # without using the `n` *command*. Used by macro-plugin compilation (the
-            # `s` command), where skipping the C-compiler round-trip is the biggest
-            # compile-time win. Mirrors `n`'s config in dispatchBasicCommand; the
-            # defines are forwarded to nimsem by compileProgram (the backendNative
-            # branch), so this flag itself need not propagate.
+            # `s` command) and native-target CTFE evaluator builds, where skipping
+            # the C-compiler round-trip is the biggest compile-time win. Mirrors
+            # `n`'s config in dispatchBasicCommand; the defines are forwarded to
+            # nimsem by compileProgram (the backendNative branch), so this flag
+            # itself need not propagate.
             c.config.backend = backendNative
             c.config.addDefine "nimNativeAlloc"
             forwardArg = false
