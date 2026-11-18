@@ -444,7 +444,7 @@ proc initResolver*(dl = never): Resolver {.passive, raises.} =
   ## it. The hosts file is read through the ring (`asyncio`), so construction
   ## is `{.passive.}` and bounded by `dl` like everything else here.
   result = Resolver(hosts: newStringTable(modeCaseInsensitive), servers: @[],
-                    sock: UdpSocket(fd: -1, deadline: never,
+                    sock: UdpSocket(deadline: never,
                                     peer: PeerAddr(raw: Sockaddr_storage())),
                     sockOpen: false,
                     pending: initTable[uint16, PendingQuery]())
@@ -652,7 +652,7 @@ proc resolve*(r: var Resolver; hostIn: string; dl = never): string {.passive, ra
 var
   gDefaultResolver = Resolver(hosts: newStringTable(modeCaseInsensitive),
                               servers: @[],
-                              sock: UdpSocket(fd: -1, deadline: never,
+                              sock: UdpSocket(deadline: never,
                                               peer: PeerAddr(raw: Sockaddr_storage())),
                               sockOpen: false,
                               pending: initTable[uint16, PendingQuery]())

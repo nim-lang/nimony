@@ -2,3 +2,4 @@ sockets leaked: 0
 socket moves leaked: 0
 files leaked: 0
 file moves leaked: 0
+default fds: -1 -1 -1 -1

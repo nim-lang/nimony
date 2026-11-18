@@ -44,7 +44,7 @@ const ClosedFile = cint(-1)
 
 type
   File* = object
-    fd*: cint
+    fd*: cint = ClosedFile
       ## The ring's descriptor: a POSIX fd, or on Windows the file HANDLE
       ## narrowed to `cint` the way the ring narrows every handle.
     deadline*: Deadline
