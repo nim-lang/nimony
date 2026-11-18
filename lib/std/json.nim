@@ -86,6 +86,9 @@ type
       ## `("<typeFieldName>": "<TypeName>")` as the first member — an ordinary
       ## JSON key/value, readable by any consumer. `fromJson` recognises and
       ## skips it. Empty (default) ⇒ no discriminator.
+    allowMissingKeys*: bool   ## `fromJson`: a field without a member keeps its default
+    allowExtraKeys*: bool     ## `fromJson`: a member that names no field is skipped
+    errorMsg*: string         ## `fromJson`: why it raised `ValueError`
 
   JsonTree* = object
     ## Owns the flat token buffer backing a JSON document. Move-only (the
@@ -660,37 +663,44 @@ proc toJson*[T](x: T; opts = JsonOptions()): JsonTree =
 # ── Typed map: fromJson (JSON → typed Nim) ───────────────────────────────────
 # Siblings of nifply's `fromNif`. A mutating `var T` overload (used by the
 # object walker via fieldPairs) delegates to the typedesc overloads.
+# A mismatch sets `opts.errorMsg` and raises `ValueError`.
 
-proc fromJson*(c: var JsonNode; t: typedesc[int]; opts: JsonOptions): int =
-  assert rawKind(c) == IntLit, "expected int"
+template fail(opts: var JsonOptions; msg: string) =
+  opts.errorMsg = msg
+  raise ValueError
+
+template expect(opts: var JsonOptions; c: JsonNode; what: string) =
+  fail(opts, "expected " & what & ", found " & $kind(c))
+
+proc fromJson*(c: var JsonNode; t: typedesc[int]; opts: var JsonOptions): int {.raises.} =
+  if rawKind(c) != IntLit: expect(opts, c, "int")
   result = int(intVal(c)); c.inc
-proc fromJson*(c: var JsonNode; t: typedesc[float]; opts: JsonOptions): float =
-  result = 0.0
+proc fromJson*(c: var JsonNode; t: typedesc[float]; opts: var JsonOptions): float {.raises.} =
   case rawKind(c)
   of FloatLit: result = floatVal(c)
   of IntLit:   result = float(intVal(c))
-  else:        assert false, "expected number"
+  else:        expect(opts, c, "number")
   c.inc
-proc fromJson*(c: var JsonNode; t: typedesc[string]; opts: JsonOptions): string =
-  assert rawKind(c) == StrLit, "expected string"
+proc fromJson*(c: var JsonNode; t: typedesc[string]; opts: var JsonOptions): string {.raises.} =
+  if rawKind(c) != StrLit: expect(opts, c, "string")
   result = strVal(c); c.inc
-proc fromJson*(c: var JsonNode; t: typedesc[bool]; opts: JsonOptions): bool =
-  assert rawKind(c) == TagLit, "expected bool"
+proc fromJson*(c: var JsonNode; t: typedesc[bool]; opts: var JsonOptions): bool {.raises.} =
+  if kind(c) != JBool: expect(opts, c, "bool")
   result = jsonKind(c.cursorTagId) == JKTrue
   c.skip
 
-proc fromJson*[E: enum](c: var JsonNode; t: typedesc[E]; opts: JsonOptions): E =
-  assert rawKind(c) == StrLit, "expected enum string"
+proc fromJson*[E: enum](c: var JsonNode; t: typedesc[E]; opts: var JsonOptions): E {.raises.} =
+  if rawKind(c) != StrLit: expect(opts, c, "enum string")
   let s = strVal(c); c.inc
   for e in E.low..E.high:
     if $e == s: return e
-  assert false, "unknown enum value: " & s
+  fail(opts, "unknown enum value: " & s)
 
-proc fromJson*[T: not typedesc](c: var JsonNode; x: var T; opts: JsonOptions) {.untyped, inline.} =
+proc fromJson*[T: not typedesc](c: var JsonNode; x: var T; opts: var JsonOptions) {.untyped, inline, raises.} =
   x = fromJson(c, T, opts)
 
-proc fromJson*[T](c: var JsonNode; t: typedesc[seq[T]]; opts: JsonOptions): seq[T] =
-  assert kind(c) == JArray, "expected array"
+proc fromJson*[T](c: var JsonNode; t: typedesc[seq[T]]; opts: var JsonOptions): seq[T] {.raises.} =
+  if kind(c) != JArray: expect(opts, c, "array")
   result = @[]
   c.into:
     while c.hasMore:
@@ -705,15 +715,16 @@ proc skipTypeField(c: var JsonNode; opts: JsonOptions) =
       if strVal(probe) == opts.typeFieldName:
         c.skip                       # drop the whole kv pair
 
-proc readField[T](m: var JsonNode; name: string; f: var T; opts: JsonOptions): bool =
+proc readField[T](m: var JsonNode; name: string; f: var T; opts: var JsonOptions): bool {.raises.} =
   ## Reads the member at `m` into `f` if its key is the field `name`; moves past it.
   m.into:
     result = strVal(m) == name
     m.inc
     if result: fromJson(m, f, opts) else: m.skip
 
-proc fromJson*[O: object](c: var JsonNode; t: typedesc[O]; opts: JsonOptions): O {.noinit.} =
-  assert kind(c) == JObject, "expected object"
+proc fromJson*[O: object](c: var JsonNode; t: typedesc[O]; opts: var JsonOptions): O {.noinit, raises.} =
+  if kind(c) != JObject: expect(opts, c, "object")
+  if opts.allowMissingKeys: result = default(O)
   c.into:
     skipTypeField(c, opts)
     let members = c
@@ -723,10 +734,14 @@ proc fromJson*[O: object](c: var JsonNode; t: typedesc[O]; opts: JsonOptions): O
       if not found:
         m = members                  # JSON members are unordered: find by key
         while not found and m.hasMore: found = readField(m, name, f, opts)
-      assert found, "expected object member"
-      c.skip                         # one member per field; extras stay for `into`'s check
+      if found: c.skip               # one member per field; what is left is extra
+      elif not opts.allowMissingKeys: fail(opts, "missing member: " & name)
+    if c.hasMore and not opts.allowExtraKeys: fail(opts, "extra member")
+    while c.hasMore: c.skip
 
-proc fromJson*[T](t: var JsonTree; tt: typedesc[T]; opts = JsonOptions()): T =
-  ## Entry point: deserialise the root of `t` into a `T`.
+proc fromJson*[T](t: var JsonTree; tt: typedesc[T]; opts = JsonOptions()): T {.raises.} =
+  ## Entry point: deserialise the root of `t` into a `T`. For the error message,
+  ## call `fromJson(t.root, T, opts)` with a `var opts` and read `opts.errorMsg`.
   var c = t.root
-  result = fromJson(c, T, opts)
+  var o = opts
+  result = fromJson(c, T, o)
