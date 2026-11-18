@@ -604,6 +604,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       requestMethods(c, dest, val, res.decl)
       dest.copyTree res.decl
   dest.add c.pendingSumtypes
+  dest.add c.pendingObjInits
   instantiateGenericHooks c, dest
   checkDestroysHaveWasMoved c, dest
   dest.addParRi()
@@ -666,6 +667,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     hostCommandLineArgs: hostCommandLineArgs,
     canSelfExec: canSelfExec,
     pendingSumtypes: initTokenBuf(),
+    pendingObjInits: initTokenBuf(),
     toBuild: initTokenBuf(),
     toBundle: initTokenBuf(),
     pending: createTokenBuf(),
@@ -709,6 +711,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
       requestMethods(c, dest, val, res.decl)
       dest.copyTree res.decl
   dest.add c.pendingSumtypes
+  dest.add c.pendingObjInits
   instantiateGenericHooks c, dest
   checkDestroysHaveWasMoved c, dest
   dest.addParRi()

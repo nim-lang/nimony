@@ -188,6 +188,10 @@ type
       ## syms of type instantiations to add their declarations to module
     pendingSumtypes*: TokenBuf
       ## synthesized oneof type declarations to emit at module end
+    pendingObjInits*: TokenBuf
+      ## hidden init procs for constructors with a run-time case selector,
+      ## emitted at module end (`lowerToObjInit`)
+    objInitProcs*: HashSet[SymId]
     refObjOwners*: Table[SymId, SymId]
       ## `T.Obj` → `T` for every `type T = ref|ptr object` split off by
       ## `semTypeSection`. The split runs in `SemcheckTopLevelSyms`, but the
