@@ -1820,6 +1820,9 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let ftyp = lookupField(c.typeCache, objTyp, fld.symId)
       if isClosure(ftyp) or isLiftedClosureTuple(ftyp):
         typ = ftyp
+  # A `sink`/`lent` closure parameter, captured or not, is called like the
+  # closure itself.
+  typ = typ.skipModifier
   # Upstream #2142: `isStatic` is computed up-front and drives `wantsEnv` below
   # (a static call to a proc that captures nothing is no longer a closure). Our
   # `var typ` re-resolution above (envp / captured-dot callees) feeds the
