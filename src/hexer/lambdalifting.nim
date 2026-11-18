@@ -409,7 +409,7 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi(n.endInfo)
 
 const
-  ToplevelRootKinds = {BlockS, IfS, WhenS, WhileS, CaseS, TryS, ScopeS, CoroforS}
+  ToplevelRootKinds = {BlockS, IfS, WhenS, WhileS, CaseS, WhenplatS, TryS, ScopeS, CoroforS}
     ## module level statements with locals of their own
 
 proc closureLoopVar(call: Cursor): SymId =
@@ -586,7 +586,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trSons(c, dest, n)
       c.typeCache.closeScope()
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CoroforS,
-      CaseS, RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
+      CaseS, WhenplatS, RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
@@ -2073,7 +2073,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         trPassiveCoroFor c, dest, n
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS,
-      CaseS, RetS, YldS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
+      CaseS, WhenplatS, RetS, YldS, PragmaxS, InclS, ExclS, IncS, DecS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, InvariantS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,

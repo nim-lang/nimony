@@ -2420,6 +2420,21 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         error c, "expected (of) or (else) but got: ", n
 
+proc trWhenplat(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## Leng's `whenplat` has the Nimony shape: string labels, branch bodies.
+  takeInto dest, n:
+    while n.hasMore:
+      let k = n.substructureKind
+      if k == OfU:
+        takeInto dest, n:
+          takeTree dest, n # `(ranges "a" ...)`
+          trStmtList c, dest, n
+      elif k == ElseU:
+        takeInto dest, n:
+          trStmtList c, dest, n
+      else:
+        error c, "expected (of) or (else) in `whenplat` but got: ", n
+
 proc trKeepovf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
     trExpr c, dest, n # (add ...)
@@ -2542,6 +2557,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         trExpr c, dest, n
         takeParRi dest, n, discardStart
     of CaseS: trCase c, dest, n
+    of WhenplatS: trWhenplat c, dest, n
     of WhileS, BreakS:
       if c.inAsmBody:
         # An `{.assembler.}` body's loop is the machine's: Leng has the same

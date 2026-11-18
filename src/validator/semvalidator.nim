@@ -284,7 +284,7 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
   of StmtsS:
     eachChild(n):
       result += blockBalance(ctx, p, child, false, sites)
-  of IfS, CaseS:
+  of IfS, CaseS, WhenplatS:
     # Each branch is one region, checked on its own, and what the construct as
     # a whole contributes to the enclosing sequence is the *least* any path
     # through it contributes. Folding to a flat 0 instead threw away the
@@ -425,7 +425,7 @@ proc advancesHere(n: Cursor; s: SymId): Cursor =
       let lv = unwrapAddr(a)
       if lv.kind == Symbol and lv.symId == s: return n
     return
-  if n.stmtKind in {IfS, CaseS, WhileS, ForS, TryS, BlockS}: return
+  if n.stmtKind in {IfS, CaseS, WhenplatS, WhileS, ForS, TryS, BlockS}: return
   eachChild(n):
     let hit = advancesHere(child, s)
     if not cursorIsNil(hit): return hit
@@ -571,6 +571,10 @@ proc mustAdvance(n: Cursor; s: SymId; isMutParam, exitCounts: bool): bool =
     mutates(firstChild(n), s, isMutParam) or
       branchesAdvance(n, s, isMutParam, {OfU, ElseU}, needsElse = false,
                       exitCounts = exitCounts)
+  of WhenplatS:
+    # the backend takes exactly one arm (no match does not compile)
+    branchesAdvance(n, s, isMutParam, {OfU, ElseU}, needsElse = false,
+                    exitCounts = exitCounts)
   of WhileS:
     # the body may not run, but the condition is evaluated at least once
     mutates(firstChild(n), s, isMutParam)
@@ -837,7 +841,7 @@ proc walkEmission(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
   case n.stmtKind
   of StmtsS:
     walkEmissionSeq(ctx, p, n, stack)
-  of IfS, CaseS:
+  of IfS, CaseS, WhenplatS:
     # Every branch must build the same children for the sequence to be known.
     # Comparing them is what makes `if … : addDotToken else: addSymUse` an
     # honest "one child of either kind" instead of two.

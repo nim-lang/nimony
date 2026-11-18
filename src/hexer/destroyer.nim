@@ -440,6 +440,24 @@ proc trCase(c: var Context; n: var Cursor) =
         takeTree c.dest, n
     c.flow.closeBranches()
 
+proc trWhenplat(c: var Context; n: var Cursor) =
+  ## Like `trCase` without a selector: the backend picks the branch.
+  copyInto(c.dest, n):
+    c.flow.openBranches()
+    while n.hasMore:
+      if n.substructureKind == OfU:
+        copyInto(c.dest, n):
+          takeTree c.dest, n # labels
+          c.flow.openBranch()
+          trNestedScope c, n
+          c.flow.closeBranch()
+      else:
+        copyInto(c.dest, n): # else
+          c.flow.openFinalBranch()
+          trNestedScope c, n
+          c.flow.closeBranch()
+    c.flow.closeBranches()
+
 proc tr(c: var Context; n: var Cursor) =
   # `c.terminates` (i.e. `c.flow.diverged`) says whether control has already
   # left this statement list. Only the jump statements set it — `ret`, `raise`,
@@ -463,6 +481,8 @@ proc tr(c: var Context; n: var Cursor) =
       trIf c, n
     of CaseS:
       trCase c, n
+    of WhenplatS:
+      trWhenplat c, n
     of BlockS:
       trBlock c, n
     of ScopeS:

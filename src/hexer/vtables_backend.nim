@@ -701,7 +701,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
       of NoStmt, CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS,
-         ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, AlwaysS, PragmasS, PragmaxS,
+         ForS, WhileS, CoroforS, CaseS, WhenplatS, LabS, JmpS, RetS, YldS, StmtsS, AlwaysS, PragmasS, PragmaxS,
          InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
          ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS,
          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
@@ -861,7 +861,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
   of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
      LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
      MacroS, TemplateS, BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
-     BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS,
+     BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, WhenplatS, RetS, YldS,
      PragmasS, PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
      FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
      DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS,

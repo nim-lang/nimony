@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/ttotalwhens.nim(3, 1) Error: under `.feature: "totalWhens"` a platform `when` is only allowed as a statement inside a routine body
+tests/nimony/errmsgs/ttotalwhens.nim(9, 23) Error: under `.feature: "totalWhens"` a platform `when` condition must be `defined(a) or defined(b) ...` over platform names: defined(linux) and defined(amd64)
+tests/nimony/errmsgs/ttotalwhens.nim(15, 8) Error: under `.feature: "totalWhens"` a platform `when` condition must be `defined(a) or defined(b) ...` over platform names: not(defined(windows))
+tests/nimony/errmsgs/ttotalwhens.nim(19, 12) Error: a platform `when` cannot be used as an expression

@@ -465,6 +465,25 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParRi(n.endInfo)   # close `case`
   n = caseStart; skip n
 
+proc trWhenplat(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `whenplat` is kept as a construct, like `case` without a selector: the
+  ## backend picks the branch. Labels are string literals, copied verbatim.
+  let info = n.info
+  dest.addParLe("whenplat", info)
+  let start = n
+  n = sub(n)
+  while n.substructureKind == OfU:
+    takeInto dest, n:        # `of`
+      takeTree dest, n       # ranges (string literals)
+      trScopedBody c, dest, n
+  if n.substructureKind == ElseU:
+    takeInto dest, n:        # `else`
+      trScopedBody c, dest, n
+  if n.hasMore:
+    bug "`whenplat` with a branch that is neither `of` nor `else` reached the Final IR"
+  dest.addParRi(n.endInfo)
+  n = start; skip n
+
 proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `break` is a forward `(jmp loopExit)` to the matching construct's exit.
   let info = n.info
@@ -800,6 +819,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trIf c, dest, n
   of CaseS:
     trCase c, dest, n
+  of WhenplatS:
+    trWhenplat c, dest, n
   of WhileS:
     trWhile c, dest, n
   of ForS:

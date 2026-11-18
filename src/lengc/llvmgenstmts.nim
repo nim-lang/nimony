@@ -593,6 +593,9 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
     genJtrueLLVM c, n
   of CaseS:
     genSwitchLLVM c, n
+  of WhenplatS:
+    # `nifmodules.load` resolves every `whenplat` against the platform facts
+    raiseAssert "unresolved `whenplat` reached the LLVM code generator"
   of LabS:
     genLabelLLVM c, n
   of JmpS:

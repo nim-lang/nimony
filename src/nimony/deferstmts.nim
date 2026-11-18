@@ -167,6 +167,19 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
               trBlock c, dest, n
           else:
             takeUnexpectedChild dest, n
+    of WhenplatS:
+      copyInto dest, n: # whenplat
+        while n.hasMore:
+          let k = n.substructureKind
+          if k == OfU:
+            copyInto dest, n: # of
+              takeTree dest, n # labels
+              trBlock c, dest, n
+          elif k == ElseU:
+            copyInto dest, n: # else
+              trBlock c, dest, n
+          else:
+            takeUnexpectedChild dest, n
     of ForS:
       copyInto dest, n: # for
         trStmt c, dest, n # iterator

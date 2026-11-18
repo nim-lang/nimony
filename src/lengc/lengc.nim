@@ -16,6 +16,7 @@ import noptions
 import ".." / lib / symparser
 import ".." / lib / vfs
 import ".." / lib / nimversion
+import ".." / lib / whenplat
 
 include ".." / lib / compat2
 
@@ -82,6 +83,7 @@ proc handleCmdLine() =
   var compileOnly = false
   var isMain = false
   var currentAction = atNone
+  var facts: seq[string] = @[]
 
   var actionTable = initActionTable()
 
@@ -133,6 +135,9 @@ proc handleCmdLine() =
         of "32": s.bits = 32
         of "16": s.bits = 16
         else: quit "invalid value for --bits"
+      of "os", "cpu", "plat":
+        # platform facts for `whenplat`: `--os:x`/`--cpu:x` imply `x`
+        facts.add val
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "run", "r": toRun = true
@@ -184,6 +189,7 @@ proc handleCmdLine() =
     of cmdEnd: assert false, "cannot happen"
 
   makeDir(s.config.nifcacheDir)
+  setPlatformFacts(facts)
   if actionTable.len != 0:
     for action in actionTable.keys:
       case action

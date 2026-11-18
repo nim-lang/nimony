@@ -196,7 +196,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
     of CallS, CmdS, GvarS, TvarS, ConstS, ResultS, GletS, TletS,
         ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
         TemplateS, TypeS, BlockS, EmitS, AsgnS, ScopeS, IfS,
-        WhenS, BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS,
+        WhenS, BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, WhenplatS,
         RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS,
         IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
         ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
@@ -726,7 +726,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       dest.takeTree c
     of CallS, CmdS, MacroS, EmitS, AsgnS, ScopeS, IfS, WhileS, BreakS,
         ContinueS, BlockS,
-        WhenS, CaseS, RetS, YldS, PragmasS, PragmaxS, InclS,
+        WhenS, CaseS, WhenplatS, RetS, YldS, PragmasS, PragmaxS, InclS,
         ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS,
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
         TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, InvariantS, CallstrlitS,

@@ -73,6 +73,7 @@ type
     ContinueS = (ord(ContinueTagId), "continue")  ## `continue` statement. In Leng and the multi-join IR it is a `(loop)` body's last statement, its sole back-edge: `(continue .)` always repeats, `(continue X)` repeats while `X` holds and otherwise leaves the loop. `X` has no effect: no call, no write, no flag read (`ovf`); a load is fine
     WhileS = (ord(WhileTagId), "while")  ## `while` statement
     CaseS = (ord(CaseTagId), "case")  ## `case` statement
+    WhenplatS = (ord(WhenplatTagId), "whenplat")  ## platform `when`: a `case` without a selector, resolved by the backend at compile time. A branch is taken when one of its string labels is a platform fact (`--os:x`/`--cpu:x` imply fact `x`, `--plat:x` adds one); the first matching branch wins; no match and no `else` is a compile-time error. Emitted by `.feature: "totalWhens"`
     LabS = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/internals/multi_join_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
     JmpS = (ord(JmpTagId), "jmp")  ## jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals
     RetS = (ord(RetTagId), "ret")  ## `return` instruction
@@ -90,7 +91,7 @@ type
     AlwaysS = (ord(AlwaysTagId), "always")  ## the statements of one replicated `finally` section: the eraiser emits one `(always …)` per way out of a `try`, so each copy stays recognizable as "runs on every path" after the `try` itself is gone. Like `stmts`, it opens no scope. Currently pure meta information: `lengcgen` emits its statements unwrapped, so `lengc`/`arkham` never see it. It is meant for checking that every path destroys a value and, later, for precise stack unwinding that runs custom logic
 
 proc rawTagIsLengStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, ContinueTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, AlwaysTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, ContinueTagId, WhileTagId, CaseTagId, WhenplatTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, AlwaysTagId}
 
 type
   LengType* = enum

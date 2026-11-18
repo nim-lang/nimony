@@ -255,6 +255,8 @@ type
                  ## the body may run (again) or the loop may end
     ncIte        ## `(ite cond then else)` / `(itec …)`
     ncCase       ## `(case sel (of …)* (else …)?)`
+    ncWhenplat   ## `(whenplat (of …)+ (else …)?)`: the arms are entered by
+                 ## `execStmt`; a finished arm continues after the statement
     ncTry        ## `(try body (except …)* (fin …)?)`
     ncBranch     ## `of`/`else`/`except`/`fin`: the body is the last child
     ncExit       ## `ret`/`raise`: evaluating the operand is the last thing
@@ -278,6 +280,7 @@ proc classify(n: Cursor): NodeClass =
   of BlockLikeKinds, AlwaysS: result = ncStmtList
   of RoutineKinds: result = ncRoutine
   of CaseS: result = ncCase
+  of WhenplatS: result = ncWhenplat
   of TryS: result = ncTry
   of RetS, RaiseS: result = ncExit
   of NoStmt:
@@ -445,6 +448,8 @@ proc afterNode(m: MoverContext; base: Cursor; pos: int32; x: Cursor;
         child = par                   # no else-part: the case may fall through
       else:
         child = par
+    of ncWhenplat:
+      child = par                     # an arm finished: continue after it
     of ncTry:
       if at(base, child).substructureKind == FinU:
         child = par                   # the cleanup ran: continue after the try
@@ -572,6 +577,15 @@ proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
       result = false
     else:
       result = afterNode(m, base, selPos, x, pcs, otherUsage)
+  of WhenplatS:
+    # no selector: every arm is a successor, and without an `else` a target
+    # no arm names does not compile, so nothing falls through
+    var b = firstChild(base, pc)
+    let e = endOf(base, pc)
+    while b < e:
+      pcs.add b
+      b = endOf(base, b)
+    result = true
   of TryS:
     pcs.add firstChild(base, pc)
     pushHandlers(m, base, pc, pcs)

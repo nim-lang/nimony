@@ -334,7 +334,7 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
           # the lhs, mirroring evaluation order for wasMoved tracking.
           analyse(c, b, n)
           analyse(c, b, le)
-    of IfS:
+    of IfS, WhenplatS:
       let exhaustive = isExhaustive(n, ElseU)
       var wasMovedSet: seq[WasMovedLoc] = @[]
       n.into:

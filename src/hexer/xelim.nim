@@ -34,7 +34,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
   var n = n
   case n.kind
   of TagLit:
-    if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, PatternvarS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
+    if n.stmtKind in {IfS, CaseS, WhenplatS, WhileS, AsgnS, LetS, VarS, CursorS, PatternvarS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
       result = true
     elif n.exprKind == ExprX:
       var probe = n
@@ -525,7 +525,7 @@ proc condNodeSafe(n: Cursor): bool =
       probe = sub(probe) # into `(expr`; peek only, never left
       skip probe                # the (would-be sole) value son
       if probe.hasMore: return false
-    elif n.stmtKind in {IfS, CaseS, TryS, BlockS, WhileS, ForS, StmtsS}:
+    elif n.stmtKind in {IfS, CaseS, WhenplatS, TryS, BlockS, WhileS, ForS, StmtsS}:
       return false
     n.loopInto:
       if not condNodeSafe(n): return false
@@ -1043,6 +1043,16 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   if tar.m != IsIgnored:
     tar.t.addSymUse tmp, info
 
+proc trWhenplat(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `(whenplat (of (ranges ...) S)+ (else S)?)` is always a statement: the
+  ## labels are data, each branch body is lowered like an `of` body.
+  copyInto(dest, n):
+    while n.hasMore:
+      copyInto(dest, n):
+        if n.substructureKind == RangesU:
+          takeTree dest, n
+        trStmt c, dest, n
+
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   let info = n.info
   var tmp = SymId(0)
@@ -1290,6 +1300,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of CaseS:
     var tar = initTarget(IsIgnored)
     trCase c, dest, n, tar
+  of WhenplatS:
+    trWhenplat c, dest, n
   of TryS:
     var tar = initTarget(IsIgnored)
     trTry c, dest, n, tar
@@ -1563,7 +1575,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
          GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
          IteratorS, ConverterS, MethodS, MacroS, TemplateS,
-         TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
+         TypeS, EmitS, AsgnS, ScopeS, WhenS, WhenplatS, BreakS, ContinueS,
          ForS, WhileS, CoroforS, RetS, YldS, StmtsS, AlwaysS, PragmasS,
          PragmaxS, InclS, ExclS, IncS, DecS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
