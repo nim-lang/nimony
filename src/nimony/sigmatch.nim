@@ -2590,6 +2590,14 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
       var inferred = m.inferred.getOrQuit(g.symId)
       matchEmptyContainer(m, inferred, arg)
       return
+  # The same holds for `sink` around a concrete type: the shape checks below
+  # look at `f` itself, so `@[]`, `[]` or `{}` against `sink seq[int]`
+  # matched `auto` against `(sink …)` and failed. A fresh literal is exactly
+  # what a `sink` parameter takes, so match the inner type. (`var`/`out`/`lent`
+  # stay as they are: a literal is no lvalue, and matching the inner type would
+  # move the rejection into the expansion of `@`.)
+  if f.typeKind == SinkT:
+    inc f
   # XXX handle empty containers nested inside (expr)
   if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
       (arg.n.exprKind == SetconstrX and f.typeKind == SetT):
