@@ -43,7 +43,6 @@ type
     of Ok: v: T
     of Err: e: E
 
-proc show(r: Res[int, string]): int = 0
-discard show(Err(e: 5))
+proc wrongErr(): Res[int, string] = Err(e: 5)
 
 proc text(): int = "text"
