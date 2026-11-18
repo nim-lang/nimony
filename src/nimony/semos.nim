@@ -1083,11 +1083,11 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
                usedModules: HashSet[string]; sourceDir = ""): string =
   ## Returns an error message if the evaluation failed, "" on success.
   let evalCache = evalCacheDir(c)
-  # A stdlib module is semchecked in the stdlib cache, by a build holding its
-  # lock, so the program's build runs under that lock (`NIFMAKE_HELD_LOCKS`)
-  # while the outer one goes on semchecking other stdlib modules: in the
-  # shared cache the two would build `std/writenif`'s imports at once. The
-  # program's stdlib is this module's own then, like the rest of it.
+  # A stdlib module is semchecked in the stdlib cache, by a build that goes
+  # on semchecking other stdlib modules around this evaluation. The
+  # program's stdlib is this module's own, like the rest of it, so the
+  # program's build never reaches into the shared cache from inside one of
+  # that build's nodes.
   let isStd = c.g.config.stdcachePath.len > 0 and
               c.g.config.nifcachePath == c.g.config.stdcachePath
   let progfile = evalCache / srcName.addFileExt(".p.nif")

@@ -295,6 +295,13 @@ proc invalidate(sc: var StatCache; node: Node) =
   for output in node.outputs:
     sc.entries.del output
 
+proc forget(sc: var StatCache; node: Node) =
+  ## What another build may have written since we looked: a node's outputs
+  ## and, through the nodes producing them, its inputs.
+  sc.invalidate node
+  for input in node.inputs:
+    sc.entries.del input
+
 proc needsRebuild(sc: var StatCache; node: Node): bool =
   ## Check if a node needs to be rebuilt
   result = false
@@ -479,6 +486,7 @@ type
     label: string
     start: MonoTime
     tmpOutputs: seq[string]  # an `atomic` node's outputs, as written
+    lockOff: int64           # the `NodeLocks` byte it holds, -1 for none
 
 proc atomicTmpNames(node: Node; nodeId: int): seq[string] =
   ## Where an `atomic` node's command writes its outputs instead. The names are
@@ -571,10 +579,11 @@ when defined(windows):
         result = int(c.peakWorkingSetSize div 1024)
       discard closeHandle(h)
 
-proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int): int =
+proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int;
+                   blocking = true): int =
   ## Index of the first job in `pool` that has exited, with its exit code and
-  ## peak memory use (resident set, KiB).
-  result = 0
+  ## peak memory use (resident set, KiB). Not `blocking`: -1 when none has.
+  result = -1
   when defined(windows):
     # A 1ms tick is far below the cheapest node in a real build (a `nifler`
     # parse is ~2.5ms).
@@ -589,6 +598,7 @@ proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int): int =
           peakKiB = peakKiBOf(pool[idx].process)
           exitCode = try: peekExitCode(pool[idx].process) except CatchableError: -1
           return idx
+      if not blocking: return -1
       sleep 1
   else:
     # Reaps with `wait4` rather than through osproc because only `wait4` hands
@@ -603,7 +613,9 @@ proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int): int =
       # -1 selects process group 1 there and normally fails with ECHILD.
       const anyChild = when defined(sunos): Pid(0)
                        else: Pid(-1)
-      let pid = wait4(anyChild, addr status, 0, addr ru)
+      let pid = wait4(anyChild, addr status,
+                      (if blocking: cint(0) else: WNOHANG), addr ru)
+      if pid == 0: return -1  # `WNOHANG` and no child has exited
       if pid < 0:
         if errno == EINTR: continue
         raiseOSError(osLastError())
@@ -616,11 +628,87 @@ proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int): int =
                     else: int(ru.ru_maxrss)
           return idx
 
+type
+  NodeLocks = object
+    ## `--lock`: the outputs that concurrent builds share are guarded node by
+    ## node, not by one lock for the whole build. Two builds that need the
+    ## same stale node wait for each other only on that node — the one that
+    ## gets it builds it, the other finds it current — and go on in parallel
+    ## everywhere else. A boot's five tools share most of their modules; a
+    ## single lock ran their stdlib parts one build at a time.
+    ##
+    ## A node's lock is one byte of `file`, at an offset hashed from its
+    ## first output. A collision only makes two nodes wait for each other.
+    ## The OS drops a process's locks when it ends, however it ends.
+    file: File          ## nil: no `--lock`, nothing is guarded
+    held: Table[int64, int]
+      ## offsets this process holds, with the number of running jobs on
+      ## each: POSIX locks belong to the process, so two colliding jobs of
+      ## ours share one, and only the last of them may release it
+
+const LockSlots = 1'i64 shl 30
+
+when defined(windows):
+  proc lockFileEx(hFile: Handle; flags, reserved, bytesLow, bytesHigh: DWORD;
+                  overlapped: ptr OVERLAPPED): WINBOOL {.
+    stdcall, dynlib: "kernel32", importc: "LockFileEx".}
+  proc unlockFileEx(hFile: Handle; reserved, bytesLow, bytesHigh: DWORD;
+                    overlapped: ptr OVERLAPPED): WINBOOL {.
+    stdcall, dynlib: "kernel32", importc: "UnlockFileEx".}
+
+proc openNodeLocks(path: string): NodeLocks =
+  result = NodeLocks(file: nil, held: initTable[int64, int]())
+  if not open(result.file, path, fmAppend):
+    quit "nifmake: cannot open the lock file " & path
+
+proc lockOffset(node: Node): int64 =
+  ## Every build names the same output by the same absolute path.
+  int64(hash(absolutePath(node.outputs[0])) and Hash(LockSlots - 1))
+
+proc osLock(f: File; off: int64; lock: bool): bool =
+  ## Takes (`lock`) or releases one byte without waiting; false when another
+  ## process holds it.
+  when defined(windows):
+    const LockfileFailImmediately = 1'i32
+    const LockfileExclusiveLock = 2'i32
+    var ov = default(OVERLAPPED)
+    ov.offset = DWORD(off and 0xFFFF_FFFF'i64)
+    ov.offsetHigh = DWORD(off shr 32)
+    let h = Handle(getOsFileHandle(f))
+    result = if lock: lockFileEx(h, LockfileExclusiveLock or LockfileFailImmediately,
+                                 0, 1, 0, addr ov) != 0
+             else: unlockFileEx(h, 0, 1, 0, addr ov) != 0
+  else:
+    result = false
+    let fd = getFileHandle(f)
+    while true:
+      if lseek(fd, Off(off), SEEK_SET) < 0:
+        quit "nifmake: cannot seek in the lock file"
+      if lockf(fd, (if lock: F_TLOCK else: F_ULOCK), 1) == 0: return true
+      if errno != EINTR: return false
+
+proc tryAcquire(l: var NodeLocks; off: int64): bool =
+  if l.held.hasKey(off):
+    inc l.held[off]
+    result = true
+  elif osLock(l.file, off, true):
+    l.held[off] = 1
+    result = true
+  else:
+    result = false
+
+proc release(l: var NodeLocks; off: int64) =
+  dec l.held[off]
+  if l.held[off] == 0:
+    l.held.del off
+    discard osLock(l.file, off, false)
+
 var gMaxJobs = 0
   ## Concurrency cap for `--parallel:N` / `-j:N` (0 = use all cores). Set
   ## during option parsing, read in `runDag`.
 
-proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
+proc runDag(dag: var Dag; opt: set[CliOption]; locks: var NodeLocks;
+            profile: ptr ProfileData = nil;
             progressLo = 0; progressHi = 100): bool =
   ## Execute the DAG in topological order
   result = true
@@ -659,12 +747,24 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
   var aborted = false
   let execStart = if profile != nil: getMonoTime() else: MonoTime()
 
+  var busy: seq[int] = @[]  # stale nodes another build holds the lock of
   while sched.done < sortedNodes.len:
     # Dispatch everything that fits.
     while (not aborted or KeepGoing in opt) and pool.len < jobs and sched.ready.len > 0:
       let nodeId = sched.takeReady()
       let node = addr dag.nodes[nodeId]
-      if Force in opt or Rerun in opt or needsRebuild(sc, node[]):
+      var stale = Force in opt or Rerun in opt or needsRebuild(sc, node[])
+      var lockOff = -1'i64
+      if stale and locks.file != nil and node.outputs.len > 0:
+        lockOff = lockOffset(node[])
+        if not locks.tryAcquire(lockOff):
+          busy.add nodeId
+          continue
+        # The build that held it may have just built it.
+        sc.forget node[]
+        stale = Force in opt or Rerun in opt or needsRebuild(sc, node[])
+        if not stale: locks.release lockOff
+      if stale:
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
         let tmpOutputs = if node.atomic: atomicTmpNames(node[], nodeId)
@@ -682,20 +782,31 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           cmdName: dag.commands[node.cmdIdx].name,
           label: nodeLabel(dag, node[]),
           start: (if profile != nil: getMonoTime() else: MonoTime()),
-          tmpOutputs: tmpOutputs)
+          tmpOutputs: tmpOutputs,
+          lockOff: lockOff)
       else:
         if Verbose in opt:
           echo "Up to date: ", node.outputs.join(", ")
         sched.complete nodeId
 
+    let waiting = busy.len > 0
+    if waiting:
+      # Ask again once a lock may have come free, or one of ours finished.
+      sched.ready.add busy
+      busy.setLen 0
     if pool.len == 0:
       # Nothing running and nothing ready: either the DAG is finished, or a
       # failure left the rest unreachable.
-      break
+      if not waiting or (aborted and KeepGoing notin opt): break
+      sleep 2
+      continue
 
     var exitCode = 0
     var peakKiB = 0
-    let k = waitForAnyJob(pool, exitCode, peakKiB)
+    let k = waitForAnyJob(pool, exitCode, peakKiB, blocking = not waiting)
+    if k < 0:
+      sleep 2
+      continue
     let job = pool[k]
     pool.del k
     close job.process
@@ -706,6 +817,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     prog.draw job.label
     if job.tmpOutputs.len > 0:
       commitAtomic(dag.nodes[job.nodeId], job.tmpOutputs, exitCode == 0)
+    if job.lockOff >= 0: locks.release job.lockOff
     if exitCode == 0:
       if Force in opt: touchOutputs(dag.nodes[job.nodeId], opt)
       sc.invalidate dag.nodes[job.nodeId]
@@ -732,30 +844,6 @@ proc anyStale(dag: Dag): bool =
   result = false
   for node in dag.nodes:
     if needsRebuild(sc, node): return true
-
-when defined(windows):
-  proc lockFileEx(hFile: Handle; flags, reserved, bytesLow, bytesHigh: DWORD;
-                  overlapped: ptr OVERLAPPED): WINBOOL {.
-    stdcall, dynlib: "kernel32", importc: "LockFileEx".}
-
-const HeldLocksEnv = "NIFMAKE_HELD_LOCKS"
-  ## the `--lock` files an ancestor nifmake holds, separated by `PathSep`
-
-proc acquireLock(path: string): File =
-  ## `--lock`: wait until this process holds the OS lock on the file `path`.
-  ## The OS drops it when the process ends, however it ends, so a crashed
-  ## build never leaves it held.
-  if not open(result, path, fmAppend):
-    quit "nifmake: cannot open the lock file " & path
-  when defined(windows):
-    const LockfileExclusiveLock = 2'i32
-    var ov = default(OVERLAPPED)
-    if lockFileEx(Handle(getOsFileHandle(result)), LockfileExclusiveLock, 0,
-                  high(DWORD), high(DWORD), addr ov) == 0:
-      quit "nifmake: cannot lock " & path
-  else:
-    while lockf(getFileHandle(result), F_LOCK, 0) != 0:
-      if errno != EINTR: quit "nifmake: cannot lock " & path
 
 proc mescape(p: string): string =
   when defined(windows):
@@ -968,9 +1056,9 @@ Options:
                         reason no input mtime can express — e.g. nimony when
                         the compilation options changed.
   --verbose             Show verbose output
-  --lock:<file>         Hold the OS lock on <file> while building, taken only
-                        when something is stale. For outputs that concurrent
-                        builds share.
+  --lock:<file>         Guard every stale node by an OS lock on a byte of
+                        <file>, so concurrent builds sharing outputs build
+                        each shared node once and the rest in parallel.
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.
   --progress[:LO:HI]    Show a live percentage indicator while building (only
@@ -1161,35 +1249,25 @@ proc main() =
 
     let parseStart = getMonoTime()
     var dag = parseNifFile(inputFile, baseDir)
-    var lock: File = nil
+    var locks = NodeLocks(file: nil)
     if lockFile.len > 0:
-      # Outputs that other builds share. Taken only when there is work, so
-      # builds that find everything current never wait for one another; and
-      # once it is held, `runDag` asks again what is stale, as the build we
-      # waited for may have done it all.
-      #
-      # A build that one of our own commands starts (Nimony's compile-time
-      # evaluation runs a nested build with the same options) needs the same
-      # lock, and the OS lock belongs to this process: waiting for it there
-      # would wait for us forever. So the locks held go down to every command
-      # in `HeldLocksEnv`, and a nested nifmake runs under its ancestor's.
-      let key = absolutePath(lockFile)
-      let held = getEnv(HeldLocksEnv)
-      if key notin held.split(PathSep):
-        if {Force, Rerun} * opt == {} and not anyStale(dag): return
-        lock = acquireLock(key)
-        putEnv(HeldLocksEnv, if held.len > 0: held & PathSep & key else: key)
+      # Outputs that other builds share, see `NodeLocks`. A nested build that
+      # one of our commands starts (Nimony's compile-time evaluation) takes
+      # the locks of its own nodes; it never needs the node whose command
+      # started it, so it never waits for us.
+      if {Force, Rerun} * opt == {} and not anyStale(dag): return
+      locks = openNodeLocks(lockFile)
     if Profile in opt or Report in opt:
       var profile = ProfileData()
       profile.parseTime = toSeconds(getMonoTime() - parseStart)
-      let ok = runDag(dag, opt, addr profile, progressLo, progressHi)
+      let ok = runDag(dag, opt, locks, addr profile, progressLo, progressHi)
       if Profile in opt: printProfile(profile)
       if Report in opt: printReport(profile)
       if not ok: quit 1
     else:
-      if not runDag(dag, opt, nil, progressLo, progressHi):
+      if not runDag(dag, opt, locks, nil, progressLo, progressHi):
         quit 1
-    if lock != nil: close lock
+    if locks.file != nil: close locks.file
 
   of cmdMakefile:
     if inputFile == "":
