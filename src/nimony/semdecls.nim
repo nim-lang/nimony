@@ -94,6 +94,13 @@ proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
     elif isLastSon(it.n):
       beforeLastSon = dest.len
       lastSonInfo = it.n.info
+      # The last expression is the routine's result, so like `return` it is
+      # checked against the return type. Only for sum type constructors: the
+      # last statement may also be `result = ...` or another statement without
+      # a value, which an expected type would reject.
+      if c.routine.kind != TemplateY and c.routine.resId != SymId(0) and
+          yieldsSumTypeConstr(c, it.n):
+        it.typ = c.routine.returnType
       semExpr c, dest, it, {AllowEmpty}
     elif oldRes != SymId(0) and it.n.exprKind != NoExpr and
         isTrailingRetOf(nextSibling(it.n), oldRes):
