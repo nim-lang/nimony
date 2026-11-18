@@ -2946,14 +2946,25 @@ type
     fieldType: TypeCursor
     info: NifLineInfo
 
-proc findOneofEfld(c: var SemContext; name: StrId): SymId =
+proc isBranchOf(sym, anum: SymId): bool =
+  ## `sym` is a branch of the sum type whose discriminator type is `anum`,
+  ## or of any sum type when `anum` is `SymId(0)`.
+  result = isAnumEfld(sym)
+  if result and anum != SymId(0):
+    var n = tryLoadSym(sym).decl
+    skipToLocalType n
+    result = n.isSymbol and n.symId == anum
+
+proc findOneofEfld(c: var SemContext; name: StrId; anum = SymId(0)): SymId =
+  ## A `case` pattern passes the selector's `anum`: it names a branch of
+  ## that sum type, not an equally named branch of another one in scope.
   result = SymId(0)
   let ignoreStyle = IgnoreStyleFeature in c.features
   var scope = c.currentScope
   while scope != nil:
     for k in stylesOfScope(scope, name, ignoreStyle):
       for sym in scope.tab.getOrDefault(k):
-        if sym.kind == EfldY and isAnumEfld(sym.name):
+        if sym.kind == EfldY and isBranchOf(sym.name, anum):
           return sym.name
     scope = scope.up
   for realName in stylesOfImport(c.importTab, name, ignoreStyle):
@@ -2962,7 +2973,7 @@ proc findOneofEfld(c: var SemContext; name: StrId): SymId =
       for foreignName in stylesOfIface(iface[], realName, ignoreStyle):
         let candidates = iface[].getOrDefault(foreignName)
         for defId in candidates:
-          if isAnumEfld(defId):
+          if isBranchOf(defId, anum):
             return defId
 
 proc isSumTypeConstr(c: var SemContext; n: Cursor): bool =
@@ -3026,6 +3037,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
     skip it.n
     return
   bindings.setLen 0
+  let anum = selectorType.symId
   takeInto dest, it.n:
     while it.n.hasMore:
       let info = it.n.info
@@ -3034,7 +3046,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
         it.n = sub(it.n)
         if it.n.isIdent:
           let branchName = it.n.strId
-          let efldSym = findOneofEfld(c, branchName)
+          let efldSym = findOneofEfld(c, branchName, anum)
           if efldSym == SymId(0):
             buildErr c, dest, info, "undeclared sum type branch: " & pool.strings[branchName]
             while it.n.hasMore: skip it.n
@@ -3067,7 +3079,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
             while it.n.hasMore:
               if it.n.isIdent:
                 let branchName = it.n.strId
-                let efldSym = findOneofEfld(c, branchName)
+                let efldSym = findOneofEfld(c, branchName, anum)
                 if efldSym == SymId(0):
                   buildErr c, dest, it.n.info, "undeclared sum type branch: " & pool.strings[branchName]
                 else:
