@@ -1986,6 +1986,12 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   dest.addSubtree t
   dest.addParRi()
   it.typ = typeToCursor(c, dest, beforeExpr)
+  # the expression is the type itself, as for a type symbol (`semExprSym`):
+  # a type-taking magic reads its argument as a type, not as a `typedesc`
+  dest.shrink beforeExpr
+  var base = it.typ
+  inc base
+  dest.addSubtree base
   #echo "CAME HERE! ", typeToString(t), " ", c.phase
   #writeStackTrace()
   skip it.n # skip mode

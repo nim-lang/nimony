@@ -32,4 +32,18 @@ proc main =
   assert mapIt(@[1, 2, 3], it * 10) == @[10, 20, 30]
   assert mapIt(@[1, 2, 3], $it) == @["1", "2", "3"]
 
+  # a type-taking magic reads `typeof(x)` as the type, not as `typedesc[T]`
+  type
+    Obj = object
+      a: int
+    Dist = distinct int
+  var o = Obj(a: 4)
+  o = default(typeof(o))
+  assert o.a == 0
+  assert high(typeof(3'u8)) == 255
+  var d = Dist(3)
+  d = default(typeof(d))
+  assert int(d) == 0
+  assert sizeof(typeof(o)) == sizeof(int)
+
 main()
