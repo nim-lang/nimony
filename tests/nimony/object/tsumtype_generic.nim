@@ -1,4 +1,4 @@
-import std/[syncio, assertions]
+import std/[syncio, assertions, result]
 import deps/msumtype_generic
 
 # Explicit type annotation with imported generic sum type:
@@ -133,5 +133,24 @@ assert show(pick(true)) == "ok 5"
 assert show(pick(false)) == "err off"
 assert show(grade(0)) == "err zero"
 assert show(grade(7)) == "ok 7"
+
+# `Result`'s fields are private to `std/result`; a pattern binds them in a
+# generic and in a template of another module too
+# (planetis-m/nimony-bugs-llms#87):
+proc okOr[T](r: Result[T, string]; d: T): T =
+  case r
+  of Ok(v): result = v
+  of Err(e): result = d
+
+template errLen(r: Result[int, string]): int =
+  var n = -1
+  case r
+  of Ok(v): n = v
+  of Err(e): n = e.len
+  n
+
+assert okOr(ok[int, string](5), 0) == 5
+assert okOr(err[int, string]("x"), 9) == 9
+assert errLen(err[int, string]("bad")) == 3
 
 echo "tsumtype_generic: OK"
