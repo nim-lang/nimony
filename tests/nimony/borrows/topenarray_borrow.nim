@@ -200,3 +200,19 @@ proc testCopiedViewAndReslice =
   assert r.len == 3
 
 testCopiedViewAndReslice()
+
+# A view of a sibling field does not hold the location passed to a `sink`
+# parameter.
+proc consume(s: sink seq[int]): int = s.len
+
+type
+  Two = object
+    a, b: seq[int]
+
+proc testSinkSiblingOfView =
+  var o = Two(a: @[7], b: @[8])
+  let x = toOpenArray(o.a)
+  assert consume(o.b) == 1
+  assert x[0] == 7
+
+testSinkSiblingOfView()

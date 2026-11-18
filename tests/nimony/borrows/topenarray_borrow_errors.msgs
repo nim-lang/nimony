@@ -9,3 +9,4 @@ tests/nimony/borrows/topenarray_borrow_errors.nim(99, 9) Error: borrow of a temp
 tests/nimony/borrows/topenarray_borrow_errors.nim(108, 8) Error: 's' is borrowed and cannot be mutated [pass --verbose for the Final IR]
 tests/nimony/borrows/topenarray_borrow_errors.nim(121, 8) Error: 's' is borrowed and cannot be mutated [pass --verbose for the Final IR]
 tests/nimony/borrows/topenarray_borrow_errors.nim(132, 8) Error: 's' is borrowed and cannot be mutated [pass --verbose for the Final IR]
+tests/nimony/borrows/topenarray_borrow_errors.nim(144, 19) Error: 's' is borrowed and cannot be passed to a 'sink' parameter [pass --verbose for the Final IR]
