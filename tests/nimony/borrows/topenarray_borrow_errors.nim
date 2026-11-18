@@ -135,7 +135,7 @@ proc selfReslice =
 selfReslice()
 
 # 12. A location passed to a `sink` parameter is not to be used afterwards, and
-# a live view of it is such a use: the callee may free the payload.
+# a view of it read later is such a use: the callee may free the payload.
 proc consume(s: sink seq[int]): int = s.len
 
 proc viewReadAfterSink =
@@ -145,3 +145,103 @@ proc viewReadAfterSink =
   discard view[0]
 
 viewReadAfterSink()
+
+# 13. Only a later use of the view makes a mutation an error; in a loop the
+# next iteration is later, ...
+proc viewReadInNextIteration =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  for i in 0 ..< 2:
+    discard view[0]
+    discard consume(s)
+
+viewReadInNextIteration()
+
+# 14. ... and so is the callee that gets the view next to the mutated location
+# ...
+proc both(v: openArray[int]; s: sink seq[int]): int = v[0] + s.len
+
+proc viewInSameCall =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  discard both(view, s)
+
+viewInSameCall()
+
+# 15. ... and a read of a temp the view was resliced into.
+proc first(v: openArray[int]; k: int): int = v[0] + k
+
+proc reslicedViewInTemp =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  discard first(toOpenArray(view, 0, 1), (grow(s); 1))
+
+reslicedViewInTemp()
+
+# 16. A view derived from the view holds the source as well ...
+proc mk(v: openArray[int]): openArray[int] = toOpenArray(v, 0, 1)
+
+proc derivedViewRead =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  let v2 = mk(view)
+  grow(s)
+  discard v2[0]
+
+derivedViewRead()
+
+# 17. ... and so does an iterator over the view, which reads it on every step.
+iterator values(v: openArray[int]): int =
+  for i in 0 ..< v.len: yield v[i]
+
+proc iterateView =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  for x in values(view):
+    grow(s)
+
+iterateView()
+
+# 18. A value built from the view holds the source too: an object, ...
+type
+  Holds {.view.} = object
+    v: openArray[int]
+
+proc objectOfView =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  let o = Holds(v: view)
+  grow(s)
+  discard o.v[0]
+
+objectOfView()
+
+# 19. ... also when the view is built in the constructor, ...
+proc objectOfFreshView =
+  var s = @[1, 2, 3]
+  let o = Holds(v: toOpenArray(s))
+  grow(s)
+  discard o.v[0]
+
+objectOfFreshView()
+
+# 20. ... a tuple or an array, ...
+proc tupleAndArrayOfView =
+  var s = @[1, 2, 3]
+  let t = (toOpenArray(s), 1)
+  let a = [toOpenArray(s)]
+  grow(s)
+  discard t[0][0] + a[0][0]
+
+tupleAndArrayOfView()
+
+# 21. ... or a field the view is stored into.
+proc fieldOfView =
+  var s = @[1, 2, 3]
+  var t = @[4]
+  var o = Holds(v: toOpenArray(t))
+  o.v = toOpenArray(s)
+  grow(s)
+  discard o.v[0]
+
+fieldOfView()

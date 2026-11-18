@@ -216,3 +216,42 @@ proc testSinkSiblingOfView =
   assert x[0] == 7
 
 testSinkSiblingOfView()
+
+# A view that is not used again does not hold its source: assigning it,
+# passing it as `var` or to a `sink` parameter is fine after the last read, on
+# a path that does not read the view, and when the view is rebound first.
+proc testMutateAfterLastViewRead(c: bool) =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  assert view[0] == 1
+  grow(s, 4)
+  assert consume(s) == 4
+  s = @[5]
+  for i in 0 ..< 2:
+    let v = toOpenArray(s)
+    assert v[0] == 5
+    assert consume(s) == 1
+  var i = 0
+  while i < 2:
+    let v = toOpenArray(s)
+    assert v.len > 0
+    grow(s, i)
+    inc i
+  var t = @[6]
+  let w = toOpenArray(t)
+  if c:
+    t = @[7]
+  else:
+    assert w[0] == 6
+  let u = toOpenArray(s)
+  try:
+    assert u.len == 3
+  finally:
+    grow(s, 8)
+  var r = toOpenArray(s)
+  assert r[0] == 5
+  grow(s, 9)
+  r = toOpenArray(t)
+  assert r[0] == 7
+
+testMutateAfterLastViewRead(true)

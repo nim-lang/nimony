@@ -61,7 +61,7 @@ import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes, features, expreval, sizeof,
   aliasing
-import ".." / hexer / lifter
+import ".." / hexer / [lifter, mover]
 
 type
   BorrowableCheck = enum
@@ -134,6 +134,9 @@ type
     olds: Table[string, VarId]
       ## The `old(e)` snapshots of the last call, which a store or a local that
       ## binds its result reads the callee's `.ensures` with.
+    stmt: Cursor
+      ## The statement the calls are part of: what it writes is written once
+      ## it has run, so a borrower it reads anywhere is read after the write.
 
   ProofKind = enum
     ProvenIndex, ProvenCall
@@ -172,6 +175,8 @@ type
                                        # moved-from memory, so a `notnil` field
                                        # may legitimately be set to `nil` there.
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
+    holders: seq[(SymId, Cursor)]      # a local and a value that can hold a
+                                       # view it was given (`usedAfter`)
     aliased: HashSet[SymId]            # locals of the routine whose address is
                                        # taken or that a nested routine names:
                                        # shared (`collectAliased`)
@@ -225,6 +230,8 @@ type
     obligationOpen: bool               # a range obligation is being judged;
                                        # cleared when it is not discharged
     root: Cursor                       # the lowered module, for token positions
+    rootLen: int                       # ... and its length in tokens
+    mover: MoverContext                # asks whether a borrower is read later
     dischargedIndexes: HashSet[int]    # positions of proven `(arrat …)` nodes
     provenCalls: HashSet[int]          # positions of callees whose `.requires`
                                        # was proven
@@ -656,15 +663,63 @@ proc overlaps(c: var FirContext; a: Cursor; followA: bool;
     x = nextSelector(c, x.childCursor, followA)
     y = nextSelector(c, y.childCursor, followB)
 
+proc holdsView(c: var FirContext; n: Cursor): bool =
+  ## Can the value `n` keep a view of what it is built from?
+  n.exprKind in {OconstrX, TupconstrX, AconstrX, BracketX} or canCarryBorrow(c, n)
+
+proc mentions(n: Cursor; s: SymId): bool =
+  if n.kind == Symbol: return n.symId == s
+  result = false
+  if n.kind == TagLit:
+    var it = n
+    it.into:
+      while it.hasMore and not result:
+        result = mentions(it, s)
+        skip it
+      while it.hasMore: skip it
+
+proc usedAfter(c: var FirContext; borrower: SymId; stmt: Cursor): bool =
+  ## Can `borrower`, or a value holding a view of it, be used by the statement
+  ## `stmt` or after it? The walk starts at its first operand, so `both(v, s)`
+  ## reads `v` after `s` changed. `result` is read by the caller, and a `for`
+  ## binder's borrow is the iterator's, which steps on with the container.
+  if cursorIsNil(stmt) or not stmt.isTagLit: return true
+  var todo = @[borrower]
+  var i = 0
+  while i < todo.len:
+    let s = todo[i]
+    inc i
+    if s == c.p.resultSym or s in c.forBinders or
+        isReadAfter(s, stmt.childCursor, c.root, c.rootLen, c.mover):
+      return true
+    # `let v2 = mk(v)`, `o.v = v`, `(v, 1)`, or a temp xelim hoisted one into
+    var held = c.p.holders # asking about one changes `c`
+    for t, init in pairs(c.p.inlineVars): held.add (t, init)
+    for h in held:
+      if h[0] notin todo and mentions(h[1], s) and holdsView(c, h[1]):
+        todo.add h[0]
+  result = false
+
 proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo;
-                         action = "mutated") =
-  var conflict = false
+                         call: CallContext; action = "mutated") =
+  ## Mutating a borrowed location is an error only when a borrower is used
+  ## after the mutation, that is, by the statement that mutates or later. A
+  ## temp xelim hoisted a view into before that statement is a borrower too:
+  ## `O(v: toOpenArray(s))`.
+  var borrowers: seq[SymId] = @[]
   for b in c.p.flow.borrows:
-    if overlaps(c, mut, true, b.loc, true):
-      conflict = true
-      break
-  if conflict:
-    buildErr c, info, "'" & asNimCode(locRootSym(c, mut)) & "' is borrowed and cannot be " & action
+    if overlaps(c, mut, true, b.loc, true): borrowers.add b.borrower
+  var temps: seq[(SymId, Cursor)] = @[] # asking about one changes `c`
+  for t, init in pairs(c.p.inlineVars): temps.add (t, init)
+  for t in temps:
+    if not cursorIsNil(call.stmt) and
+        cursorToPosition(c.root, t[1]) < cursorToPosition(c.root, call.stmt) and
+        establishesBorrow(c, t[1]) and overlaps(c, mut, true, t[1], true):
+      borrowers.add t[0]
+  for b in borrowers:
+    if usedAfter(c, b, call.stmt):
+      buildErr c, info, "'" & asNimCode(locRootSym(c, mut)) & "' is borrowed and cannot be " & action
+      return
 
 proc localInfoOf(c: var FirContext; s: SymId): LocalInfo =
   ## `getLocalInfo` only knows the locals of the proc under analysis; a global
@@ -4547,7 +4602,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       if not isMut and not isVarOpenArray(c, param.typ):
         let tracked = borrowMode(c, n).isTracked
         if tracked:
-          checkBorrowConflict(c, n, n.info)
+          checkBorrowConflict(c, n, n.info, call)
         # ... and against the other arguments of this call. Only a forwarded
         # parameter: an inline temp holding a `var T` call result (`s[i]`)
         # was never judged as a location for a local either.
@@ -4567,7 +4622,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
         mutatesUnknown = true
     elif pk == SinkT and borrowMode(c, n).isTracked:
       # The callee may free what it is given, like an assignment to `n` would.
-      checkBorrowConflict(c, n, n.info, "passed to a 'sink' parameter")
+      checkBorrowConflict(c, n, n.info, call, "passed to a 'sink' parameter")
     checkNilMatch c, n, param.typ
     # Binding an argument to a `range[lo..hi]` parameter is the same narrowing
     # as an assignment to one; the callee is proven from the declared type, so
@@ -4969,10 +5024,12 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
 
   # Check borrow conflicts for the destination
   if borrowMode(c, n).isTracked:
-    checkBorrowConflict(c, n, n.info)
+    checkBorrowConflict(c, n, n.info, call)
   if not c.features.contains(LenientAliasingFeature):
     checkDestAliasesValue(c, n, valueStart)
   checkEscapingBorrow(c, valueStart, locRootSym(c, n))
+  if holdsView(c, valueStart) and locRootSym(c, n) != NoSymId:
+    c.p.holders.add (locRootSym(c, n), valueStart) # `o.v = view`
   # A write to a shared variable or through a pointer is a barrier, once the
   # destination itself is accounted for.
   let written = writtenRootOf(c.typeCache, n, c.p.aliasInits)
@@ -6206,6 +6263,8 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     c.p.resultSym = name
   if isInline:
     c.p.inlineVars[name] = n
+  elif not n.isDotToken and holdsView(c, n):
+    c.p.holders.add (name, n)
   # Detect borrow: (haddr X) as init expression starts a borrow.
   # Validate that the path is borrowable (no deref in the middle, no calls).
   # Explicit `addr` in the path is an escape hatch ("unchecked").
@@ -6471,6 +6530,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## statement starts it afresh.
   if n.finalIrKind != UnknownV:
     call = freshCall()
+    call.stmt = n
   # See `stmtContext`: a statement from another file is expanded code, and
   # naming it would send the reader to a template body in the stdlib.
   if n.info.isValid and (cursorIsNil(c.p.currentProcStart) or
@@ -6539,7 +6599,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
     n.into:
       if borrowMode(c, n).isTracked:
-        checkBorrowConflict(c, n, n.info)
+        checkBorrowConflict(c, n, n.info, call)
       # The location's contents are now unknown: every fact we knew about it is
       # stale. Dropping them is what makes e.g. `move(a)` correctly forget the
       # `a != nil` proof — `a` was passed by `haddr` and reset to a moved-from
@@ -6918,6 +6978,7 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
   block:
     var fin = beginRead(finalBuf)
     c.root = fin
+    c.rootLen = finalBuf.len
     traverseToplevel c, fin
     endRead(fin)
 
