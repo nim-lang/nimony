@@ -5538,8 +5538,14 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   it.n = sub(it.n)
   if it.n.isIdent:
     block sumTypeCheck:
-      let efldSym = findOneofEfld(c, it.n.strId)
+      var efldSym = findOneofEfld(c, it.n.strId)
       if efldSym != SymId(0):
+        # where a sum type is expected, `Ok(...)` names that type's `Ok` if it
+        # is in scope, not the first `Ok` in scope:
+        let st = findSumTypeInfo(expected)
+        if st.valid:
+          let own = findOneofEfld(c, it.n.strId, st.discrimType.symId)
+          if own != SymId(0): efldSym = own
         var inferredExpected = expected
         if expected.typeKind == AutoT:
           # Try to infer generic type parameters from field values:
