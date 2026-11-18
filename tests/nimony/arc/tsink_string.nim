@@ -16,3 +16,15 @@ proc test(f: sink Foo): string =
 
 var f = Foo(buf: "1234")
 assert test(f) == "1234"
+
+# `sink`/`lent` applied to a parenthesized tuple type: as a value,
+# `(int, string)` is a tuple of typedescs, not a type.
+proc pass(t: sink (int, string)): string =
+  let (n, s) = t
+  result = s & $n
+
+proc whole(t: var (int, string)): lent (int, string) = t
+
+var p = (2, "x")
+echo pass(p)
+echo whole(p)[1]
