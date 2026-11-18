@@ -133,6 +133,23 @@ proc testStartsWith() =
   assert "this is a long string".startsWith("this is a long")
   assert not "this is a long string".startsWith("this is a long X")
 
+  # a short prefix still in the heap tier: its `bytes` cache is valid only up
+  # to its length, and the bytes above it are stale, not zero
+  var shrunk = "ada@example.com"   # heap (15 chars)
+  shrunk.setLen(0)
+  shrunk.add "name"                # heap, len 4, cache "name" + stale "exa"
+  assert "name.0".startsWith(shrunk)
+  assert "name".startsWith(shrunk)
+  assert not "nam".startsWith(shrunk)
+  assert not "nbme.0".startsWith(shrunk)
+  var reserved = newStringOfCap(32) # heap from the start, cache never written
+  reserved.add "na"
+  assert "name".startsWith(reserved)
+  assert not "nb".startsWith(reserved)
+  # ... and as `s`: the stale bytes must not make a longer prefix match
+  assert not shrunk.startsWith("nameexa")
+  assert shrunk.startsWith("nam")
+
 testStartsWith()
 echo "startsWith ok"
 

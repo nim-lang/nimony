@@ -962,22 +962,24 @@ func `<`*(a, b: string): bool {.inline.} = cmp(a, b) < 0
 func startsWithImpl*(s, prefix: string): bool =
   ## Returns true if `s` begins with `prefix`.
   ##
-  ## Always opens with a register-only masked comparison of the first
-  ## min(prefix.len, AlwaysAvail) chars — no branch needed to decide whether
-  ## the prefix fits in registers, because by SWAR design the `bytes` word
-  ## always carries valid (zero-padded) chars for all three tiers.
+  ## Opens with a masked comparison of the first min(prefix.len, AlwaysAvail)
+  ## chars inside the `bytes` words. The mask must use the prefix's logical
+  ## length, not its slen byte: for a heap or static string slen is a tier
+  ## marker (255/254), and its `bytes` cache is valid only up to `fullLen` —
+  ## a shrink or an in-place reuse leaves stale chars above it (see
+  ## `equalStringsLong`). Masking to 7 chars made a heap "name" carrying a
+  ## stale "exa" fail to prefix "name.0".
   let pbytes = prefix.bytes
   let pslen = ssLenOf(pbytes)
   let sbytes = s.bytes
   let sslen = ssLenOf(sbytes)
 
-  # Mask to min(pslen, AlwaysAvail) char-bytes inside the `bytes` word (see swarCharMask).
-  let charMask = swarCharMask(min(pslen, AlwaysAvail))
+  # Resolve actual lengths (register for short/medium; one load for heap/static).
+  let pLen = if pslen > PayloadSize: prefix.more.fullLen else: pslen
+  let charMask = swarCharMask(min(pLen, AlwaysAvail))
   if (sbytes and charMask) != (pbytes and charMask): return false
 
-  # Resolve actual lengths (register for short/medium; one load for long).
   let sLen = if sslen > PayloadSize: s.more.fullLen else: sslen
-  let pLen = if pslen > PayloadSize: prefix.more.fullLen else: pslen
   if sLen < pLen: return false
   if pLen <= AlwaysAvail: return true  # short prefix fully covered above
 
