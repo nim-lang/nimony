@@ -717,8 +717,9 @@ proc skipTypeField(c: var JsonNode; opts: JsonOptions) =
 
 proc readField[T](m: var JsonNode; name: string; f: var T; opts: var JsonOptions): bool {.raises.} =
   ## Reads the member at `m` into `f` if its key is the field `name`; moves past it.
+  ## The key is compared in place, without decoding it.
   m.into:
-    result = strVal(m) == name
+    result = strEquals(m.c, name)
     m.inc
     if result: fromJson(m, f, opts) else: m.skip
 
