@@ -7,7 +7,9 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [assertions, tables, hashes, sets, syncio, os]
+import std / [assertions, tables, hashes, sets, syncio]
+when not defined(nimony):
+  import std / os
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
@@ -77,8 +79,11 @@ proc prove(pass: var Pass; bits: int) =
     if existsEnv("NIMONY_PROVER_DUMP"):
       writeFile(getEnv("NIMONY_PROVER_DUMP") & "/" & pass.moduleSuffix & ".prover.nif",
                 toString(pass.dest, false))
+  var verbose = false
+  when not defined(nimony):
+    verbose = existsEnv("NIMONY_PROVER_VERBOSE")
   var errors = analyzeFinalIr(pass.dest, pass.moduleSuffix, features, bits,
-                              (ref Table[SymId, HooksPerType])(), existsEnv("NIMONY_PROVER_VERBOSE"))
+                              (ref Table[SymId, HooksPerType])(), verbose)
   when not defined(nimony):
     if existsEnv("NIMONY_PROVER_LOG"):
       # measurement mode: record the diagnostics, keep compiling
