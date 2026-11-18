@@ -18,7 +18,7 @@ when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
-import semos, nifconfig, nimony_model, semdata, langmodes
+import semos, nifconfig, nimony_model, semdata, langmodes, preparse
 from reporters import shortenDir
 import ".." / gear2 / modnames
 import ".." / lib / [tooldirs, platform, nifindexes, nifchecksums, symparser, docpaths, argsfinder, vfs, lengiface]
@@ -2396,6 +2396,8 @@ proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebui
   result.rootNode = root
   result.nodes.add root
   result.processedModules[p.modname] = 0
+  if not isFinal and cmd != DoDoc and not forceRebuild:
+    preparse result.config, nifler, project, {SkipSystem, IsSystem} * moduleFlags == {}
   traverseDeps result, p, root
   checkStdImports result
   if not isFinal:
