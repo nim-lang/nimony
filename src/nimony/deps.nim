@@ -195,13 +195,11 @@ proc exeFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   of appConsole, appGui:
     if config.outFile.len > 0 or config.outDir.len > 0:
       let nameOnly = if config.outFile.len > 0: config.outFile else: baseName
-      let withExt =
-        if nameOnly.splitFile.ext.len > 0: nameOnly
-        else: nameOnly.addFileExt(ExeExt)
+      let withExt = config.executableName(nameOnly)
       if config.outDir.len > 0: config.outDir / withExt
       else: withExt
     else:
-      base / baseName.addFileExt(ExeExt)
+      base / config.executableName(baseName)
   of appLib:
     if config.targetOS == osWindows:
       base / baseName.addFileExt("dll")

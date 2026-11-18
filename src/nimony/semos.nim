@@ -1060,7 +1060,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   runPlugin(c, dest, info, pluginName, input, noAdditional)
 
 proc runProgram(file: string; nimcachePath, stdcachePath: string; usedModules: HashSet[string];
-                commandLineArgs: string; native: bool;
+                commandLineArgs: string; native: bool; exeName: string;
                 sourceDir = ""): tuple[output: string, exitCode: int] =
   # Compile the .p.nif through the full pipeline, then run the resulting
   # binary. Compilation must keep the outer cwd (nimcache paths are relative
@@ -1080,7 +1080,7 @@ proc runProgram(file: string; nimcachePath, stdcachePath: string; usedModules: H
 
   let modname = extractModuleSuffix(file)
   let backendDir = if native: BackendDirNative else: BackendDirC
-  let exe = nimcachePath / backendDir / modname / splitFile(file).name.addFileExt(ExeExt)
+  let exe = nimcachePath / backendDir / modname / exeName
   # The child may start in `sourceDir`; keep the exe path absolute so it
   # still resolves against the outer compile's cwd, not the module dir.
   var exeToRun = exe
@@ -1148,9 +1148,10 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
     let nativeEval = c.g.config.isDefined("nimNativeBackend")
     if nativeEval:
       evalArgs.add " --native"
+    let exeName = c.g.config.executableName(splitFile(progfile).name)
     let (output, exitCode) = runProgram(progfile, evalCache,
                                         (if isStd: evalCache else: ""), usedModules,
-                                        evalArgs, nativeEval, sourceDir)
+                                        evalArgs, nativeEval, exeName, sourceDir)
     if exitCode != 0:
       result = ensureMove(output)
     else:

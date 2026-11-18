@@ -179,6 +179,16 @@ type
                          # in every template expansion and only a debug build
                          # reads it.
 
+proc executableName*(config: NifConfig; name: string): string =
+  ## The file the backend writes for an executable. nifasm's PE writer always
+  ## uses `.exe` (`writeExe` calls `changeFileExt("exe")`), even when `--out`
+  ## already has another extension; the other backends keep the path they are
+  ## given.
+  if config.backend == backendNative and config.targetOS == osWindows:
+    name.changeFileExt("exe")
+  else:
+    name.addFileExt(ExeExt)
+
 proc targetDriverFlags*(config: NifConfig): seq[string] =
   # On SunOS-drived platforms on x86, compilers default to 32-bit output on
   # 64-bit systems. This function adds the necessary compiler flags for this
