@@ -30,6 +30,15 @@ proc narrowedOnlyInTheOtherBranch(): int =
   else:
     result = 0
 
+# `return e` is `result = e; return result`, and an iterator's `yield e`
+# stores into its return type the same way.
+proc unnarrowedReturn(): Node =
+  let p: nil Node = Node(val: 5)
+  return p
+
+iterator unnarrowedYield(): Node =
+  let p: nil Node = Node(val: 6)
+  yield p
 # A suffixed number is no address: `0'i32` cast to a pointer is nil.
 proc castOfSuffixedZero(): int =
   var p: nil ptr int = nil
@@ -40,4 +49,6 @@ discard unnarrowedDeref()
 discard unnarrowedArgument()
 discard unnarrowedField()
 discard narrowedOnlyInTheOtherBranch()
+discard unnarrowedReturn()
+for n in unnarrowedYield(): discard n
 discard castOfSuffixedZero()
