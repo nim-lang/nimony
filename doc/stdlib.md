@@ -226,7 +226,8 @@ available.
 - `readLine(f, s)` returns `false` at EOF. Use it in a `while` loop.
 - `readLine(f)` returns the line without its line ending and raises
   `EndOfStreamError` at EOF.
-- `writeLine` appends the platform line ending.
+- `writeLine` appends `\n`, on Windows too: there is no text-mode `\r\n`
+  translation, the same as `echo`.
 - `tryWriteFile` is a convenience that opens, writes, and closes
   in one call.
 - `quit(msg)` writes to stderr and exits — useful for fatal errors.
