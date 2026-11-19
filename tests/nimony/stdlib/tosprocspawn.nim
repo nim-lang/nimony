@@ -37,6 +37,12 @@ when defined(posix):
     close(separate)
     assert collect(shell, ["-c", "printf out; printf err >&2"],
                    options = {poStdErrToStdOut}) == "outerr"
+    # `quit(msg)` writes its message to stderr, not stdout
+    let quitter = startProcess(getAppFilename(), args = ["quit"], options = {})
+    assert readAll(outputStream(quitter)) == "out\n"
+    assert readAll(errorStream(quitter)) == "fatal\n"
+    assert waitForExit(quitter) == 1
+    close(quitter)
 
     let input = startProcess(shell, args = ["-c", "cat"], options = {})
     write(inputStream(input), "stdin data")
@@ -154,6 +160,9 @@ when defined(posix):
       discard tryRemoveFile(path(script))
       removeDir(path(tmp))
 
+  if paramCount() == 1 and paramStr(1) == "quit":
+    echo "out"
+    quit "fatal"
   try:
     main()
   except:
