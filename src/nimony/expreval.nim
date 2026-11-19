@@ -1130,7 +1130,8 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
           let f = toFloat64(x)
           result = floatValue(c, f, nOrig.info)
       elif targetType.typeKind == UIntT:
-        let x = getConstOrdinalValue(val)
+        # conversions to unsigned wrap around: `uint32(-1)` is `high(uint32)`
+        let x = mask(getConstOrdinalValue(val), signedWidth(c, targetType))
         var err = false
         let u = asUnsigned(x, err)
         if err:

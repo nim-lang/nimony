@@ -12,3 +12,8 @@ printF32 1.0'f32 + 4.5
 printF32 1.0'f32 + 5
 printF64 1.0 + 6.0
 printF64 1.0 + 7
+
+# conversions to unsigned wrap around, also at compile time
+const
+  minusOne = uint32(-1)
+echo minusOne
