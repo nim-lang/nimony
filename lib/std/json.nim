@@ -571,6 +571,12 @@ proc emitEscaped(s: string; r: var string) =
     of '\r': r.add "\\r"
     of '"':  r.add "\\\""
     of '\\': r.add "\\\\"
+    of '\x00'..'\x07', '\v', '\x0E'..'\x1F':
+      # RFC 8259 section 7: every control character must be escaped.
+      const HexDigits = "0123456789abcdef"
+      r.add "\\u00"
+      r.add HexDigits[ord(c) shr 4]
+      r.add HexDigits[ord(c) and 15]
     else:    r.add c
   r.add '"'
 
