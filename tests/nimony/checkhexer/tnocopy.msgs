@@ -1,0 +1,1 @@
+tests/nimony/checkhexer/tnocopy.nim(17, 11) Error: '=dup' is not available for type <Pool>
