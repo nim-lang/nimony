@@ -273,6 +273,25 @@ proc emitWhenMarker(c: var TranslationContext) =
         toNif(entry.cond, nil, c)
     c.b.endTree()
 
+proc varTupleElemTypes(n: PNode): seq[PNode] =
+  ## The types of the names of `let (a, b): T = x`, one each, when `T` is
+  ## written as `(A, B)` or `tuple[a: A, b: B]` with as many types as there
+  ## are names and none of them is unpacked further; else none.
+  result = @[]
+  let typ = n[n.len-2]
+  let names = n.len-2
+  for i in 0..<names:
+    if n[i].kind == nkVarTuple: return @[]
+  case typ.kind
+  of nkPar, nkTupleConstr:
+    for t in typ: result.add t
+  of nkTupleTy:
+    for field in typ:
+      if field.kind != nkIdentDefs: return @[]
+      for _ in 0..<field.len-2: result.add field[field.len-2]
+  else: discard
+  if result.len != names: result = @[]
+
 proc toVarTuple(v: PNode, n: PNode; c: var TranslationContext) =
   c.b.addTree(UnpacktupL)
   for i in 0..<v.len-1: # ignores typedesc
@@ -626,10 +645,21 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.endTree()
 
   of nkVarTuple:
-    assert n[n.len-2].kind == nkEmpty
+    # `let (a, b): (A, B) = x`: the type is given to each name when it is
+    # written out as a tuple of the right length; any other type (a named
+    # tuple type, or names unpacked further) converts the value instead.
+    let typ = n[n.len-2]
+    let elemTypes = varTupleElemTypes(n)
     c.b.addTree(UnpackdeclL)
     relLineInfo(n, parent, c)
-    toNif(n[n.len-1], n, c, allowEmpty = true)
+    if typ.kind != nkEmpty and elemTypes.len == 0:
+      c.b.addTree(CallL)
+      relLineInfo(typ, n, c)
+      toNif(typ, n, c)
+      toNif(n[n.len-1], n, c)
+      c.b.endTree()
+    else:
+      toNif(n[n.len-1], n, c, allowEmpty = true)
 
     c.b.addTree(UnpacktupL)
     for i in 0..<n.len-2:
@@ -650,7 +680,11 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
         else:
           c.b.addEmpty
 
-        c.b.addEmpty 2 # type, value
+        if elemTypes.len > 0:
+          toNif(elemTypes[i], n, c) # type
+        else:
+          c.b.addEmpty # type
+        c.b.addEmpty # value
         c.b.endTree()
     c.b.endTree()
     c.b.endTree()
