@@ -35,7 +35,7 @@
 ## registered as they are declared, scopes are opened/closed and emit `kill`
 ## instructions, and `getType` drives selector/typing decisions.
 
-import std / [tables, assertions, syncio]
+import std / [tables, assertions, syncio, algorithm]
 when defined(nimony):
   {.feature: "lenientnils".}
 include ".." / lib / nifprelude
@@ -65,9 +65,20 @@ type
     tmpCounter: int
     exits: seq[Exit]
 
+  ViewLocal = object
+    ## A local that can hold a borrow: its kill can move up to its last use
+    ## (`moveKills`).
+    scope: int    # its scope, an index into `stmtStarts`
+    last: int     # where the statement of its scope that uses it last starts
+    open: int     # its uses not found to be in place
+    escapes: bool # used by a nested routine, or a view derived from it escapes
+    source: SymId # the view it is derived from, which must outlive it
+
   Context* = object
     typeCache: TypeCache
     counter: int
+    views: Table[SymId, ViewLocal]
+    stmtStarts: seq[int] ## per open scope: where its current statement starts
     thisModuleSuffix: string
     current: CurrentProc
     analysisFacts: bool ## emit `kill`/`unknown`; only the prover reads them
@@ -79,6 +90,7 @@ type
 
 proc openScope(c: var Context) =
   c.typeCache.openScope()
+  c.stmtStarts.add 0
 
 template emitKill(c: var Context; dest: var TokenBuf; info: NifLineInfo;
                   locals: untyped) =
@@ -98,6 +110,7 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   # insert kill instructions for the locals that go out of scope:
   emitKill c, dest, info, c.typeCache.currentScopeLocals
   c.typeCache.closeScope()
+  c.stmtStarts.shrink(c.stmtStarts.len - 1)
 
 proc killLocalsAbove(c: var Context; dest: var TokenBuf; depth: int;
                      info: NifLineInfo) =
@@ -119,6 +132,173 @@ proc emitJmp(dest: var TokenBuf; name: SymId; info: NifLineInfo) =
   dest.addSymUse name, info
   dest.addParRi()
 
+# ------------------------------------------------------------ moving kills
+#
+# A view keeps its source borrowed until its `kill`, which is where its scope
+# ends. When every use of the view is in place, its kill is also emitted after
+# the statement of its scope that uses it last, so `let v = toOpenArray(s);
+# echo v[0]; s.add 4` is fine. A use is in place when nothing that outlives it
+# can keep what the view borrows: a scalar is read (`v[i]`, `v.len`), the view
+# is passed to a call whose other arguments and result are scalars (`sum(v)`),
+# or it is the first argument of a view derived from it (`v[i]` as a `var T`,
+# `toOpenArray(v, a, b)`), which then keeps it alive. The scope-end kill stays
+# for the paths that jump past the moved one.
+
+const
+  LocationOps = {ArratX, PatX, DotX, DdotX, HderefX, DerefX, TupatX}
+
+proc chainRoot(n: Cursor): SymId =
+  ## The local `n` is a part of: `v` for `v`, `v[i]`, `v[i].f`.
+  var n = n
+  while n.exprKind in LocationOps: inc n
+  result = if n.kind == Symbol: n.symId else: NoSymId
+
+proc isScalarType(t: Cursor): bool =
+  t.typeKind == FT or isOrdinalType(t, allowEnumWithHoles = true)
+
+proc isScalar(c: var Context; n: Cursor): bool =
+  ## A literal, or a value that a call gets as a copy and that holds no borrow.
+  n.kind == StrLit or n.exprKind == SufX or isScalarType(getType(c.typeCache, n))
+
+proc use(c: var Context; s: SymId) =
+  if c.views.hasKey(s):
+    inc c.views.getOrQuit(s).open
+    var v = s
+    while v != NoSymId: # what `s` is derived from lives as long as `s`
+      let scope = c.views.getOrQuit(v).scope
+      c.views.getOrQuit(v).last = c.stmtStarts[scope]
+      v = c.views.getOrQuit(v).source
+
+proc isView(c: var Context; n: Cursor): bool {.inline.} =
+  c.views.len > 0 and c.views.hasKey(chainRoot(n))
+
+proc inPlace(c: var Context; n: Cursor) =
+  dec c.views.getOrQuit(chainRoot(n)).open
+
+proc judgeRead(c: var Context; n: Cursor) =
+  ## `n` is read as a value.
+  if isView(c, n) and isScalar(c, n): inPlace c, n
+
+proc othersScalar(c: var Context; args: Cursor; skipped: int): bool =
+  var a = args
+  var i = 0
+  result = true
+  while result and a.hasMore:
+    result = i == skipped or isScalar(c, a)
+    skip a
+    inc i
+
+proc judgeArgs(c: var Context; call: Cursor) =
+  if c.views.len == 0: return
+  var args = sub(call)
+  skip args # the callee
+  var a = args
+  var i = 0
+  while a.hasMore:
+    if isView(c, a):
+      let res = getType(c.typeCache, call)
+      if isScalar(c, a) or (isVoidType(res) or isScalarType(res)) and
+          othersScalar(c, args, i):
+        inPlace c, a
+    skip a
+    inc i
+
+proc judgeOperands(c: var Context; n: Cursor) =
+  ## What a builtin operation reads, unlike what `addr`, `haddr` and `cast`
+  ## take and the location `v[i]`, `v.f` select from.
+  if c.views.len == 0 or n.exprKind in {AddrX, HaddrX, CastX}: return
+  var ch = sub(n)
+  if n.exprKind in LocationOps: skip ch
+  while ch.hasMore:
+    judgeRead c, ch
+    skip ch
+
+proc viewArg(c: var Context; call: Cursor): SymId =
+  ## The view that is the first argument of `call`, if the others are scalars.
+  result = NoSymId
+  var call = call
+  if call.exprKind == HderefX: inc call
+  if call.exprKind in CallKinds:
+    var args = sub(call)
+    skip args # the callee
+    if args.hasMore and isView(c, args) and othersScalar(c, args, 0):
+      result = chainRoot(args)
+
+proc noteUses(c: var Context; n: var Cursor; inPlaceRoot: SymId; all: bool) =
+  ## The uses in a subtree that is passed on as it is.
+  if n.kind == Symbol:
+    let s = n.symId
+    use c, s
+    if c.views.hasKey(s) and (all or s == inPlaceRoot):
+      dec c.views.getOrQuit(s).open
+    inc n
+  elif n.isTagLit:
+    n.into:
+      while n.hasMore:
+        noteUses c, n, inPlaceRoot, all
+  else:
+    skip n
+
+proc forVarsScalar(vars: Cursor): bool =
+  var vars = vars
+  if vars.substructureKind in {UnpackflatU, UnpacktupU}:
+    vars = sub(vars)
+    result = true
+    while result and vars.hasMore:
+      result = forVarsScalar(vars)
+      skip vars
+  elif isLocal(vars.symKind):
+    var t = asLocal(vars).typ
+    if t.typeKind in {MutT, LentT}: t = t.childCursor
+    result = isScalarType(t)
+  else:
+    result = false
+
+proc skipStmt(buf: var TokenBuf; pos: int; lab: var bool): int =
+  ## Where the statement at `pos` ends; `lab`: is it a label, or an `unknown`
+  ## that belongs to the call before it?
+  var n = cursorAt(buf, pos)
+  lab = n.stmtKind == LabS or n.finalIrKind == UnknownV
+  result = pos + subtreeWidth(n)
+  endRead n
+
+proc cmpPos(a, b: (int, SymId)): int = cmp(b[0], a[0])
+
+proc moveKills(c: var Context; buf: var TokenBuf; info: NifLineInfo) =
+  ## Kill the views of the closing scope, whose statements `buf` holds, after
+  ## the statement that uses them last, or after the labels following it,
+  ## which other paths join, and the facts that belong to it.
+  if c.views.len == 0: return
+  var locals: seq[SymId] = @[]
+  for s in c.typeCache.currentScopeLocals:
+    if c.views.hasKey(s): locals.add s
+  var kills: seq[(int, SymId)] = @[]
+  for i in countdown(locals.high, 0): # a derived view first
+    let v = c.views.getOrQuit(locals[i])
+    if v.escapes or v.open != 0:
+      if v.source != NoSymId: c.views.getOrQuit(v.source).escapes = true
+    else:
+      var lab = false
+      var pos = skipStmt(buf, v.last, lab)
+      while pos < buf.len:
+        let next = skipStmt(buf, pos, lab)
+        if not lab: break
+        pos = next
+      if pos < buf.len: kills.add (pos, locals[i])
+    c.views.del locals[i]
+  sort kills, cmpPos # back to front, so that no position moves
+  var i = 0
+  while i < kills.len:
+    var j = i
+    var k = createTokenBuf(4)
+    k.addParLe KillV, info
+    while j < kills.len and kills[j][0] == kills[i][0]:
+      k.addSymUse kills[j][1], info
+      inc j
+    k.addParRi()
+    buf.insert k, kills[i][0]
+    i = j
+
 # Mutually recursive translators:
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -135,13 +315,17 @@ type
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo
 
-proc trStmtsInline(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Translate the children of a `(stmts ...)`/`(scope ...)` *without* emitting
-  ## a wrapping node. The caller already opened the enclosing list.
-  assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
-  n.into:
-    while n.hasMore:
-      trStmt c, dest, n
+proc trScopeStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## The statement list of a scope, or a lone statement, noting where each
+  ## statement starts (`moveKills`).
+  if n.stmtKind in {StmtsS, ScopeS}:
+    n.into:
+      while n.hasMore:
+        c.stmtStarts[c.stmtStarts.high] = dest.len
+        trStmt c, dest, n
+  else:
+    c.stmtStarts[c.stmtStarts.high] = dest.len
+    trStmt c, dest, n
 
 proc trScopedBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Translate a body that opens its own lexical scope and emit it as a fresh
@@ -152,22 +336,17 @@ proc trScopedBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   openScope c
   dest.addParLe ScopeS, info
-  if n.stmtKind in {StmtsS, ScopeS}:
-    n.into:
-      while n.hasMore:
-        trStmt c, dest, n
-    closeScope c, dest, info
-    dest.addParRi()
-  else:
-    trStmt c, dest, n
-    closeScope c, dest, info
-    dest.addParRi()
+  trScopeStmts c, dest, n
+  moveKills c, dest, info
+  closeScope c, dest, info
+  dest.addParRi()
 
 # ------------------------------------------------------------------ expressions
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
+    use c, n.symId
     dest.takeTree n
   of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeTree n
@@ -178,6 +357,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of AndX, OrX:
       bug "and/or should have been handled by the expression elimination pass xelim.nim"
     else:
+      judgeOperands c, n
       takeInto dest, n:
         while n.hasMore:
           if n.isTagLit and n.exprKind in CallKinds:
@@ -194,6 +374,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   let info = n.info
   result = CallInfo(info: info)
+  judgeArgs c, n
   takeInto dest, n: # the `(call)`
     trExpr c, dest, n # handle `fn`
     while n.hasMore:
@@ -222,6 +403,7 @@ proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   if n.exprKind in CallKinds:
     result = trCall(c, dest, n)
   else:
+    judgeRead c, n
     trExpr c, dest, n
     # `n` sits at the (possibly elided) close after the consumed expression;
     # the info is unused anyway since `mutates` is empty
@@ -247,7 +429,15 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeTree dest, n # export marker
   takeTree dest, n # pragmas
   c.typeCache.registerLocal(symId, kind, n)
+  if c.analysisFacts and kind in {VarY, LetY, CursorY} and
+      (n.typeKind in {MutT, LentT} or isViewType(n)):
+    c.views[symId] = ViewLocal(scope: c.stmtStarts.high, last: c.stmtStarts[^1])
   takeTree dest, n # type
+  if c.views.hasKey(symId) and n.isTagLit:
+    let source = viewArg(c, n) # a view derived from it: `v[i]` as a `var T`
+    if source != NoSymId:
+      dec c.views.getOrQuit(source).open
+      c.views.getOrQuit(symId).source = source
 
   # For a `for` whose iterator xelim hoisted into a temp (`forRangeAssumes`).
   if n.isTagLit and n.exprKind in CallKinds:
@@ -269,6 +459,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = sub(n)
   if n.isSymbol:
     let symId = n.symId
+    use c, symId # binding a view anew keeps it where its scope ends
     inc n # skip the destination symbol
     dest.addSymUse symId, info
     # `dest = f(args)`: the call binds directly to its destination, no temp.
@@ -281,6 +472,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # As above, with a path as the destination: `a[i] = f(x)`.
     var value = n
     skip value          # `value` is the RHS; `n` still at the destination
+    judgeRead c, n
     trExpr c, dest, n   # the destination location
     let callInfo = trBoundExpr(c, dest, value) # then the value
     skip n              # past the RHS, so `n` sits at the `)`
@@ -307,6 +499,7 @@ proc genLeaf(c: var Context; dest: var TokenBuf; n: var Cursor;
   ## target is the textual fall-through (`fallL`) is elided. This is exactly the
   ## shape the tracker already handles for loop guards.
   let info = n.info
+  judgeRead c, n
   if falseL == fallL:
     # fall through when false; jump to `trueL` when true.
     dest.addParLe IteV, info
@@ -422,6 +615,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe IteV, info
   let elifStart = n # skip `elif`
   n = sub(n)
+  judgeRead c, n
   trExpr c, dest, n          # condition
   trScopedBody c, dest, n    # then-branch
   n = elifStart; skip n      # end of `elif`
@@ -451,6 +645,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe("case", info)
   let caseStart = n
   n = sub(n)
+  judgeRead c, n
   trExpr c, dest, n          # selector
   while n.substructureKind == OfU:
     takeInto dest, n:        # `of`
@@ -522,6 +717,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse n.symId, info
     inc n
   else:
+    judgeRead c, n
     trExpr c, dest, n
   dest.addParRi(n.endInfo)
   n = retStart; skip n
@@ -567,6 +763,7 @@ proc emitLoopBody(c: var Context; dest: var TokenBuf; body: var TokenBuf;
   ## `continue`, the statements get their own `scope` and the label follows
   ## it: a `jmp` must not skip a declaration whose destructor would then run
   ## on an uninitialized value.
+  moveKills c, body, info
   if c.current.exits[^1].contUsed:
     dest.addParLe ScopeS, info
     dest.add body
@@ -590,13 +787,7 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe LoopV, info
   dest.addParLe ScopeS, info # a loop body is a scope: its locals die each iteration
   var body = createTokenBuf(64)
-  if n.stmtKind in {StmtsS, ScopeS}:
-    n.into: # the body statement list
-      while n.hasMore:
-        trStmt c, body, n
-  else:
-    # a lone statement, as a pass ahead of this one may build it
-    trStmt c, body, n
+  trScopeStmts c, body, n # a lone statement, as a pass ahead may build it, too
   emitLoopBody c, dest, body, info
   dest.addParRi() # close `scope`
   dest.addParRi() # close `loop`
@@ -657,6 +848,10 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let exitL = freshLabel(c, "´lx.")
   c.current.exits.add Exit(name: exitL, isLoop: true, cont: freshLabel(c, "´lc."),
                            scopeDepth: c.typeCache.scopeDepth)
+  if c.views.len > 0:
+    var it = n
+    noteUses c, it,
+      (if forVarsScalar(forStmt.vars): viewArg(c, forStmt.iter) else: NoSymId), false
   openScope c
   dest.addParLe(forTag, info)
   takeTree dest, n # the iterator call, verbatim: xelim already normalized it
@@ -667,9 +862,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.add assumeBuf
   assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
   var body = createTokenBuf(64)
-  n.into: # the body statement list
-    while n.hasMore:
-      trStmt c, body, n
+  trScopeStmts c, body, n
   emitLoopBody c, dest, body, info
   dest.addParRi() # close `scope`
   dest.addParRi(n.endInfo) # close `for`
@@ -753,6 +946,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
   let oldProc = move c.current
   c.current = CurrentProc(tmpCounter: 1, returnType: r.retType)
+  for v in c.views.mvalues: v.escapes = true # a closure may capture it
 
   # An `{.assembler.}` body is machine code written by hand: it has no contracts
   # to check, and its constructs are outside the Final IR's vocabulary anyway (a
@@ -773,7 +967,8 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
         let info = n.info
         copyIntoKind dest, StmtsS, info:
           openScope c
-          trStmtsInline c, dest, n
+          trScopeStmts c, dest, n
+          moveKills c, dest, info
           closeScope c, dest, info
         c.typeCache.closeScope()
       else:
@@ -836,6 +1031,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # location the prover resolves itself, and an `and` is logic rather than
     # control flow — binding either to a temp is exactly what would destroy the
     # statement. Handed on verbatim.
+    if c.views.len > 0:
+      var m = n
+      noteUses c, m, NoSymId, true
     takeTree dest, n
   of LabS, JmpS:
     # Already Final IR: `xelim` lowers short-circuit `and`/`or` to these.

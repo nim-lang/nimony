@@ -216,3 +216,57 @@ proc testSinkSiblingOfView =
   assert x[0] == 7
 
 testSinkSiblingOfView()
+
+# Only a use of a view after a mutation of its source is an error. A view that
+# is only read in place is dead after the statement that reads it last: after
+# a `for` over it, also one left by `break`, after a `try` or an `if`, and
+# after the last read of a view derived from it.
+type
+  Item = object
+    id: int
+    name: string
+
+proc testMutateAfterLastViewRead(c: bool) =
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)
+  assert view[0] == 1 and view.len == 3
+  for x in view: assert x > 0
+  grow(s, 4)
+  assert sum(s) == 10
+  for i in 0 ..< 2:
+    let v = toOpenArray(s)
+    assert v[0] == 1
+    grow(s, i)
+  let r = toOpenArray(s)
+  try:
+    assert r.len == 6
+  except:
+    discard
+  if c:
+    assert r[0] == 1
+  grow(s, 7)
+  let whole = toOpenArray(s)
+  let part = toOpenArray(whole, 0, 1)
+  assert part[0] == 1
+  s = @[8]
+  let v2 = toOpenArray(s)
+  for x in v2:
+    if x == 8: break
+  grow(s, 9)
+  assert s.len == 2
+  var items = @[Item(id: 1, name: "a")]
+  let iv = toOpenArray(items)
+  assert iv[0].id == 1 and iv[0].name == "a"
+  items.add Item(id: 2, name: "b")
+  assert items.len == 2
+
+testMutateAfterLastViewRead(true)
+testMutateAfterLastViewRead(false)
+
+# The same holds for the locals of a `block` at module level.
+block:
+  var s = @[1, 2]
+  let view = toOpenArray(s)
+  assert view[1] == 2
+  grow(s, 3)
+  assert s.len == 3
