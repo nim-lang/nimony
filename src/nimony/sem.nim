@@ -2503,12 +2503,50 @@ proc semExceptionType(c: var SemContext; dest: var TokenBuf; it: var Item) =
       buildErr c, dest, info, msg
     of CodeRaises, RefRaises, UnknownRaises: discard
 
+proc exceptArmChildren(arm: Cursor): seq[Cursor] =
+  result = @[]
+  var x = arm
+  x.into:
+    while x.hasMore:
+      result.add x
+      skip x
+
+proc semMultiExcept(c: var SemContext; dest: var TokenBuf; it: var Item;
+                    kids: seq[Cursor]) =
+  ## `except A, B: body` is one arm per type, each with its own copy of the
+  ## body: later passes read an arm as `(except <type> <body>)`.
+  let tag = it.n.cursorTagId
+  let info = it.n.info
+  var after = it.n
+  skip after
+  for i in 0 ..< kids.len - 1:
+    openScope(c)
+    dest.addParLe(tag, info)
+    it.n = kids[i]
+    if it.n.exprKind in CallKinds and it.n.childCursor.isIdent and
+        pool.strings[it.n.childCursor.strId] == "as":
+      buildErr c, dest, it.n.info, "`as` cannot be combined with a list of types in one `except` arm"
+      skip it.n
+    else:
+      semExceptionType(c, dest, it)
+    it.n = kids[kids.len - 1]
+    inc c.routine.inExcept
+    semStmtBranch c, dest, it, true
+    dec c.routine.inExcept
+    dest.addParRi(info)
+    closeScope(c)
+  it.n = after
+
 proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   takeInto dest, it.n:
     withNewScope c:
       semStmtBranch c, dest, it, true
     while it.n.hasMore and it.n.substructureKind == ExceptU:
+      let kids = exceptArmChildren(it.n)
+      if kids.len > 2:
+        semMultiExcept c, dest, it, kids
+        continue
       openScope(c)
       takeInto dest, it.n:
         if it.n.isDotToken:

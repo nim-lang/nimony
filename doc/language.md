@@ -4229,6 +4229,9 @@ proc lookup(t: Table[string, int]; key: string): int {.raises: ParseError.} =
 
 A bare `raise` inside an `except` arm raises again what that arm caught.
 
+An arm can list several types, `except A, B:`; it is one arm per type, each
+running the same statements. Such an arm cannot bind the value with `as`.
+
 ### Try statement
 
 A try statement has the general form: `try <statements> except <statements> finally <statements>`.
