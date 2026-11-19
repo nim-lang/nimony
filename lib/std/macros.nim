@@ -147,6 +147,11 @@ type
     strValField: string
     intValField: BiggestInt
     floatValField: BiggestFloat
+    tagField: string
+      ## The NIF tag the node was read from. Several tags share one
+      ## `NimNodeKind` (`fld`/`param`/`typevar` are all `nnkIdentDefs`) and
+      ## some have none (`ranges`), so `toNif` writes this tag back as long
+      ## as the node still has the kind that tag maps to.
 
 template isNilNode*(n: NimNode): bool = cast[pointer](n) == nil
 
@@ -394,7 +399,8 @@ proc copy*(n: NimNode): NimNode =
     kids: @[],
     strValField: n.strValField,
     intValField: n.intValField,
-    floatValField: n.floatValField
+    floatValField: n.floatValField,
+    tagField: n.tagField
   )
   for i in 0 ..< n.kids.len:
     let c = n.kids[i]

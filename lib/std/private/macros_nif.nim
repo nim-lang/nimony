@@ -1,6 +1,4 @@
-# NIF <-> NimNode conversion (host-Nim only).
-# Included from lib/std/macros.nim under `when not defined(nimony):`.
-# All forward-declared procs in that file are defined here.
+# NIF <-> NimNode conversion, included from lib/std/macros.nim.
 
 # Mapping from NIF tags to NimNodeKind
 proc tagToNimNodeKind(tag: string): NimNodeKind =
@@ -185,7 +183,9 @@ proc nimNodeKindToTag(k: NimNodeKind): string =
   of nnkTupleTy: "tuple"
   of nnkEnumTy: "enum"
   of nnkEnumFieldDef: "efld"
-  of nnkRecList, nnkRecCase, nnkRecWhen: "stmts"
+  of nnkRecList: "stmts"
+  of nnkRecCase: "case"
+  of nnkRecWhen: "when"
   of nnkDistinctTy: "distinct"
   of nnkRefTy: "ref"
   of nnkPtrTy: "ptr"
@@ -261,6 +261,7 @@ proc fromNifToken(r: var Reader; t: ExpandedToken): NimNode =
     else:
       let kind = tagToNimNodeKind(tag)
       result = newNimNode(kind)
+      result.tagField = tag
       # Read children until ParRi
       while true:
         let child = r.next()
@@ -280,15 +281,42 @@ proc fromNif*(r: var Reader): NimNode =
   let t = r.next()
   result = fromNifToken(r, t)
 
-proc toNif*(b: var Builder; n: NimNode) =
-  ## Convert NimNode tree to NIF stream
+proc treeTag(n: NimNode; inObject: bool): string =
+  ## The tag `n` was read with while its kind still fits it, else the tag of
+  ## its kind; a macro-built `nnkIdentDefs` is a field inside an object type.
+  if n.tagField.len > 0 and tagToNimNodeKind(n.tagField) == n.kind:
+    result = n.tagField
+  elif n.kind == nnkIdentDefs and inObject:
+    result = "fld"
+  else:
+    result = nimNodeKindToTag(n.kind)
+
+proc toNif(b: var Builder; n: NimNode; inObject: bool)
+
+proc toNifKids(b: var Builder; n: NimNode; tag: string; inObject: bool) =
+  # Fields only live directly in an object or tuple type, or in the
+  # `case`/`when`/`stmts` nested inside one; anything else starts over.
+  let kidsInObject =
+    case tag
+    of "object", "tuple": true
+    of "case", "of", "when", "elif", "else", "stmts", "fld": inObject
+    else: false
+  b.withTree tag:
+    for i in 0 ..< n.kids.len:
+      b.toNif(n.kids[i], kidsInObject)
+
+proc toNif(b: var Builder; n: NimNode; inObject: bool) =
   if isNilNode(n):
     b.addEmpty()
     return
 
   case n.kind
   of nnkNone, nnkEmpty:
-    b.addEmpty()
+    if n.tagField.len > 0:
+      # a tag without a `NimNodeKind` of its own, such as `ranges`
+      b.toNifKids(n, n.tagField, inObject)
+    else:
+      b.addEmpty()
   of nnkIdent:
     b.addIdent(n.strValField)
   of nnkSym:
@@ -321,30 +349,25 @@ proc toNif*(b: var Builder; n: NimNode) =
         let c = n.kids[i]
         if c.kind == nnkIdentDefs and c.len == 3:
           # name
-          b.toNif(c.kids[0])
+          b.toNif(c.kids[0], false)
           # export marker (none)
           b.addEmpty()
           # pragmas (none)
           b.addEmpty()
           # type
-          b.toNif(c.kids[1])
+          b.toNif(c.kids[1], false)
           # value
-          b.toNif(c.kids[2])
+          b.toNif(c.kids[2], false)
         else:
-          b.toNif(c)
+          b.toNif(c, false)
   else:
-    let tag = nimNodeKindToTag(n.kind)
-    if tag.len > 0:
-      b.withTree tag:
-        for i in 0 ..< n.kids.len:
-          let c = n.kids[i]
-          b.toNif(c)
-    else:
-      # Fallback: use stmts
-      b.withTree "stmts":
-        for i in 0 ..< n.kids.len:
-          let c = n.kids[i]
-          b.toNif(c)
+    let tag = treeTag(n, inObject)
+    # an empty tag is a kind without a tree of its own: fall back to `stmts`
+    b.toNifKids(n, if tag.len > 0: tag else: "stmts", inObject)
+
+proc toNif*(b: var Builder; n: NimNode) =
+  ## Convert NimNode tree to NIF stream
+  b.toNif(n, false)
 
 # ============================================================================
 # Macro plugin support

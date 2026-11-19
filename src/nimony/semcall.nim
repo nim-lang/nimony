@@ -1500,6 +1500,49 @@ proc hasGenericRoutine(n: Cursor): bool =
           result = true
         skip n
 
+proc symUntypedParamAt(s: SymId; pos: int): bool =
+  ## True when `s` is a template or macro whose parameter `pos` is `untyped`
+  ## (or falls into a trailing `varargs[untyped]`).
+  result = false
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing and res.decl.symKind in {TemplateY, MacroY}:
+    var p = asRoutine(res.decl).params
+    if p.substructureKind == ParamsU:
+      var i = 0
+      p.into:
+        while p.hasMore:
+          let typ = asLocal(p).typ
+          if typ.typeKind == VarargsT:
+            result = i <= pos and sub(typ).typeKind == UntypedT
+            break
+          if i == pos:
+            result = typ.typeKind == UntypedT
+            break
+          skip p
+          inc i
+        while p.hasMore: skip p
+
+proc untypedParamAt(fn: Cursor; pos: int): bool =
+  ## True when every candidate `fn` names takes an `untyped` argument at `pos`:
+  ## such an argument reaches the callee as written (`CallArg.orig`), so it is
+  ## not sem'd first. Sem'ing it would declare what it declares a second time,
+  ## once here and once in the expansion (#3044 item 7).
+  if fn.isSymbol:
+    result = symUntypedParamAt(fn.symId, pos)
+  elif fn.exprKind in {OchoiceX, CchoiceX}:
+    result = true
+    var any = false
+    var n = fn
+    n.into:
+      while n.hasMore:
+        if n.isSymbol:
+          any = true
+          if not symUntypedParamAt(n.symId, pos): result = false
+        skip n
+    result = result and any
+  else:
+    result = false
+
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
   var cs = CallState(
     beforeCall: dest.len,
@@ -1628,10 +1671,20 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       namedStart = arg.n
       arg.n = sub(arg.n)
       takeTree dest, arg.n
-    # `KeepChoices`: an argument that is a symbol choice stays one — the formal
-    # parameter it ends up matching is what picks the candidate, so lookup must
-    # not collapse it by scope distance nor declare it ambiguous here.
-    semExpr c, dest, arg, {AllowEmpty, KeepChoices}
+    var asWritten = false
+    if not named and arg.n.stmtKind == StmtsS:
+      var fnHead = readonlyCursorAt(dest, 0)
+      asWritten = untypedParamAt(fnHead, cs.args.len)
+      endRead fnHead
+    if asWritten:
+      # a block for an `untyped` parameter: passed as written, see `untypedParamAt`
+      dest.addSubtree arg.n
+      skip arg.n
+    else:
+      # `KeepChoices`: an argument that is a symbol choice stays one — the formal
+      # parameter it ends up matching is what picks the candidate, so lookup must
+      # not collapse it by scope distance nor declare it ambiguous here.
+      semExpr c, dest, arg, {AllowEmpty, KeepChoices}
     if named:
       dest.addParRi(arg.n.endInfo)
       # reset only reachable inside `if named:`, where namedStart was set:
