@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tredeclare_type.nim(2, 6) Error: attempt to redeclare: A
+tests/nimony/errmsgs/tredeclare_type.nim(7, 3) Error: attempt to redeclare: O
+tests/nimony/errmsgs/tredeclare_type.nim(11, 3) Error: attempt to redeclare: Foo
+tests/nimony/errmsgs/tredeclare_type.nim(13, 6) Error: attempt to redeclare: R
