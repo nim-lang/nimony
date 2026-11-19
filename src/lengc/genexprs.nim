@@ -254,6 +254,20 @@ proc isImportedArray(c: var GeneratedCode; n: Cursor): bool =
   else:
     result = false
 
+proc genBareArrayInit(c: var GeneratedCode; n: var Cursor) =
+  ## `(aconstr T ...)` as a C array initializer, without the `(T){.a = ...}`
+  ## wrapper: what an `importc` struct's array member takes.
+  n.into:
+    skip n # type
+    c.add CurlyLe
+    var i = 0
+    while n.hasMore:
+      if i > 0: c.add Comma
+      c.genx n
+      inc i
+    if i == 0: c.add "0"
+    c.add CurlyRi
+
 proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -525,7 +539,27 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
             let fldType = if fldSym != SymId(0): typeOfField(c.m, fldBody, fldSym) else: default(Cursor)
             let isFlexArr = not cursorIsNil(fldType) and fldType.typeKind == FlexarrayT
             if isFlexArr: c.flags.incl gfInFlexArray
-            c.genx n
+            # An `importc` struct's array member is the header's plain C
+            # array, not the wrapper struct, so it takes a bare `{...}`.
+            let importedLen =
+              if not cursorIsNil(fldType) and c.m.isImportC(objType): fixedArrayLen(c.m, fldType)
+              else: -1
+            if importedLen >= 0 and n.exprKind == AconstrC:
+              c.genBareArrayInit n
+            elif importedLen > 0 and n.kind == Symbol:
+              # a temp such as a `default` call's result: element by element
+              c.add CurlyLe
+              for e in 0 ..< importedLen:
+                if e > 0: c.add Comma
+                var v = n
+                c.genx v
+                c.add ".a["
+                c.add $e
+                c.add BracketRi
+              c.add CurlyRi
+              skip n
+            else:
+              c.genx n
             if isFlexArr: c.flags.excl gfInFlexArray
             while n.hasMore: skip n
         elif n.exprKind == OconstrC:

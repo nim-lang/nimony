@@ -33,3 +33,17 @@ block:
   assert cstruct2.cs2[0].field[1] == 4444
   assert cstruct2.cs2[1].field[0] == 55555
   assert cstruct2.cs2[1].field[1] == 666666
+
+block: # #3044 item 10: the array member takes a bare C initializer
+  let d = default(CStruct)
+  assert d.field[0] == 0
+  assert d.field[9] == 0
+  let e = CStruct(field: [1'i32, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+  assert e.field[0] == 1
+  assert e.field[9] == 10
+  let f = CStruct2(cs: e)
+  assert f.cs.field[1] == 2
+  assert f.cs2[1].field[2] == 0
+  let g = default(CStruct2)
+  assert g.cs.field[3] == 0
+  assert g.cs2[1].field[2] == 0
