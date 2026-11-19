@@ -1,0 +1,10 @@
+nnkStrLit len=0
+nnkTripleStrLit len=0
+nnkRStrLit len=0
+nnkUInt8Lit len=0
+nnkFloat32Lit len=0
+nnkStrLit plain
+nnkTripleStrLit triple
+nnkRStrLit r\aw
+200 2.5 -7 a
+b

@@ -210,6 +210,58 @@ proc nimNodeKindToTag(k: NimNodeKind): string =
   of nnkError: "err"
   of nnkType: "typedesc"
 
+proc litSuffixKind(lit: NimNodeKind; suffix: string): NimNodeKind =
+  ## The literal kind of Nifler's `(suf <lit> "<suffix>")`; `nnkNone` for a
+  ## suffix that has no kind of its own (a user-defined one).
+  result = nnkNone
+  case lit
+  of nnkStrLit:
+    if suffix == "R": result = nnkRStrLit
+    elif suffix == "T": result = nnkTripleStrLit
+  of nnkIntLit, nnkUIntLit:
+    case suffix
+    of "i8": result = nnkInt8Lit
+    of "i16": result = nnkInt16Lit
+    of "i32": result = nnkInt32Lit
+    of "i64": result = nnkInt64Lit
+    of "u": result = nnkUIntLit
+    of "u8": result = nnkUInt8Lit
+    of "u16": result = nnkUInt16Lit
+    of "u32": result = nnkUInt32Lit
+    of "u64": result = nnkUInt64Lit
+    else: discard
+  of nnkFloatLit:
+    if suffix == "f32": result = nnkFloat32Lit
+    elif suffix == "f64": result = nnkFloat64Lit
+  else: discard
+
+proc litSuffix(k: NimNodeKind): string =
+  ## The Nifler suffix that keeps a typed literal's type; `""` for none.
+  case k
+  of nnkInt8Lit: "i8"
+  of nnkInt16Lit: "i16"
+  of nnkInt32Lit: "i32"
+  of nnkInt64Lit: "i64"
+  of nnkUInt8Lit: "u8"
+  of nnkUInt16Lit: "u16"
+  of nnkUInt32Lit: "u32"
+  of nnkUInt64Lit: "u64"
+  of nnkFloat32Lit: "f32"
+  of nnkFloat64Lit: "f64"
+  else: ""
+
+proc fromSuffixed(n: NimNode): NimNode =
+  ## `(suf "x" "T")` is the literal `"""x"""`, `(suf 3 "u8")` is `3'u8`, ...
+  result = n
+  if n.len == 2 and n.kids[1].kind == nnkStrLit:
+    let lit = n.kids[0]
+    let k = litSuffixKind(lit.kind, n.kids[1].strValField)
+    if k != nnkNone:
+      result = newNimNode(k)
+      result.strValField = lit.strValField
+      result.intValField = lit.intValField
+      result.floatValField = lit.floatValField
+
 proc fromNifToken(r: var Reader; t: ExpandedToken): NimNode =
   ## Helper to convert a single already-read token
   case t.tk
@@ -271,6 +323,8 @@ proc fromNifToken(r: var Reader; t: ExpandedToken): NimNode =
           break
         else:
           result.add fromNifToken(r, child)
+      if tag == "suf":
+        result = fromSuffixed(result)
   of ParRi:
     result = newEmptyNode()
   of UnknownToken:
@@ -323,12 +377,22 @@ proc toNif(b: var Builder; n: NimNode; inObject: bool) =
     b.addSymbol(n.strValField)
   of nnkIntLit:
     b.addIntLit(n.intValField)
-  of nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
-    b.addIntLit(n.intValField)
-  of nnkUIntLit, nnkUInt8Lit, nnkUInt16Lit, nnkUInt32Lit, nnkUInt64Lit:
+  of nnkUIntLit:
     b.addUIntLit(uint(n.intValField))
-  of nnkFloatLit, nnkFloat32Lit, nnkFloat64Lit:
+  of nnkFloatLit:
     b.addFloatLit(n.floatValField)
+  of nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
+    b.withTree "suf":
+      b.addIntLit(n.intValField)
+      b.addStrLit(litSuffix(n.kind))
+  of nnkUInt8Lit, nnkUInt16Lit, nnkUInt32Lit, nnkUInt64Lit:
+    b.withTree "suf":
+      b.addUIntLit(uint(n.intValField))
+      b.addStrLit(litSuffix(n.kind))
+  of nnkFloat32Lit, nnkFloat64Lit:
+    b.withTree "suf":
+      b.addFloatLit(n.floatValField)
+      b.addStrLit(litSuffix(n.kind))
   of nnkStrLit, nnkRStrLit, nnkTripleStrLit:
     b.addStrLit(n.strValField)
   of nnkCharLit:
