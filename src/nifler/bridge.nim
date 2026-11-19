@@ -273,24 +273,44 @@ proc emitWhenMarker(c: var TranslationContext) =
         toNif(entry.cond, nil, c)
     c.b.endTree()
 
-proc varTupleElemTypes(n: PNode): seq[PNode] =
-  ## The types of the names of `let (a, b): T = x`, one each, when `T` is
-  ## written as `(A, B)` or `tuple[a: A, b: B]` with as many types as there
-  ## are names and none of them is unpacked further; else none.
+type
+  UnpackType = object
+    ## The type of one name of `let (a, (b, c)): T = x`: `t` itself when `path`
+    ## is empty, else `typeof(default(t)[path[0]][path[1]]...)`. `t == nil`: no
+    ## type was written.
+    t: PNode
+    path: seq[int]
+
+proc tupleTypeKids(t: PNode): seq[PNode] =
+  ## The field types of a tuple type written out, `(A, B)` or `tuple[a: A, b:
+  ## B]`, one per field; else none.
   result = @[]
-  let typ = n[n.len-2]
-  let names = n.len-2
-  for i in 0..<names:
-    if n[i].kind == nkVarTuple: return @[]
-  case typ.kind
+  case t.kind
   of nkPar, nkTupleConstr:
-    for t in typ: result.add t
+    for x in t: result.add x
   of nkTupleTy:
-    for field in typ:
+    for field in t:
       if field.kind != nkIdentDefs: return @[]
       for _ in 0..<field.len-2: result.add field[field.len-2]
   else: discard
-  if result.len != names: result = @[]
+
+proc unpackElem(u: UnpackType; i, names: int): UnpackType =
+  ## The type of the `i`th of `names` names unpacked from a value of type `u`.
+  if u.t == nil: return u
+  if u.path.len == 0:
+    let kids = tupleTypeKids(u.t)
+    if kids.len == names: return UnpackType(t: kids[i], path: @[])
+  result = UnpackType(t: u.t, path: u.path & i)
+
+proc ownUnpackType(n: PNode): UnpackType =
+  ## The type written after the outermost tuple. One written after a nested
+  ## tuple, `let ((a, b): T, c) = x`, is parsed and then ignored, as Nim's sem
+  ## does: its names get the part of the outer type that is theirs, if any.
+  let typ = n[n.len-2]
+  if typ.kind != nkEmpty: UnpackType(t: typ, path: @[])
+  else: UnpackType(t: nil, path: @[])
+
+proc toVarTupleNif(n, parent: PNode; c: var TranslationContext; u: UnpackType)
 
 proc toVarTuple(v: PNode, n: PNode; c: var TranslationContext) =
   c.b.addTree(UnpacktupL)
@@ -645,49 +665,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.endTree()
 
   of nkVarTuple:
-    # `let (a, b): (A, B) = x`: the type is given to each name when it is
-    # written out as a tuple of the right length; any other type (a named
-    # tuple type, or names unpacked further) converts the value instead.
-    let typ = n[n.len-2]
-    let elemTypes = varTupleElemTypes(n)
-    c.b.addTree(UnpackdeclL)
-    relLineInfo(n, parent, c)
-    if typ.kind != nkEmpty and elemTypes.len == 0:
-      c.b.addTree(CallL)
-      relLineInfo(typ, n, c)
-      toNif(typ, n, c)
-      toNif(n[n.len-1], n, c)
-      c.b.endTree()
-    else:
-      toNif(n[n.len-1], n, c, allowEmpty = true)
-
-    c.b.addTree(UnpacktupL)
-    for i in 0..<n.len-2:
-      if n[i].kind == nkVarTuple:
-        toNif(n[i], n, c)
-      else:
-        c.b.addTree(c.section)
-        let split = splitIdentDefName(n[i])
-        toNif(split.name, n, c) # name
-
-        if split.visibility != nil:
-          c.b.addRaw " x"
-        else:
-          c.b.addEmpty
-
-        if split.pragma != nil:
-          toNif(split.pragma, n, c)
-        else:
-          c.b.addEmpty
-
-        if elemTypes.len > 0:
-          toNif(elemTypes[i], n, c) # type
-        else:
-          c.b.addEmpty # type
-        c.b.addEmpty # value
-        c.b.endTree()
-    c.b.endTree()
-    c.b.endTree()
+    toVarTupleNif(n, parent, c, ownUnpackType(n))
 
   of nkForStmt:
     c.b.addTree(ForL)
@@ -917,6 +895,66 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
+
+proc toUnpackType(u: UnpackType; n: PNode; c: var TranslationContext) =
+  ## `n`: the tuple the type was written on; what the position is relative to.
+  if u.t == nil:
+    c.b.addEmpty
+  elif u.path.len == 0:
+    toNif(u.t, n, c)
+  else:
+    # typeof(default(T)[i][j]): the generated nodes have no position of their
+    # own, so they all have the type's, and the type is written against that.
+    c.b.addTree(CallL)
+    relLineInfo(u.t, n, c)
+    c.b.addIdent "typeof"
+    for _ in u.path: c.b.addTree(AtL)
+    c.b.addTree(CallL)
+    c.b.addIdent "default"
+    toNif(u.t, u.t, c)
+    c.b.endTree()
+    for i in u.path:
+      c.b.addIntLit i
+      c.b.endTree()
+    c.b.endTree()
+
+proc toVarTupleNif(n, parent: PNode; c: var TranslationContext; u: UnpackType) =
+  ## `let (a, b): T = x` and its nested `(c, d)`: the type, if one was written,
+  ## goes to each name -- the part of `(A, B)`/`tuple[...]` that is its, or
+  ## `typeof(default(T)[i])` for any other `T`.
+  let names = n.len-2
+  c.b.addTree(UnpackdeclL)
+  relLineInfo(n, parent, c)
+  toNif(n[n.len-1], n, c, allowEmpty = true)
+
+  c.b.addTree(UnpacktupL)
+  for i in 0..<names:
+    let elem = unpackElem(u, i, names)
+    if n[i].kind == nkVarTuple:
+      toVarTupleNif(n[i], n, c, elem)
+    else:
+      c.b.addTree(c.section)
+      let split = splitIdentDefName(n[i])
+      toNif(split.name, n, c) # name
+
+      if split.visibility != nil:
+        c.b.addRaw " x"
+      else:
+        c.b.addEmpty
+
+      if split.pragma != nil:
+        toNif(split.pragma, n, c)
+      else:
+        c.b.addEmpty
+
+      if elem.t == nil:
+        c.b.addEmpty 2 # type, value
+      else:
+        toUnpackType(elem, n, c) # type
+        c.b.addEmpty # value
+      c.b.endTree()
+  c.b.endTree()
+  c.b.endTree()
 
 proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, depsEnabled: bool;
                               depsOnly = false; preserveDocs = false): TranslationContext =

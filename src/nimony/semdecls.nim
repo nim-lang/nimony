@@ -2077,6 +2077,35 @@ proc addTupleAccess(buf: var TokenBuf; lvalue: SymId; i: int; info: NifLineInfo)
   buf.addIntLit(i, info)
   buf.addParRi()
 
+proc declaredUnpackType(dest: var TokenBuf; tup: Cursor): bool =
+  ## `tup` is an `(unpacktup ...)`. When every name in it has a type -- nifler
+  ## gives each its part of `let (a, b): T = x` -- the tuple of those types,
+  ## `(tup A B)`: the value is typed against it, so that `let (a, b): (float,
+  ## float) = (1, 2)` converts the fields as Nim does. False when a name has
+  ## none.
+  result = true
+  var n = tup
+  dest.addParLe(TupX, n.info)
+  n.into: # unpacktup
+    while n.hasMore:
+      if not result:
+        skip n
+      elif n.stmtKind == UnpackdeclS:
+        n.into:
+          skip n # value: `.`
+          if n.substructureKind != UnpacktupU or not declaredUnpackType(dest, n):
+            result = false
+          while n.hasMore: skip n
+      else:
+        n.into: # let/var/const
+          skip n # name
+          skip n # export
+          skip n # pragma
+          if n.kind == DotToken: result = false
+          else: dest.addSubtree n # type
+          while n.hasMore: skip n
+  dest.addParRi()
+
 proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
   case c.phase
   of SemcheckTopLevelSyms:
@@ -2097,7 +2126,15 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   let info = it.n.info
   it.n.into: # skip tag
-    var tup = Item(n: it.n, typ: c.types.autoType)
+    var expected = c.types.autoType
+    var declared = createTokenBuf(16)
+    var expectedBuf = createTokenBuf(16)
+    var names = it.n
+    skip names # value
+    if names.substructureKind == UnpacktupU and declaredUnpackType(declared, names):
+      var d = beginRead(declared)
+      expected = semLocalType(c, expectedBuf, d)
+    var tup = Item(n: it.n, typ: expected)
     let tupInfo = tup.n.info
     var tupBuf = createTokenBuf(16)
     semExpr c, tupBuf, tup

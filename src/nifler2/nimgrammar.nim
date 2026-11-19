@@ -887,7 +887,7 @@ grammar:
   # GRAMMAR.TXT: `identWithPragma`; `parseVarTuple` passes `allowDot=true`.
   nestedTuple "unpackdecl[ . varTupleLhs ]"
   varTupleBody "varTupleLhs '=' optInd exprBlocks":
-    moveLastToMark p, m
+    unpackValueFirst p, m
   varTuple "unpackdecl[ varTupleBody ]"
   # nifler: `(unpackdecl value (unpacktup (let name x pragmas . .)...))` --
   # the value first.
