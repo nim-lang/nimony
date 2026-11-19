@@ -459,17 +459,17 @@ const
   QuitSuccess* = 0
   QuitFailure* = 1
 
-proc quit*(msg: string) {.noreturn.} =
-  echo msg
-  quit QuitFailure
-
 proc quit*(msg: string; errorcode: int) {.noreturn.} =
   ## Exits the program with a status code or message.
   ##
-  ## Use `quit(int)` to exit with a code only, `quit(string)` to print a message and exit
-  ## with failure, or this overload to print a message and use a specific code.
-  echo msg
+  ## Use `quit(int)` to exit with a code only, `quit(string)` to write a message to
+  ## stderr and exit with failure, or this overload to write it and use a specific code.
+  flushImpl stdout # the message comes after what the program already printed
+  writeLine stderr, msg
   quit errorcode
+
+proc quit*(msg: string) {.noreturn.} =
+  quit msg, QuitFailure
 
 const ReadBufSize = 4000
 
