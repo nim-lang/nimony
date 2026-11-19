@@ -179,7 +179,7 @@ proc handleHex(p: pchar): char =
   else: discard
   result = char(output)
 
-proc decodeEscape(p: var pchar; sentinel: pchar): char {.inline.} =
+proc decodeEscape(p: var pchar; sentinel: pointer): char {.inline.} =
   ## Decode a single NIF27 escape body. Caller has already advanced past the
   ## leading `\`. On return, `p` points just past the escape (advanced by 1
   ## for a shortcut, 2 for a hex pair). The shortcut bodies (`n`, `t`, `r`,
@@ -217,7 +217,7 @@ proc decodeStr*(r: Reader; t: ExpandedToken): string =
   if TokenHasEscapes in t.flags:
     result = ""
     var p = t.data.p
-    let sentinel = p +! t.data.len
+    let sentinel = cast[pointer](p +! t.data.len) # see `Reader.eof`
     while p < sentinel:
       if ^p == '\\':
         inc p
@@ -264,7 +264,7 @@ proc decodeComment*(t: ExpandedToken): string =
     return
   result = ""
   var p = t.comment.p
-  let sentinel = p +! t.comment.len
+  let sentinel = cast[pointer](p +! t.comment.len)
   while p < sentinel:
     if ^p == '\\':
       inc p
@@ -277,7 +277,7 @@ proc decodeFilename*(t: ExpandedToken): string =
   if FilenameHasEscapes in t.flags:
     result = ""
     var p = t.filename.p
-    let sentinel = p +! t.filename.len
+    let sentinel = cast[pointer](p +! t.filename.len)
     while p < sentinel:
       if ^p == '\\':
         inc p
