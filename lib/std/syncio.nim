@@ -404,7 +404,8 @@ template echo*() {.varargs.} =
   write stdout, '\n'
 
 proc writeLine*(f: File; s: string) =
-  ## Writes a string followed by a newline to a file.
+  ## Writes a string followed by `'\n'` to a file, on every platform:
+  ## Windows gets no `\r\n` translation either.
   write f, s
   write f, '\n'
 
@@ -460,7 +461,8 @@ const
   QuitFailure* = 1
 
 proc quit*(msg: string) {.noreturn.} =
-  echo msg
+  ## Writes `msg` to stderr and exits with `QuitFailure`.
+  writeLine stderr, msg
   quit QuitFailure
 
 proc quit*(msg: string; errorcode: int) {.noreturn.} =
@@ -468,7 +470,8 @@ proc quit*(msg: string; errorcode: int) {.noreturn.} =
   ##
   ## Use `quit(int)` to exit with a code only, `quit(string)` to print a message and exit
   ## with failure, or this overload to print a message and use a specific code.
-  echo msg
+  ## The message goes to stderr.
+  writeLine stderr, msg
   quit errorcode
 
 const ReadBufSize = 4000
