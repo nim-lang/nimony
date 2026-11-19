@@ -1266,6 +1266,26 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
     let obj = getObjSymId(c, params[0])
     registerHook(c, obj, symId, hk, false)
 
+proc takeRawMacroBody(dest: var TokenBuf; n: var Cursor) =
+  ## Copies a macro body that stays raw AST. A `const` without a type gets
+  ## `(auto)` in its type slot, as in an untyped generic (#1898): the slot
+  ## must not be empty after sem; the plugin's own sem infers the type.
+  if n.stmtKind == ConstS:
+    takeInto dest, n:
+      for i in 0 ..< 3: # name, export marker, pragmas
+        takeRawMacroBody dest, n
+      if n.isDotToken:
+        dest.addParPair(AutoT, n.info)
+        inc n
+      while n.hasMore:
+        takeRawMacroBody dest, n
+  elif n.isTagLit:
+    takeInto dest, n:
+      while n.hasMore:
+        takeRawMacroBody dest, n
+  else:
+    takeTree dest, n
+
 proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
                       kind: SymKind; crucial: CrucialPragma; symId: SymId;
                       beforeGenericParams, beforeParams: int; hookName: string; info: NifLineInfo) =
@@ -1284,7 +1304,7 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     # already skip MacroS bodies. Side-effect: nested macro calls in this
     # body don't expand at user-side; they'd be re-resolved by the plugin
     # under the plugin's import scope.
-    dest.takeTree it.n
+    takeRawMacroBody dest, it.n
   elif kind == MacroY:
     # Macro without untyped/typed params — sem normally so nested macro
     # calls expand at user-sem time (see project_macro_plugins.md).
