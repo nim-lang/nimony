@@ -1922,6 +1922,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   var isEnumTypeDecl = false
   var isRefPtrObj = false
   var innerObjDecl = initTokenBuf()
+  var redeclared = false
   dest.addParLe(n.cursorTagId, n.info)
   n.into:
     # name, export marker, generic params, pragmas, body
@@ -2033,8 +2034,15 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       c.routine.inInst = prevInst
       c.visOwner.setLen prevVisOwner
 
-    c.addSym dest, delayed
+    redeclared = c.addSymForwardError(delayed)
     dest.addParRi(n.endInfo)
+
+  if redeclared:
+    # The whole declaration becomes the error: later phases read a type
+    # declaration by position and an extra child would derail them.
+    dest.shrink declStart
+    c.buildErr dest, delayed.info, "attempt to redeclare: " & pool.strings[delayed.lit]
+    return
 
   publish c, dest, delayed.s.name, declStart
 
