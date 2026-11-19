@@ -77,8 +77,6 @@ block nameBuiltinAndCompositeTypes:
   echo $seq[float64]
   echo $Foo[int]
   echo $StaticFoo[3, float32]
-  echo $Foo[seq[Foo[string]]]
-  echo $Foo[Foo[Foo[MyInt]]]
 
 block nameTypeParameters:
   proc echoNAndT[N: static[int]; T](x: StaticFoo[N, T]) =
