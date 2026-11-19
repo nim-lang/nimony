@@ -70,6 +70,7 @@ import std/httpserver
 import std/intsets
 import std/ioring
 import std/json
+import std/lenientops
 import std/lexbase
 import std/locks
 import std/logging
