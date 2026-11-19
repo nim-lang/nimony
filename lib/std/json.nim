@@ -27,10 +27,10 @@
 ## * **parse / read** — `parseJson` / `parseFile` build a `JsonTree`; navigate
 ##   with `kind`, `getStr`/`getInt`/…, `len`, `items`, `pairs`, `{}`.
 ## * **typed map** — `toJson` (typed Nim → JSON) and `fromJson` (JSON → typed
-##   Nim), the JSON siblings of `nifply`'s `toNif`/`fromNif`. Same reflection
-##   magics (`internalFieldPairs` / `internalTypeName`), same `oconstr`/`kv`/
-##   `aconstr` tag vocabulary — differing only where idiomatic JSON differs
-##   (string keys, enums as name-strings, optional `"type"` discriminator).
+##   Nim), the JSON siblings of `nifply`'s `toNif`/`fromNif`. Same
+##   `oconstr`/`kv`/`aconstr` tag vocabulary — differing only where idiomatic
+##   JSON differs (fields keyed by their source name, enums as name-strings,
+##   optional `"type"` discriminator).
 ## * **line info** — `parseJson` takes a `LineInfoMode`; under `KeepLineInfo`
 ##   each node carries a `nifcore.LineInfoLit`, the same cheap source-position
 ##   token NIF uses. Building (`toJson`) carries none — there is no source.
@@ -39,17 +39,10 @@ when defined(nimony):
   {.feature: "untyped".}      # generic bodies sem-checked at instantiation
   {.feature: "lenientnils".}  # nifcore returns nil pools for ownerless cursors
 
-import std / [parsejson, streams, parseutils, assertions, formatfloat, syncio]
+import std / [parsejson, streams, parseutils, assertions, formatfloat, syncio, typetraits]
 import ../../src/lib/nifcore
 
 export parsejson  # callers may want JsonParser, getTok, etc.
-
-# ── Reflection magics (shared with nifply) ───────────────────────────────────
-
-func internalTypeName*[T](x: typedesc[T]): string {.magic: "InternalTypeName", noSideEffect.}
-
-iterator internalFieldPairs*[T: tuple|object](x: T): tuple[key: string, val: untyped] {.
-  magic: "InternalFieldPairs", noSideEffect.}
 
 # ── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,12 +86,16 @@ type
       ## `("<typeFieldName>": "<TypeName>")` as the first member — an ordinary
       ## JSON key/value, readable by any consumer. `fromJson` recognises and
       ## skips it. Empty (default) ⇒ no discriminator.
+    allowMissingKeys*: bool   ## `fromJson`: a field without a member keeps its default
+    allowExtraKeys*: bool     ## `fromJson`: a member that names no field is skipped
+    readError: string         ## `fromJson`: why a reader raised; the entry copies it to the tree
 
   JsonTree* = object
     ## Owns the flat token buffer backing a JSON document. Move-only (the
     ## underlying `TokenBuf` forbids copy); a `JsonNode` obtained via `root` keeps
     ## the data alive independently through `nifcore`'s reference counting.
     buf*: TokenBuf
+    readError: string  ## why the last `fromJson(tree, T)` raised; see `errorMsg`
 
   JsonNode* = object
     ## A handle to one node inside a `JsonTree`: a `nifcore.Cursor` wrapped so the
@@ -491,15 +488,18 @@ proc errorMsg*(t: var JsonTree): string =
   ## `""` if it parsed cleanly. Ignore it and malformed nodes simply read as
   ## `null`; consult it for the diagnostic and source position of the first
   ## failure. Trailing input after the document is reported here as well.
+  ## Without a parse error, it is why the last `fromJson(t, T)` raised.
   result = ""
   var c = t.root
   while c.hasMore:
     result = firstErrorMsg(c)
     if result.len > 0: return
     c.skip
+  result = t.readError
 
 proc hasError*(t: var JsonTree): bool {.inline.} =
-  ## True when the document contains any parse error (see `errorMsg`).
+  ## True when the document contains a parse error, or the last
+  ## `fromJson(t, T)` raised (see `errorMsg`).
   errorMsg(t).len > 0
 
 proc len*(n: JsonNode): int =
@@ -620,13 +620,12 @@ proc `$`*(t: var JsonTree): string =
 # Siblings of nifply's `toNif`. Every overload takes `opts` in the same
 # position so the composite walkers can recurse with `toJson(t, field, opts)`.
 
-proc bareName(mangled: string): string =
-  ## `internalFieldPairs` / `internalTypeName` yield names with a NIF
-  ## disambiguation suffix (`x.0`, `Box.0.<module>`); JSON keys and the `"type"`
-  ## discriminator want the bare source name before the first `.`.
+proc typeKey(name: string): string =
+  ## The `"type"` discriminator: the type's name without its generic
+  ## arguments (`Gen[int]` → `Gen`).
   result = ""
-  for c in mangled:
-    if c == '.': break
+  for c in name:
+    if c == '[': break
     result.add c
 
 proc toJson*(t: var JsonTree; x: int; opts: JsonOptions) =
@@ -652,10 +651,10 @@ proc toJson*[O: object](t: var JsonTree; x: O; opts: JsonOptions) =
   if opts.typeFieldName.len > 0:
     t.buf.buildTree JKKv.tagId:
       t.buf.addStrLit opts.typeFieldName
-      t.buf.addStrLit bareName(internalTypeName(O))
-  for name, f in internalFieldPairs(x):
+      t.buf.addStrLit typeKey($O)
+  for name, f in fieldPairs(x):
     t.buf.buildTree JKKv.tagId:
-      t.buf.addStrLit bareName(name)
+      t.buf.addStrLit name
       toJson(t, f, opts)                   # opts threads down
   t.buf.closeTag()
 
@@ -667,38 +666,46 @@ proc toJson*[T](x: T; opts = JsonOptions()): JsonTree =
 
 # ── Typed map: fromJson (JSON → typed Nim) ───────────────────────────────────
 # Siblings of nifply's `fromNif`. A mutating `var T` overload (used by the
-# object walker via internalFieldPairs) delegates to the typedesc overloads.
+# object walker via fieldPairs) delegates to the typedesc overloads.
+# A mismatch records the reason in `opts` and raises `ValueError`; the entry
+# point `fromJson(tree, T)` hands it on to `errorMsg(tree)`.
 
-proc fromJson*(c: var JsonNode; t: typedesc[int]; opts: JsonOptions): int =
-  assert rawKind(c) == IntLit, "expected int"
+template fail(opts: var JsonOptions; msg: string) =
+  opts.readError = msg
+  raise ValueError
+
+template expect(opts: var JsonOptions; c: JsonNode; what: string) =
+  fail(opts, "expected " & what & ", found " & $kind(c))
+
+proc fromJson*(c: var JsonNode; t: typedesc[int]; opts: var JsonOptions): int {.raises.} =
+  if rawKind(c) != IntLit: expect(opts, c, "int")
   result = int(intVal(c)); c.inc
-proc fromJson*(c: var JsonNode; t: typedesc[float]; opts: JsonOptions): float =
-  result = 0.0
+proc fromJson*(c: var JsonNode; t: typedesc[float]; opts: var JsonOptions): float {.raises.} =
   case rawKind(c)
   of FloatLit: result = floatVal(c)
   of IntLit:   result = float(intVal(c))
-  else:        assert false, "expected number"
+  else:        expect(opts, c, "number")
   c.inc
-proc fromJson*(c: var JsonNode; t: typedesc[string]; opts: JsonOptions): string =
-  assert rawKind(c) == StrLit, "expected string"
+proc fromJson*(c: var JsonNode; t: typedesc[string]; opts: var JsonOptions): string {.raises.} =
+  if rawKind(c) != StrLit: expect(opts, c, "string")
   result = strVal(c); c.inc
-proc fromJson*(c: var JsonNode; t: typedesc[bool]; opts: JsonOptions): bool =
-  assert rawKind(c) == TagLit, "expected bool"
+proc fromJson*(c: var JsonNode; t: typedesc[bool]; opts: var JsonOptions): bool {.raises.} =
+  if kind(c) != JBool: expect(opts, c, "bool")
   result = jsonKind(c.cursorTagId) == JKTrue
   c.skip
 
-proc fromJson*[E: enum](c: var JsonNode; t: typedesc[E]; opts: JsonOptions): E =
-  assert rawKind(c) == StrLit, "expected enum string"
+proc fromJson*[E: enum](c: var JsonNode; t: typedesc[E]; opts: var JsonOptions): E {.raises.} =
+  if rawKind(c) != StrLit: expect(opts, c, "enum string")
   let s = strVal(c); c.inc
   for e in E.low..E.high:
     if $e == s: return e
-  assert false, "unknown enum value: " & s
+  fail(opts, "unknown enum value: " & s)
 
-proc fromJson*[T: not typedesc](c: var JsonNode; x: var T; opts: JsonOptions) {.untyped, inline.} =
+proc fromJson*[T: not typedesc](c: var JsonNode; x: var T; opts: var JsonOptions) {.untyped, inline, raises.} =
   x = fromJson(c, T, opts)
 
-proc fromJson*[T](c: var JsonNode; t: typedesc[seq[T]]; opts: JsonOptions): seq[T] =
-  assert kind(c) == JArray, "expected array"
+proc fromJson*[T](c: var JsonNode; t: typedesc[seq[T]]; opts: var JsonOptions): seq[T] {.raises.} =
+  if kind(c) != JArray: expect(opts, c, "array")
   result = @[]
   c.into:
     while c.hasMore:
@@ -713,18 +720,39 @@ proc skipTypeField(c: var JsonNode; opts: JsonOptions) =
       if strVal(probe) == opts.typeFieldName:
         c.skip                       # drop the whole kv pair
 
-proc fromJson*[O: object](c: var JsonNode; t: typedesc[O]; opts: JsonOptions): O {.noinit.} =
-  assert kind(c) == JObject, "expected object"
+proc readField[T](m: var JsonNode; name: string; f: var T; opts: var JsonOptions): bool {.raises.} =
+  ## Reads the member at `m` into `f` if its key is the field `name`; moves past it.
+  ## The key is compared in place, without decoding it.
+  m.into:
+    result = strEquals(m.c, name)
+    m.inc
+    if result: fromJson(m, f, opts) else: m.skip
+
+proc fromJson*[O: object](c: var JsonNode; t: typedesc[O]; opts: var JsonOptions): O {.noinit, raises.} =
+  if kind(c) != JObject: expect(opts, c, "object")
+  if opts.allowMissingKeys: result = default(O)
   c.into:
     skipTypeField(c, opts)
-    for name, f in internalFieldPairs(result):
-      assert rawKind(c) == TagLit and jsonKind(c.cursorTagId) == JKKv,
-             "expected object member"
-      c.into:
-        c.inc                        # skip key (fields assumed in declared order)
-        fromJson(c, f, opts)
+    let members = c
+    var m = members
+    for name, f in fieldPairs(result):
+      var found = m.hasMore and readField(m, name, f, opts)
+      if not found:
+        m = members                  # JSON members are unordered: find by key
+        while not found and m.hasMore: found = readField(m, name, f, opts)
+      if found: c.skip               # one member per field; what is left is extra
+      elif not opts.allowMissingKeys: fail(opts, "missing member: " & name)
+    if c.hasMore and not opts.allowExtraKeys: fail(opts, "extra member")
+    while c.hasMore: c.skip
 
-proc fromJson*[T](t: var JsonTree; tt: typedesc[T]; opts = JsonOptions()): T =
-  ## Entry point: deserialise the root of `t` into a `T`.
+proc fromJson*[T](t: var JsonTree; tt: typedesc[T]; opts = JsonOptions()): T {.raises.} =
+  ## Entry point: deserialise the root of `t` into a `T`. When it raises,
+  ## `errorMsg(t)` says why.
+  t.readError = ""
   var c = t.root
-  result = fromJson(c, T, opts)
+  var o = opts
+  try:
+    result = fromJson(c, T, o)
+  except ErrorCode as e:
+    t.readError = o.readError
+    raise e

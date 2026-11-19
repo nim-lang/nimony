@@ -2,6 +2,7 @@ when defined(nimony):
   {.feature: "untyped".}   # so the `check` template's `xx != b` resolves to bool
 
 import std/[json, streams, syncio]
+import mjson_private
 
 type Color = enum red, green, blue
 type Point = object
@@ -10,6 +11,13 @@ type Point = object
   shade: Color
 type Box = object
   v: int
+type Gen[T] = object
+  a: T
+type Boxed = object
+  box: Box
+type Guide = object             # from Nim's tests/stdlib/tjsonutils.nim
+  question: string
+  answer: int
 
 template check(a, b) =
   let xx = a
@@ -17,7 +25,16 @@ template check(a, b) =
     echo "test failed ", astToStr(a), ": got ", xx, " expected ", b
     quit 1
 
-proc main() =
+proc failure[T](src: string; tt: typedesc[T]; opts = JsonOptions()): string =
+  ## `fromJson`'s error message; "no error" when it did not raise.
+  var t = parseJson(src)
+  try:
+    discard fromJson(t, T, opts)
+    result = "no error"
+  except ErrorCode:
+    result = errorMsg(t)
+
+proc main() {.raises.} =
   block atoms:
     var t = parseJson("""{"a":1,"b":"hi","c":true,"d":null,"e":3.5}""")
     check len(t.root), 5
@@ -60,10 +77,56 @@ proc main() =
     check back.x, 3
     check back.label, "hi"
     check back.shade, green
+    var shuffled = parseJson("""{"shade":"red","label":"lo","y":2,"x":1}""")
+    let q = fromJson(shuffled, Point)    # members match fields by key, not position
+    check q.x, 1
+    check q.y, 2
+    check q.label, "lo"
+    check q.shade, red
+    var priv = toJson(initSecret(5, "s"))  # private fields of another module
+    check $priv, """{"id":5,"hidden":"s"}"""
+    var privIn = parseJson("""{"hidden":"t","id":6}""")
+    let sec = fromJson(privIn, Secret)
+    check sec.id, 6
+    check sec.hidden, "t"
+
+  block typed_errors:
+    check failure("""[{"v":1},{"v":true}]""", seq[Box]), "expected int, found JBool"
+    check failure("""{"x":1,"y":2,"label":"","shade":"pink"}""", Point), "unknown enum value: pink"
+    check failure("""{"v":[]}""", seq[Box]), "expected array, found JObject"
+    check failure("""{"answer":42}""", Guide), "missing member: question"
+    check failure("""{"question":"q","answer":42,"author":"D"}""", Guide), "extra member"
+    check failure("""{"box":{"v":"1"}}""", Boxed), "expected int, found JString"
+    var short = parseJson("""{"answer":42}""")
+    try: discard fromJson(short, Guide)
+    except ErrorCode: discard
+    check hasError(short), true
+    discard fromJson(short, Guide, JsonOptions(allowMissingKeys: true))
+    check errorMsg(short), ""            # a read that succeeds clears it
+
+  block typed_allow_keys:       # ported from tjsonutils.nim's testJoptions
+    let extra = """{"question":"6*9=?","answer":42,"author":"Douglas Adams"}"""
+    var t = parseJson(extra)
+    let g = fromJson(t, Guide, JsonOptions(allowExtraKeys: true))
+    check g.question, "6*9=?"
+    check g.answer, 42
+    check failure(extra, Guide, JsonOptions(allowMissingKeys: true)), "extra member"
+    var short = parseJson("""{"answer":42}""")
+    let h = fromJson(short, Guide, JsonOptions(allowMissingKeys: true))
+    check h.question, ""
+    check h.answer, 42
+    check failure("""{"answer":42}""", Guide, JsonOptions(allowExtraKeys: true)),
+          "missing member: question"
+    var both = parseJson("""{"answer":42,"author":"Douglas Adams"}""")
+    let k = fromJson(both, Guide, JsonOptions(allowExtraKeys: true, allowMissingKeys: true))
+    check k.question, ""
+    check k.answer, 42
 
   block typed_with_discriminator:
     var tree = toJson(Box(v: 7), JsonOptions(typeFieldName: "type"))
     check $tree, """{"type":"Box","v":7}"""
+    var gen = toJson(Gen[int](a: 1), JsonOptions(typeFieldName: "type"))
+    check $gen, """{"type":"Gen","a":1}"""   # without its generic arguments
 
   block raw_numbers:
     var small = parseJson("[1,2]", rawIntegers = true)
@@ -199,4 +262,5 @@ proc main() =
 
   echo "json self-tests passed"
 
-main()
+try: main()
+except ErrorCode as e: echo "unexpected ", e
