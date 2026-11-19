@@ -29,7 +29,7 @@
 ##   with `n > 1` in exactly three places: the first four and the last two
 ##   slots of a `proctype`/`itertype`, the four empty slots of a `for` loop's
 ##   tuple variable, and the type and value slots of every other `let` that
-##   unpacks a tuple without a type.
+##   unpacks a tuple.
 
 import std / [syncio, assertions]
 import ".." / lib / [nifbuilder, nifpools]
@@ -99,8 +99,7 @@ proc emptyRuns(n: Node; tag, parentTag: NiflerKind; inForTuple: bool): EmptyRuns
         result.s1 = 1
         result.n1 = 4
     elif parentTag == UnpacktupL or parentTag == UnpackflatL:
-      # `. .` for no type and no value; a typed name writes its type
-      if childCount(n) == 5 and kind(n.down.next.next.next) == DotToken:
+      if childCount(n) == 5:
         result.s1 = 3
         result.n1 = 2
   else: discard

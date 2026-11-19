@@ -883,14 +883,14 @@ grammar:
     wrapSection p, m
   varTupleLhs """unpacktup[ '(' optInd
                (tupleVar | nestedTuple) (comma (tupleVar | nestedTuple)?)*
-               optPar ')' (':' optInd typeDescExpr)? ]"""
+               optPar ')' ] (':' optInd typeDescExpr)?"""
   # GRAMMAR.TXT: `identWithPragma`; `parseVarTuple` passes `allowDot=true`.
   nestedTuple "unpackdecl[ . varTupleLhs ]"
   varTupleBody "varTupleLhs '=' optInd exprBlocks":
-    unpackValueFirst p, m
+    moveLastToMark p, m
   varTuple "unpackdecl[ varTupleBody ]"
-  # nifler: `(unpackdecl value (unpacktup (let name x pragmas . .)...))` --
-  # the value first.
+  # nifler: `(unpackdecl value (unpacktup (let name x pragmas . .)...) T?)` --
+  # the value first, the tuple's type (if any) after the names.
 
   variable "(varTuple | declColonEqualsDot) indAndComment"
   # GRAMMAR.TXT: `colonBody?`, i.e. `colcom stmt postExprBlocks?`.
