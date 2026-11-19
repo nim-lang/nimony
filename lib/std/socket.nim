@@ -230,7 +230,7 @@ proc sendToAsync*(fd: cint; buf: pointer; len: int;
 
 type
   Listener* = object
-    fd*: cint
+    fd*: cint = -1
     deadline*: Deadline
       ## Accept's budget, used the same way a `Socket`'s deadline is: taken
       ## from here and only ever tightened by an argument.
@@ -349,7 +349,7 @@ proc connect*(host: string; port: uint16; dl = never): Socket {.passive, raises.
 
 type
   Socket* = object
-    fd*: cint
+    fd*: cint = -1
     deadline*: Deadline
       ## This socket's budget. Set at construction and re-armed at whatever
       ## the protocol above calls a request boundary; every operation below
@@ -615,7 +615,7 @@ proc flush*(s: var Socket; n: int; dl = never) {.passive, raises.} =
 
 type
   UdpSocket* = object
-    fd*: cint
+    fd*: cint = -1
     deadline*: Deadline
       ## This socket's budget, used the way `Socket`'s is: taken from here and
       ## only ever tightened by an argument.
