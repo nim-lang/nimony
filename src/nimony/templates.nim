@@ -257,17 +257,43 @@ const MaxPluginRounds = 32
   ## type nesting. This catches a plugin that finds new symbols to ask about
   ## forever (a cyclic decl walked without a `seen` set, say).
 
-proc appendDecl(s: SymId; dest: var TokenBuf): bool =
-  ## Appends `s`'s declaration — a type *or* a type variable — and says whether
-  ## there was one. Type variables are shipped too, so that a plugin can tell
-  ## "this is a `T` still to be substituted" from "this is a type" positively,
-  ## rather than guessing from what is absent.
-  result = false
+proc appendDecl(s: SymId; dest: var TokenBuf; provided: var HashSet[SymId])
+
+proc appendInstanceArgs(n: Cursor; dest: var TokenBuf; provided: var HashSet[SymId]) =
+  ## Ships the generic instances among an instance's arguments: in
+  ## `(at Gen Gen.I1)` the plugin cannot tell `Gen.I1` from a plain nominal
+  ## type without a further round, and renders it by its declaration.
+  var n = n
+  if n.kind == Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing and res.decl.symKind == TypeY and
+        asTypeDecl(res.decl).typevars.typeKind == InvokeT:
+      appendDecl(n.symId, dest, provided)
+  elif n.kind == TagLit:
+    n.into:
+      while n.hasMore:
+        appendInstanceArgs(n, dest, provided)
+        skip n
+
+proc appendDecl(s: SymId; dest: var TokenBuf; provided: var HashSet[SymId]) =
+  ## Appends `s`'s declaration — a type *or* a type variable — once. Type
+  ## variables are shipped too, so that a plugin can tell "this is a `T` still
+  ## to be substituted" from "this is a type" positively, rather than guessing
+  ## from what is absent. A generic instance brings its instance arguments.
+  if provided.containsOrIncl(s): return
   let res = tryLoadSym(s)
   if res.status != LacksNothing: return
   if res.decl.symKind notin {TypeY, TypevarY, StaticTypevarY}: return
   dest.addSubtree res.decl
-  result = true
+  if res.decl.symKind == TypeY:
+    let typevars = asTypeDecl(res.decl).typevars
+    if typevars.typeKind == InvokeT:
+      var args = typevars
+      args.into:
+        skip args # the head is the generic type itself, never rendered from a decl
+        while args.hasMore:
+          appendInstanceArgs(args, dest, provided)
+          skip args
 
 proc buildTypeDefsInput(decls: var TokenBuf; info: NifLineInfo): TokenBuf =
   ## Wrap the declarations gathered so far as `(stmts <decl>*)`. A template
@@ -360,9 +386,9 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
       dest.shrink outputStart
       var progress = false
       for s in wanted:
-        if not provided.containsOrIncl(s):
+        if s notin provided:
           progress = true
-          discard appendDecl(s, decls)
+          appendDecl(s, decls, provided)
       if not progress:
         errMsg = "plugin '" & pool.strings[path] &
           "' asked again for declarations it was already given"
