@@ -103,11 +103,6 @@ proc main() {.raises.} =
     check hasError(short), true
     discard fromJson(short, Guide, JsonOptions(allowMissingKeys: true))
     check errorMsg(short), ""            # a read that succeeds clears it
-    var c = short.root                   # cursor level: the message is in opts
-    var o = JsonOptions()
-    try: discard fromJson(c, Guide, o)
-    except ErrorCode: discard
-    check o.errorMsg, "missing member: question"
 
   block typed_allow_keys:       # ported from tjsonutils.nim's testJoptions
     let extra = """{"question":"6*9=?","answer":42,"author":"Douglas Adams"}"""

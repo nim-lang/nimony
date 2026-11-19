@@ -88,7 +88,7 @@ type
       ## skips it. Empty (default) ⇒ no discriminator.
     allowMissingKeys*: bool   ## `fromJson`: a field without a member keeps its default
     allowExtraKeys*: bool     ## `fromJson`: a member that names no field is skipped
-    errorMsg*: string         ## `fromJson`: why it raised `ValueError`
+    readError: string         ## `fromJson`: why a reader raised; the entry copies it to the tree
 
   JsonTree* = object
     ## Owns the flat token buffer backing a JSON document. Move-only (the
@@ -667,10 +667,11 @@ proc toJson*[T](x: T; opts = JsonOptions()): JsonTree =
 # ── Typed map: fromJson (JSON → typed Nim) ───────────────────────────────────
 # Siblings of nifply's `fromNif`. A mutating `var T` overload (used by the
 # object walker via fieldPairs) delegates to the typedesc overloads.
-# A mismatch sets `opts.errorMsg` and raises `ValueError`.
+# A mismatch records the reason in `opts` and raises `ValueError`; the entry
+# point `fromJson(tree, T)` hands it on to `errorMsg(tree)`.
 
 template fail(opts: var JsonOptions; msg: string) =
-  opts.errorMsg = msg
+  opts.readError = msg
   raise ValueError
 
 template expect(opts: var JsonOptions; c: JsonNode; what: string) =
@@ -753,5 +754,5 @@ proc fromJson*[T](t: var JsonTree; tt: typedesc[T]; opts = JsonOptions()): T {.r
   try:
     result = fromJson(c, T, o)
   except ErrorCode as e:
-    t.readError = o.errorMsg
+    t.readError = o.readError
     raise e
