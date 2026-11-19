@@ -13,6 +13,8 @@ type
     id: int
   Node = ref object
     p: Payload
+  Holder = object
+    p: Payload
 
 var destroyed = 0
 
@@ -22,6 +24,9 @@ proc `=destroy`(v: Payload) =
 
 proc mkNode(id: int): Node {.raises.} =
   result = Node(p: Payload(id: id))
+
+proc wrap(h: Holder): Node {.raises.} =
+  result = Node(p: Payload(id: h.p.id))
 
 proc consumeDirect(): Node {.raises.} =
   # raising call directly in `result =` position
@@ -37,6 +42,15 @@ proc run() {.raises.} =
     discard m
   # block end: n's payload (1), m's old (2) and new (3) payloads must all
   # have been destroyed exactly once.
+  echo "destroyed=", destroyed
+  block:
+    # #285: the argument is a constructor that moves a local (its last use),
+    # so the duplifier binds the call to a temp before the deferred
+    # `=wasMoved`; that temp must have the success tuple's type.
+    let p = Payload(id: 4)
+    let k = wrap(Holder(p: p))
+    echo "wrapped=", k.p.id
+  # +3: `p` (moved-from), the `Holder` and k's own payload
   echo "destroyed=", destroyed
 
 try:

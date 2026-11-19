@@ -1733,9 +1733,18 @@ proc trConstructing(c: var Context; n: var Cursor; e: Expects; k: ExprKind)
       # Ask for the type only now: `getType` hands out a cursor into the type
       # cache, and the translation above grows that cache — a type read before
       # the dispatch dangles by the time we would copy it.
+      # Signatures are nimsem's (`T` plus `.raises`), but the eraiser ran
+      # already: a raising call's value is the success tuple.
+      let raising = k == CallX and procHasPragma(
+        getType(c.typeCache, constrNode.childCursor, {SkipAliases}), RaisesP)
       let typ = getType(c.typeCache, constrNode)
       if not cursorIsNil(typ) and typ.typeKind != VoidT:
-        bindPendingMoves c, start, typ, constrNode.info
+        if raising:
+          var tup = createTokenBuf(6)
+          addSuccessTupleType(tup, typ, constrNode.info)
+          bindPendingMoves c, start, cursorAt(tup, 0), constrNode.info
+        else:
+          bindPendingMoves c, start, typ, constrNode.info
       # else: a void call has no value to bind to. It only ever appears as a
       # statement (or as the initializer of the `canRaise` temp the eraiser puts
       # in front of one), so `trStmts` runs the moves after that statement.
