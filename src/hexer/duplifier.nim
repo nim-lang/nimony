@@ -1907,28 +1907,14 @@ type
   ErrorScan = object
     r: Reporter
     inferred: seq[(SymId, Cursor)] ## generic instances and derived hooks
+    local: HashSet[SymId] ## the routines in `inferred`
     errors: HashSet[SymId] ## the `inferred` routines that became `.error`
-
-proc isErrorRoutine(s: ErrorScan; fn: SymId): bool =
-  if fn in s.errors:
-    result = true
-  else:
-    let res = tryLoadSym(fn)
-    result = res.status == LacksNothing and res.decl.symKind.isRoutine and
-      hasPragma(asRoutine(res.decl).pragmas, ErrorP)
-
-proc callsErrorRoutine(s: ErrorScan; n: var Cursor): bool =
-  ## Scans the tree at `n`, advancing past it.
-  result = false
-  if n.kind == TagLit:
-    if n.exprKind in CallKinds:
-      let fn = n.childCursor
-      if fn.isSymbol and isErrorRoutine(s, fn.symId):
-        result = true
-    n.loopInto:
-      if callsErrorRoutine(s, n): result = true
-  else:
-    inc n
+    foreign: Table[SymId, bool]
+      ## The same inference for an instance another module emitted: a call
+      ## reuses it when that module instantiated it first (#3044 item 1). Its
+      ## body is nimsem's, so the copies in it are `(dup x)`/`(copy d s)`, and
+      ## whether they reach an `.error` hook takes the operand's type.
+    bits: int
 
 proc isDerivedHook(fn: SymId): bool =
   ## The lifter names its hooks `=op_<type key>`; a written one is `=op`.
@@ -1944,6 +1930,80 @@ proc isInferred(r: Routine): bool =
   result = r.typevars.typeKind == InvokeT or
     (r.name.isSymbolDef and isDerivedHook(r.name.symId))
 
+proc callsErrorRoutine(s: var ErrorScan; n: var Cursor): bool
+proc foreignCallsErrorRoutine(s: var ErrorScan; tc: var TypeCache; n: var Cursor): bool
+
+proc isErrorRoutine(s: var ErrorScan; fn: SymId): bool =
+  if fn in s.errors: return true
+  result = false
+  let res = tryLoadSym(fn)
+  if res.status == LacksNothing and res.decl.symKind.isRoutine:
+    let r = asRoutine(res.decl, SkipInclBody)
+    if hasPragma(r.pragmas, ErrorP):
+      result = true
+    elif fn notin s.local and isInferred(r) and r.body.isTagLit:
+      if s.foreign.hasKey(fn):
+        result = s.foreign.getOrDefault(fn)
+      else:
+        s.foreign[fn] = false # a cycle back to `fn` adds nothing
+        var tc = createTypeCache(s.bits, keepOwned = true)
+        tc.openScope()
+        tc.openProcScope(fn, res.decl, r.params)
+        tc.registerParams(fn, res.decl, r.params)
+        var body = r.body
+        result = foreignCallsErrorRoutine(s, tc, body)
+        s.foreign[fn] = result
+
+proc copyHookIsError(s: var ErrorScan; tc: var TypeCache; op: AttachedOp;
+                     operand: Cursor): bool =
+  ## Is the declared `op` hook of the type of `operand` an `.error` routine?
+  ## A type without a declared hook of its own is not judged.
+  var a = operand
+  if a.exprKind == HaddrX: inc a
+  let typ = skipModifier(getType(tc, a))
+  result = false
+  if typ.isSymbol:
+    let hook = tryLoadHook(op, typ.symId)
+    if hook != SymId(0):
+      result = isErrorRoutine(s, hook)
+
+proc foreignCallsErrorRoutine(s: var ErrorScan; tc: var TypeCache; n: var Cursor): bool =
+  ## `callsErrorRoutine` for a body in nimsem's form. Scans the tree at `n`,
+  ## advancing past it.
+  result = false
+  if n.kind == TagLit:
+    let ek = n.exprKind
+    if ek in CallKinds:
+      let fn = n.childCursor
+      if fn.isSymbol and isErrorRoutine(s, fn.symId):
+        result = true
+    elif ek == DupX:
+      result = copyHookIsError(s, tc, attachedDup, n.childCursor)
+    elif ek == CopyX:
+      result = copyHookIsError(s, tc, attachedCopy, n.childCursor)
+    elif n.stmtKind in LocalDecls:
+      let kind = n.symKind
+      let l = asLocal(n)
+      if l.name.isSymbolDef:
+        tc.registerLocal(l.name.symId, kind, l.typ)
+    n.loopInto:
+      if foreignCallsErrorRoutine(s, tc, n): result = true
+  else:
+    inc n
+
+proc callsErrorRoutine(s: var ErrorScan; n: var Cursor): bool =
+  ## Scans the tree at `n`, advancing past it.
+  result = false
+  if n.kind == TagLit:
+    if n.exprKind in CallKinds:
+      let fn = n.childCursor
+      if fn.isSymbol and isErrorRoutine(s, fn.symId):
+        result = true
+    n.loopInto:
+      if callsErrorRoutine(s, n): result = true
+  else:
+    inc n
+
 proc collectInferred(s: var ErrorScan; n: Cursor) =
   var n = n
   n.loopInto:
@@ -1951,6 +2011,7 @@ proc collectInferred(s: var ErrorScan; n: Cursor) =
       let routine = asRoutine(n, SkipInclBody)
       if routine.name.isSymbolDef and routine.body.isTagLit and isInferred(routine):
         s.inferred.add (routine.name.symId, routine.body)
+        s.local.incl routine.name.symId
     skip n
 
 proc inferErrors(s: var ErrorScan) =
@@ -2021,7 +2082,8 @@ proc checkForMoveTypesImpl(n: var Cursor; s: var ErrorScan): int =
     inc n
 
 proc checkForMoveTypes(c: var Context; n: Cursor): int =
-  var s = ErrorScan(r: Reporter(verbosity: 2, noColors: not useColors()))
+  var s = ErrorScan(r: Reporter(verbosity: 2, noColors: not useColors()),
+                    bits: c.lifter.bits)
   collectInferred(s, n)
   # the hooks lifted in this pass are a sequence of routines, not one tree:
   var hooks = createTokenBuf(c.lifter.dest.len + 2)

@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tcopyerrorforeign.nim(8, 11) Error: '=dup' is not available for type <seq[Handle]>
+tests/nimony/errmsgs/tcopyerrorforeign.nim(11, 12) Error: '=dup' is not available for type <Holder>
