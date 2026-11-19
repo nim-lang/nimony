@@ -381,7 +381,7 @@
 
 Tuple unpacking in Nim can appear in two contexts: variable declarations and `for` loop variables. NIF uses three distinct tags to encode these.
 
-**`(unpackdecl VALUE (unpacktup DECL+))`** — a `var`/`let`/`const` statement that destructures a tuple:
+**`(unpackdecl VALUE (unpacktup DECL+) TYPE?)`** — a `var`/`let`/`const` statement that destructures a tuple:
 
 ```nim
 let (a, b) = someTuple
@@ -396,6 +396,8 @@ becomes:
 ```
 
 `VALUE` is the tuple expression evaluated once. Each `DECL` inside `unpacktup` is an ordinary variable declaration whose initializer is synthesized as a field access into `VALUE`.
+
+In the parsed form (`nim-parsed`) a type written after the names follows the `unpacktup`, as written: `let (a, b): T = x` is `(unpackdecl x (unpacktup ...) T)`, and so is a nested `(a, b): T` (with `.` for its value). Sema types `VALUE` as `T`, so each name gets its part of it.
 
 **`(unpackflat VAR+)`** — a flat list of loop variables in a `for` statement that unpacks a tuple-yielding iterator:
 

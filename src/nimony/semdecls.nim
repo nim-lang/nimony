@@ -2097,7 +2097,16 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   let info = it.n.info
   it.n.into: # skip tag
-    var tup = Item(n: it.n, typ: c.types.autoType)
+    # `(unpackdecl VALUE (unpacktup ...) T?)`: `let (a, b): T = x` types the
+    # value as `T`
+    var expected = c.types.autoType
+    var declared = it.n
+    skip declared # value
+    skip declared # unpacktup
+    var typeBuf = createTokenBuf(8)
+    if declared.hasMore:
+      expected = semLocalType(c, typeBuf, declared)
+    var tup = Item(n: it.n, typ: expected)
     let tupInfo = tup.n.info
     var tupBuf = createTokenBuf(16)
     semExpr c, tupBuf, tup
@@ -2140,7 +2149,8 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
               assert it.n.isDotToken # value
               inc it.n
               declBuf.addTupleAccess(tmpName, i, declInfo)
-              takeTree declBuf, it.n
+              takeTree declBuf, it.n # unpacktup
+              if it.n.hasMore: takeTree declBuf, it.n # type
           else:
             takeInto declBuf, it.n:
               takeTree declBuf, it.n # 0: name
@@ -2154,6 +2164,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
           semStmt c, dest, decl, false
           declBuf.shrink 0
           inc i
+      if it.n.hasMore: skip it.n # type, already used for the value
   producesVoid c, dest, info, it.typ
 
 proc semUsing(c: var SemContext; dest: var TokenBuf; n: var Cursor) =

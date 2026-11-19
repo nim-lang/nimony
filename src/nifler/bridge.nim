@@ -626,7 +626,6 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.endTree()
 
   of nkVarTuple:
-    assert n[n.len-2].kind == nkEmpty
     c.b.addTree(UnpackdeclL)
     relLineInfo(n, parent, c)
     toNif(n[n.len-1], n, c, allowEmpty = true)
@@ -653,6 +652,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
         c.b.addEmpty 2 # type, value
         c.b.endTree()
     c.b.endTree()
+    if n[n.len-2].kind != nkEmpty:
+      toNif(n[n.len-2], n, c) # `let (a, b): T = x`
     c.b.endTree()
 
   of nkForStmt:
