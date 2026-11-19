@@ -3040,6 +3040,47 @@ proc anArgIsStillUntyped(args: openArray[CallArg]): bool =
   for a in args:
     if not cursorIsNil(a.typ) and a.typ.typeKind == AutoT: return true
 
+proc isSumObjectType(t: Cursor): bool =
+  ## Is `t` a sum type (`object` with a nameless `case`)? Its discriminator is
+  ## the synthesized `anum`, which has no default.
+  result = false
+  var t = t
+  if t.typeKind == InvokeT: inc t
+  if not t.isSymbol: return
+  let res = tryLoadSym(t.symId)
+  if res.status != LacksNothing or res.decl.stmtKind != TypeS: return
+  let body = asTypeDecl(res.decl).body
+  if body.typeKind != ObjectT: return
+  var field = body
+  inc field # past (object
+  skip field # inheritance slot
+  while field.hasMore and field.substructureKind == FldU:
+    skip field
+  if not field.hasMore or field.substructureKind != CaseU: return
+  inc field # past (case
+  if field.substructureKind != FldU: return
+  let discrim = asLocal(field).typ
+  if discrim.isSymbol:
+    let d = tryLoadSym(discrim.symId)
+    result = d.status == LacksNothing and d.decl.stmtKind == TypeS and
+      asTypeDecl(d.decl).body.typeKind == AnumT
+
+proc rejectSumTypeDefault(m: var Match) =
+  ## `system.default[T: object]` (the `DefaultObj` magic) has nothing to build
+  ## for a sum type, so it does not match one: `HasDefault` is then not
+  ## satisfied and the error lands at the user's call (#3044 item 18). A sum
+  ## type with a `default` of its own (`Opt`) still has that one. An object
+  ## holding a sum type is not judged here: its field may be such a type.
+  if m.fn.kind notin RoutineKinds: return
+  let res = tryLoadSym(m.fn.sym)
+  if res.status != LacksNothing or
+      asRoutine(res.decl).exported.exprKind != DefaultobjX: return
+  for v in typeVars(m.fn.sym):
+    let inf = m.inferred.getOrDefault(v)
+    if not cursorIsNil(inf) and isSumObjectType(inf):
+      let tv = tryLoadSym(v)
+      m.error(ConstraintMismatch, asTypevar(tv.decl).typ, inf)
+
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
@@ -3067,6 +3108,9 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
   if not f.hasMore:
     f = paramsStart; skip f
     m.returnType = f # return type follows the parameters in the token stream
+
+  if not m.err:
+    rejectSumTypeDefault m
 
   if m.unboundTvars > 0 and not m.err and not m.insertedParam and
       not anArgIsStillUntyped(args):

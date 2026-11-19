@@ -1,0 +1,9 @@
+tests/nimony/errmsgs/tsumtype_hasdefault.nim(11, 9) Error: Type mismatch at [position]
+s.(setLen, 0)
+[1] Status does not match constraint HasDefault (declared in lib/std/system/seqimpl.nim(337, 1))
+[1] expected: string but got: seq[Status] (declared in lib/std/system/stringimpl.nim(649, 1))
+tests/nimony/errmsgs/tsumtype_hasdefault.nim(12, 23) Error: Type mismatch at [position]
+newSeq(2)
+[1] too many arguments (declared in lib/std/system/seqimpl.nim(71, 1))
+[1] Status does not match constraint HasDefault (declared in lib/std/system/seqimpl.nim(76, 1))
+[1] Status does not match constraint HasDefault (declared in lib/std/system/seqimpl.nim(351, 1))
