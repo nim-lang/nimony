@@ -32,7 +32,7 @@ proc record*(file, test: string; flags: set[RecordFlag]; cat: Category) =
     gitAdd test
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
-    if cat notin {Basics, Tracked}:
+    if cat notin {Basics, Tracked, Check}:
       let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       let ext = if testProgramExitCode != 0: ".exitcode" else: ".output"

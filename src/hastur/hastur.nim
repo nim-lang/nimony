@@ -204,7 +204,7 @@ Files (per test directory, all optional):
                         reproducible in a shared process, or that races with
                         its neighbours over a shared build artifact.
   hastur.mode           this directory's category for the built-in nimony
-                        runner: nosystem, track, compat, valgrind, opt, or
+                        runner: nosystem, track, check, compat, valgrind, opt, or
                         skip (excluded from the sweep, but still run when
                         pointed at directly). Absent means normal.
 """
