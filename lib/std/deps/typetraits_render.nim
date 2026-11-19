@@ -18,7 +18,7 @@ proc takeNumberType(n: var NifCursor; base: string): string =
     while n.hasMore:
       skip n
 
-proc renderTypeName*(defs: NifCursor; n: var NifCursor): string
+proc renderTypeName*(defs: NifCursor; n: NifCursor): string
 
 proc renderInvocation(defs: NifCursor; n: var NifCursor): string =
   var head = n
@@ -44,7 +44,9 @@ proc nominalName(defs: NifCursor; sym: SymId): string =
   else:
     result = symBasename(sym)
 
-proc renderTypeName*(defs: NifCursor; n: var NifCursor): string =
+proc renderTypeName*(defs: NifCursor; n: NifCursor): string =
+  ## Leaves the caller's cursor where it is; callers `skip` past the type.
+  var n = n
   if n.kind == Symbol:
     return nominalName(defs, n.symId)
   if n.kind == IntLit:
