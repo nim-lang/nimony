@@ -116,8 +116,6 @@ proc printProcs(nifFile, nameSubstr: string) =
 proc patMain*(args: seq[string]) =
   ## Entry for the `shoggoth pat …` subcommand. `args` are the CLI tokens after
   ## `pat`.
-  # NB: `initOptParser(@[])` would fall back to the *real* command line, so an
-  # empty arg list must be handled up front.
   if args.len == 0:
     quit "usage: shoggoth pat [--from:NIF] [--keep] [--shoggoth] <file.nim> [<substr>]"
   var files: seq[string] = @[]

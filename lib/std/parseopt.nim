@@ -46,8 +46,8 @@ type
     key*, val*: string
     current: string
     cmdLine: seq[string]
-      ## When non-empty, `next` reads from this list instead of the OS
-      ## process argv. Lets callers feed the parser tokens collected from
+      ## When `useCmdLine` is set, `next` reads from this list instead of
+      ## the OS process argv. Lets callers feed the parser tokens collected from
       ## an `.args` config file.
     useCmdLine: bool
 
@@ -55,14 +55,12 @@ func initOptParser*(): OptParser =
   OptParser(pos: 0, inShortState: false, idx: 1, kind: cmdEnd, key: "", val: "", current: "")
 
 func initOptParser*(cmdLine: sink seq[string]): OptParser =
-  ## Parse the explicit `cmdLine` instead of the process arguments. Useful
-  ## for re-parsing options collected from a `.args` file. When `cmdLine`
-  ## is empty, falls back to the process argv (matches Nim's `std/parseopt`).
-  if cmdLine.len == 0:
-    result = initOptParser()
-  else:
-    result = OptParser(pos: 0, inShortState: false, idx: 0, kind: cmdEnd, key: "", val: "",
-              current: "", cmdLine: cmdLine, useCmdLine: true)
+  ## Parse exactly `cmdLine` instead of the process arguments. Useful for
+  ## re-parsing options collected from a `.args` file. An empty `cmdLine` is
+  ## an empty command line; unlike Nim's `std/parseopt` it never falls back
+  ## to the process argv — use `initOptParser()` for that.
+  result = OptParser(pos: 0, inShortState: false, idx: 0, kind: cmdEnd, key: "", val: "",
+            current: "", cmdLine: cmdLine, useCmdLine: true)
 
 func isKeySep(c: char): bool {.inline.} = c == ':' or c == '='
 
