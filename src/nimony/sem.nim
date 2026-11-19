@@ -217,6 +217,10 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool
 
 proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; firstPhase: SemPhase)
 
+proc findOneofEfld(c: var SemContext; name: StrId; anum: SymId = SymId(0)): SymId
+
+proc sumTypeAnum(t: Cursor): SymId
+
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
 
 proc semStaticExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -3109,7 +3113,13 @@ proc isBranchOf(sym, anum: SymId): bool =
     skipToLocalType n
     result = n.isSymbol and n.symId == anum
 
-proc findOneofEfld(c: var SemContext; name: StrId; anum = SymId(0)): SymId =
+proc sumTypeAnum(t: Cursor): SymId =
+  ## The discriminator type of the sum type `t`, or `SymId(0)` if `t` is none.
+  let info = findSumTypeInfo(t)
+  result = if info.valid and info.discrimType.isSymbol: info.discrimType.symId
+           else: SymId(0)
+
+proc findOneofEfld(c: var SemContext; name: StrId; anum: SymId = SymId(0)): SymId =
   ## A `case` pattern passes the selector's `anum`: it names a branch of
   ## that sum type, not an equally named branch of another one in scope.
   result = SymId(0)
@@ -5496,7 +5506,14 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   it.n = sub(it.n)
   if it.n.isIdent:
     block sumTypeCheck:
-      let efldSym = findOneofEfld(c, it.n.strId)
+      # the expected sum type's branch of that name, if there is one (#3044
+      # item 13); else whichever branch lookup finds first
+      let expectedAnum = sumTypeAnum(expected)
+      var efldSym = SymId(0)
+      if expectedAnum != SymId(0):
+        efldSym = findOneofEfld(c, it.n.strId, expectedAnum)
+      if efldSym == SymId(0):
+        efldSym = findOneofEfld(c, it.n.strId)
       if efldSym != SymId(0):
         var inferredExpected = expected
         if expected.typeKind == AutoT:

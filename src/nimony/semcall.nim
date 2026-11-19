@@ -608,13 +608,51 @@ proc isAnumEfld(sym: SymId): bool =
         let typeDecl = asTypeDecl(typeRes.decl)
         result = typeDecl.body.typeKind == AnumT
 
+proc efldAnum(sym: SymId): SymId =
+  ## The discriminator type a sum type branch belongs to.
+  var n = tryLoadSym(sym).decl
+  skipToLocalType n
+  result = if n.isSymbol: n.symId else: SymId(0)
+
+proc pickSumTypeBranch(c: var SemContext; fn, expected: Cursor): SymId =
+  ## `Branch(...)` used as a constructor: the branch of that name of the sum
+  ## type the context expects, as for any symbol choice in a typed position;
+  ## else the branch lookup found, or the module's own one among several.
+  ## `SymId(0)` if `fn` names no sum type branch or nothing decides.
+  result = SymId(0)
+  var syms: seq[SymId] = @[]
+  if fn.isSymbol:
+    if not isAnumEfld(fn.symId): return
+    syms.add fn.symId
+  elif fn.exprKind in {OchoiceX, CchoiceX}:
+    var n = fn
+    n.into:
+      while n.hasMore:
+        if not (n.isSymbol and isAnumEfld(n.symId)): return
+        syms.add n.symId
+        skip n
+  else:
+    return
+  let anum = sumTypeAnum(expected)
+  if anum != SymId(0):
+    for s in syms:
+      if efldAnum(s) == anum: return s
+    # lookup preferred another sum type's branch: find the expected one's
+    let alt = findOneofEfld(c, symToIdent(syms[0]), anum)
+    if alt != SymId(0): return alt
+  if syms.len == 1: return syms[0]
+  var own = 0
+  for s in syms:
+    if pool.symModule(s) == c.thisModuleSuffix:
+      result = s
+      inc own
+  if own != 1: result = SymId(0)
+
 proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
-                               it: var Item; cs: var CallState) =
+                               it: var Item; cs: var CallState; efldSym: SymId) =
   it.n = cs.scope; skip it.n
   let info = cs.callNodeInfo
   let expected = it.typ
-  assert cs.fn.n.isSymbol
-  let efldSym = cs.fn.n.symId
   var objBuf = createTokenBuf(32)
   objBuf.addParLe(OconstrX, info)
   if expected.typeKind == AutoT:
@@ -1110,6 +1148,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     else: emptyNode(c)
 
   var m: seq[Match] = @[]
+  let branch = pickSumTypeBranch(c, cs.fn.n, it.typ)
+  if branch != SymId(0):
+    closeArgsScope c, cs
+    semSumTypeConstrFromCall c, dest, it, cs, branch
+    return
   if cs.fn.n.exprKind in {OchoiceX, CchoiceX}:
     var f = cs.fn.n
     f = sub(f) # bound the candidate walk
@@ -1144,10 +1187,6 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 0:
     closeArgsScope c, cs
     semObjConstrFromCall c, dest, it, cs
-    return
-  elif cs.fnKind == EfldY and cs.fn.n.isSymbol and isAnumEfld(cs.fn.n.symId):
-    closeArgsScope c, cs
-    semSumTypeConstrFromCall c, dest, it, cs
     return
   else:
     # Keep in mind that proc vars are a thing:
