@@ -63,6 +63,10 @@ proc main() {.raises.} =
     var t2 = parseJson(s)
     check $t2, s
 
+  block control_chars_escaped:
+    var t = parseJson("\"\\u0000\\u0001\\b\\u000b\\u001b\\u001f \"")
+    check $t, "\"\\u0000\\u0001\\b\\u000b\\u001b\\u001f \""
+
   block line_info:
     var t = parseJson("{\n  \"a\": 1\n}", "doc.json", KeepLineInfo)
     let c = t{"a"}
