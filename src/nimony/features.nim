@@ -65,6 +65,13 @@ type
       ## always a statically checked unique ownership annotation; this only
       ## opts a module into the discipline for values it never wrote `owned`
       ## for.
+    TotalWhensFeature
+      ## A `when` whose conditions test platform names (`defined(linux)`,
+      ## `defined(windows)`, `defined(amd64)`, ...) is not resolved here but
+      ## becomes an `if` over `(defined "a" "b")`, an opaque `bool` that only
+      ## the backend folds, from its `--os`/`--cpu`/`--plat` facts; every
+      ## branch is checked, like `if`. Picky: only `defined(a) or defined(b) ...`
+      ## conditions over platform names, and only inside routine bodies.
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -92,6 +99,7 @@ proc parseFeatures*(s: string): set[Feature] =
   of "assumesync": {AssumeSyncFeature}
   of "staticoverloads": {StaticOverloadsFeature}
   of "ownedrefs": {OwnedRefsFeature}
+  of "totalwhens": {TotalWhensFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,

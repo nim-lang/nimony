@@ -2571,8 +2571,124 @@ proc semUnresolvedWhenBranch(c: var SemContext; dest: var TokenBuf; it: var Item
     semObjectComponent c, dest, it.n, state
     dest.addParRi(it.n.endInfo)
 
+# ---------------- `.feature: "totalWhens"`: platform `when` -> `if (defined "a" ...)` ----------------
+
+proc definedPlatformName(c: var SemContext; n: Cursor): string =
+  ## `defined(x)` / `defined x` (unsemchecked) or `(defined x)` (semchecked)
+  ## where `x` is a platform name: returns `x` normalized, else "".
+  result = ""
+  if not n.isTagLit: return
+  var n = n
+  if n.exprKind in CallKinds:
+    n = sub(n)
+    let callee = takeIdent(n)
+    if callee == StrId(0) or pool.strings[callee] != "defined": return
+  elif n.exprKind == DefinedX:
+    n = sub(n)
+  else:
+    return
+  if not n.hasMore: return
+  let arg = takeIdent(n)
+  if arg == StrId(0) or n.hasMore: return
+  let name = pool.strings[arg]
+  if isPlatformName(name): result = name.normalize
+
+proc isOrNode(n: Cursor): bool =
+  ## `a or b` as nifler (`(infix or a b)`) or sem (`(or a b)`) spells it.
+  if n.exprKind == OrX: return true
+  if n.exprKind == InfixX:
+    var op = sub(n)
+    let name = takeIdent(op)
+    result = name != StrId(0) and pool.strings[name] == "or"
+  else:
+    result = false
+
+proc collectPlatformLabels(c: var SemContext; n: Cursor; labels: var seq[string]): bool =
+  ## The one condition shape `totalWhens` accepts: `defined(a) or defined(b) ...`
+  ## over platform names, optionally parenthesized.
+  let name = definedPlatformName(c, n)
+  if name.len > 0:
+    if name notin labels: labels.add name
+    return true
+  if n.exprKind == ParX:
+    var inner = sub(n)
+    return inner.hasMore and collectPlatformLabels(c, inner, labels)
+  if isOrNode(n):
+    var x = sub(n)
+    if n.exprKind == InfixX: skip x # the `or` operator
+    var operands = 0
+    while x.hasMore:
+      if not collectPlatformLabels(c, x, labels): return false
+      skip x
+      inc operands
+    return operands == 2
+  result = false
+
+proc mentionsPlatform(c: var SemContext; n: Cursor): bool =
+  ## Does the condition test a platform name anywhere? Such a `when` is a
+  ## platform `when` and must take the `totalWhens` shape.
+  if definedPlatformName(c, n).len > 0: return true
+  if not n.isTagLit: return false
+  var x = sub(n)
+  while x.hasMore:
+    if mentionsPlatform(c, x): return true
+    skip x
+  result = false
+
+proc isPlatformWhen(c: var SemContext; n: Cursor): bool =
+  var x = sub(n)
+  while x.hasMore and x.substructureKind == ElifU:
+    let cond = sub(x)
+    if mentionsPlatform(c, cond): return true
+    skip x
+  result = false
+
+proc semPlatformWhen(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode) =
+  ## Rewrites `when defined(a) or defined(b): x elif defined(c): y else: z`
+  ## into `if (defined "a" "b"): x elif (defined "c"): y else: z` and checks
+  ## that as an `if`: every branch is checked. `(defined "a" "b")` is an
+  ## opaque `bool` that only the backend folds, from its platform facts.
+  let info = it.n.info
+  let whenStart = it.n
+  if mode == ObjectWhen or c.routine.kind == NoSym:
+    buildErr c, dest, info,
+      "under `.feature: \"totalWhens\"` a platform `when` is only allowed inside a routine body"
+    it.n = whenStart; skip it.n
+    return
+  var buf = createTokenBuf(64)
+  buf.addParLe(IfS, info)
+  var n = sub(it.n)
+  while n.hasMore and n.substructureKind == ElifU:
+    let elifInfo = n.info
+    var x = sub(n)
+    var labels: seq[string] = @[]
+    if not collectPlatformLabels(c, x, labels):
+      buildErr c, dest, x.info,
+        "under `.feature: \"totalWhens\"` a platform `when` condition must be `defined(a) or defined(b) ...` over platform names: " &
+        asNimCode(x)
+      it.n = whenStart; skip it.n
+      return
+    buf.addParLe(ElifU, elifInfo)
+    buf.addParLe(DefinedX, x.info)
+    for l in labels: buf.addStrLit(l, elifInfo)
+    buf.addParRi()
+    skip x
+    takeTree buf, x
+    buf.addParRi()
+    skip n
+  if n.hasMore and n.substructureKind == ElseU:
+    takeTree buf, n
+  buf.addParRi()
+  var ifIt = Item(n: beginRead(buf), typ: it.typ)
+  semIf c, dest, ifIt
+  it.typ = ifIt.typ
+  it.n = whenStart; skip it.n
+
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
                  state: var SemObjectState) =
+  if TotalWhensFeature in c.features and isPlatformWhen(c, it.n):
+    semPlatformWhen c, dest, it, mode
+    return
   let start = dest.len
   let info = it.n.info
   dest.addParLe(it.n.cursorTagId, it.n.info)

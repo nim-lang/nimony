@@ -395,6 +395,37 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     # and `symbol` here are normalized, so the two spellings meet.
     else: result = config.mm.len > 0 and symbol.normalize == "gc" & config.mmName
 
+const
+  PlatformAliases = ["arm", "x86", "itanium", "x8664", "posix", "unix", "bsd",
+    "msdos", "mswindows", "win32", "macintosh", "osx", "sunos", "lwip"]
+    ## The `defined()` names `isDefined` derives from the target OS/CPU besides
+    ## the OS/CPU names themselves. Endianness and `cpuN` are not platform
+    ## facts: a portable bundle has one pointer width and one byte order.
+
+proc isPlatformName*(symbol: string): bool =
+  ## True for a name whose `defined()` is a fact about the target OS or CPU.
+  ## Under `.feature: "totalWhens"` a `when` over such names is not resolved
+  ## by sem but becomes a Leng `(defined "a" ...)`.
+  let s = symbol.normalize
+  if s in PlatformAliases: return true
+  for os in OS:
+    if s == os.name.normalize: return true
+  for cpu in CPU:
+    if s == cpu.name.normalize: return true
+  result = false
+
+proc platformFacts*(config: NifConfig): seq[string] =
+  ## Every platform name `defined()` holds for on the configured target, in
+  ## normalized spelling. The driver passes them to the backend as `--plat:x`
+  ## so `(defined "a")` in Leng means what `defined()` means in the frontend.
+  result = @[]
+  var names = newSeq[string]()
+  for os in OS: names.add os.name.normalize
+  for cpu in CPU: names.add cpu.name.normalize
+  for a in PlatformAliases: names.add a
+  for n in names:
+    if n notin result and config.isDefined(n): result.add n
+
 when isMainModule:
   var conf = default(NifConfig)
   parseNifConfig "src/nifler/nifler.cfg.nif", conf

@@ -133,6 +133,9 @@ proc handleCmdLine() =
         of "32": s.bits = 32
         of "16": s.bits = 16
         else: quit "invalid value for --bits"
+      of "os", "cpu", "plat":
+        # platform facts for `(defined "a" ...)`: `--os:x`/`--cpu:x` imply `x`
+        s.facts.add val
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "run", "r": toRun = true

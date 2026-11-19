@@ -61,6 +61,8 @@ type
     types*: seq[Cursor]                  ## points into MainModule.src
     filename*: string
     config*: ConfigRef
+    facts*: seq[string]                  ## platform facts: an `ite` over
+                                         ## `(defined "a" ...)` keeps one arm
     builtinTypes*: Table[string, Cursor]
     current*: TypeScope
     defs: Table[SymId, Definition]

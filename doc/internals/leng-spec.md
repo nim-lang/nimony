@@ -110,6 +110,7 @@ Expr ::= Number | CharLiteral | StringLiteral |
          (par Expr) | # wraps the expression in parentheses
          (addr Lvalue (cppref)?) | # "address of" operation
          (nil) | (false) | (true) |
+         (defined StringLiteral+) | # a platform test, see "Platform facts"
          (inf) | (neginf) | (nan) |
          (and Expr Expr) | # "&&"
          (or Expr Expr) | # "||"
@@ -401,6 +402,35 @@ nothing earlier. A body that reads the flag therefore stays correct when it is
 inlined into a caller with checked arithmetic of its own. Read `(ovf)` right
 after its `keepovf`; a call in between may be inlined and bring a `keepovf` of
 its own. Native code generation relies on this: there the flag is the CPU's.
+
+
+Platform facts: defined
+-----------------------
+
+`(defined "linux" "bsd")` is a platform test that survives into Leng, so that
+one set of `.nif` files can be compiled for different targets. It is a `bool`
+that is true when one of its string literals is a **platform fact**; facts are
+plain strings and are not validated against any list.
+
+- `--os:x` and `--cpu:x` make `x` a fact; `--plat:x` adds the fact `x` and may
+  be repeated. The Nimony driver passes every platform name `defined()` holds
+  for on the target (`posix`, `bsd`, ...) as `--plat`.
+- Only the code generator evaluates it (lengc's C and LLVM generators,
+  arkham, jorogumo). There is no pre-pass: the generator's `ite` handler
+  collapses an `ite` whose condition **is** a `(defined ...)` to the arm the
+  facts pick, and every walk over a body that precedes code generation
+  (arkham's analyser and planner, its callee collection) visits only that arm.
+  The other arm may refer to things that do not exist on the target.
+  `and`/`or`/`not` over `defined` are not evaluated; the frontend never emits
+  them. A `(defined ...)` outside an `ite` condition is not produced either;
+  lengc gives it its value.
+- Every pass in between, `shoggoth opt` included, treats it as an opaque
+  constant `bool` without side effects: both arms of its `ite` stay live.
+
+Nimony emits it under `.feature: "totalWhens"`: `when defined(linux) or
+defined(bsd): A elif defined(windows): B else: C` becomes
+`(ite (defined "linux" "bsd") A (ite (defined "windows") B C))`. A missing
+`else` is no error: if no branch is taken, nothing is.
 
 
 NJ instructions

@@ -77,7 +77,7 @@ type
     HcallX = (ord(HcallTagId), "hcall")  ## hidden converter call
     CompilesX = (ord(CompilesTagId), "compiles")
     DeclaredX = (ord(DeclaredTagId), "declared")
-    DefinedX = (ord(DefinedTagId), "defined")
+    DefinedX = (ord(DefinedTagId), "defined")  ## `defined(x)`; in Leng (and in Nimony under `.feature: "totalWhens"`) `(defined "linux" "bsd")`: true if one of the string literals is a platform fact (`--os`, `--cpu`, `--plat`). The code generator collapses an `ite` over it to the taken arm
     AstToStrX = (ord(AstToStrTagId), "astToStr")  ## converts AST to string
     BindSymX = (ord(BindSymTagId), "bindSym")  ## hygienic symbol reference inside a macro body: at sem time, resolves the string-literal argument in the macro's *definition* scope and replaces the call with a `(call newSymNode "<full-sym-name>")` so the plugin emits a NIF Symbol token that bypasses call-site lookup
     BindSymNameX = (ord(BindSymNameTagId), "bindSymName")  ## plugin-side cousin of `bindSym`: at sem time, resolves the string-literal argument in the surrounding module's *definition* scope and replaces the call with a `StringLit` carrying the fully-qualified symbol name. Plugin authors feed the resulting string to `addSymUse(builder, name)` so the emitted NIF contains a resolved `Symbol` token.

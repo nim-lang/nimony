@@ -1883,7 +1883,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           trExpr c, dest, n
         dest.addParRi(n.endInfo)
     of ErrX, NewobjX, NewrefX, SetconstrX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
-       InsetX, CardX, SuccX, PredX, BracketX, CurlyX, TupX, CompilesX, StaticX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
+       InsetX, CardX, SuccX, PredX, BracketX, CurlyX, TupX, CompilesX, StaticX, DeclaredX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX,
@@ -1905,6 +1905,11 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trExpr c, dest, n
       dest.addParRi()
+    of DefinedX:
+      # `(defined "linux" "bsd")` (`.feature: "totalWhens"`): Leng's own
+      # platform test, folded by the backend. Its labels are raw string
+      # literals, not Nimony `string` values.
+      takeTree dest, n
     of CanFormCyclesX, SupportsCopyMemX:
       bug "`canFormCycles`/`supportsCopyMem` is folded by derefs"
     of SizeofX, AlignofX, OffsetofX:

@@ -1380,6 +1380,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addSymbolDef wholeProgTool
         b.addStrLit findTool(wholeProgTool)
         b.addStrLit webRenderer
+        for fact in platformFacts(c.config):
+          b.addStrLit "--plat:" & fact
         # The browser host has no Node `fs`/`process`; the JS renderer drops
         # that face and lands the export surface on globalThis.NIF. The wasm
         # renderer has no such mode — a wasm module never had that face to
@@ -1402,6 +1404,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # and errors on an unsupported combination (no silent host fallback).
         b.addStrLit "--os:" & platform.OS[c.config.targetOS].name
         b.addStrLit "--cpu:" & platform.CPU[c.config.targetCPU].name
+        # The platform facts `(defined "a" ...)` is folded with: every platform name
+        # `defined()` holds for (`posix`, `bsd`, ...), as the frontend knows them.
+        for fact in platformFacts(c.config):
+          b.addStrLit "--plat:" & fact
         # The board, when one was given. A bare-metal image has no OS to ask how
         # much RAM it may have, so the layout file is that answer — and arkham
         # forwards it into the asm-NIF so nifasm places segments from the same
@@ -1423,6 +1429,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addStrLit $c.config.backend
         b.addStrLit "--compileOnly"
         b.addStrLit "--bits:" & $c.config.bits
+        for fact in platformFacts(c.config):
+          b.addStrLit "--plat:" & fact
         b.addKeyw "args"
         if commandLineArgsLengc.len > 0:
           for arg in commandLineArgsLengc.split(' '):
@@ -2448,6 +2456,8 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addStrLit findTool("lengc")
       b.addStrLit "c"
       b.addStrLit "--compileOnly"
+      for fact in platformFacts(config):
+        b.addStrLit "--plat:" & fact
       b.addKeyw "args"
       b.addKeyw "input"
 
