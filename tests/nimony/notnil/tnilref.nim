@@ -34,6 +34,39 @@ proc receiveRef(o: nil Myref) =
   touch(o.x)
   touch(o[].x)
 
+# A check on one of several equal locations covers them all, after the
+# checked one moves on, at a join and through a loop.
+type
+  Link = ref object
+    x: int
+    next: nil Link
+
+proc afterWalk(head: nil Link): int =
+  var it = head
+  var prev = it
+  result = 0
+  if it != nil:
+    it = it.next
+    result = prev.x
+
+proc checkedOnEitherSide(a: nil Link; b: bool): int =
+  var x = a
+  var y = x
+  if b:
+    if y == nil: return 0
+  else:
+    if x == nil: return 0
+  result = x.x + y.x
+
+proc throughLoop(head: nil Link; n: int): int =
+  var first = head
+  var it = first
+  if it == nil: return 0
+  result = 0
+  for i in 0..<n:
+    result += first.x
+    if it != nil: it = it.next
+
 try:
   hah2()
   other()
@@ -43,5 +76,7 @@ try:
   var o = Myref(x: 1)
   receiveRef(o)
   echo o.x
+  echo afterWalk(Link(x: 6)), " ", checkedOnEitherSide(Link(x: 7), false), " ",
+    throughLoop(Link(x: 2), 3)
 except:
   echo "god riddance"

@@ -1,7 +1,8 @@
 # Indices the prover must not take for granted under `staticContracts`: a block
-# copy `p - start` whose 17 steps do not fit a 16-slot block, and a mask that
-# can reach `len`, and a length read through a `ref` that an alias may have
-# changed. The proven sides are `blockSum` and `ringAt` in
+# copy `p - start` whose 17 steps do not fit a 16-slot block, a mask that can
+# reach `len`, a length read through a `ref` that an alias may have changed,
+# and an index after `x = 0'i32` or `x = cast[int8](addr y)`: a number is no
+# non-nil address. The proven sides are `blockSum` and `ringAt` in
 # `tests/nimony/contracts/tprovershapes.nim`.
 
 {.feature: "staticContracts".}
@@ -40,9 +41,29 @@ proc throughPointer(a: Buf; p: ptr seq[int]): int =
     p[].setLen 0
     result = a.data[0]
 
+proc afterSuffixedZero(at: int): int =
+  var x = 1'i32
+  x = 0'i32
+  var arr = default(array[8, int])
+  result = 0
+  if at >= 0 and at <= 8:
+    result = arr[at] + int(x)
+
+proc afterCastAddr(k: int): int =
+  var buf = default(array[4, uint8])
+  var arr = default(array[8, int])
+  var x = 1'i8
+  result = 0
+  if k >= 0 and k < 4:
+    x = cast[int8](addr buf[k])
+    if x <= 8:
+      result = arr[x - 1'i8]
+
 var wide = default(array[20, int])
 blockTooWide(wide)
 discard maskedByLen(@[1, 2], 3)
 var shared = Buf(data: @[1])
 discard throughAlias(shared, shared)
 discard throughPointer(shared, addr shared.data)
+discard afterSuffixedZero(8)
+discard afterCastAddr(0)

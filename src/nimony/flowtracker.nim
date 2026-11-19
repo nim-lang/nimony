@@ -227,6 +227,7 @@ proc setFactsTo(f: var Facts; cp: int; target: Facts) =
       removeFactAt(f, i)          # journaled removal; rechecks slot i
   for key, cc in want:
     f.add LeXplusC(a: key[0], b: key[1], c: cc)
+  f.setNilsTo target
 
 # --------------------------------------------------------------- flow state
 
