@@ -122,6 +122,9 @@ type
       ## so the dep analyzer can evaluate them and skip dead branches.
       ## `negated` entries (an `else` branch carries the negation of every
       ## prior elif condition) are wrapped in `(prefix not ...)` at emission.
+    nested: int
+      ## Routines and blocks entered: a `{.*define.}` const is a guard input of
+      ## the dependency scanner only at module level.
 
 proc lineInfoPath(i: TLineInfo; c: TranslationContext): string =
   ## Relative to the current directory with `--portablePaths`, else absolute;
@@ -293,7 +296,56 @@ proc handleCaseIdentDefs(n, parent: PNode; c: var TranslationContext) =
   else:
     toNif(n, parent, c)
 
+proc emitDefineConst(c: var TranslationContext; name, pragma, typ, value: PNode) =
+  ## `const x {.strdefine.} = "a"` at module level decides `when x == "b":
+  ## import y` before sem. Record such consts in the deps file as
+  ## `(define (when ...)? x (kind) "defineName" default)`; the default is kept
+  ## only when it is a literal. Ordinary consts would bloat every deps file and
+  ## need sem anyway.
+  if c.nested > 0 or name.kind != nkIdent: return
+  for it in pragma:
+    let key = if it.kind in nkPragmaCallKinds and it.len > 0: it[0] else: it
+    if key.kind != nkIdent: continue
+    var kind = key.ident.s
+    case kind
+    of "booldefine", "intdefine", "strdefine": discard
+    of "define":
+      # The generic form takes its kind from the declared type.
+      if typ.kind != nkIdent: return
+      case typ.ident.s
+      of "bool": kind = "booldefine"
+      of "int": kind = "intdefine"
+      of "string": kind = "strdefine"
+      else: return
+    else: continue
+    var defineName = name.ident.s
+    if it.kind in nkPragmaCallKinds:
+      if it.len != 2 or it[1].kind notin {nkStrLit..nkTripleStrLit}: return
+      defineName = it[1].strVal
+    withDepsStream c:
+      c.b.addTree "define"
+      emitWhenMarker c
+      c.b.addIdent name.ident.s
+      c.b.addTree kind
+      c.b.endTree()
+      c.b.addStrLit defineName
+      case value.kind
+      of nkStrLit..nkTripleStrLit: c.b.addStrLit value.strVal
+      of nkIntLit: c.b.addIntLit value.intVal
+      of nkIdent:
+        if value.ident.s in ["true", "false"]: c.b.addIdent value.ident.s
+        else: c.b.addEmpty
+      else: c.b.addEmpty
+      c.b.endTree()
+    return
+
 proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
+  let nests = n.kind in {nkProcDef, nkFuncDef, nkConverterDef, nkMacroDef,
+    nkTemplateDef, nkIteratorDef, nkMethodDef, nkLambda, nkDo, nkBlockStmt,
+    nkBlockExpr}
+  if nests: inc c.nested
+  defer:
+    if nests: dec c.nested
   case n.kind
   of nkNone:
     assert false, "unexpected nkNone"
@@ -442,6 +494,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
       if split.pragma != nil:
         toNif(split.pragma, n[i], c)
+        if c.depsEnabled and n.kind == nkConstDef:
+          emitDefineConst(c, split.name, split.pragma, n[last-1], n[last])
       else:
         c.b.addEmpty
 

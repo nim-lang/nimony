@@ -224,6 +224,10 @@ proc writeNifler*(first: Node; pool: Pool; tags: TagPool; sizeHint: int;
 #   -- so the dependency scanner can skip what is statically dead.
 # * `{.plugin: "name".}` is `(plugin (when...)? "name")`: a program the build
 #   has to produce before the module can be checked.
+# * A module-level `const x {.strdefine: "name".} = "a"` (also `booldefine`,
+#   `intdefine`, and `define` typed `bool`/`int`/`string`) is
+#   `(define (when...)? x (strdefine) "name" "a")`, the default `.` unless it is
+#   a literal, so the scanner can decide `when x == "b": import y`.
 # * Nothing inside `runnableExamples` counts.
 
 proc isDep(k: NiflerKind): bool =
@@ -239,6 +243,7 @@ type
   DepsWalker = object
     w: Writer
     conds: seq[WhenCond]
+    nested: int          ## routines and blocks entered
 
 proc whenMarker(d: var DepsWalker) =
   if d.conds.len == 0: return
@@ -271,9 +276,72 @@ proc isPlugin(d: DepsWalker; kv: Node; name: var string): bool =
       return true
   false
 
+proc strOf(d: DepsWalker; v: Node): Node =
+  ## A string literal, raw or triple-quoted ones included; nil otherwise.
+  result = nil
+  if v == nil: return
+  if kind(v) == StrLit: return v
+  if kind(v) == TagLit and tagKind(v) == SufL:
+    let s = v.down
+    if s != nil and kind(s) == StrLit: return s
+
+proc defineConst(d: var DepsWalker; n: Node) =
+  ## bridge.nim's `emitDefineConst`: `n` is `(const name x? pragmas type value)`.
+  let name = n.down
+  if name == nil or kind(name) != Ident: return
+  let pragmas = name.next.next
+  if pragmas == nil or kind(pragmas) != TagLit or tagKind(pragmas) != PragmasL:
+    return
+  let typ = pragmas.next
+  let value = typ.next
+  var it = pragmas.down
+  while it != nil:
+    let isKv = kind(it) == TagLit and tagKind(it) == KvL
+    let key = if isKv: it.down else: it
+    if key != nil and kind(key) == Ident:
+      var kindName = d.w.pool.strings[strId(key)]
+      var known = true
+      case kindName
+      of "booldefine", "intdefine", "strdefine": discard
+      of "define":
+        if kind(typ) != Ident: return
+        case d.w.pool.strings[strId(typ)]
+        of "bool": kindName = "booldefine"
+        of "int": kindName = "intdefine"
+        of "string": kindName = "strdefine"
+        else: return
+      else: known = false
+      if known:
+        var defineName = d.w.pool.strings[strId(name)]
+        if isKv:
+          let v = d.strOf(key.next)
+          if v == nil or key.next.next != nil: return
+          defineName = d.w.pool.strings[strId(v)]
+        d.w.b.addTree "define"
+        d.whenMarker()
+        d.w.b.addIdent d.w.pool.strings[strId(name)]
+        d.w.b.addTree kindName
+        d.w.b.endTree()
+        d.w.b.addStrLit defineName
+        let v = d.strOf(value)
+        if v != nil:
+          d.w.b.addStrLit d.w.pool.strings[strId(v)]
+        elif kind(value) == IntLit:
+          d.w.b.addIntLit intVal(value)
+        elif kind(value) == Ident and
+            d.w.pool.strings[strId(value)] in ["true", "false"]:
+          d.w.b.addIdent d.w.pool.strings[strId(value)]
+        else:
+          d.w.b.addEmpty
+        d.w.b.endTree()
+        return
+    it = it.next
+
 proc walkDeps(d: var DepsWalker; n: Node; inObject: bool) =
   if kind(n) != TagLit: return
   let tg = tagKind(n)
+  if tg == ConstL and d.nested == 0:
+    d.defineConst(n)
   if isDep(tg):
     d.w.b.addTree tagName(d.w, n)
     d.whenMarker()
@@ -327,10 +395,14 @@ proc walkDeps(d: var DepsWalker; n: Node; inObject: bool) =
       br = br.next
     return
   let nowInObject = inObject or tg == ObjectL
+  let nests = tg in {ProcL, FuncL, IteratorL, MethodL, MacroL, TemplateL,
+                     ConverterL, DoL, BlockL}
+  if nests: inc d.nested
   var k = n.down
   while k != nil:
     walkDeps(d, k, nowInObject)
     k = k.next
+  if nests: dec d.nested
 
 proc writeDeps*(first: Node; pool: Pool; tags: TagPool;
                 outfile: string) {.raises.} =
