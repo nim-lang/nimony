@@ -28,13 +28,11 @@ template check(a, b) =
 proc failure[T](src: string; tt: typedesc[T]; opts = JsonOptions()): string =
   ## `fromJson`'s error message; "no error" when it did not raise.
   var t = parseJson(src)
-  var c = t.root
-  var o = opts
   try:
-    discard fromJson(c, T, o)
+    discard fromJson(t, T, opts)
     result = "no error"
   except ErrorCode:
-    result = o.errorMsg
+    result = errorMsg(t)
 
 proc main() {.raises.} =
   block atoms:
@@ -99,6 +97,17 @@ proc main() {.raises.} =
     check failure("""{"answer":42}""", Guide), "missing member: question"
     check failure("""{"question":"q","answer":42,"author":"D"}""", Guide), "extra member"
     check failure("""{"box":{"v":"1"}}""", Boxed), "expected int, found JString"
+    var short = parseJson("""{"answer":42}""")
+    try: discard fromJson(short, Guide)
+    except ErrorCode: discard
+    check hasError(short), true
+    discard fromJson(short, Guide, JsonOptions(allowMissingKeys: true))
+    check errorMsg(short), ""            # a read that succeeds clears it
+    var c = short.root                   # cursor level: the message is in opts
+    var o = JsonOptions()
+    try: discard fromJson(c, Guide, o)
+    except ErrorCode: discard
+    check o.errorMsg, "missing member: question"
 
   block typed_allow_keys:       # ported from tjsonutils.nim's testJoptions
     let extra = """{"question":"6*9=?","answer":42,"author":"Douglas Adams"}"""

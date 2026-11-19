@@ -95,6 +95,7 @@ type
     ## underlying `TokenBuf` forbids copy); a `JsonNode` obtained via `root` keeps
     ## the data alive independently through `nifcore`'s reference counting.
     buf*: TokenBuf
+    readError: string  ## why the last `fromJson(tree, T)` raised; see `errorMsg`
 
   JsonNode* = object
     ## A handle to one node inside a `JsonTree`: a `nifcore.Cursor` wrapped so the
@@ -487,15 +488,18 @@ proc errorMsg*(t: var JsonTree): string =
   ## `""` if it parsed cleanly. Ignore it and malformed nodes simply read as
   ## `null`; consult it for the diagnostic and source position of the first
   ## failure. Trailing input after the document is reported here as well.
+  ## Without a parse error, it is why the last `fromJson(t, T)` raised.
   result = ""
   var c = t.root
   while c.hasMore:
     result = firstErrorMsg(c)
     if result.len > 0: return
     c.skip
+  result = t.readError
 
 proc hasError*(t: var JsonTree): bool {.inline.} =
-  ## True when the document contains any parse error (see `errorMsg`).
+  ## True when the document contains a parse error, or the last
+  ## `fromJson(t, T)` raised (see `errorMsg`).
   errorMsg(t).len > 0
 
 proc len*(n: JsonNode): int =
@@ -741,8 +745,13 @@ proc fromJson*[O: object](c: var JsonNode; t: typedesc[O]; opts: var JsonOptions
     while c.hasMore: c.skip
 
 proc fromJson*[T](t: var JsonTree; tt: typedesc[T]; opts = JsonOptions()): T {.raises.} =
-  ## Entry point: deserialise the root of `t` into a `T`. For the error message,
-  ## call `fromJson(t.root, T, opts)` with a `var opts` and read `opts.errorMsg`.
+  ## Entry point: deserialise the root of `t` into a `T`. When it raises,
+  ## `errorMsg(t)` says why.
+  t.readError = ""
   var c = t.root
   var o = opts
-  result = fromJson(c, T, o)
+  try:
+    result = fromJson(c, T, o)
+  except ErrorCode as e:
+    t.readError = o.errorMsg
+    raise e
