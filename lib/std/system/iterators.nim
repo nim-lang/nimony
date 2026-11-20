@@ -71,21 +71,13 @@ iterator countdown*[T: Ordinal and Comparable and Orderable; V: Ordinal](a, b: T
   ## efficiency reasons and it is a rare case.
   var res = a
   if res >= b:
-    when T is range:
-      # As in `..`: a step of a `range` owes the range, so it is taken only
-      # after the stepped value is tested against both bounds on this round.
-      # The test against `a` fails only for a step below 1 or one that wraps.
-      while true:
-        yield res
-        let next = ord(res) - ord(step)
-        if next < ord(b) or next > ord(a): break
-        res = T(next)
-    else:
-      while true:
-        yield res
-        if res < succ(b, step):
-          break
-        dec(res, step)
+    while true:
+      yield res
+      if ord(res) < ord(b) + ord(step):
+        break
+      # `cast`, not `dec`: on a `range` a step owes the range
+      # (nim-lang/nimony#2855), which the prover cannot show from the test.
+      res = cast[T](ord(res) - ord(step))
 
 iterator countup*[T: Ordinal and Comparable and Orderable and not bool](a, b: T; step: Positive = 1): T {.inline,
     requires: b < high(T) or
@@ -102,18 +94,11 @@ iterator countup*[T: Ordinal and Comparable and Orderable and not bool](a, b: T;
   ## enough: this fails if `b + step > high(T)` for efficiency reasons and
   ## it is a rare case.
   var res = a
-  when T is range:
-    # See `countdown`.
-    var more = res <= b
-    while more:
-      yield res
-      let next = ord(res) + step
-      if next <= ord(b) and next >= ord(a): res = T(next)
-      else: more = false
-  else:
-    while res <= b:
-      yield res
-      inc(res, step)
+  while res <= b:
+    yield res
+    # `cast`, not `inc`: the value past `b` that ends the loop is no value of
+    # a `range` `T`; it is only compared, never yielded.
+    res = cast[T](ord(res) + step)
 
 # RootObj is replaced with untyped for now:
 
