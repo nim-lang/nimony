@@ -76,3 +76,11 @@ three
 
 
 [9] 5 requests on one connection -> 5 responses
+[10] HTTP/1.1 400 Bad Request
+date: <when>
+server: t
+connection: close
+content-length: 0
+
+
+[11] short body -> ''

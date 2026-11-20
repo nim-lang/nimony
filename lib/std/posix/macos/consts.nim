@@ -98,6 +98,8 @@ const
   O_CLOEXEC* = cint(0x1000000)
   F_GETFL* = cint(3)
   F_SETFL* = cint(4)
+  F_SETFD* = cint(2)
+  FD_CLOEXEC* = cint(1)
 
 # <dlfcn.h>
 const
@@ -138,6 +140,7 @@ const
   SOCK_SEQPACKET* = cint(5)
   SOL_SOCKET* = cint(0xffff)
   SO_REUSEADDR* = cint(0x4)
+  SO_NOSIGPIPE* = cint(0x1022)
   IPPROTO_IP* = cint(0)
   IPPROTO_ICMP* = cint(1)
   IPPROTO_TCP* = cint(6)

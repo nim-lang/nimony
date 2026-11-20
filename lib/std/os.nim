@@ -114,10 +114,48 @@ when defined(linux) or defined(aix):
       len = 0
     setLen(result, len)
 
+when defined(windows):
+  import widestrs
+
+  proc getModuleFileNameW(hModule: nil pointer; filename: WideCString;
+                          size: uint32): uint32 {.
+    stdcall, importc: "GetModuleFileNameW", dynlib: "kernel32", sideEffect.}
+
+  proc getApplAux(): string =
+    ## The loader's path of the executable; `paramStr(0)` is only what the
+    ## parent passed to `CreateProcess`. A full buffer means truncation.
+    var size = 256'u32
+    while true:
+      var buf = newWideCString(int(size))
+      let n = getModuleFileNameW(nil, buf.toWideCString, size)
+      if n == 0'u32:
+        return ""
+      if n < size:
+        return $buf.toWideCString
+      size = size * 2'u32
+elif defined(macosx):
+  proc nsGetExecutablePath(buf: cstring; bufsize: var uint32): cint {.
+    importc: "_NSGetExecutablePath", header: "<mach-o/dyld.h>", sideEffect.}
+
+  proc getApplAux(): string =
+    var size = 1024'u32
+    result = newString(int(size))
+    if nsGetExecutablePath(result.toCString, size) != 0:
+      # `size` now holds the length needed.
+      result = newString(int(size))
+      if nsGetExecutablePath(result.toCString, size) != 0:
+        return ""
+    var L = 0
+    while L < result.len and result[L] != '\0': inc L
+    result.setLen(L)
+
 when supportedSystem:
   proc getAppFilename*(): string {.tags: [ReadIOEffect], raises: [].} =
+    ## The full path of the running executable.
     when defined(linux) or defined(aix):
       result = getApplAux("/proc/self/exe")
+    elif defined(windows) or defined(macosx):
+      result = getApplAux()
     else:
       result = paramStr(0)
 
@@ -205,7 +243,6 @@ when defined(posix):
     result = int64(s.st_mtim.tv_sec) * 1_000_000_000'i64 + int64(s.st_mtim.tv_nsec)
 elif defined(windows):
   import windows/winlean
-  import widestrs
 
   const
     # Number of 100-nanosecond intervals between 1601-01-01 and 1970-01-01.

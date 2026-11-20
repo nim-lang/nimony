@@ -3,6 +3,8 @@ when defined(windows):
   echo "server saw GET /hello keepalive=true"
   echo "second request on the same connection: /again"
   echo "read past a dead peer: EndOfStreamError"
+  echo "write to a dead peer: IOError"
+  echo "socket write to a dead peer: IOError"
   echo "idle connection timed out: TimeoutError"
   echo "per-call deadlines do not stick: 3 bytes"
   echo "client got 200 len=12 body=hello world!"
@@ -199,6 +201,41 @@ else:
     deadFd = a
     submit(delay(readsDeadPeer()), 0)
     awaitFlag(serverDone)           # `a` belongs to the connection
+
+  # ---- writing to a peer that has gone (SIGPIPE ended the process) -------
+
+  var goneFd: cint
+
+  when defined(linux):
+    # The default action for SIGPIPE, which ends the process, whatever the
+    # runner inherited: a write to a gone peer must not raise it.
+    proc c_signal(sig: cint; handler: nil pointer): nil pointer {.
+      importc: "signal", header: "<signal.h>".}
+    discard c_signal(13, nil)   # SIGPIPE, SIG_DFL
+
+  proc writesDeadPeer() {.passive.} =
+    var c = initHttpConn(goneFd, afterMs(5000), tags)
+    try:
+      c.respond(200, "hello")
+      serverLog.add "write to a dead peer: no error\n"
+    except ErrorCode as e:
+      serverLog.add "write to a dead peer: " & $e & "\n"
+    let (a, b) = mkPair()
+    closeFd(b)
+    var s = initSocket(a, afterMs(5000))
+    try:
+      s.write("hello")
+      serverLog.add "socket write to a dead peer: no error\n"
+    except ErrorCode as e:
+      serverLog.add "socket write to a dead peer: " & $e & "\n"
+    atomicStore(serverDone, 1, moRelease)
+
+  block deadPeerWrite:
+    let (a, b) = mkPair()
+    closeFd(b)
+    goneFd = a
+    submit(delay(writesDeadPeer()), 0)
+    awaitFlag(serverDone)
 
   # ---- the peer goes quiet ------------------------------------------------
 

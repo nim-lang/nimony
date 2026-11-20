@@ -1,6 +1,8 @@
 server saw GET /hello keepalive=true
 second request on the same connection: /again
 read past a dead peer: EndOfStreamError
+write to a dead peer: IOError
+socket write to a dead peer: IOError
 idle connection timed out: TimeoutError
 per-call deadlines do not stick: 3 bytes
 client got 200 len=12 body=hello world!

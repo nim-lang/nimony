@@ -56,7 +56,7 @@ proc fchmodat(dirfd: cint; path: cstring; mode: Mode; flags: cint): cint {.
 proc chmod*(path: cstring, mode: Mode): cint {.inline, sideEffect.} =
   fchmodat(AT_FDCWD, path, mode, cint(0))
 
-proc pipe2(a: ptr cint; flags: cint): cint {.importc: "pipe2", sideEffect.}
+proc pipe2*(a: ptr cint; flags: cint): cint {.importc: "pipe2", sideEffect.}
 proc dup3(oldfd, newfd, flags: cint): cint {.importc: "dup3", sideEffect.}
 # `fork()` is `clone(SIGCHLD, 0, 0, 0, 0)` — what glibc's own fork reduces to
 # once its pthread bookkeeping is stripped. The child inherits everything and

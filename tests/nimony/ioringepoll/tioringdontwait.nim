@@ -21,6 +21,7 @@ when not defined(linux):
   echo "two accepts, second connection: completions=1 ok=true"
   echo "pipe read: n=2 buf=hi"
   echo "pipe write: n=3 buf=abc"
+  echo "send to a gone peer: res=-32"
 else:
   import std / [ioring, syncio, assertions]
   import std/ioring/platform
@@ -93,6 +94,11 @@ else:
       for i in 0 ..< n:
         if comps[i].op == opTimeout: done = true
         else: result.add comps[i]
+
+  # The default action for SIGPIPE, which ends the process, whatever the
+  # runner inherited: a write to a gone peer must not raise it.
+  proc c_signal(sig: cint; handler: nil pointer): nil pointer {.importc: "signal", header: "<signal.h>".}
+  discard c_signal(13, nil)   # SIGPIPE, SIG_DFL
 
   echo "readiness backend: ", not hasIouring
 
@@ -178,6 +184,18 @@ else:
     echo "pipe write: n=", (if got.len > 0: got[0].result else: -1),
          " buf=", outb[0], outb[1], outb[2], (if n == 3: "" else: " short")
     closeFd(fds[0]); closeFd(fds[1])
+    while pollCompletions(comps) > 0: discard
+
+  block sendToGonePeer:
+    # A send whose peer has gone completes with -EPIPE. It must not raise
+    # SIGPIPE, which would end the process.
+    let (a, b) = mkPair()
+    closeFd(b)
+    var x = "x"
+    discard submitSendTo(a, x.toCString, 1, Sockaddr_storage(), SockLen(0), never)
+    let got = settle(150)
+    echo "send to a gone peer: res=", (if got.len > 0: got[0].result else: 0)
+    closeFd(a)
     while pollCompletions(comps) > 0: discard
 
 {.feature: "assumeSync".}  # test program: globals shared freely

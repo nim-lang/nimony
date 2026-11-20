@@ -838,14 +838,16 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
       c.dest.addSubtree expr
     else:
       # Const-eval snippets may call `.raises` stdlib (e.g. `readFile`). A
-      # catch-all `except` arm gives the body `CanRaise` in NJVL/derefs.
+      # catch-all `except` arm gives the body `CanRaise` in NJVL/derefs; it
+      # fails the program, which has written no result.
       c.dest.copyIntoKind TryS, info:
         c.dest.copyIntoKind StmtsS, info:
           entryPoint(c, retType, expr)
         c.dest.copyIntoKind ExceptU, info:
           c.dest.addDotToken()
           c.dest.copyIntoKind StmtsS, info:
-            discard
+            c.dest.copyIntoKind CallS, info:
+              c.dest.addSymUse pool.symId("raised.0." & writeNifModuleSuffix), info
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.symId("teardown.0." & writeNifModuleSuffix), info

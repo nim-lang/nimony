@@ -1,7 +1,7 @@
 when defined(nimony):
   {.feature: "untyped".}   # so the `check` template's `xx != b` resolves to bool
 
-import std/[json, streams, syncio]
+import std/[json, streams, syncio, tables, opt]
 import mjson_private
 
 type Color = enum red, green, blue
@@ -15,6 +15,9 @@ type Gen[T] = object
   a: T
 type Boxed = object
   box: Box
+type Tabled = object
+  t: Table[string, int]
+  ot: OrderedTable[string, int]
 type Guide = object             # from Nim's tests/stdlib/tjsonutils.nim
   question: string
   answer: int
@@ -131,6 +134,28 @@ proc main() {.raises.} =
     check $tree, """{"type":"Box","v":7}"""
     var gen = toJson(Gen[int](a: 1), JsonOptions(typeFieldName: "type"))
     check $gen, """{"type":"Gen","a":1}"""   # without its generic arguments
+
+  block table_hooks:            # ported from jsonutils' Table hooks
+    var src = parseJson("""{"t":{"two":2,"one":1},"ot":{"one":1,"three":3}}""")
+    let foo = fromJson(src, Tabled)
+    check foo.t == [("one", 1), ("two", 2)].toTable, true
+    check foo.ot == [("one", 1), ("three", 3)].toOrderedTable, true
+    var tree = toJson(Tabled(t: [("two", 2)].toTable, ot: [("one", 1), ("three", 3)].toOrderedTable))
+    check $tree, """{"t":{"two":2},"ot":{"one":1,"three":3}}"""
+
+  block option_hooks:           # ported from tjsonutils.nim's testOption
+    var a = toJson(some("test"))
+    check $a, "\"test\""
+    check fromJson(a, Opt[string]).get(""), "test"
+    var b = toJson(none[string]())
+    check $b, "null"
+    check fromJson(b, Opt[string]).isNone, true
+    var c = toJson(some(42))
+    check $c, "42"
+    check fromJson(c, Opt[int]).get(0), 42
+    var d = toJson(none[int]())
+    check $d, "null"
+    check fromJson(d, Opt[int]).isNone, true
 
   block raw_numbers:
     var small = parseJson("[1,2]", rawIntegers = true)

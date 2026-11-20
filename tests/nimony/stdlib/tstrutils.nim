@@ -1105,3 +1105,9 @@ block indentTests:
   assert block1.dedent() == "Hello\n  There\n"
   assert block1.dedent(1) == "   Hello\n     There\n"
   assert "  a\n    b".dedent() == "a\n  b"
+
+block: # count
+  assert count("foofoofoo", "foofoo") == 1
+  assert count("foofoofoo", "foofoo", overlapping = true) == 2
+  assert count("foofoofoo", 'f') == 3
+  assert count("foofoofoobar", {'f', 'b'}) == 4

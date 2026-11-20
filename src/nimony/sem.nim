@@ -3968,17 +3968,20 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # raise is a property of where it is expanded: the expansion is checked again
   # in that routine. An error written into the stored body here would be copied
   # into every expansion as an extra child of the `raise`.
+  # An error replaces the whole `(raise X)` node (`combineErr`): written as an
+  # extra child, it would break the arity of a stored generic body.
   let inTemplate = c.routine.kind == TemplateY
+  let start = dest.len
+  var err = ""
+  if c.routine.kind == NoSym:
+    err = "`raise` only allowed within a routine"
+  elif not inTemplate and not c.routine.pragmas.contains(RaisesP) and
+      CanRaiseFeature notin c.features:
+    err = "`raise` only allowed within a routine with `raises` pragma"
   takeInto dest, it.n:
-    if c.routine.kind == NoSym:
-      buildErr c, dest, info, "`raise` only allowed within a routine"
-    elif not inTemplate and not c.routine.pragmas.contains(RaisesP) and
-        CanRaiseFeature notin c.features:
-      buildErr c, dest, info, "`raise` only allowed within a routine with `raises` pragma"
     if it.n.isDotToken:
-      if c.routine.inExcept == 0 and not inTemplate:
-        buildErr c, dest, info,
-          "bare `raise` is only allowed inside an `except` block"
+      if c.routine.inExcept == 0 and not inTemplate and err.len == 0:
+        err = "bare `raise` is only allowed inside an `except` block"
       takeTree dest, it.n
     else:
       var a = Item(n: it.n, typ: c.types.autoType)
@@ -4005,14 +4008,16 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
           var m = createMatch(addr c)
           matchObjectInheritance(m, raisesRefT, raisedRefT, raisesRefT.symId, raisedRefT.symId, NoType)
           compatible = not m.err
-        if not compatible:
-          let raisesType = c.routine.raisesType
-          c.typeMismatch dest, info, a.typ, raisesType
-      elif not inTemplate and raisesFamily(a.typ) == RefLacksRtti:
+        if not compatible and err.len == 0:
+          err = "type mismatch: got: " & typeToString(a.typ) &
+            " but wanted: " & typeToString(c.routine.raisesType)
+      elif not inTemplate and raisesFamily(a.typ) == RefLacksRtti and err.len == 0:
         # A `canraise` routine: no `.raises` type was checked for it.
-        buildErr c, dest, info, "`raise` takes a `ref` object type with RTTI, not `" &
+        err = "`raise` takes a `ref` object type with RTTI, not `" &
           typeToString(a.typ) & "`; inherit its object from `Exception`"
       it.n = a.n
+  if err.len > 0:
+    combineErr c, dest, start, info, err
   producesNoReturn c, dest, info, it.typ
 
 proc semYield(c: var SemContext; dest: var TokenBuf; it: var Item) =

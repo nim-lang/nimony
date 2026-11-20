@@ -1241,9 +1241,11 @@ proc emitDispatcher(c: var Context; arms: seq[ExceptArm]; frame: TryFrame;
   # What no typed arm takes: the catch-all, or on to the next handler. Without
   # one to reach — no enclosing `try` and a routine that does not raise — the
   # checks at the raise sites have proven this path dead, so the last typed
-  # arm takes it: a `try` expression has a value on every path.
+  # arm takes it: a `try` expression has a value on every path. Being inside
+  # another `try`'s arm is no receiver: a raise there leaves that `try` (#3044
+  # item 9).
   let reraise = catchAll < 0 and
-    (c.r.tries.len > 0 or c.r.armRaises.len > 0 or not cursorIsNil(c.r.raisesType))
+    (c.r.tries.len > 0 or not cursorIsNil(c.r.raisesType))
   let hasElse = catchAll >= 0 or reraise
   var branches = 0
   for i in 0 ..< arms.len:

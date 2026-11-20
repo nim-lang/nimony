@@ -16,3 +16,6 @@ proc g[T](x: T) =
 let i = echo "y"
 p()
 g(1)
+
+# `slurp` of a file that cannot be read is an error at the call.
+const j = slurp("tdeclvalueerr_nosuch.txt")
