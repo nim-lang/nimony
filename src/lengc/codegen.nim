@@ -588,7 +588,11 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     let name = mangleDecl(c, d.name, d.pragmas, skipDecl)
     let beforeDecl = c.code.len
 
-    if toExtern or isImportC(c.m, d.name):
+    # C++ gives a namespace-scope `const` internal linkage: without `extern` its
+    # definition is invisible to the other modules, which declare it `extern`.
+    let cppConstDef = vk == IsConst and not toExtern and not useStatic and
+      c.m.config.backend == backendCpp and not isImportC(c.m, d.name)
+    if toExtern or isImportC(c.m, d.name) or cppConstDef:
       c.add ExternKeyword
 
     if vk == IsThreadlocal:
@@ -596,6 +600,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     genType c, typ, name, isConst = vk == IsConst
     let flags = genVarPragmas(c, d.pragmas)
     if not toExtern and (StaticP in flags or useStatic):
+      if cppConstDef: c.code.delete(beforeDecl)  # `static` and `extern` exclude each other
       c.code.insert([Token(StaticKeyword)], beforeDecl)
     let beforeInit = c.code.len
 
