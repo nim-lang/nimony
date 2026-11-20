@@ -404,7 +404,8 @@ template echo*() {.varargs.} =
   write stdout, '\n'
 
 proc writeLine*(f: File; s: string) =
-  ## Writes a string followed by a newline to a file.
+  ## Writes a string followed by `'\n'` to a file, on every platform:
+  ## Windows gets no `\r\n` translation either.
   write f, s
   write f, '\n'
 
