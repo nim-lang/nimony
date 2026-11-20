@@ -67,11 +67,21 @@ iterator countdown*[T: Ordinal and Comparable and Orderable; V: Ordinal](a, b: T
   ## efficiency reasons and it is a rare case.
   var res = a
   if res >= b:
-    while true:
-      yield res
-      if res < succ(b, step):
-        break
-      dec(res, step)
+    when T is range:
+      # As in `..`: a step of a `range` owes the range, so it is taken only
+      # after the stepped value is tested against both bounds on this round.
+      # The test against `a` fails only for a step below 1 or one that wraps.
+      while true:
+        yield res
+        let next = ord(res) - ord(step)
+        if next < ord(b) or next > ord(a): break
+        res = T(next)
+    else:
+      while true:
+        yield res
+        if res < succ(b, step):
+          break
+        dec(res, step)
 
 iterator countup*[T: Ordinal and Comparable and Orderable and not bool](a, b: T; step: Positive = 1): T {.inline,
     requires: b < high(T) or
@@ -88,9 +98,18 @@ iterator countup*[T: Ordinal and Comparable and Orderable and not bool](a, b: T;
   ## enough: this fails if `b + step > high(T)` for efficiency reasons and
   ## it is a rare case.
   var res = a
-  while res <= b:
-    yield res
-    inc(res, step)
+  when T is range:
+    # See `countdown`.
+    var more = res <= b
+    while more:
+      yield res
+      let next = ord(res) + step
+      if next <= ord(b) and next >= ord(a): res = T(next)
+      else: more = false
+  else:
+    while res <= b:
+      yield res
+      inc(res, step)
 
 # RootObj is replaced with untyped for now:
 
