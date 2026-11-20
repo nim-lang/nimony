@@ -26,4 +26,13 @@ proc main =
   # unsigned descending inclusive must stop at zero
   assert toSeq(3'u >.. 0'u) == @[3'u, 2'u, 1'u, 0'u]
 
+  # over a `range` type, with and without a step (nimony-bugs-llms#160)
+  type R = range[0..9]
+  var s: seq[int] = @[]
+  for i in countdown(R(9), R(0), 2): s.add i
+  for i in countup(R(0), R(8), 2): s.add i
+  for i in countdown(R(2), R(0)): s.add i
+  for i in countup(R(7), R(9)): s.add i
+  assert s == @[9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 2, 1, 0, 7, 8, 9]
+
 main()
