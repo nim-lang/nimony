@@ -21,17 +21,22 @@ proc isTypevar(defs: NifCursor; s: SymId): bool =
   ## absence would instead report every not-yet-requested type as one.
   isTypevarDecl(findDecl(defs, s))
 
-proc collectUnknown(defs: NifCursor; n: NifCursor; missing: var seq[SymId]) =
+proc collectUnknown(defs: NifCursor; n: NifCursor; missing: var seq[SymId];
+                    instanceArgs: bool) =
   ## Every symbol in `n` that has not been provided yet. Collected across the
   ## whole argument, so one request covers a level instead of one round each.
   var n = n
   if n.kind == Symbol:
-    if not findDecl(defs, n.symId).hasMore:
+    let decl = findDecl(defs, n.symId)
+    if not decl.hasMore:
       missing.add n.symId
+    elif instanceArgs and decl.stmtKind == TypeS and asTypeDecl(decl).typevars.typeKind == AtT:
+      # A generic instance: `$` renders its arguments, so they are needed too.
+      collectUnknown(defs, asTypeDecl(decl).typevars, missing, instanceArgs)
   elif n.kind == TagLit:
     n.into:
       while n.hasMore:
-        collectUnknown(defs, n, missing)
+        collectUnknown(defs, n, missing, instanceArgs)
         skip n
 
 proc unwrap(n: NifCursor): NifCursor =
@@ -79,7 +84,7 @@ proc tr(n: NifCursor; defs: NifCursor): NifBuilder =
 
   # First round on a nominal argument: nothing has been provided yet, so ask.
   var missing: seq[SymId] = @[]
-  collectUnknown(defs, arg, missing)
+  collectUnknown(defs, arg, missing, instanceArgs = false)
   if missing.len > 0:
     return needTypes(missing)
 
@@ -106,6 +111,11 @@ proc tr(n: NifCursor; defs: NifCursor): NifBuilder =
       else:
         result = errorTree("'genericHead' expects an instantiated generic type", n)
   of "name", "$":
+    # Rendering needs the declarations of a generic instance's arguments too.
+    var wanted: seq[SymId] = @[]
+    collectUnknown(defs, arg, wanted, instanceArgs = true)
+    if wanted.len > 0:
+      return needTypes(wanted)
     var ty = arg
     let s = renderTypeName(defs, ty)
     result = createTree()
