@@ -882,6 +882,33 @@ func rfind*(s, sub: string; start: Natural = 0; last = -1): int =
     if j == sub.len:
       return i
 
+func count*(s: string; sub: char): int =
+  ## Counts the occurrences of the character `sub` in the string `s`.
+  result = 0
+  for c in s:
+    if c == sub: inc result
+
+func count*(s: string; subs: set[char]): int =
+  ## Counts the occurrences of the group of character `subs` in the string `s`.
+  assert card(subs) > 0
+  result = 0
+  for c in s:
+    if c in subs: inc result
+
+func count*(s: string; sub: string; overlapping: bool = false): int =
+  ## Counts the occurrences of a substring `sub` in the string `s`.
+  ## Overlapping occurrences of `sub` only count when `overlapping`
+  ## is set to true (default: false).
+  assert sub.len > 0
+  result = 0
+  var i: Natural = 0
+  while true:
+    let j = s.find(sub, i)
+    if j < 0: break
+    if overlapping: i = j + 1
+    else: i = j + sub.len
+    inc result
+
 func replace*(s: string; sub, by: char): string =
   ## Returns a copy of `s` where every `sub` is replaced by `by`.
   result = s
