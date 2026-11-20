@@ -721,8 +721,8 @@ proc skipTypeField(c: var JsonNode; opts: JsonOptions) =
   ## If the next member is the `"type"` discriminator, consume it.
   if opts.typeFieldName.len > 0 and c.hasMore and
      rawKind(c) == TagLit and jsonKind(c.cursorTagId) == JKKv:
-    var probe = c
-    probe.into:
+    var probe = c.c
+    probe.peekInto:                  # reads only the key
       if strVal(probe) == opts.typeFieldName:
         c.skip                       # drop the whole kv pair
 
