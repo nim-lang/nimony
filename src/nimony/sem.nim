@@ -2869,6 +2869,24 @@ proc semCaseOfValueString(c: var SemContext; dest: var TokenBuf; it: var Item; s
     buildErr c, dest, it.n.info, "`ranges` within `of` expected"
     skip it.n
 
+proc semCaseOfValueFloat(c: var SemContext; dest: var TokenBuf; it: var Item; selectorType: TypeCursor;
+                         seen: var seq[float]) =
+  ## A float label is a single constant value; a range is refused.
+  if it.n.substructureKind == RangesU:
+    takeInto dest, it.n:
+      while it.n.hasMore:
+        let info = it.n.info
+        var x = 0.0
+        if not evalConstFloatExpr(c, dest, it.n, selectorType, x):
+          discard "the error is in the tree already"
+        elif x in seen:
+          buildErr c, dest, info, "value already handled"
+        else:
+          seen.add x
+  else:
+    buildErr c, dest, it.n.info, "`ranges` within `of` expected"
+    skip it.n
+
 proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; selectorType: TypeCursor; seen: seq[(xint, xint)]) =
   var total = createXint(0'i32)
   for s in items(seen):
@@ -3446,8 +3464,10 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
         buildErr c, dest, info, "selector must be of an ordinal type"
 
   let isString = if isSumType: false else: isSomeStringType(selectorType)
+  let isFloat = not isSumType and selectorType.typeKind == FloatT
   var seen: seq[(xint, xint)] = @[]
   var seenStr = initHashSet[StrId]()
+  var seenFloat: seq[float] = @[]
   var bindings: seq[SumTypeBinding] = @[]
   if it.n.hasMore and it.n.substructureKind == OfU:
     while it.n.hasMore and it.n.substructureKind == OfU:
@@ -3458,6 +3478,8 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
         semSumTypeCaseOfValue c, dest, it, selectorType, stInfo.objTypeSym, seen, bindings
       elif isString:
         semCaseOfValueString c, dest, it, selectorType, seenStr
+      elif isFloat:
+        semCaseOfValueFloat c, dest, it, selectorType, seenFloat
       else:
         semCaseOfValue c, dest, it, selectorType, seen
       case mode

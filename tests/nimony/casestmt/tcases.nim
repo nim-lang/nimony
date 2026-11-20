@@ -83,3 +83,17 @@ proc caseR8(r: R8): int =
 assert caseR8(R8(5)) == 1
 assert caseR8(R8(7)) == 2
 assert caseR8(R8(9)) == 0
+
+# a float selector (nimony-bugs-llms#205)
+proc caseF(x: float): string =
+  case x
+  of 1.5: "a"
+  of 2.5, 3: "b"
+  else: "o"
+echo caseF(1.5), caseF(2.5), caseF(3.0), caseF(9.0)
+proc caseF32(x: float32) =
+  case x + 1
+  of 1.5'f32: echo "a32"
+  else: echo "o32"
+caseF32(0.5'f32)
+caseF32(1.5'f32)
