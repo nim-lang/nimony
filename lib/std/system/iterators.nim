@@ -53,8 +53,12 @@ iterator `>..`*[T: Ordinal and Comparable and Orderable](a, b: T): T {.inline,
     dec i
 
 iterator items*[T: OrdinalEnum](E: typedesc[T]): T =
-  for v in low(E) .. high(E):
+  # Like `>..`: no step past `high(E)`, which may fill its storage.
+  var v = low(E)
+  while true:
     yield v
+    if v == high(E): break
+    inc v
 
 iterator countdown*[T: Ordinal and Comparable and Orderable; V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
     ensures: (b <= result and result <= a).} =
