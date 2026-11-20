@@ -221,6 +221,24 @@ proc evalConstIntExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
   else:
     foldIntoDest dest, start, expected, value
 
+proc evalConstFloatExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor;
+                          x: var float): bool =
+  ## False when `n` is not a float literal after folding; the error is in `dest` then.
+  let info = n.info
+  let start = dest.len
+  var valueBuf = evalConstExpr(c, dest, n, expected)
+  let value = beginRead(valueBuf)
+  result = value.kind == FloatLit
+  if result:
+    x = value.floatVal
+    foldIntoDest dest, start, expected, value
+  else:
+    dest.shrink start
+    if value.isTagLit and value.cursorTagId == nifpools.ErrT:
+      dest.add valueBuf
+    else:
+      buildErr c, dest, info, "expected constant float value but got: " & asNimCode(value)
+
 proc evalConstStrExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): StrId =
   let info = n.info
   let start = dest.len

@@ -2398,7 +2398,7 @@ proc trStringCase(c: var EContext; dest: var TokenBuf; n: var Cursor): bool =
   var nb = n
   inc nb
   let selectorType = getType(c.typeCache, nb)
-  if isSomeStringType(selectorType):
+  if isSomeStringType(selectorType) or selectorType.typeKind == FloatT:
     transformStringCase(c, dest, n)
     result = true
   else:
