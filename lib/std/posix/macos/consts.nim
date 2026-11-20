@@ -138,6 +138,7 @@ const
   SOCK_SEQPACKET* = cint(5)
   SOL_SOCKET* = cint(0xffff)
   SO_REUSEADDR* = cint(0x4)
+  SO_NOSIGPIPE* = cint(0x1022)
   IPPROTO_IP* = cint(0)
   IPPROTO_ICMP* = cint(1)
   IPPROTO_TCP* = cint(6)

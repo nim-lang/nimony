@@ -414,7 +414,9 @@ proc toErr(n: int): ErrorCode {.inline.} =
 proc writeFd(c: Core; data: openArray[char]) {.passive, raises.} =
   var sent = 0
   while sent < data.len:
-    let n = writeAsync(c.fd, addr data[sent], data.len - sent, c.dl)
+    let p = addr data[sent]
+    let n = if c.isSocket: sendAsync(c.fd, p, data.len - sent, c.dl)
+            else: writeAsync(c.fd, p, data.len - sent, c.dl)
     if n <= 0: raise toErr(n)
     sent += n
 

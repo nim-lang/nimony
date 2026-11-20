@@ -182,6 +182,17 @@ proc writeAsync*(fd: cint; buf: pointer; len: int; dl: Deadline): int {.passive.
   discard submitWrite(fd, buf, len, dl, c, addr result)
   suspend()
 
+proc sendAsync*(fd: cint; buf: pointer; len: int; dl: Deadline): int {.passive.} =
+  ## `writeAsync` for a connected socket: a send, so a peer that has gone is
+  ## an error result and not a SIGPIPE that ends the process.
+  when defined(windows):
+    result = writeAsync(fd, buf, len, dl)   # Winsock raises no signal
+  else:
+    result = 0
+    let c = delay()
+    discard submitSendTo(fd, buf, len, Sockaddr_storage(), SockLen(0), dl, c, addr result)
+    suspend()
+
 proc acceptAsync*(listenFd: cint; peer: var PeerAddr; dl: Deadline): int {.passive.} =
   ## One `accept`, parked on the ring. The accepted fd, or negative on error —
   ## `IoTimedOut` when the deadline arrived first.
@@ -554,8 +565,8 @@ proc writeAll*(s: var Socket; buf: pointer; len: int;
   let dl2 = budget(s, dl)
   var sent = 0
   while sent < len:
-    let n = writeAsync(s.fd, cast[pointer](cast[uint](buf) + uint(sent)),
-                       len - sent, dl2)
+    let n = sendAsync(s.fd, cast[pointer](cast[uint](buf) + uint(sent)),
+                      len - sent, dl2)
     # `0` is not an end here the way it is on the read side: a write that
     # placed nothing and reported no error has a peer that is gone.
     if n <= 0: raise toErr(n)
