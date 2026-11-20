@@ -79,3 +79,8 @@ block:  # `==` for tuple|object
   assert i[] == j[]
   assert i[] != k[]
   assert i[] != l[]
+
+block: # `&` for seqs
+  assert(@[1, 2, 3, 4] & @[5, 6] == @[1, 2, 3, 4, 5, 6])
+  assert(@[1, 2, 3] & 4 == @[1, 2, 3, 4])
+  assert(1 & @[2, 3, 4] == @[1, 2, 3, 4])
