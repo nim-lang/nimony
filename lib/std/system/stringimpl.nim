@@ -1061,6 +1061,19 @@ func charToString(c: char): string =
 func `&`*(x: string; y: char): string {.inline.} = result = x & charToString(y)
 func `&`*(x: char; y: string): string {.inline.} = result = charToString(x) & y
 
+func add*(s: var string; chars: openArray[char]) {.inline.} =
+  ## Concatenates `s` and `chars` in place. `chars` must not overlap with `s`.
+  if chars.len > 0:
+    let start = s.len
+    let p = beginStore(s, start + chars.len, start)
+    # nil: out of memory, and `s` is the OOM marker
+    if p != nil:
+      copyMem(p, addr chars[0], chars.len)
+      # `endStore` refreshes the cached first `AlwaysAvail` chars; past them
+      # there is nothing to refresh.
+      if start < AlwaysAvail:
+        endStore(s)
+
 func `&=`*(x: var string; y: string) {.inline.} = x.add y
 func `&=`*(x: var string; y: char) {.inline.} = x.add y
 

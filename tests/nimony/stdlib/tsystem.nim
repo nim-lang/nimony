@@ -84,3 +84,14 @@ block: # `&` for seqs
   assert(@[1, 2, 3, 4] & @[5, 6] == @[1, 2, 3, 4, 5, 6])
   assert(@[1, 2, 3] & 4 == @[1, 2, 3, 4])
   assert(1 & @[2, 3, 4] == @[1, 2, 3, 4])
+
+block: # add(var string, openArray[char])
+  var a0 = "hi"
+  var b0 = "foobar"
+  a0.add b0.toOpenArray(1,3)
+  assert a0 == "hioob"
+  proc fn(c: openArray[char]): string =
+    result = ""
+    result.add c
+  assert fn("def") == "def"
+  assert fn(['d','\0', 'f'])[2] == 'f'
