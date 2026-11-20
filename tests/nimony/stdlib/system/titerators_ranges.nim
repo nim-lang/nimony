@@ -35,4 +35,16 @@ proc main =
   for i in countup(R(7), R(9)): s.add i
   assert s == @[9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 2, 1, 0, 7, 8, 9]
 
+  # `items` of an enum whose `high` fills its storage: no step past `high`
+  # (nimony-bugs-llms#122)
+  type
+    E1 = enum e253 = 253, e254, e255
+    E2 = enum f40000 = 40000, f40001
+    E4 = enum g0 = 2147483646, g1 = 2147483647
+  var n = 0
+  for v in E1: inc n
+  for v in E2: inc n
+  for v in E4: inc n
+  assert n == 7
+
 main()
