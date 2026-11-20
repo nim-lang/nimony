@@ -3702,6 +3702,9 @@ without any further overloads and `put` might not take ownership of `k` if
 `k` already exists in the table. Sink parameters enable an affine type system,
 not a linear type system.
 
+`sink T` is written in prefix form only: `sink (int, int)` is a type, but
+`(int, int).sink` is not a valid type construction.
+
 The employed static analysis is limited and only concerned with local variables;
 however, object and tuple fields are treated as separate entities:
 
