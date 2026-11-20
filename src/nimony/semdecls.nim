@@ -1110,12 +1110,15 @@ proc overrideEffectError(c: var SemContext; symId: SymId; pragmas: Cursor): stri
         "' overrides a `noSideEffect` method and must be `noSideEffect` too"
 
 proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
-                  declStart, beforeParams, beforeGenericParams: int; info: NifLineInfo) =
+                  beforeParams, beforeGenericParams: int): string =
+  ## The error that keeps `symId` from being a method, or "".
+  result = ""
   var params = cursorAt(dest, beforeParams)
   let paramsNode = params
   var root = SymId(0)
   var signature = StrId(0)
   var hasFirstParam = false
+  var isBase = false
   if params.isTagLit:
     inc params
     if isParamLike(params.substructureKind):
@@ -1127,15 +1130,23 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
       root = getClass(params) # can be a generic instance symbol
       var methodName = pool.symBasename(symId)
       signature = pool.strings.getOrIncl(methodKey(methodName, paramsNode))
-  if not hasFirstParam or root == SymId(0) or not isObjectType(root):
-    var errBuf = createTokenBuf(16)
-    if not hasFirstParam:
-      # `params` is not sitting on a type here, so don't render one: without a
-      # first parameter there is nothing a method could dispatch on (#2279).
-      buildErr c, errBuf, info, "'method' needs a parameter that has an object type"
-    else:
-      buildErr c, errBuf, info, "cannot attach method to type " & typeToString(params)
-    dest.insert errBuf, declStart
+      var pragmas = paramsNode
+      skip pragmas # params
+      skip pragmas # return type
+      isBase = hasPragma(pragmas, BaseP)
+  if not hasFirstParam:
+    # `params` is not sitting on a type here, so don't render one: without a
+    # first parameter there is nothing a method could dispatch on (#2279).
+    result = "'method' needs a parameter that has an object type"
+  elif root == SymId(0) or not isObjectType(root):
+    result = "cannot attach method to type " & typeToString(params)
+  elif isBase and
+      pool.symModule(classHead(root)) != c.thisModuleSuffix and
+      pool.symModule(classHead(root)) notin c.cycleGroup:
+    # Only the class's module emits its vtable, so only it can add a slot
+    # (Araq on llms#175). An override fills a slot that already exists.
+    result = "a base method must be declared in the module that declares its class: " &
+      typeToString(params)
   else:
     let methodIsInstance = dest[beforeGenericParams].kind == TagLit and dest[beforeGenericParams].tagId == TagId(InvokeT)
     var symToRegister = symId
@@ -1195,12 +1206,14 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
 
 proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
                        symId: SymId; declStart, beforeExportMarker, beforeGenericParams, beforeParams: int;
-                       hk: HookKind; info: NifLineInfo; isMagic: bool) =
-  ## Attach converters, methods, or hooks that should become methods.
+                       hk: HookKind; info: NifLineInfo; isMagic: bool): string =
+  ## Attach converters, methods, or hooks that should become methods. A
+  ## method's error is returned, to be reported after the routine.
+  result = ""
   if kind == ConverterY:
     attachConverter c, dest, symId, declStart, beforeExportMarker, beforeGenericParams, info
   elif kind == MethodY:
-    attachMethod c, dest, symId, declStart, beforeParams, beforeGenericParams, info
+    result = attachMethod(c, dest, symId, beforeParams, beforeGenericParams)
   elif isMagic:
     # Magic hooks (`=destroy` etc. with a `.magic`) never become methods.
     # Their `(magicname)` tag also replaced the export marker, so the
@@ -1213,7 +1226,7 @@ proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
     discard
   elif hookThatShouldBeMethod(c, dest, hk, beforeParams):
     setTagAt(dest, declStart, TagId(MethodS)) # keeps the sealed jump
-    attachMethod c, dest, symId, declStart, beforeParams, beforeGenericParams, info
+    result = attachMethod(c, dest, symId, beforeParams, beforeGenericParams)
 
 proc untypedIsActive(c: SemContext; crucial: CrucialPragma): bool {.inline.} =
   result = UntypedP in crucial.flags or UntypedFeature in c.features
@@ -1514,8 +1527,9 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         collectConceptBounds c, symId
       let hookName = getHookName(symId)
       let hk = hookToKind(hookName)
+      var attachErr = ""
       if status in {OkNew, OkExistingFresh}:
-        attachSpecialProc(c, dest, kind, symId, declStart, beforeExportMarker,
+        attachErr = attachSpecialProc(c, dest, kind, symId, declStart, beforeExportMarker,
                           beforeGenericParams, beforeParams, hk, info,
                           isMagic = crucial.magic.len > 0)
       let beforeBody = dest.len
@@ -1565,6 +1579,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         # A statement of its own after the routine: in the body slot it would
         # give the routine one child too many.
         c.buildErr dest, info, "'method' is only allowed at top level"
+      if attachErr.len > 0:
+        c.buildErr dest, info, attachErr
     finally:
       c.inGenericDefinition = outerGenericDefinition
       c.visOwner.setLen outerVisOwner
