@@ -3,8 +3,10 @@
 
 import std / syncio
 
-template staticRead*(filename: string): untyped =
+proc staticRead*(filename: string): string {.raises.} =
+  # A proc, not a template: the sub-compile resolves a relative path against
+  # the directory of the call's file, which must be the caller's, not this one.
   readFile(filename)
 
-template slurp*(filename: string): untyped =
-  staticRead(filename)
+proc slurp*(filename: string): string {.raises.} =
+  readFile(filename)

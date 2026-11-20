@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tconstevalraises.nim(5, 21) Error: cannot evaluate expression at compile time: staticRead("nosuchfile.txt")
+
+the evaluation raised an exception
