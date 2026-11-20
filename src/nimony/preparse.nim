@@ -72,6 +72,11 @@ proc queueImports(config: NifConfig; p: Parse; seen: var HashSet[string];
 
 proc preparse*(config: NifConfig; parser, root: string; withSystem: bool) =
   ## `root` is the main module, which is never a stdlib one.
+  if root.endsWith(".nif"):
+    # `nimony s` starts from an already parsed `.p.nif` (for example a macro
+    # plugin module). There is no Nim source to preparse, and handing the NIF
+    # tree to the Nim parser would report its first line info as source text.
+    return
   let jobs = if config.parallelBuild > 0: config.parallelBuild
              else: countProcessors()
   var seen = initHashSet[string]()
