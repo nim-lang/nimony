@@ -227,12 +227,18 @@ when not defined(windows):
 
   proc createPipes(s: var LaunchState) {.raises.} =
     for i in 0 ..< 3:
-      when defined(illumos):
-        # Atomic CLOEXEC prevents another concurrent launch inheriting our
-        # parent ends and keeping a stream alive after its owner closes it.
-        let rc = pipe2(addr s.pipes[i][0], O_CLOEXEC)
+      # CLOEXEC keeps a later launch from inheriting our parent ends and
+      # keeping a stream alive after its owner closes it; the child's dup2
+      # targets do not carry the flag.
+      when defined(osx):
+        # No pipe2 on macOS: a launch racing on another thread can still
+        # inherit the ends between the two calls.
+        var rc = pipe(addr s.pipes[i][0])
+        for j in 0 ..< 2:
+          if rc == 0 and fcntl(s.pipes[i][j], F_SETFD, FD_CLOEXEC) != 0:
+            rc = -1
       else:
-        let rc = pipe(addr s.pipes[i][0])
+        let rc = pipe2(addr s.pipes[i][0], O_CLOEXEC)
       if rc != 0:
         raiseOSError(osLastError())
       when defined(illumos):
