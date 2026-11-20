@@ -98,6 +98,8 @@ const
   O_CLOEXEC* = cint(0x1000000)
   F_GETFL* = cint(3)
   F_SETFL* = cint(4)
+  F_SETFD* = cint(2)
+  FD_CLOEXEC* = cint(1)
 
 # <dlfcn.h>
 const

@@ -51,6 +51,16 @@ when defined(posix):
     assert waitForExit(input, 5000) == 0
     close(input)
 
+    # A later child must not inherit an earlier child's stdin write end.
+    let first = startProcess(shell, args = ["-c", "cat"], options = {})
+    let second = startProcess(shell, args = ["-c", "cat"], options = {})
+    close(inputStream(first))
+    assert waitForExit(first, 5000) == 0
+    close(inputStream(second))
+    assert waitForExit(second, 5000) == 0
+    close(first)
+    close(second)
+
     let parent = startProcess(shell, args = ["-c", "exit 23"],
                               options = {poParentStreams})
     assert waitForExit(parent) == 23

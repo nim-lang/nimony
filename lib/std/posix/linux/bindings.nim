@@ -40,6 +40,7 @@ when not linuxA64Raw:
   proc unlink*(path: cstring): cint {.importc: "unlink", sideEffect.}
 
   proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
+  proc pipe2*(a: ptr cint; flags: cint): cint {.importc: "pipe2", sideEffect.}
   proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
   proc fork*(): Pid {.importc: "fork", sideEffect.}
 
