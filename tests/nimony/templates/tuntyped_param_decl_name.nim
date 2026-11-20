@@ -26,3 +26,8 @@ proc f(): int =
 echo f()
 declareInject(g)
 echo g
+
+template declareQuoted(name: untyped) {.untyped.} =
+  func `name`(): int = 1
+declareQuoted(one)
+echo one()
