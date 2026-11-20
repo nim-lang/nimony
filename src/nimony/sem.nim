@@ -622,6 +622,9 @@ proc semStmtsExpr(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScop
       else:
         semExpr c, dest, it
   dest.addParRi()
+  # the list is not a symbol, even when its last son is one: a routine kind
+  # here would make a call through `(expr ... anonproc)` look up symbol 0
+  it.kind = NoSym
   if empty:
     # `(stmts)` produces nothing: that is `void`, not "unknown". A template whose
     # body was a `when` that compiled to nothing publishes exactly this, and its
