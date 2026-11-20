@@ -7,3 +7,4 @@ two accepts, one connection: completions=1 ok=true
 two accepts, second connection: completions=1 ok=true
 pipe read: n=2 buf=hi
 pipe write: n=3 buf=abc
+send to a gone peer: res=-32

@@ -61,6 +61,8 @@ when defined(posix):
   export F_GETFL, F_SETFL, O_NONBLOCK, SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
   from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
                               SockAddr, InAddr, TSa_Family
+  when defined(osx):
+    from ./ioring/backends/poll import noSigPipe
   # `submitAccept`'s `peer` names these, so a caller has to be able to name
   # them too. The Windows arm exports the same three from its own declarations
   # further down; this keeps the ring's public surface identical on both.
@@ -420,7 +422,10 @@ proc submitSendTo*(fd: cint; buf: pointer; len: int; sa: Sockaddr_storage;
   ## Send `buf` as one datagram to `sa`. Completes with the number of bytes
   ## sent, or a negative result. On the readiness backends `fd` must be
   ## `O_NONBLOCK`. The address is copied into the op, so it does
-  ## not need to outlive the call the way `submitConnect`'s does.
+  ## not need to outlive the call the way `submitConnect`'s does. A `saLen`
+  ## of `0` sends to the connected peer, as `send` does. A send to a peer
+  ## that has gone completes with `-EPIPE` and raises no SIGPIPE on Linux
+  ## and FreeBSD.
   result = nextSeqNum()
   var op = OpContext(kind: opSendTo, fd: fd, seqnum: result,
     sendto: SendToArgs(buf: buf, len: len, sockAddr: sa, sockAddrLen: saLen),
@@ -607,7 +612,9 @@ when defined(posix):
     ## blocking one would finish the connect inside the syscall and there
     ## would be nothing for the ring to wait on.
     result = socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
-    if result >= 0: setNonBlocking(result)
+    if result >= 0:
+      setNonBlocking(result)
+      when defined(osx): noSigPipe(result)
 
   proc loopbackAddr*(sa: var Sockaddr_storage; saLen: var SockLen;
                      port: uint16) =
@@ -642,6 +649,7 @@ when defined(posix):
   proc listenTcp*(port: uint16; backlog = 1024): cint =
     let fd = socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     assert fd >= 0, "socket() failed"
+    when defined(osx): noSigPipe(fd)   # accepted sockets inherit it
     var yes: cint = 1
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
     var addr4 = default(Sockaddr_in)

@@ -178,7 +178,21 @@ when defined(posix):
   proc posixRecvfrom(s: cint; buf: nil pointer; count: int; flags: cint;
                      `addr`: pointer; addrlen: ptr SockLen): int {.importc: "recvfrom".}
   proc posixSendto(s: cint; buf: nil pointer; count: int; flags: cint;
-                   `addr`: pointer; addrlen: SockLen): int {.importc: SendToName.}
+                   `addr`: nil pointer; addrlen: SockLen): int {.importc: SendToName.}
+  const MsgNoSignal = when defined(linux): 0x4000.cint
+                      elif defined(freebsd): 0x20000.cint
+                      elif defined(illumos): 0x200.cint
+                      else: 0.cint
+    ## A send to a peer that has gone fails with `EPIPE` instead of raising
+    ## SIGPIPE, which would end the process. macOS has no such flag: there
+    ## the socket itself carries SO_NOSIGPIPE (`noSigPipe`).
+  when defined(osx):
+    from std/posix/posix import SO_NOSIGPIPE
+    proc noSigPipe*(fd: cint) =
+      ## Set SO_NOSIGPIPE on a socket when it is made, as Nim 2's `newSocket`
+      ## does.
+      var yes: cint = 1
+      discard posixSetsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, addr yes, SockLen(sizeof(yes)))
   proc posixOpen(path: cstring; flags: cint): cint {.varargs, importc: "open", sideEffect.}
     ## A named `open`: `posix.open` and `syncio.open` clash wherever both are
     ## imported, and importing only the one this file needs would be a line of
@@ -202,7 +216,10 @@ when defined(posix):
     ## thread performs it and completes with the fd (or `-errno`). The flag
     ## just created has nothing to arm: its O_NONBLOCK comes from a ring op,
     ## not from waiting on it.
-    complete(s, int pcall(posixSocket(cint(domain), cint(typ), cint(proto))))
+    let fd = pcall(posixSocket(cint(domain), cint(typ), cint(proto)))
+    when defined(osx):
+      if fd >= 0: noSigPipe(cint(fd))
+    complete(s, int fd)
 
   proc completeSetSockOpt*(s: Slot; fd: FileHandle; level, optName: cint;
                            optVal: nil pointer; optLen: SockLen) =
@@ -354,8 +371,10 @@ when defined(posix):
           if transferDone(n): complete(s, n)
       of opSendTo:
         if evWrite in firedEvents:
-          let r = int pcall(posixSendto(fd, s.op.sendto.buf, s.op.sendto.len, 0,
-                                       addr s.op.sendto.sockAddr, s.op.sendto.sockAddrLen))
+          var to: nil pointer = addr s.op.sendto.sockAddr
+          if s.op.sendto.sockAddrLen == 0: to = nil   # a connected socket's send
+          let r = int pcall(posixSendto(fd, s.op.sendto.buf, s.op.sendto.len, MsgNoSignal,
+                                       to, s.op.sendto.sockAddrLen))
           if transferDone(r): complete(s, r)
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)

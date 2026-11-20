@@ -145,7 +145,8 @@ proc fillSqe(sqe: ptr Sqe; slot: Slot) {.inline.} =
   of opSendTo:
     discard sqe.sendmsg(SocketHandle(op.fd),
       newMsg(slot, addr op.sendto.sockAddr,
-             op.sendto.sockAddrLen, cast[pointer](op.sendto.buf), op.sendto.len))
+             op.sendto.sockAddrLen, cast[pointer](op.sendto.buf), op.sendto.len),
+      {MSG_NOSIGNAL})
   of opNop, opTimeout:
     # A timer needs no SQE. The lane's deadline heap already knows when it is
     # due and bounds the `submit(waitNr)` below, so letting the kernel hold a

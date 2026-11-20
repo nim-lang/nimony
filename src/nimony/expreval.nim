@@ -387,7 +387,8 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       # `slurp`/`staticRead` reads a file at compile time. Fold it natively so
       # a small file (e.g. `doc/version.md`) does not trigger a full nested
       # sub-compile. Paths are resolved relative to the source file, matching
-      # `exprexec`'s sub-compile behaviour; failures fold to "" like the proc.
+      # `exprexec`'s sub-compile behaviour. A file that cannot be read is an
+      # error at the call, as in Nim 2.
       if c.c == nil or c.noExecute:
         # No `SemContext` to record the file dependency in (hexer/FIR
         # callers): leave the call to `slurp`'s body, a runtime `readFile`.
@@ -400,15 +401,14 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       let relPath = pool.strings[a.strId]
       let full = if isAbsolute(relPath): relPath
                  else: constSourceDir(n.info) / relPath
-      var contents = ""
       try:
-        contents = readFile(full)
+        let contents = readFile(full)
         # Same bookkeeping as a plugin's `dependsOn`: without it the module's
         # `.s.nif` is never rebuilt when the file changes (nim-lang/nimony#1378).
         recordFileDep c.c[], full
+        result = stringValue(c, contents, n.info)
       except:
-        contents = ""
-      result = stringValue(c, contents, n.info)
+        result = c.error("cannot open file: " & relPath, n.info)
     of "newSeqUninit":
       # `@[]` lowers to `newSeqUninit[T](0)`. Fold the empty case natively to an
       # empty `seq[T]` value; a non-zero size yields uninitialised memory and
