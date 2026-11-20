@@ -13,6 +13,10 @@ proc setup*(filename: string) =
 proc teardown*() =
   close(outp)
 
+proc raised*() =
+  write stderr, "the evaluation raised an exception"
+  quit 1
+
 # all atoms must start with a space, keeps the logic simple
 
 proc writeNifFloat*(f: float) =

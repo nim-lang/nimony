@@ -6,7 +6,7 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
-from std / strutils import multiReplace, startsWith, split
+from std / strutils import multiReplace, startsWith, split, strip
 from std / algorithm import sort
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
 from std / osproc import execCmdEx, startProcess, waitForExit, close,
@@ -1153,7 +1153,8 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
                                         (if isStd: evalCache else: ""), usedModules,
                                         evalArgs, nativeEval, exeName, sourceDir)
     if exitCode != 0:
-      result = ensureMove(output)
+      # `execCmdEx` ends every line it read with a newline, the last one too
+      result = output.strip(leading = false)
     else:
       let outfile = evalCache / srcName.addFileExt(".out.nif")
       var r = rd.open(outfile)
