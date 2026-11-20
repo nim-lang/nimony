@@ -17,7 +17,7 @@ import ".." / lib / nifreader
 from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
 import nimony_model, decls, programs
-from semos import shellArgs
+from semos import shellArgs, nativeHostArgs
 
 type
   MacroPlugin* = object
@@ -281,13 +281,18 @@ proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
   when defined(windows):
     result.add ".exe"
 
-proc macroPluginExists*(nifcachePath: string; macroSym: SymId): bool =
-  ## True when a compiled plugin binary for `macroSym` already sits in the
-  ## shared nifcache. Used to recognise a macro imported from another module:
-  ## its declaration is never re-semchecked in the importer (so it is absent
-  ## from `SemContext.compiledMacros`), but the dependency build compiled its
-  ## plugin into the same nifcache we read here.
-  fileExists(getMacroPluginPath(nifcachePath, macroSym))
+proc findMacroPluginPath*(nifcachePath, stdcachePath: string;
+                          macroSym: SymId): string =
+  ## Finds the plugin of a macro imported from another module. A macro from
+  ## the main build lives in `nifcachePath`; a stdlib macro's plugin lives in
+  ## the shared stdlib cache instead, because that is where the stdlib module
+  ## was semchecked.
+  result = getMacroPluginPath(nifcachePath, macroSym)
+  if fileExists(result): return
+  result = ""
+  if stdcachePath.len > 0:
+    let stdPath = getMacroPluginPath(stdcachePath, macroSym)
+    if fileExists(stdPath): result = stdPath
 
 proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymId;
                          info: NifLineInfo;
@@ -340,15 +345,18 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
 
   let nimonyExe = getAppDir() / "nimony"
   let srcLibPath = getAppDir().parentDir() / "src" / "lib"
+  # A macro plugin is a host program, not part of the target. Build it with
+  # the native backend wherever the host supports it: that skips the C compiler
+  # round-trip and makes it libc-free even when the outer target is not.
+  let backendArgs = nativeHostArgs()
 
   # Pre-populate the isolated plugin cache with a host-bits stdlib. `nimony s`
   # only reads its imports' `.s.nif` — it does not build them — so in a fresh
   # per-plugin cache we must first materialise the stdlib the plugin imports.
   # The plugin scaffold imports exactly `std/[syncio, macros]` (see
   # `emitImportStdMacros`); compiling those pulls in the whole host-bits stdlib
-  # closure the plugin needs (incl. the NimNode/NIF-reader machinery). The
-  # native link of this setup may fail (harmless — we only need the `.s.nif`/
-  # `.c.nif`), and `nimony c` is incremental so repeat calls are cheap.
+  # closure the plugin needs (incl. the NimNode/NIF-reader machinery).
+  # `nimony c` is incremental so repeat calls are cheap.
   let setupFile = pluginCache / "macro_setup.nim"
   try:
     writeFile(setupFile, "import std/[syncio, macros]\n")
@@ -356,11 +364,12 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
     echo "Macro plugin: failed to write ", setupFile
     return ""
   let setupCmd = quoteShell(nimonyExe) & shellArgs(hostCommandLineArgs) &
+                 backendArgs &
                  " --path:" & quoteShell(srcLibPath) &
                  " --nimcache:" & quoteShell(pluginCache) &
                  " c " & quoteShell(setupFile)
   try:
-    discard execCmdEx(setupCmd)   # ignore exit: a failed native link still leaves the .s.nif/.c.nif
+    discard execCmdEx(setupCmd)   # ignore exit: a failed link still leaves the .s.nif/.c.nif
   except:
     echo "Macro plugin: failed to setup host stdlib: ", setupCmd
     return ""
@@ -378,6 +387,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # nimsem (currently paused waiting on this exec) still has it mmap'd.
   # Same rationale as `semos.runProgram`.
   let cmd = quoteShell(nimonyExe) & shellArgs(hostCommandLineArgs) &
+            backendArgs &
             " --path:" & quoteShell(srcLibPath) &
             " --nimcache:" & quoteShell(pluginCache) &
             " -o:" & quoteShell(exePath) &
@@ -399,17 +409,16 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
 
   result = exePath
 
-proc runMacroPlugin*(nifcachePath: string; dest: var TokenBuf;
+proc runMacroPlugin*(exePath, workCache: string; dest: var TokenBuf;
                      info: NifLineInfo;
                      macroSym: SymId; args: TokenBuf): bool =
-  let exePath = getMacroPluginPath(nifcachePath, macroSym)
   if not fileExists(exePath):
     echo "Macro plugin not found: ", exePath
     return false
 
   let stem = macroFileStem(macroSym)
-  let inputPath = nifcachePath / stem & ".in.nif"
-  let outputPath = nifcachePath / stem & ".out.nif"
+  let inputPath = workCache / stem & ".in.nif"
+  let outputPath = workCache / stem & ".out.nif"
   try:
     writeFile(inputPath, toString(args))
   except:

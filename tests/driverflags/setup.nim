@@ -13,3 +13,12 @@ for targetOS in TSystemOS:
       assert flags == @["-m64"]
     else:
       assert flags.len == 0
+
+# nifasm's PE writer replaces the output's extension with `.exe`, including
+# evaluator outputs whose temporary module name ends in `.p`.
+config.targetOS = osWindows
+assert config.executableName("nim123.p", true) == "nim123.exe"
+assert config.executableName("nim123", true) == "nim123.exe"
+assert config.executableName("nim123.p", false) == "nim123.p"
+config.targetOS = osLinux
+assert config.executableName("nim123.p", true) == "nim123.p"
