@@ -150,6 +150,7 @@ proc getIdentReplaceParams(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
     if count == 1 and sym.exprKind == OchoiceX: inc sym
     if sym.isSymbol and isTemplParam(c, sym.symId):
       dest.addSubtree sym
+      inc n # the `quoted` loop below advances through `n`
       result = true
     else:
       takeTree dest, n
