@@ -70,6 +70,9 @@ var gServer = 0
 proc serverChain() {.passive.} =
   var s = listenHttp(0'u16, tags)     # port 0: the kernel picks, nothing collides
   s.serverName = "t"
+  # Server-wide because a connection takes it from its server at accept: on
+  # Windows closing a writer sends no FIN, so case11 ends only by this budget.
+  s.requestMs = 3000
   gPort = int(boundPort(s.fd))
   atomicStore(listening, 1, moRelease)
   var left = gServer
@@ -199,11 +202,26 @@ proc case10() {.passive.} =
     "Transfer-Encoding: foo\r\n\r\n5\r\nhello\r\n0\r\n\r\n")) & "\n"
   atomicStore(clientDone, 1, moRelease)
 
+proc case11() {.passive.} =
+  # A body that ends before its `Content-Length`: the request half-closes
+  # after 10 of 100 bytes, and must not be answered as if it were whole.
+  var r = ""
+  try:
+    var (rd, w) = streamio.connect("127.0.0.1:" & $gPort,
+      "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n0123456789",
+      dl = afterMs(5000))
+    w.close()
+    r = rd.readAll()
+  except ErrorCode as e:
+    r.add "CLIENT " & $e
+  log.add "[11] short body -> '" & scrub(r) & "'\n"
+  atomicStore(clientDone, 1, moRelease)
+
 # ---------------------------------------------------------------- driver --
 
 proc main =
   initIoRing()
-  gServer = 15        # 9 single-connection cases + 6 targets in case7
+  gServer = 16        # 10 single-connection cases + 6 targets in case7
   submit(delay(serverChain()), 0)
   let start = monoNow()
   while atomicLoad(listening, moAcquire) == 0:
@@ -220,6 +238,7 @@ proc main =
   submit(delay(case8()), 1); awaitFlag(clientDone)
   submit(delay(case9()), 1); awaitFlag(clientDone)
   submit(delay(case10()), 1); awaitFlag(clientDone)
+  submit(delay(case11()), 1); awaitFlag(clientDone)
   awaitFlag(serverDone)
   stdout.write log
 

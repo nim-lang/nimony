@@ -529,6 +529,9 @@ proc readBody*(c: var HttpConnection; dest: var openArray[char]): int {.
   elif c.bodyLeft > 0:
     let want = if c.bodyLeft < dest.len: c.bodyLeft else: dest.len
     result = c.conn.readBody(toOpenArray(dest, 0, want - 1))
+    # The peer stopped before `Content-Length`: a truncated body, as
+    # `readChunked` reports one, and not its end.
+    if result == 0 and want > 0: raise EndOfStreamError
     c.bodyLeft -= result
 
 proc readBody*(c: var HttpConnection; limit = 1024 * 1024): string {.

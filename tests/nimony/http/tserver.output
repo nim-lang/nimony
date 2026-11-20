@@ -82,3 +82,4 @@ connection: close
 content-length: 0
 
 
+[11] short body -> ''
