@@ -1,1 +1,2 @@
 tests/nimony/exceptions/tbare_raise_outside.nim(7, 3) Error: bare `raise` is only allowed inside an `except` block
+tests/nimony/exceptions/tbare_raise_outside.nim(14, 3) Error: `raise` only allowed within a routine with `raises` pragma

@@ -7,3 +7,10 @@ proc bad() {.raises.} =
   raise
 
 bad()
+
+# The error replaces the `raise` node: an extra child crashed the
+# instantiation of the stored generic body.
+proc g[T](x: T): T =
+  raise ValueError
+
+discard g(1)
