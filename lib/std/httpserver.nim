@@ -460,6 +460,12 @@ proc next*(c: var HttpConnection): bool {.passive.} =
     fail(c, 400)
     return false
 
+  # A `Transfer-Encoding` other than exactly `chunked` leaves the body without
+  # a length we can read: 400 and close (RFC 9112 §6.3).
+  if c.req.contains(hTransferEncoding) and not c.req.isChunked:
+    fail(c, 400)
+    return false
+
   c.chunked = c.req.isChunked
   c.bodyLeft = if c.chunked: -1 else: (let n = c.req.contentLength; if n < 0: 0 else: n)
   if c.chunked: c.conn.beginBody()
