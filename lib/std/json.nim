@@ -39,7 +39,7 @@ when defined(nimony):
   {.feature: "untyped".}      # generic bodies sem-checked at instantiation
   {.feature: "lenientnils".}  # nifcore returns nil pools for ownerless cursors
 
-import std / [parsejson, streams, parseutils, assertions, formatfloat, syncio, typetraits]
+import std / [parsejson, streams, parseutils, assertions, formatfloat, syncio, typetraits, tables, opt]
 import ../../src/lib/nifcore
 
 export parsejson  # callers may want JsonParser, getTok, etc.
@@ -664,6 +664,21 @@ proc toJson*[O: object](t: var JsonTree; x: O; opts: JsonOptions) =
       toJson(t, f, opts)                   # opts threads down
   t.buf.closeTag()
 
+proc toJson*[V; M: Table[string, V] | OrderedTable[string, V]](t: var JsonTree; x: M; opts: JsonOptions) =
+  t.buf.openTag JKObject.tagId
+  for k, v in pairs(x):
+    t.buf.buildTree JKKv.tagId:
+      t.buf.addStrLit k
+      toJson(t, v, opts)
+  t.buf.closeTag()
+
+proc toJson*[T](t: var JsonTree; x: Opt[T]; opts: JsonOptions) =
+  if isSome(x):
+    toJson(t, getOrQuit(x), opts)
+  else:
+    t.buf.buildTree JKNull.tagId:
+      discard
+
 proc toJson*[T](x: T; opts = JsonOptions()): JsonTree =
   ## Entry point: serialise `x` to a fresh `JsonTree`. Distinguished from the
   ## recursive workers by arity (1–2 args, no leading `var JsonTree`).
@@ -716,6 +731,22 @@ proc fromJson*[T](c: var JsonNode; t: typedesc[seq[T]]; opts: var JsonOptions): 
   c.into:
     while c.hasMore:
       result.add fromJson(c, T, opts)
+
+proc fromJson*[V; M: Table[string, V] | OrderedTable[string, V]](c: var JsonNode; t: typedesc[M]; opts: var JsonOptions): M {.raises.} =
+  if kind(c) != JObject: expect(opts, c, "object")
+  result = default(M)
+  c.into:
+    while c.hasMore:
+      c.into:
+        let k = strVal(c); c.inc
+        result[k] = fromJson(c, V, opts)
+
+proc fromJson*[T](c: var JsonNode; t: typedesc[Opt[T]]; opts: var JsonOptions): Opt[T] {.raises.} =
+  if kind(c) != JNull:
+    result = some(fromJson(c, T, opts))
+  else:
+    result = none[T]()
+    c.skip
 
 proc skipTypeField(c: var JsonNode; opts: JsonOptions) =
   ## If the next member is the `"type"` discriminator, consume it.
