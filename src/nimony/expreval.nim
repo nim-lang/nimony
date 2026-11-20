@@ -1331,6 +1331,27 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
             cannotEval n
             return
       result = cursorAt(buf, 0)
+    of ArratX, TupatX:
+      # `c[i]` of a constant array or tuple: the element of the folded value.
+      # `(arrat a i high low?)`: the element's position is `i - low`.
+      let orig = n
+      var val = default(Cursor)
+      var pos = createNaN()
+      n.into:
+        val = propagateError eval(c, n)
+        pos = getConstOrdinalValue propagateError eval(c, n)
+        if n.hasMore: skip n # high
+        if n.hasMore: pos = pos - getConstOrdinalValue propagateError eval(c, n)
+      var err = isNaN(pos) or not (isPlainArrayValue(val) or val.exprKind == TupconstrX)
+      var k = if err: -1'i64 else: asSigned(pos, err)
+      if not err and k >= 0:
+        val.peekInto:
+          skip val # type
+          while k > 0 and val.hasMore:
+            skip val
+            dec k
+          if k == 0 and val.hasMore: result = val
+      if cursorIsNil(result): cannotEval orig
     of AddrX:
       # Pass-through: `addr X` folds to itself, preserving the inner
       # symbol/path verbatim. Recursing into `eval` would replace a `ConstY`
