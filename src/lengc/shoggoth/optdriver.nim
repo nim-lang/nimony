@@ -405,16 +405,19 @@ proc processFile*(input, output: string; verify = false;
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
-  # The vectorizer runs before the cleanup passes, which ask the type context
-  # about every call they see: its intrinsics must be known by then. They are
-  # appended to the module only if something was vectorized (`optimizeModule`).
-  var vecDecls = createTokenBuf(256, src.pool, src.tags)
+  # The vectorizer and the memory-loop idioms run before the cleanup passes,
+  # which ask the type context about every call and `(instr …)` they see: their
+  # intrinsics must be known by then. They are appended to the module only if
+  # something used them (`optimizeModule`).
+  var intrinsicDecls = createTokenBuf(256, src.pool, src.tags)
   if target.vecMode != vecOff:
-    addVecIntrinsicDecls(vecDecls, "vec." & suffix)
-    var d = beginRead(vecDecls)
-    while d.hasMore:
-      typeCtx.registerProcDecl(d)
-      skip d
+    addVecIntrinsicDecls(intrinsicDecls, "vec." & suffix)
+  if ZeroMemOp in st.memOps: addMemIntrinsicDecl(intrinsicDecls, "mem." & suffix, ZeroMemOp)
+  if CopyMemOp in st.memOps: addMemIntrinsicDecl(intrinsicDecls, "mem." & suffix, CopyMemOp)
+  var d = beginRead(intrinsicDecls)
+  while d.hasMore:
+    typeCtx.registerProcDecl(d)
+    skip d
   var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, target)
   checkWellFormed(optimized)
   onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))

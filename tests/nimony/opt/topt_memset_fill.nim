@@ -65,6 +65,13 @@ proc u8Loop(): int =
   result = 0
   for x in a: result = result + int(x)
 
+proc clearRowTails(m: var array[3, array[4, int]]) =
+  # a fill loop inside a counted loop: the outer loop's passes ask about the
+  # memset row the inner loop became
+  for r in 0 ..< 3:
+    m[r][0] = 7
+    for c in 1 ..< 4: m[r][c] = 0
+
 defaults()
 
 var s = newSeq[Obj](5)
@@ -97,3 +104,9 @@ fillThroughGlobal(3)
 echo store[0], " ", store[2], " ", store[3]
 
 echo "u8: ", u8Loop()
+
+var grid: array[3, array[4, int]]
+for r in 0 ..< 3:
+  for c in 0 ..< 4: grid[r][c] = r * 4 + c + 1
+clearRowTails(grid)
+echo "rows: ", grid[0][0], " ", grid[1][3], " ", grid[2][0], " ", grid[2][3]
