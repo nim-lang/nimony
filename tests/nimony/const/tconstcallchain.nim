@@ -18,3 +18,15 @@ proc twiceStr(s: string): string = s & s
 proc lit(): string = "ab".twiceStr
 const l = lit()
 echo l
+
+# A value of an inheritable type: the inherited fields are named by `kv`s with
+# their inheritance depth, as in sem's constructors (#142 of nimony-bugs-llms).
+type
+  Base = object of RootObj
+    bx: int
+  Child = object of Base
+    cy: int
+proc mkChild(): Child = Child(bx: 1, cy: 2)
+const child = mkChild()
+const direct = Child(bx: 3, cy: 4)
+echo child.bx, child.cy, direct.bx, direct.cy
