@@ -331,6 +331,8 @@ proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: Token
   else:
     let a = accessObjField(c, param, r.name, needsDeref, depth = depth)
     entryPoint(c, fieldType, readonlyCursorAt(a, 0))
+  if depth > 0:
+    genStringCall(c, "writeNifRaw", " " & $depth)
   genParRiCall c
 
 proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
@@ -374,7 +376,19 @@ proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: Toke
       error "illformed AST inside object: ", n
 
 
-proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; depth: int) =
+proc unravelObjAndParents(c: var SynthesizeSerializerCtx; obj: Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
+  ## The fields of `obj`, after those of its ancestors. They stay flat, an
+  ## inherited field's `kv` carrying its depth, as in sem's object constructors.
+  var n = sub(obj) # bound the field walk; `n` is a copy
+  if not n.isDotToken:
+    var parent = n
+    if parent.typeKind in {RefT, PtrT}:
+      inc parent
+    unravelObjAndParents c, toTypeImpl(parent), param, needsDeref, depth+1
+  skip n # inheritance is gone
+  unravelObjFields c, n, param, needsDeref, depth
+
+proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf) =
   genStringCall(c, "writeNifParLe", "oconstr")
   # we simply generate the type as a raw string:
   genTypeCall(c, orig)
@@ -384,15 +398,7 @@ proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; d
   if n.typeKind in {RefT, PtrT}:
     inc n
   assert n.typeKind == ObjectT
-  n = sub(n) # bound the field walk; `n` is a copy
-  # recurse for the inherited object type, if any:
-  if not n.isDotToken:
-    var parent = n
-    if parent.typeKind in {RefT, PtrT}:
-      inc parent
-    unravelObj c, toTypeImpl(parent), param, depth+1
-  skip n # inheritance is gone
-  unravelObjFields c, n, param, needsDeref, depth
+  unravelObjAndParents c, n, param, needsDeref, 0
   genParRiCall c
 
 proc unravelTuple(c: var SynthesizeSerializerCtx;
@@ -661,7 +667,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
   of ObjectT:
     if orig.isSymbol and hasRtti(orig.symId):
       c.routineKind = MethodY
-    unravelObj c, typ, param, 0
+    unravelObj c, typ, param
   of TupleT:
     unravelTuple c, typ, param
   of ArrayT:

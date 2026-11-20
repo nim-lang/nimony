@@ -1599,6 +1599,11 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   var n = objType
   if n.typeKind != ObjectT: return false
   n = sub(n) # bound the walk to the object body; `n` is a copy
+  if not n.isDotToken:
+    # an inherited field: a constant's `(kv x v depth)` names it as well
+    var parent = n
+    if parent.typeKind in {RefT, PtrT}: inc parent
+    if findObjectField(toTypeImpl(parent), fieldSym, typ, exported): return true
   skip n # parent type
   var iter = initObjFieldIter()
   while nextField(iter, n):
