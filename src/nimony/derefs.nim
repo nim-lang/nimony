@@ -817,7 +817,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     return
 
   let tt = getType(c.typeCache, n)
-  let fnType = skipProcTypeToParams(tt.skipModifier)
+  let fnType = skipProcTypeToParams(tt)
   if not fnType.isParamsTag:
     bug "derefs trCall: callee type not params at " & infoToStr(n.info)
   # Declared here (not up top) so its body can see `fnType`: Nimony resolves

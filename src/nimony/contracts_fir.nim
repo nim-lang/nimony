@@ -189,6 +189,8 @@ type
     ownOlds: Table[string, VarId]
       ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
+    yieldType: Cursor                  # an iterator's return type, which each
+                                       # `yield` stores into; nil otherwise
     laterParams: HashSet[SymId]        # the current proc's params after the first;
                                        # see `checkResultBorrow`
     currentProcStart: Cursor           # cursor at the start of the proc whose
@@ -5958,8 +5960,16 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
         # it into `result` first, so `traverseAsgn`'s escape check never sees it.
         checkBorrowOutlivesProc(c, n)
         checkResultBorrow(c, n)
+      let value = n
       traverseExpr c, n, call
       if providesResult:
+        # ... nor its nil check: `return e` is `result = e; return result`.
+        # Not for a `var`/`lent` result: `e` is then the borrowed location,
+        # which the check cannot analyse (`return localOnly` from a `lent Box`
+        # proc got a false "cannot analyze" next to its borrow error).
+        let resType = getLocalInfo(c.typeCache, res).typ
+        if resType.typeKind notin {MutT, LentT}:
+          checkStoreNilMatch c, value, resType
         markInit(c, c.p.resultSym)
   leaveToReturn(c)
 
@@ -6395,6 +6405,8 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
         ownEnsures = extractPragma(n, EnsuresP)
     elif i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
+    elif i == ReturnTypePos and decl.symKind == IteratorY:
+      c.p.yieldType = n
     elif i == ParamsPos:
       if n.isTagLit:
         var p = n
@@ -6621,8 +6633,13 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     of CallKindsS:
       analyseCall c, n, call
     of DiscardS, YldS:
+      let isYield = n.stmtKind == YldS
       n.into:
+        let value = n
         traverseExpr c, n, call
+        let yieldType = c.p.yieldType
+        if isYield and not cursorIsNil(yieldType):
+          checkStoreNilMatch c, value, yieldType
     of EmitS, InclS, ExclS:
       skip n
     of IncS, DecS:

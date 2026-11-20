@@ -103,7 +103,7 @@ const
 type
   HttpServer* = object
     ## A listening socket and the policy every connection off it inherits.
-    fd*: cint
+    fd*: cint = -1
     tags*: HttpTags
     headMs*: int
     requestMs*: int

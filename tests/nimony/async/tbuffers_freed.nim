@@ -5,6 +5,9 @@
 ## neither the ring nor the network, and only the bytes left over are printed.
 ## Each socket stages a write with `scratch`, so it owns a buffer however
 ## `initSocket` sizes them.
+##
+## A socket or file nobody gave a descriptor owns none: its `fd` is -1, not
+## 0, so destroying it does not close stdin (nimony-bugs-llms#279).
 import std/[syncio, socket, asyncio, ioring]
 
 proc takeSocket(s: sink Socket) = discard s.buffered
@@ -44,3 +47,10 @@ echo "sockets leaked: ", leaked(sockets())
 echo "socket moves leaked: ", leaked(socketMoves())
 echo "files leaked: ", leaked(files())
 echo "file moves leaked: ", leaked(fileMoves())
+
+type Conn = object
+  name: string
+  sock: Socket
+
+echo "default fds: ", Conn(name: "x").sock.fd, " ", default(UdpSocket).fd, " ",
+  default(Listener).fd, " ", default(asyncio.File).fd

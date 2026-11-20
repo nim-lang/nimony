@@ -558,14 +558,16 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
   let info = cs.callNodeInfo
   var destType = cs.fn.typ
   if destType.typeKind == TypedescT: inc destType
-  if destType.typeKind in {SinkT, LentT, OwnedT} and cs.args[0].typ.typeKind == TypedescT:
+  if destType.typeKind in {SinkT, LentT, OwnedT}:
     var nullary = destType
     inc nullary
     if not nullary.hasMore:
-      # sink T/lent T/owned T call
+      # sink T/lent T/owned T call. The argument is a type, so it is
+      # checked again from its source: as a value, `(int, int)` is a
+      # tuple of typedescs, not the tuple type.
       var typeBuf = createTokenBuf(16)
       typeBuf.addParLe(destType.cursorTagId, destType.info)
-      typeBuf.addSubtree cs.args[0].n
+      typeBuf.addSubtree cs.args[0].orig
       typeBuf.addParRi()
       var item = Item(n: beginRead(typeBuf), typ: it.typ)
       semLocalTypeExpr(c, dest, item)

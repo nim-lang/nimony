@@ -105,8 +105,9 @@ proc skipRoutineDeclPrefix*(n: var Cursor; parentKind: TypeKind) =
     skip n # generics
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
-  ## Pure version: returns a cursor advanced past the prefix slots.
-  result = t
+  ## Pure version: returns a cursor advanced past the prefix slots. A callee
+  ## typed `sink`/`lent`/`var` proc (a parameter's declared type) is the proc.
+  result = skipModifier(t)
   if result.typeKind in RoutineTypes:
     skipToParams result
 
