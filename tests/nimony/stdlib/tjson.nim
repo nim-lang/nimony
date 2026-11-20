@@ -134,6 +134,12 @@ proc main() {.raises.} =
     check $tree, """{"type":"Box","v":7}"""
     var gen = toJson(Gen[int](a: 1), JsonOptions(typeFieldName: "type"))
     check $gen, """{"type":"Gen","a":1}"""   # without its generic arguments
+    # `fromJson` skips the discriminator (nimony-bugs-llms#247)
+    let typed = JsonOptions(typeFieldName: "type")
+    var nested = toJson(Boxed(box: Box(v: 5)), typed)
+    check fromJson(nested, Boxed, typed).box.v, 5
+    var untagged = parseJson("""{"v":3}""")
+    check fromJson(untagged, Box, typed).v, 3
 
   block table_hooks:            # ported from jsonutils' Table hooks
     var src = parseJson("""{"t":{"two":2,"one":1},"ot":{"one":1,"three":3}}""")
