@@ -72,3 +72,14 @@ proc hoo =
     branch = 2
   assert branch == 2
 hoo()
+
+# an int literal labels a range of a narrow int type (nimony-bugs-llms#215)
+type R8 = range[0'i8 .. 100'i8]
+proc caseR8(r: R8): int =
+  case r
+  of 5: 1
+  of 6..7: 2
+  else: 0
+assert caseR8(R8(5)) == 1
+assert caseR8(R8(7)) == 2
+assert caseR8(R8(9)) == 0
