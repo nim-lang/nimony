@@ -256,10 +256,11 @@ proc `=copy`*(dest: var Listener; src: Listener) {.error.}
   ## Two listeners over one descriptor, whichever dies first closes it. Like
   ## `Socket`, this is move-only.
 
-proc listen*(port: uint16; backlog = 128; deadline = never): Listener =
+proc listen*(port: uint16; backlog = 128; deadline = never): Listener {.raises.} =
   ## A bound, listening socket on `port`; `0` asks the kernel to pick one, and
   ## `boundPort` reports what it chose. Binding and listening are synchronous —
-  ## nothing for the ring to wait on — so only `accept` parks.
+  ## nothing for the ring to wait on — so only `accept` parks. Raises the OS
+  ## error when the port cannot be bound (in use) or listened on.
   Listener(fd: listenTcp(port, backlog), deadline: deadline)
 
 proc boundPort*(l: Listener): uint16 {.inline.} = boundPort(l.fd)

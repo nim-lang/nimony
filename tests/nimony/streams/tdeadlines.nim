@@ -257,7 +257,7 @@ proc client() {.passive.} =
   atomicStore(clientDone, 1, moRelease)
 
 initIoRing()
-listener = listen(0)
+listener = try: listen(0) except ErrorCode: quit "listen failed"
 thePort = listener.boundPort
 submit(delay(server()), 0)
 submit(delay(client()), 1)

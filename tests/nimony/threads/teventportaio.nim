@@ -64,7 +64,7 @@ when defined(illumos):
     assert input[0] == '!'
 
   # Network operations use X/Open socket symbols and illumos option values.
-  let listener = listenTcp(0)
+  let listener = try: listenTcp(0) except ErrorCode: quit "listen failed"
   let client = socketNonBlocking()
   var address = default(Sockaddr_storage)
   var length = SockLen(0)

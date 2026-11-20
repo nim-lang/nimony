@@ -68,7 +68,7 @@ proc awaitFlag(flag: var int) =
     if millisUntil(monoNow(), start) > 30_000: quit "timed out"
   assert atomicLoad(flag, moAcquire) == 1
 
-gL = listen(0)
+gL = try: listen(0) except ErrorCode: quit "listen failed"
 thePort = boundPort(gL)
 echo "listening"
 submit(delay(server()), 0)

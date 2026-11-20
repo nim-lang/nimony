@@ -80,7 +80,7 @@ proc handle(c: sink HttpConnection) {.passive.} =
       c.close()
 
 proc serverChain() {.passive.} =
-  var s = listenHttp(0'u16, tags)
+  var s = try: listenHttp(0'u16, tags) except ErrorCode: quit "listen failed"
   s.serverName = "t"
   gPort = int(boundPort(s.fd))
   atomicStore(listening, 1, moRelease)

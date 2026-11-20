@@ -11,7 +11,8 @@
 #       else:             c.respond(404, "")
 #
 #   proc acceptLoop() {.passive.} =
-#     var s = listenHttp(8080'u16, tags)
+#     var s = try: listenHttp(8080'u16, tags)    # raises when the port is in use
+#             except ErrorCode: quit "cannot listen on 8080"
 #     while true:
 #       submit(delay(handle(s.accept())), -1)
 #
@@ -170,8 +171,9 @@ type
 
 # ------------------------------------------------------------- listening ---
 
-proc listenHttp*(port: uint16; tags: HttpTags; backlog = 1024): HttpServer =
-  ## Listen on `port`. `initIoRing()` must already have run.
+proc listenHttp*(port: uint16; tags: HttpTags; backlog = 1024): HttpServer {.raises.} =
+  ## Listen on `port`. `initIoRing()` must already have run. Raises the OS
+  ## error when the port cannot be bound (in use) or listened on.
   ##
   ## `backlog` is how many completed handshakes the kernel may queue for
   ## `accept` before it starts dropping new ones, and the kernel clamps it to

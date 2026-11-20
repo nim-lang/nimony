@@ -50,7 +50,7 @@ proc handle(c: sink HttpConnection) {.passive.} =
 var gServer = 0
 
 proc serverChain() {.passive.} =
-  var s = listenHttp(0'u16, tags)
+  var s = try: listenHttp(0'u16, tags) except ErrorCode: quit "listen failed"
   s.serverName = "t"
   s.compression = true
   gPort = int(boundPort(s.fd))
