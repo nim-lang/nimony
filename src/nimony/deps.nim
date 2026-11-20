@@ -2355,10 +2355,10 @@ proc execBackend(cmd, memoPath, memo: string; changed: bool) =
 
 proc stdCacheDir(config: NifConfig; moduleFlags: set[ModuleFlag]): string =
   ## The stdlib's cache for builds with `config`'s frontend key:
-  ## `<toolchain>/stdcache/<bin dir>/<key>`. One per bin dir, because the
-  ## tools are what made the artifacts: the boot stages build with compilers
-  ## of their own, side by side. Within one, a rebuilt tool makes the nodes
-  ## stale (`toolInputs`).
+  ## `<cache>/stdlib/<toolchain root>/<bin dir>/<key>`. One per toolchain
+  ## root and bin dir, because the tools are what made the artifacts: the boot
+  ## stages build with compilers of their own, side by side. Within one, a
+  ## rebuilt tool makes the nodes stale (`toolInputs`).
   ##
   ## `cycles` is no part of the key: the runtime the `mm` names decides it,
   ## and the driver learns it only by reading that runtime, in this cache.
@@ -2374,7 +2374,7 @@ proc stdCacheDir(config: NifConfig; moduleFlags: set[ModuleFlag]): string =
     if SkipSystem in moduleFlags: b.addKeyw "nosystem"
     if config.keepSemTree: b.addKeyw "keepsemtree"
   let (root, bin) = splitPath(normalizedPath(getAppDir()))
-  result = root / "stdcache" / bin / uhashBase36(b.extract())
+  result = getCacheDir("nimony") / "stdlib" / uhashBase36(root) / bin / uhashBase36(b.extract())
 
 proc checkStdImports(c: DepContext) =
   ## A stdlib module importing one that is not: its `.s.nif`, shared by every
