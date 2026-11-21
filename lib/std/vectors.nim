@@ -271,7 +271,7 @@ proc distance*[T: HasArithmetic and SomeFloat, C: Broadcastable[T]](a, b: C): fl
 func lerp*[T: HasArithmetic, C: Broadcastable[T]](a, b: C, t: float): C =
   ## Linear interpolation: t=0 → a, t=1 → b.
   ## t is NOT clamped — values outside [0,1] extrapolate beyond the segment.
-  @. a +. (b -. a) *! t
+  a +. (b -. a) *! t
 
 func lerpClamped*[T: HasArithmetic, C: Broadcastable[T]](a, b: C, t: float): C =
   ## Lerp with t clamped to [0, 1]. Safe version that never extrapolates.
@@ -289,7 +289,7 @@ func slerp*[T: ArithmeticAndDiv and SomeFloat, C: Broadcastable[T]](a, b: C, t: 
   let wa   = sin((1.float - t) * angle) / sinA
   let wb   = sin(t * angle) / sinA
 
-  return @. a *! wa +. b *! wb
+  return a *! wa +. b *! wb
 
 func moveTowards*[T: SomeFloat, C: Broadcastable[T]](current, target: C, maxDelta: float): C =
   ## Move current towards target by at most maxDelta units per call.
@@ -300,7 +300,7 @@ func moveTowards*[T: SomeFloat, C: Broadcastable[T]](current, target: C, maxDelt
     target
   else:
     let inv = T(maxDelta / dist)
-    @. current +. dv *! inv
+    current +. dv *! inv
 
 func smoothFunc[T: SomeFloat and ArithmeticAndDiv](a, b, x: T): T =
   let t = T(clamp(((x - a) / (b - a)), 0.T, 1.T))
@@ -321,23 +321,27 @@ proc smoothStep*[T: SomeFloat, C: Broadcastable[T]](edge0, edge1, v: C): C =
 
 func abs*[T: HasAbs, C: Broadcastable[T]](v: C): C =
   ## Component-wise absolute value.
-  v |>. ((proc (x: T): T)(abs))
+  result = similar(v)
+  for i in 0..<v.len: result[i] = abs(v[i])
 
 func floor*[T: HasFloor, C: Broadcastable[T]](v: C): C =
   ## Component-wise floor.
-  v |>. ((proc (x: T): T)(floor))
+  result = similar(v)
+  for i in 0..<v.len: result[i] = floor(v[i])
 
 func ceil*[T: HasCeil, C: Broadcastable[T]](v: C): C =
   ## Component-wise ceil.
-  v |>. ((proc (x: T): T)(ceil))
+  result = similar(v)
+  for i in 0..<v.len: result[i] = ceil(v[i])
 
 func round*[T: HasRound, C: Broadcastable[T]](v: C): C =
   ## Component-wise round to nearest integer.
-  v |>. ((proc (x: T): T)(round))
+  result = similar(v)
+  for i in 0..<v.len: result[i] = round(v[i])
 
 func fract*[T: HasFloor and SomeNumber, C: Broadcastable[T]](v: C): C =
   ## Component-wise fractional part: v - floor(v). Each result in [0, 1).
-  @. v -. v |>. ((proc (x: T): T)(floor))
+  v -. floor(v)
 
 proc min*[T: HasMin, C: Broadcastable[T]](a, b: C): C =
   ## Component-wise minimum.
@@ -368,7 +372,8 @@ func clamp*[T: SomeNumber, C: Broadcastable[T]](v: C): C =
 
 func sign*[T: HasSign, C: Broadcastable[T]](v: C): C =
   ## Component-wise round to nearest integer.
-  `|>.`(v, (proc (x: T): T)(sgn))
+  result = similar(v)
+  for i in 0..<v.len: result[i] = sgn(v[i])
 
 func sum*[T: HasArithmetic, C: Broadcastable[T]](v: C): T {.requires: v.len > 0.} =
   ## Sum of all components. Useful for computing averages.
@@ -396,7 +401,7 @@ func reflect*[T: SomeNumber and HasArithmetic, C: Broadcastable[T]](incident, no
   ## Reflect the incident vector about a unit surface normal (2D).
   ## Formula: incident − 2·dot(incident, normal)·normal.
   let d = T(2) * dot(incident, normal)
-  @. incident -. (normal *! d)
+  incident -. (normal *! d)
   
 func refract*[T: SomeFloat and HasArithmetic and HasComp and HasSqrt, C: Broadcastable[T]](incident, normal: C, eta: T): C =
   ## Refracted direction via Snell's law.
@@ -410,7 +415,7 @@ func refract*[T: SomeFloat and HasArithmetic and HasComp and HasSqrt, C: Broadca
     fill(result, T(0))    # total internal reflection
   else:
     let c = eta * ni + sqrt(k)
-    result = @. incident *! eta -. normal *! c
+    result = incident *! eta -. normal *! c
 
 func project*[T: SomeFloat and ArithmeticAndDiv, C: Broadcastable[T]](v, onto: C): C =
   ## Project v onto `onto`. onto need not be normalized.

@@ -34,17 +34,11 @@ type
     func `div`(a,b: Self): Self
     func `mod`(a,b: Self): Self
 
-  Mapper*[T] = proc(x: T): T
-
 func similar*[T](s: seq[T]): seq[T] {.untyped.} =
   result = newSeq[T](s.len)
 func similar*[N: static[int], T](a: array[N, T]): array[N, T] {.untyped.} =
   result = default(array[N, T])
 func len*[N: static[int], T](a: array[N, T]): int = N
-
-# Loop fusion operator.
-# This is able to compute expressions like `a +. b *. c +! 5 + map(sin, arr)` in a single loop without temporary allocations
-template `@.`*[T; C:Broadcastable[T]](expr: C): untyped {.untyped, plugin: "deps/broadcast.nim".}
 
 # --- HasArithmetic operators (. and !) ---
 func `+.`*[T: HasArithmetic, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
@@ -97,8 +91,10 @@ func `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: C, b: T): C =
   for i in 0..<a.len:
     result[i] = a[i] / b
 
-func inv[T: ArithmeticAndDiv](v: T): T {.untyped.} = 1/v
-template `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: T, b: C): C {.untyped.} = b |>. inv *! a
+func `/!`*[T: ArithmeticAndDiv, C:Broadcastable[T]](a: T, b: C): C =
+  result = similar(b)
+  for i in 0..<b.len:
+    result[i] = a / b[i]
 
 # --- Power operators ---
 func `^.`*[T: HasPower, C:Broadcastable[T]](a, b: C): C {.requires: a.len == b.len.} =
@@ -217,17 +213,10 @@ func `%!`*[T: HasDivMod, C:Broadcastable[T]](a: C, b: T): C =
     result[i] = a[i] mod b
 template `mod`*[T: HasDivMod, C:Broadcastable[T]](a:C, b: T): C = a %! b
 
-proc `|>`*[T](a: T, f: Mapper[T]): T {.untyped.} =
-  result= f(a)
-
-proc `|>.`*[T; C:Broadcastable[T]](a: C, f: Mapper[T]): C {.untyped.} =
+func `-`*[T; C:Broadcastable[T]](a: C): C {.untyped.} =
   result = similar(a)
-  for i in 0..<result.len:
-    result[i] = a[i] |> f
-
-  result
-
-template `-`*[T; C:Broadcastable[T]](a: C): C {.untyped.} = a |>. `-`
+  for i in 0..<a.len:
+    result[i] = -a[i]
 
 proc fill*[T; C: Broadcastable[T]](v: var C, val: T) {.untyped.} =
   for i in 0..<v.len:

@@ -31,6 +31,11 @@
 ## A right operand that is itself such a chain is computed into a single fresh
 ## temporary first, so `a - (b*c + d)` costs one temporary instead of two.
 ##
+## An assignment `x = a*b + c` to a local `x` of the type becomes
+## `x = a; x *= b; x += c` when the right-hand side does not mention `x`.
+## Here even a single operator saves the temporary that would be moved
+## into `x`.
+##
 ## **Contract.** Attaching the plugin is a promise by the type's author: for
 ## every operator `op` in `+ - * /` and every `y` for which `x op y` compiles
 ## when `x` is of the type, `x op y` returns the type, `x op= y` exists, and
@@ -39,13 +44,17 @@
 ## on this promise. It only starts a chain at an operand whose type it *knows*
 ## is the plugin's type — a local, parameter or global declared with it, or an
 ## object constructor of it — and only rewrites declarations, whose fresh
-## variable nothing can alias. Everything else is passed through untouched.
+## variable nothing can alias, and assignments to locals, which no parameter can
+## alias either. (Globals and `var` parameters may be aliased by a parameter
+## the right-hand side reads after the first in-place step has overwritten the
+## target, so assignments to them are left alone.) Everything else is passed
+## through untouched.
 ##
 ## For a generic type the plugin is triggered by the generic symbol while the
 ## code mentions its instances; an instance is recognized by having the
 ## generic type's name.
 
-import std / [tables, strutils]
+import std / [tables, sets, strutils]
 import plugins
 
 const
@@ -64,6 +73,7 @@ type
     typeSym: SymId               # the type that triggered the plugin
     typeName: string             # its basename, to recognize generic instances
     known: Table[SymId, NifCursor] # locals/params/globals of the type -> their type
+    locals: HashSet[SymId]       # the subset declared by a routine-local `var`
 
 proc isTheType(r: Rewriter; t: NifCursor): bool =
   if t.kind != Symbol: return false
@@ -80,6 +90,8 @@ proc recordLocal(r: var Rewriter; n: NifCursor) =
   if d.name.kind != SymbolDef: return
   if r.isTheType(d.typ):
     r.known[d.name.symId] = d.typ
+    if n.stmtKind in {VarS, ResultS}:
+      r.locals.incl d.name.symId
   elif d.typ.kind == TagLit and d.typ.typeKind == MutT:
     let inner = firstChild(d.typ)
     if r.isTheType(inner):
@@ -227,6 +239,34 @@ proc trDecl(r: var Rewriter; dest: var NifBuilder; n: var NifCursor): bool =
   skip n
   result = true
 
+proc mentions(n: NifCursor; s: SymId): bool =
+  if n.kind == Symbol: return n.symId == s
+  if n.kind != TagLit: return false
+  var c = firstChild(n)
+  while c.hasMore:
+    if mentions(c, s): return true
+    skip c
+  result = false
+
+proc trAsgn(r: var Rewriter; dest: var NifBuilder; n: var NifCursor): bool =
+  ## Rewrites `x = chain` for a local `x` that `chain` does not mention.
+  ## Returns false (consuming nothing) when the assignment does not qualify.
+  var c = firstChild(n)
+  if c.kind != Symbol or c.symId notin r.locals: return false
+  let target = c.symId
+  skip c
+  let rhs = c
+  var ch = Chain()
+  if not r.matchChain(rhs, ch) or mentions(rhs, target): return false
+  let info = n.info
+  dest.withTree AsgnS, info:
+    dest.addSymUse target, info
+    var leaf = ch.leaf
+    dest.takeTree leaf
+  r.emitSteps(dest, ch, target, VarS, info)
+  skip n
+  result = true
+
 proc trAux(r: var Rewriter; dest: var NifBuilder; n: var NifCursor) =
   if n.kind != TagLit:
     dest.takeTree n
@@ -237,6 +277,8 @@ proc trAux(r: var Rewriter; dest: var NifBuilder; n: var NifCursor) =
     r.recordLocal n
   # not `tvar`: its initializer runs per thread and must stay one expression
   if sk in {LetS, VarS, GletS, GvarS} and r.trDecl(dest, n):
+    return
+  if sk == AsgnS and r.trAsgn(dest, n):
     return
   dest.copyInto(n):
     while n.hasMore:
