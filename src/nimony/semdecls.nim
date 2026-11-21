@@ -923,6 +923,33 @@ proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
   else:
     result = SymId(0)
 
+proc hookTargetIsObject(c: var SemContext; params: seq[TypeCursor]): bool =
+  ## Whether the hook's nominal type is (or may yet turn out to be) an object.
+  ## A concrete non-object type such as `int` has no hook slot, so registering
+  ## a hook for it lets later passes crash instead of reporting the signature
+  ## error `checkTypeHook` already emits: `checkDestroysHaveWasMoved` names
+  ## the type via `pool.symBasename`, which fails on the foreign builtin
+  ## symbol id (#3091). Typevars are undecided here and keep the old
+  ## behaviour; their validity is decided at instantiation.
+  result = true
+  if params.len == 0:
+    return
+  let obj = getObjSymId(c, params[0])
+  if obj == SymId(0):
+    # No nominal type at all (e.g. a builtin type tag such as `int`):
+    # `checkTypeHook` rejects this too, and there is no type to attach the
+    # hook to — registering under `SymId(0)` is what crashed #3091, since
+    # `checkDestroysHaveWasMoved` then calls `pool.symBasename(SymId(0))`.
+    return false
+  let res = tryLoadSym(obj)
+  if res.status != LacksNothing:
+    return false
+  if res.decl.symKind == TypevarY:
+    return # undecided: decided at instantiation
+  if res.decl.symKind != TypeY:
+    return false
+  result = classifyType(c, asTypeDecl(res.decl).body) == ObjectT
+
 proc checkTypeHook(c: var SemContext; dest: var TokenBuf; params: seq[TypeCursor]; op: HookKind; info: NifLineInfo) =
   var cond: bool
   let returnType = c.routine.returnType
@@ -1264,7 +1291,8 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
     let params = getParamsType(c, dest, beforeParams)
     assert params.len >= 1
     let obj = getObjSymId(c, params[0])
-    registerHook(c, obj, symId, hk, false)
+    if hookTargetIsObject(c, params):
+      registerHook(c, obj, symId, hk, false)
 
 proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
                       kind: SymKind; crucial: CrucialPragma; symId: SymId;
@@ -1321,7 +1349,8 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     let objCursor = semHook(c, dest, hookName, beforeParams, symId, info)
     let obj = getObjSymId(c, objCursor)
     checkCopyDupAgree(c, dest, obj, symId, hk, false, info)
-    registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
+    if hookTargetIsObject(c, getParamsType(c, dest, beforeParams)):
+      registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
 
 proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
                   kind: SymKind; crucial: CrucialPragma; pass: PassKind;
@@ -1332,8 +1361,9 @@ proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     if hk != NoHook:
       let objCursor = semHook(c, dest, hookName, beforeParams, symId, info)
       let obj = getObjSymId(c, objCursor)
-      # Only register when signature is valid (obj != 0); checkTypeHook may have buildErr'd
-      if obj != SymId(0):
+      # Only register when signature is valid (obj != 0 and the hook target
+      # is an object); checkTypeHook may have buildErr'd
+      if obj != SymId(0) and hookTargetIsObject(c, getParamsType(c, dest, beforeParams)):
         checkCopyDupAgree(c, dest, obj, symId, hk, true, info)
         registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
     takeTree dest, it.n
@@ -1539,7 +1569,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
             let params = getParamsType(c, dest, beforeParams)
             if params.len >= 1:
               let obj = getObjSymId(c, params[0])
-              if obj != SymId(0):
+              if obj != SymId(0) and hookTargetIsObject(c, params):
                 registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
           dest.takeTree it.n
           c.closeScope() # close parameter scope
