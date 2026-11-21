@@ -98,7 +98,7 @@ func `[]`*[N: static[int], T](v: Vec[N,T], i: int): T {.requires: i < N.} =
 func `[]=`*[N: static[int], T](v: var Vec[N,T], i: int, val: T) {.requires: i < N.} = 
   v.components[i] = val
 func len*[N: static[int], T](v: Vec[N,T]): int {.inline.} = N
-func similar*[N: static[int], T](v: Vec[N,T]): Vec[N, T] {.inline.} =
+func similar*[N: static[int], T: HasDefault](v: Vec[N,T]): Vec[N, T] {.inline.} =
   return default(Vec[N, T])
 
 func x*[T](v: Vec2[T]):T = v.components[0]

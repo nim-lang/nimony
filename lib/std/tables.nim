@@ -568,6 +568,13 @@ func putCount[K: Keyable](t: var CountTable[K]; key: K; val: int;
   inc t.counter
   true
 
+func clearEntry[K](e: var CountEntry[K]) {.inline.} =
+  ## Empties a slot without needing `default(K)`: `val == 0` marks a slot as
+  ## unused and its key is not read then, so the key only has to give up
+  ## what it owns.
+  discard move(e.key)
+  e.val = 0
+
 func countDelIdx[K: Keyable](t: var CountTable[K]; i: int) =
   if i < 0 or i >= t.data.len:
     return
@@ -581,7 +588,7 @@ func countDelIdx[K: Keyable](t: var CountTable[K]; i: int) =
     while true:
       var j = i
       {.assume: 0 <= i and i < t.data.len.}
-      t.data[i] = default(CountEntry[K])
+      clearEntry(t.data[i])
       while true:
         i = nextProbe(i, mask)
         {.assume: 0 <= i and i < t.data.len.}
@@ -715,7 +722,7 @@ func pop*[K: Keyable](t: var CountTable[K]; key: K; val: var int): bool =
 
 func clear*[K](t: var CountTable[K]) =
   for i in 0 ..< t.data.len:
-    t.data[i] = default(CountEntry[K])
+    clearEntry(t.data[i])
   t.counter = 0
   t.isSorted = false
 
