@@ -164,12 +164,15 @@ when defined(nimony):
     assert idx < t.vals.len
     result = t.vals[idx]
 else:
-  proc `[]`*[Id, T](t: var BiTable[Id, T]; strId: Id): var T {.inline.} =
+  proc `[]=`*[Id, T](t: var BiTable[Id, T]; strId: Id; v: sink T) {.inline.} =
+    ## Overwrites an entry in place. Not a `var T` returning `[]`: under Nim that
+    ## overload wins for every lvalue receiver, including `pool.strings[id]`
+    ## through a `ref`, which makes each read a mutation for strictFuncs.
     let idx = idToIdx strId
     assert idx < t.vals.len
-    result = t.vals[idx]
+    t.vals[idx] = v
 
-  proc `[]`*[Id, T](t: BiTable[Id, T]; strId: Id): lent T {.inline.} =
+  func `[]`*[Id, T](t: BiTable[Id, T]; strId: Id): lent T {.inline.} =
     let idx = idToIdx strId
     assert idx < t.vals.len
     result = t.vals[idx]
