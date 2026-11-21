@@ -3188,7 +3188,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
 
   var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", owningBuf, true)
   let cBits = c.bits
-  var dest = transform(c, c0, mp.name, cBits)
+  var dest = transform(c, c0, mp.name, cBits, runProver = true)
 
   var n = beginRead(dest)
   let rootInfo = n.info
