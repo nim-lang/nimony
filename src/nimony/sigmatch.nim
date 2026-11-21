@@ -1924,6 +1924,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   let isFloatLit = f.typeKind != CharT and
     ex.kind == FloatLit and sameTrees(a, m.context.types.floatType)
   let sameKind = a.isTagLit and f.cursorTagId == a.cursorTagId
+  let aType = a
   if sameKind or isIntLit or isFloatLit:
     inc a
   else:
@@ -1954,7 +1955,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
         isIntLit, isFloatLit
       inc m.opened
   else:
-    m.error InvalidMatch, f, a
+    m.error InvalidMatch, forig, aType
   if f.hasMore: inc f # past the bits
   while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
     skip f
@@ -2317,7 +2318,15 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
       else:
         let fStart = f # -> base type
         f = sub(f)
-        linearMatch m, f, a
+        if f.typeKind in {IntT, UIntT, FloatT} and not sameTrees(f, a) and
+            skipExpr(arg.n).kind in {IntLit, FloatLit}:
+          # a literal fits the base type as it fits that type itself:
+          # `5` for `range[0'i8 .. 100'i8]`. The cost keeps `p(5)` picking
+          # `p(x: int8)` over `p(x: range[0'i8 .. 100'i8])`.
+          matchIntegralType m, f, arg # consumes the base type
+          inc m.inheritanceCosts
+        else:
+          linearMatch m, f, a
         skip f # lo bound
         skip f # hi bound
         expectParRi m, f, fStart

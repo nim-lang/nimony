@@ -53,8 +53,12 @@ iterator `>..`*[T: Ordinal and Comparable and Orderable](a, b: T): T {.inline,
     dec i
 
 iterator items*[T: OrdinalEnum](E: typedesc[T]): T =
-  for v in low(E) .. high(E):
+  # Like `>..`: no step past `high(E)`, which may fill its storage.
+  var v = low(E)
+  while true:
     yield v
+    if v == high(E): break
+    inc v
 
 iterator countdown*[T: Ordinal and Comparable and Orderable; V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
     ensures: (b <= result and result <= a).} =
@@ -69,9 +73,11 @@ iterator countdown*[T: Ordinal and Comparable and Orderable; V: Ordinal](a, b: T
   if res >= b:
     while true:
       yield res
-      if res < succ(b, step):
+      if ord(res) < ord(b) + ord(step):
         break
-      dec(res, step)
+      # `cast`, not `dec`: on a `range` a step owes the range
+      # (nim-lang/nimony#2855), which the prover cannot show from the test.
+      res = cast[T](ord(res) - ord(step))
 
 iterator countup*[T: Ordinal and Comparable and Orderable and not bool](a, b: T; step: Positive = 1): T {.inline,
     requires: b < high(T) or
@@ -90,7 +96,9 @@ iterator countup*[T: Ordinal and Comparable and Orderable and not bool](a, b: T;
   var res = a
   while res <= b:
     yield res
-    inc(res, step)
+    # `cast`, not `inc`: the value past `b` that ends the loop is no value of
+    # a `range` `T`; it is only compared, never yielded.
+    res = cast[T](ord(res) + step)
 
 # RootObj is replaced with untyped for now:
 

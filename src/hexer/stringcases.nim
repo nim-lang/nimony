@@ -9,7 +9,8 @@
 
 # included from nifcgen.nim
 
-## Transforms string `case` statements to decision trees.
+## Transforms string `case` statements to decision trees, and float `case`
+## statements to one `eq` test per label.
 
 const
   EqStringsOp* = "equalStrings.0." & SystemModuleSuffix
@@ -101,6 +102,7 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let selector: SymId
 
   let selectorType = getType(c.typeCache, selectorNode)
+  let isFloat = selectorType.typeKind == FloatT
   if selectorType.typeKind == CstringT:
     # the other overload of `borrowCStringUnsafe`
     selector = pool.symId("`tc." & $c.getTmpId)
@@ -118,7 +120,11 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoUnchecked "var", sinfo:
       dest.addSymDef(selector, sinfo)
       dest.addDotToken() # pragmas
-      dest.addSymUse(pool.symId(StringName), sinfo)
+      if isFloat:
+        var t = selectorType
+        trType(c, dest, t)
+      else:
+        dest.addSymUse(pool.symId(StringName), sinfo)
       trExpr(c, dest, selectorNode)
   skip nb # selector
 
@@ -129,14 +135,27 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         assert nb.substructureKind == RangesU
         nb.into:                              # (ranges ...)
           while nb.hasMore:
-            let strId = getSimpleStringLit(c, nb)
-            pairs.add (pool.strings[strId], labl)
+            if isFloat:
+              let info = nb.info
+              dest.copyIntoUnchecked "ite", info:
+                dest.copyIntoUnchecked "eq", info:
+                  dest.addSymUse(selector, info)
+                  trExpr(c, dest, nb)
+                dest.copyIntoUnchecked "stmts", info:
+                  dest.copyIntoUnchecked "jmp", info:
+                    dest.addSymUse(pool.symId(labl), info)
+                dest.addDotToken() # no else
+              pairs.add ("", labl)
+            else:
+              let strId = getSimpleStringLit(c, nb)
+              pairs.add (pool.strings[strId], labl)
         skip nb # skip action for now
     else:
       skip nb
 
-  let solution = createSearchTree(pairs)
-  decodeSolution(c, dest, solution, 0, selector, selectorNode.info)
+  if not isFloat:
+    let solution = createSearchTree(pairs)
+    decodeSolution(c, dest, solution, 0, selector, selectorNode.info)
   var i = 0
   nb = n
   let caseStart = nb

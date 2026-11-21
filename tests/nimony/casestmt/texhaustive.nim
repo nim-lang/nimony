@@ -35,3 +35,8 @@ proc missing(e: HoleyEnum) =
 dispatch(a)
 dispatch(b)
 dispatch(c)
+
+proc floatNoElse(x: float) =
+  case x
+  of 1.5:
+    echo "1.5"
