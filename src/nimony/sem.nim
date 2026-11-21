@@ -4742,6 +4742,33 @@ proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLi
   var it = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
   semCall c, dest, it, {}
 
+proc isDeferredDefault(n: Cursor): bool =
+  ## Is `n` a call `callDefault` deferred: `(call <choice of default> T)` with
+  ## `T` still carrying generic params? Sem meets its own output again when a
+  ## type or module plugin hands the module back, and must then defer the call
+  ## once more instead of resolving it.
+  result = false
+  if n.exprKind == CallX:
+    var n = sub(n)
+    if n.exprKind in {OchoiceX, CchoiceX}:
+      var choice = sub(n)
+      if choice.kind == Symbol and pool.syms[choice.symId].startsWith("default."):
+        skip n
+        if n.hasMore and containsGenericParams(n):
+          skip n
+          result = not n.hasMore
+
+proc semDeferredDefault(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  let exprStart = dest.len
+  let expected = it.typ
+  var typeArg = sub(it.n)
+  skip typeArg
+  it.typ = semLocalType(c, dest, typeArg)
+  dest.shrink exprStart
+  dest.addSubtree it.n
+  skip it.n
+  commonType c, dest, it, exprStart, expected
+
 type
   RuntimeCase = object
     selector: SymId
@@ -6501,7 +6528,10 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
         semExpr c, dest, it
     of CallX, CmdX, CallstrlitX, InfixX, PrefixX, HcallX:
       toplevelGuard c:
-        semCall c, dest, it, flags
+        if isDeferredDefault(it.n):
+          semDeferredDefault c, dest, it
+        else:
+          semCall c, dest, it, flags
     of ProccallX:
       toplevelGuard c:
         semProccall c, dest, it
