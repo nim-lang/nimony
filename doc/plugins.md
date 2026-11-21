@@ -407,11 +407,12 @@ The plugin intercepts assignments to fields of `Listener` and injects calls to t
 `onChanged` template.
 
 Another use case is expression template optimization. A type like `Matrix` with a
-plugin can rewrite `a*b + c - d` into fused in-place operations, avoiding temporaries:
+plugin can rewrite `a*b + c - d` into fused in-place operations, avoiding temporaries.
+`std/deps/avoidtemps` is that plugin (see the language guide for its contract):
 
 ```nim
 type
-  Matrix {.plugin: "avoidtemps".} = object
+  Matrix {.plugin: "std/deps/avoidtemps".} = object
     a: array[4, array[4, float]]
 ```
 
