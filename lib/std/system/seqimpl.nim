@@ -73,6 +73,31 @@ func newSeq*[T](): seq[T] {.nodestroy, inline.} =
   ## value: a `seq` of a not-nil ref starts empty and grows by `add`.
   result = seq[T](len: 0, data: nil)
 
+func allZeroBytes(p: pointer; n: int): bool {.inline.} =
+  let bytes = cast[ptr UncheckedArray[byte]](p)
+  for i in 0 ..< n:
+    if bytes[i] != 0:
+      return false
+  true
+
+func fillDefault[T: HasDefault](dst: ptr UncheckedArray[T]; start, stop: int) =
+  ## Fills raw sequence storage with `default(T)`. A typed assignment would
+  ## inject a destination `=destroy` for a hook-bearing type. `default(T)` owns
+  ## no resources, so copying its bits is the initialization. A one-pass probe
+  ## turns an all-zero default into one `memset`; otherwise the initialized
+  ## prefix is doubled.
+  if start >= stop: return
+  let init = default(T)
+  if allZeroBytes(addr init, sizeof(T)):
+    zeroMem(addr dst[start], (stop - start) * sizeof(T))
+  else:
+    copyMem(addr dst[start], addr init, sizeof(T))
+    var filled = start + 1
+    while filled < stop:
+      let chunk = min(filled - start, stop - filled)
+      copyMem(addr dst[filled], addr dst[start], chunk * sizeof(T))
+      inc filled, chunk
+
 func newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
   ## Creates a new sequence of length `size` with default-initialized elements.
   if size == 0:
@@ -340,12 +365,10 @@ func setLen*[T: HasDefault](s: var seq[T]; newLen: int) {.nodestroy.} =
     shrink(s, newLen)
   else:
     let fenced = seqFenceEnter[T]()
-    var i = s.len
+    let start = s.len
     growUnsafeImpl(s, newLen)
     if s.len >= newLen: # else out of memory; see `grow`
-      while i < newLen:
-        {.cast(noSideEffect).}: (s.data[i]) = default(T)
-        inc i
+      fillDefault(s.data, start, newLen)
     seqFenceExit fenced
 
 proc newSeq*[T: HasDefault](s: out seq[T]; newLen: int) {.nodestroy, inline.} =
