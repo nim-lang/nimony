@@ -1,17 +1,6 @@
 import std/vectors
 import std/[assertions, math, syncio]
 
-proc vec2(x, y: float): Vec2[float] =
-  result = default(Vec2[float])
-  result.x = x
-  result.y = y
-
-proc vec3(x, y, z: float): Vec3[float] =
-  result = default(Vec3[float])
-  result.x = x
-  result.y = y
-  result.z = z
-
 proc close(a, b: float): bool = abs(a - b) < 1e-5
 
 proc main =
