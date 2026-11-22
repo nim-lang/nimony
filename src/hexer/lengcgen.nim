@@ -1458,6 +1458,61 @@ proc zeroFillBits(c: var EContext; srcType, destType: Cursor): int =
       var err = false
       result = int(asSigned(srcSize, err)) * 8
 
+proc castScalar(t: Cursor; isEnum: var bool): Cursor =
+  ## The machine scalar behind `t`: distinct skipped, an enum replaced by its
+  ## base type (`isEnum`). Anything else is returned as it is.
+  var isDistinct = false
+  result = skipDistinct(t, isDistinct)
+  if result.typeKind in {EnumT, HoleyEnumT}:
+    isEnum = true
+    inc result # the base type
+    result = skipDistinct(result, isDistinct)
+
+proc sameScalar(c: var EContext; a, b: Cursor): bool =
+  result = a.typeKind == b.typeKind and
+    a.typeKind in {IntT, UIntT, FloatT, CharT, BoolT} and
+    getSize(a, c.bits div 8, c.sizeofCache) == getSize(b, c.bits div 8, c.sizeofCache)
+
+proc trCast(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## A `cast` between types that are the same scalar modulo `distinct` and
+  ## `enum` is no pun at all: distinct is erased, so it vanishes, and an enum
+  ## side makes it a `conv`. A cast to an enum from a different scalar becomes
+  ## `conv E (cast Base x)`. Leng then only sees casts to the types that
+  ## really reinterpret bits, which matters for analyses that must take a
+  ## cast to a named type as a possibly forged pointer (funcsummary).
+  let info = n.info
+  n.into:
+    let destType = n
+    skip n
+    let srcType = getType(c.typeCache, n)
+    var destIsEnum = false
+    var srcIsEnum = false
+    let destBase = castScalar(destType, destIsEnum)
+    let srcBase = castScalar(srcType, srcIsEnum)
+    let same = sameScalar(c, destBase, srcBase)
+    let conv = destIsEnum or (same and srcIsEnum)
+    if conv:
+      dest.addParLe("conv", info)
+      var dt = destType
+      trType(c, dest, dt)
+    if same:
+      trExpr(c, dest, n)
+    else:
+      dest.addParLe("cast", info)
+      var dt = if destIsEnum: destBase else: destType
+      trType(c, dest, dt)
+      let bits = zeroFillBits(c, srcType, destType)
+      if bits > 0:
+        # Through the unsigned type of the source's width, which zero-extends.
+        dest.addParLe("cast", info)
+        dest.addParLe("u", info)
+        dest.addIntLit(bits, info)
+        dest.addParRi()
+      trExpr(c, dest, n)
+      if bits > 0: dest.addParRi()
+      dest.addParRi()
+    if conv: dest.addParRi()
+
 proc trConv(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let beforeConv = dest.len
@@ -1734,18 +1789,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         inc n
         trExpr(c, dest, n)
     of CastX:
-      takeInto dest, n:
-        let destType = n
-        trType(c, dest, n)
-        let bits = zeroFillBits(c, getType(c.typeCache, n), destType)
-        if bits > 0:
-          # Through the unsigned type of the source's width, which zero-extends.
-          dest.addParLe("cast", n.info)
-          dest.addParLe("u", n.info)
-          dest.addIntLit(bits, n.info)
-          dest.addParRi()
-        trExpr(c, dest, n)
-        if bits > 0: dest.addParRi()
+      trCast c, dest, n
     of HconvX, ConvX:
       trConv c, dest, n
     of DconvX:
