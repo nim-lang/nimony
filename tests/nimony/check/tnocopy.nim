@@ -1,6 +1,6 @@
 # A copy of a type whose `=copy`/`=dup` are `{.error.}` is rejected by hexer,
 # not by the frontend. Plain `nimony check` stops after the frontend and says
-# nothing (see checkhexer/tnocopy.nim for `check --hexer`).
+# nothing (see checkfull/tnocopy.nim for `check --fullCheck`).
 
 type
   Pool = object

@@ -252,7 +252,7 @@ type
     Profile        ## ask nifmake to print its timing profile
     Report         ## ask nifmake to print machine-readable invocation counts
     Stats          ## after build, print total LOC + module count across the dep graph
-    CheckHexer     ## `check --hexer`: also run hexer over the project's modules
+    FullCheck      ## `check --fullCheck`: also run hexer over the project's modules
 
   CFile = object
     name: string        ## the source, relative to the cwd
@@ -1259,7 +1259,7 @@ proc writeStdBuildFile(c: DepContext; content: string): string =
     publishShared tmp, result
 
 proc checkStamp(x: string): string =
-  ## `check --hexer` writes this instead of the module's `.x.nif`, which `c` must
+  ## `check --fullCheck` writes this instead of the module's `.x.nif`, which `c` must
   ## not mistake for a finished module.
   assert x.endsWith(".x.nif")
   result = x[0 ..< x.len - ".x.nif".len] & ".chk.nif"
@@ -1337,7 +1337,7 @@ proc generateStdBackendBuildFile(c: DepContext): string =
   result = writeStdBuildFile(c, b.extract())
 
 proc generateCheckBuildFile(c: DepContext): string =
-  ## What `nimony check --hexer` runs after the frontend: hexer over the project's own
+  ## What `nimony check --fullCheck` runs after the frontend: hexer over the project's own
   ## modules, so that `check` reports what `c` reports before it calls a C
   ## compiler. The stdlib's modules are not run: their errors are not the
   ## project's, and they are built by `generateStdBackendBuildFile`.
@@ -2713,11 +2713,11 @@ proc buildGraph*(config: sink NifConfig; project: string;
 
   # `nimony c` drives nifmake for the frontend (0..50%) and the backend or
   # docs (51..100%); `DoCheck` stops after the frontend (0..100%), or with
-  # `--hexer` runs hexer over the project's modules in the second half. Within a
+  # `--fullCheck` runs hexer over the project's modules in the second half. Within a
   # phase the stdlib's run and the project's run share the range, and only
   # the project's run (`--done`) closes the line.
-  let checkHexer = cmd == DoCheck and CheckHexer in flags
-  let frontHi = if cmd != DoCheck or checkHexer: 50 else: 100
+  let fullCheck = cmd == DoCheck and FullCheck in flags
+  let frontHi = if cmd != DoCheck or fullCheck: 50 else: 100
 
   if c.hasStdNodes:
     exec stdCommand & progArg(flags, 0, frontHi, closes = false) &
@@ -2775,8 +2775,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
         jobsArg(config) & " run " & progArg(flags, 51, 100) & quoteShell(buildFinalFilename),
       beMemoFile, beMemo, backendChanged
 
-  if checkHexer:
-    # `check --hexer` reports what `c` reports before it calls a C compiler, and some
+  if fullCheck:
+    # `check --fullCheck` reports what `c` reports before it calls a C compiler, and some
     # of that comes from hexer (e.g. a type without `=dup`/`=copy` that is
     # copied). Hexer needs only the frontend's output; lengc, the C compiler
     # and the linker are not run.

@@ -1,4 +1,4 @@
-# The same type moved instead of copied: nothing for `check --hexer` to report.
+# The same type moved instead of copied: nothing for `check --fullCheck` to report.
 
 type
   Pool = object

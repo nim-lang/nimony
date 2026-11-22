@@ -1,5 +1,5 @@
 # A copy of a type whose `=copy`/`=dup` are `{.error.}` is rejected by hexer,
-# not by the frontend. `nimony check --hexer` reports it, as `nimony c` does.
+# not by the frontend. `nimony check --fullCheck` reports it, as `nimony c` does.
 
 type
   Pool = object

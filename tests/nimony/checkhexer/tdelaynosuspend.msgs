@@ -1,1 +1,0 @@
-[Error] tests/nimony/checkhexer/tdelaynosuspend.nim(7, 16) `delay()` with no arguments must be followed by a suspension point in the same state; add `suspend()` or a call to a `.passive` routine after it: (delay0)

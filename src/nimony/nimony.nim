@@ -47,7 +47,7 @@ Command:
                               (`jorogumo j`; one self-contained .js, no linker)
   check project.nim           check the full project for errors; can be
                               combined with `--usages`, `--def` for
-                              editor integration, or with `--hexer`
+                              editor integration, or with `--fullCheck`
   m file.nim [project.nim]    compile a single Nim module to Hexer
 
 Options:
@@ -78,7 +78,7 @@ Options:
                             complete stdout/stderr lines go to
                             console.log/console.error, and the export surface
                             lands on globalThis.NIF.
-  --hexer                   check only: also run hexer over the project's
+  --fullCheck               check only: also run hexer over the project's
                             modules, so errors that `c` reports from hexer
                             (e.g. copying a type whose `=copy`/`=dup` is
                             `{.error.}`) show up. Slower than plain `check`
@@ -307,8 +307,8 @@ proc handleCmdLine(c: var CmdOptions; p: var OptParser; mode: CmdMode) =
           of "stats":
             c.buildFlags.incl Stats
             forwardArg = false
-          of "hexer":
-            c.buildFlags.incl CheckHexer
+          of "fullcheck":
+            c.buildFlags.incl FullCheck
             forwardArg = false
           of "ischild":
             # undocumented command line option, by design
@@ -376,11 +376,11 @@ proc compileProgram(c: var CmdOptions) =
       c.config.linker = "clang"
   elif c.config.linker.len == 0 and c.config.cc.len > 0:
     c.config.linker = c.config.cc
-  if CheckHexer in c.buildFlags:
+  if FullCheck in c.buildFlags:
     if c.cmd != CheckProject:
-      quit "`--hexer` applies to the `check` command only"
+      quit "`--fullCheck` applies to the `check` command only"
     if c.config.toTrack.mode != TrackNone:
-      quit "`--hexer` cannot be combined with `--usages`/`--def`"
+      quit "`--fullCheck` cannot be combined with `--usages`/`--def`"
   if c.args.len == 0:
     quit "too few command line arguments, try --help"
   elif c.args.len > 2 - int(c.cmd in {FullProject, CheckProject, DocProject}):
