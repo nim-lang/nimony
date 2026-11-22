@@ -1103,19 +1103,6 @@ proc trTupleConstr(c: var Context; n: var Cursor; outerE: Expects) =
       else:
         tr c, n, e, fieldType
 
-proc collectFieldTypes(n: Cursor; types: var seq[Cursor]) =
-  ## The field types of the object body (or `case`/`of` part of it) at `n`.
-  var n = n
-  n.loopInto:
-    if n.symKind == FldY:
-      types.add asLocal(n).typ
-      skip n
-    elif n.isTagLit:
-      collectFieldTypes(n, types)
-      skip n
-    else:
-      inc n
-
 proc collectCopyHooks(c: var Context; op: AttachedOp; t: Cursor;
                       hooks: var seq[SymId]; copiesOwned: var bool;
                       visited: var HashSet[SymId]) =
@@ -1149,19 +1136,20 @@ proc collectCopyHooks(c: var Context; op: AttachedOp; t: Cursor;
     return
   case t.typeKind
   of ObjectT:
-    var base = t.childCursor
-    if not base.isDotToken:
-      collectCopyHooks(c, op, base, hooks, copiesOwned, visited)
-    var fields: seq[Cursor] = @[]
-    collectFieldTypes(t, fields)
-    for f in fields: collectCopyHooks(c, op, f, hooks, copiesOwned, visited)
+    var n = sub(t) # bounds the walk to the object body
+    if not n.isDotToken:
+      collectCopyHooks(c, op, n, hooks, copiesOwned, visited) # the base type
+    skip n
+    var iter = initObjFieldIter()
+    while nextField(iter, n):
+      let field = takeLocal(n, SkipFinalParRi)
+      # a `.cursor` field is bit-copied by the derived hooks:
+      if field.kind in {FldY, GfldY} and not hasPragma(field.pragmas, CursorP):
+        collectCopyHooks(c, op, field.typ, hooks, copiesOwned, visited)
   of TupleT:
-    var n = t
-    n.loopInto:
-      if n.symKind == FldY:
-        collectCopyHooks(c, op, asLocal(n).typ, hooks, copiesOwned, visited)
-      else:
-        collectCopyHooks(c, op, n, hooks, copiesOwned, visited)
+    var n = sub(t)
+    while n.hasMore:
+      collectCopyHooks(c, op, getTupleFieldType(n), hooks, copiesOwned, visited)
       skip n
   of ArrayT, DistinctT:
     collectCopyHooks(c, op, t.childCursor, hooks, copiesOwned, visited)
