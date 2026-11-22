@@ -97,6 +97,13 @@ type
     typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
     tmpCounter: int  # for fresh symbols in exception lowering
     errorCodeType: TokenBuf # `ErrorCode`, what a bare `(raises)` raises
+    inferredOwner: SymId
+      ## the generic instance being translated, `NoSymId` outside of one
+    copyDeps: Table[SymId, seq[SymId]]
+      ## per generic instance: the `=dup`/`=copy` hooks its explicit hook
+      ## calls (`(dup x)`, `(copy a b)`) run, see `markErrorRoutines`
+    copiesOwned: HashSet[SymId]
+      ## generic instances that copy an `owned ref`, which is never possible
     handlerStack: seq[tuple[errSym, eSym: SymId]]
       # stack of (`err`, `_e`) syms for synthesized ref-exception handlers; used to
       # rewrite bare `raise` into `exc = err; raise _e` so the original error code
@@ -599,12 +606,15 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   let props = if decl.stmtKind in {FuncS, IteratorS, ConverterS}: {IsNoSideEffect} else: {}
   var r = CurrentRoutine(returnExpects: WantT, props: props)
   swap c.r, r
+  let outerOwner = c.inferredOwner
   takeInto c.dest, n:
     let symId = n.symId
     var isGeneric = false
     for i in 0..<BodyPos:
       if i == TypevarsPos:
         isGeneric = n.substructureKind == TypevarsU
+        if n.typeKind == InvokeT and outerOwner == NoSymId:
+          c.inferredOwner = symId
         takeTree c.dest, n
       elif i == ParamsPos:
         c.typeCache.registerParams(symId, decl, n)
@@ -637,6 +647,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
         c.dest.reopenLastTree bodyStart
         checkForDangerousLocations c, body
         c.dest.addParRi()
+  c.inferredOwner = outerOwner
   swap c.r, r
   c.typeCache.closeScope()
 
@@ -1089,6 +1100,84 @@ proc trTupleConstr(c: var Context; n: var Cursor; outerE: Expects) =
           tr c, n, e, fieldType
       else:
         tr c, n, e, fieldType
+
+proc collectFieldTypes(n: Cursor; types: var seq[Cursor]) =
+  ## The field types of the object body (or `case`/`of` part of it) at `n`.
+  var n = n
+  n.loopInto:
+    if n.symKind == FldY:
+      types.add asLocal(n).typ
+      skip n
+    elif n.isTagLit:
+      collectFieldTypes(n, types)
+      skip n
+    else:
+      inc n
+
+proc collectCopyHooks(c: var Context; op: AttachedOp; t: Cursor;
+                      hooks: var seq[SymId]; copiesOwned: var bool;
+                      visited: var HashSet[SymId]) =
+  ## The hooks a copy of type `t` runs: `t`'s own `=dup`/`=copy` (its
+  ## sibling when it has only one) or, for a type whose hooks the lifter
+  ## derives, the ones of its fields and elements.
+  var t = t
+  while t.typeKind in {MutT, LentT, SinkT, OutT}: t = t.childCursor
+  if t.isSymbol:
+    let s = t.symId
+    if s in visited: return
+    visited.incl s
+    let sibling = if op == attachedDup: attachedCopy else: attachedDup
+    var hook = NoSymId
+    for o in [op, sibling]:
+      if c.hooks[].hasKey(s):
+        hook = c.hooks[].getOrQuit(s).a[o]
+      if hook == NoSymId:
+        hook = tryLoadHook(o, s)
+      if hook != NoSymId: break
+    if hook != NoSymId:
+      hooks.add hook
+    else:
+      let d = tryLoadSym(s)
+      if d.status == LacksNothing and d.decl.symKind == TypeY:
+        let decl = asTypeDecl(d.decl)
+        if decl.typevars.substructureKind != TypevarsU:
+          collectCopyHooks(c, op, decl.body, hooks, copiesOwned, visited)
+    return
+  case t.typeKind
+  of ObjectT:
+    var base = t.childCursor
+    if not base.isDotToken:
+      collectCopyHooks(c, op, base, hooks, copiesOwned, visited)
+    var fields: seq[Cursor] = @[]
+    collectFieldTypes(t, fields)
+    for f in fields: collectCopyHooks(c, op, f, hooks, copiesOwned, visited)
+  of TupleT:
+    var n = t
+    n.loopInto:
+      if n.symKind == FldY:
+        collectCopyHooks(c, op, asLocal(n).typ, hooks, copiesOwned, visited)
+      else:
+        collectCopyHooks(c, op, n, hooks, copiesOwned, visited)
+      skip n
+  of ArrayT, DistinctT:
+    collectCopyHooks(c, op, t.childCursor, hooks, copiesOwned, visited)
+  of OwnedT:
+    copiesOwned = true
+  else:
+    discard
+
+proc noteCopy(c: var Context; op: AttachedOp; n: Cursor) =
+  ## `n` is `(dup x)` or `(copy a b)` in a generic instance: remember the
+  ## hooks that copy runs, see `markErrorRoutines`.
+  if c.inferredOwner == NoSymId: return
+  let typ = getType(c.typeCache, n.childCursor)
+  var hooks: seq[SymId] = @[]
+  var copiesOwned = false
+  var visited = initHashSet[SymId]()
+  collectCopyHooks(c, op, typ, hooks, copiesOwned, visited)
+  if copiesOwned: c.copiesOwned.incl c.inferredOwner
+  if hooks.len > 0:
+    c.copyDeps.mgetOrPut(c.inferredOwner, @[]).add hooks
 
 proc trVarHook(c: var Context; n: var Cursor) =
   takeInto c.dest, n:
@@ -1866,8 +1955,10 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
     of EmoveX:
       trSons c, n, WantT, expected
     of CopyX, WasmovedX, SinkhX, TraceX:
+      if n.exprKind == CopyX: noteCopy(c, attachedCopy, n)
       trVarHook c, n
     of DupX, DestroyX:
+      if n.exprKind == DupX: noteCopy(c, attachedDup, n)
       trSons c, n, WantT
     of HconvX, ConvX, CastX:
       if e.wantMutable:
@@ -1966,6 +2057,92 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
     # classic model, a real ParRi scope-close: copy the token verbatim.
     takeTree c, n
 
+proc isDerivedHook(fn: SymId): bool =
+  ## The lifter names its hooks `=op_<type key>`; a written one is `=op`.
+  let name = pool.symBasename(fn)
+  result = name.len > 2 and name[0] == '=' and name[1] in {'a'..'z'} and
+    name.find('_') > 0
+
+proc collectCalls(n: Cursor; calls: var seq[SymId]) =
+  var n = n
+  if n.isTagLit:
+    if n.exprKind in CallKinds:
+      let fn = n.childCursor
+      if fn.isSymbol: calls.add fn.symId
+    n.loopInto:
+      collectCalls(n, calls)
+      skip n
+
+proc hasErrorPragma(fn: SymId): bool =
+  let res = tryLoadSym(fn)
+  result = res.status == LacksNothing and res.decl.symKind.isRoutine and
+    hasPragma(asRoutine(res.decl).pragmas, ErrorP)
+
+proc addErrorPragma(dest: var TokenBuf; n: var Cursor) =
+  ## Copies the routine at `n`, with `(error)` added to its pragmas.
+  takeInto dest, n:
+    for i in 0..<BodyPos:
+      if i == ProcPragmasPos:
+        let info = n.info
+        if n.isDotToken:
+          dest.addParLe PragmasU, info
+          inc n
+        else:
+          dest.addParLe(n.cursorTagId, info)
+          n.into:
+            while n.hasMore: dest.takeTree n
+        dest.addParLe(cast[TagId](uint32(ord(ErrorP))), info)
+        dest.addParRi()
+        dest.addParRi()
+      else:
+        dest.takeTree n
+    while n.hasMore: dest.takeTree n
+
+proc markErrorRoutines(c: var Context) =
+  ## A generic instance, seq's `=dup` for a `T` that cannot be copied, exists
+  ## for every instantiation, used or not, and a derived hook for every type
+  ## that needs one: the ones that copy a value whose `=dup`/`=copy` is
+  ## `.error` become `.error` themselves, so every module that calls them,
+  ## through any type that names them in a hook slot, reports the copy.
+  var routines: seq[(SymId, seq[SymId])] = @[]
+  var n = beginRead(c.dest)
+  n.loopInto:
+    if n.symKind.isRoutine:
+      let r = asRoutine(n, SkipInclBody)
+      if r.name.isSymbolDef and r.body.isTagLit and
+          (r.typevars.typeKind == InvokeT or isDerivedHook(r.name.symId)) and
+          not hasPragma(r.pragmas, ErrorP):
+        let fn = r.name.symId
+        var deps = c.copyDeps.getOrDefault(fn)
+        collectCalls(r.body, deps)
+        routines.add (fn, deps)
+    skip n
+  var errors = c.copiesOwned
+  var changed = true
+  while changed:
+    changed = false
+    for (fn, deps) in routines:
+      if fn notin errors:
+        for d in deps:
+          if d in errors or hasErrorPragma(d):
+            errors.incl fn
+            changed = true
+            break
+  var marked = false
+  for (fn, _) in routines:
+    if fn in errors: marked = true
+  if not marked: return
+  var dest = createTokenBuf(c.dest.len + 8)
+  n = beginRead(c.dest)
+  takeInto dest, n:
+    while n.hasMore:
+      if n.symKind.isRoutine and n.childCursor.isSymbolDef and
+          n.childCursor.symId in errors:
+        addErrorPragma(dest, n)
+      else:
+        dest.takeTree n
+  c.dest = ensureMove(dest)
+
 proc injectDerefs*(n: Cursor; hooks: ref Table[SymId, HooksPerType];
                    classes: sink Classes;
                    thisModuleSuffix: string; bits: int; cycles = false): TokenBuf =
@@ -1999,4 +2176,5 @@ proc injectDerefs*(n: Cursor; hooks: ref Table[SymId, HooksPerType];
   # because the latter may add error nodes.
   c.dest.addParRi()
   c.typeCache.closeScope()
+  markErrorRoutines c
   result = ensureMove(c.dest)
