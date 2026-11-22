@@ -34,6 +34,7 @@ import std / [assertions, tables]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lengc / [leng_model]
+from ".." / nimony / builtintypes import SystemModuleSuffix
 
 type
   ParamEffect* = object
@@ -108,6 +109,12 @@ const
   OutsideElem = -1                 ## untracked symbol: a global / unknown graph
 
 type
+  ModuleEnv = object
+    ## What the analysis of one proc may know about the rest of its module.
+    types: Table[SymId, Cursor]   ## named type -> body of its `(type)` decl;
+                                  ## a type declared elsewhere stays unresolved
+    copyMem: SymId                ## `system.copyMem`, see `handleCopyMem`
+
   CallFact = object
     callee: SymId
     argRoots: seq[seq[int]]   ## per actual: the interface elements it may root at
@@ -123,6 +130,7 @@ type
                                        ## body — see `ParamEffect.constRef`.
     writesGlobal, readsGlobal, callsUnknown, raises: bool
     calls: seq[CallFact]
+    env: ptr ModuleEnv                 ## nil: nothing beyond the proc is known
 
 proc ufFind(u: var seq[int]; x: int): int =
   var r = x
@@ -166,9 +174,11 @@ proc firstChild(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
 
-proc typeMayHoldPointer(typ: Cursor; depth = 0): bool =
+proc typeMayHoldPointer(env: ptr ModuleEnv; typ: Cursor; depth = 0): bool =
   ## Structural stand-in for aliasing.pointerBearing without a type navigator.
-  ## Named types (Symbol) are treated as pointer-bearing (conservative).
+  ## A named type resolves through the module's own `(type)` decls (`env`), so
+  ## `cast[Color](1)` of a local enum is a value pun, not a forged pointer. A
+  ## type declared elsewhere, or anything not understood, is pointer-bearing.
   if depth > 12: return true
   case typ.typeKind
   of IT, UT, FT, CT, BoolT, EnumT, VoidT:
@@ -176,22 +186,31 @@ proc typeMayHoldPointer(typ: Cursor; depth = 0): bool =
   of PtrT, AptrT, ProctypeT, FlexarrayT:
     result = true
   of ArrayT:
-    result = typeMayHoldPointer(firstChild(typ), depth+1)
+    result = typeMayHoldPointer(env, firstChild(typ), depth+1)
   of ObjectT, UnionT:
     result = false
     var body = typ
     body.into:
-      if typ.typeKind == ObjectT and body.kind == Symbol:
-        if typeMayHoldPointer(body, depth+1): return true
-        inc body
+      if typ.typeKind == ObjectT:
+        if body.kind == Symbol:      # base type
+          if typeMayHoldPointer(env, body, depth+1): return true
+          inc body
+        elif body.kind == DotToken:  # no base
+          inc body
       while body.hasMore:
         if body.substructureKind == FldU:
           let fld = takeFieldDecl(body)
-          if typeMayHoldPointer(fld.typ, depth+1): return true
-        else:
+          if typeMayHoldPointer(env, fld.typ, depth+1): return true
+        elif body.typeKind in {ObjectT, UnionT}:
+          if typeMayHoldPointer(env, body, depth+1): return true
           skip body
+        else:
+          return true              # a variant branch or an unknown form
   else:
-    result = true                  # Symbol / unknown
+    if typ.kind == Symbol and env != nil and env.types.hasKey(typ.symId):
+      result = typeMayHoldPointer(env, env.types.getOrQuit(typ.symId), depth+1)
+    else:
+      result = true                # foreign / unknown
 
 proc sourceMayBePointer(n: Cursor): bool =
   ## True unless `n` is provably a pointer-free value. Integer casts and
@@ -231,14 +250,14 @@ proc sourceMayBePointer(n: Cursor): bool =
   else:
     result = false
 
-proc isForgingCast(n: Cursor): bool =
+proc isForgingCast(env: ptr ModuleEnv; n: Cursor): bool =
   if n.kind != TagLit or n.exprKind != CastC: return false
   var t = firstChild(n)
   var inner = t
   skip inner
-  result = typeMayHoldPointer(t) and not sourceMayBePointer(inner)
+  result = typeMayHoldPointer(env, t) and not sourceMayBePointer(inner)
 
-proc unwrapConv(n: Cursor): Cursor =
+proc unwrapConv(env: ptr ModuleEnv; n: Cursor): Cursor =
   ## Strip `(conv)`/`(baseobj)`/`(par)` wrappers, and non-forging `(cast)`,
   ## so the head is the underlying value. A forging cast is not identity.
   result = n
@@ -248,7 +267,7 @@ proc unwrapConv(n: Cursor): Cursor =
       inc result
       skip result                # type
     of CastC:
-      if isForgingCast(result): break
+      if isForgingCast(env, result): break
       inc result
       skip result
     of BaseobjC:
@@ -260,27 +279,27 @@ proc unwrapConv(n: Cursor): Cursor =
     else:
       break
 
-proc baseSymOf(n: Cursor): SymId =
+proc baseSymOf(env: ptr ModuleEnv; n: Cursor): SymId =
   ## Innermost symbol of an lvalue path, or `SymId(0)` if the path is computed.
-  var n = unwrapConv(n)
+  var n = unwrapConv(env, n)
   while n.kind == TagLit:
     case n.exprKind
     of DotC, DerefC, PatC, AtC, AddrC, HaddrC, ParC:
-      n = unwrapConv(n.childCursor)
+      n = unwrapConv(env, n.childCursor)
     else:
       return SymId(0)
   if n.kind == Symbol: result = n.symId
   else: result = SymId(0)
 
-proc isIdentityExpr(n: Cursor): bool =
+proc isIdentityExpr(env: ptr ModuleEnv; n: Cursor): bool =
   ## True when `n` names an existing graph (`p`, `addr p`) rather than a
   ## projection or computed value. Used to decide whether a copy should join
   ## partition classes. The address of any lvalue path (`addr p[]`,
   ## `addr p.field`, `addr a[i]`) points into the base's graph: writing
   ## through it writes that graph (#2930).
-  var n = unwrapConv(n)
+  var n = unwrapConv(env, n)
   if n.kind == TagLit and n.exprKind in {AddrC, HaddrC}:
-    result = baseSymOf(n) != SymId(0)
+    result = baseSymOf(env, n) != SymId(0)
   else:
     result = n.kind == Symbol
 
@@ -351,7 +370,7 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
       skip r                 # skip the type operand
       result = exprRoots(a, r)
     of CastC:
-      if isForgingCast(n):
+      if isForgingCast(a.env, n):
         result = @[]         # untracked pointee, not the inner integer
       else:
         var r = n
@@ -401,7 +420,7 @@ proc handleLocalDecl(a: var ProcAnalysis; n: var Cursor) =
   if sym != SymId(0):
     # Only an identity init (`var x = p`) lets x name p's graph. A field
     # load, call, or computed value is a fresh copy.
-    if isIdentityExpr(initStart): a.localRoots[sym] = roots
+    if isIdentityExpr(a.env, initStart): a.localRoots[sym] = roots
     else: a.localRoots[sym] = @[]
   for e in roots: markReadElem(a, e)
   var ic = initStart
@@ -423,7 +442,7 @@ proc handleAssign(a: var ProcAnalysis; n: var Cursor) =
     # graph. Join classes only on identity (`p = q`), never on `p = obj.field`.
     let e = a.paramLookup.getOrQuit(destStart.symId)
     markWriteElem(a, e, slot = true)
-    if isIdentityExpr(valStart):
+    if isIdentityExpr(a.env, valStart):
       for r in valRoots: ufUnion(a.uf, e, r)
   elif destBareSym:
     # Copy into a local. Only an identity (`x = y`) rebinds x to y's graph;
@@ -431,7 +450,7 @@ proc handleAssign(a: var ProcAnalysis; n: var Cursor) =
     # that local would join every argument of f via the result element.
     if not a.localRoots.hasKey(destStart.symId):
       a.writesGlobal = true
-    if isIdentityExpr(valStart): a.localRoots[destStart.symId] = valRoots
+    if isIdentityExpr(a.env, valStart): a.localRoots[destStart.symId] = valRoots
     else: a.localRoots[destStart.symId] = @[]
   else:
     # Store through dest: `obj.field = x`, `p[] = x`, `a[i] = x`.
@@ -441,12 +460,12 @@ proc handleAssign(a: var ProcAnalysis; n: var Cursor) =
     if destRoots.len == 0:
       # Empty roots: a fresh stack local (result, or a not-yet-aliased var)
       # vs. a computed / untracked address. Only the latter is a global write.
-      if not isTrackedSym(a, baseSymOf(destStart)):
+      if not isTrackedSym(a, baseSymOf(a.env, destStart)):
         a.writesGlobal = true
     else:
       for e in destRoots:
         markWriteElem(a, e)
-      if isIdentityExpr(valStart):
+      if isIdentityExpr(a.env, valStart):
         for e in destRoots:
           for r in valRoots: ufUnion(a.uf, e, r)
     var dc = destStart
@@ -462,7 +481,7 @@ proc handleRet(a: var ProcAnalysis; n: var Cursor) =
   c = sub(c)  # throwaway copy; no leaveScope needed
   if c.hasMore and c.kind != DotToken:
     let roots = exprRoots(a, c)
-    if isIdentityExpr(c):
+    if isIdentityExpr(a.env, c):
       for r in roots:
         ufUnion(a.uf, a.nParams, r)            # result aliases a returned identity
     for r in roots:
@@ -471,7 +490,63 @@ proc handleRet(a: var ProcAnalysis; n: var Cursor) =
     walkStmt(a, rc)
   skip n
 
+proc walkPointerArg(a: var ProcAnalysis; arg: Cursor) =
+  ## Walk an argument whose address the callee is known not to retain: an
+  ## `(addr X)` there is no escape of X, but X's own subexpressions still are
+  ## walked for nested calls and addresses.
+  var c = arg
+  if c.isTagLit and c.exprKind in AddrKinds:
+    c = c.childCursor
+  walkStmt(a, c)
+
+proc copyMemSide(a: var ProcAnalysis; arg: Cursor; write: bool): seq[int] =
+  result = exprRoots(a, arg)
+  if result.len == 0 and not isTrackedSym(a, baseSymOf(a.env, arg)):
+    # A computed / untracked address, as in `handleAssign`.
+    if write: a.writesGlobal = true
+    else: a.readsGlobal = true
+  for r in result:
+    if write: markWriteElem(a, r)
+    else: markReadElem(a, r)
+  walkPointerArg(a, arg)
+
+proc handleCopyMem(a: var ProcAnalysis; n: var Cursor) =
+  ## `copyMem(dest, src, size)` is `dest[] = src[]` for `size` bytes: it
+  ## writes dest's graph, reads src's and retains neither. `xelim` emits it
+  ## for every int<->float `cast` on the C backend (`copyMem(addr dst, addr
+  ## src, sizeof T)`), so taking it as an unknown foreign call would make any
+  ## proc with such a value pun `callsUnknown` and let its operand escape.
+  ## The copied bytes may be a pointer, so the two sides share a class.
+  var c = n
+  c = sub(c)  # throwaway copy; no leaveScope needed
+  skip c                                       # callee
+  let dst = copyMemSide(a, c, write = true)
+  skip c
+  let src = copyMemSide(a, c, write = false)
+  skip c
+  for d in dst:
+    for s in src: ufUnion(a.uf, d, s)
+  while c.hasMore:                             # size
+    var sc = c
+    walkStmt(a, sc)
+    skip c
+  skip n
+
+proc isCopyMemCall(a: ProcAnalysis; n: Cursor): bool =
+  if a.env == nil or a.env.copyMem == SymId(0): return false
+  var c = n
+  c = sub(c)  # throwaway copy; no leaveScope needed
+  if c.kind != Symbol or c.symId != a.env.copyMem: return false
+  result = true
+  for i in 0 ..< 3:                            # callee, dest, src
+    if not c.hasMore: return false
+    skip c
+  result = c.hasMore                           # size
+
 proc handleCall(a: var ProcAnalysis; n: var Cursor) =
+  if isCopyMemCall(a, n):
+    handleCopyMem(a, n)
+    return
   var c = n
   c = sub(c)  # throwaway copy; no leaveScope needed
   let calleeStart = c
@@ -522,7 +597,7 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
     if n.exprKind in AddrKinds:
       let escRoots = exprRoots(a, n.childCursor)
       for r in escRoots: markEscapeElem(a, r)
-    elif n.exprKind == CastC and isForgingCast(n):
+    elif n.exprKind == CastC and isForgingCast(a.env, n):
       a.writesGlobal = true
       a.readsGlobal = true
     n.loopInto:
@@ -551,11 +626,11 @@ proc isExternProc(pragmas: Cursor): bool =
     if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP, ImportjsP}: return true
     skip p
 
-proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
+proc computeProcAnalysis(procDecl: Cursor; env: ptr ModuleEnv = nil): ProcAnalysis =
   var p = procDecl
   let d = takeProcDecl(p)
   let paramSyms = collectParamSyms(d.params)
-  result = ProcAnalysis(nParams: paramSyms.len)
+  result = ProcAnalysis(nParams: paramSyms.len, env: env)
   result.constRef = collectParamConstRef(d.params)
   result.uf = newSeq[int](paramSyms.len + 1)
   for i in 0 .. paramSyms.len: result.uf[i] = i
@@ -646,7 +721,22 @@ proc resolveSummaries(analyses: var Table[SymId, ProcAnalysis]): FunctionSummary
         changed = true
     if not changed: break
 
-proc collectProcAnalyses(buf: var TokenBuf): Table[SymId, ProcAnalysis] =
+proc collectModuleEnv(buf: var TokenBuf): ModuleEnv =
+  ## The cursors point into `buf`, which must stay unchanged while the
+  ## analyses run.
+  result = ModuleEnv(types: initTable[SymId, Cursor](),
+                     copyMem: pool.symId("copyMem.0." & SystemModuleSuffix))
+  var n = beginRead(buf)
+  if n.stmtKind == StmtsS:
+    n.into:
+      while n.hasMore:
+        if n.isTagLit and n.stmtKind == TypeS:
+          let t = takeTypeDecl(n)
+          if t.name.isSymbolDef: result.types[t.name.symId] = t.body
+        else:
+          skip n
+
+proc collectProcAnalyses(buf: var TokenBuf; env: ptr ModuleEnv): Table[SymId, ProcAnalysis] =
   result = initTable[SymId, ProcAnalysis]()
   var n = beginRead(buf)
   if n.stmtKind == StmtsS:
@@ -657,7 +747,7 @@ proc collectProcAnalyses(buf: var TokenBuf): Table[SymId, ProcAnalysis] =
           var d = n
           inc d
           if d.isSymbolDef:
-            result[d.symId] = computeProcAnalysis(p)
+            result[d.symId] = computeProcAnalysis(p, env)
         skip n
 
 # ---- serialization --------------------------------------------------------
@@ -819,7 +909,8 @@ proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
     dest.takeTree n
 
 proc annotateFunctionSummaries*(buf: var TokenBuf) =
-  var analyses = collectProcAnalyses(buf)
+  var env = collectModuleEnv(buf)
+  var analyses = collectProcAnalyses(buf, addr env)
   let summaries = resolveSummaries(analyses)
 
   var n = beginRead(buf)
@@ -962,6 +1053,78 @@ when isMainModule:
     let s = twoParams(
       "(asgn obj.0 (cast (ptr (i +32)) (add (u +64) (cast (u +64) x.0) 8)))")
     doAssert not s.writesGlobal
+
+  proc moduleSummaries(src: string): FunctionSummaryTable =
+    var buf = parseFromBuffer("(stmts " & src & ")", "M")
+    var env = collectModuleEnv(buf)
+    var analyses = collectProcAnalyses(buf, addr env)
+    result = resolveSummaries(analyses)
+
+  block cast_literal_to_local_enum_is_not_forging:
+    # `cast[Color](1)`: a named type declared in the module resolves to an
+    # enum, which holds no pointer.
+    let t = moduleSummaries("""
+      (type :Color.0 . (enum (u +8) (efld :red.0 0) (efld :green.0 1)))
+      (proc :f.0 (params) Color.0 . (stmts
+        (var :result.0 . Color.0 .)
+        (asgn result.0 (cast Color.0 1))
+        (ret result.0)))""")
+    let s = t.getOrQuit(pool.symId("f.0"))
+    doAssert not s.writesGlobal
+    doAssert not s.readsGlobal
+
+  block cast_literal_to_local_object_with_ptr_is_forging:
+    let t = moduleSummaries("""
+      (type :P.0 . (object . (fld :p.0 . (ptr (i +32)))))
+      (proc :f.0 (params) P.0 . (stmts
+        (var :result.0 . P.0 .)
+        (asgn result.0 (cast P.0 1))
+        (ret result.0)))""")
+    doAssert t.getOrQuit(pool.symId("f.0")).writesGlobal
+
+  block cast_literal_to_foreign_type_is_forging:
+    # Not declared here: it might be a pointer type.
+    let t = moduleSummaries("""
+      (proc :f.0 (params) Foreign.0.other . (stmts
+        (var :result.0 . Foreign.0.other .)
+        (asgn result.0 (cast Foreign.0.other 1))
+        (ret result.0)))""")
+    doAssert t.getOrQuit(pool.symId("f.0")).writesGlobal
+
+  block float_bitcast_via_copymem_is_precise:
+    # xelim's C-backend lowering of `cast[uint64](x: float)`.
+    let t = moduleSummaries("""
+      (proc :f.0 (params (param :x.0 . (f +64))) (u +64) . (stmts
+        (var :result.0 . (u +64) .)
+        (var :xc.0 . (u +64) .)
+        (call copyMem.0.""" & SystemModuleSuffix & """ (addr xc.0) (addr x.0) (sizeof (u +64)))
+        (asgn result.0 xc.0)
+        (ret result.0)))""")
+    let s = t.getOrQuit(pool.symId("f.0"))
+    doAssert not s.callsUnknown
+    doAssert not s.writesGlobal
+    doAssert not s.readsGlobal
+    doAssert s.params[0].reads
+    doAssert not s.params[0].writes
+    doAssert not s.params[0].escapes
+    doAssert int(s.resultCls) == 1
+
+  block copymem_through_params:
+    let t = moduleSummaries("""
+      (proc :f.0 (params (param :d.0 . (ptr (i +64))) (param :s.0 . (ptr (i +64)))) . . (stmts
+        (call copyMem.0.""" & SystemModuleSuffix & """ d.0 s.0 8)))""")
+    let s = t.getOrQuit(pool.symId("f.0"))
+    doAssert not s.callsUnknown
+    doAssert s.params[0].writes and not s.params[0].escapes
+    doAssert s.params[1].reads and not s.params[1].writes
+    doAssert not s.params[1].escapes
+    doAssert s.params[0].cls == s.params[1].cls   # the bytes may be a pointer
+
+  block copymem_into_global_writes_global:
+    let t = moduleSummaries("""
+      (proc :f.0 (params (param :s.0 . (ptr (i +64)))) . . (stmts
+        (call copyMem.0.""" & SystemModuleSuffix & """ (addr g.0.other) s.0 8)))""")
+    doAssert t.getOrQuit(pool.symId("f.0")).writesGlobal
 
   block constref_param_outlives_callsUnknown:
     # `(constref)` marks a pointer standing for a by-value source parameter.
