@@ -224,6 +224,7 @@
 | `(borrow)` | NimonyPragma | `borrow` pragma |
 | `(noSideEffect)` | NimonyPragma | `noSideEffect` pragma |
 | `(nodestroy)` | NimonyPragma | `nodestroy` pragma |
+| `(lifted)` | NimonyPragma | the lifter generated this hook (a *derived* hook, `lifter.genProcDecl`); a written hook, or an instance of one, has no `(lifted)`. Never written by the user |
 | `(plugin X)` | NimonyPragma | `plugin` pragma |
 | `(bycopy)` | NimonyPragma | `bycopy` pragma |
 | `(byref)` | NimonyPragma | `byref` pragma |
