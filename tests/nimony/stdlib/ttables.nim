@@ -362,6 +362,16 @@ block:
   t.del("a")
   assert t.len == 0
 
+  # emptied slots (deleted, cleared) are reused correctly
+  for i in 0 ..< 40: t.inc($i, i + 1)
+  for i in countup(0, 39, 2): t.del($i)
+  assert t.len == 20
+  for i in 0 ..< 40: assert t[$i] == (if i mod 2 == 0: 0 else: i + 1)
+  t.clear()
+  assert t.len == 0 and t["1"] == 0
+  t.inc("1")
+  assert t["1"] == 1 and t.len == 1
+
   let c = toCountTable(["x", "y", "x", "z", "x"])
   assert c["x"] == 3
   assert c["y"] == 1

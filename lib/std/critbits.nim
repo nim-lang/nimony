@@ -152,7 +152,7 @@ proc rawInsert(c: var CritBitTree[void], key: string): Node[void] =
   inc c.count
   result = newLeaf
 
-proc rawInsert[T: not void](c: var CritBitTree[T], key: string): Node[T] =
+proc rawInsert[T: not void and HasDefault](c: var CritBitTree[T], key: string): Node[T] =
   if c.root == nil:
     let n = Node[T](isLeaf: true, key: key)
     c.root = n
@@ -295,7 +295,7 @@ proc missingOrExcl*[T](c: var CritBitTree[T], key: string): bool =
   discard exclImpl(c, key)
   result = c.count == oldCount
 
-proc containsOrIncl*[T: not void](c: var CritBitTree[T], key: string, val: sink T): bool =
+proc containsOrIncl*[T: not void and HasDefault](c: var CritBitTree[T], key: string, val: sink T): bool =
   ## Returns true if `c` contains the given `key`. If the key does not exist,
   ## `c[key] = val` is performed.
   ##
@@ -368,7 +368,7 @@ proc incl*(c: var CritBitTree[void], key: string) =
 
   discard rawInsert(c, key)
 
-proc incl*[T: not void](c: var CritBitTree[T], key: string, val: sink T) =
+proc incl*[T: not void and HasDefault](c: var CritBitTree[T], key: string, val: sink T) =
   ## Inserts `key` with value `val` into `c`.
   ##
   ## **See also:**
@@ -382,7 +382,7 @@ proc incl*[T: not void](c: var CritBitTree[T], key: string, val: sink T) =
   let n = rawInsert(c, key)
   n.val = val
 
-proc `[]=`*[T: not void](c: var CritBitTree[T], key: string, val: sink T) =
+proc `[]=`*[T: not void and HasDefault](c: var CritBitTree[T], key: string, val: sink T) =
   ## Alias for `incl <#incl,CritBitTree[T],string,T>`_.
   ##
   ## **See also:**
@@ -576,7 +576,7 @@ func commonPrefixLen*[T](c: CritBitTree[T]): int {.inline, ensures: result >= 0.
   else:
     result = 0
 
-proc toCritBitTree*[T: not void](pairs: sink openArray[(string, T)]): CritBitTree[T] =
+proc toCritBitTree*[T: not void and HasDefault](pairs: sink openArray[(string, T)]): CritBitTree[T] =
   ## Creates a new `CritBitTree` that contains the given `pairs`.
   runnableExamples:
     doAssert {"a": "0", "b": "1", "c": "2"}.toCritBitTree is CritBitTree[string]

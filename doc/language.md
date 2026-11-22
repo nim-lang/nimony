@@ -5488,7 +5488,7 @@ Module plugins can also be attached to a nominal type (or a generic type that be
 
 ```nim
 type
-  Matrix {.plugin: "avoidtemps".} = object
+  Matrix {.plugin: "std/deps/avoidtemps".} = object
     a: array[4, array[4, float]]
 
 proc `*=`(x: var Matrix; y: Matrix) = ...
@@ -5514,7 +5514,20 @@ e -= d
 
 Avoiding the creation of temporary matrices entirely.
 
-While the code for the avoidtemps plugin is beyond the scope of this document, this is a classical compiler transformation.
+The plugin ships as `std/deps/avoidtemps`; `std/vectors` uses it for its `Vec`
+type. Attaching it is a promise by the type's author that for the operators
+`+ - * /`, `x op y` with `x` of the type returns the type and means
+`(var t = x; t op= y; t)`. The plugin rewrites `let`/`var` declarations of
+the type, and only when the chain starts at an operand that is known to be of
+the type (a local, parameter or global declared with it, or an object
+constructor of it). A right operand that is itself a chain gets one temporary:
+`let e = a - (b*c + d)` becomes `var e = a; var t = b; t *= c; t += d; e -= t`.
+
+It also rewrites an assignment `x = y*z` to a local `x` of the type into
+`x = y; x *= z` when the right-hand side does not mention `x`. Assignments to
+globals and `var` parameters are left alone: a parameter on the right-hand
+side could alias them and would then be read after the first in-place step
+has already overwritten the target.
 
 
 ### Import plugins

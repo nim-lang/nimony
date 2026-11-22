@@ -1,0 +1,15 @@
+chain [1.0, 2.0; 5.0, 2.0] binary=0 inplace=3
+nested [-2.0, 1.0; 2.0, 1.0] binary=0 inplace=3
+scalar [2.0, 5.0; 7.0, 8.0] binary=0 inplace=2
+scalarleft [2.0, 5.0; 7.0, 8.0] binary=2 inplace=2
+single [1.0, 3.0; 4.0, 4.0] binary=1 inplace=1
+call [2.0, 3.0; 4.0, 5.0] binary=2 inplace=2
+varparam [1.0, 4.0; 5.0, 4.0] binary=0 inplace=2
+asgn [2.0, 1.0; 4.0, 3.0] binary=0 inplace=1
+asgnnested [-1.0, -2.0; -2.0, -1.0] binary=0 inplace=3
+asgnself [0.0, 0.0; 1.0, 3.0] binary=1 inplace=1
+asgnselfrhs [2.0, 5.0; 3.0, 4.0] binary=2 inplace=2
+asgnvarparam [0.0, 2.0; 2.0, 0.0] binary=1 inplace=1
+asgnresult [2.0, 4.0; 5.0, 5.0] binary=0 inplace=2
+asgnglobal [1.0, 2.0; 2.0, 1.0] binary=1 inplace=1
+global [2.0, 3.0; 4.0, 5.0] binary=0 inplace=2
