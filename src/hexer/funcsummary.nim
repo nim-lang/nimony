@@ -130,7 +130,7 @@ type
                                        ## body — see `ParamEffect.constRef`.
     writesGlobal, readsGlobal, callsUnknown, raises: bool
     calls: seq[CallFact]
-    env: ptr ModuleEnv                 ## nil: nothing beyond the proc is known
+    env: ptr ModuleEnv                 ## an empty one: nothing beyond the proc is known
 
 proc ufFind(u: var seq[int]; x: int): int =
   var r = x
@@ -207,7 +207,7 @@ proc typeMayHoldPointer(env: ptr ModuleEnv; typ: Cursor; depth = 0): bool =
         else:
           return true              # a variant branch or an unknown form
   else:
-    if typ.kind == Symbol and env != nil and env.types.hasKey(typ.symId):
+    if typ.kind == Symbol and env.types.hasKey(typ.symId):
       result = typeMayHoldPointer(env, env.types.getOrQuit(typ.symId), depth+1)
     else:
       result = true                # foreign / unknown
@@ -533,7 +533,7 @@ proc handleCopyMem(a: var ProcAnalysis; n: var Cursor) =
   skip n
 
 proc isCopyMemCall(a: ProcAnalysis; n: Cursor): bool =
-  if a.env == nil or a.env.copyMem == SymId(0): return false
+  if a.env.copyMem == SymId(0): return false
   var c = n
   c = sub(c)  # throwaway copy; no leaveScope needed
   if c.kind != Symbol or c.symId != a.env.copyMem: return false
@@ -626,7 +626,7 @@ proc isExternProc(pragmas: Cursor): bool =
     if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP, ImportjsP}: return true
     skip p
 
-proc computeProcAnalysis(procDecl: Cursor; env: ptr ModuleEnv = nil): ProcAnalysis =
+proc computeProcAnalysis(procDecl: Cursor; env: ptr ModuleEnv): ProcAnalysis =
   var p = procDecl
   let d = takeProcDecl(p)
   let paramSyms = collectParamSyms(d.params)
@@ -660,8 +660,9 @@ proc finalizeSummary(a: var ProcAnalysis): FunctionSummary =
   result.resultEscapes = a.escapes[a.nParams]
 
 proc computeFunctionSummary*(procDecl: Cursor): FunctionSummary =
-  ## Intra-procedural summary only (no callee summaries available).
-  var a = computeProcAnalysis(procDecl)
+  ## Intra-procedural summary only (no callee summaries, no module types).
+  var env = ModuleEnv()
+  var a = computeProcAnalysis(procDecl, addr env)
   result = finalizeSummary(a)
 
 proc applyCallee(a: var ProcAnalysis; call: CallFact; callee: FunctionSummary) =
