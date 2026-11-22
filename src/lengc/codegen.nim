@@ -570,6 +570,14 @@ proc genVarInitValue(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     c.add Semicolon
 
+proc hasPragma(n: Cursor; p: LengPragma): bool =
+  result = false
+  if n.substructureKind == PragmasU:
+    var n = n
+    n.loopInto:
+      if n.pragmaKind == p: result = true
+      skip n
+
 proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   genCLineDir(c, info(n))
   var d = takeVarDecl(n)
@@ -592,7 +600,15 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     # definition is invisible to the other modules, which declare it `extern`.
     let cppConstDef = vk == IsConst and not toExtern and not useStatic and
       c.m.config.backend == backendCpp and not isImportC(c.m, d.name)
-    if toExtern or isImportC(c.m, d.name) or cppConstDef:
+    # An `exportc` global gets C linkage in C++, as an `exportc` proc does. Its
+    # declarations take `extern "C"` alone (which implies `extern`); its definition
+    # goes in an `extern "C" { }` block, as the single-declaration form would make
+    # it a declaration.
+    let cppExportc = vk != IsLocal and not useStatic and c.m.config.backend == backendCpp and
+      hasPragma(d.pragmas, ExportcP)
+    if cppExportc and toExtern:
+      c.add "NIM_EXTERNC "
+    elif toExtern or isImportC(c.m, d.name) or cppConstDef:
       c.add ExternKeyword
 
     if vk == IsThreadlocal:
@@ -626,6 +642,9 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
         c.init.add c.code[i]
       setLen c.code, beforeInit
       c.add Semicolon
+    if cppExportc and not toExtern and not skipDecl:
+      c.code.insert([c.tokens.getOrIncl("NIM_EXTERNC {")], beforeDecl)
+      c.add "}"
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
@@ -683,7 +702,12 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     c.add StaticKeyword
     c.add "inline "
   else:
-    if isExtern:
+    if ExportcP in prag.flags and c.m.config.backend == backendCpp:
+      # C++ would mangle the exported name: an `exportc` proc gets C linkage, as
+      # in Nim, in every module that declares it. The single-declaration form of
+      # `extern "C"` implies `extern`, and C++ rejects the two together.
+      c.add "NIM_EXTERNC "
+    elif isExtern:
       c.add ExternKeyword
     if NoinlineP in prag.flags:
       c.add "N_NOINLINE "
