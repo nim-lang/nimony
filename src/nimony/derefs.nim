@@ -46,7 +46,6 @@ include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / hexer / lifter
-import ".." / lib / symparser
 import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops, vtables_frontend, semdata, builtintypes
 
 type
@@ -98,7 +97,7 @@ type
     typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
     tmpCounter: int  # for fresh symbols in exception lowering
     errorCodeType: TokenBuf # `ErrorCode`, what a bare `(raises)` raises
-    thisModuleSuffix: string
+    thisModule: StrId # the module suffix of this module's symbols
     inferredOwner: SymId
       ## the generic instance being translated, `NoSymId` outside of one
     copyDeps: Table[SymId, seq[SymId]]
@@ -1125,7 +1124,7 @@ proc collectCopyHooks(c: var Context; op: AttachedOp; t: Cursor;
       if hook != NoSymId: break
     if hook != NoSymId:
       hooks.add hook
-    elif extractModule(pool.symString(s)) == c.thisModuleSuffix:
+    elif pool.sym(s).module == c.thisModule:
       # another module's type without hooks is trivial: its module forged
       # the ones it needs. Only this module's types may not have them yet.
       let d = tryLoadSym(s)
@@ -2148,7 +2147,7 @@ proc injectDerefs*(n: Cursor; hooks: ref Table[SymId, HooksPerType];
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId),
     dest: createTokenBuf(inputWidth + inputWidth div 4), # about 1.12x the input
     hooks: hooks,
-    thisModuleSuffix: thisModuleSuffix,
+    thisModule: pool.strings.getOrIncl(thisModuleSuffix),
     classes: ensureMove(classes),
     lifter: nil) # set below
   c.errorCodeType = createTokenBuf(1)
