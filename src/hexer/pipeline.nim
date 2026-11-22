@@ -44,7 +44,11 @@ proc publishHooks*(n: var Cursor) =
   else:
     inc n
 
-proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
+proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int;
+                checkOnly = false): TokenBuf =
+  ## `checkOnly` stops after the vtables pass, the last one that reports an error
+  ## to the user (the duplifier's `.error` hooks, `cps`'s `delay()` misuse, the vtables'
+  ## missing methods); the result is then not a module.
   # The input is already the Final IR (`doc/final_ir.md`): nimsem lowers a
   # module before publishing it. Every pass here reads and writes that form.
   var input = createTokenBuf(300)
@@ -135,6 +139,9 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   var needsXelimAgain = false
   pass.prepareForNext("vtables")
   transformVTables(pass, needsXelimAgain)
+  if checkOnly:
+    pass.finishPass()
+    return ensureMove(pass.dest)
 
   # Pass 10: Inject Const Param Dereferences
   pass.prepareForNext("constparams")

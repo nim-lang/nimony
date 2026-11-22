@@ -1258,12 +1258,22 @@ proc writeStdBuildFile(c: DepContext; content: string): string =
     vfsWrite(tmp, content)
     publishShared tmp, result
 
-proc emitHexerNode(c: DepContext; b: var Builder; v: Node; isMain: bool; backendDir: string) =
+proc checkStamp(x: string): string =
+  ## `check --hexer` writes this instead of the module's `.x.nif`, which `c` must
+  ## not mistake for a finished module.
+  assert x.endsWith(".x.nif")
+  result = x[0 ..< x.len - ".x.nif".len] & ".chk.nif"
+
+proc emitHexerNode(c: DepContext; b: var Builder; v: Node; isMain: bool; backendDir: string;
+                   check = false) =
   ## For the root module the output is main-specific so that its --isMain
   ## version does not overwrite the shared .x.nif that other compilations
   ## produce when this module is a non-main dependency.
   b.withTree "do":
     b.addIdent "hexer"
+    if check:
+      b.withTree "args":
+        b.addStrLit "--check"
     if isMain:
       b.withTree "args":
         b.addStrLit "--isMain"
@@ -1295,9 +1305,10 @@ proc emitHexerNode(c: DepContext; b: var Builder; v: Node; isMain: bool; backend
       if not seenImports.containsOrIncl(idxFile):
         b.withTree "input":
           b.addStrLit idxFile
+    let outFile = if isMain: backendDir / v.files[0].modname & ".x.nif"
+                  else: c.config.hexedFile(v.files[0])
     b.withTree "output":
-      b.addStrLit(if isMain: backendDir / v.files[0].modname & ".x.nif"
-                  else: c.config.hexedFile(v.files[0]))
+      b.addStrLit(if check: checkStamp(outFile) else: outFile)
 
 proc linuxLibc(c: DepContext): bool =
   ## On Linux `-d:useLibc` makes a native program a libc program (see
@@ -1340,7 +1351,7 @@ proc generateCheckBuildFile(c: DepContext): string =
     for i in 0 ..< c.nodes.len:
       let v = c.nodes[i]
       if i == 0 or not v.files[0].std:
-        emitHexerNode(c, b, v, i == 0, backendDir)
+        emitHexerNode(c, b, v, i == 0, backendDir, check = true)
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.config.backendTag / c.rootNode.files[0].modname & ".final.build.nif"

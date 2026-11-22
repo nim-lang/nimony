@@ -62,6 +62,8 @@ Options:
   --outdir:DIR              (d, dl, de) write the outputs to DIR
   --stdcache:DIR            (c) where the stdlib's semchecked modules are
   --isMain                  mark the file as the main module
+  --check                   (c) stop once the lowering has reported its errors;
+                            writes <module>.chk.nif instead of <module>.x.nif
   --native                  target the native backend (arkham+nifasm, no C)
   --app:TYPE                application type: console, gui, lib, staticlib (default: console)
   --flags:FLAGS             undocumented flags
@@ -81,6 +83,7 @@ proc hexerMain() =
   var outdir = ""
   var action = ""
   var isMain = false
+  var checkOnly = false
   var native = false
   var crt = false
   var cycles = false
@@ -117,6 +120,8 @@ proc hexerMain() =
         prog.stdDir = val
       of "ismain":
         isMain = true
+      of "check":
+        checkOnly = true
       of "native":
         native = true
       of "crt":
@@ -144,7 +149,7 @@ proc hexerMain() =
     case action
     of "c":
       expand files[0], bits, bigEndian, flags, isMain, outdir, appType, native, isWindows, crt,
-             cycles
+             cycles, checkOnly
     of "d":
       deadCodeElimination(files, outdir)
     of "dl":
