@@ -289,6 +289,9 @@ type
     rootNode: Node
     includeStack: seq[string]
     processedModules: Table[string, int] # modname -> index to c.nodes
+    pairs: Table[string, FilePair] ## source path -> its pair: an import edge names
+                                   ## a module again for every importer, and naming one
+                                   ## costs a path normalisation plus a `relativePath` per search path
     inPluginImports: bool ## a plugin may import the module that declares it
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
@@ -302,16 +305,20 @@ type
     passL: seq[string]
     passC: seq[string]
 
-proc toPair(c: DepContext; f: string): FilePair =
+proc toPair(c: var DepContext; f: string): FilePair =
   if f.endsWith(".nif"):
     # For .p.nif files (e.g. from compile-time eval snippets), extract the
     # module suffix directly from the filename rather than recomputing it:
-    FilePair(nimFile: f, modname: extractModuleSuffix(f))
+    result = FilePair(nimFile: f, modname: extractModuleSuffix(f))
   else:
-    FilePair(nimFile: f, modname: moduleSuffix(f, c.config),
-             std: inStdcache(c.config, f))
+    # `config.paths` and `config.stdcachePath` are fixed once a DepContext exists
+    result = c.pairs.getOrDefault(f)
+    if result.modname.len == 0:
+      result = FilePair(nimFile: f, modname: moduleSuffix(f, c.config),
+                        std: inStdcache(c.config, f))
+      c.pairs[f] = result
 
-proc modulePair(c: DepContext; f: string): FilePair =
+proc modulePair(c: var DepContext; f: string): FilePair =
   ## `toPair` for a module, not an include file: a module's name must not
   ## start with a digit (doc/language.md, "Modules").
   let name = moduleNameFromPath(f)
