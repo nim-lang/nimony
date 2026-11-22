@@ -31,6 +31,17 @@
 ## A right operand that is itself such a chain is computed into a single fresh
 ## temporary first, so `a - (b*c + d)` costs one temporary instead of two.
 ##
+## When the first right operand is itself a chain, as in `a - (b*c + d)`, that
+## chain is computed directly into the target and the leaf applied
+## afterwards: `var e = b; e *= c; e += d; subFrom(e, a)`. For `+` this uses
+## `t += a`, so the contract includes that `+` is commutative. For `-`, `*`
+## and `/` it uses `subFrom(t, a)`, `mulFrom(t, a)`, `divFrom(t, a)`, meaning
+## `t = a op t`; these are optional, and where one does not resolve the
+## chain falls back to the in-order form with a temporary. Since the leaf is
+## now read last, this only happens when the leaf and the operand contain
+## nothing but symbols, literals, constructors, field accesses, conversions
+## and the plugin's operators.
+##
 ## An assignment `x = a*b + c` to a local `x` of the type becomes
 ## `x = a; x *= b; x += c` when the right-hand side does not mention `x`.
 ## Here even a single operator saves the temporary that would be moved
@@ -39,7 +50,8 @@
 ## **Contract.** Attaching the plugin is a promise by the type's author: for
 ## every operator `op` in `+ - * /` and every `y` for which `x op y` compiles
 ## when `x` is of the type, `x op y` returns the type, `x op= y` exists, and
-## `x op y` means `(var t = x; t op= y; t)`. The plugin cannot see the
+## `x op y` means `(var t = x; t op= y; t)`; also, `+` on two values of the
+## type is commutative. The plugin cannot see the
 ## operators' declarations (they usually live in another module), so it relies
 ## on this promise. It only starts a chain at an operand whose type it *knows*
 ## is the plugin's type — a local, parameter or global declared with it, or an
@@ -168,20 +180,95 @@ proc flattenable(r: Rewriter; rhs: NifCursor; sub: var Chain): bool =
   ## A right operand earns its own temporary only if that saves one.
   result = r.matchChain(rhs, sub) and sub.steps.len >= 2
 
-proc emitTempDecl(r: Rewriter; dest: var NifBuilder; ch: Chain; target: SymId;
-                  declKind: NimonyStmt; info: LineInfo)
+proc pure(n: NifCursor): bool =
+  ## Can evaluating `n` neither write anything nor observe a write? Symbols,
+  ## literals, constructors, field accesses, conversions, and the plugin's
+  ## operators (pure by the contract). Anything else may be a call with
+  ## effects.
+  if n.kind != TagLit: return true
+  let ek = n.exprKind
+  if ek in {InfixX, CallX}:
+    var c = firstChild(n)
+    if c.kind != Symbol or c.symId.symBasename notin InPlaceOps: return false
+  elif ek notin {ParX, ExprX, OconstrX, DotX, ConvX, HconvX, HderefX, SufX} and
+      n.otherKind != KvU and n.typeKind == NoType:
+    return false
+  var c = firstChild(n)
+  while c.hasMore:
+    if not pure(c): return false
+    skip c
+  result = true
 
-proc emitSteps(r: Rewriter; dest: var NifBuilder; ch: Chain; target: SymId;
-               declKind: NimonyStmt; info: LineInfo) =
-  ## `target op= rhs` for every step. A right operand that is a chain worth
-  ## flattening is computed into its own temporary first; this keeps the
-  ## original evaluation order (leaf, rhs1, rhs2, ...).
-  for st in ch.steps:
+proc reversible(r: Rewriter; ch: Chain; sub: var Chain): bool =
+  ## `leaf op1 (sub) ...` can be computed as `target = sub; target = leaf op1
+  ## target; ...`: the first right operand goes straight into the target and
+  ## the leaf is applied afterwards, so `sub` needs no temporary. This reads
+  ## the leaf after `sub` instead of before, which is only unobservable when
+  ## both are pure.
+  result = ch.steps.len > 0 and r.matchChain(ch.steps[0].rhs, sub) and
+    pure(ch.leaf) and pure(ch.steps[0].rhs)
+
+const
+  ReverseOps = ["subFrom", "mulFrom", "divFrom"] # for `-`, `*`, `/`
+
+proc reverseOp(op: string): string =
+  case op
+  of "-": ReverseOps[0]
+  of "*": ReverseOps[1]
+  else: ReverseOps[2]
+
+type
+  InitMode = enum
+    InitDecl   # the original declaration `orig`, with its value replaced
+    InitAsgn   # `target = value`
+    InitTemp   # `var target: T = value`
+
+  Init = object
+    mode: InitMode
+    orig: NifCursor              # InitDecl: the declaration to copy from
+    typ: NifCursor               # InitTemp: the type of the temporary
+    declKind: NimonyStmt         # how temporaries are declared
+
+proc emitInit(dest: var NifBuilder; ini: Init; target: SymId; value: NifCursor;
+              info: LineInfo) =
+  var value = value
+  case ini.mode
+  of InitDecl:
+    dest.withTree ini.declKind, info:
+      var c = firstChild(ini.orig)
+      dest.takeTree c                # :name
+      dest.takeTree c                # export marker
+      dest.takeTree c                # pragmas
+      dest.takeTree c                # type
+      dest.takeTree value
+  of InitAsgn:
+    dest.withTree AsgnS, info:
+      dest.addSymUse target, info
+      dest.takeTree value
+  of InitTemp:
+    dest.withTree ini.declKind, info:
+      dest.addSymDef target, info
+      dest.addEmptyNode2 info        # export marker, pragmas
+      var t = ini.typ
+      dest.takeTree t
+      dest.takeTree value
+
+proc emitChain(r: Rewriter; dest: var NifBuilder; ch: Chain; target: SymId;
+               ini: Init; info: LineInfo)
+
+proc emitSteps(r: Rewriter; dest: var NifBuilder; ch: Chain; first: int;
+               target: SymId; declKind: NimonyStmt; info: LineInfo) =
+  ## `target op= rhs` for the steps from `first` on. A right operand that is a
+  ## chain worth flattening is computed into its own temporary first; this
+  ## keeps the original evaluation order (leaf, rhs1, rhs2, ...).
+  for i in first ..< ch.steps.len:
+    let st = ch.steps[i]
     var rhs = st.rhs
     var sub = Chain()
     if r.flattenable(rhs, sub):
       let tmp = genSym()
-      r.emitTempDecl(dest, sub, tmp, declKind, info)
+      r.emitChain(dest, sub, tmp,
+        Init(mode: InitTemp, typ: sub.typ, declKind: declKind), info)
       dest.withTree InfixX, info:
         dest.addIdent st.op & "="
         dest.addSymUse target, info
@@ -192,17 +279,60 @@ proc emitSteps(r: Rewriter; dest: var NifBuilder; ch: Chain; target: SymId;
         dest.addSymUse target, info
         dest.takeTree rhs
 
-proc emitTempDecl(r: Rewriter; dest: var NifBuilder; ch: Chain; target: SymId;
-                  declKind: NimonyStmt; info: LineInfo) =
-  ## `var target: T = leaf` followed by the in-place steps.
-  dest.withTree declKind, info:
-    dest.addSymDef target, info
-    dest.addEmptyNode2 info          # export marker, pragmas
-    var t = ch.typ
-    dest.takeTree t
-    var leaf = ch.leaf
-    dest.takeTree leaf
-  r.emitSteps(dest, ch, target, declKind, info)
+proc emitReversed(r: Rewriter; dest: var NifBuilder; ch, sub: Chain;
+                  target: SymId; ini: Init; info: LineInfo) =
+  ## `target = sub; target = leaf op1 target; <remaining steps>`.
+  r.emitChain(dest, sub, target, ini, info)
+  let op = ch.steps[0].op
+  var leaf = ch.leaf
+  if op == "+":
+    dest.withTree InfixX, info:      # `+` commutes: `leaf + t == t + leaf`
+      dest.addIdent "+="
+      dest.addSymUse target, info
+      dest.takeTree leaf
+  else:
+    dest.withTree CallX, info:
+      dest.addIdent reverseOp(op)
+      dest.addSymUse target, info
+      dest.takeTree leaf
+  r.emitSteps(dest, ch, 1, target, ini.declKind, info)
+
+proc emitChain(r: Rewriter; dest: var NifBuilder; ch: Chain; target: SymId;
+               ini: Init; info: LineInfo) =
+  ## Initializes `target` with the value of `ch`.
+  var sub = Chain()
+  if not r.reversible(ch, sub):
+    emitInit(dest, ini, target, ch.leaf, info)
+    r.emitSteps(dest, ch, 0, target, ini.declKind, info)
+  elif ch.steps[0].op == "+":
+    r.emitReversed(dest, ch, sub, target, ini, info)
+  else:
+    # `subFrom` & co are optional: use them only where they resolve.
+    #   when compiles((var t = leaf; subFrom(t, leaf))): <reversed>
+    #   else: <in order>
+    dest.withTree WhenS, info:
+      dest.withTree ElifU, info:
+        dest.withTree CallX, info:
+          dest.addIdent "compiles"
+          dest.withTree ExprX, info:
+            let probe = genSym()
+            dest.withTree StmtsS, info:
+              dest.withTree VarS, info:
+                dest.addSymDef probe, info
+                dest.addEmptyNode3 info
+                var init = ch.leaf
+                dest.takeTree init
+            dest.withTree CallX, info:
+              dest.addIdent reverseOp(ch.steps[0].op)
+              dest.addSymUse probe, info
+              var arg = ch.leaf
+              dest.takeTree arg
+        dest.withTree StmtsS, info:
+          r.emitReversed(dest, ch, sub, target, ini, info)
+      dest.withTree ElseU, info:
+        dest.withTree StmtsS, info:
+          emitInit(dest, ini, target, ch.leaf, info)
+          r.emitSteps(dest, ch, 0, target, ini.declKind, info)
 
 proc mutableKind(k: NimonyStmt): NimonyStmt =
   case k
@@ -218,24 +348,15 @@ proc trDecl(r: var Rewriter; dest: var NifBuilder; n: var NifCursor): bool =
   if d.name.kind != SymbolDef or not r.isTheType(d.typ) or
       not r.matchChain(d.val, ch):
     return false
-  var worth = ch.steps.len >= 2
+  var sub = Chain()
+  var worth = ch.steps.len >= 2 or r.reversible(ch, sub)
   for st in ch.steps:
-    var sub = Chain()
     if r.flattenable(st.rhs, sub): worth = true
   if not worth: return false
 
   let kind = mutableKind(n.stmtKind)
-  let target = d.name.symId
-  let info = n.info
-  dest.withTree kind, info:
-    var c = firstChild(n)
-    dest.takeTree c                  # :name
-    dest.takeTree c                  # export marker
-    dest.takeTree c                  # pragmas
-    dest.takeTree c                  # type
-    var leaf = ch.leaf
-    dest.takeTree leaf
-  r.emitSteps(dest, ch, target, kind, info)
+  r.emitChain(dest, ch, d.name.symId,
+    Init(mode: InitDecl, orig: n, declKind: kind), n.info)
   skip n
   result = true
 
@@ -258,12 +379,7 @@ proc trAsgn(r: var Rewriter; dest: var NifBuilder; n: var NifCursor): bool =
   let rhs = c
   var ch = Chain()
   if not r.matchChain(rhs, ch) or mentions(rhs, target): return false
-  let info = n.info
-  dest.withTree AsgnS, info:
-    dest.addSymUse target, info
-    var leaf = ch.leaf
-    dest.takeTree leaf
-  r.emitSteps(dest, ch, target, VarS, info)
+  r.emitChain(dest, ch, target, Init(mode: InitAsgn, declKind: VarS), n.info)
   skip n
   result = true
 

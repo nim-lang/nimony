@@ -5517,11 +5517,23 @@ Avoiding the creation of temporary matrices entirely.
 The plugin ships as `std/deps/avoidtemps`; `std/vectors` uses it for its `Vec`
 type. Attaching it is a promise by the type's author that for the operators
 `+ - * /`, `x op y` with `x` of the type returns the type and means
-`(var t = x; t op= y; t)`. The plugin rewrites `let`/`var` declarations of
+`(var t = x; t op= y; t)`, and that `+` on two values of the type is
+commutative. The plugin rewrites `let`/`var` declarations of
 the type, and only when the chain starts at an operand that is known to be of
 the type (a local, parameter or global declared with it, or an object
 constructor of it). A right operand that is itself a chain gets one temporary:
 `let e = a - (b*c + d)` becomes `var e = a; var t = b; t *= c; t += d; e -= t`.
+
+The first right operand avoids even that temporary when the type provides the
+optional reverse operator: it is computed into `e` directly, and the leaf is
+applied afterwards. With `proc subFrom(x: var Matrix; y: Matrix)` meaning
+`x = y - x`, the example becomes `var e = b; e *= c; e += d; subFrom(e, a)`.
+`mulFrom` and `divFrom` do the same for `*` and `/`. `+` needs no extra
+operator: the contract includes that `+` is commutative, so the plugin uses
+`e += a`. Because `a` is now read after the right operand is evaluated, this
+only happens when both consist of symbols, literals, constructors, field
+accesses, conversions and the plugin's operators, so that no call can change
+`a` in between.
 
 It also rewrites an assignment `x = y*z` to a local `x` of the type into
 `x = y; x *= z` when the right-hand side does not mention `x`. Assignments to

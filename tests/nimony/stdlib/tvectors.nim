@@ -73,6 +73,10 @@ proc main =
     assert f == vec3(-2.0, -2.5, -3.0)
     let g = b / vec3(2.0, 5.0, 3.0) + a
     assert g == vec3(3.0, 3.0, 5.0)
+    let h = a * (b - c) / (c + c)  # `mulFrom`: no temporary for `b - c`
+    assert h == vec3(3.5, 9.0, 16.5)
+    let k = b / (a + a) - c         # `divFrom`
+    assert k == vec3(1.5, 0.75, 0.5)
 
   block: # approximate equality and predicates
     assert vec2(1.0, 2.0).approxEq(vec2(1.0 + 1e-7, 2.0))

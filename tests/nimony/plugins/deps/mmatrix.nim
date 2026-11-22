@@ -33,6 +33,13 @@ proc `-=`*(x: var Matrix; y: Matrix) =
   for i in 0..1:
     for j in 0..1: x.a[i][j] = x.a[i][j] - y.a[i][j]
 
+proc subFrom*(x: var Matrix; y: Matrix) =
+  ## `x = y - x`. There is deliberately no `mulFrom`, so `a * (b + c)` keeps
+  ## its temporary.
+  inc inplaceCalls
+  for i in 0..1:
+    for j in 0..1: x.a[i][j] = y.a[i][j] - x.a[i][j]
+
 proc `*`*(x, y: Matrix): Matrix =
   inc binaryCalls
   result = x; result *= y

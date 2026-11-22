@@ -26,6 +26,23 @@ proc chains(a, b, c, d: Matrix) =
   let j = mat(1, 0, 0, 1) + a + b  # starts at a call of unknown type: left alone
   report "call", j
 
+proc reversed(a, b, c, d: Matrix) =
+  let e = a + b*c                # `var e = b; e *= c; e += a`
+  report "revplus", e
+
+  let f = a - (b*c + d) + c      # `var f = b; f *= c; f += d; subFrom(f, a); f += c`
+  report "revminus", f
+
+  let g = a * (b + c)            # no `mulFrom`: one temporary
+  report "revnomul", g
+
+  let h = a - (b * mat(1, 0, 0, 1) + c)  # a call could change `a`: in order
+  report "revimpure", h
+
+  var x = c
+  x = d - (a + b)                # assignments too
+  report "revasgn", x
+
 proc viaVar(x: var Matrix; y: Matrix) =
   let k = x + y + y            # starts at a `var` parameter
   report "varparam", k
@@ -61,6 +78,7 @@ inplaceCalls = 0
 chains(a, b, c, d)
 var x = a
 viaVar(x, b)
+reversed(a, b, c, d)
 assignments(a, b, c)
 assignVar(x, b)
 report "asgnresult", viaResult(a, b, c)

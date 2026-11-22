@@ -158,6 +158,16 @@ func `*=`*[N: static[int], T: HasArithmetic](a: var Vec[N, T]; b: Vec[N, T]) =
 func `/=`*[N: static[int], T: ArithmeticAndDiv](a: var Vec[N, T]; b: Vec[N, T]) =
   for i in 0..<N: a.components[i] = a.components[i] / b.components[i]
 
+# The optional reverse forms `a = b op a`, which let the plugin compute a
+# parenthesized right operand directly into the target: `a - (b + c)` needs
+# no temporary for `b + c`.
+func subFrom*[N: static[int], T: HasArithmetic](a: var Vec[N, T]; b: Vec[N, T]) =
+  for i in 0..<N: a.components[i] = b.components[i] - a.components[i]
+func mulFrom*[N: static[int], T: HasArithmetic](a: var Vec[N, T]; b: Vec[N, T]) =
+  for i in 0..<N: a.components[i] = b.components[i] * a.components[i]
+func divFrom*[N: static[int], T: ArithmeticAndDiv](a: var Vec[N, T]; b: Vec[N, T]) =
+  for i in 0..<N: a.components[i] = b.components[i] / a.components[i]
+
 func `+`*[N: static[int], T: HasArithmetic](a, b: Vec[N, T]): Vec[N, T] =
   result = a
   result += b
