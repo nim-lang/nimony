@@ -14,7 +14,7 @@ to type `(T, T)`, etc.
 
 ]##
 
-import std/[assertions, tables, hashes, strutils, syncio]
+import std/[assertions, tables, hashes, sets, strutils, syncio]
 
 when defined(nimony):
   {.feature: "lenientnils".}
@@ -46,6 +46,9 @@ type
 
   LiftingCtx* = object
     dest*: TokenBuf
+    errorInstances*: HashSet[SymId]
+      ## generic hook instances the frontend found `.error` (derefs), not
+      ## yet in a declaration `tryLoadSym` could show
     op: AttachedOp
     routineKind: SymKind
     calledErrorHook: NifLineInfo
@@ -150,8 +153,9 @@ proc lookupHookSym(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
   if result == SymId(0):
     result = tryLoadHook(op, s)
 
-proc isErrorHook(s: SymId): bool =
+proc isErrorHook(c: LiftingCtx; s: SymId): bool =
   if s == SymId(0): return false
+  if s in c.errorInstances: return true
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
     let r = asRoutine(res.decl)
@@ -177,7 +181,7 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     # trivial layout and only `.error =copy` would silently bit-copy
     # through assignment.
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
-    result = isErrorHook(lookupHookSym(c, siblingOp, s))
+    result = isErrorHook(c, lookupHookSym(c, siblingOp, s))
   elif not result and c.op == attachedDestroy:
     result = hasUserCopyHook(c, s)
 
@@ -191,7 +195,7 @@ proc siblingHookError(c: var LiftingCtx; typ: TypeCursor;
   if not (typ.isSymbol or typ.isSymbolDef):
     return
   let siblingSym = lookupHookSym(c, siblingOp, typ.symId)
-  if not isErrorHook(siblingSym):
+  if not isErrorHook(c, siblingSym):
     return
   let res = tryLoadSym(siblingSym)
   let r = asRoutine(res.decl)
@@ -673,7 +677,7 @@ proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceS
     let res = tryLoadSym(s)
     if res.status == LacksNothing:
       let r = asRoutine(res.decl)
-      if hasPragma(r.pragmas, ErrorP):
+      if hasPragma(r.pragmas, ErrorP) or s in c.errorInstances:
         c.calledErrorHook = r.name.info
         c.calledErrorHookSet = true
     if c.op == attachedDup:

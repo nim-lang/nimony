@@ -5,9 +5,11 @@ import deps / [mcopyerrorhandle, mcopyerrorholder]
 proc main =
   var a = handles(7)
   var b = a
+  var c = handles(8)
+  c = a
   var m = move a
   var h = mk()
   var h2 = h
   var hm = move h
-  discard b.len + m.len + h2.hs.len + hm.hs.len
+  discard b.len + c.len + m.len + h2.hs.len + hm.hs.len
 main()

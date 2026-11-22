@@ -100,11 +100,8 @@ type
     thisModule: StrId # the module suffix of this module's symbols
     inferredOwner: SymId
       ## the generic instance being translated, `NoSymId` outside of one
-    copyDeps: Table[SymId, seq[SymId]]
-      ## per generic instance: the `=dup`/`=copy` hooks its explicit hook
-      ## calls (`(dup x)`, `(copy a b)`) run, see `markErrorRoutines`
-    copiesOwned: HashSet[SymId]
-      ## generic instances that copy an `owned ref`, which is never possible
+    inferredOwnerParam: Cursor
+      ## its first parameter's type: the type a hook instance belongs to
     handlerStack: seq[tuple[errSym, eSym: SymId]]
       # stack of (`err`, `_e`) syms for synthesized ref-exception handlers; used to
       # rewrite bare `raise` into `exc = err; raise _e` so the original error code
@@ -622,6 +619,8 @@ proc trProcDecl(c: var Context; n: var Cursor) =
         var params = n
         inc params
         let firstParam = asLocal(params)
+        if c.inferredOwner == symId and isParamLike(firstParam.kind):
+          c.inferredOwnerParam = firstParam.typ
         if isParamLike(firstParam.kind):
           c.r.firstParam = firstParam.name.symId
           c.r.firstParamKind = firstParam.typ.typeKind
@@ -1102,6 +1101,21 @@ proc trTupleConstr(c: var Context; n: var Cursor; outerE: Expects) =
       else:
         tr c, n, e, fieldType
 
+proc hookOf(c: var Context; op: AttachedOp; s: SymId): SymId =
+  result = NoSymId
+  if c.hooks[].hasKey(s):
+    result = c.hooks[].getOrQuit(s).a[op]
+  if result == NoSymId:
+    result = tryLoadHook(op, s)
+
+proc isErrorHook(c: var Context; fn: SymId): bool =
+  if fn in c.lifter.errorInstances:
+    result = true
+  else:
+    let res = tryLoadSym(fn)
+    result = res.status == LacksNothing and res.decl.symKind.isRoutine and
+      hasPragma(asRoutine(res.decl).pragmas, ErrorP)
+
 proc collectCopyHooks(c: var Context; op: AttachedOp; t: Cursor;
                       hooks: var seq[SymId]; copiesOwned: var bool;
                       visited: var HashSet[SymId]) =
@@ -1115,13 +1129,8 @@ proc collectCopyHooks(c: var Context; op: AttachedOp; t: Cursor;
     if s in visited: return
     visited.incl s
     let sibling = if op == attachedDup: attachedCopy else: attachedDup
-    var hook = NoSymId
-    for o in [op, sibling]:
-      if c.hooks[].hasKey(s):
-        hook = c.hooks[].getOrQuit(s).a[o]
-      if hook == NoSymId:
-        hook = tryLoadHook(o, s)
-      if hook != NoSymId: break
+    var hook = hookOf(c, op, s)
+    if hook == NoSymId: hook = hookOf(c, sibling, s)
     if hook != NoSymId:
       hooks.add hook
     elif pool.sym(s).module == c.thisModule:
@@ -1157,20 +1166,39 @@ proc collectCopyHooks(c: var Context; op: AttachedOp; t: Cursor;
   else:
     discard
 
+proc markErrorInstance(c: var Context) =
+  ## The generic instance being translated copies a value that cannot be
+  ## copied. A type's `=copy` is unavailable when its `=dup` is and the other
+  ## way round, as for the lifter's hooks: seq's `=copy` only calls
+  ## `copyImpl`, it is `.error` because seq's `=dup` is.
+  let fn = c.inferredOwner
+  c.lifter.errorInstances.incl fn
+  var t = c.inferredOwnerParam
+  if t.typeKind == MutT: t = t.childCursor
+  if t.isSymbol:
+    let dup = hookOf(c, attachedDup, t.symId)
+    let copy = hookOf(c, attachedCopy, t.symId)
+    if fn == dup and copy != NoSymId:
+      c.lifter.errorInstances.incl copy
+    elif fn == copy and dup != NoSymId:
+      c.lifter.errorInstances.incl dup
+
 proc noteCopy(c: var Context; op: AttachedOp; n: Cursor) =
-  ## `n` is `(dup x)` or `(copy a b)` in a generic instance: remember the
-  ## hooks that copy runs, see `markErrorRoutines`.
-  if c.inferredOwner == NoSymId: return
+  ## `n` is `(dup x)` or `(copy a b)` in a generic instance: when the copy
+  ## runs an `.error` hook, the instance is `.error`. The instances of the
+  ## hooks of `x`'s type come before this one, sem instantiates a type's
+  ## arguments first.
+  let fn = c.inferredOwner
+  if fn == NoSymId or fn in c.lifter.errorInstances: return
   let typ = getType(c.typeCache, n.childCursor)
   var hooks: seq[SymId] = @[]
   var copiesOwned = false
   var visited = initHashSet[SymId]()
   collectCopyHooks(c, op, typ, hooks, copiesOwned, visited)
-  if copiesOwned: c.copiesOwned.incl c.inferredOwner
-  if hooks.len > 0:
-    var deps = c.copyDeps.getOrDefault(c.inferredOwner)
-    for h in hooks: deps.add h
-    c.copyDeps[c.inferredOwner] = ensureMove(deps)
+  var isError = copiesOwned
+  for h in hooks:
+    if not isError and isErrorHook(c, h): isError = true
+  if isError: markErrorInstance(c)
 
 proc trVarHook(c: var Context; n: var Cursor) =
   takeInto c.dest, n:
@@ -2050,21 +2078,6 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
     # classic model, a real ParRi scope-close: copy the token verbatim.
     takeTree c, n
 
-proc collectCalls(n: Cursor; calls: var seq[SymId]) =
-  var n = n
-  if n.isTagLit:
-    if n.exprKind in CallKinds:
-      let fn = n.childCursor
-      if fn.isSymbol: calls.add fn.symId
-    n.loopInto:
-      collectCalls(n, calls)
-      skip n
-
-proc hasErrorPragma(fn: SymId): bool =
-  let res = tryLoadSym(fn)
-  result = res.status == LacksNothing and res.decl.symKind.isRoutine and
-    hasPragma(asRoutine(res.decl).pragmas, ErrorP)
-
 proc addErrorPragma(dest: var TokenBuf; n: var Cursor) =
   ## Copies the routine at `n`, with `(error)` added to its pragmas.
   takeInto dest, n:
@@ -2085,50 +2098,18 @@ proc addErrorPragma(dest: var TokenBuf; n: var Cursor) =
         dest.takeTree n
     while n.hasMore: dest.takeTree n
 
-proc markErrorRoutines(c: var Context; liftedStart: int) =
-  ## A generic instance, seq's `=dup` for a `T` that cannot be copied, exists
-  ## for every instantiation, used or not, and a derived hook for every type
-  ## that needs one: the ones that copy a value whose `=dup`/`=copy` is
-  ## `.error` become `.error` themselves, so every module that calls them,
-  ## through any type that names them in a hook slot, reports the copy.
-  ## The derived hooks are the routines `genMissingHooks` emitted, from
-  ## `liftedStart` on.
-  var routines: seq[(SymId, seq[SymId])] = @[]
-  let base = beginRead(c.dest)
-  var n = base
-  n.loopInto:
-    if n.symKind.isRoutine:
-      let r = asRoutine(n, SkipInclBody)
-      let isLifted = cursorToPosition(base, n) >= liftedStart
-      if r.name.isSymbolDef and r.body.isTagLit and
-          (r.typevars.typeKind == InvokeT or isLifted) and
-          not hasPragma(r.pragmas, ErrorP):
-        let fn = r.name.symId
-        var deps = c.copyDeps.getOrDefault(fn)
-        collectCalls(r.body, deps)
-        routines.add (fn, deps)
-    skip n
-  var errors = c.copiesOwned
-  var changed = true
-  while changed:
-    changed = false
-    for (fn, deps) in routines:
-      if fn notin errors:
-        for d in deps:
-          if d in errors or hasErrorPragma(d):
-            errors.incl fn
-            changed = true
-            break
-  var marked = false
-  for (fn, _) in routines:
-    if fn in errors: marked = true
-  if not marked: return
+proc addErrorPragmas(c: var Context) =
+  ## Writes `(error)` into the pragmas of the generic instances found
+  ## `.error`: every module that calls one, through any type that names it in
+  ## a hook slot, reports the copy. The lifter marked its own hooks already.
+  if c.lifter.errorInstances.len == 0: return
   var dest = createTokenBuf(c.dest.len + 8)
-  n = beginRead(c.dest)
+  var n = beginRead(c.dest)
   takeInto dest, n:
     while n.hasMore:
       if n.symKind.isRoutine and n.childCursor.isSymbolDef and
-          n.childCursor.symId in errors:
+          n.childCursor.symId in c.lifter.errorInstances and
+          not hasPragma(asRoutine(n).pragmas, ErrorP):
         addErrorPragma(dest, n)
       else:
         dest.takeTree n
@@ -2161,7 +2142,6 @@ proc injectDerefs*(n: Cursor; hooks: ref Table[SymId, HooksPerType];
     # clean up dots that sem might have introduced for moving inner generic instances:
     if n2.isDotToken: inc n2
     else: tr(c, n2, WantT)
-  let liftedStart = c.dest.len
   genMissingHooks c.lifter[], c.dest
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
@@ -2169,5 +2149,5 @@ proc injectDerefs*(n: Cursor; hooks: ref Table[SymId, HooksPerType];
   # because the latter may add error nodes.
   c.dest.addParRi()
   c.typeCache.closeScope()
-  markErrorRoutines c, liftedStart
+  addErrorPragmas c
   result = ensureMove(c.dest)
