@@ -1939,19 +1939,12 @@ proc callsErrorRoutine(s: ErrorScan; n: var Cursor): bool =
   else:
     inc n
 
-proc isDerivedHook(fn: SymId): bool =
-  ## The lifter names its hooks `=op_<type key>`; a written one is `=op`.
-  let name = pool.symBasename(fn)
-  result = name.len > 2 and name[0] == '=' and name[1] in {'a'..'z'} and
-    name.find('_') > 0
-
 proc isInferred(r: Routine): bool =
   ## A generic instance exists for every instantiation of the generic, used or
   ## not -- seq's `=dup` for a `T` that cannot be copied -- and a derived hook
   ## for every type that needs one: an `.error` call in either does not report
   ## but makes the routine itself `.error`, reported where it is called.
-  result = r.typevars.typeKind == InvokeT or
-    (r.name.isSymbolDef and isDerivedHook(r.name.symId))
+  result = r.typevars.typeKind == InvokeT or hasPragma(r.pragmas, LiftedP)
 
 proc collectInferred(s: var ErrorScan; n: Cursor) =
   var n = n

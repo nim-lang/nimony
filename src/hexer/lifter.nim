@@ -171,8 +171,12 @@ proc hasUserCopyHook(c: var LiftingCtx; s: SymId): bool =
   result = false
 
 proc isWrittenHook(s: SymId): bool =
-  ## Not one of ours: `generateHookName` names them `=op_<type key>`.
-  s != SymId(0) and '_' notin pool.symBasename(s)
+  ## Not one of ours: `genProcDecl` marks them `(lifted)`. One still queued
+  ## cannot be loaded yet, every written one can.
+  if s == SymId(0): return false
+  let res = tryLoadSym(s)
+  result = res.status == LacksNothing and res.decl.symKind.isRoutine and
+    not hasPragma(asRoutine(res.decl).pragmas, LiftedP)
 
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
   result = c.nominalTypeToHook[c.op].hasKey(s) or
@@ -1424,6 +1428,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     let pragmasStart = c.dest.len
     copyIntoKind c.dest, PragmasS, c.info:
       copyIntoKind c.dest, NodestroyP, c.info: discard
+      copyIntoKind c.dest, LiftedP, c.info: discard
       let pragmasPos = c.dest.len
 
     c.dest.addEmpty c.info # exc

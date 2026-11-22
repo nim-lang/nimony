@@ -675,6 +675,9 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     dest.addParRi()
   of FeatureP:
     buildErr c, dest, n.info, "`feature` pragma is only allowed as top level pragma"
+  of LiftedP:
+    buildErr c, dest, n.info, "unsupported pragma", n
+    skip n
   of MethodsP:
     dest.addParLe(pk, n.info)
     toPragmaArgs()
