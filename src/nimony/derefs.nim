@@ -2050,12 +2050,6 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
     # classic model, a real ParRi scope-close: copy the token verbatim.
     takeTree c, n
 
-proc isDerivedHook(fn: SymId): bool =
-  ## The lifter names its hooks `=op_<type key>`; a written one is `=op`.
-  let name = pool.symBasename(fn)
-  result = name.len > 2 and name[0] == '=' and name[1] in {'a'..'z'} and
-    name.find('_') > 0
-
 proc collectCalls(n: Cursor; calls: var seq[SymId]) =
   var n = n
   if n.isTagLit:
@@ -2091,19 +2085,23 @@ proc addErrorPragma(dest: var TokenBuf; n: var Cursor) =
         dest.takeTree n
     while n.hasMore: dest.takeTree n
 
-proc markErrorRoutines(c: var Context) =
+proc markErrorRoutines(c: var Context; liftedStart: int) =
   ## A generic instance, seq's `=dup` for a `T` that cannot be copied, exists
   ## for every instantiation, used or not, and a derived hook for every type
   ## that needs one: the ones that copy a value whose `=dup`/`=copy` is
   ## `.error` become `.error` themselves, so every module that calls them,
   ## through any type that names them in a hook slot, reports the copy.
+  ## The derived hooks are the routines `genMissingHooks` emitted, from
+  ## `liftedStart` on.
   var routines: seq[(SymId, seq[SymId])] = @[]
-  var n = beginRead(c.dest)
+  let base = beginRead(c.dest)
+  var n = base
   n.loopInto:
     if n.symKind.isRoutine:
       let r = asRoutine(n, SkipInclBody)
+      let isLifted = cursorToPosition(base, n) >= liftedStart
       if r.name.isSymbolDef and r.body.isTagLit and
-          (r.typevars.typeKind == InvokeT or isDerivedHook(r.name.symId)) and
+          (r.typevars.typeKind == InvokeT or isLifted) and
           not hasPragma(r.pragmas, ErrorP):
         let fn = r.name.symId
         var deps = c.copyDeps.getOrDefault(fn)
@@ -2163,6 +2161,7 @@ proc injectDerefs*(n: Cursor; hooks: ref Table[SymId, HooksPerType];
     # clean up dots that sem might have introduced for moving inner generic instances:
     if n2.isDotToken: inc n2
     else: tr(c, n2, WantT)
+  let liftedStart = c.dest.len
   genMissingHooks c.lifter[], c.dest
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
@@ -2170,5 +2169,5 @@ proc injectDerefs*(n: Cursor; hooks: ref Table[SymId, HooksPerType];
   # because the latter may add error nodes.
   c.dest.addParRi()
   c.typeCache.closeScope()
-  markErrorRoutines c
+  markErrorRoutines c, liftedStart
   result = ensureMove(c.dest)
