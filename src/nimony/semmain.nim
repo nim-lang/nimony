@@ -589,23 +589,28 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest.add c.expanded
     dest.addParRi()
 
-  instantiateGenerics c, dest
   var i = 0
-  while i < c.typeInstDecls.len: # typing defaults can add instances
-    let val = c.typeInstDecls[i]
-    inc i
-    # its field defaults, if no construction typed them yet; the generic
-    # routines they need are instantiated with the hooks below
-    discard loadSymWithPhase(c, val, SemcheckBodies)
-    let s = fetchSym(c, val)
-    let res = declToCursor(c, dest, s)
-    if res.status == LacksNothing:
-      requestHookInstance(c, res.decl)
-      requestMethods(c, dest, val, res.decl)
-      dest.copyTree res.decl
-  dest.add c.pendingSumtypes
-  dest.add c.pendingObjInits
-  instantiateGenericHooks c, dest
+  while true:
+    instantiateGenerics c, dest
+    while i < c.typeInstDecls.len: # typing defaults can add instances
+      let val = c.typeInstDecls[i]
+      inc i
+      # its field defaults, if no construction typed them yet; the generic
+      # routines they need are instantiated with the hooks below
+      discard loadSymWithPhase(c, val, SemcheckBodies)
+      let s = fetchSym(c, val)
+      let res = declToCursor(c, dest, s)
+      if res.status == LacksNothing:
+        requestHookInstance(c, res.decl)
+        requestMethods(c, dest, val, res.decl)
+        dest.copyTree res.decl
+    dest.add c.pendingSumtypes
+    c.pendingSumtypes = createTokenBuf()
+    dest.add c.pendingObjInits
+    c.pendingObjInits = createTokenBuf()
+    if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
+      break
+    instantiateGenericHooks c, dest
   checkDestroysHaveWasMoved c, dest
   dest.addParRi()
   dbgCheckSeals(dest, "phase3")
@@ -696,23 +701,28 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     dest.add c.expanded
     dest.addParRi()
 
-  instantiateGenerics c, dest
   var i = 0
-  while i < c.typeInstDecls.len: # typing defaults can add instances
-    let val = c.typeInstDecls[i]
-    inc i
-    # its field defaults, if no construction typed them yet; the generic
-    # routines they need are instantiated with the hooks below
-    discard loadSymWithPhase(c, val, SemcheckBodies)
-    let s = fetchSym(c, val)
-    let res = declToCursor(c, dest, s)
-    if res.status == LacksNothing:
-      requestHookInstance(c, res.decl)
-      requestMethods(c, dest, val, res.decl)
-      dest.copyTree res.decl
-  dest.add c.pendingSumtypes
-  dest.add c.pendingObjInits
-  instantiateGenericHooks c, dest
+  while true:
+    instantiateGenerics c, dest
+    while i < c.typeInstDecls.len: # typing defaults can add instances
+      let val = c.typeInstDecls[i]
+      inc i
+      # its field defaults, if no construction typed them yet; the generic
+      # routines they need are instantiated with the hooks below
+      discard loadSymWithPhase(c, val, SemcheckBodies)
+      let s = fetchSym(c, val)
+      let res = declToCursor(c, dest, s)
+      if res.status == LacksNothing:
+        requestHookInstance(c, res.decl)
+        requestMethods(c, dest, val, res.decl)
+        dest.copyTree res.decl
+    dest.add c.pendingSumtypes
+    c.pendingSumtypes = createTokenBuf()
+    dest.add c.pendingObjInits
+    c.pendingObjInits = createTokenBuf()
+    if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
+      break
+    instantiateGenericHooks c, dest
   checkDestroysHaveWasMoved c, dest
   dest.addParRi()
 
