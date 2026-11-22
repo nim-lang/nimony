@@ -1177,7 +1177,9 @@ proc noteCopy(c: var Context; op: AttachedOp; n: Cursor) =
   collectCopyHooks(c, op, typ, hooks, copiesOwned, visited)
   if copiesOwned: c.copiesOwned.incl c.inferredOwner
   if hooks.len > 0:
-    c.copyDeps.mgetOrPut(c.inferredOwner, @[]).add hooks
+    var deps = c.copyDeps.getOrDefault(c.inferredOwner)
+    for h in hooks: deps.add h
+    c.copyDeps[c.inferredOwner] = ensureMove(deps)
 
 proc trVarHook(c: var Context; n: var Cursor) =
   takeInto c.dest, n:
