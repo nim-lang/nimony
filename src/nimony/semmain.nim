@@ -606,8 +606,13 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
         requestHookInstance(c, res.decl)
         requestMethods(c, dest, val, res.decl)
         dest.copyTree res.decl
+    
+    # Empty the pending sum types and object initialization
+    # To avoid duplication
     dest.add c.pendingSumtypes
+    c.pendingSumtypes = createTokenBuf()
     dest.add c.pendingObjInits
+    c.pendingObjInits = createTokenBuf()
     if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
       break
 
