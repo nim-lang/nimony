@@ -34,6 +34,7 @@ import std / [assertions, tables]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lengc / [leng_model]
+from ".." / nimony / builtintypes import SystemModuleSuffix
 
 type
   ParamEffect* = object
@@ -123,6 +124,7 @@ type
                                        ## body — see `ParamEffect.constRef`.
     writesGlobal, readsGlobal, callsUnknown, raises: bool
     calls: seq[CallFact]
+    copyMem: SymId                     ## `system.copyMem`, see `handleCopyMem`
 
 proc ufFind(u: var seq[int]; x: int): int =
   var r = x
@@ -471,7 +473,63 @@ proc handleRet(a: var ProcAnalysis; n: var Cursor) =
     walkStmt(a, rc)
   skip n
 
+proc walkPointerArg(a: var ProcAnalysis; arg: Cursor) =
+  ## Walk an argument whose address the callee is known not to retain: an
+  ## `(addr X)` there is no escape of X, but X's own subexpressions still are
+  ## walked for nested calls and addresses.
+  var c = arg
+  if c.isTagLit and c.exprKind in AddrKinds:
+    c = c.childCursor
+  walkStmt(a, c)
+
+proc copyMemSide(a: var ProcAnalysis; arg: Cursor; write: bool): seq[int] =
+  result = exprRoots(a, arg)
+  if result.len == 0 and not isTrackedSym(a, baseSymOf(arg)):
+    # A computed / untracked address, as in `handleAssign`.
+    if write: a.writesGlobal = true
+    else: a.readsGlobal = true
+  for r in result:
+    if write: markWriteElem(a, r)
+    else: markReadElem(a, r)
+  walkPointerArg(a, arg)
+
+proc handleCopyMem(a: var ProcAnalysis; n: var Cursor) =
+  ## `copyMem(dest, src, size)` is `dest[] = src[]` for `size` bytes: it
+  ## writes dest's graph, reads src's and retains neither. `xelim` emits it
+  ## for every int<->float `cast` on the C backend (`copyMem(addr dst, addr
+  ## src, sizeof T)`), so taking it as an unknown foreign call would make any
+  ## proc with such a value pun `callsUnknown` and let its operand escape.
+  ## The copied bytes may be a pointer, so the two sides share a class.
+  var c = n
+  c = sub(c)  # throwaway copy; no leaveScope needed
+  skip c                                       # callee
+  let dst = copyMemSide(a, c, write = true)
+  skip c
+  let src = copyMemSide(a, c, write = false)
+  skip c
+  for d in dst:
+    for s in src: ufUnion(a.uf, d, s)
+  while c.hasMore:                             # size
+    var sc = c
+    walkStmt(a, sc)
+    skip c
+  skip n
+
+proc isCopyMemCall(a: ProcAnalysis; n: Cursor): bool =
+  if a.copyMem == SymId(0): return false
+  var c = n
+  c = sub(c)  # throwaway copy; no leaveScope needed
+  if c.kind != Symbol or c.symId != a.copyMem: return false
+  result = true
+  for i in 0 ..< 3:                            # callee, dest, src
+    if not c.hasMore: return false
+    skip c
+  result = c.hasMore                           # size
+
 proc handleCall(a: var ProcAnalysis; n: var Cursor) =
+  if isCopyMemCall(a, n):
+    handleCopyMem(a, n)
+    return
   var c = n
   c = sub(c)  # throwaway copy; no leaveScope needed
   let calleeStart = c
@@ -555,7 +613,8 @@ proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   var p = procDecl
   let d = takeProcDecl(p)
   let paramSyms = collectParamSyms(d.params)
-  result = ProcAnalysis(nParams: paramSyms.len)
+  result = ProcAnalysis(nParams: paramSyms.len,
+                        copyMem: pool.symId("copyMem.0." & SystemModuleSuffix))
   result.constRef = collectParamConstRef(d.params)
   result.uf = newSeq[int](paramSyms.len + 1)
   for i in 0 .. paramSyms.len: result.uf[i] = i
@@ -962,6 +1021,46 @@ when isMainModule:
     let s = twoParams(
       "(asgn obj.0 (cast (ptr (i +32)) (add (u +64) (cast (u +64) x.0) 8)))")
     doAssert not s.writesGlobal
+
+  proc moduleSummaries(src: string): FunctionSummaryTable =
+    var buf = parseFromBuffer("(stmts " & src & ")", "M")
+    var analyses = collectProcAnalyses(buf)
+    result = resolveSummaries(analyses)
+
+  block float_bitcast_via_copymem_is_precise:
+    # xelim's C-backend lowering of `cast[uint64](x: float)`.
+    let t = moduleSummaries("""
+      (proc :f.0 (params (param :x.0 . (f +64))) (u +64) . (stmts
+        (var :result.0 . (u +64) .)
+        (var :xc.0 . (u +64) .)
+        (call copyMem.0.""" & SystemModuleSuffix & """ (addr xc.0) (addr x.0) (sizeof (u +64)))
+        (asgn result.0 xc.0)
+        (ret result.0)))""")
+    let s = t.getOrQuit(pool.symId("f.0"))
+    doAssert not s.callsUnknown
+    doAssert not s.writesGlobal
+    doAssert not s.readsGlobal
+    doAssert s.params[0].reads
+    doAssert not s.params[0].writes
+    doAssert not s.params[0].escapes
+    doAssert int(s.resultCls) == 1
+
+  block copymem_through_params:
+    let t = moduleSummaries("""
+      (proc :f.0 (params (param :d.0 . (ptr (i +64))) (param :s.0 . (ptr (i +64)))) . . (stmts
+        (call copyMem.0.""" & SystemModuleSuffix & """ d.0 s.0 8)))""")
+    let s = t.getOrQuit(pool.symId("f.0"))
+    doAssert not s.callsUnknown
+    doAssert s.params[0].writes and not s.params[0].escapes
+    doAssert s.params[1].reads and not s.params[1].writes
+    doAssert not s.params[1].escapes
+    doAssert s.params[0].cls == s.params[1].cls   # the bytes may be a pointer
+
+  block copymem_into_global_writes_global:
+    let t = moduleSummaries("""
+      (proc :f.0 (params (param :s.0 . (ptr (i +64)))) . . (stmts
+        (call copyMem.0.""" & SystemModuleSuffix & """ (addr g.0.other) s.0 8)))""")
+    doAssert t.getOrQuit(pool.symId("f.0")).writesGlobal
 
   block constref_param_outlives_callsUnknown:
     # `(constref)` marks a pointer standing for a by-value source parameter.
