@@ -50,8 +50,8 @@ func canFormCycles*[T](t: typedesc[T]): bool {.magic: "CanFormCycles", noSideEff
 
 func supportsCopyMem*[T](t: typedesc[T]): bool {.magic: "SupportsCopyMem", noSideEffect.}
   ## Can a value of type `T` be moved and copied as its bytes: it has no
-  ## `=destroy`, so it owns nothing through a `ref`, `string`, `seq` or
-  ## closure. Raw pointers do not count.
+  ## hooks at all, no `=destroy`, `=copy` or `=dup`, so it owns nothing
+  ## through a `ref`, `string`, `seq` or closure. Raw pointers do not count.
 
 template `$`*[T](t: typedesc[T]): string {.plugin: "deps/typetraits".}
   ## Stringify a type.

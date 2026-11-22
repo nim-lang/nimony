@@ -1549,7 +1549,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         of checkSignatures:
           if hk notin {NoHook, CopyH, DupH}:
             # Known from the signature already, so a body checked before the
-            # hook's own (`when` asking `needsDestroy`, a `{.cyclic.}` sibling
+            # hook's own (`when` asking `needsHooks`, a `{.cyclic.}` sibling
             # instantiating the type) sees it. The body pass registers it
             # again, after validating the signature. `=copy` and `=dup` wait
             # for it: `checkCopyDupAgree` reports on the second of the two.

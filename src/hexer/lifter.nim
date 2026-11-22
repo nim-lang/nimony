@@ -22,7 +22,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
-import closuretypes
+import closuretypes, defaultvalues
 
 proc isMutFirstParam*(destroyProc: SymId): bool =
   result = false
@@ -181,7 +181,9 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     # trivial layout and only `.error =copy` would silently bit-copy
     # through assignment.
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
-    result = isErrorHook(c, lookupHookSym(c, siblingOp, s))
+    let sibling = lookupHookSym(c, siblingOp, s)
+    # a user `=copy` without a `=dup`: the derived `=dup` calls it (#3090)
+    result = isErrorHook(c, sibling) or (c.op == attachedDup and sibling != SymId(0))
   elif not result and c.op == attachedDestroy:
     result = hasUserCopyHook(c, s)
 
@@ -1427,7 +1429,20 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     copyIntoKind(c.dest, StmtsS, c.info):
       maybeAddResultDecl c, paramA, typ
       let beforeUnravel = c.dest.len
-      if a.typeKind == RefT:
+      let userCopy = if c.op == attachedDup and (typ.isSymbol or typ.isSymbolDef):
+                       lookupHookSym(c, attachedCopy, typ.symId)
+                     else: SymId(0)
+      if userCopy != SymId(0):
+        # `=dup(x)` is `wasMoved(result); =copy(result, x)` (language.md):
+        copyIntoKind c.dest, AsgnS, c.info:
+          copyTree c.dest, paramTreeA
+          addDefaultValue c.dest, typ, c.info, c.bits div 8
+        copyIntoKind c.dest, CallX, c.info:
+          copyIntoSymUse c.dest, userCopy, c.info
+          copyIntoKind c.dest, HaddrX, c.info: # `result` is no `var` parameter
+            copyTree c.dest, paramTreeA
+          copyTree c.dest, paramTreeB
+      elif a.typeKind == RefT:
         unravelRef(c, a, paramTreeA, paramTreeB)
       else:
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
