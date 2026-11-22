@@ -590,6 +590,8 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest.addParRi()
 
   var i = 0
+  # When a generic proc is called for the first time in a lifetime hook
+  # we should loop back in order to instanciate it
   while true:
     instantiateGenerics c, dest
     while i < c.typeInstDecls.len: # typing defaults can add instances
@@ -605,11 +607,10 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
         requestMethods(c, dest, val, res.decl)
         dest.copyTree res.decl
     dest.add c.pendingSumtypes
-    c.pendingSumtypes = createTokenBuf()
     dest.add c.pendingObjInits
-    c.pendingObjInits = createTokenBuf()
     if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
       break
+
     instantiateGenericHooks c, dest
   checkDestroysHaveWasMoved c, dest
   dest.addParRi()
@@ -722,6 +723,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     c.pendingObjInits = createTokenBuf()
     if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
       break
+  
     instantiateGenericHooks c, dest
   checkDestroysHaveWasMoved c, dest
   dest.addParRi()
