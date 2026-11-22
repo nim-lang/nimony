@@ -22,7 +22,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
-import closuretypes, defaultvalues
+import closuretypes
 
 proc isMutFirstParam*(destroyProc: SymId): bool =
   result = false
@@ -170,6 +170,10 @@ proc hasUserCopyHook(c: var LiftingCtx; s: SymId): bool =
       return true
   result = false
 
+proc isWrittenHook(s: SymId): bool =
+  ## Not one of ours: `generateHookName` names them `=op_<type key>`.
+  s != SymId(0) and '_' notin pool.symBasename(s)
+
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
   result = c.nominalTypeToHook[c.op].hasKey(s) or
            lookupHookSym(c, c.op, s) != SymId(0)
@@ -182,8 +186,8 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     # through assignment.
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
     let sibling = lookupHookSym(c, siblingOp, s)
-    # a user `=copy` without a `=dup`: the derived `=dup` calls it (#3090)
-    result = isErrorHook(c, sibling) or (c.op == attachedDup and sibling != SymId(0))
+    # a written `=copy` without a `=dup`: the derived `=dup` calls it (#3090)
+    result = isErrorHook(c, sibling) or (c.op == attachedDup and isWrittenHook(sibling))
   elif not result and c.op == attachedDestroy:
     result = hasUserCopyHook(c, s)
 
@@ -1429,14 +1433,21 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     copyIntoKind(c.dest, StmtsS, c.info):
       maybeAddResultDecl c, paramA, typ
       let beforeUnravel = c.dest.len
-      let userCopy = if c.op == attachedDup and (typ.isSymbol or typ.isSymbolDef):
-                       lookupHookSym(c, attachedCopy, typ.symId)
-                     else: SymId(0)
+      var userCopy = SymId(0)
+      if c.op == attachedDup and (typ.isSymbol or typ.isSymbolDef):
+        userCopy = lookupHookSym(c, attachedCopy, typ.symId)
+        if not isWrittenHook(userCopy): userCopy = SymId(0)
       if userCopy != SymId(0):
-        # `=dup(x)` is `wasMoved(result); =copy(result, x)` (language.md):
-        copyIntoKind c.dest, AsgnS, c.info:
-          copyTree c.dest, paramTreeA
-          addDefaultValue c.dest, typ, c.info, c.bits div 8
+        # `=dup(x)` is `wasMoved(result); =copy(result, x)` (language.md),
+        # `wasMoved` as the zeroed bytes a `not nil` field may not be typed as:
+        copyIntoKind c.dest, CallS, c.info:
+          copyIntoSymUse c.dest, getCompilerProc(c, "zeroMem"), c.info
+          copyIntoKind c.dest, CastX, c.info:
+            copyIntoKind c.dest, PointerT, c.info: discard
+            copyIntoKind c.dest, HaddrX, c.info:
+              copyTree c.dest, paramTreeA
+          copyIntoKind c.dest, SizeofX, c.info:
+            c.addParamType typ
         copyIntoKind c.dest, CallX, c.info:
           copyIntoSymUse c.dest, userCopy, c.info
           copyIntoKind c.dest, HaddrX, c.info: # `result` is no `var` parameter
