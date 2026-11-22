@@ -991,6 +991,9 @@ proc hookToAttachedOp(op: HookKind): AttachedOp =
   of TraceH, NoHook: attachedTrace
 
 proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isGeneric: bool) =
+  # a hook lives in its type's declaration; `=destroy(x: int)` has no
+  # declaration to attach to, `checkTypeHook` reported it (#3091)
+  if obj == SymId(0): return
   let attachedOp = hookToAttachedOp(op)
   # track per-type for embedding in type declarations:
   c.typeHooks[].mgetOrPut(obj, HooksPerType()).a[attachedOp] = symId
@@ -1553,8 +1556,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
             let params = getParamsType(c, dest, beforeParams)
             if params.len >= 1:
               let obj = getObjSymId(c, params[0])
-              if obj != SymId(0):
-                registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
+              registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
           dest.takeTree it.n
           c.closeScope() # close parameter scope
         of checkConceptProc:

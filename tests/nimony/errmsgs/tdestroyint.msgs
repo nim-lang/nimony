@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tdestroyint.nim(1, 1) Error: signature for '=destroy' must be proc[T: object](x: T)
