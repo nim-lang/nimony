@@ -3569,9 +3569,8 @@ Requiring `default(T)` would also be impossible for types that have no default
 value, like `ref X` (a `ref` that is not `nil ref`).
 
 Which operations *other than the hooks* are valid on a moved-from object is
-part of the type's API, not of the language. This is the same question as
-"can I use `var x: Table; x[key] = val`", which depends on how `Table` is
-written. A moved-from object is not undefined behavior: its state is whatever
+part of the type's API, not of the language. 
+A moved-from object is not undefined behavior: its state is whatever
 the type's `=wasMoved` produced. To reuse it, generic code can always assign a
 new value (`x = initTable()`), because assignments are implemented by the
 hooks. Code that needs a known value without assigning one uses `system.move`,
@@ -3755,16 +3754,7 @@ Because it needs a default value, `move` is declared as
 `func move*[T: HasDefault](x: var T): T`. A generic routine that calls `move`
 on a value of type `T` must constrain `T` to `HasDefault` as well. Types
 without a default, like `ref X` or an object with a `ref X` field, cannot be
-moved out with `move`. For such an object `HasDefault` still matches, since
-every object type has a `default`, but `default(T)` is rejected when `move` is
-instantiated. Use the `.nodestroy` idiom instead, which leaves the
-`=wasMoved` state:
-
-  ```nim
-  proc take(m: var Msg): Msg {.nodestroy.} =
-    result = m
-    `=wasMoved`(m)
-  ```
+moved out with `move`.
 
 `=wasMoved` is a no-op for every type that has no hooks, `int`, `float`,
 `char`, enums and `nil ptr T` among them, as well as for objects, tuples and
@@ -3925,14 +3915,6 @@ out, provided that `x` is not used afterward, which is the case at the end of
 improve efficiency and code sizes. The current implementation does perform
 this optimization.
 
-The side condition matters: if the pair were removed in the middle of `x`'s
-scope, `x` would keep a stale reference to a resource that was moved
-elsewhere, and a later `=sink` or `=destroy` of `x` would free it a second
-time.
-
-`system.move` does not call `=wasMoved`; it stores `default(T)`, so a
-`move(x)` followed by `=destroy(x)` is not such a pair. Code that discards `x`
-right after taking its value should not reach for `move`.
 
 
 #### Self assignments
@@ -4108,9 +4090,7 @@ slots without overhead:
 
 Unlike `move`, this needs no `HasDefault` constraint, and it takes about as
 much care as calling `=wasMoved` by hand. `system.move` itself is written this
-way: `result = x; x = default(T)` in a `.nodestroy` routine. It is still
-preferable to `=wasMoved(dest); =copy(dest, src)` when `dest` is a heap
-location that the compiler cannot reason about.
+way: `result = x; x = default(T)` in a `.nodestroy` routine.
 
 
 #### Copy on write
