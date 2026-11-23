@@ -1,7 +1,7 @@
 # Private implementation included by std/posix/posix; not a standalone module.
 
 # Header-free ABI constants; checked by tests/nimony/stdlib/tposixabi.nim.
-# Linux values are shared by the supported amd64/arm64/i386 ABIs and by
+# Linux values are shared by the supported amd64/arm64/i386/arm ABIs and by
 # glibc and musl. Architectures with divergent errno/socket tables are
 # rejected by types.nim, not silently assigned these values.
 # Only declare symbols consumed in this repository; add their header probes
@@ -101,10 +101,10 @@ const
   F_GETFL* = cint(3)
   F_SETFL* = cint(4)
 
-# <dlfcn.h>
+# <dlfcn.h> (Bionic keeps historical values on 32-bit targets)
 const
-  RTLD_NOW* = cint(2)
-  RTLD_GLOBAL* = cint(0x100)
+  RTLD_NOW* = when defined(android) and defined(cpu32): cint(0) else: cint(2)
+  RTLD_GLOBAL* = when defined(android) and defined(cpu32): cint(2) else: cint(0x100)
 
 # <pthread.h>
 const

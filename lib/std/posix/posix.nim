@@ -153,7 +153,7 @@ when defined(posix):
   # unbound. With a default, `open(fc, flags)` and `open(fc, flags, mode)` are
   # the same 3-arg call (the kernel ignores `mode` unless O_CREAT is set).
   #
-  # On i386 every symbol that touches a 64-bit `Off` binds the glibc LFS
+  # On i386 and 32-bit ARM every symbol that touches a 64-bit `Off` binds the LFS
   # variant (`open64`/`stat64`/...): the plain names there speak the legacy
   # 32-bit-off_t ABI, and our `Off` is int64 on every architecture.
   # Directory entry type constants shared by the supported ABIs.
