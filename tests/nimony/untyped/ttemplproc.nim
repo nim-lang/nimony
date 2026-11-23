@@ -44,3 +44,24 @@ template procLiteral(n: int) {.untyped.} =
   echo f(1)
 
 procLiteral(3)
+
+# An object constructor's field name binds to no symbol, not to a proc or a
+# local of the same name; the field here is inherited (#339):
+type
+  Top = ref object of RootObj
+    value: float
+  Leaf = ref object of Top
+    c: float
+  Other = object
+
+proc value(o: Other): float = 0.0
+
+template makeLeaf(T: untyped; v: float) {.untyped.} =
+  echo T(value: v, c: 2.0).value
+
+template makeLeafLocal(T: untyped) {.untyped.} =
+  let value = 3.5
+  echo T(value: value).value
+
+makeLeaf(Leaf, 1.5)
+makeLeafLocal(Leaf)

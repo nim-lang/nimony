@@ -696,6 +696,18 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
     of AtX, CurlyatX:
       # XXX generate `[]`/`{}` symchoice
       semTemplBodySons c, dest, n
+    of OconstrX:
+      # a field name binds to no symbol: `semObjConstr` takes a Symbol key
+      # for a field an earlier pass resolved (#339)
+      copyInto dest, n:
+        semTemplBody c, dest, n # type
+        while n.hasMore:
+          if n.substructureKind == KvU:
+            copyInto dest, n:
+              discard getIdentReplaceParams(c, dest, n)
+              while n.hasMore: semTemplBody c, dest, n
+          else:
+            semTemplBody c, dest, n
     of DotX:
       # XXX qualified symbols not special cased here, not tested if this works
       copyInto dest, n:
