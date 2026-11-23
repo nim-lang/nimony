@@ -378,7 +378,7 @@ func delete*[T](s: var seq[T]; idx: int) {.requires: (idx >= 0 and idx < s.len),
     inc i
   dec s.len
 
-func `&`*[T](x, y: sink seq[T]): seq[T] =
+func `&`*[T: HasDefault](x, y: sink seq[T]): seq[T] =
   ## Concatenates two sequences.
   result = newSeqOfCap[T](x.len + y.len)
   for i in 0..x.len-1:
@@ -386,14 +386,14 @@ func `&`*[T](x, y: sink seq[T]): seq[T] =
   for i in 0..y.len-1:
     result.add move(y[i])
 
-func `&`*[T](x: sink seq[T]; y: sink T): seq[T] =
+func `&`*[T: HasDefault](x: sink seq[T]; y: sink T): seq[T] =
   ## Appends element `y` to the end of the sequence.
   result = newSeqOfCap[T](x.len + 1)
   for i in 0..x.len-1:
     result.add move(x[i])
   result.add y
 
-func `&`*[T](x: sink T; y: sink seq[T]): seq[T] =
+func `&`*[T: HasDefault](x: sink T; y: sink seq[T]): seq[T] =
   ## Prepends the element `x` to the beginning of the sequence.
   result = newSeqOfCap[T](y.len + 1)
   result.add x

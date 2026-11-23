@@ -3534,14 +3534,66 @@ Usually some nullable pointer field inside the object is set to `nil`:
     x.field = nil  # field is of a `nil ptr` type
   ```
 
+A type that has a custom `=destroy` must also have a custom `=wasMoved`. The
+compiler cannot know which fields `=destroy` checks, so it reports an error
+when the `=wasMoved` is missing.
+
+After `=wasMoved(x)`:
+
+- `=destroy(x)` must do nothing.
+- Every other hook must still work with `x`: `=copy`, `=sink` and `=dup`,
+  with `x` as the source or the destination, `=wasMoved` itself, and `=trace`.
+
+This is the complete contract that `=wasMoved` has with the language.
+The moved-from state does **not** have to be `default(T)`. The `=wasMoved`
+that the compiler generates when no custom hook is provided only resets what
+the type's other generated hooks look at: it sets `ref` fields to `nil` and
+calls the `=wasMoved` of fields that have one. Fields of types without hooks,
+like `int`, `float` or `nil ptr T`, are left as they are, and for a type made
+only of such fields `=wasMoved` does nothing at all. A custom hook can
+likewise do less than a reset. A typical example is a fixed-capacity
+sequence, where a "watermark" protects the remaining slots so that they do
+not have to be cleared:
+
+  ```nim
+  type
+    FixedSeq[N: static int; T] = object
+      len: int
+      data: array[N, T]
+
+  proc `=wasMoved`[N: static int; T](x: var FixedSeq[N, T]) =
+    x.len = 0 # data[0 ..< len] is all that `=destroy` and `=copy` look at
+  ```
+
+Requiring `default(T)` would also be impossible for types that have no default
+value, like `ref X` (a `ref` that is not `nil ref`).
+
+Which operations *other than the hooks* are valid on a moved-from object is
+part of the type's API, not of the language. This is the same question as
+"can I use `var x: Table; x[key] = val`", which depends on how `Table` is
+written. A moved-from object is not undefined behavior: its state is whatever
+the type's `=wasMoved` produced. To reuse it, generic code can always assign a
+new value (`x = initTable()`), because assignments are implemented by the
+hooks. Code that needs a known value without assigning one uses `system.move`,
+which resets its source to `default(T)` (see [move versus `=wasMoved`]).
+Type authors should still give the moved-from object a reasonable state.
+For a deque, `=wasMoved` should set `len = 0` and `cap = 0`, not only
+`data = nil`, so that the moved-from object behaves like an empty deque.
+
+A cheaper `=wasMoved` pushes some complexity into the type itself. Because
+`FixedSeq`'s `=wasMoved` does not reset `data[len ..< N]`, the elements in
+that range are in an unspecified state: `FixedSeq`'s `add` must not call
+`=sink` or `=copy` for a slot beyond `len`. It has to store into the slot
+without running hooks, see [nodestroy pragma]. This is the type author's
+choice, so it is the type's implementation that has to deal with it.
+
 
 ### `=sink` hook
 
 A `=sink` hook moves an object around, the resources are stolen from the source
 and passed to the destination. It is ensured that the source's destructor does
-not free the resources afterward by setting the object to its default value
-(the value the object's state started in). Setting an object `x` back to its
-default value is written as `wasMoved(x)`. When not provided the compiler
+not free the resources afterward by calling `=wasMoved` on the source; see
+[`=wasMoved` hook] for the state this leaves the source in. When not provided the compiler
 is using a combination of `=destroy` and `copyMem` instead. This is efficient
 hence users rarely need to implement their own `=sink` operator, it is enough to
 provide `=destroy` and `=copy`, the compiler will take care of the rest.
@@ -3558,7 +3610,7 @@ The general pattern in `=sink` looks like:
 
   proc `=sink`(dest: var T; source: T) =
     `=destroy`(dest)
-    wasMoved(dest)
+    `=wasMoved`(dest)
     dest.field = source.field
   ```
 
@@ -3585,9 +3637,14 @@ The general pattern in `=copy` looks like:
     # protect against self-assignments:
     if dest.field != source.field:
       `=destroy`(dest)
-      wasMoved(dest)
+      `=wasMoved`(dest)
       dest.field = duplicateResource(source.field)
   ```
+
+The check is needed even though the compiler removes simple self-assignments
+like `x = x` (see [Self assignments]): it cannot see all aliasing, for example
+`a[i] = a[j]` with `i == j` at runtime, or `var` parameters that refer to the
+same location.
 
 The `=copy` proc can be marked with the `{.error.}` pragma. Then any assignment
 that otherwise would lead to a copy is prevented at compile-time. This looks like:
@@ -3602,7 +3659,7 @@ by the compiler. Notice that there is no `=` before the `{.error.}` pragma.
 
 ### `=dup` hook
 
-A `=dup` hook duplicates an object. `=dup(x)` can be regarded as an optimization replacing a `wasMoved(dest); =copy(dest, x)` operation.
+A `=dup` hook duplicates an object. `=dup(x)` can be regarded as an optimization replacing a `=wasMoved(dest); =copy(dest, x)` operation.
 
 The prototype of this hook for a type `T` needs to be:
 
@@ -3652,9 +3709,10 @@ used afterward. This property is computed by a static control flow analysis
 but can also be enforced by using `system.move` explicitly.
 
 One can query if the analysis is able to perform a move with `system.ensureMove`.
-`move` enforces a move operation and calls `=wasMoved` whereas `ensureMove` is
-an annotation that implies no runtime operation. An `ensureMove` annotation leads to a static error
-if the compiler cannot prove that a move would be safe.
+`move` enforces a move operation and resets its source to `default(T)`, whereas
+`ensureMove` is an annotation that implies no runtime operation. An
+`ensureMove` annotation leads to a static error if the compiler cannot prove
+that a move would be safe.
 
 For example:
 
@@ -3668,6 +3726,42 @@ For example:
     # valid:
     let alsoValid = ensureMove sinkParam
   ```
+
+
+#### move versus `=wasMoved`
+
+There are three ways to leave a location after its value was taken out:
+
+1. A move that the compiler inserts for `lastReadOf(x)` runs `=wasMoved(x)`.
+   `x` is never read again, so the cheapest state that `=destroy` accepts is
+   enough.
+2. `=wasMoved(x)`, called explicitly, gives the same moved-from state. Only the
+   hooks are guaranteed to work with it, see [`=wasMoved` hook]. This is
+   the tool for code that overwrites or destroys `x` next anyway, such as a
+   container that moves an element out of a slot it then forgets.
+3. `system.move(x)` returns the value and resets `x` to `default(T)`. `x` stays
+   usable like a freshly declared variable:
+
+   ```nim
+   var a = @[1, 2, 3]
+   let b = move(a)
+   assert a.len == 0 # `a` is `default(seq[int])`, i.e. `@[]`
+   var i = 5
+   let j = move(i)
+   assert i == 0     # `=wasMoved` would have left `i` at 5
+   ```
+
+Because it needs a default value, `move` is declared as
+`func move*[T: HasDefault](x: var T): T`. A generic routine that calls `move`
+on a value of type `T` must constrain `T` to `HasDefault` as well. Types
+without a default, like `ref X`, cannot be moved out of a location that stays
+alive, only out of a location whose life ends, which is what the compiler's
+own moves do.
+
+`=wasMoved` is a no-op for every type that has no hooks, `int`, `float`,
+`char`, enums and `nil ptr T` among them, as well as for objects, tuples and
+arrays made only of such types. `move` still resets those: it is a
+statement about the value of `x`, not about its resources.
 
 
 #### Swap
@@ -3736,6 +3830,12 @@ optimizations (and the current implementation does not).
 
 **Note**: Resources are destroyed at the scope exit.
 
+The rules are not independent: when more than one rule matches, the first one
+listed wins. In particular (self-assignment-removal) must take precedence
+over (move-optimization). An assignment overwrites its destination, so in
+`x = x` the right-hand side *is* `lastReadOf x`, and `=sink(x, x)` would
+destroy its own source.
+
 
     var x: T; stmts
     ---------------             (destroy-var)
@@ -3757,15 +3857,15 @@ optimizations (and the current implementation does not).
     `=sink`(x, f(...))
 
 
-    x = lastReadOf z
+    v = v
+    ------------------          (self-assignment-removal)
+    discard "nop"
+
+
+    x = lastReadOf z            # x and z are different locations
     ------------------          (move-optimization)
     `=sink`(x, z)
     `=wasMoved`(z)
-
-
-    v = v
-    ------------------   (self-assignment-removal)
-    discard "nop"
 
 
     x = y
@@ -3790,6 +3890,19 @@ optimizations (and the current implementation does not).
     `=wasMoved`(y)
 
 
+    f_sink(lastReadOf y)        # as part of a larger expression
+    -----------------------     (move-to-sink-arg)
+    f_sink((let blitTmp = y;
+    `=wasMoved`(y);
+    blitTmp))
+
+(move-to-sink) is only valid when the call is a statement of its own. If the
+call is part of a larger expression, `=wasMoved(y)` must run *before* the
+call. Otherwise, in `x = select(cond, x, y)`, the `=sink(x, ...)` that follows
+the call would destroy the very resource `select` returned. The general form is
+(move-to-sink-arg); see [Self assignments] for a worked example.
+
+
 #### Object and array construction
 
 Object and array construction is treated as a function call where the
@@ -3799,9 +3912,19 @@ function has `sink` parameters.
 #### Destructor elision
 
 `=wasMoved(x)` followed by a `=destroy(x)` operation cancel each other
-out. An implementation is encouraged to exploit this in order to improve
-efficiency and code sizes. The current implementation does perform this
-optimization.
+out, provided that `x` is not used afterward, which is the case at the end of
+`x`'s scope. An implementation is encouraged to exploit this in order to
+improve efficiency and code sizes. The current implementation does perform
+this optimization.
+
+The side condition matters: if the pair were removed in the middle of `x`'s
+scope, `x` would keep a stale reference to a resource that was moved
+elsewhere, and a later `=sink` or `=destroy` of `x` would free it a second
+time.
+
+`system.move` does not call `=wasMoved`; it stores `default(T)`, so a
+`move(x)` followed by `=destroy(x)` is not such a pair. Code that discards `x`
+right after taking its value should not reach for `move`.
 
 
 #### Self assignments
@@ -3955,6 +4078,31 @@ used to specialize the object traversal in order to avoid deep recursions:
 
 As can be seen from the example, this solution is hardly sufficient and
 should eventually be replaced by a better solution.
+
+`.nodestroy` means "inject no hooks": inside such a routine, no `=destroy`,
+`=copy`, `=sink` or `=wasMoved` calls are injected, and assignments are
+bitwise copies. It is not a calling convention: call sites of a `.nodestroy`
+routine are processed as usual, so passing an argument to a `sink` parameter
+still moves it (including the `=wasMoved` of the source) or copies it.
+
+This makes `.nodestroy` the tool for moving values in and out of container
+slots without overhead:
+
+  ```nim
+  proc add[T](d: var Deque[T]; v: sink T) {.nodestroy.} =
+    d.data[d.tail] = v   # bitwise copy: no `=destroy` of the old slot contents
+    inc d.tail
+
+  proc popLast[T](d: var Deque[T]): T {.nodestroy.} =
+    dec d.tail
+    result = d.data[d.tail] # bitwise copy: the slot is now dead, no `=wasMoved`
+  ```
+
+Unlike `move`, this needs no `HasDefault` constraint, and it takes about as
+much care as calling `=wasMoved` by hand. `system.move` itself is written this
+way: `result = x; x = default(T)` in a `.nodestroy` routine. It is still
+preferable to `=wasMoved(dest); =copy(dest, src)` when `dest` is a heap
+location that the compiler cannot reason about.
 
 
 #### Copy on write

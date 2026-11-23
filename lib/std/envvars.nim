@@ -47,7 +47,7 @@ else:
     # TODO: {.importc: "char**", nodecl.}
     cstringArray = ptr UncheckedArray[cstring]
 
-  proc delete[T](x: var seq[T], i: Natural) {.noSideEffect.} =
+  proc delete[T: HasDefault](x: var seq[T], i: Natural) {.noSideEffect.} =
     let xl = x.len
     for j in i.int..xl-2:
       x[j] = move x[j+1]
