@@ -37,5 +37,8 @@ elif defined(arm64):
 elif defined(i386):
   include "i386/types"
   include "i386/consts"
+elif defined(arm):
+  include "arm/types"
+  include "arm64/consts"  # O_DIRECTORY is 0o40000 on 32-bit ARM too
 else:
-  {.error: "std/posix has no transcribed ABI for this Linux architecture; supported: amd64, arm64, i386".}
+  {.error: "std/posix has no transcribed ABI for this Linux architecture; supported: amd64, arm64, i386, arm".}

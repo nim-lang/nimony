@@ -166,7 +166,7 @@ elif not defined(illumos):
       # `SYS_futex` number — no libc `futex` symbol required.
       const SYS_futex = when defined(amd64): clong(202)
                         elif defined(arm64): clong(98)
-                        elif defined(i386): clong(240)
+                        elif defined(i386) or defined(arm): clong(240)
                         else: clong(202)
       proc syscall(number: clong): clong {.
         importc: "syscall", varargs, sideEffect.}

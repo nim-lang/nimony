@@ -39,7 +39,7 @@ when defined(posix):
     int64(cast[int](field) - cast[int](base))
 
   proc main =
-    when defined(i386) and defined(linux):
+    when (defined(i386) or defined(arm)) and defined(linux):
       # glibc selects the 32-bit `struct stat` unless large-file support is
       # requested; the bindings always use the LFS layout.
       src.add "#define _FILE_OFFSET_BITS 64\n"

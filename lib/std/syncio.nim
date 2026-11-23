@@ -128,7 +128,11 @@ else:
   else:
     proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
   proc sysClose(fd: OsFileHandle): cint {.importc: "close".}
-  proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
+  when defined(linux) and (defined(i386) or defined(arm)):
+    # 32-bit Linux: `lseek` takes a 32-bit off_t; the LFS symbol takes int64.
+    proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek64".}
+  else:
+    proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
 
   # `interrupted(k)`: the `read`/`write` that returned `k` was cut short by a
   # signal handler installed without `SA_RESTART` (EINTR). That is no error and

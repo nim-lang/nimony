@@ -555,7 +555,7 @@ elif defined(linux):
   proc syscall(arg: clong): clong {.varargs, importc: "syscall".}
   const NR_gettid = (
     when defined(amd64): clong(186)
-    elif defined(i386): clong(224)
+    elif defined(i386) or defined(arm): clong(224)
     else: clong(178))  # arm64 (and every asm-generic unistd arch)
 
   proc getThreadId*(): int =

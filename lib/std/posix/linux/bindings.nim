@@ -1,6 +1,7 @@
 # Private implementation included by std/posix/posix; not a standalone module.
 
-when defined(i386):
+when defined(i386) or defined(arm):
+  # Both 32-bit ABIs bind the same LFS symbols (glibc and bionic export them).
   include "i386/bindings"
 elif linuxA64Raw:
   include "arm64/raw"
@@ -48,7 +49,7 @@ when not linuxA64Raw:
 # and a raw syscall name arkham can lower — one binding serves every
 # configuration (glibc's own posix_fallocate is just this plus a
 # gap-plugging fallback for filesystems without fallocate support).
-when not defined(i386):
+when not (defined(i386) or defined(arm)):
   proc fallocateImpl(fd: cint; mode: cint; offset, len: Off): cint {.
     importc: "fallocate", sideEffect.}
 proc posix_fallocate*(a1: cint, a2, a3: Off): cint =
