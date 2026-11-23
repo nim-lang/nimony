@@ -10,6 +10,28 @@
 when defined(arm):
   {.passL:"-latomic".}
 
+when defined(android):
+  const miOptionShowErrors = cint(0) # `mi_option_show_errors`, first of `mi_option_t`
+
+  func mi_option_set_enabled(option: cint; enable: bool) {.importc: "mi_option_set_enabled", cdecl.}
+  func mi_option_is_enabled(option: cint): bool {.importc: "mi_option_is_enabled", cdecl.}
+
+  # Android's 39-bit virtual address space disables mimalloc's aligned-allocation
+  # hint, so the first arena reserve falls back to over-allocation. That fallback
+  # is successful and expected, but mimalloc reports it as a warning. Mute the
+  # diagnostic for the first allocation only; after that, real allocator problems
+  # must still be visible (unless the user turned diagnostics off themselves).
+  let mimallocDiagnosticsEnabled = mi_option_is_enabled(miOptionShowErrors)
+  mi_option_set_enabled(miOptionShowErrors, false)
+
+  var mimallocDiagnosticsArmed = false
+
+  proc armMimallocDiagnostics() {.inline.} =
+    if not mimallocDiagnosticsArmed:
+      mimallocDiagnosticsArmed = true
+      if mimallocDiagnosticsEnabled:
+        mi_option_set_enabled(miOptionShowErrors, true)
+
 type
   MiStatCount {.importc: "mi_stat_count_t", bycopy.} = object
     total: int64    # total allocated over time
@@ -52,12 +74,21 @@ func mi_stats_get(stats_size: csize_t; stats: ptr MiStatsPrefix) {.importc: "mi_
 
 func alloc*(size: int): pointer =
   result = mi_malloc(size.csize_t)
+  when defined(android):
+    {.cast(noSideEffect).}:
+      armMimallocDiagnostics()
 
 func alloc0*(size: int): pointer =
   result = mi_calloc(1.csize_t, size.csize_t)
+  when defined(android):
+    {.cast(noSideEffect).}:
+      armMimallocDiagnostics()
 
 func realloc*(p: pointer; size: int): pointer =
   result = mi_realloc(p, size.csize_t)
+  when defined(android):
+    {.cast(noSideEffect).}:
+      armMimallocDiagnostics()
 
 func dealloc*(p: pointer) =
   mi_free(p)
