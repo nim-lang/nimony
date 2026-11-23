@@ -461,7 +461,8 @@ proc semTemplRoutineDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k
   copyInto dest, n: # proc/func/etc tag
     let nameStart = dest.len
     takeTree dest, n # name
-    addDecl(c, dest, routine.name, routine.pragmas, k, nameStart, declStart)
+    if not routine.name.isDotToken: # a proc literal declares no name
+      addDecl(c, dest, routine.name, routine.pragmas, k, nameStart, declStart)
     takeTree dest, n # exported
     semTemplBody c, dest, n # pattern
     let isGeneric = n.substructureKind == TypevarsU

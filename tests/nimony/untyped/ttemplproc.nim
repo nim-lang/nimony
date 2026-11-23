@@ -34,3 +34,13 @@ template defineOps() {.untyped.} =
 defineOps()
 echo double(5)
 echo quadruple(3)
+
+# Proc literals declare no name (#338); the first template is never used:
+template unusedLiteral(n: int) {.untyped.} =
+  let f = proc (): int = n
+
+template procLiteral(n: int) {.untyped.} =
+  let f = proc (a: int): int = a + n
+  echo f(1)
+
+procLiteral(3)
