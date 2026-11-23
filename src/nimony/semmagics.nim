@@ -904,25 +904,30 @@ proc semCanFormCycles*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.boolType
   commonType c, dest, it, beforeExpr, expected
 
-proc hasDestroyHook(c: var SemContext; s: SymId): bool =
-  result = hooksOf(c, s).a[attachedDestroy] != NoSymId
+proc hasHook(c: var SemContext; s: SymId): bool =
+  ## Any hook at all: a `=copy` or `=dup` alone must run too (#3090).
+  let hooks = hooksOf(c, s)
+  for op in low(AttachedOp)..high(AttachedOp):
+    if hooks.a[op] != NoSymId: return true
+  result = false
 
-proc needsDestroy(c: var SemContext; t: TypeCursor; depth: int): bool =
-  ## Does a value of type `t` own something its `=destroy` must release? The
-  ## lifter's `isTrivial` answers the same question after sem; `when` needs
-  ## the answer now. Unknown shapes answer yes.
+proc needsHooks(c: var SemContext; t: TypeCursor; depth: int): bool =
+  ## Does a value of type `t` have a hook, its own or a field's, or own
+  ## something its `=destroy` must release? The lifter's `isTrivial` answers
+  ## the same question after sem; `when` needs the answer now. Unknown shapes
+  ## answer yes.
   if depth > 50: return true
   case t.kind
   of Symbol:
     let s = t.symId
     let origin = skipTypeInstSym(s)
-    if hasDestroyHook(c, s) or (origin != s and hasDestroyHook(c, origin)):
+    if hasHook(c, s) or (origin != s and hasHook(c, origin)):
       return true
     let res = tryLoadSym(s)
     if res.status != LacksNothing or res.decl.symKind != TypeY: return true
     let decl = asTypeDecl(res.decl)
     if decl.isGeneric: return true
-    result = needsDestroy(c, decl.body, depth + 1)
+    result = needsHooks(c, decl.body, depth + 1)
   of TagLit:
     case t.typeKind
     of IntT, UIntT, FloatT, BoolT, CharT, PtrT, MutT, OutT, LentT, SetT,
@@ -934,24 +939,24 @@ proc needsDestroy(c: var SemContext; t: TypeCursor; depth: int): bool =
     of RefT, OwnedT:
       result = true
     of SinkT, ArrayT, DistinctT:
-      result = needsDestroy(c, t.childCursor, depth + 1)
+      result = needsHooks(c, t.childCursor, depth + 1)
     of ObjectT:
       var n = t
       inc n                                   # the `(object` token
-      if n.kind != DotToken and needsDestroy(c, n, depth + 1): return true
+      if n.kind != DotToken and needsHooks(c, n, depth + 1): return true
       skip n                                  # the base type
       var iter = initObjFieldIter()
       result = false
       while nextField(iter, n):
         let field = takeLocal(n, SkipFinalParRi)
         if not hasPragma(field.pragmas, CursorP) and
-            needsDestroy(c, field.typ, depth + 1):
+            needsHooks(c, field.typ, depth + 1):
           return true
     of TupleT:
       var n = sub(t)
       result = false
       while n.hasMore:
-        if needsDestroy(c, getTupleFieldType(n), depth + 1): return true
+        if needsHooks(c, getTupleFieldType(n), depth + 1): return true
         skip n
     else:
       result = true
@@ -973,7 +978,7 @@ proc semSupportsCopyMem*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   inc typ                                 # into `(supportsCopyMem`
   if c.inGenericDefinition == 0 and not containsGenericParams(typ):
     known = true
-    answer = not needsDestroy(c, typ, 0)
+    answer = not needsHooks(c, typ, 0)
   endRead(typ)
   if known:
     dest.shrink beforeExpr

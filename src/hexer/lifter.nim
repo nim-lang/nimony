@@ -170,6 +170,14 @@ proc hasUserCopyHook(c: var LiftingCtx; s: SymId): bool =
       return true
   result = false
 
+proc isWrittenHook(s: SymId): bool =
+  ## Not one of ours: `genProcDecl` marks them `(lifted)`. One still queued
+  ## cannot be loaded yet, every written one can.
+  if s == SymId(0): return false
+  let res = tryLoadSym(s)
+  result = res.status == LacksNothing and res.decl.symKind.isRoutine and
+    not hasPragma(asRoutine(res.decl).pragmas, LiftedP)
+
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
   result = c.nominalTypeToHook[c.op].hasKey(s) or
            lookupHookSym(c, c.op, s) != SymId(0)
@@ -181,7 +189,9 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     # trivial layout and only `.error =copy` would silently bit-copy
     # through assignment.
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
-    result = isErrorHook(c, lookupHookSym(c, siblingOp, s))
+    let sibling = lookupHookSym(c, siblingOp, s)
+    # a written `=copy` without a `=dup`: the derived `=dup` calls it (#3090)
+    result = isErrorHook(c, sibling) or (c.op == attachedDup and isWrittenHook(sibling))
   elif not result and c.op == attachedDestroy:
     result = hasUserCopyHook(c, s)
 
@@ -1418,6 +1428,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     let pragmasStart = c.dest.len
     copyIntoKind c.dest, PragmasS, c.info:
       copyIntoKind c.dest, NodestroyP, c.info: discard
+      copyIntoKind c.dest, LiftedP, c.info: discard
       let pragmasPos = c.dest.len
 
     c.dest.addEmpty c.info # exc
@@ -1427,7 +1438,27 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     copyIntoKind(c.dest, StmtsS, c.info):
       maybeAddResultDecl c, paramA, typ
       let beforeUnravel = c.dest.len
-      if a.typeKind == RefT:
+      var userCopy = SymId(0)
+      if c.op == attachedDup and (typ.isSymbol or typ.isSymbolDef):
+        userCopy = lookupHookSym(c, attachedCopy, typ.symId)
+        if not isWrittenHook(userCopy): userCopy = SymId(0)
+      if userCopy != SymId(0):
+        # `=dup(x)` is `wasMoved(result); =copy(result, x)` (language.md),
+        # `wasMoved` as the zeroed bytes a `not nil` field may not be typed as:
+        copyIntoKind c.dest, CallS, c.info:
+          copyIntoSymUse c.dest, getCompilerProc(c, "zeroMem"), c.info
+          copyIntoKind c.dest, CastX, c.info:
+            copyIntoKind c.dest, PointerT, c.info: discard
+            copyIntoKind c.dest, HaddrX, c.info:
+              copyTree c.dest, paramTreeA
+          copyIntoKind c.dest, SizeofX, c.info:
+            c.addParamType typ
+        copyIntoKind c.dest, CallX, c.info:
+          copyIntoSymUse c.dest, userCopy, c.info
+          copyIntoKind c.dest, HaddrX, c.info: # `result` is no `var` parameter
+            copyTree c.dest, paramTreeA
+          copyTree c.dest, paramTreeB
+      elif a.typeKind == RefT:
         unravelRef(c, a, paramTreeA, paramTreeB)
       else:
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
