@@ -103,7 +103,7 @@ type
       d: X
 
 proc `=wasMoved`(x: var X) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(x: var X) =
+proc `=destroy`(x: var X) {.sideEffect.} =
   echo "x destroyed"
 
 var o = O(kind: d, d: X(v: 12345))

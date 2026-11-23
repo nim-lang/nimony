@@ -8,5 +8,5 @@ proc `=wasMoved`(x: var CustomBase) {.nodestroy, inline.} = zeroMem(addr x, size
 method `=destroy`(b: CustomBase) = discard
 method `=trace`(b: var CustomBase; p: pointer) = discard
 
-method reportIdentity*(b: CustomBase) =
+method reportIdentity*(b: CustomBase) {.sideEffect.} =
   echo "CustomBase"

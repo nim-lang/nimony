@@ -107,7 +107,7 @@ type
   Tracked = object
     id: int
 
-proc `=destroy`(t: Tracked) =
+proc `=destroy`(t: Tracked) {.sideEffect.} =
   if t.id != 0: atomicDec alive
 
 proc `=wasMoved`(t: var Tracked) = t.id = 0

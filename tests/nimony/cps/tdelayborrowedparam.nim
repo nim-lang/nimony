@@ -10,7 +10,7 @@ type
     t: Tracked
 
 proc `=wasMoved`(x: var Tracked) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(t: Tracked) =
+proc `=destroy`(t: Tracked) {.sideEffect.} =
   if t.name.len > 0: echo "destroy ", t.name
 
 proc show(b: Box; tag: string) {.passive.} =

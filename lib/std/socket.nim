@@ -246,7 +246,7 @@ type
       ## Accept's budget, used the same way a `Socket`'s deadline is: taken
       ## from here and only ever tightened by an argument.
 
-proc `=destroy`*(l: Listener) =
+proc `=destroy`*(l: Listener) {.sideEffect.} =
   if l.fd >= 0: closeFd(l.fd)
 
 proc `=wasMoved`*(l: var Listener) {.nodestroy, inline.} =
@@ -375,7 +375,7 @@ type
     rpos: int          ## bytes already consumed from the front
     wbuf: seq[char]
 
-proc `=destroy`*(s: Socket) =
+proc `=destroy`*(s: Socket) {.sideEffect.} =
   ## Closing is not something a caller has to remember. A `Socket` owns its
   ## fd, so the fd goes when the socket does — the leak that mattered was
   ## never the buffers, it was the descriptor on the error path nobody wrote.
@@ -637,7 +637,7 @@ type
       ## until then — and always for a server socket, whose correspondents are
       ## per-datagram and owned by `recvFrom`, not by the socket.
 
-proc `=destroy`*(s: UdpSocket) =
+proc `=destroy`*(s: UdpSocket) {.sideEffect.} =
   if s.fd >= 0: closeFd(s.fd)
 
 proc `=wasMoved`*(s: var UdpSocket) {.nodestroy, inline.} =

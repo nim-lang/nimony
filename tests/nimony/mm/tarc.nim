@@ -16,7 +16,7 @@ type
 
 var destroyed = 0
 proc `=wasMoved`(x: var NodeObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(n: NodeObj) =
+proc `=destroy`(n: NodeObj) {.sideEffect.} =
   inc destroyed
 
 proc main =

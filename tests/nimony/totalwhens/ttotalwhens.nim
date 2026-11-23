@@ -12,7 +12,7 @@ type
 
 var destroyed = 0
 
-proc `=destroy`(r: Res) =
+proc `=destroy`(r: Res) {.sideEffect.} =
   # silent: how many run depends on the platform
   if r.s.len > 0: inc destroyed
 

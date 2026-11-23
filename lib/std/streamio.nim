@@ -374,7 +374,7 @@ type
     ## Shared by the ends one constructor returns. They are move-only, so the
     ## (atomic) reference count changes only when an end is created or dies.
 
-proc `=destroy`(c: CoreObj) =
+proc `=destroy`(c: CoreObj) {.sideEffect.} =
   if c.kind == ckFd and c.fd >= 0:
     closeFd(c.fd)
   let g = c.ring
@@ -542,7 +542,7 @@ type
     adapter: nil Adapter
     finished: bool
 
-proc `=destroy`*(r: Reader) =
+proc `=destroy`*(r: Reader) {.sideEffect.} =
   let c = r.core
   if c != nil:
     let g = c.ring
@@ -564,7 +564,7 @@ proc `=copy`*(dest: var Reader; src: Reader) {.error.}
 
 proc finishImpl(w: var Writer; clean: bool) {.passive, raises.}
 
-proc `=destroy`*(w: Writer) =
+proc `=destroy`*(w: Writer) {.sideEffect.} =
   if w.core != nil:
     let wp = cast[ptr Writer](unsafeAddr w)
     if not w.finished:

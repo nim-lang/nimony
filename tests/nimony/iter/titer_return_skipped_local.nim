@@ -12,7 +12,7 @@ type
 
 var destroyed = 0
 
-proc `=destroy`(p: Probe) =
+proc `=destroy`(p: Probe) {.sideEffect.} =
   if p.id != 0: inc destroyed
   else: inc destroyed, 1000 # never constructed: an uninitialized local
 

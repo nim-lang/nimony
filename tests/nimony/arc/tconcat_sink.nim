@@ -10,7 +10,7 @@ type
   Node = ref object
     v: int
 
-proc `=destroy`(x: R) =
+proc `=destroy`(x: R) {.sideEffect.} =
   if x.id != 0:
     {.cast(assumeSync).}:
       inc destroyed

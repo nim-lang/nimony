@@ -3699,6 +3699,50 @@ The prototype of this hook for a type `T` needs to be:
 to calls of the built-in `=trace` operation.
 
 
+### Hooks are side-effect free
+
+A hook is `.noSideEffect` by default, whether it is declared with `func` or
+with `proc` (see [Func]). The compiler calls hooks in places the program does
+not spell out, at the end of every scope and for every assignment. A hook
+should only touch the value it is handed: what that value owns, and through
+its `var` parameter, its own storage. Then those implicit calls change nothing
+else, and the compiler can keep what it knows about other locations across
+them (see [Contracts]).
+
+Releasing what the value owns is part of that value. Freeing its memory is,
+and so is updating a reference count that the value shares with its copies.
+Code that does this through a pointer says so with `{.cast(noSideEffect).}`,
+as any `func` that writes through a pointer does:
+
+  ```nim
+  proc `=copy`(dest: var Handle; src: Handle) =
+    if dest.p != src.p:
+      `=destroy`(dest)
+      {.cast(noSideEffect).}: # the count belongs to the handles sharing `p`
+        if src.p != nil: inc src.p.rc
+      dest.p = src.p
+  ```
+
+A hook that really has side effects says `.sideEffect`. Examples: a `=destroy`
+that flushes buffered output, closes a descriptor that an event loop still
+tracks, or logs. The compiler then treats every implicit call of it as a call
+that may change any shared location:
+
+  ```nim
+  proc `=destroy`(w: Writer) {.sideEffect.} =
+    if w.core != nil: flush(w)
+  ```
+
+The effect of a hook is the effect of everything it runs, and the hooks of
+the fields and elements it destroys or copies are part of that. A `=destroy`
+of a `seq[T]` or of an object that has a `Writer` field has the side effects
+of `T`'s or `Writer`'s `=destroy`. This is how the compiler judges the effect
+of an implicit hook call. It does not do this for an explicit call such as
+`=destroy(x.field)` in a `.noSideEffect` routine. Such a call is accepted
+even when the hook it ends up running is `.sideEffect`, and so is the
+`=destroy` of a local of such a type that runs at the end of a `func`.
+
+
 ### Move semantics
 
 A "move" can be regarded as an optimized copy operation. If the source of the

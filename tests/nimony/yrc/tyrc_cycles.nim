@@ -42,13 +42,13 @@ type
     s: string
 
 proc `=wasMoved`(x: var PairObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(p: PairObj) =
+proc `=destroy`(p: PairObj) {.sideEffect.} =
   inc destroyed
   `=destroy`(p.name)
   `=destroy`(p.other)
 
 proc `=wasMoved`(x: var TreeObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(t: TreeObj) =
+proc `=destroy`(t: TreeObj) {.sideEffect.} =
   inc destroyed
   `=destroy`(t.kids)
   `=destroy`(t.parent)

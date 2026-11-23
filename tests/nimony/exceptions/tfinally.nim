@@ -27,7 +27,7 @@ type
 
 # Custom destructor
 proc `=wasMoved`(x: var MyObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(x: var MyObj) =
+proc `=destroy`(x: var MyObj) {.sideEffect.} =
   echo "Destructor called for MyObj(value=", x.value, ")"
 
 proc main() =

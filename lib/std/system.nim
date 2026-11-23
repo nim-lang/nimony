@@ -406,7 +406,7 @@ proc iterCancelled(coro: ptr CoroutineBase): bool {.inline.} =
   ## loop gone? The iterator's `caller` is its loop's `Join` (`attach`).
   result = cast[ptr Join](coro.caller.env).done == -1
 
-proc `=destroy`(j: Join) =
+proc `=destroy`(j: Join) {.sideEffect.} =
   ## A `for` loop left before its iterator finished, by whatever way out of
   ## the loop's scope. The iterator is parked at a `yield`: resume it with
   ## `done = -1`, and it returns from there, destroying its locals and

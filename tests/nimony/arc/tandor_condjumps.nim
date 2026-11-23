@@ -22,7 +22,7 @@ var evals = 0
 var destroys = 0
 
 proc `=wasMoved`(x: var Box) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(b: Box) =
+proc `=destroy`(b: Box) {.sideEffect.} =
   if b.s.len > 0: inc destroys
 
 proc `=dup`(b: Box): Box = Box(s: b.s)

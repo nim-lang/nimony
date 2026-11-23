@@ -23,7 +23,7 @@ type
   Counted = object
     x: int
 
-proc `=destroy`(c: Counted) =
+proc `=destroy`(c: Counted) {.sideEffect.} =
   if c.x != 0: inc destroyed
 proc `=wasMoved`(c: var Counted) = c.x = 0
 proc `=dup`(c: Counted): Counted {.error.}

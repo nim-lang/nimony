@@ -19,7 +19,7 @@ type
 var destroyed = 0
 
 proc `=wasMoved`(x: var Payload) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(v: Payload) =
+proc `=destroy`(v: Payload) {.sideEffect.} =
   destroyed = destroyed + 1
 
 proc mkNode(id: int): Node {.raises.} =

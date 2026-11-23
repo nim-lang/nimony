@@ -15,7 +15,7 @@ proc takeBox[T](b: Box[T]) = discard
 type Holder[T] = object
   w: Wrapper[T]
 
-proc `=destroy`[T](h: var Holder[T]) =
+proc `=destroy`[T](h: var Holder[T]) {.sideEffect.} =
   takeBox(h.w) # the first use of `Box[float32]` is in this hook instance
 
 proc `=wasMoved`[T](h: var Holder[T]) = discard
@@ -30,13 +30,13 @@ type
   Outer[T] = object
     v: T
 
-proc `=destroy`[T](x: var Inner[T]) = echo "inner destroyed"
+proc `=destroy`[T](x: var Inner[T]) {.sideEffect.} = echo "inner destroyed"
 proc `=wasMoved`[T](x: var Inner[T]) = discard
 proc g[T](x: T) =
   var i = Inner[T](v: x)
 proc f[T](x: T) = g(x)
 
-proc `=destroy`[T](h: var Outer[T]) = f(h.v)
+proc `=destroy`[T](h: var Outer[T]) {.sideEffect.} = f(h.v)
 proc `=wasMoved`[T](h: var Outer[T]) = discard
 
 proc main =

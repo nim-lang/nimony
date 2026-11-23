@@ -9,7 +9,7 @@ type
 
 proc mk[T](x: T): CycBox[T] = CycBox[T](item: x)
 
-proc `=destroy`*[T](h: CycHolder[T]) =
+proc `=destroy`*[T](h: CycHolder[T]) {.sideEffect.} =
   let b = mk(h.v) # the first use of `CycBox[int]`
   echo "cyclic destroyed"
 proc `=wasMoved`*[T](h: var CycHolder[T]) = discard

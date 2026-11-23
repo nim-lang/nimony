@@ -1865,28 +1865,28 @@ proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; f
   else:
     semExpr c, dest, it
 
-proc addImpliedClosurePragma(c: var SemContext; dest: var TokenBuf;
-                             pragmasAt: int; info: NifLineInfo) =
-  ## Splice `(closure)` into the pragmas slot `semPragmas` just emitted at
+proc addImpliedPragma(c: var SemContext; dest: var TokenBuf;
+                      pragmasAt: int; pk: PragmaKind; info: NifLineInfo) =
+  ## Splice `(pk)` into the pragmas slot `semPragmas` just emitted at
   ## `pragmasAt`. The enclosing routine tree must still be open: `replace` /
   ## `insert` maintain the open-tag bookkeeping but cannot widen the sealed
   ## jump of an enclosing scope (see `sem.addVarargsParameter`).
   if dest[pragmasAt].kind == DotToken:
     var tmp = createTokenBuf(4)
     tmp.addParLe(PragmasU, info)
-    tmp.addParPair(ClosureP, info)
+    tmp.addParPair(pk, info)
     tmp.addParRi(info)
     dest.replace cursorAt(tmp, 0), pragmasAt
   else:
-    var closureBuf = createTokenBuf(2)
-    closureBuf.addParPair(ClosureP, info)
+    var pragmaBuf = createTokenBuf(2)
+    pragmaBuf.addParPair(pk, info)
     var n = cursorAt(dest, pragmasAt)
     assert n.substructureKind == PragmasU
     n = sub(n)
     while n.hasMore: skip n
     let insertPos = cursorToPosition(dest, n)
     let before = dest.len
-    dest.insert closureBuf, insertPos
+    dest.insert pragmaBuf, insertPos
     widenSealed(dest, pragmasAt, dest.len - before)
 
 proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; info: NifLineInfo) =
