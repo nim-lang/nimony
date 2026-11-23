@@ -362,6 +362,40 @@ proc tryLinearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] 
 
 proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool
 
+proc inheritedBase(fbase, asym: SymId; depth: var int): Cursor
+proc matchNilAnnotations(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor)
+
+proc matchInheritedConstraint(m: var Match; f, a: Cursor): bool =
+  ## `T: Base` also takes a type that inherits from `Base`, and `T: ref Base`
+  ## a `ref` to one, as in Nim 2; `T` binds to the argument's own type. The
+  ## constraint is matched against the base in the argument's inheritance
+  ## chain, so typevars in it (`T: GBox[U]`) bind from that base.
+  var f = f
+  var a = a
+  let ptrKind = f.typeKind
+  if ptrKind in {RefT, PtrT}:
+    if a.typeKind != ptrKind: return false
+    inc f
+    inc a
+  if not isObjectType(f) or not a.isSymbol or not isObjectType(a.symId):
+    return false
+  let fsym = if f.typeKind == InvokeT: f.childCursor.symId else: f.symId
+  var depth = 0
+  var parent = inheritedBase(skipTypeInstSym(fsym), a.symId, depth)
+  result = not cursorIsNil(parent) and tryLinearMatch(m, f, parent, ConstraintMatchFlags)
+  if result and ptrKind in {RefT, PtrT}:
+    # the nil annotations must agree as for a structural match
+    inc a
+    let fOrig = f
+    let aOrig = a
+    let oldErr = m.err
+    let oldHasError = m.hasError
+    m.err = false
+    matchNilAnnotations m, f, a, fOrig, aOrig
+    result = not m.err
+    m.err = oldErr
+    m.hasError = oldHasError
+
 proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   let fOrig = f
@@ -394,9 +428,10 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # otherwise, match symbol as a regular type (includes typevar case):
   # XXX typevars inferred to have typevar values will try to match individual constraints here
   f = fOrig
-  var a = a
+  var a2 = a
   # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-  result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
+  result = tryLinearMatch(m, f, a2, ConstraintMatchFlags) or
+    matchInheritedConstraint(m, fOrig, a)
 
 proc isBuiltinContainerSym(s: SymId; decl: Cursor): bool =
   ## `string`, `seq` and `openArray` are declared as objects in `lib/std/system`,
@@ -459,13 +494,17 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
       result = matchConceptInvocation(m, f, a)
       skip f
     else:
-      var a = a
-      result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
+      let fOrig = f
+      var a2 = a
+      result = tryLinearMatch(m, f, a2, ConstraintMatchFlags) or
+        matchInheritedConstraint(m, fOrig, a)
   else:
     # match as a regular type:
-    var a = a
+    let fOrig = f
+    var a2 = a
     # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-    result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
+    result = tryLinearMatch(m, f, a2, ConstraintMatchFlags) or
+      matchInheritedConstraint(m, fOrig, a)
 
 proc matchSingleConstraint(m: var Match; f: var Cursor; a: Cursor): bool {.inline.} =
   if f.isSymbol:
@@ -1608,19 +1647,21 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
 proc isEmptyContainer*(n: Cursor): bool
 
-proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
-  let fbase = skipTypeInstSym(fsym)
-  var diff = 1
+proc inheritedBase(fbase, asym: SymId; depth: var int): Cursor =
+  ## Walks up the inheritance chain of the object type `asym` to the first
+  ## parent that is `fbase` or an instance of the generic `fbase`. Returns that
+  ## parent as written in the `object of` clause, without `ref`/`ptr`, and its
+  ## distance from `asym` in `depth`; a nil cursor when there is none.
+  result = default(Cursor)
+  depth = 1
   var objbody = objtypeImpl(asym)
   while true:
     let od = asObjectDecl(objbody)
     if od.kind != ObjectT:
-      m.error InvalidMatch, f, a
-      return
+      return default(Cursor)
     var parent = od.parentType
     if parent.typeKind in {RefT, PtrT}:
       inc parent
-
     var psym = SymId(0)
     var pbase = SymId(0)
     if parent.typeKind == InvokeT:
@@ -1632,47 +1673,52 @@ proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrK
       psym = parent.symId
       pbase = skipTypeInstSym(psym)
     else:
-      break
-
+      return default(Cursor)
     if sameSymbol(fbase, pbase):
-      if f.typeKind != InvokeT and fsym != fbase and psym != pbase and
-          not sameSymbol(fsym, psym):
-        # both are instances of the same generic: `Parent[int]` is not a
-        # `Parent[string]`
-        m.error InvalidMatch, f, a
-        return
-      if f.typeKind == InvokeT:
-        # infer generic params
-        # XXX might need to use something like `bindSubsInvokeArgs` here
-        # if `parent` contains generic parameters of the object type
-        var f2 = f
-        var p2 = parent
-        linearMatch m, f2, p2
-
-      m.args.addParLe BaseobjX, m.argInfo
-      if m.flipped:
-        if ptrKind != NoType: m.args.addParLe(ptrKind, a.info)
-        m.args.addSubtree a
-        if ptrKind != NoType: m.args.addParRi()
-        m.args.addIntLit -diff, m.argInfo
-        dec m.inheritanceCosts, diff
-      else:
-        if ptrKind != NoType: m.args.addParLe(ptrKind, f.info)
-        m.args.addSubtree f
-        if containsGenericParams(f):
-          # needs to be instantiated, reuse genericConverter
-          m.genericConverter = true
-        if ptrKind != NoType: m.args.addParRi()
-        m.args.addIntLit diff, m.argInfo
-        inc m.inheritanceCosts, diff
-      inc m.opened
-      diff = 0 # mark as success
-      break
-    inc diff
+      return parent
+    inc depth
     objbody = objtypeImpl(psym)
-  if diff != 0:
+
+proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
+  let fbase = skipTypeInstSym(fsym)
+  var diff = 0
+  let parent = inheritedBase(fbase, asym, diff)
+  if cursorIsNil(parent):
     m.error InvalidMatch, f, a
-  elif m.skippedMod == OutT:
+    return
+  let psym = if parent.typeKind == InvokeT: parent.childCursor.symId else: parent.symId
+  if f.typeKind != InvokeT and fsym != fbase and psym != skipTypeInstSym(psym) and
+      not sameSymbol(fsym, psym):
+    # both are instances of the same generic: `Parent[int]` is not a
+    # `Parent[string]`
+    m.error InvalidMatch, f, a
+    return
+  if f.typeKind == InvokeT:
+    # infer generic params
+    # XXX might need to use something like `bindSubsInvokeArgs` here
+    # if `parent` contains generic parameters of the object type
+    var f2 = f
+    var p2 = parent
+    linearMatch m, f2, p2
+
+  m.args.addParLe BaseobjX, m.argInfo
+  if m.flipped:
+    if ptrKind != NoType: m.args.addParLe(ptrKind, a.info)
+    m.args.addSubtree a
+    if ptrKind != NoType: m.args.addParRi()
+    m.args.addIntLit -diff, m.argInfo
+    dec m.inheritanceCosts, diff
+  else:
+    if ptrKind != NoType: m.args.addParLe(ptrKind, f.info)
+    m.args.addSubtree f
+    if containsGenericParams(f):
+      # needs to be instantiated, reuse genericConverter
+      m.genericConverter = true
+    if ptrKind != NoType: m.args.addParRi()
+    m.args.addIntLit diff, m.argInfo
+    inc m.inheritanceCosts, diff
+  inc m.opened
+  if m.skippedMod == OutT:
     m.error UnavailableSubtypeRelation, f, a
 
 proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind) =

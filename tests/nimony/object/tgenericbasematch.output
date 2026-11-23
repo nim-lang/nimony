@@ -1,1 +1,6 @@
-3 4 5 s
+true true true
+3
+T: Base | T: Base | Base | T: not Base
+7 0 7 0
+5
+T: OBase | T: Other
