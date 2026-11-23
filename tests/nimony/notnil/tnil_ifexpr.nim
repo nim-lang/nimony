@@ -13,3 +13,21 @@ var s: nil X = case k
   of 3: nil
   else: X(data: 2)
 echo q == nil, " ", r == nil, " ", s == nil
+
+# #328: a `notnil` first branch must not give the expression a `notnil`
+# type when a later branch is `nil`.
+proc pickIf(s: seq[X]; i: int): nil X =
+  result = if i >= 0: s[i] elif i == -1: s[0] else: nil
+
+proc pickCase(s: seq[X]; i: int): nil X =
+  result = case i
+    of 0: s[i]
+    else: nil
+
+proc pickTry(s: seq[X]; i: int): nil X =
+  result = try: s[i] except: nil
+
+let xs = @[X(data: 1)]
+echo pickIf(xs, 0) == nil, " ", pickIf(xs, -2) == nil, " ",
+  pickCase(xs, 0) == nil, " ", pickCase(xs, 1) == nil, " ",
+  pickTry(xs, 0) == nil

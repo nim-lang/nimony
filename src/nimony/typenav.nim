@@ -391,6 +391,31 @@ proc typeofBranchBody(c: var TypeCache; br: Cursor; flags: set[GetTypeFlag]): Cu
     br = last
   result = getTypeImpl(c, br, flags)
 
+proc admitsOnlyNonNil(t: Cursor): bool =
+  ## Whether `t` is a pointer-like type marked `notnil`, looking through
+  ## aliases and value-passing wrappers (the slot `contracts_fir.markedAs`
+  ## reads).
+  var t = skipTypeAliases(t)
+  while t.typeKind in {SinkT, MutT, LentT, OutT, OwnedT}:
+    t = skipTypeAliases(t.childCursor)
+  if t.typeKind notin {PtrT, RefT, CstringT, PointerT, ProctypeT, ItertypeT}:
+    return false
+  var e = t.childCursor
+  if t.typeKind in {PtrT, RefT}: skip e # base type
+  result = e.hasMore and e.substructureKind == NotnilU
+
+proc joinBranchType(typ: var Cursor; brType: Cursor): bool =
+  ## Folds one branch's type into the type `typ` of an `if`/`case`/`try`
+  ## value; returns whether the remaining branches can no longer change it.
+  ## The first non-void branch decides, but a `notnil` pointer yields to a
+  ## sibling that may be `nil`: sem accepts a `notnil` value for a `nil T`
+  ## without a conversion, so for `if c: s[i] else: nil` typed `nil T` only
+  ## the join is the type sem gave the expression.
+  if brType.typeKind notin {VoidT, NiltT} and
+      (typ.typeKind == VoidT or not admitsOnlyNonNil(brType)):
+    typ = brType
+  result = typ.typeKind != VoidT and not admitsOnlyNonNil(typ)
+
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   result = c.builtins.autoType # to indicate error
   case exprKind(n)
@@ -413,7 +438,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     of TagLit:
       case stmtKind(n)
       of IfS:
-        # Walk all branches and pick the first non-void branch's type. A
+        # Walk the branches and pick the first non-void branch's type
+        # (`joinBranchType` says when a later one still counts). A
         # branch body may be `(stmts ...)` — sem emits that shape for
         # template-expanded if-expressions too, so the branch's value is its
         # trailing item, not blanket void (typing it void made xelim declare
@@ -430,9 +456,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
           inc br # `elif` or `else`
           if sub == ElifU:
             skip br # condition
-          let brType = typeofBranchBody(c, br, flags)
-          if brType.typeKind != VoidT:
-            result = brType
+          if joinBranchType(result, typeofBranchBody(c, br, flags)):
             break
           skip n
       of CaseS:
@@ -449,23 +473,22 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
           inc br # `of` or `else`
           if sub == OfU:
             skip br # set
-          let brType = typeofBranchBody(c, br, flags)
-          if brType.typeKind != VoidT:
-            result = brType
+          if joinBranchType(result, typeofBranchBody(c, br, flags)):
             break
           skip n
       of TryS:
         # Like `if`: a body that ends in `return`/`raise` is void, so the
-        # first non-void `except` arm decides.
+        # first non-void `except` arm decides (with `joinBranchType`).
         var n = n
         inc n # skip `try`
-        result = typeofBranchBody(c, n, flags)
+        result = c.builtins.voidType
+        var settled = joinBranchType(result, typeofBranchBody(c, n, flags))
         skip n
-        while result.typeKind == VoidT and n.substructureKind == ExceptU:
+        while not settled and n.substructureKind == ExceptU:
           var br = n
           inc br # `except`
           skip br # exception type, `let` or `.`
-          result = typeofBranchBody(c, br, flags)
+          settled = joinBranchType(result, typeofBranchBody(c, br, flags))
           skip n
       of BlockS:
         var n = n
