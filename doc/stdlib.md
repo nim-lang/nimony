@@ -108,9 +108,19 @@ under `lib/std/system/`; nothing in `system.nim` enumerates them.
 | `--mm:` | file | notes |
 | --- | --- | --- |
 | `atomicArc` | `system/atomicarc.nim` | default; the reference count is updated atomically, so a `ref` may be shared between threads |
-| `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread |
-| `orc` | `system/orc.nim` | `arc` plus a cycle collector: cyclic garbage is freed too; a `ref` must stay on one thread |
+| `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread, so not with the pool's I/O (see below) |
+| `orc` | `system/orc.nim` | `arc` plus a cycle collector: cyclic garbage is freed too; a `ref` must stay on one thread, so not with the pool's I/O (see below) |
 | `yrc` | `system/yrc.nim` | thread-safe `orc`: refs may be shared between threads, and threads collect cycles concurrently with each other and with the mutators |
+
+`std/threadpool` resumes a parked `.passive` proc on whichever thread runs the
+pool's next task, and the proc's frame takes its refs along; channels, pipes
+and the `dns` resolver are also used by several pool tasks. Under `arc` and
+`orc` the counts of such refs are updated without atomics, and under `orc` a
+ref can sit in one thread's cycle roots while another thread destroys it.
+Everything built on the pool's I/O (`std/ioring`, `streamio`, `socket`, `tls`,
+`httpclient`, `httpserver`, `websocket`, `dns`, `channels`, `asyncio`)
+therefore needs `atomicArc` or `yrc`, even when the program's own refs stay on
+the main thread; `std/ioring` refuses `arc` and `orc` at compile time.
 
 A strategy module defines exactly three primitives — `arcInc`, `arcDec` (true
 when the count reached zero) and `arcIsUnique`. What is built on top of them

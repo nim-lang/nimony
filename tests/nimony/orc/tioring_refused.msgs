@@ -1,0 +1,1 @@
+lib/std/ioring.nim(45, 5) Error: std/ioring shares refs between pool threads, which --mm:arc and --mm:orc do not support; use --mm:atomicArc (the default) or --mm:yrc
