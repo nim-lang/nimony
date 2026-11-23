@@ -571,12 +571,6 @@ proc instantiateGenerics*(c: var SemContext; dest: var TokenBuf) =
     let procReqs = move(c.procRequests)
     for p in procReqs: instantiateGenericProc c, dest, p
 
-proc instantiateGenericHooks*(c: var SemContext; dest: var TokenBuf) =
-  ## hooks are instantiated after all generics have been instantiated
-  while c.procRequests.len > 0:
-    let procReqs = move(c.procRequests)
-    for p in procReqs: instantiateGenericProc c, dest, p
-
 # -------------------- sem checking -----------------------------
 
 proc instantiateExprIntoBuf(c: var SemContext; buf: var TokenBuf; it: var Item; bindings: Table[SymId, Cursor]) =
