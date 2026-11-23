@@ -38,6 +38,12 @@ import channels {.cyclic.}
 
 from std/ioring import Sockaddr_storage, earlier, never, afterMs, submitTimeout, monoNow
 
+proc takeSock(s: var UdpSocket): UdpSocket {.nodestroy, inline.} =
+  ## Moves the socket out and leaves `s` in its `=wasMoved` state. Not
+  ## `move`: a socket has no `default` for `move` to reset `s` to.
+  result = s
+  `=wasMoved`(s)
+
 const
   MaxPtrLabels = 64
     ## A poisoned compression chain must stop; the bound is generous because a
@@ -543,7 +549,7 @@ proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
     var won = false
     withLock(r.sockLock):
       if not r.sockOpen:
-        r.sock = move(s)
+        r.sock = takeSock(s)
         r.sockOpen = true
         won = true
     if won:
@@ -683,7 +689,7 @@ proc defaultResolver(dl: Deadline): Resolver {.passive, raises.} =
     withLock(gDefaultResolverLock):
       if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
         {.cast(assumeSync).}: # written under `gDefaultResolverLock`
-          gDefaultResolver = move(fresh)
+          gDefaultResolver = ensureMove(fresh)
         atomicStore(gDefaultResolverInited, 1, moRelease)
   {.cast(assumeSync).}: # published by the release-store above, never written again
     result = gDefaultResolver
