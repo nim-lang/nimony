@@ -214,7 +214,7 @@ proc recv*[T](r: Receiver[T]; dest: var T): bool {.passive, raises.} =
   var v {.noinit.}: T
   zeroMem(addr v, sizeof(T))          # a moved-from value until filled
   result = recvBytes(e, addr v, sizeof(T))
-  if result: dest = move v
+  if result: dest = ensureMove v
 
 proc tryRecv*[T](r: Receiver[T]; dest: var T): bool {.passive, raises.} =
   ## One value if one is already waiting; false when the channel is empty, or
@@ -226,7 +226,7 @@ proc tryRecv*[T](r: Receiver[T]; dest: var T): bool {.passive, raises.} =
   var v {.noinit.}: T
   zeroMem(addr v, sizeof(T))          # a moved-from value until filled
   result = tryRecvBytes(e, addr v, sizeof(T))
-  if result: dest = move v
+  if result: dest = ensureMove v
 
 proc flush*[T](s: Sender[T]) {.passive, raises.} =
   ## For a sender over a buffered `Writer`: everything sent goes out. A

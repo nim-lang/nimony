@@ -378,24 +378,34 @@ func delete*[T](s: var seq[T]; idx: int) {.requires: (idx >= 0 and idx < s.len),
     inc i
   dec s.len
 
+func moveAllInto[T](dest: var seq[T]; src: var seq[T]) {.nodestroy.} =
+  ## Appends `src`'s elements to `dest` bitwise and leaves `src` empty. `src`
+  ## keeps its buffer, which its `=destroy` frees. No `move`, so no
+  ## `HasDefault`: a slot that was taken out of is past `src.len` and dead.
+  ## The fence covers the window in which both seqs show the same elements.
+  let fenced = seqFenceEnter[T]()
+  let L = src.len
+  var i = 0
+  while i < L:
+    dest.add src.data[i]
+    inc i
+  src.len = 0
+  seqFenceExit fenced
+
 func `&`*[T](x, y: sink seq[T]): seq[T] =
   ## Concatenates two sequences.
   result = newSeqOfCap[T](x.len + y.len)
-  for i in 0..x.len-1:
-    result.add move(x[i])
-  for i in 0..y.len-1:
-    result.add move(y[i])
+  moveAllInto result, x
+  moveAllInto result, y
 
 func `&`*[T](x: sink seq[T]; y: sink T): seq[T] =
   ## Appends element `y` to the end of the sequence.
   result = newSeqOfCap[T](x.len + 1)
-  for i in 0..x.len-1:
-    result.add move(x[i])
+  moveAllInto result, x
   result.add y
 
 func `&`*[T](x: sink T; y: sink seq[T]): seq[T] =
   ## Prepends the element `x` to the beginning of the sequence.
   result = newSeqOfCap[T](y.len + 1)
   result.add x
-  for i in 0..y.len-1:
-    result.add move(y[i])
+  moveAllInto result, y

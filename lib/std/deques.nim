@@ -62,7 +62,7 @@ func len*[T](d: Deque[T]): int {.inline.} =
   ## Returns the number of elements of `d`.
   d.count
 
-func growIfNeeded[T](d: var Deque[T]): bool =
+func growIfNeeded[T: HasDefault](d: var Deque[T]): bool =
   ## Doubles the capacity if the ring buffer is full, re-laying the elements
   ## out contiguously starting at index 0. `false` when the buffer is full and
   ## could not grow: `d` is left exactly as it was.
@@ -85,7 +85,7 @@ func growIfNeeded[T](d: var Deque[T]): bool =
   d.mask = newCap - 1
   result = true
 
-func addLast*[T](d: var Deque[T]; item: sink T) =
+func addLast*[T: HasDefault](d: var Deque[T]; item: sink T) =
   ## Adds an `item` to the end of `d`.
   runnableExamples:
     var a = initDeque[int]()
@@ -97,7 +97,7 @@ func addLast*[T](d: var Deque[T]; item: sink T) =
   d.tail = (d.tail + 1) and d.mask
   inc d.count
 
-func addFirst*[T](d: var Deque[T]; item: sink T) =
+func addFirst*[T: HasDefault](d: var Deque[T]; item: sink T) =
   ## Adds an `item` to the beginning of `d`.
   runnableExamples:
     var a = initDeque[int]()
@@ -116,13 +116,13 @@ func peekLast*[T](d: Deque[T]): var T {.requires: d.count > 0.} =
   ## Returns the last element of `d`. Requires `d` to be non-empty.
   result = d.data[(d.tail - 1) and d.mask]
 
-func popFirst*[T](d: var Deque[T]): T {.requires: d.count > 0.} =
+func popFirst*[T: HasDefault](d: var Deque[T]): T {.requires: d.count > 0.} =
   ## Removes and returns the first element of `d`. Requires `d` to be non-empty.
   result = move(d.data[d.head])
   d.head = (d.head + 1) and d.mask
   dec d.count
 
-func popLast*[T](d: var Deque[T]): T {.requires: d.count > 0.} =
+func popLast*[T: HasDefault](d: var Deque[T]): T {.requires: d.count > 0.} =
   ## Removes and returns the last element of `d`. Requires `d` to be non-empty.
   d.tail = (d.tail - 1) and d.mask
   result = move(d.data[d.tail])
@@ -207,7 +207,7 @@ func `$`*[T: Stringable](d: Deque[T]): string =
     result.add $d.data[(d.head + i) and d.mask]
   result.add "]"
 
-func toDeque*[T](xs: openArray[T]): Deque[T] =
+func toDeque*[T: HasDefault](xs: openArray[T]): Deque[T] =
   ## Creates a new `Deque` containing the elements of `xs`, in order.
   runnableExamples:
     let a = toDeque([1, 2, 3])

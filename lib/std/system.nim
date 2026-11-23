@@ -120,11 +120,6 @@ func `=trace`*[T](x: var T; env: pointer) {.magic: "Trace", noSideEffect.}
 func ensureMove*[T](x: T): T {.magic: "EnsureMove", noSideEffect.}
   ## Hint for the compiler to treat `x` as a moved-from value where applicable.
 
-func move*[T](x: var T): T {.nodestroy, inline, noSideEffect.} =
-  ## Moves `x` out: returns its value and leaves `x` in a moved-from state.
-  result = x
-  `=wasMoved`(x)
-
 template len*[I, T](x: typedesc[array[I, T]]): int =
   ## Returns the length of an array type.
   ## This is roughly the same as `high(T)-low(T)+1`.
@@ -153,6 +148,18 @@ template `isnot`*(x, y: untyped): untyped =
 
 include "system/iterators"
 include "system/defaults"
+
+func move*[T: HasDefault](x: var T): T {.nodestroy, inline, noSideEffect.} =
+  ## Moves `x` out: returns its value and resets `x` to `default(T)`.
+  ##
+  ## Unlike the moves the compiler inserts for a last use, which only run
+  ## `=wasMoved` and so leave `x` in whatever state its type's `=wasMoved`
+  ## produces, `move` gives `x` a known value: after `let y = move(x)`, `x`
+  ## can be used like a freshly declared variable. Code that does not need
+  ## that, because it overwrites or discards `x` anyway, can write
+  ## `result = x; =wasMoved(x)` in a `.nodestroy` routine instead.
+  result = x
+  x = default(T)
 
 include "system/countbits_impl"
 include "system/setops"

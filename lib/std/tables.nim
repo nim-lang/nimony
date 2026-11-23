@@ -282,7 +282,7 @@ func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
   t.data.shrink(t.data.len - 1)
   rebuildHashPart(t)
 
-func pop*[K: Keyable, V](t: var Table[K, V]; key: K; val: var V): bool =
+func pop*[K: Keyable, V: HasDefault](t: var Table[K, V]; key: K; val: var V): bool =
   ## Removes `key` and stores its value in `val`.
   let hc = readHash(t, key)
   let index = rawGet(t, key, hc)
@@ -293,7 +293,7 @@ func pop*[K: Keyable, V](t: var Table[K, V]; key: K; val: var V): bool =
     del(t, key)
     result = true
 
-func take*[K: Keyable, V](t: var Table[K, V]; key: K; val: var V): bool {.inline.} =
+func take*[K: Keyable, V: HasDefault](t: var Table[K, V]; key: K; val: var V): bool {.inline.} =
   pop(t, key, val)
 
 func initTable*[K, V](initialSize = defaultInitialSize): Table[K, V] =
@@ -435,11 +435,11 @@ func del*[K: Keyable, V](t: var OrderedTable[K, V]; key: K) =
   ## Removes `key`; does nothing when it is absent.
   t.inner.del(key)
 
-func pop*[K: Keyable, V](t: var OrderedTable[K, V]; key: K;
+func pop*[K: Keyable, V: HasDefault](t: var OrderedTable[K, V]; key: K;
                          val: var V): bool =
   t.inner.pop(key, val)
 
-func take*[K: Keyable, V](t: var OrderedTable[K, V]; key: K;
+func take*[K: Keyable, V: HasDefault](t: var OrderedTable[K, V]; key: K;
                           val: var V): bool {.inline.} =
   t.inner.take(key, val)
 
@@ -530,7 +530,7 @@ func ctCheckIfInitialized[K](t: var CountTable[K]): bool =
     return true
   ctInitImpl(t, defaultInitialSize)
 
-func ctEnlarge[K: Keyable](t: var CountTable[K]): bool =
+func ctEnlarge[K: Keyable and HasDefault](t: var CountTable[K]): bool =
   let oldLen = t.data.len
   if oldLen == 0:
     return false
@@ -553,7 +553,7 @@ func ctEnlarge[K: Keyable](t: var CountTable[K]): bool =
       ctRawInsert(t.data, move(n[i].key), v, j)
   true
 
-func putCount[K: Keyable](t: var CountTable[K]; key: K; val: int;
+func putCount[K: Keyable and HasDefault](t: var CountTable[K]; key: K; val: int;
                           index: int): bool =
   ## Inserts a missing key with a positive count.
   var idx = index
@@ -571,11 +571,13 @@ func putCount[K: Keyable](t: var CountTable[K]; key: K; val: int;
 func clearEntry[K](e: var CountEntry[K]) {.inline.} =
   ## Empties a slot without needing `default(K)`: `val == 0` marks a slot as
   ## unused and its key is not read then, so the key only has to give up
-  ## what it owns.
-  discard move(e.key)
+  ## what it owns: `=destroy` then `=wasMoved`, not `move`, which would
+  ## need `default(K)`.
+  `=destroy`(e.key)
+  `=wasMoved`(e.key)
   e.val = 0
 
-func countDelIdx[K: Keyable](t: var CountTable[K]; i: int) =
+func countDelIdx[K: Keyable and HasDefault](t: var CountTable[K]; i: int) =
   if i < 0 or i >= t.data.len:
     return
   let dataLen = t.data.len
@@ -606,7 +608,7 @@ func initCountTable*[K](initialSize = defaultInitialSize): CountTable[K] =
       data: default(CountEntrySeq[K]), counter: 0, isSorted: false)
   discard ctInitImpl(result, initialSize)
 
-func toCountTable*[K: Keyable](keys: openArray[K]): CountTable[K] =
+func toCountTable*[K: Keyable and HasDefault](keys: openArray[K]): CountTable[K] =
   ## Counts how often each element of `keys` occurs.
   result = initCountTable[K](keys.len)
   for key in keys:
@@ -622,7 +624,7 @@ func `[]`*[K: Keyable](t: CountTable[K]; key: K): int =
   else:
     0
 
-func `[]=`*[K: Keyable](t: var CountTable[K]; key: K; val: int) =
+func `[]=`*[K: Keyable and HasDefault](t: var CountTable[K]; key: K; val: int) =
   assert(not t.isSorted, "CountTable must not be used after sorting")
   assert(val >= 0, "CountTable values must be non-negative")
   if val == 0:
@@ -637,7 +639,7 @@ func `[]=`*[K: Keyable](t: var CountTable[K]; key: K; val: int) =
   else:
     discard putCount(t, key, val, index)
 
-func inc*[K: Keyable](t: var CountTable[K]; key: K; val = 1) =
+func inc*[K: Keyable and HasDefault](t: var CountTable[K]; key: K; val = 1) =
   ## Increments `t[key]` by `val`.
   assert(not t.isSorted, "CountTable must not be used after sorting")
   if not ctCheckIfInitialized(t):
@@ -697,7 +699,7 @@ func getOrDefault*[K: Keyable](t: CountTable[K]; key: K; def = 0): int =
   else:
     def
 
-func del*[K: Keyable](t: var CountTable[K]; key: K) =
+func del*[K: Keyable and HasDefault](t: var CountTable[K]; key: K) =
   ## Removes `key`; does nothing when it is absent.
   if t.data.len == 0:
     return
@@ -711,7 +713,7 @@ func del*[K: Keyable](t: var CountTable[K]; key: K) =
     h = nextProbe(h, mask)
     {.assume: 0 <= h and h < t.data.len.}
 
-func pop*[K: Keyable](t: var CountTable[K]; key: K; val: var int): bool =
+func pop*[K: Keyable and HasDefault](t: var CountTable[K]; key: K; val: var int): bool =
   let index = ctRawGet(t, key)
   if index < 0:
     return false
@@ -736,7 +738,7 @@ proc sort*[K](t: var CountTable[K]; order = SortOrder.Descending) =
   algorithm.sort(t.data, proc (x, y: CountEntry[K]): int = ctCmp(x, y), order)
   t.isSorted = true
 
-proc merge*[K: Keyable](s: var CountTable[K]; t: CountTable[K]) =
+proc merge*[K: Keyable and HasDefault](s: var CountTable[K]; t: CountTable[K]) =
   assert(not s.isSorted, "CountTable must not be used after sorting")
   for h in 0 ..< t.data.len:
     if t.data[h].val != 0:
