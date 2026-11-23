@@ -691,6 +691,13 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       while n.hasMore: skip n
     n = start; skip n
 
+proc isExternNamePragma(n: Cursor): bool =
+  ## The pragmas `semPragma` names after the declared symbol when they have
+  ## no argument.
+  var n = n
+  if n.substructureKind == KvU or n.exprKind == CallX: inc n
+  result = pragmaKind(n) in {ImportcP, ImportcppP, ImportjsP, ExportcP, HeaderP, DynlibP}
+
 proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   var pragmaOpen = false
   let info = n.info
@@ -731,7 +738,9 @@ proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: 
     for i in 0 ..< c.pragmaStack.len:
       var n2 = beginRead(c.pragmaStack[i])
       while n2.hasMore:
-        if checkedPragmas.isChecked(n2, kind):
+        if checkedPragmas.isChecked(n2, kind) or
+            (crucial.sym == SymId(0) and isExternNamePragma(n2)):
+          # a proc type declares no symbol to import or export
           skip n2
         else:
           if not pragmaOpen:

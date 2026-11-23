@@ -34,3 +34,18 @@ proc getchar(): cint {.importc: "putchar", header: "<stdio.h>", noconv.}
 {.push callConv: cdecl.}
 proc testCallConv(x: cint): cint {.importc: "testCallConv", header: "<stdio.h>".}
 {.pop.}
+
+# A proc type declares no symbol to import: the pushed `importc` skips the
+# parameter's proc type
+{.push importc, cdecl.}
+proc qsort(base: pointer; n, size: csize_t; cmp: proc (a, b: pointer): cint {.cdecl.})
+{.pop.}
+
+proc cmpInt(a, b: pointer): cint {.cdecl.} =
+  let x = cast[ptr cint](a)[]
+  let y = cast[ptr cint](b)[]
+  result = (if x < y: -1 elif x > y: 1 else: 0)
+
+var arr = [cint 3, 1, 2]
+qsort(addr arr[0], 3, csize_t sizeof(cint), cmpInt)
+assert arr == [cint 1, 2, 3]
