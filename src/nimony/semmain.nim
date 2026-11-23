@@ -589,35 +589,42 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest.add c.expanded
     dest.addParRi()
 
-  var i = 0
-  # When a generic proc is called for the first time in a lifetime hook
-  # we should loop back in order to instanciate it
-  while true:
-    instantiateGenerics c, dest
-    while i < c.typeInstDecls.len: # typing defaults can add instances
-      let val = c.typeInstDecls[i]
-      inc i
-      # its field defaults, if no construction typed them yet; the generic
-      # routines they need are instantiated with the hooks below
-      discard loadSymWithPhase(c, val, SemcheckBodies)
-      let s = fetchSym(c, val)
-      let res = declToCursor(c, dest, s)
-      if res.status == LacksNothing:
-        requestHookInstance(c, res.decl)
-        requestMethods(c, dest, val, res.decl)
-        dest.copyTree res.decl
-    
-    # Empty the pending sum types and object initialization
-    # To avoid duplication
-    dest.add c.pendingSumtypes
-    c.pendingSumtypes = createTokenBuf()
-    dest.add c.pendingObjInits
-    c.pendingObjInits = createTokenBuf()
-    if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
-      break
+  # A plugin round follows: the plugin sees the module as written, and the
+  # next round, which semchecks what the plugin returns, generates the
+  # instances, hooks and synthesized declarations. Its `semcheckCore` takes
+  # over the queues below as they are; their requests point into `prog.mem`,
+  # not into `dest`. Handing the plugin this round's instances instead made
+  # the next round check them as written code (nim-lang/nimony#3105).
+  if not c.hasPendingPlugins:
+    var i = 0
+    # When a generic proc is called for the first time in a lifetime hook
+    # we should loop back in order to instanciate it
+    while true:
+      instantiateGenerics c, dest
+      while i < c.typeInstDecls.len: # typing defaults can add instances
+        let val = c.typeInstDecls[i]
+        inc i
+        # its field defaults, if no construction typed them yet; the generic
+        # routines they need are instantiated with the hooks below
+        discard loadSymWithPhase(c, val, SemcheckBodies)
+        let s = fetchSym(c, val)
+        let res = declToCursor(c, dest, s)
+        if res.status == LacksNothing:
+          requestHookInstance(c, res.decl)
+          requestMethods(c, dest, val, res.decl)
+          dest.copyTree res.decl
 
-    instantiateGenericHooks c, dest
-  checkDestroysHaveWasMoved c, dest
+      # Empty the pending sum types and object initialization
+      # To avoid duplication
+      dest.add c.pendingSumtypes
+      c.pendingSumtypes = createTokenBuf()
+      dest.add c.pendingObjInits
+      c.pendingObjInits = createTokenBuf()
+      if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
+        break
+
+      instantiateGenericHooks c, dest
+    checkDestroysHaveWasMoved c, dest
   dest.addParRi()
   dbgCheckSeals(dest, "phase3")
   when defined(dumpPhases):
