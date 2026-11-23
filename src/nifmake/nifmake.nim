@@ -486,7 +486,7 @@ type
     label: string
     start: MonoTime
     tmpOutputs: seq[string]  # an `atomic` node's outputs, as written
-    lockOff: int64           # the `NodeLocks` byte it holds, -1 for none
+    lockOffs: seq[int64]     # the `NodeLocks` bytes it holds
 
 proc atomicTmpNames(node: Node; nodeId: int): seq[string] =
   ## Where an `atomic` node's command writes its outputs instead. The names are
@@ -637,8 +637,8 @@ type
     ## everywhere else. A boot's five tools share most of their modules; a
     ## single lock ran their stdlib parts one build at a time.
     ##
-    ## A node's lock is one byte of `file`, at an offset hashed from its
-    ## first output. A collision only makes two nodes wait for each other.
+    ## A node locks one byte of `file` per output, at an offset hashed from
+    ## it. A collision only makes two nodes wait for each other.
     ## The OS drops a process's locks when it ends, however it ends.
     file: File          ## nil: no `--lock`, nothing is guarded
     held: Table[int64, int]
@@ -661,9 +661,15 @@ proc openNodeLocks(path: string): NodeLocks =
   if not open(result.file, path, fmAppend):
     quit "nifmake: cannot open the lock file " & path
 
-proc lockOffset(node: Node): int64 =
-  ## Every build names the same output by the same absolute path.
-  int64(hash(absolutePath(node.outputs[0])) and Hash(LockSlots - 1))
+proc lockOffsets(node: Node): seq[int64] =
+  ## Every build names the same output by the same absolute path. Two nodes
+  ## that write a file in common wait for each other although they list other
+  ## outputs first: a `{.cyclic.}` group's node lists first the member its
+  ## build reached first. Sorted, so builds take shared bytes in one order.
+  result = @[]
+  for output in node.outputs:
+    result.add int64(hash(absolutePath(output)) and Hash(LockSlots - 1))
+  sort result
 
 proc osLock(f: File; off: int64; lock: bool): bool =
   ## Takes (`lock`) or releases one byte without waiting; false when another
@@ -702,6 +708,17 @@ proc release(l: var NodeLocks; off: int64) =
   if l.held[off] == 0:
     l.held.del off
     discard osLock(l.file, off, false)
+
+proc releaseAll(l: var NodeLocks; offs: openArray[int64]) =
+  for off in offs: l.release off
+
+proc tryAcquireAll(l: var NodeLocks; offs: openArray[int64]): bool =
+  ## All of `offs` or none.
+  result = true
+  for i in 0 ..< offs.len:
+    if not l.tryAcquire(offs[i]):
+      for j in 0 ..< i: l.release offs[j]
+      return false
 
 var gMaxJobs = 0
   ## Concurrency cap for `--parallel:N` / `-j:N` (0 = use all cores). Set
@@ -754,16 +771,16 @@ proc runDag(dag: var Dag; opt: set[CliOption]; locks: var NodeLocks;
       let nodeId = sched.takeReady()
       let node = addr dag.nodes[nodeId]
       var stale = Force in opt or Rerun in opt or needsRebuild(sc, node[])
-      var lockOff = -1'i64
+      var lockOffs: seq[int64] = @[]
       if stale and locks.file != nil and node.outputs.len > 0:
-        lockOff = lockOffset(node[])
-        if not locks.tryAcquire(lockOff):
+        lockOffs = lockOffsets(node[])
+        if not locks.tryAcquireAll(lockOffs):
           busy.add nodeId
           continue
         # The build that held it may have just built it.
         sc.forget node[]
         stale = Force in opt or Rerun in opt or needsRebuild(sc, node[])
-        if not stale: locks.release lockOff
+        if not stale: locks.releaseAll lockOffs
       if stale:
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
@@ -783,7 +800,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; locks: var NodeLocks;
           label: nodeLabel(dag, node[]),
           start: (if profile != nil: getMonoTime() else: MonoTime()),
           tmpOutputs: tmpOutputs,
-          lockOff: lockOff)
+          lockOffs: lockOffs)
       else:
         if Verbose in opt:
           echo "Up to date: ", node.outputs.join(", ")
@@ -817,7 +834,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; locks: var NodeLocks;
     prog.draw job.label
     if job.tmpOutputs.len > 0:
       commitAtomic(dag.nodes[job.nodeId], job.tmpOutputs, exitCode == 0)
-    if job.lockOff >= 0: locks.release job.lockOff
+    locks.releaseAll job.lockOffs
     if exitCode == 0:
       if Force in opt: touchOutputs(dag.nodes[job.nodeId], opt)
       sc.invalidate dag.nodes[job.nodeId]
