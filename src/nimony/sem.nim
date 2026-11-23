@@ -5571,12 +5571,17 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
         # object type's scope. Always resolve it by name against `decl` (the type
         # being constructed) rather than trusting a carried field sym via
         # `tryLoadSym` — a carried sym can be stale (e.g. an earlier instantiation
-        # numbered the field differently than the canonical decl). The Symbol form
-        # means a prior semcheck pass already validated visibility, so bypass the
-        # visibility check in that case.
-        let hasFieldSym = fieldNameCursor.isSymbol
+        # numbered the field differently than the canonical decl). A key that is
+        # the very field found by name means a prior semcheck pass already
+        # validated visibility and stored the inheritance level, so bypass the
+        # visibility check in that case. Any other Symbol key (a proc or local
+        # of the same name, bound by a template or macro) is only a name (#339).
         var field = findObjFieldConsiderVis(c, decl, fieldName, bindings, fieldInfo,
-                                            bypassVis = hasFieldSym)
+                                            bypassVis = fieldNameCursor.isSymbol)
+        let hasFieldSym = fieldNameCursor.isSymbol and field.level >= 0 and
+                          fieldNameCursor.symId == field.sym
+        if fieldNameCursor.isSymbol and not hasFieldSym:
+          field = findObjFieldConsiderVis(c, decl, fieldName, bindings, fieldInfo)
         if field.level >= 0:
           if field.sym in setFieldPositions:
             c.buildErr dest, fieldInfo, "field already set: " & pool.strings[fieldName]

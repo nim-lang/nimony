@@ -1,0 +1,2 @@
+tests/nimony/modules/tfieldvis_untypedkey.nim(12, 5) Trace: instantiation from here
+tests/nimony/modules/tfieldvis_untypedkey.nim(10, 24) Error: undeclared field: 'private' for type Foo
