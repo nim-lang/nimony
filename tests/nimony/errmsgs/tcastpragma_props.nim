@@ -15,3 +15,15 @@ func bad() =
     bumps()
 
 {.feature: "assumeSync".}  # test program: globals shared freely
+
+proc noisy(): bool =
+  bumps()
+  result = true
+
+func discards(): int =
+  discard noisy() # a discarded call is checked like any other (#341)
+  result = 1
+
+iterator walk(): int =
+  discard noisy()
+  yield 1

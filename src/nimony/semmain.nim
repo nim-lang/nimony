@@ -490,6 +490,10 @@ func hasPendingPlugins(c: SemContext): bool {.inline.} = c.pendingTypePlugins.le
 proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
   ## Lower the module to the Final IR (`doc/internals/final_ir.md`), prove its
   ## contracts and publish the lowered tree without the prover's facts.
+  # derefs reports by `(err)` nodes in the tree; neither the lowering nor the
+  # prover can type one
+  if reportErrors(dest) > 0:
+    quit 1
   if c.g.config.keepSemTree:
     # The structured tree, for the sem validator; the compiler never reads it.
     onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif")
