@@ -2450,11 +2450,13 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
           let pragmas = n
           dest.takeTree n # pragmas
           field = localToFieldname(c, paramSym)
+          # the frame owns a `sink` parameter as a plain `T` (#348)
+          let fieldTyp = if n.typeKind == SinkT: n.childCursor else: n
           c.currentProc.localToEnv[paramSym] = EnvField(
             objType: coroTypeForProc(c, sym),
             field: field,
             pragmas: pragmas,
-            typ: n,
+            typ: fieldTyp,
             def: -1,
             use: 0)
           c.typeCache.registerLocal(paramSym, ParamY, n)
