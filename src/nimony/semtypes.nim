@@ -1306,7 +1306,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
       let beforePragmas = dest.len
-      semPragmas c, dest, n, crucial, ProcY
+      semPragmas c, dest, n, crucial, ProcY, forProcType = true
       if tk == ItertypeT and AutoClosuresFeature in c.features and
           {ClosureP, PassiveP} * crucial.flags == {}:
         # Under `autoclosures`, `iterator(): T` means the closure-iterator
