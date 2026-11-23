@@ -344,7 +344,10 @@ proc localToField(c: var Context; n: Cursor; local, typ: SymId; isCursor = false
     name.add "."
     name.add c.thisModuleSuffix
     result = pool.symId(name)
-    let localTyp = c.typeCache.getType(n)
+    var localTyp = c.typeCache.getType(n)
+    # A captured `sink` parameter moves into the env: the field owns a plain
+    # `T` (the lifter hooks no `sink T` field, #348).
+    if localTyp.typeKind == SinkT: inc localTyp
     c.currentProc.localToEnv[(typ, local)] = EnvField(objType: typ, field: result, typ: localTyp, isCursor: isCursor)
     c.envFieldType[result] = localTyp
 
