@@ -41,6 +41,15 @@ proc runJob(job, dir: string) =
     when defined(posix):
       discard posix.kill(posix.getpid(), SIGTERM)
     quit "FAILURE: signal job survived"
+  of "groupA", "groupB":
+    # Writes `x` and `y`; notes whether the other build's node ran meanwhile.
+    let other = dir / (if job == "groupA": "groupB" else: "groupA") & ".started"
+    writeFile(dir / job & ".started", "")
+    let deadline = getMonoTime() + initDuration(seconds = 1)
+    while not fileExists(other) and getMonoTime() < deadline: sleep 10
+    if fileExists(other): writeFile(dir / "overlap", "")
+    writeFile(dir / "x", "")
+    writeFile(dir / "y", "")
   of "first", "blocked", "after": discard
   else: quit "FAILURE: unknown job " & job
   writeFile(dir / job, "done\n")
@@ -142,3 +151,29 @@ for scenario in ["serial", "parallel", "failure", "signal", "keepgoing"]:
       require(output.contains("total=2") and not fileExists(dir / "after"),
               "launched a job after a failure:\n" & output)
   echo "nifmake: ", scenario, " execution passed"
+
+block:
+  # `--lock`: two builds whose nodes write the same files but list them in
+  # other orders, as a `{.cyclic.}` group entered through different members
+  # does, build them once and never at the same time.
+  let dir = cache / "lock"
+  if dirExists(dir): removeDir(dir)
+  createDir(dir)
+  var builds: seq[Process] = @[]
+  for (job, first, second) in [("groupA", "x", "y"), ("groupB", "y", "x")]:
+    let graphFile = dir / job & ".nif"
+    writeFile(graphFile, "(.nif27)\n(stmts\n(cmd :" & job & " " &
+      nifString(getAppFilename()) & " " & nifString("--job:" & job) & " " &
+      nifString("--dir:" & dir) & ")\n(do " & job & " (input) (output " &
+      nifString(dir / first) & ") (output " & nifString(dir / second) & ")))\n")
+    builds.add startProcess(nifmake & " --lock:" & quoteShell(dir / "lock") &
+      " run " & graphFile.quoteShell,
+      options = {poEvalCommand, poStdErrToStdOut, poParentStreams})
+  for p in builds:
+    require(waitForExit(p) == 0, "a build sharing the lock failed")
+    close p
+  require(not fileExists(dir / "overlap"),
+          "two builds wrote the same outputs at the same time")
+  require(fileExists(dir / "groupA") xor fileExists(dir / "groupB"),
+          "the build that waited did not find the outputs current")
+  echo "nifmake: builds sharing outputs under --lock passed"
