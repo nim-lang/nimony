@@ -41,12 +41,14 @@ proc getForVars(e: var EContext, forVars: Cursor): seq[Cursor] =
     skip forVars
 
 proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Cursor;
-          forVar: Cursor; res: var Table[SymId, SymId]) =
+          forVar: Cursor; captured: HashSet[SymId]; res: var Table[SymId, SymId]) =
+  ## A yielded symbol becomes the loop variable itself unless a routine in the
+  ## body mentions the loop variable: a closure would then see the iterator's
+  ## local after the loop, a value the loop variable never had.
   let local = asLocal(forVar)
   let destSym = local.name.symId
   let info = local.name.info
-  case c.kind
-  of Symbol:
+  if c.kind == Symbol and destSym notin captured:
     let val = c.symId
     res[destSym] = val
     inc c, SkipName
@@ -85,19 +87,18 @@ proc startTupleAccess(s: SymId; info: NifLineInfo; needsDeref: bool): TokenBuf =
   else:
     result.addSymUse(s, info)
 
-proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
-  result = initTable[SymId, SymId]()
-
+proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars: Cursor, yieldType: Cursor;
+                        captured: HashSet[SymId]; res: var Table[SymId, SymId]) =
   let forVars = getForVars(e, vars)
 
   if forVars.len == 1:
-    connectSingleExprToLoopVar(e, dest, c, forVars[0], result)
+    connectSingleExprToLoopVar(e, dest, c, forVars[0], captured, res)
   else:
     if c.isTagLit and c.exprKind == TupX:
       c.into:
         var i = 0
         while c.hasMore:
-          connectSingleExprToLoopVar(e, dest, c, forVars[i], result)
+          connectSingleExprToLoopVar(e, dest, c, forVars[i], captured, res)
           inc i
     else:
       let tmpId: SymId
@@ -153,7 +154,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
             # = (tupat ...)` is wrapped in `(haddr ...)`.
             let innerNeedsAddr = needsDeref or hasModifier
             while unpackCursor.hasMore:
-              unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr, result)
+              unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr, res)
               inc counter
               skip unpackCursor
               skip typ
@@ -161,7 +162,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
             typ = modStart; skip typ
         else:
           var left = startTupleAccess(tmpId, info, needsDeref)
-          unpackTupleAccess(e, dest, forVars[i], left, i, info, typ, needsDeref, result)
+          unpackTupleAccess(e, dest, forVars[i], left, i, info, typ, needsDeref, res)
           skip typ
 
         if isKvU:
@@ -335,19 +336,31 @@ const NestedRoutines = {ProcS, FuncS, IteratorS, ConverterS, MethodS}
   ## Routines declared inside a copied body: each copy of the body gets its
   ## own, and their uses of the body's renamed locals are renamed with it.
 
-proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
+proc addMentions(n: Cursor; s: var HashSet[SymId]) =
+  if n.kind == Symbol:
+    s.incl n.symId
+  elif n.isTagLit:
+    var it = sub(n)   # peek only, never left
+    while it.hasMore:
+      addMentions(it, s)
+      skip it
+
+proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId];
+                 captured: var HashSet[SymId]) =
   ## A fresh name for every local and label `n` declares. Labels have to be
   ## known up front: a `jmp` comes before its `lab`. A nested routine gets a
   ## fresh name too (one definition per copy), but what it declares inside is
   ## its own and keeps its names. A routine's name is global (sem gives a nested
   ## one `inner.0.<suffix>` too), so the copy's name stays global: a local name
   ## would reach module scope unqualified and collide with another module's
-  ## copies (#2645, #2681).
+  ## copies (#2645, #2681). `captured` gets every symbol a nested routine
+  ## mentions.
   if n.isTagLit and n.stmtKind in NestedRoutines:
     let d = n.childCursor
     if d.kind == SymbolDef:
       mapping[d.symId] = pool.symId("`iir." & $e.localDeclCounters & "." & e.main)
       inc e.localDeclCounters
+    addMentions(n, captured)
   elif n.isTagLit and n.stmtKind notin {MacroS, TemplateS, TypeS, PragmasS}:
     if n.stmtKind in {VarS, LetS, CursorS, PatternvarS, ResultS, LabS}:
       let d = n.childCursor
@@ -355,7 +368,7 @@ proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
         mapping[d.symId] = pool.symId("`ii." & $e.getTmpId)
     var it = sub(n)   # peek only, never left
     while it.hasMore:
-      collectDefs(e, it, mapping)
+      collectDefs(e, it, mapping, captured)
       skip it
 
 proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymId]) =
@@ -466,8 +479,10 @@ proc inlineIteratorBodyFir(e: var EContext; dest: var TokenBuf;
   if c.isTagLit:
     if c.stmtKind == YldS:
       c.into: # skips yield
-        var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
-        collectDefs(e, forStmt.body, mapping)
+        var mapping = initTable[SymId, SymId]()
+        var captured = initHashSet[SymId]()
+        collectDefs(e, forStmt.body, mapping, captured)
+        createYieldMapping(e, dest, c, forStmt.vars, yieldType, captured, mapping)
         emitForBody(e, dest, forStmt.body, mapping, createTokenBuf(0))
     elif c.stmtKind == RetS:
       # The iterator's own `return` ends the loop; one in the loop body is
@@ -594,9 +609,10 @@ proc expandInlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
     for i in 0 ..< paramCount:
       freshBuf.takeTree lc
     var fresh = initTable[SymId, SymId]()
+    var unused = initHashSet[SymId]()
     var probe = lc
     while probe.hasMore:
-      collectDefs(e, probe, fresh)
+      collectDefs(e, probe, fresh, unused)
       skip probe
     while lc.hasMore:
       copyFreshened(freshBuf, lc, fresh)
