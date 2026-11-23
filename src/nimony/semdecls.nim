@@ -1689,6 +1689,21 @@ proc transformMacroInvoc(c: var SemContext; dest: var TokenBuf; it: var Item; ma
   it.n = n
   it.typ = it2.typ
 
+proc routineValueType(decl: Cursor; kind: SymKind): TypeCursor =
+  ## The type of a routine used as a value, named or a proc literal: a
+  ## `(proctype ...)`, or an `(itertype ...)` for a closure iterator. A routine
+  ## declaration is never a value's type. Not interned: `typeToCursor` ignores
+  ## parameter names, which a call's named arguments need.
+  let r = asRoutine(decl)
+  var buf = createTokenBuf()
+  buf.addParLe (if kind == IteratorY and hasPragma(r.pragmas, ClosureP): ItertypeT else: ProctypeT)
+  buf.addDotToken() # nilability tag (none — `nil`/`notnil` set later)
+  buf.addSubtree r.params
+  buf.addSubtree r.retType
+  buf.addSubtree r.pragmas
+  buf.addParRi()
+  result = beginRead(buf)
+
 proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind; pass: PassKind) =
   let macroInvocsPos = findMacroInvocs(c, it.n, kind)
   if macroInvocsPos.len > 0:
@@ -1706,13 +1721,12 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
     let exprStart = dest.len
     dest.addParLe(ExprX, info)
     dest.addParLe(StmtsS, info)
-    let anonTypePos = dest.len
     dest.add anons
     dest.addParRi()
     dest.addSymUse(name, info)
     dest.addParRi()
     let expected = it.typ
-    it.typ = typeToCursor(c, dest, anonTypePos)
+    it.typ = routineValueType(cursorAt(anons, 0), kind)
     commonType c, dest, it, exprStart, expected
 
   else:

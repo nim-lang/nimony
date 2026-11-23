@@ -2192,20 +2192,10 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
       if s.kind.isLocal or s.kind == EfldY:
         skipToLocalType n
       elif s.kind.isRoutine:
-        var thisProc = asRoutine(n)
         # Closure iterators surface as a first-class `itertype` value. Same
         # shape as proctype (nilTag, params, retType, pragmas) — sigmatch /
         # lengcgen route both through the same paths.
-        let isClosureIter =
-          s.kind == IteratorY and hasPragma(thisProc.pragmas, ClosureP)
-        var procTypeBuf = createTokenBuf()
-        procTypeBuf.addParLe (if isClosureIter: ItertypeT else: ProctypeT)
-        procTypeBuf.addDotToken() # nilability tag (none — `nil`/`notnil` set later)
-        procTypeBuf.addSubtree thisProc.params
-        procTypeBuf.addSubtree thisProc.retType
-        procTypeBuf.addSubtree thisProc.pragmas
-        procTypeBuf.addParRi() # end of (proc|iter)type
-        n = beginRead(procTypeBuf)
+        n = routineValueType(n, s.kind)
       elif s.kind == ModuleY:
         if AllowModuleSym notin flags:
           c.buildErr dest, readonlyCursorAt(dest, start).info, "module symbol '" & pool.symString(s.name) & "' not allowed in this context"
