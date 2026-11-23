@@ -27,3 +27,47 @@ proc perYieldCopies(): int =
 
 echo sumViaClosures(4)
 echo perYieldCopies()
+
+# A closure capturing the loop variable itself sees the last value the loop
+# variable had, not the iterator's counter after the loop (#350: 3 3 3).
+var cbs: seq[proc () {.closure.}] = @[]
+for i in 0 ..< 3:
+  cbs.add proc () {.closure.} = echo i
+for cb in cbs: cb()
+
+iterator words(): string =
+  var s = ""
+  var k = 0
+  while k < 2:
+    s = "w" & $k
+    yield s
+    inc k
+  s = "after"
+
+proc captureYieldedString() =
+  var cbs: seq[proc () {.closure.}] = @[]
+  for w in words():
+    cbs.add proc () {.closure.} = echo w
+  for cb in cbs: cb()
+
+captureYieldedString()
+
+# A nested routine that does not mention the loop variable keeps the alias:
+# no copy of the yielded local.
+type Counted = object
+  v: int
+proc `=copy`(d: var Counted; s: Counted) =
+  echo "copy"
+  d.v = s.v
+iterator counted(): Counted =
+  var o = Counted(v: 0)
+  while o.v < 3:
+    yield o
+    inc o.v
+proc sumCounted() =
+  var total = 0
+  for o in counted():
+    proc helper(x: int): int = x + 1
+    total += helper(o.v)
+  echo total
+sumCounted()
