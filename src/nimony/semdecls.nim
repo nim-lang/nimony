@@ -1121,7 +1121,6 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
   var root = SymId(0)
   var signature = StrId(0)
   var hasFirstParam = false
-  var isBase = false
   if params.isTagLit:
     inc params
     if isParamLike(params.substructureKind):
@@ -1133,22 +1132,17 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
       root = getClass(params) # can be a generic instance symbol
       var methodName = pool.symBasename(symId)
       signature = pool.strings.getOrIncl(methodKey(methodName, paramsNode))
-      var pragmas = paramsNode
-      skip pragmas # params
-      skip pragmas # return type
-      isBase = hasPragma(pragmas, BaseP)
   if not hasFirstParam:
     # `params` is not sitting on a type here, so don't render one: without a
     # first parameter there is nothing a method could dispatch on (#2279).
     result = "'method' needs a parameter that has an object type"
   elif root == SymId(0) or not isObjectType(root):
     result = "cannot attach method to type " & typeToString(params)
-  elif isBase and
-      pool.symModule(classHead(root)) != c.thisModuleSuffix and
+  elif pool.symModule(classHead(root)) != c.thisModuleSuffix and
       pool.symModule(classHead(root)) notin c.cycleGroup:
-    # Only the class's module emits its vtable, so only it can add a slot
-    # (Araq on llms#175). An override fills a slot that already exists.
-    result = "a base method must be declared in the module that declares its class: " &
+    # Only the class's module emits its vtable, so a method declared elsewhere
+    # is in no vtable (Araq on llms#175).
+    result = "a method must be declared in the module that declares its class: " &
       typeToString(params)
   else:
     let methodIsInstance = dest[beforeGenericParams].kind == TagLit and dest[beforeGenericParams].tagId == TagId(InvokeT)

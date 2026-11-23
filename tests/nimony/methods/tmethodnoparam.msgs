@@ -1,3 +1,4 @@
-tests/nimony/methods/tmethodnoparam.nim(6, 1) Error: 'method' needs a parameter that has an object type
-tests/nimony/methods/tmethodnoparam.nim(9, 1) Error: cannot attach method to type int64
-tests/nimony/methods/tmethodnoparam.nim(14, 1) Error: a base method must be declared in the module that declares its class: Animal
+tests/nimony/methods/tmethodnoparam.nim(7, 1) Error: 'method' needs a parameter that has an object type
+tests/nimony/methods/tmethodnoparam.nim(10, 1) Error: cannot attach method to type int64
+tests/nimony/methods/tmethodnoparam.nim(15, 1) Error: a method must be declared in the module that declares its class: Animal
+tests/nimony/methods/tmethodnoparam.nim(19, 1) Error: a method must be declared in the module that declares its class: Dog
