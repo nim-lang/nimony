@@ -52,6 +52,17 @@ const
     ## with one. Used by `exprexec`, whose sub-compile is a synthesized module.
 
 type
+  PendingSpan* = object
+    ## The `pendingSumtypes` and `pendingObjInits` tokens, and the
+    ## `rootSumtypeCtors`, that checking one call argument added. They belong
+    ## to the module, not to the argument's tree, so when a call drops the
+    ## checked tree (an `untyped` parameter takes the argument as written) it
+    ## must drop them too: a sum type the argument declared would otherwise
+    ## leave behind a hidden `anum` whose owner type is never emitted, and
+    ## branch constructors that clash with the expansion's own.
+    sumtypesStart*, sumtypesEnd*, objInitsStart*, objInitsEnd*: int
+    ctorsStart*, ctorsEnd*: int ## into `rootSumtypeCtors`
+
   Item* = object
     ## A semchecked expression together with its type. Lives here (rather than
     ## in sigmatch) so that the `SemContext` callback typedefs below can name it
@@ -191,6 +202,9 @@ type
     pendingObjInits*: TokenBuf
       ## hidden init procs for constructors with a run-time case selector,
       ## emitted at module end (`lowerToObjInit`)
+    rootSumtypeCtors*: seq[(StrId, SymId)]
+      ## the branch constructors of sum types, which `synthSumTypeDiscriminator`
+      ## adds to the module's root scope — past any shadow scope's rollback
     objInitProcs*: HashSet[SymId]
     refObjOwners*: Table[SymId, SymId]
       ## `T.Obj` → `T` for every `type T = ref|ptr object` split off by
@@ -374,6 +388,65 @@ proc hooksOf*(c: SemContext; typ: SymId): HooksPerType =
     result = c.typeHooks[].getOrDefault(typ)
   else:
     result = tryLoadAllHooks(typ)
+
+proc beginPendingSpan*(c: SemContext): PendingSpan =
+  PendingSpan(sumtypesStart: c.pendingSumtypes.len, sumtypesEnd: c.pendingSumtypes.len,
+              objInitsStart: c.pendingObjInits.len, objInitsEnd: c.pendingObjInits.len,
+              ctorsStart: c.rootSumtypeCtors.len, ctorsEnd: c.rootSumtypeCtors.len)
+
+proc endPendingSpan*(c: SemContext; span: var PendingSpan) =
+  span.sumtypesEnd = c.pendingSumtypes.len
+  span.objInitsEnd = c.pendingObjInits.len
+  span.ctorsEnd = c.rootSumtypeCtors.len
+
+proc dropRanges(buf: var TokenBuf; ranges: seq[(int, int)]) =
+  ## `ranges` do not overlap. Each is a run of complete declarations.
+  var keep = createTokenBuf(buf.len)
+  var i = 0
+  while i < buf.len:
+    var dropTo = -1
+    for r in ranges:
+      if r[0] == i and r[1] > r[0]:
+        dropTo = r[1]
+    if dropTo >= 0:
+      i = dropTo
+    else:
+      # the buffer holds balanced declarations; a raw copy keeps their seals
+      keep.add buf[i]
+      inc i
+  buf = ensureMove keep
+
+proc dropPendingSpans*(c: var SemContext; spans: openArray[PendingSpan]) =
+  ## Drops what checking the arguments of `spans` added to the module's
+  ## pending declarations and to its root scope.
+  var sumtypes: seq[(int, int)] = @[]
+  var objInits: seq[(int, int)] = @[]
+  var ctors: seq[(int, int)] = @[]
+  for s in spans:
+    if s.ctorsEnd > s.ctorsStart:
+      ctors.add (s.ctorsStart, s.ctorsEnd)
+    if s.sumtypesEnd > s.sumtypesStart:
+      sumtypes.add (s.sumtypesStart, s.sumtypesEnd)
+    if s.objInitsEnd > s.objInitsStart:
+      objInits.add (s.objInitsStart, s.objInitsEnd)
+  if sumtypes.len > 0:
+    dropRanges c.pendingSumtypes, sumtypes
+  if objInits.len > 0:
+    dropRanges c.pendingObjInits, objInits
+  if ctors.len > 0:
+    var rootScope = c.currentScope
+    while rootScope.up != nil: rootScope = rootScope.up
+    var keep: seq[(StrId, SymId)] = @[]
+    for i in 0 ..< c.rootSumtypeCtors.len:
+      var dropped = false
+      for r in ctors:
+        if i >= r[0] and i < r[1]: dropped = true
+      if dropped:
+        let (name, sym) = c.rootSumtypeCtors[i]
+        rootScope.removeOverloadable(name, sym)
+      else:
+        keep.add c.rootSumtypeCtors[i]
+    c.rootSumtypeCtors = ensureMove keep
 
 proc recordFileDep*(c: var SemContext; path: string) =
   ## `path` was read while semchecking this module; see `fileDeps`. Only a
