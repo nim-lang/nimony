@@ -126,12 +126,14 @@ type
       ## declares a name an earlier round already declared.
 
 const
-  IdempotentStages = {stRewrite, stCtorProj, stScalarize, stUnswitch, stRefold, stCse}
+  IdempotentStages = {stRewrite, stCtorProj, stUnswitch, stRefold, stCse}
     ## Stages whose run on their own output is a no-op, so they are skipped
     ## when nothing changed the body since. The rewriter and unswitching are
-    ## fixpoints themselves. Copy propagation is the exception: one run deletes
-    ## only the last link of a dead-store chain (`x = bytes and 255` over
-    ## `bytes = b.bytes`), so it runs every round.
+    ## fixpoints themselves. Copy propagation and scalarization are the
+    ## exceptions: one copy-propagation run deletes only the last link of a
+    ## dead-store chain (`x = bytes and 255` over `bytes = b.bytes`), and one
+    ## scalarization run splits one aggregate layer, leaving a field that is
+    ## itself an object as a new local for the next run. Both run every round.
 
 proc mutated(f: var Fixpoint) {.inline.} =
   ## The body changed: every stage has something new to look at.
@@ -448,4 +450,18 @@ when isMainModule:
     let a = origText(s)
     let b = rebuiltText(s)
     doAssert a == b, "round-trip MISMATCH\n  orig:    " & a & "\n  rebuilt: " & b
+  block nested_aggregate_scalarized_across_rounds:
+    # The scalarizer splits one aggregate layer per run: `o` becomes a scalar
+    # per field, and the field that holds a `U` becomes a local of type `U`
+    # that only the next run can split. Nothing else changes the body, so the
+    # fixpoint must not take the scalarizer's own change as "done".
+    var b = parseFromBuffer(
+      "(stmts (var :o.0.t . . (oconstr T.0.t (kv f.0.t (oconstr U.0.t (kv a.0.t 1))))) " &
+      "(asgn x.0.t (dot (dot o.0.t f.0.t) a.0.t)))",
+      "t", 100, sharedTags = createLengTagPool())
+    var f = Fixpoint()
+    var st = Stats()
+    cleanupFixpoint(b, f, st, nil, nil, default(Cursor), nil)
+    let got = toString(b)
+    doAssert "oconstr" notin got, "nested aggregate left unsplit: " & got
   echo "optdriver self-tests passed"
