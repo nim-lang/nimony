@@ -571,6 +571,31 @@ proc checkDestroysHaveWasMoved(c: var SemContext; dest: var TokenBuf) =
     buildErr c, dest, info, "type '" & pool.symBasename(obj) &
       "' has a '=destroy' but no '=wasMoved'"
 
+proc instantiateRequests(c: var SemContext; dest: var TokenBuf) =
+  ## A routine instance can use a type instance first, and a type instance
+  ## requests the instances of its hooks and methods: repeat until no
+  ## request is left, as a hook body can be the first to use a type.
+  var i = 0
+  while true:
+    instantiateGenerics c, dest
+    while i < c.typeInstDecls.len: # typing defaults can add instances
+      let val = c.typeInstDecls[i]
+      inc i
+      # its field defaults, if no construction typed them yet; the generic
+      # routines they need are instantiated in the next round
+      discard loadSymWithPhase(c, val, SemcheckBodies)
+      let s = fetchSym(c, val)
+      let res = declToCursor(c, dest, s)
+      if res.status == LacksNothing:
+        requestHookInstance(c, res.decl)
+        requestMethods(c, dest, val, res.decl)
+        dest.copyTree res.decl
+    dest.add c.pendingSumtypes
+    c.pendingSumtypes = createTokenBuf()
+    dest.add c.pendingObjInits
+    c.pendingObjInits = createTokenBuf()
+    if c.procRequests.len == 0: break
+
 proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
 
@@ -592,38 +617,11 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   # A plugin round follows: the plugin sees the module as written, and the
   # next round, which semchecks what the plugin returns, generates the
   # instances, hooks and synthesized declarations. Its `semcheckCore` takes
-  # over the queues below as they are; their requests point into `prog.mem`,
-  # not into `dest`. Handing the plugin this round's instances instead made
+  # over the queues `instantiateRequests` drains as they are; their requests
+  # point into `prog.mem`, not into `dest`. Handing the plugin this round's instances instead made
   # the next round check them as written code (nim-lang/nimony#3105).
   if not c.hasPendingPlugins:
-    var i = 0
-    # When a generic proc is called for the first time in a lifetime hook
-    # we should loop back in order to instanciate it
-    while true:
-      instantiateGenerics c, dest
-      while i < c.typeInstDecls.len: # typing defaults can add instances
-        let val = c.typeInstDecls[i]
-        inc i
-        # its field defaults, if no construction typed them yet; the generic
-        # routines they need are instantiated with the hooks below
-        discard loadSymWithPhase(c, val, SemcheckBodies)
-        let s = fetchSym(c, val)
-        let res = declToCursor(c, dest, s)
-        if res.status == LacksNothing:
-          requestHookInstance(c, res.decl)
-          requestMethods(c, dest, val, res.decl)
-          dest.copyTree res.decl
-
-      # Empty the pending sum types and object initialization
-      # To avoid duplication
-      dest.add c.pendingSumtypes
-      c.pendingSumtypes = createTokenBuf()
-      dest.add c.pendingObjInits
-      c.pendingObjInits = createTokenBuf()
-      if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
-        break
-
-      instantiateGenericHooks c, dest
+    instantiateRequests c, dest
     checkDestroysHaveWasMoved c, dest
   dest.addParRi()
   dbgCheckSeals(dest, "phase3")
@@ -714,29 +712,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     dest.add c.expanded
     dest.addParRi()
 
-  var i = 0
-  while true:
-    instantiateGenerics c, dest
-    while i < c.typeInstDecls.len: # typing defaults can add instances
-      let val = c.typeInstDecls[i]
-      inc i
-      # its field defaults, if no construction typed them yet; the generic
-      # routines they need are instantiated with the hooks below
-      discard loadSymWithPhase(c, val, SemcheckBodies)
-      let s = fetchSym(c, val)
-      let res = declToCursor(c, dest, s)
-      if res.status == LacksNothing:
-        requestHookInstance(c, res.decl)
-        requestMethods(c, dest, val, res.decl)
-        dest.copyTree res.decl
-    dest.add c.pendingSumtypes
-    c.pendingSumtypes = createTokenBuf()
-    dest.add c.pendingObjInits
-    c.pendingObjInits = createTokenBuf()
-    if c.procRequests.len == 0 and i >= c.typeInstDecls.len:
-      break
-  
-    instantiateGenericHooks c, dest
+  instantiateRequests c, dest
   checkDestroysHaveWasMoved c, dest
   dest.addParRi()
 
