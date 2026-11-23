@@ -156,7 +156,7 @@ proc runPipelineRound(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
   ## bindings copy propagation can see through on the next round.
   f.changed = false
   let rw = eng != nil and passOn("rewrite")
-  stage(f, stRewrite, rw): runRewritesFix(eng, buf) > 0
+  stage(f, stRewrite, rw): runRewritesFix(eng, buf, m) > 0
   stage(f, stCtorProj, passOn("ctorproj")): runConstructorProjection(buf)
   stage(f, stScalarize, passOn("scalarize")): runScalarize(buf, m, f.sroa)
   stage(f, stCopyProp, passOn("copyprop")): runCopyProp(buf, params, summaries, m)
@@ -164,7 +164,7 @@ proc runPipelineRound(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
   # Copy propagation and unswitching substitute values into expressions;
   # `(add T x 0)` and `(lt 14 14)` that only now became foldable fold here,
   # before CSE keys on them.
-  stage(f, stRefold, rw): runRewritesFix(eng, buf) > 0
+  stage(f, stRefold, rw): runRewritesFix(eng, buf, m) > 0
   stage(f, stCse, passOn("cse")):
     runCSE(buf, summaries, m, params, f.cse, st.checksRemoved)
 

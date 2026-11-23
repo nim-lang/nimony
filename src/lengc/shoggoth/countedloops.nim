@@ -73,19 +73,50 @@ type
 
 proc counterSym*(d: DetectedLoop): SymId {.inline.} = symId(d.counter)
 
-proc isOneLit(n: Cursor): bool =
-  ## `1`, possibly suffixed, parenthesized or converted.
+proc intTypeRange(typ: Cursor; minVal, maxVal: var int64; isUnsigned: var bool): bool =
+  ## Signed/unsigned integer bounds for `(i B)` or `(u B)` (conservative for `-1`).
+  result = false
+  if cursorIsNil(typ) or typ.kind != TagLit or typ.typeKind notin {IT, UT} or
+     typ.childCursor.kind != IntLit: return
+  let bits = int(intVal(typ.childCursor))
+  if bits notin [8, 16, 32, 64, -1]: return
+  isUnsigned = typ.typeKind == UT
+  let width = if bits == -1: 32 else: bits
+  maxVal =
+    if bits == 64: high(int64)
+    elif isUnsigned: (1'i64 shl width) - 1'i64
+    else: (1'i64 shl (width - 1)) - 1'i64
+  minVal = if isUnsigned: 0'i64 elif bits == 64: low(int64) else: -maxVal - 1'i64
+  result = true
+
+proc constInt*(n: Cursor; v: var int64): bool =
+  ## Constant integer value of `n`, peeling `suf`, `par` and value-preserving `conv`.
+  result = false
+  if cursorIsNil(n): return
   case n.kind
-  of IntLit: intVal(n) == 1
-  of UIntLit: uintVal(n) == 1'u64
+  of IntLit:
+    v = intVal(n)
+    result = true
+  of UIntLit:
+    if uintVal(n) <= uint64(high(int64)):
+      v = int64(uintVal(n))
+      result = true
   of TagLit:
-    if n.exprKind in {SufC, ParC}: isOneLit(n.childCursor)
+    if n.exprKind in {SufC, ParC}: result = constInt(n.childCursor, v)
     elif n.exprKind == ConvC:
       var c = n.childCursor
-      skip c                                 # the type
-      isOneLit(c)
-    else: false
-  else: false
+      var minVal, maxVal = 0'i64
+      var isUnsigned = false
+      if intTypeRange(c, minVal, maxVal, isUnsigned):
+        skip c                                 # the type
+        if constInt(c, v) and v >= minVal and v <= maxVal:
+          result = true
+  else: discard
+
+proc isOneLit(n: Cursor): bool =
+  ## `1`, possibly suffixed, parenthesized or converted.
+  var v = 0'i64
+  constInt(n, v) and v == 1
 
 proc isUnitStep*(d: DetectedLoop): bool {.inline.} =
   ## The counter moves by one per iteration.
@@ -396,5 +427,14 @@ when isMainModule:
     var buf = parse("(loop (stmts (asgn i.0.M (add (i 64) i.0.M 1)) " &
       "(continue (lt i.0.M (add (i 64) i.0.M 1)))))")
     doAssert detectLoop(beginRead(buf)).kind == NoLoop
+
+  block const_int:
+    var v = 0'i64
+    var b1 = parse("(conv (u 8) -1)")
+    doAssert not constInt(beginRead(b1), v)
+    var b2 = parse("(conv (i 8) 256)")
+    doAssert not constInt(beginRead(b2), v)
+    var b3 = parse("(conv (i 64) (suf 3 \"i64\"))")
+    doAssert constInt(beginRead(b3), v) and v == 3
 
   echo "countedloops.nim: all self-tests passed"

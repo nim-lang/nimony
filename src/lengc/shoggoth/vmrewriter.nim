@@ -34,7 +34,9 @@ when defined(nimony):
   import std / syncio   # `quit` lives here under Nimony; host Nim has it in `system`
   {.feature: "lenientnils".}   # `Engine` is a `ref` the driver passes as nil, and
                                # an unregistered `PredProc` is a nil closure
-import ".." / ".." / "lib" / nifcoreparse  # re-exports nifcore
+import ".." / ".." / "lib" / [nifcoreparse, nifcdecl]  # nifcoreparse re-exports nifcore
+import ".." / [nifmodules, typenav]
+import countedloops
 # For `getOrQuit`: Nimony's `Table.[]` raises `KeyError`, and every lookup
 # below is already guarded by an `in` test or an `assert`. `getOrQuit` is the
 # non-raising spelling of "the key is there"; the shim provides it under Nim.
@@ -788,8 +790,126 @@ proc tryRulesAt(e: Engine; node: Cursor; dest: var TokenBuf): bool =
       return true
   return false
 
+# ---- constant aggregate read folding --------------------------------------
+
+proc isConstScalar(node: Cursor; allowSuf = true): bool =
+  ## True for scalar literals (and suffixed forms); excludes aggregates, strings, `nil`.
+  if node.kind in {IntLit, UIntLit, FloatLit, CharLit}: return true
+  if node.exprKind in {TrueC, FalseC, InfC, NeginfC, NanC}: return not node.childCursor.hasMore
+  result = false
+  if allowSuf and node.exprKind == SufC:
+    var child = node.childCursor
+    if child.hasMore and isConstScalar(child, false):
+      skip child
+      if child.hasMore and child.kind == StrLit:
+        skip child
+        result = not child.hasMore
+
+proc emitConstScalar(dest: var TokenBuf; value: Cursor; info: NifLineInfo) =
+  ## Emit a scalar constant literal into `dest`, stamped with `info`.
+  case value.kind
+  of IntLit: dest.addIntLit intVal(value)
+  of UIntLit: dest.addUIntLit uintVal(value)
+  of FloatLit: dest.addFloatLit floatVal(value)
+  of CharLit: dest.addCharLit charLit(value)
+  of StrLit: dest.addStrLit strVal(value)
+  of TagLit:
+    dest.openTag cursorTagId(value)
+    dest.appendLineInfo info
+    var child = value.childCursor
+    while child.hasMore:
+      emitConstScalar(dest, child, NoNifLineInfo)
+      skip child
+    dest.closeTag()
+    return
+  else: return
+  dest.appendLineInfo info
+
+proc lookupObjField(oconstr: Cursor; field: SymId; wantDepth: int64;
+                    value: var Cursor): bool =
+  ## Find `(kv field val [depth])` in `oconstr`; bail on nested base `oconstr`.
+  result = false
+  var cur = oconstr.childCursor
+  if cur.hasMore: skip cur
+  while cur.hasMore and not result:
+    if cur.exprKind == OconstrC: return false
+    if cur.substructureKind == KvU:
+      var kv = cur.childCursor
+      if kv.hasMore and kv.kind == Symbol and symId(kv) == field:
+        skip kv
+        value = kv
+        if kv.hasMore:
+          skip kv
+          var kvDepth = 0'i64
+          result = (not kv.hasMore or constInt(kv, kvDepth)) and kvDepth == wantDepth
+    skip cur
+
+proc evalConstAgg(node: Cursor; module: var MainModule; depth: int;
+                  value: var Cursor): bool =
+  ## Resolve a compile-time constant aggregate or element referenced by `node`.
+  result = false
+  if depth > 16: return
+  if node.kind == Symbol:
+    if not canLoadForeign(module, symId(node)): return
+    let decl = getDeclOrNil(module, symId(node))
+    if decl == nil or decl.kind != ConstY or decl.isImport or decl.pos.stmtKind != ConstS: return
+    var pos = decl.pos
+    value = takeVarDecl(pos).value
+    result = not cursorIsNil(value) and value.kind != DotToken
+  elif node.kind == TagLit:
+    var cur = node.childCursor
+    if not cur.hasMore: return
+    if node.exprKind == ParC: return evalConstAgg(cur, module, depth + 1, value)
+    let base = cur
+    skip cur
+    var baseVal = default(Cursor)
+    if node.exprKind == AtC:
+      var index = 0'i64
+      if cur.hasMore and constInt(cur, index) and index >= 0 and
+         evalConstAgg(base, module, depth + 1, baseVal) and baseVal.exprKind == AconstrC:
+        var elem = baseVal.childCursor
+        if elem.hasMore: skip elem
+        while elem.hasMore and index > 0:
+          dec index
+          skip elem
+        value = elem
+        result = elem.hasMore
+    elif node.exprKind == DotC and cur.hasMore and cur.kind == Symbol:
+      let field = symId(cur)
+      skip cur
+      var wantDepth = 0'i64
+      if (not cur.hasMore or (constInt(cur, wantDepth) and wantDepth >= 0)) and
+         evalConstAgg(base, module, depth + 1, baseVal) and baseVal.exprKind == OconstrC:
+        result = lookupObjField(baseVal, field, wantDepth, value)
+  if result and value.kind == Symbol:
+    let nextNode = value
+    result = evalConstAgg(nextNode, module, depth + 1, value)
+
+proc memOpLocCount(module: ptr MainModule; node: Cursor): int =
+  ## Leading lvalue operand count for memory-op `(instr ...)` nodes.
+  result = 0
+  if module != nil and node.stmtKind == InstrS:
+    let callee = node.childCursor
+    if callee.kind == Symbol and canLoadForeign(module[], callee.symId):
+      var bits = 0
+      let op = intrinsicOfCallee(module[], callee, bits)
+      if op.isMemOp: result = memLocOperands(op)
+
+proc childTakesAddr(node: Cursor; childIdx: int; inAddr: bool; instrLocs: int): bool =
+  ## True when child `childIdx` of `node` is evaluated as an lvalue.
+  if node.exprKind in AddrKinds or node.stmtKind == AsgnS: return childIdx == 0
+  if node.stmtKind == KeepovfS: return childIdx == 1
+  if instrLocs > 0: return childIdx >= 1 and childIdx <= instrLocs
+  if not inAddr: return false
+  case node.exprKind
+  of DotC, AtC, ParC: childIdx == 0
+  of ConvC, CastC: childIdx == 1
+  of BaseobjC: childIdx == 2
+  else: false
+
 proc rewriteNode(e: Engine; src: var Cursor; dest: var TokenBuf;
-                 fired: var bool; inList = false) =
+                 fired: var bool; inList = false;
+                 module: ptr MainModule = nil; inAddr = false) =
   ## `inList`: `src` is a member of a `(stmts …)`/`(scope …)`. A statement a rule
   ## rewrites to `.` — `(ite (false) A .)` — is then dropped instead of left as
   ## a hole: Leng lists carry none.
@@ -799,6 +919,8 @@ proc rewriteNode(e: Engine; src: var Cursor; dest: var TokenBuf;
     return
   let tagId = cursorTagId(src)
   let isList = tagId == e.stmtsTag or tagId == e.scopeTag
+  let parentNode = src
+  let instrLocs = memOpLocCount(module, parentNode)
   # The children are rewritten straight into `dest`, and the rules are tried on
   # the node right where it landed. Building every node in a buffer of its own
   # and copying it into its parent's copied each node once per ancestor, and
@@ -807,9 +929,24 @@ proc rewriteNode(e: Engine; src: var Cursor; dest: var TokenBuf;
   dest.openTag tagId
   dest.appendLineInfo rawLineInfo(src)
   src.into:
+    var childIdx = 0
     while src.hasMore:
-      rewriteNode(e, src, dest, fired, isList)
+      let childInAddr = module != nil and childTakesAddr(parentNode, childIdx, inAddr, instrLocs)
+      rewriteNode(e, src, dest, fired, isList, module, childInAddr)
+      inc childIdx
   dest.closeTag()
+  if module != nil and not inAddr:
+    var node = cursorAt(dest, start)
+    var folded = default(Cursor)
+    let hitConst = node.exprKind in {DotC, AtC} and
+                   evalConstAgg(node, module[], 0, folded) and isConstScalar(folded)
+    let info = rawLineInfo(node)
+    endRead node
+    if hitConst:
+      fired = true
+      dest.shrink start
+      emitConstScalar(dest, folded, info)
+      return
   if e.dispatch.getOrDefault(tagId, -1) < 0: return   # no rule has this head
   var node = cursorAt(dest, start)
   var res = createTokenBuf(16, e.pool, e.tags)
@@ -823,21 +960,22 @@ proc rewriteNode(e: Engine; src: var Cursor; dest: var TokenBuf;
       dest.addSubtree rc
     endRead rc
 
-proc runRewrites*(e: Engine; buf: var TokenBuf): bool =
+proc runRewrites*(e: Engine; buf: var TokenBuf; module: ptr MainModule = nil): bool =
   var fired = false
   var dest = createTokenBuf(buf.len + 16, e.pool, e.tags)
   var c = buf.beginRead()
   while c.hasMore:
-    rewriteNode(e, c, dest, fired)
+    rewriteNode(e, c, dest, fired, module = module)
   endRead c
   if fired:
     buf = ensureMove(dest)
   result = fired
 
-proc runRewritesFix*(e: Engine; buf: var TokenBuf; maxIter = 32): int {.discardable.} =
+proc runRewritesFix*(e: Engine; buf: var TokenBuf; module: ptr MainModule = nil;
+                     maxIter = 32): int {.discardable.} =
   result = 0
   for i in 0 ..< maxIter:
-    if not runRewrites(e, buf): return
+    if not runRewrites(e, buf, module): return
     inc result
 
 # ---- canonicalization -----------------------------------------------------
@@ -912,6 +1050,8 @@ proc canon*(e: Engine; buf: var TokenBuf) =
 # ---- self-tests -----------------------------------------------------------
 
 when isMainModule:
+  from std / os import getTempDir, `/`, fileExists, removeFile
+  import std / syncio
   const rulesSrc = staticRead("rules/arith.rewrite.nif")
 
   var e = newEngine(rulesSrc)
@@ -1047,7 +1187,7 @@ when isMainModule:
       echo "FAILED shared_pool_engine. got:\n", toString(buf)
       quit 1
 
-  block lineinfo_preserved:
+  proc testLineInfo() =
     let f = e.pool.filenames.getOrIncl("t.nim")
     proc li(f: FileId; line, col: int): NifLineInfo =
       NifLineInfo(file: f, line: line.int32, col: col.int32)
@@ -1099,6 +1239,7 @@ when isMainModule:
     var d = b2.beginRead()
     doAssert d.kind == IntLit and intVal(d) == 0
     wantInfo d, 7, 3
+  testLineInfo()
 
   block canon_alpha_equiv:
     # Two procs differing only in parameter/local names canon to the same tokens.
@@ -1132,5 +1273,99 @@ when isMainModule:
     var b = e.parseInput("(proc :q.0.M (params (param :x.1.M (i 32))) (i 32) (stmts (ret x.1.M)))")
     e.canon(a); e.canon(b)
     doAssert not sameTokens(a, b), "canon must keep distinct proc names distinct"
+
+  proc testConstAggFold() =
+    const ModSrc = """(.nif24)
+(stmts
+ (const :arr.0.M . (array (i 64) 3) (aconstr (array (i 64) 3) (suf 10 "i64") (suf 20 "i64") (suf 30 "i64")))
+ (const :things.0.M . (array Thing.0.M 2)
+  (aconstr (array Thing.0.M 2)
+   (oconstr Thing.0.M (kv kind.0 0) (kv flag.0 (true)) (kv val.0 -0.25)
+    (kv center.0 (oconstr Vec.0.M (kv x.0 1.5) (kv y.0 (suf -2.0 "f32")))))
+   (oconstr Thing.0.M (kv kind.0 (suf 1 "i64")) (kv flag.0 (false)) (kv val.0 2.5)
+    (kv center.0 (oconstr Vec.0.M (kv x.0 -3.0) (kv y.0 (suf 4.0 "f32")))))))
+ (const :subObj.0.M . Sub.0.M
+  (oconstr Sub.0.M (addr vt.0.M) (kv baseF.0 11 1) (kv subF.0 22)))
+ (const :aliasObj.0.M . Sub.0.M subObj.0.M)
+ (const :extConst.0.M (pragmas (importc "ext")) (array (i 64) 2) (aconstr (array (i 64) 2) 1 2))
+ (const :emptyConst.0.M . (array (i 64) 2) .)
+ (const :strArr.0.M . (array (aptr (c 8)) 1) (aconstr (array (aptr (c 8)) 1) "hi"))
+ (gvar :mutArr.0.M . (array (i 64) 2) (aconstr (array (i 64) 2) 7 8))
+ (proc :copyMem.0.M (params (param :d.0 . (i 64)) (param :s.0 . (i 64)) (param :n.0 . (i 64))) .
+  (pragmas (intrinsic "copyMemIns")) .))
+"""
+    const ForeignSrc = """(stmts
+ (const :fArr.0.F . (array (i 64) 2) (aconstr (array (i 64) 2) (suf 77 "i64") (suf 88 "i64")))
+ (const :fObj.0.F . Pt.0.F (oconstr Pt.0.F (kv x.0 3.25) (kv y.0 -1.5))))
+"""
+    let dir = getTempDir()
+    let mainPath = dir / "M.c.nif"
+    let foreignPath = dir / "F.c.nif"
+    writeFile(mainPath, ModSrc)
+    var fBuf = parseFromBuffer(ForeignSrc, "F", 64, sharedTags = createLengTagPool())
+    writeFile(foreignPath, toModuleString(fBuf, ".F"))
+    defer:
+      if fileExists(mainPath): removeFile(mainPath)
+      if fileExists(foreignPath): removeFile(foreignPath)
+    var pool = newPool()
+    var tags = createLengTagPool()
+    var module = load(mainPath, pool, tags)
+    var eng = newEngine(rulesSrc, pool, tags)
+
+    proc runCase(src, expected: string) =
+      var buf = parseFromBuffer(src, "M", 64, pool, tags)
+      discard runRewritesFix(eng, buf, addr module)
+      var want = parseFromBuffer(expected, "M", 64, pool, tags)
+      doAssert sameTokens(buf, want),
+        "const fold mismatch:\n  got:  " & toString(buf) & "\n  want: " & toString(want)
+
+    # Scalar array, object field, nested object field, float/bool/suf, deref+haddr, branch fold
+    runCase "(stmts (asgn r.0 (at arr.0.M 1)))",
+            "(stmts (asgn r.0 (suf 20 \"i64\")))"
+    runCase "(stmts (asgn r.0 (dot (at things.0.M 0) kind.0 0)))",
+            "(stmts (asgn r.0 0))"
+    runCase "(stmts (asgn r.0 (dot (at things.0.M 1) flag.0 0)))",
+            "(stmts (asgn r.0 (false)))"
+    runCase "(stmts (asgn r.0 (dot (dot (at things.0.M 0) center.0 0) y.0 0)))",
+            "(stmts (asgn r.0 (suf -2.0 \"f32\")))"
+    runCase "(stmts (ite (eq (dot (deref (haddr (at things.0.M 1))) kind.0 0) 1) (asgn r.0 1) (asgn r.0 2)))",
+            "(stmts (asgn r.0 1))"
+    # Cross-module constant array and object (loaded via .c.nif embedded index)
+    runCase "(stmts (asgn r.0 (at fArr.0.F 1)))",
+            "(stmts (asgn r.0 (suf 88 \"i64\")))"
+    runCase "(stmts (asgn r.0 (dot fObj.0.F x.0 0)))",
+            "(stmts (asgn r.0 3.25))"
+    # Inheritance depth + const alias
+    runCase "(stmts (asgn r.0 (dot aliasObj.0.M baseF.0 1)))",
+            "(stmts (asgn r.0 11))"
+    runCase "(stmts (asgn r.0 (dot subObj.0.M baseF.0 0)))",
+            "(stmts (asgn r.0 (dot subObj.0.M baseF.0 0)))"
+    # Non-literal, OOB, negative index, aggregate result, string, gvar, importc, missing init stay untouched
+    runCase "(stmts (asgn r.0 (at arr.0.M i.0)))",
+            "(stmts (asgn r.0 (at arr.0.M i.0)))"
+    runCase "(stmts (asgn r.0 (at arr.0.M 5)))",
+            "(stmts (asgn r.0 (at arr.0.M 5)))"
+    runCase "(stmts (asgn r.0 (at arr.0.M -1)))",
+            "(stmts (asgn r.0 (at arr.0.M -1)))"
+    runCase "(stmts (asgn r.0 (dot (at things.0.M 0) center.0 0)))",
+            "(stmts (asgn r.0 (dot (at things.0.M 0) center.0 0)))"
+    runCase "(stmts (asgn r.0 (at strArr.0.M 0)))",
+            "(stmts (asgn r.0 (at strArr.0.M 0)))"
+    runCase "(stmts (asgn r.0 (at mutArr.0.M 0)))",
+            "(stmts (asgn r.0 (at mutArr.0.M 0)))"
+    runCase "(stmts (asgn r.0 (at extConst.0.M 0)))",
+            "(stmts (asgn r.0 (at extConst.0.M 0)))"
+    runCase "(stmts (asgn r.0 (at emptyConst.0.M 0)))",
+            "(stmts (asgn r.0 (at emptyConst.0.M 0)))"
+    # Lvalue positions must NOT fold, while index subexpr inside addr CAN fold
+    runCase "(stmts (asgn p.0 (addr (at arr.0.M 0))))",
+            "(stmts (asgn p.0 (addr (at arr.0.M 0))))"
+    runCase "(stmts (asgn p.0 (haddr (dot (at things.0.M 0) kind.0 0))))",
+            "(stmts (asgn p.0 (haddr (dot (at things.0.M 0) kind.0 0))))"
+    runCase "(stmts (instr copyMem.0.M d.0 (at arr.0.M 0) 8))",
+            "(stmts (instr copyMem.0.M d.0 (at arr.0.M 0) 8))"
+    runCase "(stmts (asgn p.0 (addr (at d.0 (dot (at things.0.M 1) kind.0 0)))))",
+            "(stmts (asgn p.0 (addr (at d.0 (suf 1 \"i64\")))))"
+  testConstAggFold()
 
   echo "vmrewriter.nim: all self-tests passed"
