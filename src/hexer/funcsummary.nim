@@ -33,6 +33,7 @@
 import std / [assertions, tables]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
+import ".." / lib / intrinsics
 import ".." / lengc / [leng_model]
 from ".." / nimony / builtintypes import SystemModuleSuffix
 
@@ -366,7 +367,7 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
       skip r                 # type
       skip r                 # inheritance-depth intlit
       result = exprRoots(a, r)
-    of CallC:
+    of CallC, InstrC:
       # Conservative "select": without the callee's summary yet, a pointer
       # result may be one of the arguments. Value results (bool, int) still
       # get these roots, but `handleRet` / slot rebind refuse to *join classes*
@@ -570,7 +571,7 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
     handleAssign(a, n)
   of RetS:
     handleRet(a, n)
-  of CallS:
+  of CallS, InstrS:
     handleCall(a, n)
   of RaiseS:
     a.raises = true
@@ -598,15 +599,35 @@ proc markAllUnknown(a: var ProcAnalysis) =
 
 proc isExternProc(pragmas: Cursor): bool =
   ## A proc whose implementation lives outside the NIF world: `importc` /
-  ## `importcpp` / `importjs`. Its body is `(stmts .)` — an empty body, not an effect-free
-  ## one, so walking it would "prove" that `time(addr x)` neither writes
-  ## through nor escapes its argument and copyprop would then keep believing
-  ## `x`'s pre-call value. There is nothing to analyse; say so.
+  ## `importcpp` / `importjs` / `dynlib` / `assembler` / `instruction` /
+  ## `intrinsic`. Its body is empty or machine code, not an effect-free Nim
+  ## body — there is nothing to analyse; say so.
   if not pragmas.isTagLit: return false
   var p = pragmas
   result = false
   p.loopInto:
-    if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP, ImportjsP}: return true
+    if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP, ImportjsP,
+                                       DynlibP, AssemblerP,
+                                       InstructionP, IntrinsicP}:
+      result = true
+    skip p
+
+proc isPureIntrinsicProc(pragmas: Cursor): bool =
+  ## True when `pragmas` names a target instruction or portable intrinsic whose
+  ## row in `lib/intrinsics` carries `efPure` (e.g. `Sqrt`, `Clz`, `Ctz`).
+  if not pragmas.isTagLit: return false
+  var p = pragmas
+  result = false
+  p.loopInto:
+    if p.isTagLit and p.pragmaKind in {InstructionP, IntrinsicP}:
+      let cls = if p.pragmaKind == InstructionP: icPinned else: icPortable
+      var a = p
+      a.into:
+        if a.hasMore and a.kind == StrLit:
+          let op = intrinsicOpByName(pool.strings[a.strId], cls)
+          if op != NoIntrinsicOp and efPure in IntrinsicRows[op].effects:
+            result = true
+        while a.hasMore: skip a
     skip p
 
 proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
@@ -623,7 +644,9 @@ proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   result.slotW = newSeq[bool](paramSyms.len + 1)
   result.escapes = newSeq[bool](paramSyms.len + 1)
   for i, s in paramSyms: result.paramLookup[s] = i
-  if d.body.isTagLit and not isExternProc(d.pragmas):
+  if isPureIntrinsicProc(d.pragmas):
+    discard
+  elif d.body.isTagLit and not isExternProc(d.pragmas):
     var body = d.body
     walkStmt(result, body)
   else:
@@ -668,9 +691,13 @@ proc applyCallee(a: var ProcAnalysis; call: CallFact; callee: FunctionSummary) =
     # Union caller actuals the callee placed in one class (identity aliases
     # only — the callee no longer merges classes on field store/load).
     for r in roots:
-      if r < 0: continue
-      if byCls.hasKey(pe.cls): ufUnion(a.uf, byCls.getOrQuit(pe.cls), r)
-      else: byCls[pe.cls] = r
+      if r >= 0:
+        if byCls.hasKey(pe.cls): ufUnion(a.uf, byCls.getOrQuit(pe.cls), r)
+        else: byCls[pe.cls] = r
+  for k in callee.params.len ..< call.argRoots.len:
+    for r in call.argRoots[k]:
+      markWriteElem(a, r)
+      markEscapeElem(a, r)
 
 proc applyExternalCall(a: var ProcAnalysis; call: CallFact) =
   a.callsUnknown = true
@@ -1082,5 +1109,18 @@ when isMainModule:
     doAssert paramMayWrite(s, 1)
     # Out-of-range stays conservative even with a marked param present.
     doAssert paramMayWrite(s, 2)
+
+  block instr_is_conservative_not_readonly:
+    let t = moduleSummaries("""
+      (proc :myClz.0 (params (param :x.0 . (u +64))) (i +64) (pragmas (intrinsic "Clz")) .)
+      (proc :fPure.0 (params (param :x.0 . (u +64))) (i +64) . (stmts
+        (ret (instr myClz.0 x.0))))
+      (proc :fMem.0 (params (param :p.0 . . . .)) . . (stmts
+        (instr zeroMemIns.0.mem p.0 8)))""")
+    let sp = t.getOrQuit(pool.symId("fPure.0"))
+    doAssert isReadOnly(sp)
+    let sm = t.getOrQuit(pool.symId("fMem.0"))
+    doAssert sm.callsUnknown
+    doAssert sm.params[0].writes
 
   echo "ok"
