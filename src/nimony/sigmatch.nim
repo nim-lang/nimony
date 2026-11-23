@@ -362,6 +362,20 @@ proc tryLinearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] 
 
 proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool
 
+proc inheritsFromConstraint(m: var Match; f, a: Cursor): bool =
+  ## `T: Base` also takes a type that inherits from `Base`, as in Nim 2, and
+  ## `T` binds to that type. The subtype relation is the one parameter
+  ## passing uses. A constraint naming other typevars (`T: ptr GBox[U]`) is
+  ## left out: the probe would not share their bindings.
+  var obj = a
+  if obj.typeKind in {RefT, PtrT}: inc obj
+  if m.context == nil or not isObjectType(obj) or containsGenericParams(f):
+    return false
+  var probe = createMatch(m.context)
+  var f = f
+  singleArg probe, f, CallArg(n: emptyNode(m.context[]), typ: a)
+  result = not probe.err and probe.inheritanceCosts > 0
+
 proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   let fOrig = f
@@ -394,9 +408,10 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # otherwise, match symbol as a regular type (includes typevar case):
   # XXX typevars inferred to have typevar values will try to match individual constraints here
   f = fOrig
-  var a = a
+  var a2 = a
   # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-  result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
+  result = tryLinearMatch(m, f, a2, ConstraintMatchFlags) or
+    inheritsFromConstraint(m, fOrig, a)
 
 proc isBuiltinContainerSym(s: SymId; decl: Cursor): bool =
   ## `string`, `seq` and `openArray` are declared as objects in `lib/std/system`,
@@ -463,9 +478,11 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
       result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
   else:
     # match as a regular type:
-    var a = a
+    let fOrig = f
+    var a2 = a
     # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-    result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
+    result = tryLinearMatch(m, f, a2, ConstraintMatchFlags) or
+      inheritsFromConstraint(m, fOrig, a)
 
 proc matchSingleConstraint(m: var Match; f: var Cursor; a: Cursor): bool {.inline.} =
   if f.isSymbol:
