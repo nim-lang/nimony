@@ -3079,6 +3079,27 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   dest.addParRi() # stmts
   dest.addParRi() # proc
 
+proc genLibMain(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
+  ## `--app:lib` and `--app:staticlib`: the exported `NimMain` that runs the
+  ## main module's init proc, as Nim 2 emits it. The host calls it before
+  ## anything else; a second call does nothing (the init proc's guard).
+  dest.addParLe("proc", rootInfo)
+  dest.addSymDef(pool.symId("`NimMain.0." & c.main), rootInfo)
+  dest.addParLe("params", rootInfo)
+  dest.addParRi() # params
+  dest.addDotToken() # return type: void
+  dest.addParLe("pragmas", rootInfo)
+  dest.addParLe("exportc", rootInfo)
+  dest.addStrLit("NimMain", rootInfo)
+  dest.addParRi() # exportc
+  dest.addParRi() # pragmas
+  dest.addParLe("stmts", rootInfo)
+  dest.addParLe("call", rootInfo)
+  dest.addSymUse(pool.symId(initProcName(c.main)), rootInfo)
+  dest.addParRi() # call
+  dest.addParRi() # stmts
+  dest.addParRi() # proc
+
 proc isTopLevelDecl(n: Cursor): bool {.inline.} =
   ## Returns true for declarations that should stay at the top level
   ## (outside the init proc). Everything else is executable code or
@@ -3267,8 +3288,10 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   cdest.add c.initBody
   genInitProcEnd(c, cdest, rootInfo)
 
-  if isMain and appType in {appConsole, appGui}:
-    genMainProc(c, cdest, rootInfo, isWindows)
+  if isMain:
+    case appType
+    of appConsole, appGui: genMainProc(c, cdest, rootInfo, isWindows)
+    of appLib, appStaticLib: genLibMain(c, cdest, rootInfo)
 
   # the module's close was consumed by `trToplevel`
   let destfileName = c.dir / c.main & ".x.nif"
