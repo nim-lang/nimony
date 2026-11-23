@@ -691,7 +691,20 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       while n.hasMore: skip n
     n = start; skip n
 
-proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
+proc isProcTypeProperty(n: Cursor): bool =
+  ## A pragma that is part of a proc type: its calling convention, `raises`,
+  ## `closure` or `passive` (what `sigmatch.extractProcProps` compares).
+  var n = n
+  if n.substructureKind == KvU or n.exprKind == CallX: inc n
+  result = callConvKind(n) != NoCallConv or
+    pragmaKind(n) in {CallConvP, RaisesP, ClosureP, PassiveP}
+
+proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind;
+                 forProcType = false) =
+  ## `forProcType`: the pragmas of a proc type, which declares no symbol. Of
+  ## the `{.push.}` stack it takes only the pragmas that are part of the type;
+  ## the others (`importc`, `inline`, ...) are for the declarations in the
+  ## section, as in Nim 2.
   var pragmaOpen = false
   let info = n.info
   if n.isDotToken or n.substructureKind == PragmasU:
@@ -731,7 +744,8 @@ proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: 
     for i in 0 ..< c.pragmaStack.len:
       var n2 = beginRead(c.pragmaStack[i])
       while n2.hasMore:
-        if checkedPragmas.isChecked(n2, kind):
+        if (forProcType and not isProcTypeProperty(n2)) or
+            checkedPragmas.isChecked(n2, kind):
           skip n2
         else:
           if not pragmaOpen:
