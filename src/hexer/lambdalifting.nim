@@ -1690,7 +1690,9 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
   let needNilCheck = typ.typeKind == ProctypeT and isClosure(typ) and
                      not calleeHasClosureParam(typ)
   var tmp = SymId(0)
-  if n.kind == Symbol:
+  if n.kind == Symbol and c.currentProc.localToEnv.getOrDefault(
+      (c.currentProc.env.typ, n.symId)).field == SymId(0):
+    # a local not moved into the env (that one is read through `tre`, #343)
     tmp = n.symId
     inc n, SkipName
   else:
