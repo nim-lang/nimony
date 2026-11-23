@@ -593,7 +593,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       elif pool.symString(fld) == DataField and
             obj.exprKind in {DerefX, HderefX}:
         inc obj
-        var t = skipOwned getTypeImpl(c, obj, flags)
+        var t = skipModifierAndOwned getTypeImpl(c, obj, flags)
         if t.isSymbol:
           var counter = 20
           while counter > 0 and t.isSymbol:
