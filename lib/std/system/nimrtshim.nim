@@ -35,7 +35,10 @@ type
     ## runtime that traces: `(rc, rootIdx, payload)`.
     rc: int
       ## zero based, counted in `rcIncrement`s above the collector's flags
-    rootIdx: int64
+    when declared(orcIntRootIdx):
+      rootWord: int64 ## `system/orc` reads it as Nim's `int` `rootIdx`
+    else:
+      rootIdx: int64
   Cell = ptr RefHeader
 
   CellOp* = proc (cell: pointer; env: pointer) {.nimcall.}

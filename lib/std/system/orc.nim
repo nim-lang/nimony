@@ -21,7 +21,14 @@
 
 {.feature: "lenientnils".}
 
+# Nim's ORC keeps `rootIdx` as an `int`; the header word is 64 bits on every
+# target (see `nimrtshim`), so on a 32-bit one it is read through these.
+const orcIntRootIdx = true # `nimrtshim` names the word `rootWord`
+
 include "nimrtshim"
+
+template rootIdx(c: Cell): int = int(c.rootWord)
+template `rootIdx=`(c: Cell; v: int) = c.rootWord = v
 
 func arcInc*(memLoc: var int) {.inline.} =
   ## Increments the reference count.
