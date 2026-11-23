@@ -33,6 +33,7 @@ import vmrewriter                              # the DFA rewrite engine (arith.r
 import tailcalls                              # runTailCalls (the tail-call encoding)
 import coldguards                             # runColdGuards (guard arms to the body's end)
 import memidioms                              # runMemIdioms (zero-fill loops -> zeroMemIns)
+import cunroll                                # tryUnrollOne (complete unrolling of tiny loops)
 import ".." / ".." / "lib" / intrinsics       # IntrinsicOp (Stats.memOps)
 export MemOpts                                # the driver flags' type, for shoggoth.nim
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
@@ -51,6 +52,8 @@ type
     scaledIndex*: bool        ## `base + index*size` is one addressing mode, so
                               ## `a[i]` costs no more than `p[]` (see
                               ## `induction_variables`)
+    cunroll*: bool            ## complete unrolling of small constant-trip loops
+                              ## (native back end only)
 
 proc hasScaledIndex*(cpu: string): bool =
   ## x86 and ARM address `[base + index*size]` in one operand (Thumb-2 as
@@ -69,9 +72,9 @@ let disabledPasses = block:
   ## reaches a fixed point or does not. `SHOGGOTH_NO_VECTORIZE` was the same idea for
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
-  ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## memidioms (both stages), memloops (only the loop idioms before the
-  ## inliner), vectorize, sinkret, tailcall, coldguards.
+  ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, cunroll,
+  ## indvars, cse, memidioms (both stages), memloops (only the loop idioms
+  ## before the inliner), vectorize, sinkret, tailcall, coldguards.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -87,6 +90,7 @@ type
     procs*, bodies*, intermodChanged*: int
     checksRemoved*: int
     vectorized*: int
+    cunrollTried*, cunrollKept*: int
     memOps*: set[IntrinsicOp]                 ## the mem rows memidioms emitted
 
 proc extractModuleSuffix(filename: string): string =
@@ -109,6 +113,8 @@ const
     ## Bound of the cleanup fixpoint. Most bodies converge in two rounds (the
     ## second confirms); a third catches the chains the second exposes. More
     ## buys nothing measurable on the benchmarks and costs compile time.
+  MaxCunrollTrials = 32
+    ## Upper bound on per-proc complete-unroll trial iterations.
 
 type
   CleanupStage = enum
@@ -120,7 +126,7 @@ type
     clean: set[CleanupStage]
       ## Stages whose last run is still current: nothing changed the body since.
     changed: bool             ## the current round changed the body
-    sroa, us, iv, cse: int
+    sroa, us, iv, cse, cu: int
       ## The temp counters of the passes that mint locals. A pass that runs
       ## again in a later round continues its own numbering, so it never
       ## declares a name an earlier round already declared.
@@ -175,6 +181,14 @@ proc cleanupFixpoint(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
     runPipelineRound(buf, f, st, summaries, m, params, eng)
     if not f.changed: break
 
+proc bodyTokens(buf: var TokenBuf): int =
+  ## Logical NIF tokens in `buf`, excluding line-info suffixes.
+  result = 0
+  var cursor = beginRead(buf)
+  while cursor.hasMore:
+    inc result
+    inc cursor
+
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                   params: Cursor = default(Cursor); eng: Engine = nil;
@@ -206,6 +220,40 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
       inc st.vectorized
   var f = Fixpoint()
   cleanupFixpoint(buf, f, st, summaries, m, params, eng)
+  # Complete unrolling of small constant-trip loops (1..8 iterations), native
+  # back end only. Runs after initial cleanup so copy propagation has resolved
+  # loop bounds to literals, and before `indvars` and late store merging so
+  # constant indices expose folding, bounds-check removal, SROA and merging
+  # without IV strength reduction polluting tiny loops first. Each candidate is
+  # trial-cleaned and kept only when token size stays within `CunrollTokenSlack`.
+  if target.cunroll and passOn("cunroll"):
+    var skipCount = 0
+    var trials = 0
+    var origTokens = -1
+    while trials < MaxCunrollTrials:
+      inc trials
+      var trial = TokenBuf()
+      var trialCu = f.cu
+      if not tryUnrollOne(buf, skipCount, trial, trialCu):
+        break
+      if origTokens < 0: origTokens = bodyTokens(buf)
+      inc st.cunrollTried
+      var trialF = f
+      trialF.cu = trialCu
+      mutated(trialF)
+      var trialSt = st
+      if m != nil: m[].openScope()
+      cleanupFixpoint(trial, trialF, trialSt, summaries, m, params, eng)
+      if m != nil: m[].closeScope()
+      let trialTokens = bodyTokens(trial)
+      if trialTokens <= origTokens + CunrollTokenSlack:
+        buf = ensureMove(trial)
+        f = trialF
+        st = trialSt
+        origTokens = trialTokens
+        inc st.cunrollKept
+      else:
+        inc skipCount
   # Strength reduction is a lowering, not a cleanup: it is not idempotent (a
   # second run reduces its own pointer IVs again), so it runs exactly once, on
   # the cleaned-up loops. What it leaves behind is cleanup work again —

@@ -122,6 +122,34 @@ proc isUnitStep*(d: DetectedLoop): bool {.inline.} =
   ## The counter moves by one per iteration.
   isOneLit(d.step)
 
+proc constTripCount*(d: DetectedLoop; start: Cursor;
+                     startVal: var int64; isUnsigned: var bool): int64 =
+  ## Guarded trip count for a unit-step counted loop, or -1 if unknown or wrapping.
+  ## Callers on a bare bottom-tested loop must require `result >= 1`.
+  result = -1
+  var minVal, maxVal = 0'i64
+  if not d.isUnitStep or not intTypeRange(d.typ, minVal, maxVal, isUnsigned): return
+  var stopVal = 0'i64
+  if not constInt(start, startVal) or not constInt(d.stop, stopVal): return
+  if startVal < minVal or startVal > maxVal or stopVal < minVal or stopVal > maxVal: return
+  let diff =
+    if d.kind == CountDown: cast[uint64](startVal) - cast[uint64](stopVal)
+    else: cast[uint64](stopVal) - cast[uint64](startVal)
+  case d.kind
+  of CountUpExclusive:
+    if startVal >= stopVal: result = 0
+    elif diff <= uint64(high(int64)): result = int64(diff)
+  of CountUp:
+    if startVal > stopVal: result = 0
+    elif stopVal < maxVal and diff < uint64(high(int64)): result = int64(diff + 1'u64)
+  of CountDown:
+    if stopVal > startVal: result = 0
+    elif stopVal > minVal and diff < uint64(high(int64)): result = int64(diff + 1'u64)
+  of CountUpUntil:
+    if startVal == stopVal: result = 0
+    elif startVal < stopVal and diff <= uint64(high(int64)): result = int64(diff)
+  of NoLoop: discard
+
 proc isSym(n: Cursor; s: SymId): bool {.inline.} =
   n.kind == Symbol and symId(n) == s
 
@@ -213,11 +241,11 @@ proc parseUpdate(d: var DetectedLoop; n: Cursor): bool =
                 d.update = n
                 result = true
 
-proc countWrites(n: Cursor; s: SymId): int =
+proc countWrites*(n: Cursor; s: SymId): int =
   ## Assignments to `s` itself, and addresses taken of it, anywhere under `n`.
   result = 0
   if n.kind == TagLit:
-    if n.stmtKind == AsgnS and isSym(n.childCursor, s): inc result
+    if n.stmtKind in {AsgnS, KeepovfS} and isSym(n.childCursor, s): inc result
     elif n.exprKind in AddrKinds and isSym(n.childCursor, s): inc result
     var it = n.childCursor
     while it.hasMore:
@@ -227,7 +255,7 @@ proc countWrites(n: Cursor; s: SymId): int =
 proc detectLoop*(loop: Cursor): DetectedLoop =
   ## The bottom-tested `(loop (stmts … (asgn IV …) (continue TEST)))`.
   result = DetectedLoop(kind: NoLoop)
-  if loop.kind != TagLit or loop.stmtKind != LoopS: return
+  if cursorIsNil(loop) or loop.kind != TagLit or loop.stmtKind != LoopS: return
   let body = loop.childCursor
   if body.kind != TagLit or body.stmtKind != StmtsS: return
   var it = body.childCursor
@@ -245,7 +273,7 @@ proc detectLoop*(loop: Cursor): DetectedLoop =
      countWrites(body, d.counterSym) == 1:
     result = d
 
-proc startValue(prev: Cursor; s: SymId): Cursor =
+proc startValue*(prev: Cursor; s: SymId): Cursor =
   ## What `(var :IV PRAGMAS T START)` or `(asgn IV START)` sets the counter to.
   result = default(Cursor)
   if not cursorIsNil(prev) and prev.kind == TagLit:
@@ -259,7 +287,7 @@ proc startValue(prev: Cursor; s: SymId): Cursor =
       skip c
       result = c
 
-proc sameTest(g, cond: Cursor; s: SymId; start: Cursor): bool =
+proc sameTest*(g, cond: Cursor; s: SymId; start: Cursor): bool =
   ## `g` is `cond`, or `cond` with the counter replaced by `start` (copy
   ## propagation substitutes the entry value into the guard).
   if isSym(cond, s) and not cursorIsNil(start) and sameTest(g, start, SymId(0), start):
@@ -278,28 +306,40 @@ proc sameTest(g, cond: Cursor; s: SymId; start: Cursor): bool =
   else:
     result = g.load == cond.load
 
+proc unwrapSingleLoop*(n: Cursor): Cursor =
+  ## Unwrap single-statement `(stmts …)`/`(scope …)` wrappers to a `(loop …)`,
+  ## or return nil if `n` does not wrap a single loop.
+  var cur = n
+  while cur.kind == TagLit and cur.stmtKind in {StmtsS, ScopeS}:
+    var it = cur.childCursor
+    if not it.hasMore: return default(Cursor)
+    cur = it
+    skip it
+    if it.hasMore: return default(Cursor)
+  if cur.kind == TagLit and cur.stmtKind == LoopS: cur else: default(Cursor)
+
+proc guardedLoop*(guard: Cursor): Cursor =
+  ## The `(loop …)` inside `(ite COND (stmts (loop …)) .)`, or nil.
+  result = default(Cursor)
+  if guard.kind != TagLit or guard.stmtKind != IteS: return
+  var c = guard.childCursor
+  skip c                                     # condition
+  let arm = c
+  skip c
+  if c.hasMore and c.kind != DotToken: return    # an else arm
+  result = unwrapSingleLoop(arm)
+
 proc detectGuardedLoop*(guard: Cursor; prev = default(Cursor)): DetectedLoop =
   ## `(ite TEST' (stmts (loop …)) .)`, the rotated loop with its entry test.
   ## `prev` is the statement before the `ite` when there is one: where `start`
   ## comes from.
   result = DetectedLoop(kind: NoLoop)
-  if guard.kind != TagLit or guard.stmtKind != IteS: return
-  var c = guard.childCursor
-  let g = c
-  skip c
-  var arm = c
-  skip c
-  if c.hasMore and c.kind != DotToken: return    # an else arm
-  while arm.kind == TagLit and arm.stmtKind in {StmtsS, ScopeS}:
-    var it = arm.childCursor
-    if not it.hasMore: return
-    arm = it
-    skip it
-    if it.hasMore: return                        # more than the loop
+  let arm = guardedLoop(guard)
+  if cursorIsNil(arm): return
   var d = detectLoop(arm)
   if d.kind == NoLoop: return
   d.start = startValue(prev, d.counterSym)
-  if sameTest(g, d.cond, d.counterSym, d.start):
+  if sameTest(guard.childCursor, d.cond, d.counterSym, d.start):
     d.guard = guard
     result = d
 
@@ -428,7 +468,7 @@ when isMainModule:
       "(continue (lt i.0.M (add (i 64) i.0.M 1)))))")
     doAssert detectLoop(beginRead(buf)).kind == NoLoop
 
-  block const_int:
+  block const_int_and_trip_count:
     var v = 0'i64
     var b1 = parse("(conv (u 8) -1)")
     doAssert not constInt(beginRead(b1), v)
@@ -436,5 +476,25 @@ when isMainModule:
     doAssert not constInt(beginRead(b2), v)
     var b3 = parse("(conv (i 64) (suf 3 \"i64\"))")
     doAssert constInt(beginRead(b3), v) and v == 3
+
+    var startVal = 0'i64
+    var isUnsigned = false
+    var bUp = parse(rotated("(le i.0.M 3)", "(le i.0.M 3)"))
+    let dUp = guarded(bUp)
+    doAssert constTripCount(dUp, dUp.start, startVal, isUnsigned) == 4 and
+      startVal == 0 and not isUnsigned
+
+    var bDown = parse("(stmts (var :i.0.M . (i 64) 3) (ite (le 0 i.0.M) (stmts " &
+      "(loop (stmts (call use.0.M i.0.M) (asgn i.0.M (sub (i 64) i.0.M 1)) " &
+      "(continue (le 0 i.0.M))))) .))")
+    let dDown = guarded(bDown)
+    doAssert constTripCount(dDown, dDown.start, startVal, isUnsigned) == 4 and
+      startVal == 3 and not isUnsigned
+
+    var bWrap = parse("(stmts (var :i.0.M . (u 8) 3u) (ite (le 0u i.0.M) (stmts " &
+      "(loop (stmts (call use.0.M i.0.M) (asgn i.0.M (sub (u 8) i.0.M 1u)) " &
+      "(continue (le 0u i.0.M))))) .))")
+    let dWrap = guarded(bWrap)
+    doAssert constTripCount(dWrap, dWrap.start, startVal, isUnsigned) == -1
 
   echo "countedloops.nim: all self-tests passed"

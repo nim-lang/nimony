@@ -2,9 +2,12 @@
 # Vec3 color channels use x, y, z and all scalar math uses float64.
 import std/[math, syncio]
 const
-  ImageSize = 16
+  smoke = defined(benchSmoke)
+    ## `hastur` builds with `-d:benchSmoke` and diffs the 16 pixels against
+    ## `raytracer.output`; a normal build renders a full image so it can be timed.
+  ImageSize = when smoke: 16 else: 1024
   TileStart = 0
-  TileCount = 16
+  TileCount = when smoke: 16 else: ImageSize * ImageSize
   FarAway: float64 = 1000000.0
   MaxDepth = 5
 
@@ -240,6 +243,7 @@ proc channel(value: float64): int =
   ## Retains the original unchecked byte wrapping for over-bright colors.
   return int(round(value * 255.0)) mod 256
 
+var checksum = 0
 for i in 0 ..< TileCount:
   let
     pixel = TileStart + i
@@ -247,4 +251,10 @@ for i in 0 ..< TileCount:
     y = pixel div ImageSize
     ray = Ray(start: camera.pos, dir: getPoint(x, y))
     color = traceRay(ray, 0)
-  echo channel(color.x), channel(color.y), channel(color.z)
+  when smoke:
+    echo channel(color.x), channel(color.y), channel(color.z)
+  else:
+    checksum = (checksum * 31 + channel(color.x) * 65536 +
+      channel(color.y) * 256 + channel(color.z)) mod 1_000_000_007
+when not smoke:
+  echo "raytracer ", ImageSize, "x", ImageSize, " checksum=", checksum

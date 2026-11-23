@@ -51,7 +51,7 @@ Command:
   dl file1.x.nif ...        compute the global live set (one .live.nif per module)
   de file.x.nif file.live.nif
                             emit one module's live code as .c.nif
-  opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] [--vectorize[:sse]] in.nif [out.nif]
+  opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] [--vectorize[:sse]] [--cunroll] in.nif [out.nif]
                             optimize NIFC modules (in place without out.nif)
   pat [--from:NIF] [--keep] [--shoggoth] file.nim [substr]
                             compile a .nim file and print its NIFC procs
@@ -166,6 +166,8 @@ proc runOne(input, output: string; verify, stats: bool; target: Target) =
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "inliner=" & $st.intermodChanged
+    if st.cunrollTried > 0:
+      parts.add "cunroll=" & $st.cunrollKept & "/" & $st.cunrollTried
     echo "  ", extractFilename(input), ": ", st.procs, " procs, ",
          st.bodies, " bodies",
          (if parts.len > 0: "  [" & parts.join(" ") & "]" else: "")
@@ -183,6 +185,7 @@ proc optimizeMain(args: seq[string]) =
     elif a.startsWith("--cpu:"): target.scaledIndex = hasScaledIndex(a["--cpu:".len .. ^1])
     elif a == "--vectorize": target.vecMode = vecNeon
     elif a == "--vectorize:sse": target.vecMode = vecSse
+    elif a == "--cunroll": target.cunroll = true
     elif a == "--no-mem-intrinsics": target.mem.intrinsics = false   # a back end without the zeroMemIns/copyMemIns rows
     elif a.startsWith("--merge-stores:"):
       # adjacent constant field stores -> one wider store; the value is the
@@ -196,7 +199,7 @@ proc optimizeMain(args: seq[string]) =
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth opt [--outdir:DIR] [--verify] [--stats] [--cpu:NAME] [--cunroll] [--no-mem-intrinsics] [--merge-stores:BITS] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
     onRaiseQuit createDir(path(outdir))
