@@ -62,7 +62,6 @@ when defined(posix):
   export F_GETFL, F_SETFL, O_NONBLOCK, SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
   from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
                               SockAddr, InAddr, TSa_Family, pcall
-                              SockAddr, InAddr, TSa_Family
   when defined(osx):
     from ./ioring/backends/poll import noSigPipe
   # `submitAccept`'s `peer` names these, so a caller has to be able to name
