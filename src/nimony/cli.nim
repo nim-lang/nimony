@@ -163,7 +163,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     # build is for, once per module waiting on it. Forwarded to nimsem and to
     # the next level's evaluations, but not to a macro plugin's host compile,
     # which evaluates for nothing outside it.
-    config.evaluating.add val
+    config.evaluating.incl val
     forwardArgHost = false
   of "stdcache":
     # internal: deps.nim passes it to the frontend and hexer commands it

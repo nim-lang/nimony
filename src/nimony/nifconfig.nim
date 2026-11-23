@@ -173,10 +173,10 @@ type
                          # nifmake run; 0 = one per core. Not an option of the
                          # generated files, so no part of the cache memos
                          # (`deps.addFrontendKey`).
-    evaluating*: seq[string] # --evaluating: the modules whose compile-time
-                             # evaluation this build is for (`semos.runEval`);
-                             # what is built does not depend on it, so it is
-                             # no part of the cache memos (`deps.addFrontendKey`)
+    evaluating*: HashSet[string] # --evaluating: the modules whose compile-time
+                                 # evaluation this build is for (`semos.runEval`);
+                                 # what is built does not depend on it, so it is
+                                 # no part of the cache memos (`deps.addFrontendKey`)
     inlineFrames*: bool  # --inlineframes:on: record which template an expansion
                          # came from, so a debug backend can emit DWARF inlined
                          # frames for it (#1987). Off by default: it costs work
