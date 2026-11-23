@@ -67,7 +67,7 @@ else:
     result = comps[0]
 
   # An ephemeral-port listener; the port comes back from getsockname.
-  let lfd = listenTcp(0)
+  let lfd = try: listenTcp(0) except ErrorCode: quit "listen failed"
   var bound = default(SockAddrIn)
   var blen = cint(sizeof(bound))
   assert wsGetsockname(SocketHandle(cast[uint32](lfd)), addr bound, addr blen) == 0
@@ -125,7 +125,7 @@ else:
   closeFd(cfd)
   let ab = waitOne()
   echo "abort read res=", ab.result, " op=", ab.op == opRead
-  let lfd2 = listenTcp(0)
+  let lfd2 = try: listenTcp(0) except ErrorCode: quit "listen failed"
   discard submitAccept(lfd2, never)
   discard pollCompletions(comps)
   closeFd(lfd2)
@@ -145,7 +145,7 @@ else:
 
   # A real non-blocking connect through the ring, to a listener we own. Port 0:
   # the kernel picks, so a parallel run cannot collide with us.
-  let lfd3 = listenTcp(0'u16)
+  let lfd3 = try: listenTcp(0'u16) except ErrorCode: quit "listen failed"
   let port3 = boundPort(lfd3)
   assert port3 != 0'u16, "no port was bound"
   let cs = socketNonBlocking()

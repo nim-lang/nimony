@@ -68,7 +68,7 @@ var gServer = 0
   ## ends it.
 
 proc serverChain() {.passive.} =
-  var s = listenHttp(0'u16, tags)     # port 0: the kernel picks, nothing collides
+  var s = try: listenHttp(0'u16, tags) except ErrorCode: quit "listen failed"  # port 0: the kernel picks, nothing collides
   s.serverName = "t"
   # Server-wide because a connection takes it from its server at accept: on
   # Windows closing a writer sends no FIN, so case11 ends only by this budget.
@@ -227,6 +227,11 @@ proc main =
   while atomicLoad(listening, moAcquire) == 0:
     if millisUntil(monoNow(), start) > 5000: break
   assert atomicLoad(listening, moAcquire) == 1, "the listener never came up"
+  try:   # a port already in use raises; it used to be an assert (llms#93)
+    discard listenHttp(uint16(gPort), tags)
+    log.add "[0] busy port: listened\n"
+  except ErrorCode as e:
+    log.add "[0] busy port: " & $e & "\n"
 
   submit(delay(case1()), 1); awaitFlag(clientDone)
   submit(delay(case2()), 1); awaitFlag(clientDone)

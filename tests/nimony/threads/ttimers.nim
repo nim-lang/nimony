@@ -144,7 +144,7 @@ else:
   block connectWorks:
     # A real non-blocking connect through the ring, to a listener we own.
     # Port 0: the kernel picks, so a parallel run cannot collide with us.
-    let lfd = listenTcp(0'u16)
+    let lfd = try: listenTcp(0'u16) except ErrorCode: quit "listen failed"
     let port = boundPort(lfd)
     assert port != 0'u16, "no port was bound"
     let s = socketNonBlocking()
@@ -162,7 +162,7 @@ else:
     # Nothing is listening: the ring must report the errno, not a bare -1, and
     # not hang until the deadline.
     # A port nothing is listening on: bind one, learn its number, close it.
-    let probe = listenTcp(0'u16)
+    let probe = try: listenTcp(0'u16) except ErrorCode: quit "listen failed"
     let deadPort = boundPort(probe)
     closeFd(probe)
     let s = socketNonBlocking()

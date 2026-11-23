@@ -110,7 +110,9 @@ var gServer = 0
   ## How many connections this run still expects.
 
 proc serverChain() {.passive.} =
-  var s = listenHttp(0'u16, tags)     # port 0: the kernel picks, nothing collides
+  var s: HttpServer
+  try: s = listenHttp(0'u16, tags)    # port 0: the kernel picks, nothing collides
+  except ErrorCode: quit "listen failed"
   s.serverName = "t"
   gPort = int(boundPort(s.fd))
   atomicStore(listening, 1, moRelease)

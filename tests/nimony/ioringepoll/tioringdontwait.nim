@@ -143,7 +143,7 @@ else:
 
   block twoAccepts:
     let label = "two accepts"
-    let lfd = listenTcp(0)
+    let lfd = try: listenTcp(0) except ErrorCode: quit "listen failed"
     let port = boundPort(lfd)
     discard submitAccept(lfd, never)
     discard submitAccept(lfd, never)

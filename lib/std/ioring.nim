@@ -7,7 +7,7 @@
 #
 # Usage:
 #   initIoRing()
-#   let listenFd = listenTcp(8080)
+#   let listenFd = listenTcp(8080)   # raises the OS error, e.g. port in use
 #   discard submitAccept(listenFd)
 #   var comps: array[16, IoCompletion]
 #   let n = waitCompletions(comps)
@@ -50,6 +50,7 @@ export types.`==`
 export backend.IoTimedOut
 export backend.BackendRelays, backend.CqSize
 import ./ioring/platform
+import std/oserrors   # raiseOSError — `listenTcp`'s failures
 when defined(windows):
   when not defined(nimIoringWsaPoll):
     import ./ioring/backends/iocp   # iocpOwnerLane / iocpWake — lane routing
@@ -60,7 +61,7 @@ when defined(posix):
                               SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
   export F_GETFL, F_SETFL, O_NONBLOCK, SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
   from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
-                              SockAddr, InAddr, TSa_Family
+                              SockAddr, InAddr, TSa_Family, pcall
   when defined(osx):
     from ./ioring/backends/poll import noSigPipe
   # `submitAccept`'s `peer` names these, so a caller has to be able to name
@@ -646,9 +647,17 @@ when defined(posix):
     # needed: sin_port sits at offset 2 in both sockaddr_in and sockaddr_in6.
     result = (uint16(raw[2]) shl 8) or uint16(raw[3])
 
-  proc listenTcp*(port: uint16; backlog = 1024): cint =
-    let fd = socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
-    assert fd >= 0, "socket() failed"
+  proc listenFailed(fd: cint; err: clong) {.noreturn, raises.} =
+    if fd >= 0: closeFdRaw(fd)
+    raiseOSError(OSErrorCode(int32(-err)))
+
+  proc listenTcp*(port: uint16; backlog = 1024): cint {.raises.} =
+    ## A non-blocking IPv4 wildcard listener on `port` (`0`: the kernel picks
+    ## one, see `boundPort`). Raises the OS error when socket(), bind() or
+    ## listen() fails, e.g. for a port already in use, as Nim 2's
+    ## `bindAddr`/`listen` do.
+    let fd = cint(pcall(socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))))
+    if fd < 0: listenFailed(-1, fd)
     when defined(osx): noSigPipe(fd)   # accepted sockets inherit it
     var yes: cint = 1
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
@@ -658,9 +667,10 @@ when defined(posix):
       addr4.sin_len = uint8(sizeof(addr4))  # the BSDs check it (FreeBSD: EINVAL)
     addr4.sin_port = htons(port)
     addr4.sin_addr.s_addr = INADDR_ANY
-    assert bindAddr(fd, cast[ptr SockAddr](addr addr4),
-                    SockLen(sizeof(addr4))) == 0, "bind failed"
-    assert listen(fd, backlog.cint) == 0, "listen failed"
+    let b = pcall(bindAddr(fd, cast[ptr SockAddr](addr addr4), SockLen(sizeof(addr4))))
+    if b != 0: listenFailed(fd, b)
+    let l = pcall(listen(fd, backlog.cint))
+    if l != 0: listenFailed(fd, l)
     setNonBlocking(fd)
     result = fd
 
@@ -713,6 +723,12 @@ when defined(windows):
     stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
   proc wsGetsockname(s: SocketHandle; name: pointer; namelen: ptr cint): cint {.
     stdcall, importc: "getsockname", dynlib: "ws2_32.dll".}
+  proc wsaGetLastError(): cint {.stdcall, importc: "WSAGetLastError", dynlib: "ws2_32.dll".}
+
+  proc listenFailed(s: SocketHandle) {.noreturn, raises.} =
+    let err = wsaGetLastError()
+    if s != InvalidSocket: discard wsClosesocket(s)
+    raiseOSError(OSErrorCode(err))
 
   proc socketOf(fd: cint): SocketHandle {.inline.} =
     SocketHandle(cast[uint32](fd))
@@ -746,19 +762,20 @@ when defined(windows):
       discard cancelPendingOps(fd)
     discard wsClosesocket(socketOf(fd))
 
-  proc listenTcp*(port: uint16; backlog = 1024): cint =
+  proc listenTcp*(port: uint16; backlog = 1024): cint {.raises.} =
     ## IPv4 wildcard listener. No SO_REUSEADDR: on Winsock that option allows a
     ## second bind to hijack a live listener, so the POSIX "restart without
-    ## TIME_WAIT" semantics are not what it means here.
+    ## TIME_WAIT" semantics are not what it means here. Raises the OS error
+    ## when socket(), bind() or listen() fails, as Nim 2's `bindAddr`/`listen` do.
     let s = wsSocket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
-    assert s != InvalidSocket, "socket() failed"
+    if s == InvalidSocket: listenFailed(s)
     assert s <= SocketHandle(high(cint)), "SOCKET handle exceeds the ring's cint fd space"
     var addr4 = default(Sockaddr_in)
     addr4.sin_family = cushort(AF_INET)
     addr4.sin_port = htons(port)
     addr4.sin_addr.s_addr = INADDR_ANY
-    assert wsBind(s, addr addr4, cint(sizeof(addr4))) == 0, "bind failed"
-    assert wsListen(s, backlog.cint) == 0, "listen failed"
+    if wsBind(s, addr addr4, cint(sizeof(addr4))) != 0: listenFailed(s)
+    if wsListen(s, backlog.cint) != 0: listenFailed(s)
     result = cint(cast[uint32](s))
     setNonBlocking(result)
 
