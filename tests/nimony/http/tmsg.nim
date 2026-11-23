@@ -144,17 +144,24 @@ proc testRecycle =
     assert m.contentLength == round
   assert tags.pool.tags.len == poolSizeAtInit, "recycling never touches tags"
 
+proc takeMsg(m: var HttpMsg): HttpMsg {.nodestroy.} =
+  # Not `move`: an `HttpMsg` holds a `not nil` ref, so it has no
+  # `default(HttpMsg)` for `move` to reset `m` to. The moved-from state that
+  # `=wasMoved` leaves is what this test checks.
+  result = m
+  `=wasMoved`(m)
+
 proc testMoveOnly =
   var m = initHttpMsg(tags)
   m.startRequest(tag(mGet), "/")
   m.finish()
   assert m.hasBuf
-  var taken = move(m)
+  var taken = takeMsg(m)
   assert taken.hasBuf
   assert not m.hasBuf, "a moved-from message no longer owns a buffer"
   assert taken.target == "/"
   # …and it can be donated back, which is what the event loop does.
-  m = move(taken)
+  m = takeMsg(taken)
   assert m.hasBuf and not taken.hasBuf
   assert m.target == "/"
 

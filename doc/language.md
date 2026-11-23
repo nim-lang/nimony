@@ -3754,9 +3754,17 @@ There are three ways to leave a location after its value was taken out:
 Because it needs a default value, `move` is declared as
 `func move*[T: HasDefault](x: var T): T`. A generic routine that calls `move`
 on a value of type `T` must constrain `T` to `HasDefault` as well. Types
-without a default, like `ref X`, cannot be moved out of a location that stays
-alive, only out of a location whose life ends, which is what the compiler's
-own moves do.
+without a default, like `ref X` or an object with a `ref X` field, cannot be
+moved out with `move`. For such an object `HasDefault` still matches, since
+every object type has a `default`, but `default(T)` is rejected when `move` is
+instantiated. Use the `.nodestroy` idiom instead, which leaves the
+`=wasMoved` state:
+
+  ```nim
+  proc take(m: var Msg): Msg {.nodestroy.} =
+    result = m
+    `=wasMoved`(m)
+  ```
 
 `=wasMoved` is a no-op for every type that has no hooks, `int`, `float`,
 `char`, enums and `nil ptr T` among them, as well as for objects, tuples and
