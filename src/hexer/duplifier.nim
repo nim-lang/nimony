@@ -1014,6 +1014,8 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.resultSym = NoSymId
   c.flags = {}
   var oldUnassigned = move c.unassigned
+  # Local names are unique only within one routine (`ii.3` recurs in each).
+  var oldCallTemps = move c.callTemps
   let decl = n
   var r = takeRoutine(n, SkipFinalParRi)
   let symId = r.name.symId
@@ -1048,6 +1050,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.flags = oldFlags
   c.retType = oldRetType
   c.unassigned = move oldUnassigned
+  c.callTemps = move oldCallTemps
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   # `isTrivial(c.lifter[], typ)` consults `c.lifter[].op`, which floats
