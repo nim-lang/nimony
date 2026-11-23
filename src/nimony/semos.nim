@@ -1111,6 +1111,14 @@ proc evalCacheDir*(c: SemContext): string =
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
                usedModules: HashSet[string]; sourceDir = ""): string =
   ## Returns an error message if the evaluation failed, "" on success.
+  if c.thisModuleSuffix in c.g.config.evaluating:
+    # This build is the program's build of an evaluation in this very module:
+    # the program imports it, `std/writenif` or `system` say, and checking it
+    # here would evaluate the same expression again, in a build one level
+    # deeper, without end (nim-lang/nimony#3094). The caller says what could
+    # not be evaluated, this says why.
+    return "the evaluator program's build checks this module again, " &
+      "which evaluates the same expression again"
   let evalCache = evalCacheDir(c)
   # A stdlib module is semchecked in the stdlib cache, by a build that goes
   # on semchecking other stdlib modules around this evaluation. The
@@ -1145,6 +1153,9 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
     # command line, though: constant evaluation follows the target's word size
     # and OS/CPU semantics.
     var evalArgs = c.commandLineArgs
+    # the modules waiting for this build, ours included (`c.commandLineArgs`
+    # forwards the ones further out)
+    evalArgs.add " --evaluating:" & c.thisModuleSuffix
     let nativeEval = c.g.config.isDefined("nimNativeBackend")
     if nativeEval:
       evalArgs.add " --native"
