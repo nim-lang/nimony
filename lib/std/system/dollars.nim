@@ -61,3 +61,24 @@ func `$`*[T: tuple](x: T): string =
   if count == 1 and not named:
     result.add ","
   result.add ")"
+
+func addFormatted[T](s: var string; x: T) {.untyped.} =
+  ## Appends `x` to `s` without quoting: strings and chars are added as they
+  ## are, every other value is added via `$`.
+  when T is string or T is char:
+    s.add x
+  else:
+    s.add $x
+
+func `&`*[T: tuple](x: T): string =
+  ## Concatenates the fields of the tuple `x` into a single string. Strings
+  ## and chars are added unchanged, every other field is converted via `$`.
+  ## This is Nimony's replacement for `strformat`:
+  ##
+  ##   ```nim
+  ##   let x = 42
+  ##   assert &("x is ", x, "!") == "x is 42!"
+  ##   ```
+  result = ""
+  for value in fields(x):
+    result.addFormatted value

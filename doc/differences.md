@@ -22,6 +22,7 @@
 - Nimony is case sensitive. Use the new `{.feature: "ignoreStyle".}` statement to enable Nim 2's partial case sensitivity on a per module basis.
 - An unlabeled `break` only leaves a loop, never a `block`; a block is left via `break <blockname>`. Use `{.feature: "anonBlockBreaks".}` to get Nim 2's behavior back on a per module basis.
 - Signed integer overflow wraps around instead of raising `OverflowDefect`: `high(int) + 1 == low(int)`. Use `{.keepOverflowFlag.}` and `overflowFlag()` to detect an overflow.
+- `strformat` is replaced by `&` on tuples, which concatenates the tuple's fields into a string: strings and chars are added as they are, every other value is converted via `$`. Instead of `fmt"abc {x}\n"` write `&("abc ", x, "\n")`. Benefit: no string-literal mini language, the arguments are ordinary expressions that are type checked like any other.
 
 - The side-effect system works differently:
   - `func`, `iterator` and `converter` are treated as `noSideEffect` by default.
