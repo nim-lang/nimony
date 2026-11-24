@@ -261,6 +261,7 @@ proc fromNifToken(r: var Reader; t: ExpandedToken): NimNode =
     else:
       let kind = tagToNimNodeKind(tag)
       result = newNimNode(kind)
+      result.tagField = tag
       # Read children until ParRi
       while true:
         let child = r.next()
@@ -280,12 +281,27 @@ proc fromNif*(r: var Reader): NimNode =
   let t = r.next()
   result = fromNifToken(r, t)
 
+proc toNif*(b: var Builder; n: NimNode)
+proc toNifFresh(b: var Builder; n: NimNode)
+
+proc toNifAsRead(b: var Builder; n: NimNode) =
+  ## A node `fromNif` produced whose kind the macro left alone: its tag and
+  ## children go back exactly as they came in.
+  b.withTree n.tagField:
+    for i in 0 ..< n.kids.len:
+      b.toNif(n.kids[i])
+
 proc toNif*(b: var Builder; n: NimNode) =
   ## Convert NimNode tree to NIF stream
   if isNilNode(n):
     b.addEmpty()
-    return
+  elif n.tagField.len > 0 and tagToNimNodeKind(n.tagField) == n.kind:
+    b.toNifAsRead(n)
+  else:
+    b.toNifFresh(n)
 
+proc toNifFresh(b: var Builder; n: NimNode) =
+  ## A node a macro built (or changed the kind of): its tag comes from its kind.
   case n.kind
   of nnkNone, nnkEmpty:
     b.addEmpty()
