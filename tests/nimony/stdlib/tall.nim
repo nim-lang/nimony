@@ -91,6 +91,7 @@ import std/oserrors
 import std/osproc
 import std/packedsets
 import std/parfor
+import std/parklocks
 import std/parsecsv
 import std/parsejson
 import std/parseopt

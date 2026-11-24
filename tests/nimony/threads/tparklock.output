@@ -1,0 +1,3 @@
+counter 10050 overlaps 0
+tryAcquire free true
+tryAcquire held false
