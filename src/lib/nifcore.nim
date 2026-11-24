@@ -855,13 +855,10 @@ func toUniqueId*(c: Cursor): int {.inline.} =
 
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`*(c: Cursor) {.inline.} =
-    # the refcount is this cursor's share of the owner, not outside state
-    {.cast(noSideEffect).}:
-      if c.owner != nil: decRcAndFree(c.owner)
+    if c.owner != nil: decRcAndFree(c.owner)
 else:
   proc `=destroy`*(c: var Cursor) {.inline.} =
-    {.cast(noSideEffect).}:
-      if c.owner != nil: decRcAndFree(c.owner)
+    if c.owner != nil: decRcAndFree(c.owner)
 
 proc `=wasMoved`*(c: var Cursor) {.inline.} =
   c.owner = nil
@@ -871,16 +868,14 @@ proc `=wasMoved`*(c: var Cursor) {.inline.} =
 proc `=copy`*(dest: var Cursor; src: Cursor) {.inline.} =
   if dest.owner != src.owner or dest.p != src.p:
     `=destroy`(dest)
-    {.cast(noSideEffect).}:
-      if src.owner != nil: inc src.owner.rc
+    if src.owner != nil: inc src.owner.rc
     dest.owner = src.owner
     dest.p = src.p
   dest.rem = src.rem
 
 proc `=dup`*(src: Cursor): Cursor {.nodestroy, inline.} =
   result = Cursor(owner: src.owner, p: src.p, rem: src.rem)
-  {.cast(noSideEffect).}:
-    if result.owner != nil: inc result.owner.rc
+  if result.owner != nil: inc result.owner.rc
 
 # ── Cursor primitives ────────────────────────────────────────────────────
 
@@ -1447,9 +1442,8 @@ proc `=wasMoved`(dest: var TokenBuf) {.nodestroy, inline.} =
 
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`(dest: TokenBuf) {.inline.} =
-    {.cast(noSideEffect).}: # the buffer's own share of its owner
-      if dest.owner != nil: decRcAndFree(dest.owner)
-      elif dest.data != nil: dealloc(dest.data)
+    if dest.owner != nil: decRcAndFree(dest.owner)
+    elif dest.data != nil: dealloc(dest.data)
     # A custom `=destroy` replaces the field-wise one, so the owned fields
     # must be released here. The cursor owner holds references of its own on
     # both pools (`ensureOwner`), so cursors still outlive the buffer.
@@ -1458,9 +1452,8 @@ when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
     `=destroy`(dest.tags)
 else:
   proc `=destroy`(dest: var TokenBuf) {.inline.} =
-    {.cast(noSideEffect).}: # the buffer's own share of its owner
-      if dest.owner != nil: decRcAndFree(dest.owner)
-      elif dest.data != nil: dealloc(dest.data)
+    if dest.owner != nil: decRcAndFree(dest.owner)
+    elif dest.data != nil: dealloc(dest.data)
     # A custom `=destroy` replaces the field-wise one, so the owned fields
     # must be released here. The cursor owner holds references of its own on
     # both pools (`ensureOwner`), so cursors still outlive the buffer.
