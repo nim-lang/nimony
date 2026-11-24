@@ -3699,23 +3699,6 @@ The prototype of this hook for a type `T` needs to be:
 to calls of the built-in `=trace` operation.
 
 
-### Hooks are side-effect free
-
-A hook should only touch the value it is handed: what that value owns, and
-through its `var` parameter, its own storage. The compiler calls hooks in
-places the program does not spell out, at the end of every scope and for every
-assignment. A hook declared as a `func` (see [Func]) promises this, and the
-compiler can keep what it knows about other locations across those implicit
-calls (see [Contracts]). A hook declared with `proc` is assumed to have side
-effects: the compiler treats every implicit call of it as a call that may
-change any shared location.
-
-The effect of a hook is the effect of everything it runs, and the hooks of
-the fields and elements it destroys or copies are part of that. A `=destroy`
-of a `seq[T]` or of an object that has a `Writer` field has the side effects
-of `T`'s or `Writer`'s `=destroy`.
-
-
 ### Move semantics
 
 A "move" can be regarded as an optimized copy operation. If the source of the
