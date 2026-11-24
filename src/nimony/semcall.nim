@@ -482,14 +482,14 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
         assert res.status == LacksNothing
         let routine = asRoutine(res.decl)
         if routine.kind in RoutineKinds and hasAttachedParam(routine.params, s):
-          cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
+          cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: res.decl)
     else:
       if c.cachedTypeboundOps.hasKey((s, fn)):
         for fnSym in c.cachedTypeboundOps.getOrQuit((s, fn)):
           let res = tryLoadSym(fnSym)
           assert res.status == LacksNothing
           let routine = asRoutine(res.decl)
-          cands.addUnique FnCandidate(kind: routine.kind, sym: fnSym, typ: routine.params)
+          cands.addUnique FnCandidate(kind: routine.kind, sym: fnSym, typ: res.decl)
       else:
         var ops: seq[SymId] = @[]
         for topLevelSym in loadSyms(moduleSuffix, fn):
@@ -498,7 +498,7 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
           let routine = asRoutine(res.decl)
           if routine.kind in RoutineKinds and hasAttachedParam(routine.params, s):
             ops.add topLevelSym
-            cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
+            cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: res.decl)
         c.cachedTypeboundOps[(s, fn)] = ops
   elif decl.kind == TypevarY:
     maybeAddConceptMethods c, fn, s, cands
