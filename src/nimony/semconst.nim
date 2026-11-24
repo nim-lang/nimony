@@ -19,7 +19,7 @@ import std / [tables, sets]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import nimony_model, builtintypes, xints, semdata, sembasics,
-  renderer, expreval, programs
+  renderer, expreval, programs, typeprops
 
 # --- thin shim forwarding into the sem core via the SemContext callback ---
 
@@ -141,7 +141,11 @@ proc semConstExpr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   swap c.phase, phase
   semExpr c, dest, it
   swap c.phase, phase
-  # XXX future note: consider when the expression depends on a generic param
+  if c.inGenericDefinition > 0 and containsGenericParams(readonlyCursorAt(dest, start)):
+    # `const n = sizeof(T)`: the value depends on a type parameter, so like a
+    # `when` condition it stays the checked expression and each instantiation,
+    # which checks the body again with `T` bound, evaluates it.
+    return
   var e = cursorAt(dest, start)
   var valueBuf = evalExpr(c, e, it.typ)
   endRead e
