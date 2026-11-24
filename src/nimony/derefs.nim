@@ -598,6 +598,80 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
         else:
           takeTree c.dest, n
 
+proc genericPragmaProps(c: var Context; n: Cursor) =
+  ## The `.noSideEffect`/`.sideEffect` overrides of a generic routine, read
+  ## without translating its pragmas: a generic decl is only copied.
+  if n.substructureKind == PragmasU:
+    var n = n
+    n.into:
+      while n.hasMore:
+        case n.pragmaKind
+        of NoSideEffectP: c.r.props.incl IsNoSideEffect
+        of SideEffectP: c.r.props.excl IsNoSideEffect
+        else: discard
+        skip n
+
+proc castsNoSideEffect(n: Cursor): bool =
+  ## `n` is a `(pragmax ...)`: true for `{.cast(noSideEffect).}: body`.
+  result = false
+  var n = n
+  inc n # past `pragmax`
+  if n.substructureKind == PragmasU:
+    n.into:
+      while n.hasMore:
+        if n.pragmaKind == CastP:
+          var inner = sub(n)
+          if inner.substructureKind == PragmasU:
+            inner = sub(inner)
+            while inner.hasMore:
+              if inner.pragmaKind == NoSideEffectP: result = true
+              skip inner
+        skip n
+
+proc boundCalleeHasSideEffect(c: var Context; callee: Cursor): bool =
+  ## A call in a generic body whose callee sem already bound to a routine or
+  ## to a parameter of routine type: its effect does not depend on the type
+  ## parameters. Late-bound callees (identifiers, locals) and templates, which
+  ## are expanded per instance, are left to the instances.
+  result = false
+  if callee.kind == Symbol:
+    let k = c.typeCache.fetchSymKind(callee.symId)
+    if k in {ProcY, FuncY, IteratorY, ConverterY, MethodY, ParamY}:
+      let tt = getType(c.typeCache, callee)
+      let fnType = skipProcTypeToParams(tt)
+      if fnType.isParamsTag:
+        var pragmas = fnType
+        skip pragmas # params
+        skip pragmas # return type
+        result = calleeEffect(tt.skipModifier, pragmas) == HasSideEffect
+
+proc trGenericBody(c: var Context; n: var Cursor) =
+  ## Copies the body of a generic `.noSideEffect` routine and reports what
+  ## violates `.noSideEffect` independently of the type parameters: calls of
+  ## bound side-effecting routines and uses of global variables. The instances
+  ## are checked in full again; this only makes sure the error does not
+  ## depend on the generic being instantiated.
+  case n.kind
+  of Symbol:
+    if c.typeCache.fetchSymKind(n.symId) in {GvarY, TvarY}:
+      buildLocalErr c.dest, n.info, "use of global/thread-local variable '" & asNimCode(n) & "' in .noSideEffect context"
+      inc n
+    else:
+      takeTree c.dest, n
+  of TagLit:
+    if isDeclarative(n) or n.symKind in RoutineKinds or
+        (n.stmtKind == PragmaxS and castsNoSideEffect(n)):
+      takeTree c.dest, n
+    elif n.exprKind in CallKinds and boundCalleeHasSideEffect(c, n.childCursor):
+      buildLocalErr c.dest, n.info, "cannot call a routine with side effects from a `.noSideEffect` context"
+      skip n
+    else:
+      takeInto c.dest, n:
+        while n.hasMore:
+          trGenericBody c, n
+  else:
+    takeTree c.dest, n
+
 proc trProcDecl(c: var Context; n: var Cursor) =
   let decl = n
   c.typeCache.openScope(ProcScope)
@@ -625,8 +699,12 @@ proc trProcDecl(c: var Context; n: var Cursor) =
           c.r.firstParam = firstParam.name.symId
           c.r.firstParamKind = firstParam.typ.typeKind
         takeTree c.dest, n
-      elif i == ProcPragmasPos and not isGeneric:
-        trProcPragmas(c, n)
+      elif i == ProcPragmasPos:
+        if isGeneric:
+          genericPragmaProps(c, n)
+          takeTree c.dest, n
+        else:
+          trProcPragmas(c, n)
       elif i == ReturnTypePos:
         c.r.returnType = n
         if n.typeKind in {MutT, OutT, LentT}:
@@ -636,7 +714,10 @@ proc trProcDecl(c: var Context; n: var Cursor) =
         takeTree c.dest, n
 
     if isGeneric:
-      takeTree c.dest, n
+      if IsNoSideEffect in c.r.props:
+        trGenericBody c, n
+      else:
+        takeTree c.dest, n
     else:
       var body = n
       let bodyStart = c.dest.len
