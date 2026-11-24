@@ -3371,7 +3371,6 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
       programs.publish sym, efldBuf, c.phase
       let s = Sym(kind: EfldY, name: sym, pos: ImportedPos)
       rootScope.addOverloadable(name, s)
-      c.rootSumtypeCtors.add (name, sym)
 
   var fldNameStr = "`kind"
   c.makeFieldSym(fldNameStr)

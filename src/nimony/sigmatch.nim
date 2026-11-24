@@ -18,8 +18,6 @@ type
   CallArg* = object
     n*, typ*: Cursor
     orig*: Cursor ## original tree before semchecking, used for untyped args
-    pending*: PendingSpan ## what checking `n` added to the module's pending
-                          ## declarations; dropped when `orig` is used instead
 
   FnCandidate* = object
     kind*: SymKind
@@ -96,8 +94,6 @@ type
     staticArgs: int ## how many arguments went to a `staticParam`; consulted
                     ## only by the `staticOverloads` tiebreaker in `cmpMatches`
     returnType*: Cursor
-    droppedArgs*: seq[PendingSpan] ## the arguments `useArg` passed as written
-                                   ## (`orig`): their checked trees are gone
     expected*: TypeCursor ## the type the call site wants, or a nil/`auto`
                           ## cursor when it wants nothing in particular. The
                           ## last thing that can bind a leftover typevar (see
@@ -1606,7 +1602,6 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
   elif f.typeKind == UntypedT and not cursorIsNil(arg.orig):
     # pass arg tree before semchecking to untyped args:
     m.args.addSubtree arg.orig
-    m.droppedArgs.add arg.pending
   else:
     m.args.addSubtree arg.n
 
@@ -2155,7 +2150,7 @@ proc inferArgTypevar(m: var Match; f: var Cursor; arg: CallArg; aSym: SymId) =
   if m.inferred.contains(aSym):
     let prev = m.inferred.getOrQuit(aSym)
     m.concreteMatch = true
-    singleArgImpl(m, f, CallArg(n: arg.n, typ: prev, orig: arg.orig, pending: arg.pending))
+    singleArgImpl(m, f, CallArg(n: arg.n, typ: prev, orig: arg.orig))
     m.concreteMatch = false
   elif matchesConstraint(m, aSym, f):
     m.inferred[aSym] = f
@@ -2247,7 +2242,7 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
         inc m.opened
       let fStart = f
       f = sub(f)
-      singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig, pending: arg.pending)
+      singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig)
       expectParRi m, f, fStart
     of MutT, OutT, SinkT, LentT:
       var a = arg.typ
@@ -2266,7 +2261,7 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
           m.error VarNeeded, f, arg.typ
       let fStart = f
       f = sub(f)
-      singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig, pending: arg.pending)
+      singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig)
       expectParRi m, f, fStart
     of IntT, UIntT, FloatT, CharT:
       matchIntegralType m, f, arg # consumes the whole tree, incl. the close

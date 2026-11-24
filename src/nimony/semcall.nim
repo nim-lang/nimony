@@ -1062,15 +1062,12 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     # …)` diagnostics or other sem rewrites the user never wrote.
     var argsBuf = createTokenBuf(30)
     argsBuf.addParLe StmtsS, cs.callNodeInfo
-    var dropped: seq[PendingSpan] = @[]
     for a in cs.args:
       if not cursorIsNil(a.orig):
         argsBuf.addSubtree a.orig
-        dropped.add a.pending
       else:
         argsBuf.addSubtree a.n
     argsBuf.addParRi()
-    dropPendingSpans c, dropped
 
     # Run the macro plugin
     var expandedInto = createTokenBuf(30)
@@ -1279,9 +1276,6 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     let finalFn = m[idx].fn
     # only merge symbols defined in args to scope if we did not match a macro/template:
     closeArgsScope c, cs, merge = finalFn.kind notin {MacroY, TemplateY}
-    if finalFn.kind != MacroY:
-      # a macro's arguments are dropped where it serializes them
-      dropPendingSpans c, m[idx].droppedArgs
     let isMagic = c.addFn(dest, finalFn, cs.fn.n, m[idx])
     if finalFn.kind notin {TemplateY, MacroY}:
       # Nim 2 compat: if a typed-varargs slot matched, replace the flat
@@ -1569,9 +1563,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     var lhsBuf = createTokenBuf(4)
     let lhsOrig = cs.fn.n
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
-    var lhsPending = beginPendingSpan(c)
     semExpr c, lhsBuf, lhs, {AllowModuleSym}
-    endPendingSpan(c, lhsPending)
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
     let fieldNameCursor = cs.fn.n
@@ -1618,7 +1610,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       let lhsIndex = dest.len
       dest.addSubtree lhs.n
       argIndexes.add lhsIndex
-      cs.args.add CallArg(typ: lhs.typ, orig: lhsOrig, pending: lhsPending) # n will be set by argIndexes
+      cs.args.add CallArg(typ: lhs.typ, orig: lhsOrig) # n will be set by argIndexes
   else:
     semExpr(c, dest, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads})
     cs.fnName = getFnIdent(c, dest)
@@ -1644,9 +1636,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     # `KeepChoices`: an argument that is a symbol choice stays one — the formal
     # parameter it ends up matching is what picks the candidate, so lookup must
     # not collapse it by scope distance nor declare it ambiguous here.
-    var pending = beginPendingSpan(c)
     semExpr c, dest, arg, {AllowEmpty, KeepChoices}
-    endPendingSpan(c, pending)
     if named:
       dest.addParRi(arg.n.endInfo)
       # reset only reachable inside `if named:`, where namedStart was set:
@@ -1655,7 +1645,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     if arg.typ.typeKind == UntypedT:
       skipSemCheck = true
     it.n = arg.n
-    cs.args.add CallArg(typ: arg.typ, orig: argOrig, pending: pending) # n will be set by argIndexes
+    cs.args.add CallArg(typ: arg.typ, orig: argOrig) # n will be set by argIndexes
   when defined(debug):
     c.debugAllowErrors = oldDebugAllowErrors
   assert cs.args.len == argIndexes.len
