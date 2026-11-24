@@ -5,7 +5,7 @@ type
   Box*[T] = object
     x*: T
 
-proc `=destroy`*[T](b: Box[T]) =
+proc `=destroy`*[T](b: Box[T]) {.sideEffect.} =
   echo "destroyed"
 
 proc `=wasMoved`*[T](b: var Box[T]) =

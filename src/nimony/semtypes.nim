@@ -1316,7 +1316,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         # tests for it, and none of them should have to know about the feature.
         # Without the feature the annotation is required, as for proc types
         # (doc/language.md, "Closures").
-        addImpliedClosurePragma c, dest, beforePragmas, info
+        addImpliedPragma c, dest, beforePragmas, ClosureP, info
       var hasNilSuffix = false
       if isTypeForm and not sourceIsNewLayout:
         var n2 = n

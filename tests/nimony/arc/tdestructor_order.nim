@@ -13,15 +13,15 @@ type
     member: ref Aaaa
 
 proc `=wasMoved`(x: var Cccc) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(v: Cccc) =
+proc `=destroy`(v: Cccc) {.sideEffect.} =
   echo "destroying c"
 
 proc `=wasMoved`(x: var Dddd) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(v: Dddd) =
+proc `=destroy`(v: Dddd) {.sideEffect.} =
   echo "destroying d"
 
 proc `=wasMoved`(x: var Aaaa) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(v: Aaaa) =
+proc `=destroy`(v: Aaaa) {.sideEffect.} =
   echo "destroying a ", v.vvvv
 
 func makeHolder(vvvv: int): ref Holder =

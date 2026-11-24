@@ -18,7 +18,7 @@ type
   Node = ref NodeObj
 
 proc `=wasMoved`(x: var NodeObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(n: NodeObj) =
+proc `=destroy`(n: NodeObj) {.sideEffect.} =
   inc destroyed
   `=destroy`(n.kids)
   `=destroy`(n.parent)

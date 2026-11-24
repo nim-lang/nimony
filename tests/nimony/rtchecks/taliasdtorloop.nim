@@ -7,7 +7,7 @@ var g = 3
 type D = object
   x: int
 proc `=wasMoved`(d: var D) = d.x = 0
-proc `=destroy`(d: D) =
+proc `=destroy`(d: D) {.sideEffect.} =
   g = 1000000000
 proc h(arr: array[10, int]): int =
   result = 0

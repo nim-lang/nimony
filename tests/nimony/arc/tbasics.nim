@@ -167,7 +167,7 @@ type
     bar: TestObj
 
 proc `=wasMoved`(x: var TestTestObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(x: TestTestObj) =
+proc `=destroy`(x: TestTestObj) {.sideEffect.} =
   echo "Destructor for TestTestObj"
   let test = Test2(foo: TestObj())
 

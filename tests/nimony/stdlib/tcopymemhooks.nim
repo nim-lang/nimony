@@ -12,7 +12,7 @@ type
 
 var copies = 0
 
-proc `=copy`(dst: var WithCopy; src: WithCopy) =
+proc `=copy`(dst: var WithCopy; src: WithCopy) {.sideEffect.} =
   {.cast(assumeSync).}:
     inc copies
   dst.x = src.x

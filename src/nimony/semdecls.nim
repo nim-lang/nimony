@@ -1476,7 +1476,15 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         # feature marks it exactly as it marks a nested proc literal. Without
         # the feature the annotation is required.
         crucial.flags.incl ClosureP
-        addImpliedClosurePragma c, dest, beforePragmas, info
+        addImpliedPragma c, dest, beforePragmas, ClosureP, info
+      when false:
+        # Research (PR #3121): a hook is `.noSideEffect` unless it says
+        # `.sideEffect`, like a `func`. Disabled: not worth the churn; write
+        # the hook as a `func` to get this.
+        if kind == ProcY and hookToKind(getHookName(symId)) != NoHook and
+            crucial.flags * {NoSideEffectP, SideEffectP} == {}:
+          crucial.flags.incl NoSideEffectP
+          addImpliedPragma c, dest, beforePragmas, NoSideEffectP, info
       c.routine.pragmas = crucial.flags
       c.routine.raisesType = crucial.raisesType
       if crucial.hasVarargs.isValid:

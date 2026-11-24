@@ -16,9 +16,9 @@ type
     n {.cursor.}: Node
 
 proc `=wasMoved`(x: var Probe) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(o: Probe) = echo "destroyed ", o.x
+proc `=destroy`(o: Probe) {.sideEffect.} = echo "destroyed ", o.x
 
-proc lastUse() =
+proc lastUse() {.sideEffect.} =
   let n = Node(p: Probe(x: 1))
   let e = Entry(at: 1, n: n)
   echo e.at, " ", e.n.p.x

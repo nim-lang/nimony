@@ -16,7 +16,7 @@ proc `=sink`(dest: var Foo; source: Foo) =
 proc `=copy`(dest: var Foo; source: Foo) =
   dest.id = source.id + 1
 
-proc `=destroy`(x: var Foo) =
+proc `=destroy`(x: var Foo) {.sideEffect.} =
   if x.id != 0:
     echo "destroyed"
     x.id = 0

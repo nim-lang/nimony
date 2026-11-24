@@ -8,7 +8,7 @@ type
   D = object
     r: ref Obj
 proc `=wasMoved`(d: var D) = d.r = nil
-proc `=destroy`(d: D) =
+proc `=destroy`(d: D) {.sideEffect.} =
   if d.r != nil: d.r.n = 1000000000
 proc g(v: var Obj; r: ref Obj; arr: array[10, int]): int =
   result = 0

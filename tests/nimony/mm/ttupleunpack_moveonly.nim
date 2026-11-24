@@ -9,11 +9,11 @@ type
   W = object
     y: int
 
-proc `=destroy`(r: R) = echo "destroy R ", r.x
+proc `=destroy`(r: R) {.sideEffect.} = echo "destroy R ", r.x
 proc `=wasMoved`(r: var R) = r.x = 0
 proc `=dup`(r: R): R {.error.}
 proc `=copy`(d: var R; s: R) {.error.}
-proc `=destroy`(w: W) = echo "destroy W ", w.y
+proc `=destroy`(w: W) {.sideEffect.} = echo "destroy W ", w.y
 proc `=wasMoved`(w: var W) = w.y = 0
 proc `=dup`(w: W): W {.error.}
 proc `=copy`(d: var W; s: W) {.error.}

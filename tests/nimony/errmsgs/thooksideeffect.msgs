@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/thooksideeffect.nim(11, 7) Error: use of global/thread-local variable 'destroyed' in .noSideEffect context

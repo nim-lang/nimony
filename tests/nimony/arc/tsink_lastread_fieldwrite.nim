@@ -24,7 +24,7 @@ type
 
 var gDestroyed = 0
 proc `=wasMoved`(x: var InnerObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(x: InnerObj) =
+proc `=destroy`(x: InnerObj) {.sideEffect.} =
   inc gDestroyed
 
 proc build(): Outer =

@@ -9,7 +9,7 @@ type
     name*: string
 
 proc `=wasMoved`*(x: var Resource) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`*(r: Resource) =
+proc `=destroy`*(r: Resource) {.sideEffect.} =
   if r.name.len > 0: echo "released ", r.name
 
 type

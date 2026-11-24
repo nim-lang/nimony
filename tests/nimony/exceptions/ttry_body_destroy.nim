@@ -7,7 +7,7 @@ type
   Res = object
     id: int
 
-proc `=destroy`(r: Res) =
+proc `=destroy`(r: Res) {.sideEffect.} =
   if r.id >= 0: echo "close ", r.id
 proc `=wasMoved`(r: var Res) = r.id = -1
 proc `=copy`(dest: var Res; src: Res) {.error.}

@@ -10,7 +10,7 @@ type
     other: nil Pair
   Pair = ref PairObj
 proc `=wasMoved`(x: var PairObj) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(p: PairObj) =
+proc `=destroy`(p: PairObj) {.sideEffect.} =
   inc destroyed
   `=destroy`(p.name)
   `=destroy`(p.other)

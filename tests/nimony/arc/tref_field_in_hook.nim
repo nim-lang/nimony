@@ -16,9 +16,9 @@ type
     head: nil Node      # an empty list, and what `=wasMoved` leaves behind
 
 proc `=wasMoved`(x: var Elem) {.nodestroy, inline.} = zeroMem(addr x, sizeof(x))
-proc `=destroy`(e: Elem) = inc freed
+proc `=destroy`(e: Elem) {.sideEffect.} = inc freed
 
-proc `=destroy`(x: List) {.nodestroy.} =
+proc `=destroy`(x: List) {.nodestroy, sideEffect.} =
   var it = x.head
   while it != nil:
     var nxt = move it.next     # field read through a ref inside the hook

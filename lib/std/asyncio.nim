@@ -52,7 +52,7 @@ type
     rlen*: int
     rpos*: int
 
-proc `=destroy`*(f: File) =
+proc `=destroy`*(f: File) {.sideEffect.} =
   ## Closing is not something a caller has to remember: a `File` owns its
   ## descriptor, so the descriptor goes when the file does. A hand-written
   ## `=destroy` replaces the field-wise one, so the buffer is freed here too.
