@@ -106,9 +106,10 @@ type
   IndexSections* = object
     converters*: seq[(SymId, SymId)] # string is for compat with `methods`
     exportBuf*: TokenBuf
-    reexportedChecksums*: seq[string] ## the checksums of the modules
-      ## `exportBuf` re-exports: an importer reads their declarations through
-      ## this module, so they are part of its interface
+    importedChecksums*: seq[string] ## the checksums of the modules this
+      ## one imports: an importer reads their declarations through this
+      ## module's re-exports, generics and inline bodies, so they are part
+      ## of its interface
 
 proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   result = createTokenBuf(30)
@@ -154,7 +155,7 @@ proc createIndex*(infile: string; root: NifLineInfo; buildChecksum: bool; sectio
     nifreader.close(r)
     var checksum = newSha1State()
     processForChecksum(checksum, buf)
-    for cs in sections.reexportedChecksums:
+    for cs in sections.importedChecksums:
       checksum.update cs
     let final = SecureHash checksum.finalize()
     content.add "(checksum \"" & $final & "\")"

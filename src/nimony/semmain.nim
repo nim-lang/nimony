@@ -16,7 +16,7 @@
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
-import std / [tables, sets, syncio, assertions, hashes]
+import std / [tables, sets, syncio, assertions, hashes, algorithm]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -67,24 +67,27 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
         result.addIdent(s, NoLineInfo)
       result.addParRi()
 
-proc reexportedChecksums(c: var SemContext): seq[string] =
-  ## The interface checksums of the modules this one re-exports, in the
-  ## order `buildIndexExports` lists them. An importer of this module loads
-  ## their declarations without importing them itself, so its nimsem node
-  ## depends only on this module's `.s.idx.nif`: their interface has to be
-  ## part of ours, or a changed signature there leaves the importer's `.s.nif`
-  ## with the old one (doc/internals/ic.md). Transitive re-exports are covered
-  ## because each of these checksums covers its own module's re-exports.
+proc importedChecksums(c: var SemContext): seq[string] =
+  ## The interface checksums of every module this one imports, ordered by
+  ## suffix. An importer of this module reads more than its declarations: it
+  ## instantiates its generics and expands its inline procs, templates and
+  ## re-exports, and those reach into the modules imported here. Yet the
+  ## importer's nimsem node depends only on this module's `.s.idx.nif`, so
+  ## their interface has to be part of ours, or a changed declaration there
+  ## leaves the importer's `.s.nif` with the old one (doc/internals/ic.md).
+  ## Modules further down are covered because each checksum covers its own
+  ## module's imports. The other members of this module's import cycle are
+  ## left out: they are semchecked in the same node.
   result = @[]
-  if c.exports.len == 0: return
-  var suffixes = initTable[SymId, string]()
-  for suffix, sym in c.processedModules:
-    suffixes[sym] = suffix
-  for m, ex in c.exports:
-    if ex.kind == FromImport and ex.list.len == 0: continue
-    let suffix = suffixes.getOrDefault(m)
-    if suffix.len > 0:
-      result.add load(suffix).index.checksum
+  var cyclic = initHashSet[string]()
+  for (suffix, _) in c.deferredCyclicImports: cyclic.incl suffix
+  var suffixes: seq[string] = @[]
+  for suffix, _ in c.processedModules:
+    if suffix notin cyclic: suffixes.add suffix
+  sort suffixes
+  for suffix in suffixes:
+    let cs = load(suffix).index.checksum
+    if cs.len > 0: result.add cs
 
 proc writeNewDepsFile(c: var SemContext; outfile: string) =
   # Update .s.deps.nif file that doesn't contain modules imported under `when false:`
@@ -219,7 +222,7 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
     IndexSections(
       converters: move c.converterIndexMap,
       exportBuf: buildIndexExports(c),
-      reexportedChecksums: reexportedChecksums(c)))
+      importedChecksums: importedChecksums(c)))
   writeNewDepsFile c, outfile
 
 proc dbgCheckSeals*(dest: TokenBuf; label: string) =

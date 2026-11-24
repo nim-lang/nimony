@@ -556,6 +556,45 @@ proc incrementalTests*() =
                " times (expected 1: a body-only edit is no interface change)"
     writeFile(reDep, originalReDep)
 
+  # Phase 14b: a declaration reached through a generic of an import.
+  # `genericuser` imports only `genericmid`, whose generic `incl` calls
+  # `putIt` of `genericdep`, which `genericmid` does not re-export. The
+  # instances are compiled in the user, whose nimsem node depends on the
+  # mid's `.s.idx.nif` alone, so the mid's interface has to cover what it
+  # imports: dropping the `.requires` of `needPositive` (and with it its
+  # split body ``needPositive`body``) used to leave the user's instance
+  # calling the body, and `lengc` found no such symbol.
+  let genDep = "tests/incremental/genericdep.nim"
+  let genUser = "tests/incremental/genericuser.nim"
+  let genCache = "nimcache" / "incremental-generic"
+  if fileExists(genDep) and fileExists(genUser):
+    inc phases
+    let originalGenDep = readFile(genDep)
+    removeDir genCache
+    var genOutput = ""
+    proc runGen(label: string): bool =
+      let (output, ec) = execCmdEx(nimony.quoteShell &
+        " c -r --silentMake --nimcache:" & genCache.quoteShell & " " &
+        genUser.quoteShell)
+      genOutput = output
+      result = ec == 0
+      if not result:
+        failures.add label & ": compile failed: " & output.strip.splitLines[^1]
+    block:
+      if runGen("generic-cold"):
+        expect genOutput.contains("generic true"), "generic-cold: expected 'generic true'"
+        let dropped = originalGenDep.replace("{.inline, requires: x > 0.}", "{.inline.}")
+        expect dropped != originalGenDep, "generic-drop: the edit no longer applies to " & genDep
+        writeFile(genDep, dropped)
+        if runGen("generic-drop"):
+          expect genOutput.contains("generic true"),
+                 "generic-drop: expected 'generic true' after dropping the `.requires`"
+          writeFile(genDep, originalGenDep)
+          if runGen("generic-readd"):
+            expect genOutput.contains("generic true"),
+                   "generic-readd: expected 'generic true' after restoring the `.requires`"
+    writeFile(genDep, originalGenDep)
+
   # Phase 15: options of a module that the build in between did not import.
   # `optionuser` is built with a define, then `optionother`, which does not
   # import `optiondep`, without it, then `optionuser` again without it. The
