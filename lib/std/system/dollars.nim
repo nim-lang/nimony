@@ -62,13 +62,11 @@ func `$`*[T: tuple](x: T): string =
     result.add ","
   result.add ")"
 
-func addFormatted[T](s: var string; x: T) {.untyped.} =
-  ## Appends `x` to `s` without quoting: strings and chars are added as they
-  ## are, every other value is added via `$`.
-  when T is string or T is char:
-    s.add x
-  else:
-    s.add $x
+# `addFormatted` appends without quoting: strings and chars are added as
+# they are, every other value is added via `$`.
+func addFormatted(s: var string; x: string) {.inline.} = s.add x
+func addFormatted(s: var string; x: char) {.inline.} = s.add x
+func addFormatted[T: Stringable](s: var string; x: T) {.inline.} = s.add $x
 
 func `&`*[T: tuple](x: T): string =
   ## Concatenates the fields of the tuple `x` into a single string. Strings
