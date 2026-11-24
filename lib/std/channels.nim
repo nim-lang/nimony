@@ -22,65 +22,25 @@
 ## lifecycle stays that of a connection: the last copy gone is the end gone.
 
 import streamio {.cyclic.}
-import std/[threadpool, ticketlocks, typetraits]
+import std/[threadpool, parklocks, typetraits]
 
 export streamio.Reader, streamio.Writer
 
 # On a channel's own ring, a send or a receive is one whole record under the
 # ring's lock, so copies on different threads need nothing more.
 # Over any other stream, the end's buffer and a partial write would mix up
-# messages, so the copies take turns: `EndLock` parks the ones waiting.
-
-type
-  EndLock = object
-    spin: TicketLock
-    held: bool
-    waiters: seq[Continuation]
-
-proc lockWait(L: ptr EndLock) {.passive.} =
-  let k = delay()
-  var ready = false
-  acquire L.spin
-  if L.held:
-    L.waiters.add k
-  else:
-    L.held = true
-    ready = true
-  release L.spin
-  if ready: submit(k)
-  suspend()
-
-proc lockEnd(L: ptr EndLock) {.passive.} =
-  var got = false
-  acquire L.spin
-  if not L.held:
-    L.held = true
-    got = true
-  release L.spin
-  if not got: lockWait(L)          # `unlockEnd` hands the lock over
-
-proc unlockEnd(L: ptr EndLock) =
-  var wake: seq[Continuation] = @[]
-  acquire L.spin
-  if L.waiters.len > 0:            # stays held: the oldest waiter has it now
-    wake.add L.waiters[0]
-    var rest: seq[Continuation] = @[]
-    for i in 1 ..< L.waiters.len: rest.add L.waiters[i]
-    L.waiters = rest
-  else: L.held = false
-  release L.spin
-  for k in wake: submit(k)
+# messages, so the copies take turns: a `ParkLock` parks the ones waiting.
 
 type
   SendEndObj = object
-    lock: EndLock
+    lock: ParkLock
     w: Writer
     direct: bool          ## sends go straight into the writer's ring
 
   SendEnd = ref SendEndObj
 
   RecvEndObj = object
-    lock: EndLock
+    lock: ParkLock
     r: Reader
     direct: bool
 
@@ -94,24 +54,21 @@ type
     ## The receiving end of a channel. Copies share the end.
     e: nil RecvEnd
 
-proc newEndLock(): EndLock =
-  EndLock(spin: TicketLock(), held: false, waiters: @[])
-
 proc sendEnd(w: sink Writer; recSize: int): SendEnd {.raises.} =
   if not isOpen(w): raise BadOperation
   let direct = hasRecordRing(w, recSize)
-  result = SendEnd(lock: newEndLock(), w: w, direct: direct)
+  result = SendEnd(lock: ParkLock(), w: w, direct: direct)
 
 proc recvEnd(r: sink Reader; recSize: int): RecvEnd {.raises.} =
   if not isOpen(r): raise BadOperation
   let direct = hasRecordRing(r, recSize)
-  result = RecvEnd(lock: newEndLock(), r: r, direct: direct)
+  result = RecvEnd(lock: ParkLock(), r: r, direct: direct)
 
 proc sendBytes(e: SendEnd; p: pointer; n: int): bool {.passive, raises.} =
   if e.direct:
     result = writeRecord(e.w, p)
   else:
-    lockEnd(addr e.lock)
+    acquire(e.lock)
     try:
       write(e.w, toOpenArray(cast[ptr UncheckedArray[char]](p), 0, n - 1))
       result = true
@@ -119,16 +76,16 @@ proc sendBytes(e: SendEnd; p: pointer; n: int): bool {.passive, raises.} =
       if err == BadDescriptor and isPipe(e.w):
         result = false           # a byte pipe whose reader is gone
       else:
-        unlockEnd(addr e.lock)
+        release(e.lock)
         raise err
-    unlockEnd(addr e.lock)
+    release(e.lock)
 
 proc recvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
   if e.direct:
     result = readRecord(e.r, p)
   else:
     let dest = cast[ptr UncheckedArray[char]](p)
-    lockEnd(addr e.lock)
+    acquire(e.lock)
     var got = 0
     try:
       while got < n:
@@ -139,9 +96,9 @@ proc recvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
           break
         got += k
     except ErrorCode as err:
-      unlockEnd(addr e.lock)
+      release(e.lock)
       raise err
-    unlockEnd(addr e.lock)
+    release(e.lock)
     result = got == n
 
 proc tryRecvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
@@ -152,7 +109,7 @@ proc tryRecvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
     result = tryReadRecord(e.r, p)
   else:
     result = false
-    lockEnd(addr e.lock)
+    acquire(e.lock)
     if e.r.buffered >= n:
       let dest = cast[ptr UncheckedArray[char]](p)
       var got = 0
@@ -163,10 +120,10 @@ proc tryRecvBytes(e: RecvEnd; p: pointer; n: int): bool {.passive, raises.} =
           if k == 0: break
           got += k
       except ErrorCode as err:
-        unlockEnd(addr e.lock)
+        release(e.lock)
         raise err
       result = got == n
-    unlockEnd(addr e.lock)
+    release(e.lock)
 
 proc dropRecord[T](p: pointer) {.nimcall.} =
   var x {.noinit.}: T
@@ -180,8 +137,8 @@ proc channel*[T](capacity: int): (Receiver[T], Sender[T]) =
   when not supportsCopyMem(T):
     drop = dropRecord[T]
   var (r, w) = recordPipe(capacity, sizeof(T), drop)
-  result = (Receiver[T](e: RecvEnd(lock: newEndLock(), r: r, direct: true)),
-            Sender[T](e: SendEnd(lock: newEndLock(), w: w, direct: true)))
+  result = (Receiver[T](e: RecvEnd(lock: ParkLock(), r: r, direct: true)),
+            Sender[T](e: SendEnd(lock: ParkLock(), w: w, direct: true)))
 
 proc sender*[T](w: sink Writer): Sender[T] {.raises.} =
   ## Values of `T` over any `Writer`, as their bytes. Between machines the
@@ -234,10 +191,10 @@ proc flush*[T](s: Sender[T]) {.passive, raises.} =
   let e = s.e
   if e == nil: raise BadOperation
   if not e.direct:
-    lockEnd(addr e.lock)
+    acquire(e.lock)
     try:
       flush(e.w)
     except ErrorCode as err:
-      unlockEnd(addr e.lock)
+      release(e.lock)
       raise err
-    unlockEnd(addr e.lock)
+    release(e.lock)

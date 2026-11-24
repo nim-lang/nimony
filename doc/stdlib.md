@@ -594,6 +594,29 @@ let pts = sender[Point](openWriter(path"points.bin"))   # over any stream
   channel's own ring copies need no extra lock; over any other stream they
   take turns under a lock that parks its waiters.
 
+## parklocks
+
+[Source](../lib/std/parklocks.nim)
+
+`ParkLock`, a mutex for `.passive` code: a task that finds it taken parks
+instead of blocking its thread, and `release` hands the lock to the oldest
+waiter and resumes it on the thread pool.
+
+```nim
+var L: ParkLock
+proc bump() {.passive.} =
+  withLock L:
+    inc counter        # the body may call `.passive` procs and park
+```
+
+- Owned by the task, not the thread: a holder that parks may resume on another
+  worker and release there. Waiters are served in arrival order.
+- Uncontended `acquire`/`release` are one compare-and-swap each; `tryAcquire`
+  never parks.
+- Regular code may call `acquire` too and waits like for any `.passive` call.
+  Waiters are resumed via `threadpool.submit`, so a contended lock needs a
+  running pool (`initPool`). Not re-entrant.
+
 ## tls
 
 [Source](../lib/std/tls.nim)
