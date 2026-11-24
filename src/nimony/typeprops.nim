@@ -219,8 +219,16 @@ proc containsGenericParamsAux(n: var TypeCursor): bool =
   case n.kind
   of Symbol:
     let res = tryLoadSym(n.symId)
-    if res.status == LacksNothing and res.decl.tagEnum in {TypevarTagId, StaticTypevarTagId}:
-      return true
+    if res.status == LacksNothing:
+      case res.decl.tagEnum
+      of TypevarTagId, StaticTypevarTagId:
+        return true
+      of ConstTagId:
+        # a `const` in a generic body whose value mentions a type parameter
+        # stays unevaluated until instantiation (`semConstExpr`)
+        var val = asLocal(res.decl).val
+        if containsGenericParamsAux(val): return true
+      else: discard
     inc n
   of TagLit:
     n.loopInto:
