@@ -36,6 +36,14 @@
 ##   or reports `WSAEWOULDBLOCK`, which the WSAPoll backend already treats as
 ##   "still pending".
 
+when defined(gcArc) or defined(gcOrc):
+  # Pool threads share refs here: a parked `.passive` proc resumes on whichever
+  # worker gets its completion, with its frame's refs, and channels, pipes and
+  # the dns resolver are used by several pool tasks. `arc`/`orc` counts are not
+  # atomic and `orc`'s cycle roots are per thread, so both corrupt memory
+  # (nimony-bugs-llms#344).
+  {.error: "std/ioring shares refs between pool threads, which --mm:arc and --mm:orc do not support; use --mm:atomicArc (the default) or --mm:yrc".}
+
 import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
 import ./commonio   # FileMode, FilePermission — `submitOpen`'s arguments
