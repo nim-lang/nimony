@@ -275,20 +275,7 @@ compat2.nim provides `getOrQuit` for host Nim, so the same call compiles
 under both.
 
 
-## 9. Calls, templates and pragmas
-
-### Parameterless routines need `()`
-
-A bare identifier is the routine itself, not a call:
-
-```nim
-proc flush = ...
-flush()      # OK
-flush        # error: expression of type `proc ()` must be discarded
-```
-
-This applies to procs and templates alike. At module top level the error
-message is `undeclared identifier` instead.
+## 9. Templates and pragmas
 
 ### Dirty templates that use caller-scope identifiers
 
