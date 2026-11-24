@@ -463,22 +463,6 @@ statement" holds for it too. A `while c: b` is therefore expressed as a guarded
 bottom-tested loop, `(ite c (stmts (loop (stmts b (continue c)))) .)`, which evaluates
 `c` exactly as often as the `while` did.
 
-### mflag and vflag
-
-`(mflag SymbolDef)` declares a **materialized** control flow flag. It is a boolean variable
-initialized to `false`. Its value is observable at runtime and generates a real C variable
-of type `NB8`.
-
-`(vflag SymbolDef)` declares a **virtual** control flow flag. It is also a boolean initialized
-to `false`, but the code generator can optimize it away entirely. When `(ite (not vflagSym) ...)`
-is used with a vflag, the code generator knows the condition is always true and emits only the
-then-branch, eliminating the `if` statement.
-
-### jtrue
-
-`(jtrue Symbol+)` sets the listed flag symbols to `true`. The last symbol in the list is
-special: it becomes a `goto` target. This allows the code generator to turn a flag-set
-followed by a conditional check into a direct jump.
 
 ### The (lab) marker in ite
 
