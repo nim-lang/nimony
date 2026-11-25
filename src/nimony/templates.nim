@@ -524,15 +524,17 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   prog.mem[sym].phase = SemcheckBodies
   result = true
 
-proc tryTypeFieldDefaults(c: var SemContext; sym: SymId): bool =
-  ## The field defaults of an object type of this module are typed when the
-  ## body phase reaches its declaration (`semFieldDefaults`). A construction
-  ## before that point -- in a `const`, a parameter default, a proc body
-  ## earlier in the module, a generic instance -- needs them now: run that
-  ## body-phase visit of the declaration early, at the module's top scope.
-  ## The in-order visit later types the same defaults to the same tree.
+proc tryTypeObjectEarly(c: var SemContext; sym: SymId; target: SemPhase): bool =
+  ## An object type of this module is checked when a phase reaches its
+  ## declaration. A use before that point needs it now: run that phase's visit
+  ## of the declaration early, at the module's top scope; the in-order visit
+  ## later produces the same tree. Bodies: a construction (in a `const`, a
+  ## parameter default, an earlier proc body, a generic instance) needs the
+  ## typed field defaults (`semFieldDefaults`). Signatures: `object of Base`
+  ## before `Base` in a type section needs `Base`'s checked declaration.
   result = false
-  if prog.mem.hasKey(sym) and prog.mem[sym].phase == SemcheckSignatures and
+  let before = if target == SemcheckBodies: SemcheckSignatures else: SemcheckTopLevelSyms
+  if prog.mem.hasKey(sym) and prog.mem[sym].phase == before and
       pool.symModule(sym) == c.thisModuleSuffix and
       readonlyCursorAt(prog.mem[sym].buffer, 0).stmtKind == TypeS and
       asTypeDecl(readonlyCursorAt(prog.mem[sym].buffer, 0)).body.typeKind == ObjectT:
@@ -543,7 +545,7 @@ proc tryTypeFieldDefaults(c: var SemContext; sym: SymId): bool =
     var routine = createSemRoutine(NoSym, nil)
     var inGenericDefinition = 0
     var typesInProgress: seq[SymId] = @[]
-    var phase = SemcheckBodies
+    var phase = target
     while c.currentScope.up != nil:
       c.currentScope = c.currentScope.up
     swap c.routine, routine
@@ -566,14 +568,15 @@ proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): 
   ## Drive `symId` toward `targetPhase` on demand, then load it. This is the
   ## single entry point for cross-phase symbol resolution: today the
   ## registered drivers are template-body promotion (Signatures -> Bodies, see
-  ## `tryPromoteTemplateBody`) and the typing of an object type's field
-  ## defaults (Signatures -> Bodies, `tryTypeFieldDefaults`); as more of the
+  ## `tryPromoteTemplateBody`) and the early check of an object type
+  ## (to Signatures or Bodies, `tryTypeObjectEarly`); as more of the
   ## phased passes become on-demand, additional drivers hang off here rather
   ## than being invoked ad hoc at each consumption site (toward
   ## nim-lang/nimony#2064's phase de-rigidification).
   if targetPhase >= SemcheckBodies:
     discard tryPromoteTemplateBody(c, symId)
-    discard tryTypeFieldDefaults(c, symId)
+  if targetPhase >= SemcheckSignatures:
+    discard tryTypeObjectEarly(c, symId, min(targetPhase, SemcheckBodies))
   if ensurePhase(symId, targetPhase) == PhaseCycle:
     return LoadResult(status: LacksOffset)  # cycle detected
   result = tryLoadSym(symId)
