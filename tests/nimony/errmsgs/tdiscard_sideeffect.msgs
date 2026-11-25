@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tdiscard_sideeffect.nim(24, 11) Error: cannot call a routine with side effects from a `.noSideEffect` context
+tests/nimony/errmsgs/tdiscard_sideeffect.nim(28, 11) Error: cannot call a routine with side effects from a `.noSideEffect` context
+tests/nimony/errmsgs/tdiscard_sideeffect.nim(32, 11) Error: use of global/thread-local variable 'counter' in .noSideEffect context
+tests/nimony/errmsgs/tdiscard_sideeffect.nim(36, 11) Error: cannot call a routine with side effects from a `.noSideEffect` context
+tests/nimony/errmsgs/tdiscard_sideeffect.nim(40, 13) Error: cannot call a routine with side effects from a `.noSideEffect` context
