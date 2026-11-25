@@ -60,7 +60,7 @@ iterator items*[T: OrdinalEnum](E: typedesc[T]): T =
     if v == high(E): break
     inc v
 
-iterator countdown*[T: Ordinal and Comparable and Orderable; V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
+iterator countdown*[T: Ordinal and Comparable and Orderable](a, b: T; step: Positive = 1): T {.inline,
     ensures: (b <= result and result <= a).} =
   ## Counts from ordinal value `a` down to `b` (inclusive) with the given
   ## step count.

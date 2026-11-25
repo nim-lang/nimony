@@ -15,7 +15,7 @@ for i in 1 .. 3:
     testCountdown(low(int) + j, low(int), i)
     testCountdown(low(int) + j, low(int) + 1, i)
 
-for i in 1'u .. 3'u:
+for i in 1 .. 3:
   for j in 0'u .. 3'u:
     testCountdown(j, 0'u, i)
     testCountdown(j, 1'u, i)
