@@ -1,0 +1,3 @@
+tests/nimony/methods/tgenericmethod.nim(8, 1) Error: a generic method needs a generic class: ref A.Obj not nil
+tests/nimony/methods/tgenericmethod.nim(10, 1) Error: a generic method needs a generic class: ref B.Obj not nil
+tests/nimony/methods/tgenericmethod.nim(11, 1) Error: a generic method needs a generic class: ref G.Obj[int64] not nil
