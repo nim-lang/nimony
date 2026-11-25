@@ -568,6 +568,11 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = false
   of LentT:
     result = true # lent types are borrowed; no hooks needed
+  of ErrT:
+    # The type of an erroneous expression (`typenav.getType` of `(err)`), such
+    # as a temp xelim binds a discarded `(err)` to. The module is rejected
+    # once its errors are reported; nothing runs a hook for it.
+    result = true
   of SinkT, ArrayT:
     result = isTrivial(c, typ.childCursor)
   of OwnedT:
@@ -584,7 +589,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
         return false
       skip tup
     result = true
-  of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
+  of NoType, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
      TypekindT, UntypedT, TypedT, PluginCallT:
     # `PluginCallT` is frontend-only: a deferred plugin call is resolved by
     # every instantiation, and only instantiations reach hexer.
