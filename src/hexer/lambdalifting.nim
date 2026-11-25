@@ -140,12 +140,12 @@ type
       ## iters in the module and get flushed in `elimLambdas`.
     hoisted: TokenBuf
       ## Statements `genCall` and `emitIterValue` put in front of the current
-      ## statement (callee temp, proc-value bridge env, iterator frame); the Final
+      ## statement (callee temp, iterator frame); the Final
       ## IR has no `(expr …)`. `treStmt` splices them in.
     thunks: Table[SymId, SymId]
       ## routine -> its `cthunk`, see `nonClosureToClosure`
-    bridgeDecls: TokenBuf
-      ## the thunks and proc-value bridges (and their env types) generated
+    thunkDecls: TokenBuf
+      ## the thunks generated
       ## while walking the module; emitted in front of the module's statements
     raisingIterTypes: HashSet[SymId]
       ## `itertype` aliases of `.raises` iterators. Pass 1 rewrites an alias to
@@ -1785,12 +1785,13 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
-proc bridgeHead(c: var Context; dest: var TokenBuf; sym: SymId; origTyp: Cursor;
-                info: NifLineInfo): (seq[SymId], Cursor) =
+proc thunkHead(c: var Context; dest: var TokenBuf; sym: SymId; origTyp: Cursor;
+               info: NifLineInfo): (seq[SymId], Cursor) =
   ## Opens the routine `sym` with `origTyp`'s parameters plus the env
   ## parameter, its return type and, of its pragmas, the calling convention,
-  ## `.raises` and `.passive` (cps lowers the bridge along with the callee). Returns the parameter names and the (untranslated) return
-  ## type; `bridgeBody` adds the body.
+  ## `.raises` and `.passive` (cps lowers the thunk along
+  ## with the callee). Returns the parameter names and the (untranslated) return
+  ## type; `thunkBody` adds the body.
   result = (newSeq[SymId](), default(Cursor))
   dest.addParLe ProcS, info
   dest.addSymDef sym, info
@@ -1834,9 +1835,9 @@ proc bridgeHead(c: var Context; dest: var TokenBuf; sym: SymId; origTyp: Cursor;
     while n.hasMore: skip n
   dest.addDotToken() # no effects
 
-proc bridgeBody(c: var Context; dest: var TokenBuf; callee: TokenBuf;
-                params: seq[SymId]; retType: Cursor; info: NifLineInfo) =
-  ## `callee(params)`, its result returned; closes the routine `bridgeHead`
+proc thunkBody(c: var Context; dest: var TokenBuf; callee: TokenBuf;
+               params: seq[SymId]; retType: Cursor; info: NifLineInfo) =
+  ## `callee(params)`, its result returned; closes the routine `thunkHead`
   ## opened.
   var call = createTokenBuf(16)
   call.copyIntoKind CallX, info:
@@ -1870,110 +1871,25 @@ proc thunkFor(c: var Context; p: SymId; origTyp: Cursor; info: NifLineInfo): Sym
     inc c.counter
     c.thunks[p] = result
     var decl = createTokenBuf(32)
-    let (params, retType) = bridgeHead(c, decl, result, origTyp, info)
+    let (params, retType) = thunkHead(c, decl, result, origTyp, info)
     var callee = createTokenBuf(1)
     callee.addSymUse p, info
-    bridgeBody(c, decl, callee, params, retType, info)
+    thunkBody(c, decl, callee, params, retType, info)
     programs.publish(result, decl, 0)
-    c.bridgeDecls.add decl
-
-proc procValueBridge(c: var Context; origTyp: Cursor; info: NifLineInfo): (SymId, SymId, SymId) =
-  ## For a proc value converted to a closure: an env object holding the value
-  ## and a bridge that calls it from there. Returns (bridge, env type, field).
-  let id = $c.counter & "." & c.thisModuleSuffix
-  inc c.counter
-  let bridge = pool.symId("`ctBridge." & id)
-  let envTyp = pool.symId("`ctEnv." & id)
-  let fld = pool.symId("`ctFn." & id)
-  var decl = createTokenBuf(64)
-  decl.copyIntoKind TypeS, info:
-    decl.addSymDef envTyp, info
-    decl.addDotToken() # no export marker
-    decl.addDotToken() # no generic params
-    decl.addDotToken() # no pragmas
-    decl.copyIntoKind ObjectT, info:
-      decl.addSymUse pool.symId(BareRootObjName), info
-      let beforeField = decl.len
-      decl.copyIntoKind FldY, info:
-        decl.addSymDef fld, info
-        decl.addDotToken() # no export marker
-        decl.addDotToken() # no pragmas
-        # the value's own type: `origTyp` without `.closure`
-        var plain = createTokenBuf(16)
-        var t = origTyp
-        assert t.typeKind == ProctypeT
-        takeInto plain, t:
-          while t.hasMore:
-            if t.substructureKind == PragmasU:
-              takeInto plain, t:
-                while t.hasMore:
-                  if t.pragmaKind == ClosureP: skip t
-                  else: plain.takeTree t
-            else:
-              plain.takeTree t
-        var pt = beginRead(plain)
-        treType c, decl, pt
-        decl.addDotToken() # no default value
-      programs.publish(fld, decl, beforeField)
-  programs.publish(envTyp, decl, 0)
-  let start = decl.len
-  let (params, retType) = bridgeHead(c, decl, bridge, origTyp, info)
-  var callee = createTokenBuf(16)
-  callee.copyIntoKind DotX, info:
-    callee.copyIntoKind DerefX, info:
-      callee.copyIntoKind CastX, info:
-        callee.copyIntoKind RefT, info:
-          callee.addSymUse envTyp, info
-        callee.addSymUse pool.symId(ClosureEnvParamName), info
-    callee.addSymUse fld, info
-  bridgeBody(c, decl, callee, params, retType, info)
-  programs.publish(bridge, decl, start)
-  c.bridgeDecls.add decl
-  result = (bridge, envTyp, fld)
+    c.thunkDecls.add decl
 
 proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: NifLineInfo) =
-  ## A plain proc as a closure value. A closure is always called with its env
-  ## (`genClosureValueCall`), so the fn slot gets an env-taking routine on
-  ## every target: a routine symbol its `cthunk`, any other proc value a
-  ## bridge reading the value from a small heap env. Storing the bare proc and
+  ## A routine as a closure value. A closure is always called with its env
+  ## (`genClosureValueCall`), so the fn slot gets the routine's `cthunk`, an
+  ## env-taking routine, and the env is nil. Storing the bare routine and
   ## calling it without an env when the env is nil had the caller pick a
   ## signature the stored routine may not have; wasm's `call_indirect` traps
-  ## on that (#2755).
-  let isRoutine = n.kind == Symbol and
-                  c.typeCache.fetchSymKind(n.symId) in RoutineKinds
-  var fn = SymId(0)
-  var envTmp = SymId(0)
-  if isRoutine:
-    fn = thunkFor(c, n.symId, origTyp, info)
-    inc n
-  else:
-    let (bridge, envTyp, fld) = procValueBridge(c, origTyp, info)
-    fn = bridge
-    envTmp = pool.symId("`ctEnvTmp." & $c.counter & "." & c.thisModuleSuffix)
-    inc c.counter
-    var value = createTokenBuf(16)
-    if n.isTagLit:
-      treSons c, value, n
-    else:
-      tre c, value, n
-    var setup = createTokenBuf(16)
-    setup.copyIntoKind VarS, info:
-      setup.addSymDef envTmp, info
-      setup.addDotToken() # no export marker
-      setup.addDotToken() # no pragmas
-      setup.copyIntoKind RefT, info:
-        setup.addSymUse envTyp, info
-      setup.copyIntoKind NewobjX, info:
-        setup.copyIntoKind RefT, info:
-          setup.addSymUse envTyp, info
-    c.typeCache.registerLocal(envTmp, VarY, default(Cursor))
-    setup.copyIntoKind AsgnS, info:
-      setup.copyIntoKind DotX, info:
-        setup.copyIntoKind DerefX, info:
-          setup.addSymUse envTmp, info
-        setup.addSymUse fld, info
-      setup.add value
-    c.hoisted.add setup
+  ## on that (#2755). Only a routine converts implicitly: sigmatch rejects a
+  ## proc value, which has no static routine to forward to.
+  if not (n.kind == Symbol and c.typeCache.fetchSymKind(n.symId) in RoutineKinds):
+    bug "toClosure of a proc value; sigmatch accepts only a routine"
+  let fn = thunkFor(c, n.symId, origTyp, info)
+  inc n
   dest.copyIntoKind TupconstrX, info:
     dest.copyIntoKind ClosureTupleT, info:
       c.toProcType(dest, origTyp)
@@ -1981,12 +1897,7 @@ proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; orig
     dest.copyIntoKind CastX, info:
       c.toProcType(dest, origTyp)
       dest.addSymUse fn, info
-    if envTmp == SymId(0):
-      dest.addParPair NilX, info
-    else:
-      dest.copyIntoKind CastX, info:
-        dest.addRootRef info
-        dest.addSymUse envTmp, info
+    dest.addParPair NilX, info
 
 proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -2277,7 +2188,7 @@ proc elimLambdas*(pass: var Pass; raisesLowered: var HashSet[SymId]) =
     ptrSize: pass.bits div 8
   )
   c.hoisted = createTokenBuf(0)
-  c.bridgeDecls = createTokenBuf(0)
+  c.thunkDecls = createTokenBuf(0)
   c.typeCache.openScope()
   tr c, pass.dest, n
   c.typeCache.closeScope()
@@ -2315,7 +2226,7 @@ proc elimLambdas*(pass: var Pass; raisesLowered: var HashSet[SymId]) =
       for (sym, sig) in c.pendingIterSigs.mitems:
         publishSignature sig, sym, 0
       pass.dest.add c.coroCtx.coroTypes
-      pass.dest.add c.bridgeDecls
+      pass.dest.add c.thunkDecls
       pass.dest.add stmtsBuf
       pass.dest.addParRi(n2.endInfo)
     pass.nextTemp = c.coroCtx.nextTemp

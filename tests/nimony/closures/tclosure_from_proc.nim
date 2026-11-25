@@ -1,8 +1,8 @@
 ## A plain proc stored in a closure is called with an env like any closure:
-## the fn slot holds a thunk (a routine symbol) or a bridge (a proc value)
-## with the closure's signature. The importer of the closure's type used to
-## call the bare proc without an env instead, a signature mismatch that wasm's
-## `call_indirect` traps on (#2755).
+## the fn slot holds the routine's thunk, which has the closure's signature.
+## The importer of the closure's type used to call the bare proc without an
+## env instead, a signature mismatch that wasm's `call_indirect` traps on
+## (#2755).
 
 import std/syncio
 import deps/mclosureholder
@@ -13,11 +13,6 @@ let a = Holder(f: proc (n: int): int = n + 2)
 let b = Holder(f: named)
 echo callHere(a, 10), " ", callHere(b, 10)
 echo a.f(10), " ", b.f(10)
-
-# a proc value, not a routine symbol
-let p: proc (n: int): int {.nimcall.} = named
-let h = Holder(f: p)
-echo callHere(h, 5), " ", h.f(5)
 
 # the thunk keeps `.raises`
 proc raiser(n: int): int {.raises.} =

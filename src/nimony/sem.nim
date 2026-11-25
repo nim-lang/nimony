@@ -295,8 +295,10 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
       endRead convArg.n
       expectUnique dest
       shrink dest, argBegin
-      #buildErr c, dest, info, getErrorMsg(m)
-      c.typeMismatch dest, info, it.typ, expected
+      if rejectsProcValueToClosure(m):
+        buildErr c, dest, info, getErrorMsg(m)
+      else:
+        c.typeMismatch dest, info, it.typ, expected
   else:
     endRead arg.n
     expectUnique dest
