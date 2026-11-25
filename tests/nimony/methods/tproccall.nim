@@ -39,3 +39,19 @@ proc dispatchClosures =
   echo p.mk(4)()
 
 dispatchClosures()
+
+# An inline proc type is the same parameter type in every override, whatever
+# its parameters are named (#366).
+type Other = ref object of Parent
+
+method runInline(x: Parent; f: proc (x: int) {.closure.}) {.base.} = f(1)
+method runInline(x: Child; f: proc (x: int) {.closure.}) = f(20)
+method runInline(x: Other; f: proc (y: int) {.closure.}) = f(300)
+
+proc dispatchInline =
+  var total = 0
+  let f = proc (x: int) {.closure.} = total += x
+  for p in [Parent(), Parent(Child()), Parent(Other())]: p.runInline(f)
+  echo total
+
+dispatchInline()

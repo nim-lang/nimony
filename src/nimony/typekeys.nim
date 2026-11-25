@@ -28,6 +28,14 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         skip c, SkipPragmas # pragmas
         mangleImpl b, c, mm # type is interesting
         skip c, SkipValue # value
+    elif c.substructureKind == ParamU:
+      # a parameter's name is not part of a proc type (#366)
+      b.addTree(tag)
+      c.into:
+        skip c, SkipName # name
+        while c.hasMore:
+          mangleImpl b, c, mm
+      b.endTree()
     elif c.typeKind == ArrayT:
       b.addTree tag
       c.into:
