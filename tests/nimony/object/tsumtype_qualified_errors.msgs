@@ -1,3 +1,7 @@
 tests/nimony/object/tsumtype_qualified_errors.nim(13, 63) Error: type mismatch: got: int64 but wanted: string
 tests/nimony/object/tsumtype_qualified_errors.nim(16, 60) Error: undeclared sum type branch: Bad
 tests/nimony/object/tsumtype_qualified_errors.nim(19, 59) Error: sum type constructor requires named arguments
+tests/nimony/object/tsumtype_qualified_errors.nim(22, 55) Error: cannot infer type parameter 'E' of the sum type of branch `Ok`; write it instead of `_`
+tests/nimony/object/tsumtype_qualified_errors.nim(26, 59) Error: type mismatch: got: string but wanted: int64
+tests/nimony/object/tsumtype_qualified_errors.nim(36, 53) Error: type mismatch: got: string but wanted: int64
+tests/nimony/object/tsumtype_qualified_errors.nim(38, 51) Error: too many type arguments for the sum type of branch `Ok`

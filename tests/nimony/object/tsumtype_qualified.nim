@@ -65,4 +65,37 @@ assert total(Tree[int].Node(left: Tree[int].Leaf(val: 1), right: Tree[int].Leaf(
 assert area(Shape.Line(a: 2, b: 9)) == 7
 assert area(Shape.Dot(x: 4)) == 4
 
+# `_` stands for a type argument the fields determine, as `Ok(v: 5)` does
+# for the `T` of `Res[T, E]`; only what the fields cannot tell is written:
+assert show(Res[_, string].Ok(v: 8)) == "ok 8"
+assert show(Res[int, _].Err(e: "wild")) == "err wild"
+
+type
+  Both[A, B] = object
+    case
+    of Pair:
+      a: A
+      b: B
+    of Empty: discard
+
+proc pairText(p: Both[int, string]): string =
+  case p
+  of Pair(a, b): result = $a & b
+  of Empty: result = "empty"
+
+assert pairText(Both[_, _].Pair(a: 1, b: "x")) == "1x"
+assert pairText(Both[int, _].Pair(a: 2, b: "y")) == "2y"
+assert pairText(Both[int, string].Empty()) == "empty"
+
+# A literal takes the type written for it:
+proc byteText(p: Both[uint8, string]): string =
+  case p
+  of Pair(a, b): result = $a & b
+  of Empty: result = "empty"
+
+assert byteText(Both[uint8, _].Pair(a: 5, b: "z")) == "5z"
+
+# also for a `ref` sum type:
+assert total(Tree[_].Leaf(val: 5)) == 5
+
 echo "tsumtype_qualified: OK"
