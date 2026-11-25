@@ -6,3 +6,5 @@ tests/nimony/errmsgs/tcaseerrors.nim(13, 4) Error: value already handled
 tests/nimony/errmsgs/tcaseerrors.nim(20, 32) Error: cannot evaluate symbol at compile time: c.0.tcagl87gf1
 tests/nimony/errmsgs/tcaseerrors.nim(21, 25) Error: value already handled
 tests/nimony/errmsgs/tcaseerrors.nim(26, 3) Error: undeclared identifier: 'foo'
+tests/nimony/errmsgs/tcaseerrors.nim(30, 8) Error: `case` selector of generic type `T` is not supported; use a concrete type such as `x: int` or `x: string`
+tests/nimony/errmsgs/tcaseerrors.nim(35, 8) Error: `case` selector of generic type `T` is not supported; use a concrete type such as `x: int` or `x: string`

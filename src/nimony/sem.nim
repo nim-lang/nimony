@@ -3386,6 +3386,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
 proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: CaseMode;
                  state: var SemObjectState) =
   let info = it.n.info
+  let caseDestStart = dest.len
   dest.addParLe(it.n.cursorTagId, it.n.info)
   let caseStart = it.n
   it.n = sub(it.n)
@@ -3396,10 +3397,23 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
   case mode
   of NormalCase:
     let selectorStart = dest.len
+    let selectorInfo = it.n.info
     var selector = Item(n: it.n, typ: c.types.autoType)
     semExpr c, dest, selector
     it.n = selector.n
     selectorType = skipModifier(selector.typ)
+    if selectorType.isSymbol and getTypeSection(selectorType.symId).kind == TypevarY:
+      # A typevar is not its constraint: `[T: string]` does not make `x: T` a
+      # `string`, and `[T: int]` does not make it an `int`.
+      # The labels cannot be checked against `T`: the whole `case` becomes the
+      # error instead of one error per label.
+      let msg = "`case` selector of generic type `" & typeToString(selectorType) &
+        "` is not supported; use a concrete type such as `x: int` or `x: string`"
+      dest.shrink caseDestStart
+      buildErr c, dest, selectorInfo, msg, caseStart
+      it.n = caseStart
+      skip it.n
+      return
     stInfo = findSumTypeInfo(selectorType)
     if stInfo.valid:
       isSumType = true
