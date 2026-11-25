@@ -229,6 +229,9 @@ const
     # constructor to a hidden init proc whose arms are total constructors, so
     # arkham never sees one that names no branch.
     "tests/nimony/object/tcaseobj_runtime_discriminator",
+    # Two ref types whose payload symbols concatenate alike (`Foo.Obj.0.m`,
+    # `FooObj.0.m`) shared one type key; arkham asserted on a missing field.
+    "tests/nimony/object/trefobj_name_key",
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
     # x86-64 `bsf`, AArch64 `rbit`+`clz` — so this is the one test whose point is
     # that the C and native backends agree on results they reach by different

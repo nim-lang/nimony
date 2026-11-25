@@ -104,7 +104,11 @@ proc addIdent*(b: var Mangler; s: string) =
         b.put c
 
 proc addSymbolBody(b: var Mangler; s: string) =
+  var first = true
   for part in s.split('.'):
+    # keep the part boundaries: `Foo.Obj.0.m` and `FooObj.0.m` must differ
+    if not first: b.escape '.'
+    first = false
     if not referencePrevious(b, part):
       for c in part:
         if c.needsEscape:
