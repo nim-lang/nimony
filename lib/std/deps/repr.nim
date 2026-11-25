@@ -7,7 +7,6 @@
 ## because object type names and the distinction between `object` and `ref
 ## object` can only be decided from the concrete type.
 
-import std/strutils
 import plugins
 import typetraits_render
 import ../private/reprimpl
@@ -195,34 +194,6 @@ proc classify(defs: NifCursor; n: NifCursor; missing: var seq[SymId];
   else:
     rkUnknown
 
-func stripObjSuffix(s: string): string =
-  let p = s.find(".Obj")
-  result = s
-  if p >= 0:
-    result.delete(p .. p + 3)
-
-proc renderObjectType(defs: NifCursor; target: NifCursor): string =
-  ## Unwrap only the hidden `T.Obj` implementation type of a `ref object`;
-  ## an explicit `ref T`/`ptr T` keeps its prefix.
-  var inner = targetType(target)
-  let innerName = renderTypeName(defs, inner)
-  if innerName.contains(".Obj"):
-    result = stripObjSuffix(innerName)
-  else:
-    var outer = target
-    result = renderTypeName(defs, outer)
-
-proc reprTypeName(defs: NifCursor; orig: NifCursor; kind: ReprKind): string =
-  var n = orig
-  case kind
-  of rkRefObject, rkPtrObject:
-    if n.kind == Symbol:
-      result = renderTypeName(defs, n)
-    else:
-      result = renderObjectType(defs, n)
-  else:
-    result = renderTypeName(defs, n)
-
 proc bindHelper(b: var NifBuilder; name: string) =
   ## `bindSym` only accepts literals, so map the dynamic helper name here.
   case name
@@ -329,21 +300,8 @@ proc tr(root: NifCursor): NifBuilder =
     scanType(defs, target, missing, hasTypevar, seen)
     if missing.len > 0:
       return needTypes(missing)
-    var rendered = ""
-    if target.kind == TagLit and target.typeKind in {RefT, PtrT}:
-      var kindMissing: seq[SymId] = @[]
-      var kindSeen: seq[SymId] = @[]
-      let kind = classify(defs, target, kindMissing, kindSeen)
-      if kindMissing.len > 0:
-        return needTypes(kindMissing)
-      if kind in {rkRefObject, rkPtrObject}:
-        rendered = renderObjectType(defs, target)
-      else:
-        rendered = renderTypeName(defs, target)
-    else:
-      rendered = renderTypeName(defs, target)
     result = createTree()
-    result.addStrLit rendered
+    result.addStrLit renderTypeName(defs, target)
     return
   var typ = args
   var value = args
@@ -388,13 +346,13 @@ proc tr(root: NifCursor): NifBuilder =
   of rkTupleNamed: singleCall("reprTupleNamed", info, value)
   of rkTuplePositional: singleCall("reprTuplePositional", info, value)
   of rkObject:
-    let name = reprTypeName(defs, target, kind)
+    let name = renderTypeName(defs, target)
     typeNameCall("reprObject", name, info, value)
   of rkRefObject:
-    let name = reprTypeName(defs, target, kind)
+    let name = renderTypeName(defs, target)
     typeNameCall("reprRefObject", name, info, value)
   of rkPtrObject:
-    let name = reprTypeName(defs, target, kind)
+    let name = renderTypeName(defs, target)
     typeNameCall("reprPtrObject", name, info, value)
   of rkRef: singleCall("reprRef", info, value)
   of rkPtr: singleCall("reprPtr", info, value)

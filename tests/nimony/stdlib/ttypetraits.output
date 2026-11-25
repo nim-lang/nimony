@@ -21,6 +21,12 @@ Foo[seq[Foo[string]]]
 Foo[Foo[Foo[MyInt]]]
 3
 float32
+Node
+PNode
+GenRef[int]
+seq[Node]
+Node
+ref O
 true
 true
 true

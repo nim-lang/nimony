@@ -86,6 +86,29 @@ block nameTypeParameters:
     echo $T
   echoNAndT(default(StaticFoo[3, float32]))
 
+block nameRefObjectValues:
+  # `type T = ref object` is `ref T.Obj` once sem splits the object off; a
+  # value of type `T` still renders as `T`. A `ref` to a named object keeps
+  # its prefix.
+  type
+    Node = ref object
+    PNode = ptr object
+      x: int
+    GenRef[T] = ref object
+      x: T
+    O = object
+    R = ref O
+  let n = Node()
+  let p = cast[PNode](nil)
+  let g = GenRef[int]()
+  let r = R()
+  echo $typeof(n)
+  echo $typeof(p)
+  echo $typeof(g)
+  echo $typeof(@[n])
+  echo $Node
+  echo $typeof(r)
+
 block supportsCopyMemTuples:
   # A tuple is plain data when its fields are; so is an object holding one.
   type

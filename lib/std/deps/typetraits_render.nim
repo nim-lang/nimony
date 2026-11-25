@@ -120,19 +120,17 @@ proc renderTypeName*(defs: NifCursor; n: NifCursor): string =
         skip n
       else:
         result = "distinct"
-  of RefT:
-    result = "ref "
+  of RefT, PtrT:
+    result = if n.typeKind == RefT: "ref " else: "ptr "
     n.into:
       if n.hasMore and n.otherKind notin {NotnilU, NilU, UncheckedU}:
-        result.add renderTypeName(defs, n)
-        skip n
-      while n.hasMore:
-        skip n
-  of PtrT:
-    result = "ptr "
-    n.into:
-      if n.hasMore and n.otherKind notin {NotnilU, NilU, UncheckedU}:
-        result.add renderTypeName(defs, n)
+        let inner = renderTypeName(defs, n)
+        let base = if n.kind == Symbol: symBasename(n.symId) else: ""
+        if base.endsWith(".Obj"):
+          # `type T = ref object` is `ref T.Obj` after sem; the user knows `T`.
+          result = base.substr(0, base.len - 5) & inner.substr(base.len)
+        else:
+          result.add inner
         skip n
       while n.hasMore:
         skip n
