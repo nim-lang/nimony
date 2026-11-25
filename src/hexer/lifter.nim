@@ -844,7 +844,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
         unravelObjField c, selector, paramA, paramB, depth
 
       var selectorField = takeLocal(n, SkipFinalParRi)
-      let dest = accessObjField(c, paramA, selectorField.name)
+      let dest = accessObjField(c, paramA, selectorField.name, depth = depth)
 
       if c.op == attachedWasMoved:
         # `=wasMoved` is called on memory that is not necessarily initialized:
