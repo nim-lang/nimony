@@ -35,6 +35,20 @@ proc main =
   for i in countup(R(7), R(9)): s.add i
   assert s == @[9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 2, 1, 0, 7, 8, 9]
 
+  # `countdown` with a step over `char`, an enum or `uint8`, and over a
+  # `range` without 1 and no step
+  type
+    E = enum ea, eb, ec, ed, ee
+    R5 = range[5..9]
+  var cs = ""
+  for c in countdown('k', 'a', 3): cs.add c
+  assert cs == "kheb"
+  assert toSeq(countdown(ee, ea, 2)) == @[ee, ec, ea]
+  assert toSeq(countdown(10'u8, 0'u8, 3)) == @[10'u8, 7'u8, 4'u8, 1'u8]
+  s = @[]
+  for i in countdown(R5(9), R5(5)): s.add i
+  assert s == @[9, 8, 7, 6, 5]
+
   # `items` of an enum whose `high` fills its storage: no step past `high`
   # (nimony-bugs-llms#122)
   type
