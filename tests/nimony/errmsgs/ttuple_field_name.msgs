@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/ttuple_field_name.nim(2, 16) Error: invalid tuple field name
+tests/nimony/errmsgs/ttuple_field_name.nim(7, 21) Error: invalid tuple field name
+tests/nimony/errmsgs/ttuple_field_name.nim(13, 23) Trace: instantiation from here
+tests/nimony/errmsgs/ttuple_field_name.nim(13, 33) Error: invalid tuple field name

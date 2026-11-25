@@ -4677,7 +4677,11 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
         let name = takeIdent(it.n)
         let nameStart = dest.len
         if name == StrId(0):
+          dest.shrink exprStart
           c.buildErr dest, nameCursor.info, "invalid tuple field name", nameCursor
+          it.n = tupStart; skip it.n
+          it.typ = c.types.autoType
+          return
         else:
           dest.addIdent(name, nameCursor.info)
         for tok in nameStart ..< dest.len:
