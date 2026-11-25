@@ -1216,7 +1216,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       assert param.isParamsTag
       param = sub(param) # throwaway copy; bounds the walk under vpr
       var ai = 0
-      var anyConverters = false
+      var converted = 0 # arguments this retry wraps in a converter call
       while param.hasMore:
         # varargs not handled yet
         if ai >= cs.args.len: break
@@ -1227,7 +1227,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         var arg = cs.args[ai]
         var convMatch = createMatch(addr c)
         if isVarargs and varargsHasConverter(f) and tryVarargsConverter(c, convMatch, f, arg):
-          anyConverters = true
+          inc converted
           # match already built call, just use it
           let bufPos = newArgBufs.len
           newArgBufs.add ensureMove(convMatch.args)
@@ -1238,7 +1238,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
             baseType = instantiateType(c, baseType, convMatch.inferred)
           newArgs.add CallArg(n: beginRead(newArgBufs[bufPos]), typ: baseType)
         elif tryConverterMatch(c, convMatch, f, arg):
-          anyConverters = true
+          inc converted
           var argBuf = createTokenBuf(16)
           argBuf.addParLe(HcallX, arg.n.info)
           argBuf.addSymUse(convMatch.fn.sym, arg.n.info)
@@ -1261,8 +1261,9 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       while ai < cs.args.len:
         newArgs.add cs.args[ai]
         inc ai
-      if anyConverters:
+      if converted > 0:
         sigmatch(newMatch, m[mi].fn, newArgs, genericArgs)
+        newMatch.convertedArgs = converted
         m.add newMatch
         matchAdded = true
     if matchAdded: # m.len != L
@@ -1405,6 +1406,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       errorMsg.add "'"
       # Add proc signatures and location for each match
       for i in 0..<m.len:
+        if m[i].err: continue # failed to match: not a candidate here
         errorMsg.add "\n"
         errorMsg.add typeToString(m[i].fn.typ, {renderNoBody})
         if m[i].fn.sym != NoSymId:
