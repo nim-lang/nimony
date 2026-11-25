@@ -40,6 +40,26 @@ assert guten == """
 let s: int64 = 12
 let m: int64 = 23"""
 
+# `inc`, `dec`, `incl`, `excl` statements render as commands
+var counter = 0
+var chars: set[char] = {}
+let incDec = astToStr:
+  if counter > 0:
+    inc counter
+    dec counter
+    incl chars, 'a'
+    excl chars, 'a'
+
+assert incDec == """
+
+if 0 < counter:
+  inc counter
+  dec counter
+  incl chars, 'a'
+  excl chars, 'a'"""
+assert astToStr(inc counter) == "inc counter"
+assert astToStr(inc(counter, 2)) == "inc counter, 2"
+
 assert not compiles(3 + "1" + 4)
 assert compiles(3 + 4)
 
