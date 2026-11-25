@@ -2863,6 +2863,62 @@ proc genInitProcEnd(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) 
   dest.addParRi() # stmts (body)
   dest.addParRi() # proc
 
+proc genEnvironDecls(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
+  ## The C `char` type and the `nimEnviron` global of the entry point (`main`,
+  ## or a library's `NimMain`), which fills it; not on Windows. std/envvars and
+  ## std/posix read `nimEnviron`, never libc's `environ`.
+  # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
+  # instead of NC8 (unsigned char). The C standard requires char** for main's argv.
+  dest.addParLe("type", rootInfo)
+  dest.addSymDef(pool.symId("`cchar.0." & c.main), rootInfo)
+  dest.addParLe("pragmas", rootInfo)
+  dest.addParLe("importc", rootInfo)
+  dest.addStrLit("char", rootInfo)
+  dest.addParRi() # importc
+  dest.addParLe("nodecl", rootInfo)
+  dest.addParRi() # nodecl
+  dest.addParRi() # pragmas
+  dest.addParLe("i", rootInfo) # body: (i 8)
+  dest.addIntLit(8, rootInfo)
+  dest.addParRi() # i
+  dest.addParRi() # type
+  # (gvar :nimEnviron (pragmas (exportc "nimEnviron")) (ptr (ptr cchar)) .)
+  # Distinct from libc's `environ` on purpose: an exportc `environ` would clash
+  # with libc's, and the libc-free backend has none. The native nifasm entry
+  # passes the kernel-provided env pointer as main's 3rd arg, mirroring argc/argv.
+  dest.addParLe("gvar", rootInfo)
+  dest.addSymDef(pool.symId("`nimEnviron.0." & c.main), rootInfo)
+  dest.addParLe("pragmas", rootInfo)
+  dest.addParLe("exportc", rootInfo)
+  dest.addStrLit("nimEnviron", rootInfo)
+  dest.addParRi() # exportc
+  dest.addParRi() # pragmas
+  dest.addParLe("ptr", rootInfo)
+  dest.addParLe("ptr", rootInfo)
+  dest.addParLe("c", rootInfo)
+  dest.addIntLit(8, rootInfo)
+  dest.addParRi() # c 8
+  dest.addParRi() # inner ptr
+  dest.addParRi() # outer ptr
+  dest.addDotToken() # no init value
+  dest.addParRi() # gvar
+
+proc genEnvironAsgn(c: var EContext; dest: var TokenBuf; src: SymId; rootInfo: NifLineInfo) =
+  # (asgn nimEnviron (cast (ptr (ptr (c 8))) src))
+  dest.addParLe("asgn", rootInfo)
+  dest.addSymUse(pool.symId("`nimEnviron.0." & c.main), rootInfo)
+  dest.addParLe("cast", rootInfo)
+  dest.addParLe("ptr", rootInfo)
+  dest.addParLe("ptr", rootInfo)
+  dest.addParLe("c", rootInfo)
+  dest.addIntLit(8, rootInfo)
+  dest.addParRi() # c 8
+  dest.addParRi() # inner ptr
+  dest.addParRi() # outer ptr
+  dest.addSymUse(src, rootInfo)
+  dest.addParRi() # cast
+  dest.addParRi() # asgn
+
 proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
                  isWindows: bool) =
   ## Generate cmdCount/cmdLine globals and a C main() wrapper for the main module.
@@ -2880,27 +2936,12 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   let ccharSym = pool.symId("`cchar.0." & c.main)
   let cmdCountSym = pool.symId("`cmdCount.0." & c.main)
   let cmdLineSym = pool.symId("`cmdLine.0." & c.main)
-  let nimEnvironSym = pool.symId("`nimEnviron.0." & c.main)
   let argcSym = pool.symId("`argc.0." & c.main)
   let argvSym = pool.symId("`argv.0." & c.main)
   let envpSym = pool.symId("`envp.0." & c.main)
 
   if not isWindows:
-    # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
-    # instead of NC8 (unsigned char). The C standard requires char** for main's argv.
-    dest.addParLe("type", rootInfo)
-    dest.addSymDef(ccharSym, rootInfo)
-    dest.addParLe("pragmas", rootInfo)
-    dest.addParLe("importc", rootInfo)
-    dest.addStrLit("char", rootInfo)
-    dest.addParRi() # importc
-    dest.addParLe("nodecl", rootInfo)
-    dest.addParRi() # nodecl
-    dest.addParRi() # pragmas
-    dest.addParLe("i", rootInfo) # body: (i 8)
-    dest.addIntLit(8, rootInfo)
-    dest.addParRi() # i
-    dest.addParRi() # type
+    genEnvironDecls(c, dest, rootInfo)
 
     # (gvar :cmdCount (pragmas (exportc "cmdCount")) (i 32) .)
     dest.addParLe("gvar", rootInfo)
@@ -2931,31 +2972,6 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
     dest.addIntLit(8, rootInfo)
     dest.addParRi() # c 8
 
-    dest.addParRi() # inner ptr
-    dest.addParRi() # outer ptr
-    dest.addDotToken() # no init value
-    dest.addParRi() # gvar
-
-    # (gvar :nimEnviron (pragmas (exportc "nimEnviron")) (ptr (ptr cchar)) .)
-    # The environment block (`char **`), written by `main` from its 3rd parameter.
-    # Distinct from libc's `environ` on purpose: this same gvar is emitted for the C
-    # backend too (codegen is shared), and an exportc `environ` would clash with
-    # libc's. The libc-free backend has no `environ`, so std/envvars + std/posix read
-    # `nimEnviron` instead under `nimNoLibc` (on the C backend it's dead — those
-    # modules keep using libc's `environ`). The native nifasm entry passes the
-    # kernel-provided env pointer as main's 3rd arg, mirroring argc/argv.
-    dest.addParLe("gvar", rootInfo)
-    dest.addSymDef(nimEnvironSym, rootInfo)
-    dest.addParLe("pragmas", rootInfo)
-    dest.addParLe("exportc", rootInfo)
-    dest.addStrLit("nimEnviron", rootInfo)
-    dest.addParRi() # exportc
-    dest.addParRi() # pragmas
-    dest.addParLe("ptr", rootInfo)
-    dest.addParLe("ptr", rootInfo)
-    dest.addParLe("c", rootInfo)
-    dest.addIntLit(8, rootInfo)
-    dest.addParRi() # c 8
     dest.addParRi() # inner ptr
     dest.addParRi() # outer ptr
     dest.addDotToken() # no init value
@@ -3034,20 +3050,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
     dest.addParRi() # cast
 
     dest.addParRi() # asgn
-    # (asgn nimEnviron (cast (ptr (ptr cchar)) envp))
-    dest.addParLe("asgn", rootInfo)
-    dest.addSymUse(nimEnvironSym, rootInfo)
-    dest.addParLe("cast", rootInfo)
-    dest.addParLe("ptr", rootInfo)
-    dest.addParLe("ptr", rootInfo)
-    dest.addParLe("c", rootInfo)
-    dest.addIntLit(8, rootInfo)
-    dest.addParRi() # c 8
-    dest.addParRi() # inner ptr
-    dest.addParRi() # outer ptr
-    dest.addSymUse(envpSym, rootInfo)
-    dest.addParRi() # cast
-    dest.addParRi() # asgn
+    genEnvironAsgn(c, dest, envpSym, rootInfo)
   # (call ini.0.modname)
   dest.addParLe("call", rootInfo)
   dest.addSymUse(initSym, rootInfo)
@@ -3079,10 +3082,31 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   dest.addParRi() # stmts
   dest.addParRi() # proc
 
-proc genLibMain(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
+proc genLibMain(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
+                isWindows: bool) =
   ## `--app:lib` and `--app:staticlib`: the exported `NimMain` that runs the
   ## main module's init proc, as Nim 2 emits it. The host calls it before
   ## anything else; a second call does nothing (the init proc's guard).
+  ## A library gets no `envp`, so `NimMain` fills `nimEnviron` from libc's
+  ## `environ`, which Nim 2 reads in a library too.
+  let environSym = pool.symId("`environ.0." & c.main)
+  if not isWindows:
+    genEnvironDecls(c, dest, rootInfo)
+    # (gvar :environ (pragmas (importc "environ")) (ptr (ptr cchar)) .)
+    dest.addParLe("gvar", rootInfo)
+    dest.addSymDef(environSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("importc", rootInfo)
+    dest.addStrLit("environ", rootInfo)
+    dest.addParRi() # importc
+    dest.addParRi() # pragmas
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addSymUse(pool.symId("`cchar.0." & c.main), rootInfo)
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addDotToken() # no init value
+    dest.addParRi() # gvar
   dest.addParLe("proc", rootInfo)
   dest.addSymDef(pool.symId("`NimMain.0." & c.main), rootInfo)
   dest.addParLe("params", rootInfo)
@@ -3094,6 +3118,7 @@ proc genLibMain(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
   dest.addParRi() # exportc
   dest.addParRi() # pragmas
   dest.addParLe("stmts", rootInfo)
+  if not isWindows: genEnvironAsgn(c, dest, environSym, rootInfo)
   dest.addParLe("call", rootInfo)
   dest.addSymUse(pool.symId(initProcName(c.main)), rootInfo)
   dest.addParRi() # call
@@ -3291,7 +3316,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   if isMain:
     case appType
     of appConsole, appGui: genMainProc(c, cdest, rootInfo, isWindows)
-    of appLib, appStaticLib: genLibMain(c, cdest, rootInfo)
+    of appLib, appStaticLib: genLibMain(c, cdest, rootInfo, isWindows)
 
   # the module's close was consumed by `trToplevel`
   let destfileName = c.dir / c.main & ".x.nif"
