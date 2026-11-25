@@ -964,7 +964,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         tr c, dest, n
         while n.hasMore:
           dest.takeTree n
-    of OconstrX:
+    of OconstrX, NewobjX:
+      # A `ref` object's constructor has the shape of an object's: a field's key shares its symbol with a
+      # local of the same name and is not that local.
       trObjConstr c, dest, n
     else:
       case n.stmtKind
