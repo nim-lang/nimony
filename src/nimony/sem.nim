@@ -3383,16 +3383,6 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
 
   result = typeToCursor(c, dest, typePos)
 
-proc caseLabelType(t: TypeCursor): TypeCursor =
-  ## The type whose labels a `case` on `t` takes: for a typevar in a checked
-  ## generic body (`proc p[T: string](x: T)`), its constraint.
-  result = t
-  if t.isSymbol:
-    let res = tryLoadSym(t.symId)
-    if res.status == LacksNothing and res.decl.symKind == TypevarY:
-      let tv = asTypevar(res.decl)
-      if not tv.typ.isDotToken: result = tv.typ
-
 proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: CaseMode;
                  state: var SemObjectState) =
   let info = it.n.info
@@ -3467,9 +3457,8 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
       if not isOrdinalType(selectorType):
         buildErr c, dest, info, "selector must be of an ordinal type"
 
-  let labelType = caseLabelType(selectorType)
-  let isString = if isSumType: false else: isSomeStringType(labelType)
-  let isFloat = not isSumType and labelType.typeKind == FloatT
+  let isString = if isSumType: false else: isSomeStringType(selectorType)
+  let isFloat = not isSumType and selectorType.typeKind == FloatT
   var seen: seq[(xint, xint)] = @[]
   var seenStr = initHashSet[StrId]()
   var seenFloat: seq[float] = @[]
