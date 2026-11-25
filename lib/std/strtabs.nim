@@ -88,7 +88,7 @@ const
   growthFactor = 2
   startSize = 64
 
-proc mode*(t: StringTableRef): StringTableMode {.inline.} = t.mode
+func mode*(t: StringTableRef): StringTableMode {.inline.} = t.mode
 
 iterator pairs*(t: StringTableRef): tuple[key, value: string] =
   ## Iterates over every `(key, value)` pair in the table `t`.
@@ -154,14 +154,14 @@ proc `[]`*(t: StringTableRef, key: string): var string {.raises.} =
   ## Retrieves the location at ``t[key]``.
   ##
   ## If `key` is not in `t`, the ``KeyError`` exception is raised.
-  ## One can check with `hasKey proc <#hasKey,StringTableRef,string>`_
+  ## One can check with `hasKey func <#hasKey,StringTableRef,string>`_
   ## whether the key exists.
   ##
   ## See also:
-  ## * `getOrDefault proc <#getOrDefault,StringTableRef,string,string>`_
+  ## * `getOrDefault func <#getOrDefault,StringTableRef,string,string>`_
   ## * `[]= proc <#[]=,StringTableRef,string,string>`_ for inserting a new
   ##   (key, value) pair in the table
-  ## * `hasKey proc <#hasKey,StringTableRef,string>`_ for checking if a key
+  ## * `hasKey func <#hasKey,StringTableRef,string>`_ for checking if a key
   ##   is in the table
   runnableExamples:
     var t = {"name": "John", "city": "Monaco"}.newStringTable
@@ -179,7 +179,7 @@ func getOrDefault*(t: StringTableRef; key: string,
   ##
   ## See also:
   ## * `[] proc <#[],StringTableRef,string>`_ for retrieving a value of a key
-  ## * `hasKey proc <#hasKey,StringTableRef,string>`_ for checking if a key
+  ## * `hasKey func <#hasKey,StringTableRef,string>`_ for checking if a key
   ##   is in the table
   ## * `[]= proc <#[]=,StringTableRef,string,string>`_ for inserting a new
   ##   (key, value) pair in the table
@@ -194,20 +194,20 @@ func getOrDefault*(t: StringTableRef; key: string,
   if hasHash: result = t.data[index].val
   else: result = default
 
-proc hasKey*(t: StringTableRef, key: string): bool =
+func hasKey*(t: StringTableRef, key: string): bool =
   ## Returns true if `key` is in the table `t`.
   ##
   ## See also:
-  ## * `getOrDefault proc <#getOrDefault,StringTableRef,string,string>`_
-  ## * `contains proc <#contains,StringTableRef,string>`_
+  ## * `getOrDefault func <#getOrDefault,StringTableRef,string,string>`_
+  ## * `contains func <#contains,StringTableRef,string>`_
   runnableExamples:
     var t = {"name": "John", "city": "Monaco"}.newStringTable
     doAssert t.hasKey("name")
     doAssert not t.hasKey("occupation")
   result = rawGet(t, key)[0]
 
-proc contains*(t: StringTableRef, key: string): bool =
-  ## Alias of `hasKey proc <#hasKey,StringTableRef,string>`_ for use with
+func contains*(t: StringTableRef, key: string): bool =
+  ## Alias of `hasKey func <#hasKey,StringTableRef,string>`_ for use with
   ## the `in` operator.
   runnableExamples:
     var t = {"name": "John", "city": "Monaco"}.newStringTable
@@ -215,7 +215,7 @@ proc contains*(t: StringTableRef, key: string): bool =
     doAssert "occupation" notin t
   return hasKey(t, key)
 
-proc rawInsert(mode: StringTableMode, data: var KeyValuePairSeq, key, val: string) =
+func rawInsert(mode: StringTableMode, data: var KeyValuePairSeq, key, val: string) =
   var h: Hash = myhash(mode, key) and Hash(high(data))
   while data[h].hasValue:
     h = nextTry(h, high(data))
@@ -223,11 +223,11 @@ proc rawInsert(mode: StringTableMode, data: var KeyValuePairSeq, key, val: strin
   data[h].val = val
   data[h].hasValue = true
 
-proc enlarge(t: StringTableRef) =
-  var n: KeyValuePairSeq = newSeq[KeyValuePair](len(t.data) * growthFactor)
-  for i in 0..high(t.data):
-    if t.data[i].hasValue: rawInsert(t.mode, n, move t.data[i].key, move t.data[i].val)
-  swap(t.data, n)
+func enlarge(data: var KeyValuePairSeq, mode: StringTableMode) =
+  var n: KeyValuePairSeq = newSeq[KeyValuePair](len(data) * growthFactor)
+  for i in 0..high(data):
+    if data[i].hasValue: rawInsert(mode, n, move data[i].key, move data[i].val)
+  swap(data, n)
 
 proc `[]=`*(t: StringTableRef, key, val: string) =
   ## Inserts a `(key, value)` pair into `t`.
@@ -244,17 +244,17 @@ proc `[]=`*(t: StringTableRef, key, val: string) =
   if hasHash:
     t.data[index].val = val
   else:
-    if mustRehash(len(t.data), t.counter): enlarge(t)
+    if mustRehash(len(t.data), t.counter): enlarge(t.data, t.mode)
     rawInsert(t.mode, t.data, key, val)
     inc(t.counter)
 
-proc newStringTable*(mode: StringTableMode): StringTableRef {.noSideEffect.} =
+func newStringTable*(mode: StringTableMode): StringTableRef {.noSideEffect.} =
   ## Creates a new empty string table.
   ##
   ## See also:
   ## * `newStringTable(keyValuePairs) proc
   ##   <#newStringTable,varargs[tuple[string,string]],StringTableMode>`_
-  result = StringTableRef(mode: mode, counter: 0, data: newSeq[KeyValuePair](startSize))
+  StringTableRef(mode: mode, counter: 0, data: newSeq[KeyValuePair](startSize))
 
 # proc newStringTable*(keyValuePairs: varargs[string],
 #                      mode: StringTableMode): StringTableRef {.noSideEffect.} =
@@ -287,7 +287,7 @@ proc newStringTable*(mode: StringTableMode): StringTableRef {.noSideEffect.} =
 #     {.noSideEffect.}:
 #       result[key] = val
 
-proc raiseFormatException(s: string) {.raises.} =
+func raiseFormatException(s: string) {.raises.} =
   raise ValueError # "format string: key not found: " & s
 
 proc getValue(t: StringTableRef, flags: set[FormatFlag], key: string): string {.raises.} =
@@ -363,7 +363,7 @@ proc del*(t: StringTableRef, key: string) =
         # else:
         #   shallowCopy(t.data[j], t.data[i]) # data[j] will be marked empty next loop
 
-proc `$`*(t: StringTableRef): string =
+func `$`*(t: StringTableRef): string =
   ## The `$` operator for string tables. Used internally when calling
   ## `echo` on a table.
   if t.len == 0:
