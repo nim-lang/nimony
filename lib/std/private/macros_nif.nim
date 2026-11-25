@@ -210,6 +210,10 @@ proc nimNodeKindToTag(k: NimNodeKind): string =
   of nnkError: "err"
   of nnkType: "typedesc"
 
+const litSuffixes: array[nnkIntLit..nnkTripleStrLit, string] = [
+  "", "i8", "i16", "i32", "i64", "", "u8", "u16", "u32", "u64",
+  "", "f32", "f64", "", "R", "T"]  # the suffix of `(suf LIT "SFX")` per kind
+
 proc fromNifToken(r: var Reader; t: ExpandedToken): NimNode =
   ## Helper to convert a single already-read token
   case t.tk
@@ -271,6 +275,12 @@ proc fromNifToken(r: var Reader; t: ExpandedToken): NimNode =
           break
         else:
           result.add fromNifToken(r, child)
+      if tag == "suf" and result.len == 2 and result[1].kind == nnkStrLit:
+        for k in nnkIntLit..nnkTripleStrLit:
+          if litSuffixes[k].len > 0 and litSuffixes[k] == result[1].strValField:
+            result[0].kind = k
+            result = result[0]
+            break
   of ParRi:
     result = newEmptyNode()
   of UnknownToken:
@@ -295,6 +305,10 @@ proc toNif*(b: var Builder; n: NimNode) =
   ## Convert NimNode tree to NIF stream
   if isNilNode(n):
     b.addEmpty()
+  elif n.kind in {nnkIntLit..nnkTripleStrLit} and litSuffixes[n.kind].len > 0:
+    b.withTree "suf":
+      b.toNifFresh(n)
+      b.addStrLit(litSuffixes[n.kind])
   elif n.tagField.len > 0 and tagToNimNodeKind(n.tagField) == n.kind:
     b.toNifAsRead(n)
   else:
