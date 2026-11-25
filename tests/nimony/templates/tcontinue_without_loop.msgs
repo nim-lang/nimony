@@ -1,0 +1,1 @@
+tests/nimony/templates/tcontinue_without_loop.nim(2, 3) Error: `continue` only possible within a loop

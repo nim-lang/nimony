@@ -1517,6 +1517,7 @@ proc semContinue(c: var SemContext; dest: var TokenBuf; it: var Item) =
   takeInto dest, it.n:
     if c.routine.inLoop == 0:
       buildErr c, dest, info, "`continue` only possible within a loop"
+      skip it.n
     else:
       wantDot c, dest, it.n
   producesNoReturn c, dest, info, it.typ
