@@ -5,3 +5,27 @@ tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(10, 15) Error: Type mismatc
 takesOpenArray([1, 2], 3, 4)
 [1] expected: openArray[int64] but got: array[0..1, int64] (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(9, 1))
 [3] too many arguments (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(9, 1))
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(18, 4) Error: Type mismatch at [position]
+put(cases, ("b", dbl))
+[2] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(16, 1))
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(28, 18) Error: Type mismatch at [position]
+takeTup((dbl, 3))
+[1] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(23, 1))
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(29, 18) Error: Type mismatch at [position]
+takeTup((pv, 3))
+[1] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(23, 1))
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(30, 18) Error: Type mismatch at [position]
+takeTup(t)
+[1] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(23, 1))
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(31, 18) Error: Type mismatch at [position]
+takePtr(addrpv)
+[1] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(24, 1))
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(42, 16) Error: Type mismatch at [position]
+takeArr(plainArr)
+[1] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(36, 1))
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(43, 15) Error: Type mismatch at [position]
+takeHO(ho)
+[1] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(38, 1))
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(44, 16) Error: Type mismatch at [position]
+takeRet(mkPlain)
+[1] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(40, 1))
