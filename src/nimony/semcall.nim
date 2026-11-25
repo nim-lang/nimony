@@ -1505,7 +1505,8 @@ proc hasGenericRoutine(n: Cursor): bool =
           result = true
         skip n
 
-proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
+proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall;
+              lhsOrig: Cursor = default(Cursor)) =
   var cs = CallState(
     beforeCall: dest.len,
     callNode: it.n.load(),
@@ -1622,7 +1623,8 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
   while it.n.hasMore:
-    let argOrig = it.n
+    # `a.b` hands over its already checked `a`; an `untyped` formal still gets `a` as written:
+    let argOrig = if cs.args.len == 0 and not cursorIsNil(lhsOrig): lhsOrig else: it.n
     var arg = Item(n: it.n, typ: c.types.autoType)
     argIndexes.add dest.len
     let named = arg.n.substructureKind == VvU
