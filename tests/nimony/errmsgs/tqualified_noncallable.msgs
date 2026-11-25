@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tqualified_noncallable.nim(3, 10) Error: attempt to call routine: 'a'
+tests/nimony/errmsgs/tqualified_noncallable.nim(5, 31) Error: attempt to call routine: 'a'
