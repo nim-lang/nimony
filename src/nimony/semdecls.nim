@@ -185,10 +185,16 @@ proc exportMarkerBecomesNifTag(c: var SemContext; dest: var TokenBuf; insertPos:
   nifTag.addParRi(info)
   dest.replace cursorAt(nifTag, 0), insertPos
 
-proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial: CrucialPragma) =
+proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial: CrucialPragma;
+                   kind: SymKind) =
   if ThreadvarP in crucial.flags:
     c.buildErr dest, it.n.info, "a `threadvar` cannot have an init value"
     skip it.n
+  elif kind in {ParamY, StaticParamY}:
+    let outer = c.paramDefaultScope
+    c.paramDefaultScope = c.currentScope
+    semExpr c, dest, it
+    c.paramDefaultScope = outer
   else:
     semExpr c, dest, it
 
@@ -414,7 +420,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         # satisfy the same constant-argument restriction as an explicit one
         var it = Item(n: n, typ: typeToCursor(c, dest, beforeType))
         let valueStart = dest.len
-        semLocalValue c, dest, it, crucial
+        semLocalValue c, dest, it, crucial, kind
         n = it.n
         if not isConstantArg(readonlyCursorAt(dest, valueStart)):
           dest.shrink valueStart
@@ -458,7 +464,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
             "' with a default value needs a type"
           it.typ = typeToCursor(c, errBuf, 0)
         else:
-          semLocalValue c, dest, it, crucial # 4
+          semLocalValue c, dest, it, crucial, kind # 4
         n = it.n
         let typ = skipModifier(it.typ)
         if classifyType(c, typ) == VoidT:
@@ -528,7 +534,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
               withNewScope c:
                 semConstExpr c, dest, it # 4
           else:
-            semLocalValue c, dest, it, crucial # 4
+            semLocalValue c, dest, it, crucial, kind # 4
           n = it.n
           # an erroneous declared type stays: patching it with the value's
           # type would drop the error and leave only its follow-up mismatch

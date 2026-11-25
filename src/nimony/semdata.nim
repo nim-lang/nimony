@@ -182,6 +182,9 @@ type
     #dest*: TokenBuf
     routine*: SemRoutine
     currentScope*: Scope
+    paramDefaultScope*: Scope
+      ## while a parameter's default is checked: the parameter scope, whose
+      ## parameters the default cannot refer to; nil otherwise
     g*: ProgramContext
     procRequests*: seq[InstRequest]
     typeInstDecls*: seq[SymId]

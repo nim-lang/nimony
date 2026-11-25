@@ -2074,6 +2074,11 @@ proc isParameterlessRoutine(s: SymId): bool =
                        # so a raw `inc` would read past an empty (params)
   result = not params.hasMore
 
+proc isDeclaredIn(scope: Scope; s: SymId): bool =
+  result = false
+  for sym in scope.tab.getOrDefault(symToIdent(s)):
+    if sym.name == s: return true
+
 proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int;
                 flags: set[SemFlag]; nearestIsUnique = false) =
   it.kind = s.kind
@@ -2185,6 +2190,17 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
       var n = res.decl
       if s.kind.isLocal or s.kind == EfldY:
         skipToLocalType n
+        if s.kind in {ParamY, StaticParamY} and c.paramDefaultScope != nil and
+            (AllowOverloads notin flags or skipModifierAndOwned(n).typeKind in RoutineTypes) and
+            isDeclaredIn(c.paramDefaultScope, s.name):
+          # Default values cannot refer to other parameters. (A callee that is
+          # not callable is looked up among the routines: `path("")` beside a
+          # parameter `path`.)
+          let info = readonlyCursorAt(dest, start).info
+          dest.shrink start
+          c.buildErr dest, info, "a default value cannot refer to parameter '" & pool.symBasename(s.name) & "'"
+          it.typ = c.types.autoType
+          return
       elif s.kind.isRoutine:
         var thisProc = asRoutine(n)
         # Closure iterators surface as a first-class `itertype` value. Same
