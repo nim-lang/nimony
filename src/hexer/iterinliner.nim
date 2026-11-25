@@ -725,7 +725,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         publish iterSym, buf
       else:
         skip(c, SkipFull)
-    of TemplateS:
+    of TemplateS, MacroS:
       dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:
       takeInto dest, c:
@@ -770,7 +770,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       # descending into them with `transformStmt` mis-parses them.
       # Type bodies don't need iterator transformations.
       dest.takeTree c
-    of CallS, CmdS, MacroS, EmitS, AsgnS, ScopeS, IfS, WhileS, BreakS,
+    of CallS, CmdS, EmitS, AsgnS, ScopeS, IfS, WhileS, BreakS,
         ContinueS, BlockS,
         WhenS, CaseS, RetS, YldS, PragmasS, PragmaxS, InclS,
         ExclS, IncS, DecS, IncludeS, ImportS, ImportasS, FromimportS,
