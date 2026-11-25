@@ -332,6 +332,26 @@ proc isInferredRoutineType(n: Cursor): bool =
   n.typeKind in {ProcT, FuncT, IteratorT, ConverterT, MethodT} and
     n.childCursor.isSymbolDef
 
+proc isTypeclassParamType(typ: Cursor; routine: SymKind): bool =
+  ## A parameter type that would make its routine an implicit generic: a bare
+  ## type class (`enum`, `typedesc`), or for a routine that is compiled (not a
+  ## template or macro, where it is a mere constraint on the argument) a
+  ## union/intersection/negation class such as `int or float` or a named one
+  ## like `SomeInteger` (#3135).
+  case typ.typeKind
+  of TypekindT:
+    result = true
+  of OrT, AndT, NotT:
+    result = routine notin {TemplateY, MacroY}
+  else:
+    result = false
+    if typ.isSymbol:
+      let res = tryLoadSym(typ.symId)
+      if res.status == LacksNothing:
+        let decl = asTypeDecl(res.decl)
+        result = routine notin {TemplateY, MacroY} and decl.kind == TypeY and
+          decl.typevars.isDotToken and decl.body.typeKind in {OrT, AndT, NotT}
+
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var kind = kind
   if kind == TypevarY:
@@ -453,14 +473,16 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       else:
         let typeStart = dest.len
         let typeInfo = n.info
+        let writtenType = n
         var typ = semLocalType(c, dest, n) # 3
-        if kind == ParamY and typ.typeKind == TypekindT:
+        if kind == ParamY and isTypeclassParamType(typ, c.routine.kind):
           # A bare type class as a parameter type. `typedesc` is a meta type like
           # `untyped`/`typed` and only a template or macro may take it; any other
           # use would be an implicit generic, which Nimony does not have.
-          let isMetaType = typ.childCursor.typeKind == TypedescT
+          let isMetaType = typ.typeKind == TypekindT and
+            typ.childCursor.typeKind == TypedescT
           if not isMetaType or c.routine.kind notin {TemplateY, MacroY}:
-            let what = asNimCode(typ)
+            let what = asNimCode(writtenType)
             dest.shrink typeStart
             if isMetaType:
               c.buildErr dest, typeInfo, "a bare 'typedesc' parameter is only valid for templates and macros; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`"
