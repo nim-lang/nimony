@@ -27,3 +27,8 @@ void setCStruct2(struct CStruct2* cs2) {
   cs2->cs2[1].field[0] = 55555;
   cs2->cs2[1].field[1] = 666666;
 }
+
+struct CStruct3 {
+  int k;
+  int m[2][3];
+};

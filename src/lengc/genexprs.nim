@@ -394,6 +394,36 @@ proc genCond(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     c.add ParRi
 
+proc genAconstr(c: var GeneratedCode; n: var Cursor; raw: bool) =
+  ## `raw`: the array is a member of an imported struct, so it is a plain C
+  ## array there, not Nimony's `{.a = ...}` wrapper; nested arrays likewise.
+  n.into:
+    let isUncheckedArray = n.typeKind in {PtrT, AptrT, FlexarrayT}
+    let isZeroSizedArray = not isUncheckedArray and isZeroSized(c.m, n)
+    let raw = raw and not isUncheckedArray
+    if raw: skip n
+    else: c.objConstrType(n)
+    c.add CurlyLe
+    if not (raw or isUncheckedArray):
+      c.add ".a = "
+      c.add CurlyLe
+    var i = 0
+    while n.hasMore:
+      if i > 0: c.add Comma
+      if raw and n.exprKind == AconstrC: genAconstr c, n, true
+      else: c.genx n
+      inc i
+    if i == 0 and not isUncheckedArray and not isZeroSizedArray:
+      # `(aconstr T)`: the all-zero array, whatever `T`'s length. A
+      # zero-sized array (`a[0]` or an array of zero-sized elements, both
+      # GNU extensions) takes `{}`: brace elision would hand the `0` to a
+      # zero-length array, an excess initializer. Only arrays reach this
+      # path: desugar keeps the `default` call for objects.
+      c.add "0"
+    if not (raw or isUncheckedArray):
+      c.add CurlyRi
+    c.add CurlyRi
+
 proc genx(c: var GeneratedCode; n: var Cursor) =
   if n.exprKind notin AddrKinds and n.kind != StrLit:
     c.flags.excl gfInCallImportC
@@ -471,29 +501,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     c.add "NAN"
     skip n
   of AconstrC:
-    n.into:
-      let isUncheckedArray = n.typeKind in {PtrT, AptrT, FlexarrayT}
-      let isZeroSizedArray = not isUncheckedArray and isZeroSized(c.m, n)
-      c.objConstrType(n)
-      c.add CurlyLe
-      if not isUncheckedArray:
-        c.add ".a = "
-        c.add CurlyLe
-      var i = 0
-      while n.hasMore:
-        if i > 0: c.add Comma
-        c.genx n
-        inc i
-      if i == 0 and not isUncheckedArray and not isZeroSizedArray:
-        # `(aconstr T)`: the all-zero array, whatever `T`'s length. A
-        # zero-sized array (`a[0]` or an array of zero-sized elements, both
-        # GNU extensions) takes `{}`: brace elision would hand the `0` to a
-        # zero-length array, an excess initializer. Only arrays reach this
-        # path: desugar keeps the `default` call for objects.
-        c.add "0"
-      if not isUncheckedArray:
-        c.add CurlyRi
-      c.add CurlyRi
+    genAconstr c, n, false
   of OconstrC:
     n.into:
       let objType = n
@@ -525,7 +533,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
             let fldType = if fldSym != SymId(0): typeOfField(c.m, fldBody, fldSym) else: default(Cursor)
             let isFlexArr = not cursorIsNil(fldType) and fldType.typeKind == FlexarrayT
             if isFlexArr: c.flags.incl gfInFlexArray
-            c.genx n
+            if n.exprKind == AconstrC and c.m.isImportC(objType): genAconstr c, n, true
+            else: c.genx n
             if isFlexArr: c.flags.excl gfInFlexArray
             while n.hasMore: skip n
         elif n.exprKind == OconstrC:
