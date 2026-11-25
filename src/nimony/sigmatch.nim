@@ -1551,24 +1551,7 @@ proc skipRoutinePrefix*(n: var Cursor; kind: TypeKind) =
     skip n # pattern
     skip n # generics
 
-proc isRoutineSym(c: ptr SemContext; s: SymId): bool =
-  ## Like `sem.fetchSym`: the scope first (a routine of this module may not be
-  ## published yet), then the index.
-  result = false
-  let identifier = pool.strings.getOrIncl(pool.symBasename(s))
-  var found = false
-  var it {.cursor.} = c.currentScope
-  while it != nil and not found:
-    for sym in it.tab.getOrDefault(identifier):
-      if sym.name == s:
-        found = true
-        result = sym.kind in RoutineKinds
-    it = it.up
-  if not found:
-    let res = tryLoadSym(s)
-    result = res.status == LacksNothing and res.decl.symKind in RoutineKinds
-
-proc isRoutineValue(c: ptr SemContext; n: Cursor): bool =
+proc isRoutineValue(n: Cursor): bool =
   ## A routine symbol, a proc literal included (sem turns it into one). A proc
   ## *value* (a variable, a parameter, a field) has no static routine to give an
   ## env-taking thunk, so it does not convert implicitly to a closure.
@@ -1576,7 +1559,11 @@ proc isRoutineValue(c: ptr SemContext; n: Cursor): bool =
   while n.exprKind == ExprX:
     n = sub(n)
     while not isLastSon(n): skip n
-  result = n.isSymbol and isRoutineSym(c, n.symId)
+  if n.isSymbol:
+    let res = tryLoadSym(n.symId)
+    result = res.status == LacksNothing and res.decl.symKind in RoutineKinds
+  else:
+    result = false
 
 proc procTypeMatch(m: var Match; f, a: var Cursor) =
   ## Matches two routine types structurally. `f` ends up past its whole
@@ -1655,7 +1642,7 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   elif fcc.usesPassive != acc.usesPassive:
     m.error PassiveMismatch, f, a
   if not m.err and fcc.usesClosure and not acc.usesClosure and
-      not cursorIsNil(m.procArg) and not isRoutineValue(m.context, m.procArg):
+      not cursorIsNil(m.procArg) and not isRoutineValue(m.procArg):
     m.error NotARoutineToClosure, fStart, a
   if not m.err and fcc.usesClosure and not acc.usesClosure:
     m.args.addParLe ToClosureX, m.argInfo
