@@ -40,26 +40,42 @@ proc getForVars(e: var EContext, forVars: Cursor): seq[Cursor] =
     result.add forVars
     skip forVars
 
+type
+  LoopVarAlias = object
+    ## A loop variable bound to a yielded symbol reads that symbol, the
+    ## iterator's local: no copy. A routine declared in the body must not
+    ## see the iterator's local, though: a closure would capture it and read
+    ## its later values (`for i in 0 ..< 3` closures printed `3 3 3`). Inside
+    ## a routine the loop variable is `own`, a local of this body copy,
+    ## declared from `target` only when a routine uses it.
+    target: SymId
+    own: SymId     ## SymId(0) until a routine uses the loop variable
+    typ: Cursor    ## the loop variable's type
+    info: NifLineInfo
+
+  BodyMapping = object
+    names: Table[SymId, SymId]          ## renamed locals, labels, routines
+    aliases: Table[SymId, LoopVarAlias] ## loop variables bound to a symbol
+
 proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Cursor;
-          forVar: Cursor; res: var Table[SymId, SymId]) =
+          forVar: Cursor; res: var BodyMapping) =
   let local = asLocal(forVar)
   let destSym = local.name.symId
   let info = local.name.info
   case c.kind
   of Symbol:
-    let val = c.symId
-    res[destSym] = val
+    res.aliases[destSym] = LoopVarAlias(target: c.symId, typ: local.typ, info: info)
     inc c, SkipName
   else:
     var typ = local.typ
     # Fresh SymId per yield expansion
     let freshSym = pool.symId("`ii." & $e.getTmpId)
-    res[destSym] = freshSym
+    res.names[destSym] = freshSym
     createDecl(e, dest, freshSym, typ, c, info, VarS, needsAddr=false)
 
 proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor;
                        left: TokenBuf; i: int; info: NifLineInfo; typ: Cursor;
-                       needsAddr: bool; res: var Table[SymId, SymId]) =
+                       needsAddr: bool; res: var BodyMapping) =
   assert typ.hasMore
   let local = asLocal(forVar)
   # A fresh symbol per yield, and a mapping entry so the body reads it —
@@ -71,7 +87,7 @@ proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor;
   # first's storage and `for (f, l) in it()` read `f` from the wrong yield.
   let destSym = local.name.symId
   let freshSym = pool.symId("`ii." & $e.getTmpId)
-  res[destSym] = freshSym
+  res.names[destSym] = freshSym
   var tupBuf = createTupleAccess(left, i, info)
   var tup = beginRead(tupBuf)
   var localTyp = local.typ
@@ -85,8 +101,9 @@ proc startTupleAccess(s: SymId; info: NifLineInfo; needsDeref: bool): TokenBuf =
   else:
     result.addSymUse(s, info)
 
-proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
-  result = initTable[SymId, SymId]()
+proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars: Cursor, yieldType: Cursor): BodyMapping =
+  result = BodyMapping(names: initTable[SymId, SymId](),
+                       aliases: initTable[SymId, LoopVarAlias]())
 
   let forVars = getForVars(e, vars)
 
@@ -358,14 +375,29 @@ proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
       collectDefs(e, it, mapping)
       skip it
 
-proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymId]) =
+proc mapUse(e: var EContext; mapping: var BodyMapping; s: SymId; inRoutine: bool): SymId =
+  if mapping.aliases.hasKey(s):
+    let a = addr mapping.aliases.getOrQuit(s)
+    if not inRoutine:
+      result = a.target
+    else:
+      if a.own == SymId(0):
+        a.own = pool.symId("`ii." & $e.getTmpId)
+      result = a.own
+  else:
+    result = mapping.names.getOrDefault(s, s)
+
+proc copyFreshened(e: var EContext; dest: var TokenBuf; c: var Cursor;
+                   mapping: var BodyMapping; inRoutine = false) =
   ## Copy `c`, renaming the symbols (uses and definitions) in `mapping`.
+  ## `inRoutine`: `c` is inside a routine the body declares (see
+  ## `LoopVarAlias`).
   case c.kind
   of TagLit:
     if c.exprKind in {DotX, DdotX}:
       dest.addParLe(c.cursorTagId, c.info)
       c.into:
-        copyFreshened(dest, c, mapping) # object expression
+        copyFreshened(e, dest, c, mapping, inRoutine) # object expression
         while c.hasMore:
           dest.takeTree c # field selector + optional depth/access token
         dest.addParRi(c.endInfo)
@@ -374,7 +406,7 @@ proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymI
       c.into:
         dest.takeTree c # field name
         while c.hasMore:
-          copyFreshened(dest, c, mapping)
+          copyFreshened(e, dest, c, mapping, inRoutine)
         dest.addParRi(c.endInfo)
     elif c.stmtKind in {MacroS, TemplateS, TypeS, PragmasS}:
       dest.takeTree c
@@ -384,43 +416,44 @@ proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymI
       # `mapping` holds only the enclosing body's names, so the routine's
       # own declarations are copied unchanged.
       let start = dest.len
+      let isRoutine = c.stmtKind in NestedRoutines
       let routineSym =
-        if c.stmtKind in NestedRoutines and c.childCursor.kind == SymbolDef:
-          mapping.getOrDefault(c.childCursor.symId)
+        if isRoutine and c.childCursor.kind == SymbolDef:
+          mapping.names.getOrDefault(c.childCursor.symId)
         else:
           SymId(0)
       dest.addParLe(c.cursorTagId, c.info)
       c.into:
         while c.hasMore:
-          copyFreshened(dest, c, mapping)
+          copyFreshened(e, dest, c, mapping, inRoutine or isRoutine)
         dest.addParRi(c.endInfo)
       if routineSym != SymId(0):
         # the copy's name is a fresh global: later passes look it up
         publish routineSym, dest, start
   of Symbol:
-    dest.addSymUse(mapping.getOrDefault(c.symId, c.symId), c.info)
+    dest.addSymUse(mapUse(e, mapping, c.symId, inRoutine), c.info)
     inc c
   of SymbolDef:
-    dest.addSymDef(mapping.getOrDefault(c.symId, c.symId), c.info)
+    dest.addSymDef(mapping.names.getOrDefault(c.symId, c.symId), c.info)
     inc c
   else:
     dest.addSubtree c
     inc c
 
 proc inlineForBody(e: var EContext; dest: var TokenBuf; c: var Cursor;
-                   mapping: Table[SymId, SymId]) =
+                   mapping: var BodyMapping) =
   ## One statement of a `for` body: `copyFreshened`, with every nested `for`
   ## inlined afresh for each copy of the enclosing body.
   if c.stmtKind == ForS:
     var forBuf = createTokenBuf()
-    copyFreshened(forBuf, c, mapping)
+    copyFreshened(e, forBuf, c, mapping)
     var f = beginRead(forBuf)
     transformForFir(e, dest, f)
   elif c.kind != TagLit or c.exprKind in {DotX, DdotX} or
       c.substructureKind == KvU or
       c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
                      TemplateS, TypeS, PragmasS}:
-    copyFreshened(dest, c, mapping)
+    copyFreshened(e, dest, c, mapping)
   else:
     dest.addParLe(c.cursorTagId, c.info)
     c.into:
@@ -429,13 +462,16 @@ proc inlineForBody(e: var EContext; dest: var TokenBuf; c: var Cursor;
       dest.addParRi(c.endInfo)
 
 proc emitForBody(e: var EContext; dest: var TokenBuf; body: Cursor;
-                 mapping: Table[SymId, SymId]; prefix: TokenBuf) =
+                 mapping: var BodyMapping; prefix: TokenBuf) =
   ## `(scope <prefix> <body without its back-edge>)`. The back-edge is the
-  ## body's last statement and its only `continue`.
+  ## body's last statement and its only `continue`. A loop variable that a
+  ## routine in the body uses is declared in front of the scope (see
+  ## `LoopVarAlias`); the body has to be copied first to know which.
   var b = body
   let info = b.info
-  dest.addParLe ScopeS, info
-  dest.add prefix
+  var scope = createTokenBuf(64)
+  scope.addParLe ScopeS, info
+  scope.add prefix
   if b.stmtKind in {StmtsS, ScopeS}:
     b = sub(b)   # peek only, never left
     while b.hasMore:
@@ -444,10 +480,19 @@ proc emitForBody(e: var EContext; dest: var TokenBuf; body: Cursor;
       if b.stmtKind == ContinueS and not probe.hasMore:
         skip b, ContinueS # falling off the copy does it
       else:
-        inlineForBody(e, dest, b, mapping)
+        inlineForBody(e, scope, b, mapping)
   else:
-    inlineForBody(e, dest, b, mapping)
-  dest.addParRi()
+    inlineForBody(e, scope, b, mapping)
+  scope.addParRi()
+  for a in mapping.aliases.values:
+    if a.own != SymId(0):
+      dest.copyIntoKind LetS, a.info:
+        dest.addSymDef a.own, a.info
+        dest.addDotToken() # exported
+        dest.addDotToken() # pragmas
+        dest.copyTree a.typ
+        dest.addSymUse a.target, a.info
+  dest.add scope
 
 type
   IterExit = object
@@ -467,7 +512,7 @@ proc inlineIteratorBodyFir(e: var EContext; dest: var TokenBuf;
     if c.stmtKind == YldS:
       c.into: # skips yield
         var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
-        collectDefs(e, forStmt.body, mapping)
+        collectDefs(e, forStmt.body, mapping.names)
         emitForBody(e, dest, forStmt.body, mapping, createTokenBuf(0))
     elif c.stmtKind == RetS:
       # The iterator's own `return` ends the loop; one in the loop body is
@@ -548,7 +593,8 @@ proc emitCoroForFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
         prefix.addSymUse forLoopVarSym, info
         prefix.addIntLit i, info
       prefix.addParRi() # close decl
-  emitForBody(e, dest, forStmt.body, initTable[SymId, SymId](), prefix)
+  var noMapping = BodyMapping()
+  emitForBody(e, dest, forStmt.body, noMapping, prefix)
   dest.addParRi() # close corofor
 
 proc expandInlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
@@ -593,13 +639,13 @@ proc expandInlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt;
   lc.into:
     for i in 0 ..< paramCount:
       freshBuf.takeTree lc
-    var fresh = initTable[SymId, SymId]()
+    var fresh = BodyMapping()
     var probe = lc
     while probe.hasMore:
-      collectDefs(e, probe, fresh)
+      collectDefs(e, probe, fresh.names)
       skip probe
     while lc.hasMore:
-      copyFreshened(freshBuf, lc, fresh)
+      copyFreshened(e, freshBuf, lc, fresh)
   freshBuf.addParRi()
   var inner = createTokenBuf(freshBuf.len)
   var fc = beginRead(freshBuf)
