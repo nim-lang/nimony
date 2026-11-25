@@ -4966,12 +4966,15 @@ proc checkDestAliasesValue(c: var FirContext; dest: Cursor; value: Cursor) =
           "assign the right-hand side to a temporary first"
         break
 
-proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor;
+proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts, rhs: Cursor;
                 call: var CallContext) =
   ## The store half of an assignment, after its value has been analysed: `n`
   ## is the destination and is left past it. `valueFacts` is the value as the
   ## fact rules read it (`normalizedArith`), `valueStart` as everything else
   ## does. Shared by `(asgn …)` and by `inc`/`dec`, which store `succ`/`pred`.
+  ## `rhs` is what runs after the destination's address is taken: the value of
+  ## an `asgn`, the step of an `inc`/`dec` (nil without one). The destination
+  ## copy inside `succ`/`pred` is the destination itself, not a right-hand side.
   if c.assumedSteps.len > 0:
     # `i = i ± k`, a step the loop's pre-scan may have assumed not to wrap
     let destLoc = plainLocationVarId(c, n)
@@ -4982,8 +4985,8 @@ proc storeValue(c: var FirContext; n: var Cursor; valueStart, valueFacts: Cursor
   # Check borrow conflicts for the destination
   if borrowMode(c, n).isTracked:
     checkBorrowConflict(c, n, n.info)
-  if not c.features.contains(LenientAliasingFeature):
-    checkDestAliasesValue(c, n, valueStart)
+  if not cursorIsNil(rhs) and not c.features.contains(LenientAliasingFeature):
+    checkDestAliasesValue(c, n, rhs)
   checkEscapingBorrow(c, valueStart, locRootSym(c, n))
   # A write to a shared variable or through a pointer is a barrier, once the
   # destination itself is accounted for.
@@ -5112,7 +5115,7 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip value
   let valueStart = value
   traverseExpr c, value, call
-  storeValue c, n, valueStart, normalizedArith(c, valueStart), call
+  storeValue c, n, valueStart, normalizedArith(c, valueStart), valueStart, call
   n = asgnStart; skip n
 
 proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
@@ -5144,7 +5147,8 @@ proc traverseIncDec(c: var FirContext; n: var Cursor; call: var CallContext) =
   let value = cursorAt(buf, 0)
   checkSuccPred c, value
   var d = dest
-  storeValue c, d, value, normalizedArith(c, value), call
+  storeValue c, d, value, normalizedArith(c, value),
+             (if hasStep: step else: default(Cursor)), call
   n = start; skip n
 
 # --- Exit-summary plumbing (drives the journaled FlowTracker over c.p.flow) ---

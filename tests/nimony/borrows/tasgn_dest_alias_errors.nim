@@ -32,3 +32,9 @@ p.symbols[0].body = grow(p)
 viaParam p
 nested p
 fine p
+
+proc incStep(p: var P) =
+  # the step of an `inc` runs after the destination's address is taken
+  inc p.symbols[0].body, grow(p)
+
+incStep p
