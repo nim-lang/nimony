@@ -43,3 +43,16 @@ assert almostEqual(arctan2(-1.0'f32, -1.0'f32), -3.0'f32 * PI.float32 / 4.0'f32)
 assert sin(Inf).isNaN
 assert cos(-Inf).isNaN
 assert tan(NaN).isNaN
+
+block:
+  for x in [0.0, -0.0, 0.3, 1.0, 2.0, -2.5, 4.0, 5.5, 100.0, 1e20, -1e300]:
+    let (s, c) = sincos(x)
+    assert s == sin(x)
+    assert c == cos(x)
+  let (s0, c0) = sincos(-0.0)
+  assert s0 == 0.0 and c0 == 1.0
+  assert sincos(NaN).s.isNaN and sincos(NaN).c.isNaN
+  assert sincos(Inf).s.isNaN and sincos(-Inf).c.isNaN
+  let (sf, cf) = sincos(PI.float32 / 6.0'f32)
+  assert sf == sin(PI.float32 / 6.0'f32)
+  assert cf == cos(PI.float32 / 6.0'f32)

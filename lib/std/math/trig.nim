@@ -469,6 +469,19 @@ func cos64(x: float64): float64 =
     of 2: -kernelCos(y0, y1)
     else: kernelSin(y0, y1, 1)
 
+func sincos64(x: float64): tuple[s, c: float64] =
+  if isNan64(x): return (s: x, c: x)
+  if isInf64(x): return (s: x - x, c: x - x)
+  if x == 0.0: return (s: x, c: 1.0)
+  let (n, y0, y1) = reduceQuarter(x)
+  let s = kernelSin(y0, y1, 1)
+  let c = kernelCos(y0, y1)
+  result = case n and 3
+    of 0: (s: s, c: c)
+    of 1: (s: c, c: -s)
+    of 2: (s: -s, c: -c)
+    else: (s: -c, c: s)
+
 func tan64(x: float64): float64 =
   if isNan64(x): return x
   if isInf64(x): return x - x
@@ -607,6 +620,13 @@ func sin*(x: float32): float32 = float32(sin64(float64(x)))
 func sin*(x: float64): float64 = sin64(x)
 func cos*(x: float32): float32 = float32(cos64(float64(x)))
 func cos*(x: float64): float64 = cos64(x)
+func sincos*(x: float32): tuple[s, c: float32] =
+  ## Computes `sin(x)` and `cos(x)` with a single argument reduction.
+  let (s, c) = sincos64(float64(x))
+  result = (s: float32(s), c: float32(c))
+func sincos*(x: float64): tuple[s, c: float64] =
+  ## Computes `sin(x)` and `cos(x)` with a single argument reduction.
+  sincos64(x)
 func tan*(x: float32): float32 = float32(tan64(float64(x)))
 func tan*(x: float64): float64 = tan64(x)
 func arcsin*(x: float32): float32 = float32(asin64(float64(x)))
