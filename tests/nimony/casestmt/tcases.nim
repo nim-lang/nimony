@@ -97,3 +97,16 @@ proc caseF32(x: float32) =
   else: echo "o32"
 caseF32(0.5'f32)
 caseF32(1.5'f32)
+
+# a selector typed by a typevar takes the labels of its constraint
+proc caseGS[T: string](x: var T): string =
+  case x
+  of "a", "b": "ab"
+  of "c": "c"
+  else: "o"
+proc caseGF[T: float](x: T): string =
+  case x
+  of 1.5: "a"
+  else: "o"
+var gs = "b"
+echo caseGS(gs), caseGF(1.5), caseGF(2.0)
