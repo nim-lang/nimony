@@ -89,6 +89,10 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let beforeType = dest.len
       let info = n.info
       semLocalTypeImpl c, dest, n, InLocalDecl
+      var parent = readonlyCursorAt(dest, beforeType)
+      if parent.typeKind in {RefT, PtrT}: inc parent
+      if c.inGenericDefinition == 0 and parent.isSymbol: # may be declared later
+        discard loadSymWithPhase(c, parent.symId, SemcheckSignatures)
       let inheritsFrom = cursorAt(dest, beforeType)
       if c.inGenericDefinition == 0 and not isInheritable(inheritsFrom, true):
         let msg = "cannot inherit from type: " & asNimCode(inheritsFrom)
