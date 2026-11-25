@@ -3227,8 +3227,8 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
       if it.n.exprKind in CallKinds:
         let callStart = it.n
         it.n = sub(it.n)
-        if it.n.isIdent:
-          let branchName = it.n.strId
+        let branchName = getIdent(it.n)
+        if branchName != StrId(0):
           let efldSym = findOneofEfld(c, branchName, anum)
           if efldSym == SymId(0):
             buildErr c, dest, info, "undeclared sum type branch: " & pool.strings[branchName]
@@ -3236,7 +3236,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
             it.n = callStart; skip it.n
             continue
           dest.addSymUse(efldSym, info)
-          inc it.n
+          skip it.n
           let ordVal = getEfldOrdinal(efldSym)
           if not ordVal.isNaN:
             if seen.containsOrIncl(ordVal):
@@ -3260,8 +3260,8 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
           var firstBranchFields: seq[SumTypeBranchField] = @[]
           it.n.into: # curly
             while it.n.hasMore:
-              if it.n.isIdent:
-                let branchName = it.n.strId
+              let branchName = getIdent(it.n)
+              if branchName != StrId(0):
                 let efldSym = findOneofEfld(c, branchName, anum)
                 if efldSym == SymId(0):
                   buildErr c, dest, it.n.info, "undeclared sum type branch: " & pool.strings[branchName]
@@ -3280,7 +3280,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
                         (otherFields.len > 0 and otherFields[0].sym != firstBranchFields[0].sym):
                       buildErr c, dest, it.n.info,
                         "branches in set pattern must come from the same `of` declaration"
-              inc it.n
+              skip it.n
           if firstEfld != SymId(0):
             var fieldIdx = 0
             while it.n.hasMore:
