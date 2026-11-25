@@ -1432,6 +1432,17 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       of CmdS:
         gcmd(g, n)
 
+      of IncS, DecS, InclS, ExclS:
+        # `(inc T x step?)` is the command `inc x, step`; `T` is not source
+        put(g, tkSymbol, $n.stmtKind)
+        put(g, tkSpaces, Space)
+        n.into:
+          skip n
+          gsub(g, n)
+          while n.hasMore:
+            gcomma(g)
+            gsub(g, n)
+
       of AsgnS:
         n.into:
           gsub(g, n)
