@@ -1788,8 +1788,8 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc bridgeHead(c: var Context; dest: var TokenBuf; sym: SymId; origTyp: Cursor;
                 info: NifLineInfo): (seq[SymId], Cursor) =
   ## Opens the routine `sym` with `origTyp`'s parameters plus the env
-  ## parameter, its return type and, of its pragmas, the calling convention
-  ## and `.raises`. Returns the parameter names and the (untranslated) return
+  ## parameter, its return type and, of its pragmas, the calling convention,
+  ## `.raises` and `.passive` (cps lowers the bridge along with the callee). Returns the parameter names and the (untranslated) return
   ## type; `bridgeBody` adds the body.
   result = (newSeq[SymId](), default(Cursor))
   dest.addParLe ProcS, info
@@ -1820,7 +1820,7 @@ proc bridgeHead(c: var Context; dest: var TokenBuf; sym: SymId; origTyp: Cursor;
     if n.substructureKind == PragmasU:
       n.into:
         while n.hasMore:
-          if n.pragmaKind == RaisesP or n.callConvKind != NoCallConv:
+          if n.pragmaKind in {RaisesP, PassiveP} or n.callConvKind != NoCallConv:
             kept.takeTree n
           else:
             skip n
@@ -1869,12 +1869,13 @@ proc thunkFor(c: var Context; p: SymId; origTyp: Cursor; info: NifLineInfo): Sym
     result = pool.symId("`cthunk." & $c.counter & "." & c.thisModuleSuffix)
     inc c.counter
     c.thunks[p] = result
-    let start = c.bridgeDecls.len
-    let (params, retType) = bridgeHead(c, c.bridgeDecls, result, origTyp, info)
+    var decl = createTokenBuf(32)
+    let (params, retType) = bridgeHead(c, decl, result, origTyp, info)
     var callee = createTokenBuf(1)
     callee.addSymUse p, info
-    bridgeBody(c, c.bridgeDecls, callee, params, retType, info)
-    programs.publish(result, c.bridgeDecls, start)
+    bridgeBody(c, decl, callee, params, retType, info)
+    programs.publish(result, decl, 0)
+    c.bridgeDecls.add decl
 
 proc procValueBridge(c: var Context; origTyp: Cursor; info: NifLineInfo): (SymId, SymId, SymId) =
   ## For a proc value converted to a closure: an env object holding the value
@@ -1884,19 +1885,19 @@ proc procValueBridge(c: var Context; origTyp: Cursor; info: NifLineInfo): (SymId
   let bridge = pool.symId("`ctBridge." & id)
   let envTyp = pool.symId("`ctEnv." & id)
   let fld = pool.symId("`ctFn." & id)
-  let beforeType = c.bridgeDecls.len
-  c.bridgeDecls.copyIntoKind TypeS, info:
-    c.bridgeDecls.addSymDef envTyp, info
-    c.bridgeDecls.addDotToken() # no export marker
-    c.bridgeDecls.addDotToken() # no generic params
-    c.bridgeDecls.addDotToken() # no pragmas
-    c.bridgeDecls.copyIntoKind ObjectT, info:
-      c.bridgeDecls.addSymUse pool.symId(BareRootObjName), info
-      let beforeField = c.bridgeDecls.len
-      c.bridgeDecls.copyIntoKind FldY, info:
-        c.bridgeDecls.addSymDef fld, info
-        c.bridgeDecls.addDotToken() # no export marker
-        c.bridgeDecls.addDotToken() # no pragmas
+  var decl = createTokenBuf(64)
+  decl.copyIntoKind TypeS, info:
+    decl.addSymDef envTyp, info
+    decl.addDotToken() # no export marker
+    decl.addDotToken() # no generic params
+    decl.addDotToken() # no pragmas
+    decl.copyIntoKind ObjectT, info:
+      decl.addSymUse pool.symId(BareRootObjName), info
+      let beforeField = decl.len
+      decl.copyIntoKind FldY, info:
+        decl.addSymDef fld, info
+        decl.addDotToken() # no export marker
+        decl.addDotToken() # no pragmas
         # the value's own type: `origTyp` without `.closure`
         var plain = createTokenBuf(16)
         var t = origTyp
@@ -1911,12 +1912,12 @@ proc procValueBridge(c: var Context; origTyp: Cursor; info: NifLineInfo): (SymId
             else:
               plain.takeTree t
         var pt = beginRead(plain)
-        treType c, c.bridgeDecls, pt
-        c.bridgeDecls.addDotToken() # no default value
-      programs.publish(fld, c.bridgeDecls, beforeField)
-  programs.publish(envTyp, c.bridgeDecls, beforeType)
-  let start = c.bridgeDecls.len
-  let (params, retType) = bridgeHead(c, c.bridgeDecls, bridge, origTyp, info)
+        treType c, decl, pt
+        decl.addDotToken() # no default value
+      programs.publish(fld, decl, beforeField)
+  programs.publish(envTyp, decl, 0)
+  let start = decl.len
+  let (params, retType) = bridgeHead(c, decl, bridge, origTyp, info)
   var callee = createTokenBuf(16)
   callee.copyIntoKind DotX, info:
     callee.copyIntoKind DerefX, info:
@@ -1925,8 +1926,9 @@ proc procValueBridge(c: var Context; origTyp: Cursor; info: NifLineInfo): (SymId
           callee.addSymUse envTyp, info
         callee.addSymUse pool.symId(ClosureEnvParamName), info
     callee.addSymUse fld, info
-  bridgeBody(c, c.bridgeDecls, callee, params, retType, info)
-  programs.publish(bridge, c.bridgeDecls, start)
+  bridgeBody(c, decl, callee, params, retType, info)
+  programs.publish(bridge, decl, start)
+  c.bridgeDecls.add decl
   result = (bridge, envTyp, fld)
 
 proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: NifLineInfo) =
