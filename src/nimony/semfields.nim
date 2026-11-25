@@ -2,6 +2,10 @@ type FieldsIter = object
   nameVar, fieldVar1, fieldVar2: StrId
     # can be SymId if loopvars/body are processed before substituting
   obj1, obj2: Cursor
+  elems1, elems2: seq[Cursor]
+    # the element values when `obj1`/`obj2` is a tuple constructor: the loop
+    # then binds each element on its own instead of re-evaluating the whole
+    # constructor for every field access
 
 proc addFieldsAccessToken(buf: var TokenBuf; info: NifLineInfo; ownerSym: SymId) =
   ## `fields()` is compiler reflection: it enumerates every field of the
@@ -192,6 +196,52 @@ proc emitObjectComponent(buf: var TokenBuf; iter: FieldsIter; n: var Cursor;
   else:
     skip n
 
+proc isTrivialElem(n: Cursor): bool =
+  ## Elements that can be substituted for every use of the loop variable:
+  ## evaluating them has no side effects and costs nothing.
+  case n.kind
+  of StrLit, CharLit, IntLit, InlineInt, UIntLit, FloatLit, Symbol: true
+  else: n.exprKind in {SufX, TrueX, FalseX, NilX}
+
+proc addTupleFieldAccess(buf: var TokenBuf; info: NifLineInfo; obj: Cursor;
+                         elems: seq[Cursor]; intVal: int64; loopVar: StrId) =
+  if elems.len == 0:
+    buf.addParLe(TupatX, info)
+    buf.addSubtree obj
+    buf.addIntLit(intVal, info)
+    buf.addParRi()
+  elif isTrivialElem(elems[int(intVal)]):
+    buf.addSubtree elems[int(intVal)]
+  else:
+    # bound by a `let` in front of the body copy, see `buildTupleFieldIter`
+    buf.addIdent(loopVar, info)
+
+proc addElemBinding(buf: var TokenBuf; info: NifLineInfo; loopVar: StrId;
+                    elems: seq[Cursor]; i: int) =
+  if loopVar != StrId(0) and elems.len > 0 and not isTrivialElem(elems[i]):
+    buf.addParLe(LetS, info)
+    buf.addIdent(loopVar, info)
+    buf.addEmpty() # export marker
+    buf.addEmpty() # pragmas
+    buf.addEmpty() # type
+    buf.addSubtree elems[i]
+    buf.addParRi()
+
+proc constrElems(obj: Cursor): seq[Cursor] =
+  ## The element values of a typed `(tupconstr T elem...)`, `@[]` otherwise.
+  result = @[]
+  if not cursorIsNil(obj) and obj.exprKind == TupconstrX:
+    var n = sub(obj)
+    skip n # type
+    while n.hasMore:
+      if n.substructureKind == KvU:
+        var kv = sub(n)
+        skip kv # field name
+        result.add kv
+      else:
+        result.add n
+      skip n
+
 proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intVal: int64; name: StrId; body: Cursor) =
   ## Copies the single tree/token at `body` into `buf`, substituting the
   ## loop variables.
@@ -203,15 +253,9 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intVal: int64; na
     if s == iter.nameVar:
       buf.addStrLit(name, n.info)
     elif s == iter.fieldVar1:
-      buf.addParLe(TupatX, n.info)
-      buf.addSubtree iter.obj1
-      buf.addIntLit(intVal, n.info)
-      buf.addParRi()
+      addTupleFieldAccess(buf, n.info, iter.obj1, iter.elems1, intVal, s)
     elif s == iter.fieldVar2:
-      buf.addParLe(TupatX, n.info)
-      buf.addSubtree iter.obj2
-      buf.addIntLit(intVal, n.info)
-      buf.addParRi()
+      addTupleFieldAccess(buf, n.info, iter.obj2, iter.elems2, intVal, s)
     else:
       buf.addIdent(s, n.info)
   of TagLit:
@@ -233,6 +277,8 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
   buf.addParLe(TrueX, body.info)
   buf.addParRi()
   buf.addParLe(StmtsS, body.info)
+  addElemBinding(buf, body.info, iter.fieldVar1, iter.elems1, i)
+  addElemBinding(buf, body.info, iter.fieldVar2, iter.elems2, i)
   expandTupleFieldBody(buf, iter, int64(i), name, body)
   buf.addParRi() # (stmts)
   buf.addParRi() # (elif)
@@ -299,7 +345,8 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
 
   let isTuple = objType.typeKind == TupleT
   if isTuple:
-    discard "ok"
+    iter.elems1 = constrElems(iter.obj1)
+    iter.elems2 = constrElems(iter.obj2)
   else:
     # check if object or typevar
     if objType.typeKind in {RefT, PtrT}: inc objType

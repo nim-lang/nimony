@@ -33,3 +33,12 @@ assert &(-5'i8, " ", 200'u8, " ", high(int64), " ", 2.5'f32) == "-5 200 92233720
 
 proc greet[T: tuple](t: T): string = &t
 assert greet(("hi ", p)) == "hi Ann"
+
+# `&` is a template: the constructor's elements are evaluated once each, in
+# order, without materializing the tuple.
+proc next(c: var int): int =
+  inc c
+  c
+var c = 0
+assert &("A ", next(c), " B ", next(c)) == "A 1 B 2"
+assert c == 2
