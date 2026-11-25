@@ -1,0 +1,3 @@
+tests/nimony/object/tsumtype_qualified_errors.nim(13, 63) Error: type mismatch: got: int64 but wanted: string
+tests/nimony/object/tsumtype_qualified_errors.nim(16, 60) Error: undeclared sum type branch: Bad
+tests/nimony/object/tsumtype_qualified_errors.nim(19, 59) Error: sum type constructor requires named arguments

@@ -5424,6 +5424,80 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
+proc semQualifiedSumTypeConstr(c: var SemContext; dest: var TokenBuf;
+                                it: var Item): bool =
+  ## `T.Branch(field: value, ...)`: a sum type constructor that names its
+  ## type. `T` is the sum type, an alias of it or an instance of it. Answers
+  ## false, leaving `it` alone, when the call is not that shape, so `x.Ok(...)`
+  ## stays a call of `Ok`.
+  result = false
+  let callStart = it.n
+  if callStart.exprKind notin {CallX, CmdX, OconstrX}: return
+  let info = callStart.info
+  var fn = sub(callStart)
+  if fn.exprKind != DotX: return
+  var dotParts = sub(fn)
+  let lhsStart = dotParts
+  skip dotParts
+  if not dotParts.isIdent: return
+  let branchName = dotParts.strId
+  if findOneofEfld(c, branchName) == SymId(0): return
+  var args = fn
+  skip args
+
+  var head = lhsStart
+  if lhsStart.exprKind == AtX:
+    head = sub(lhsStart)
+  var headBuf = createTokenBuf(4)
+  var headItem = Item(n: head, typ: c.types.autoType)
+  semExpr c, headBuf, headItem, {KeepMagics, AllowUndeclared, AllowOverloads, AllowModuleSym}
+  if headItem.kind != TypeY: return
+
+  result = true
+  it.n = callStart
+  skip it.n
+  it.typ = c.types.autoType
+
+  var typeBuf = createTokenBuf(16)
+  var whole = lhsStart
+  let written = semLocalType(c, typeBuf, whole)
+  if written.typeKind == ErrT:
+    dest.addSubtree written
+    return
+  let sumInfo = findSumTypeInfo(written)
+  if not sumInfo.valid:
+    c.buildErr dest, info, "`" & pool.strings[branchName] & "` is a branch of a sum type, but the type before the dot is not one"
+    return
+  let efldSym = findOneofEfld(c, branchName, sumInfo.discrimType.symId)
+  if efldSym == SymId(0):
+    c.buildErr dest, info, "undeclared sum type branch: " & pool.strings[branchName]
+    return
+
+  var objBuf = createTokenBuf(32)
+  objBuf.addParLe(OconstrX, info)
+  objBuf.addSubtree written
+  objBuf.addParLe(KvU, info)
+  objBuf.addIdent(pool.strings.getOrIncl("`kind"), info)
+  objBuf.addSymUse(efldSym, info)
+  objBuf.addParRi()
+  while args.hasMore:
+    let orig = args
+    if orig.substructureKind notin {KvU, VvU}:
+      c.buildErr dest, orig.info, "sum type constructor requires named arguments"
+      return
+    var scan = orig
+    inc scan
+    objBuf.addParLe(KvU, orig.info)
+    objBuf.addSubtree scan
+    skip scan
+    objBuf.addSubtree scan
+    objBuf.addParRi()
+    skip args
+  objBuf.addParRi()
+  var objConstr = Item(n: cursorAt(objBuf, 0), typ: written)
+  semObjConstr c, dest, objConstr
+  it.typ = objConstr.typ
+
 proc asksForNil(typ: TypeCursor): bool =
   ## Whether a destination type spells `nil T`, i.e. asks to be handed the `nil`
   ## an allocation answers with rather than the panic. Shaped like
@@ -5485,6 +5559,7 @@ proc ownedAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): Ty
   result = typeToCursor(c, buf, 0)
 
 proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
+  if semQualifiedSumTypeConstr(c, dest, it): return
   let exprStart = dest.len
   let expected = it.typ
   let info = it.n.info
