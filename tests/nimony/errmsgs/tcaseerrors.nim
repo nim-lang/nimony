@@ -25,9 +25,3 @@ of 123: discard
 of 456:
   foo()
 else: discard
-
-proc gs[T: string](x: T) =
-  case x
-  of "abc": discard
-  of "abc": discard
-  else: discard
