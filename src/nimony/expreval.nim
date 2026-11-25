@@ -1270,12 +1270,25 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
         result = boolValue(c, val)
     of AconstrX, SetconstrX, TupconstrX,
         BracketX, CurlyX, TupX:
+      # Each element is evaluated with its own type as the expected type,
+      # not with the type of the whole value.
+      let savedExpected = c.expectedType
+      c.expectedType = default(Cursor)
+      var fieldTypes = default(Cursor)
       var buf = createTokenBuf(16)
       copyInto buf, n:
         if exprKind in {AconstrX, SetconstrX, TupconstrX}:
+          let t = toTypeImpl(n)
+          if t.typeKind in {ArrayT, SetT}:
+            c.expectedType = t.childCursor
+          elif t.typeKind == TupleT:
+            fieldTypes = t.childCursor
           # add type
           takeTree buf, n
         while n.hasMore:
+          if not cursorIsNil(fieldTypes) and fieldTypes.kind != ParRi:
+            c.expectedType = getTupleFieldType(fieldTypes)
+            skip fieldTypes
           if (exprKind == SetconstrX and n.substructureKind == RangeU) or
              (exprKind == AconstrX and n.substructureKind == KvU):
             copyInto buf, n:
@@ -1296,6 +1309,7 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
           else:
             let elem = propagateError eval(c, n)
             buf.addSubtree elem
+      c.expectedType = savedExpected
       result = cursorAt(buf, 0)
     of OconstrX:
       # an already-evaluated object literal: re-emit verbatim, evaluating
