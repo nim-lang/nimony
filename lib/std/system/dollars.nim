@@ -95,7 +95,7 @@ func addFormatted*[T: Stringable](s: var string; x: T) {.inline.} =
   ## Fallback for every other type: appends `$x`.
   s.add $x
 
-func `&`*[T: tuple](x: T): string =
+template `&`*[T: tuple](x: T): string =
   ## Concatenates the fields of the tuple `x` into a single string. This is
   ## Nimony's replacement for `strformat`:
   ##
@@ -108,6 +108,7 @@ func `&`*[T: tuple](x: T): string =
   ## Strings and chars are added unquoted, numbers are written directly into
   ## the result, and any other `Stringable` type falls back to `$`. Overload
   ## `addFormatted` for a type to control how it appears inside `&`.
-  result = ""
+  var res = ""
   for value in fields(x):
-    result.addFormatted value
+    res.addFormatted value
+  res
