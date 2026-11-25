@@ -109,29 +109,29 @@ iterator values*(t: StringTableRef): string =
       yield t.data[h].val
 
 
-proc myhash(mode: StringTableMode, key: string): Hash =
+func myhash(mode: StringTableMode, key: string): Hash =
   case mode
   of modeCaseSensitive: result = hash(key)
   of modeCaseInsensitive: result = hashIgnoreCase(key)
   of modeStyleInsensitive: result = hashIgnoreStyle(key)
 
-proc myhash(t: StringTableRef, key: string): Hash =
+func myhash(t: StringTableRef, key: string): Hash =
   result = myhash(t.mode, key)
 
-proc myCmp(t: StringTableRef, a, b: string): bool =
+func myCmp(t: StringTableRef, a, b: string): bool =
   case t.mode
   of modeCaseSensitive: result = cmp(a, b) == 0
   of modeCaseInsensitive: result = cmpIgnoreCase(a, b) == 0
   of modeStyleInsensitive: result = cmpIgnoreStyle(a, b) == 0
 
-proc mustRehash(length, counter: int): bool =
+func mustRehash(length, counter: int): bool =
   assert(length > counter)
   result = (length * 2 < counter * 3) or (length - counter < 4)
 
-proc nextTry(h, maxHash: Hash): Hash {.inline.} =
+func nextTry(h, maxHash: Hash): Hash {.inline.} =
   result = (h + 1) and maxHash
 
-proc rawGet(t: StringTableRef, key: string): (bool, Hash) =
+func rawGet(t: StringTableRef, key: string): (bool, Hash) =
   var h: Hash = myhash(t, key) and Hash(high(t.data)) # start with real hash value
   while t.data[h].hasValue:
     if myCmp(t, t.data[h].key, key):
@@ -146,7 +146,7 @@ template get(t: StringTableRef, key: string) {.untyped.} =
     raise KeyError #newException(KeyError, "key not found: " & key)
 
 
-proc len*(t: StringTableRef): int =
+func len*(t: StringTableRef): int =
   ## Returns the number of keys in `t`.
   result = t.counter
 
@@ -170,7 +170,7 @@ proc `[]`*(t: StringTableRef, key: string): var string {.raises.} =
       echo t["occupation"]
   get(t, key)
 
-proc getOrDefault*(t: StringTableRef; key: string,
+func getOrDefault*(t: StringTableRef; key: string,
     default: string = ""): string =
   ## Retrieves the location at ``t[key]``.
   ##
