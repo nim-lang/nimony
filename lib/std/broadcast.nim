@@ -218,6 +218,6 @@ func `-`*[T; C:Broadcastable[T]](a: C): C {.untyped.} =
   for i in 0..<a.len:
     result[i] = -a[i]
 
-proc fill*[T; C: Broadcastable[T]](v: var C, val: T) {.untyped.} =
+func fill*[T; C: Broadcastable[T]](v: var C, val: T) {.untyped.} =
   for i in 0..<v.len:
     v[i] = val

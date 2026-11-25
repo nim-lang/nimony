@@ -184,7 +184,7 @@ func `==`*[T: HasEq; C: Broadcastable[T]](a, b: C): bool =
 # ################################################# DOT PRODUCT ##############################################################
 # ############################################################################################################################
 
-proc dot*[T: HasArithmetic, C: Broadcastable[T]](a, b: C): T {.requires: a.len > 0 and b.len > 0.} =
+func dot*[T: HasArithmetic, C: Broadcastable[T]](a, b: C): T {.requires: a.len > 0 and b.len > 0.} =
   ## Dot product: |a|·|b|·cos(θ).
   ## Positive when vectors point the same way, 0 when perpendicular,
   ## negative when opposing. Core to lighting, projection and culling.
