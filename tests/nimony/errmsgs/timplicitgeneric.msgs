@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/timplicitgeneric.nim(3, 11) Error: type class 'SomeInteger' cannot be used as a parameter type; use an explicit generic parameter such as `proc f[T: SomeInteger](x: T)`
+tests/nimony/errmsgs/timplicitgeneric.nim(4, 15) Error: type class 'int or float' cannot be used as a parameter type; use an explicit generic parameter such as `proc f[T: int or float](x: T)`
+tests/nimony/errmsgs/timplicitgeneric.nim(5, 20) Error: type class 'not(int)' cannot be used as a parameter type; use an explicit generic parameter such as `proc f[T: not(int)](x: T)`
