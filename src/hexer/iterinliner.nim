@@ -377,12 +377,13 @@ proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
 
 proc mapUse(e: var EContext; mapping: var BodyMapping; s: SymId; inRoutine: bool): SymId =
   if mapping.aliases.hasKey(s):
-    if inRoutine:
-      if mapping.aliases[s].own == SymId(0):
-        mapping.aliases[s].own = pool.symId("`ii." & $e.getTmpId)
-      result = mapping.aliases[s].own
+    let a = addr mapping.aliases.getOrQuit(s)
+    if not inRoutine:
+      result = a.target
     else:
-      result = mapping.aliases[s].target
+      if a.own == SymId(0):
+        a.own = pool.symId("`ii." & $e.getTmpId)
+      result = a.own
   else:
     result = mapping.names.getOrDefault(s, s)
 
