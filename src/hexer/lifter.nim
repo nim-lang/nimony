@@ -976,9 +976,12 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
       inc parent
 
   if hasParent and c.op != attachedDestroy:
-    if c.op == attachedWasMoved:
+    if c.op in {attachedWasMoved, attachedDup}:
       # this ensures we don't touch the RTTI field and overwrite it
-      # with the wrong v-table pointer!
+      # with the wrong v-table pointer! A `=dup` makes its result a value field
+      # by field, the parent's fields too: its base part is no location the
+      # C backend (lengc genLvalue) assigns as a whole (`asgn (baseobj T dest) ...`); the RTTI field
+      # is set after the fields (`unravelDispatch`).
       unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
     else:
       let fn = lift(c, parent)
@@ -1255,10 +1258,13 @@ proc depth(s: SymId): int =
     root = r
     inc result
 
-proc setupVTableField(c: var LiftingCtx; param: TokenBuf; cls: SymId) =
+proc setupVTableField(c: var LiftingCtx; param: TokenBuf; cls: SymId; deref = true) =
   copyIntoKind c.dest, AsgnS, c.info:
     copyIntoKind c.dest, DotX, c.info:
-      copyIntoKind c.dest, DerefX, c.info:
+      if deref:
+        copyIntoKind c.dest, DerefX, c.info:
+          copyTree c.dest, param
+      else:
         copyTree c.dest, param
       copyIntoSymUse c.dest, pool.symId(VTableField), c.info
       c.dest.addIntLit(depth(cls), c.info)
@@ -1280,6 +1286,11 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
       elif c.op in {attachedDestroy, attachedTrace}:
         c.routineKind = MethodY
     unravelObj c, typ, paramA, paramB, 0
+    if orig.kind == Symbol and hasRtti(orig.symId) and c.op == attachedDup:
+      # A `=dup` builds a new value of the class field by field, the parent's fields too (`unravelObj`): set
+      # its RTTI field to the class's vtable last, as `=wasMoved` does. Without it the field held whatever the
+      # result's storage held, and the copy was tested with `of` and destroyed through that.
+      setupVTableField c, paramA, orig.symId, deref = false
   of DistinctT:
     # A `distinct T` shares `T`'s representation, so its hook is `T`'s hook.
     # Use `unravel` (not a recursive `unravelDispatch`) so that a base type
