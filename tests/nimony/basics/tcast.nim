@@ -80,3 +80,28 @@ var bo = true
 var na = -1'i64
 assert cast[uint64](cast[float](bo)) == 1'u64
 assert cast[uint64](cast[float](i32)) == 0xFFFF_FFFF'u64
+
+# A cast of an enum, `distinct` or `range` value reinterprets the bits of its
+# base type, in both directions, for a variable, a field or a const operand.
+type
+  E3 = enum e0, e1, e2
+  H3 = enum h5 = 5, h300 = 300
+  DI32 = distinct int32
+  R100 = range[0..100]
+  DF = distinct float
+var e = e2
+var di = DI32(-1)
+var r: R100 = 7
+var seven = 7
+var denorm = cast[float](2'i64)
+const ke = e2
+assert cast[uint64](cast[float](e)) == 2'u64
+assert cast[uint64](cast[float](e2)) == 2'u64
+assert cast[uint64](cast[float](ke)) == 2'u64
+assert cast[uint64](cast[float](h300)) == 300'u64
+assert cast[uint64](cast[float](di)) == 0xFFFF_FFFF'u64
+assert cast[uint64](cast[float](r)) == 7'u64
+assert cast[float](cast[DF](seven)) == cast[float](seven)
+assert cast[E3](denorm) == e2
+assert cast[R100](denorm) == 2
+assert cast[int64](DF(denorm)) == 2

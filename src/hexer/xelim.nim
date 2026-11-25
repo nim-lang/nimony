@@ -1394,12 +1394,21 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc isIntLike(tk: TypeKind): bool {.inline.} =
   tk in {IntT, UIntT, CharT, BoolT}
 
+proc castKind(t: Cursor): TypeKind =
+  ## The kind of `t`'s bit representation: a cast of an enum, `distinct` or
+  ## `range` value reinterprets the bits of its base type.
+  var t = toTypeImpl(t)
+  while t.typeKind in {DistinctT, RangetypeT}:
+    inc t
+    t = toTypeImpl(t)
+  result = if t.typeKind in {EnumT, HoleyEnumT, AnumT}: IntT else: t.typeKind
+
 proc needsBitCast(destType: Cursor; srcType: Cursor): bool =
   ## Returns true when the cast requires memcpy for bit reinterpretation.
   ## Integer-to-integer and float-to-float casts can use a plain C cast.
   ## Integer-to-float (and vice versa) needs memcpy.
-  let dtk = typeKind(destType)
-  let stk = typeKind(srcType)
+  let dtk = castKind(destType)
+  let stk = castKind(srcType)
   if dtk == FloatT and stk == FloatT: return false
   if isIntLike(dtk) and isIntLike(stk): return false
   # One is float, the other is integer-like (or both are value types of
@@ -1416,7 +1425,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   takeTree destTypeBuf, n # copy dest type, n now at srcExpr
   let destType = beginRead(destTypeBuf)
 
-  let dtk = typeKind(destType)
+  let dtk = castKind(destType)
   # Quick check: if dest is not a value type, skip getType on source entirely
   if dtk notin {IntT, UIntT, FloatT, CharT, BoolT}:
     var srcTarget = initTarget(IsEmpty)
@@ -1448,15 +1457,14 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   trExpr c, dest, n, srcTarget
   n = castStart; skip n
 
-  # Ensure source is a variable. A `const` is a Symbol but not storage: it is
-  # inlined later, which would leave `addr <literal>` behind.
+  # Ensure source is a variable. A `const` or an enum field is a Symbol but not
+  # storage: it becomes a literal later, which would leave `addr <literal>` behind.
   var srcSym: SymId
   var srcCur = beginRead(srcTarget.t)
   var srcIsConst = false
   if srcCur.kind == Symbol:
     let res = tryLoadSym(srcCur.symId)
-    srcIsConst = res.status == LacksNothing and isLocal(res.decl.symKind) and
-                 asLocal(res.decl).kind == ConstY
+    srcIsConst = res.status == LacksNothing and res.decl.symKind in {ConstY, EfldY}
   if srcCur.kind == Symbol and not srcIsConst:
     srcSym = srcCur.symId
   else:
