@@ -36,3 +36,22 @@ proc main() =
 
 main()
 echo "ok"
+
+# A captured `sink` parameter moves into the env; the env's `=destroy` must
+# release it like any other captured value (#348).
+type Boxed = ref object
+  r: Resource
+
+proc useSink(b: sink Boxed) =
+  let p = proc () {.closure.} = touch("sink ", b.r)
+  p()
+
+useSink(Boxed(r: Resource(name: "gamma")))
+echo "after sink"
+
+# ... and so must the frame of a closure iterator its own `sink` parameter.
+iterator ownSink(b: sink Boxed): string {.closure.} =
+  yield b.r.name
+
+for s in ownSink(Boxed(r: Resource(name: "delta"))): echo s
+echo "after iter"

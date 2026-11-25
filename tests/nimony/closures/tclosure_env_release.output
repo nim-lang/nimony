@@ -5,3 +5,9 @@ event beta
 scope end next
 released beta
 ok
+sink gamma
+released gamma
+after sink
+delta
+released delta
+after iter

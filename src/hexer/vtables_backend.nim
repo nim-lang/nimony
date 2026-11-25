@@ -18,7 +18,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / tinyhashes
 import ".." / lib / [nifindexes, symparser, treemangler]
-import passes
+import passes, closuretypes
 import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, decls, programs, typenav, renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
@@ -208,10 +208,11 @@ proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
   var n = typ
   dest.copyIntoKind ProctypeT, NoLineInfo:
     dest.addDotToken() # nilability tag
-    # params:
-    dest.takeTree n
-    # return type:
-    dest.takeTree n
+    # params and return type, a `.closure` proctype in them as the (fn, env)
+    # tuple the arguments are (#333):
+    for _ in 1..2:
+      dest.add loweredClosureType(n)
+      skip n
     # calling convention is always nimcall for now:
     dest.copyIntoKind PragmasU, NoLineInfo:
       dest.addParPair Nimcall, NoLineInfo

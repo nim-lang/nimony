@@ -344,7 +344,10 @@ proc localToField(c: var Context; n: Cursor; local, typ: SymId; isCursor = false
     name.add "."
     name.add c.thisModuleSuffix
     result = pool.symId(name)
-    let localTyp = c.typeCache.getType(n)
+    var localTyp = c.typeCache.getType(n)
+    # A captured `sink` parameter moves into the env: the field owns a plain
+    # `T` (the lifter hooks no `sink T` field, #348).
+    if localTyp.typeKind == SinkT: inc localTyp
     c.currentProc.localToEnv[(typ, local)] = EnvField(objType: typ, field: result, typ: localTyp, isCursor: isCursor)
     c.envFieldType[result] = localTyp
 
@@ -1686,13 +1689,16 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
   #    upstream tests.
   let needNilCheck = typ.typeKind == ProctypeT and isClosure(typ) and
                      not calleeHasClosureParam(typ)
-  var tmp = SymId(0)
+  # `callee` is the (fn, env) tuple, read once per slot. A symbol callee is
+  # translated like any other read of it (`tre`'s Symbol case: a local moved
+  # into the env becomes its env field, #343; a raising closure iterator's
+  # loop variable its value half), giving a path with no side effects.
+  var callee = createTokenBuf(8)
   if n.kind == Symbol:
-    tmp = n.symId
-    inc n, SkipName
+    tre c, callee, n
   else:
     # An expression callee: the (fn, env) tuple is bound to a temp first.
-    tmp = pool.symId("`llTemp." & $c.counter)
+    let tmp = pool.symId("`llTemp." & $c.counter)
     inc c.counter
     var value = createTokenBuf(16)
     tre c, value, n          # what the value itself hoists comes first
@@ -1707,6 +1713,7 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
       treType c, decl, t
       decl.add value
     c.hoisted.add decl
+    callee.addSymUse tmp, info
   # The arguments are translated once; both arms of the dispatch use them.
   var args = createTokenBuf(16)
   while n.hasMore:
@@ -1714,11 +1721,11 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
   var call = createTokenBuf(16)
   call.addParLe(callNode.cursorTagId, info)
   call.copyIntoKind TupatX, info:  # the fn slot
-    call.addSymUse tmp, info
+    call.add callee
     call.addIntLit 0, info
   call.add args
   call.copyIntoKind TupatX, info:  # the env slot
-    call.addSymUse tmp, info
+    call.add callee
     call.addIntLit 1, info
   call.addParRi()
   if not needNilCheck:
@@ -1730,7 +1737,7 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
   plain.copyIntoKind CastX, info:
     c.toNonClosureProcType plain, typ
     plain.copyIntoKind TupatX, info:
-      plain.addSymUse tmp, info
+      plain.add callee
       plain.addIntLit 0, info
   plain.add args
   plain.addParRi()
@@ -1758,7 +1765,7 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
       else:
         disp.copyIntoKind PointerT, info: discard
       disp.copyIntoKind TupatX, info:
-        disp.addSymUse tmp, info
+        disp.add callee
         disp.addIntLit 1, info
       disp.addParPair NilX, info
     disp.copyIntoKind StmtsS, info:
