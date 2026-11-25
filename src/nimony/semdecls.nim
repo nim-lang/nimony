@@ -338,19 +338,21 @@ proc isTypeclassParamType(typ: Cursor; routine: SymKind): bool =
   ## template or macro, where it is a mere constraint on the argument) a
   ## union/intersection/negation class such as `int or float` or a named one
   ## like `SomeInteger` (#3135).
-  case typ.typeKind
-  of TypekindT:
+  if typ.typeKind == TypekindT:
     result = true
-  of OrT, AndT, NotT:
-    result = routine notin {TemplateY, MacroY}
+  elif routine in {TemplateY, MacroY}:
+    result = false
+  elif typ.typeKind in {OrT, AndT, NotT}:
+    result = true
+  elif typ.isSymbol:
+    result = false
+    let res = tryLoadSym(typ.symId)
+    if res.status == LacksNothing:
+      let decl = asTypeDecl(res.decl)
+      result = decl.kind == TypeY and decl.typevars.isDotToken and
+        decl.body.typeKind in {OrT, AndT, NotT}
   else:
     result = false
-    if typ.isSymbol:
-      let res = tryLoadSym(typ.symId)
-      if res.status == LacksNothing:
-        let decl = asTypeDecl(res.decl)
-        result = routine notin {TemplateY, MacroY} and decl.kind == TypeY and
-          decl.typevars.isDotToken and decl.body.typeKind in {OrT, AndT, NotT}
 
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var kind = kind
