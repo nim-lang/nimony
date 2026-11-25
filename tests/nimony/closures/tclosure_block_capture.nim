@@ -34,3 +34,34 @@ block:
     result = x
 echo escaped()
 echo escaped()
+
+# A module level `while` is a `(loop)` after lowering. The whole loop owns the
+# environment, as a proc owns the environment of its loops: the closures share
+# `w` (2 2 2, the same as inside a proc), and `continue` stays the loop body's
+# last statement (it used to end up inside the environment's scope).
+var wcbs: seq[proc () {.closure.}] = @[]
+var wk = 0
+while wk < 3:
+  var w = wk
+  wcbs.add proc () {.closure.} = echo w
+  inc wk
+for cb in wcbs: cb()
+
+wk = 0
+while true:
+  inc wk
+  var w = wk
+  let p = proc () {.closure.} = echo w
+  if wk == 2: continue
+  p()
+  if wk >= 3: break
+
+var wi = 0
+while wi < 2:
+  var wj = 0
+  while wj < 2:
+    var w = wi * 10 + wj
+    let p = proc () {.closure.} = echo w
+    p()
+    inc wj
+  inc wi
