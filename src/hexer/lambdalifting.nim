@@ -412,8 +412,14 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi(n.endInfo)
 
 const
-  ToplevelRootKinds = {BlockS, IfS, WhenS, WhileS, CaseS, TryS, ScopeS, CoroforS}
+  ToplevelRootKinds = {BlockS, IfS, WhenS, CaseS, TryS, ScopeS, CoroforS}
     ## module level statements with locals of their own
+
+proc isToplevelRoot(n: Cursor): bool =
+  ## A module level `while` arrives as the Final IR's `(loop)`. The loop as a
+  ## whole is the root: an environment around its body would leave the
+  ## trailing `(continue)` nested inside it.
+  n.stmtKind in ToplevelRootKinds or n.finalIrKind == LoopV
 
 proc closureLoopVar(call: Cursor): SymId =
   ## The `forLoopVar` of a closure corofor's `(call iter args...
@@ -533,7 +539,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeTree dest, n
   of TagLit:
-    if c.procStack.len == 0 and n.stmtKind in ToplevelRootKinds:
+    if c.procStack.len == 0 and isToplevelRoot(n):
       trToplevelStmt c, dest, n
       return
     if n.stmtKind == CoroforS:
@@ -2015,7 +2021,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
      IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of TagLit:
-    if c.procStack.len == 0 and n.stmtKind in ToplevelRootKinds:
+    if c.procStack.len == 0 and isToplevelRoot(n):
       treToplevelStmt c, dest, n
       return
     case n.stmtKind
