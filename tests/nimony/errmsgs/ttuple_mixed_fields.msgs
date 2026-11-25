@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/ttuple_mixed_fields.nim(2, 26) Error: expected field name for named tuple constructor
+tests/nimony/errmsgs/ttuple_mixed_fields.nim(6, 37) Error: expected field name for named tuple constructor
+tests/nimony/errmsgs/ttuple_mixed_fields.nim(10, 34) Error: expected field name for named tuple constructor
