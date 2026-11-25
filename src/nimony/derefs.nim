@@ -204,12 +204,9 @@ proc trSons(c: var Context; n: var Cursor; e: Expects; expected: Cursor = defaul
         tr c, n, e, expected
 
 const
-  NilableTypes = {PtrT, RefT, PointerT, CstringT}
-    ## Data pointers only. A `nil` of a proc/iterator type is deliberately left
-    ## bare: the CPS transform rewrites a passive proc's type *after* the
-    ## frontend is done, so a type stamped here would name the pre-transform
-    ## signature and disagree with the local it initializes. `sigmatch` already
-    ## writes `(nil <proctype> (nil))` where a closure needs its environment.
+  NilableTypes = {PtrT, RefT, PointerT, CstringT, ProctypeT}
+    ## Pointer and proc types: a bare `nil` in a slot of one of them gets the
+    ## slot's type (`trNil`). A `nil` of an iterator type stays bare.
 
 proc resolvedTypeKind(typ: Cursor): TypeKind =
   ## `typ.typeKind`, but a type alias (`type PNode = ptr Node`) is followed to

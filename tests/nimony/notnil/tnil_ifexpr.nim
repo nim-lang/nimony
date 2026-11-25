@@ -42,3 +42,22 @@ try:
 except: echo "raised"
 echo viaReturn(x, true) != nil, " ", viaReturn(x, false) == nil, " ",
   viaBreak(x, true) != nil, " ", viaBreak(x, false) == nil
+
+# the same for a nilable proc type, with the `nil` branch first or second
+type Cb = proc (x: int): int {.nimcall.}
+proc dbl(x: int): int = 2*x
+proc pickFirst(f: Cb; c: bool): nil Cb =
+  result = if not c: nil else: f
+proc pickSecond(f: Cb; c: bool): nil Cb =
+  result = if c: f else: nil
+echo pickFirst(dbl, false) == nil, " ", pickFirst(dbl, true) != nil, " ",
+  pickSecond(dbl, false) == nil, " ", pickSecond(dbl, true) != nil
+proc viaContinue(f: Cb; k: int): nil Cb =
+  result = nil
+  for i in 0..0:
+    let g: nil Cb = case k
+      of 0: f
+      of 1: nil
+      else: continue
+    result = g
+echo viaContinue(dbl, 0) != nil, " ", viaContinue(dbl, 1) == nil, " ", viaContinue(dbl, 2) == nil

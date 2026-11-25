@@ -2412,13 +2412,15 @@ proc semDiscard(c: var SemContext; dest: var TokenBuf; it: var Item) =
   producesVoid c, dest, info, it.typ
 
 proc isNilMarkedPtr(t: Cursor): bool =
-  ## `nil ref T` / `nil ptr T`: a pointer type explicitly marked as nilable.
+  ## `nil ref T`, `nil ptr T`, `nil proc ...`: a type explicitly marked nilable.
   var t = skipModifier(t)
   result = false
   if t.typeKind in {RefT, PtrT}:
     var e = t.childCursor
     skip e # base type
     result = e.hasMore and e.substructureKind == NilU
+  elif t.typeKind == ProctypeT:
+    result = t.childCursor.substructureKind == NilU # slot 0: nilability
 
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool) =
   # handle statements that could be expressions
