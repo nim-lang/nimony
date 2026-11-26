@@ -363,8 +363,9 @@ proc isTypeclassParamType(typ: Cursor; routine: SymKind): bool =
 proc isRoutineGlobal(c: var SemContext; kind: SymKind; crucial: CrucialPragma): bool =
   ## A `var x {.global.}` or `{.threadvar.}` inside a routine: one location for
   ## the whole program (or thread), which xelim moves to module scope
-  ## (`xelim.trLocal`).
-  kind in {LetY, VarY} and {GlobalP, ThreadvarP} * crucial.flags != {} and
+  ## (`xelim.trLocal`). A template's expansion brings it back as the
+  ## `gvar`/`glet`/`tvar`/`tlet` its definition was tagged with.
+  kind in LocalSigKinds and {GlobalP, ThreadvarP} * crucial.flags != {} and
     c.currentScope.kind != ToplevelScope
 
 proc checkRoutineGlobalInit(c: var SemContext; dest: var TokenBuf; typePos: int) =

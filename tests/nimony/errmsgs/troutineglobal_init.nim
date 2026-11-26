@@ -8,3 +8,19 @@ proc f(a: int): int =
   result = g + h
 
 discard f(1)
+
+# A template's global belongs to the routine it expands in: the check runs at
+# the expansion, where the template's parameter is the caller's argument.
+template counted(start: int): int =
+  var cached {.global.} = start
+  inc cached
+  cached
+
+proc fromLocal(a: int): int =
+  result = counted(a)
+
+proc fromLiteral(): int =
+  result = counted(3)
+
+discard fromLocal(1)
+discard fromLiteral()
