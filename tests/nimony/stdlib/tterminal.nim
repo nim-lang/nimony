@@ -9,7 +9,7 @@ proc main() {.raises.} =
   assert ansiForegroundColorCode(fgRed) == "\e[31m"
   assert ansiForegroundColorCode(fgRed, true) == "\e[91m"
   assert ansiBackgroundColorCode(bgBlue) == "\e[44m"
-  assert ansiForegroundColorCode(rgba(240, 236, 228)) == "\e[38;2;240;236;228m"
+  assert ansiForegroundColorCode(rgb(240, 236, 228)) == "\e[38;2;240;236;228m"
   assert ansiBackgroundColorCode(colGold) == "\e[48;2;255;215;0m"
 
   # true color stays off until enabled, like Nim
@@ -45,7 +45,7 @@ proc main() {.raises.} =
     when not defined(windows): assert isTrueColorSupported()
     if isTrueColorSupported():
       f = open(path, fmWrite)
-      setBackgroundColor(f, rgba(1, 2, 3))
+      setBackgroundColor(f, rgb(1, 2, 3))
       styledWrite(f, fgColor, colRed, "x", bgColor, colBlue, "y")
       close(f)
       assert readFile(path) ==

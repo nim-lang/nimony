@@ -66,9 +66,16 @@ proc `-`*(a, b: Color): Color =
 proc extractRgba*(a: Color): tuple[r, g, b, a: uint8] =
   ## Extracts the red/green/blue/alpha components of the color `a`.
   runnableExamples:
-    let a = extractRGB(Color(0x00_ff_cc_ff'u32))
+    let a = extractRgba(Color(0x00_ff_cc_ff'u32))
     assert a.r == 0 and a.g == 255 and a.b == 204 and a.a == 255
   result = (r: a.r, g: a.g, b: a.b, a: a.a)
+
+proc extractRgb*(a: Color): tuple[r, g, b: uint8] =
+  ## Extracts the red/green/blue components of the color `a`.
+  runnableExamples:
+    let a = extractRgb(Color(0x00_ff_cc_ff'u32))
+    assert a.r == 0 and a.g == 255 and a.b == 204
+  result = (r: a.r, g: a.g, b: a.b)
 
 proc mixColors(a, b: Color; fn: proc (x, y: int): int): Color =
   ## The body of `mix`: `fn` must be a proc value, not an expression.
@@ -478,6 +485,12 @@ proc rgba*(r, g, b, a: uint8): Color =
   runnableExamples:
     assert rgba(0, 255, 128, 00) == Color(0x00_ff_80_00)
   result = rawRgba(r, g, b, a)
+
+proc rgb*(r, g, b: uint8): Color =
+  ## Constructs a color from RGB values.
+  runnableExamples:
+    assert rgb(0, 255, 128) == Color(0x00_ff_80_ff)
+  result = rawRgba(r, g, b, 255)
 
 proc opacity*(c: Color, f: float): Color {.raises.} =
   ## Returns `c` with opacity `f`. `f` must be a float from 0.0 (completely
