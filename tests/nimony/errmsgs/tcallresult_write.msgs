@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tcallresult_write.nim(23, 8) Error: cannot mutate expression get(b).n
+tests/nimony/errmsgs/tcallresult_write.nim(24, 12) Error: cannot pass get(b).n to var/out T parameter
+tests/nimony/errmsgs/tcallresult_write.nim(25, 13) Error: cannot pass get(b).n to var/out T parameter
+tests/nimony/errmsgs/tcallresult_write.nim(26, 9) Error: cannot mutate expression make().n
