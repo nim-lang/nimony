@@ -733,9 +733,9 @@ func substr*(s: string; first = 0): string =
 
 # ---- SWAR / comparison helpers ----
 
-proc bswap64(x: uint64): uint64 {.intrinsic: "Bswap", noSideEffect.}
-proc ctz64(x: uint64): int32    {.intrinsic: "Ctz", noSideEffect.}
-proc clz64(x: uint64): int32    {.intrinsic: "Clz", noSideEffect.}
+func bswap64(x: uint64): uint64 {.intrinsic: "Bswap", noSideEffect.}
+func ctz64(x: uint64): int32    {.intrinsic: "Ctz", noSideEffect.}
+func clz64(x: uint64): int32    {.intrinsic: "Clz", noSideEffect.}
 
 func bswap(x: uint): uint {.inline.} = uint(bswap64(uint64(x)))
 func ctzImpl(x: uint): int {.inline.} = int(ctz64(uint64(x)))
@@ -1140,7 +1140,7 @@ template `$`*(x: string): string = x
 
 when defined(wasm32) and defined(standalone):
   # The JS back end's `importjs` string bridge reaches strings only through these (none overloaded).
-  proc nimStrBeginStore(s: var string; newLen: int): ptr UncheckedArray[char]
+  func nimStrBeginStore(s: var string; newLen: int): ptr UncheckedArray[char]
       {.exportc: "nimStrBeginStore", noSideEffect, raises: [], tags: [].} =
     ## JS bridge entry point: makes the uninitialized slot `s` (never read) a
     ## string of `newLen` bytes and returns where to write them; call
@@ -1150,29 +1150,29 @@ when defined(wasm32) and defined(standalone):
     result = beginStore(s, newLen)
     if isOom(s): result = nil
 
-  proc nimStrEndStore(s: var string)
+  func nimStrEndStore(s: var string)
       {.exportc: "nimStrEndStore", noSideEffect, raises: [], tags: [].} =
     ## JS bridge entry point: ends a `nimStrBeginStore` write.
     endStore(s)
 
-  proc nimStrBridgeDestroy(s: var string)
+  func nimStrBridgeDestroy(s: var string)
       {.exportc: "nimStrBridgeDestroy", noSideEffect, raises: [], tags: [].} =
     ## JS bridge entry point: runs `=destroy` on `s`.
     `=destroy`(s)
 
-  proc nimStrBridgeCstr(s: var string): cstring
+  func nimStrBridgeCstr(s: var string): cstring
       {.exportc: "nimStrBridgeCstr", noSideEffect, raises: [], tags: [].} =
     ## JS bridge entry point: `s`'s bytes followed by a NUL, valid while `s`
     ## lives and is not modified (see `toCString`).
     result = toCString(s)
 
-  proc nimStrBridgeData(s {.byref.}: string): pointer
+  func nimStrBridgeData(s {.byref.}: string): pointer
       {.exportc: "nimStrBridgeData", noSideEffect, raises: [], tags: [].} =
     ## JS bridge entry point: the address of `s`'s first byte; read
     ## `nimStrBridgeLen(s)` bytes from it.
     result = rawData(s)
 
-  proc nimStrBridgeLen(s: string): int
+  func nimStrBridgeLen(s: string): int
       {.exportc: "nimStrBridgeLen", noSideEffect, raises: [], tags: [].} =
     ## JS bridge entry point: the number of bytes in `s`.
     result = len(s)

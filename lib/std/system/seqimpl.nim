@@ -348,7 +348,7 @@ func setLen*[T: HasDefault](s: var seq[T]; newLen: int) {.nodestroy.} =
         inc i
     seqFenceExit fenced
 
-proc newSeq*[T: HasDefault](s: out seq[T]; newLen: int) {.nodestroy, inline.} =
+func newSeq*[T: HasDefault](s: out seq[T]; newLen: int) {.nodestroy, inline.} =
   s = newSeq[T](newLen)
 
 func high*[T](s: seq[T]): int {.inline.} =
