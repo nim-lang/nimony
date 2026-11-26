@@ -691,7 +691,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
       dest.addSymUse(targetSym, info)
       sym.name = targetSym
     assert sym.name != SymId(0)
-    semTypeSym c, dest, sym, info, typeStart, InLocalDecl
+    semTypeSym c, dest, sym, info, typeStart, context
 
 proc isSymbolicLength(n: Cursor): bool =
   ## In an `array` index slot that still mentions generic parameters, tell a
@@ -1141,7 +1141,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
           dest.addParPair NotnilU, info
         else:
           dest.addParPair UncheckedU, info
-    of MutT, OutT, LentT, SinkT, NotT, UarrayT,
+    of MutT, OutT, LentT, SinkT, UarrayT,
        StaticT, TypedescT:
       if tryTypeClass(c, dest, n):
         return
@@ -1189,7 +1189,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         # replace the `(set ...)` tree with the error node; an appended
         # sibling would give the enclosing decl an extra child:
         c.buildErrAt dest, setStart, errMsg
-    of OrT, AndT:
+    of OrT, AndT, NotT:
       dest.takeInto n:
         while n.hasMore:
           semLocalTypeImpl c, dest, n, context

@@ -82,7 +82,8 @@ type
 
   TypeDeclContext* = enum
     InLocalDecl, InTypeSection, InReturnTypeDecl, AllowValues,
-    InGenericConstraint, InInvokeHead
+    InGenericConstraint, InInvokeHead,
+    InTypeValue ## a type name used as an expression: a `typedesc` value
 
   CrucialPragma* = object
     ## Pragma summary collected while sem-checking a routine/type's pragmas.
