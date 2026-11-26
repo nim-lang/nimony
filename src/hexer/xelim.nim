@@ -98,6 +98,9 @@ type
     bitCastsInBackend: bool  ## the backend reinterprets a cross-family `cast`
                              ## itself (arkham: `movq`), so it stays a `cast`
     ptrSize: int
+    inRoutine: bool
+    hoisted: TokenBuf ## a routine's `.global`/`.threadvar`s, lowered along with
+                      ## the temps of their initializer; see `trLocal`
 
 proc initTarget(m: Mode): Target {.inline.} =
   ## Every `Target` buffer is bound to the global pools up front: a `Target`
@@ -1186,20 +1189,51 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trStmt c, dest, n # body
     dest.addParRi(n.endInfo)
 
-proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc takePragmasWithoutGlobal(dest: var TokenBuf; n: var Cursor) =
+  ## `.global` has done its job once the declaration is at module scope.
+  if n.substructureKind != PragmasU:
+    dest.takeTree n
+  else:
+    var kept = createTokenBuf(8)
+    n.into:
+      while n.hasMore:
+        if n.pragmaKind == GlobalP: skip n
+        else: kept.takeTree n
+    if kept.len == 0:
+      dest.addDotToken()
+    else:
+      dest.addParLe PragmasU, NoLineInfo
+      dest.add kept
+      dest.addParRi()
+
+proc trLocalInto(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tmp = createTokenBuf(30)
   let kind = n.symKind
   copyInto tmp, n:
     let name = n.symId
     takeTree tmp, n # name
     takeTree tmp, n # export marker
-    takeTree tmp, n # pragmas
+    takePragmasWithoutGlobal tmp, n
     c.typeCache.registerLocal(name, kind, n)
     takeTree tmp, n # type
     var v = initTarget(IsBound)
     trExpr c, dest, n, v
     tmp.addTarget v
   dest.add tmp
+
+proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## A `var x {.global.}` (or `.threadvar`) in a routine is one location for the
+  ## whole program: it moves to module scope, together with the temps of its
+  ## initializer, which runs once before the module's toplevel statements. Sem
+  ## gave it a module-unique name (`semLocal`). No later pass sees a global in
+  ## a routine: the inliner copied it per inlined call (#3167), the duplifier
+  ## reset it per call (#3159).
+  if c.inRoutine and n.stmtKind in {GvarS, GletS, TvarS, TletS}:
+    var hoisted = move c.hoisted
+    trLocalInto c, hoisted, n
+    c.hoisted = move hoisted
+  else:
+    trLocalInto c, dest, n
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
@@ -1217,7 +1251,10 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isLocalDecl(symId):
         c.typeCache.registerLocal(symId, kind, decl)
       c.typeCache.openScope()
+      let wasInRoutine = c.inRoutine
+      c.inRoutine = true
       trStmt c, dest, n
+      c.inRoutine = wasInRoutine
       c.typeCache.closeScope()
     else:
       takeTree dest, n
@@ -1616,14 +1653,20 @@ proc lowerExprs*(pass: var Pass; goal: Goal; bitCastsInBackend = false) =
   # `finalir` and again as `xelim_final`, and restarting from 0 would mint
   # colliding `\`x.<n>` names within one function.
   var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, goal: goal,
-                  bitCastsInBackend: bitCastsInBackend, ptrSize: pass.bits div 8)
+                  bitCastsInBackend: bitCastsInBackend, ptrSize: pass.bits div 8,
+                  hoisted: initTokenBuf())
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   preRegisterRoutines(c, n)
   pass.dest.addParLe(n.cursorTagId, n.info)
+  var globalsPos = -1
   n.into:
     while n.hasMore:
+      if globalsPos < 0 and n.stmtKind != ImportS: globalsPos = pass.dest.len
       trStmt c, pass.dest, n
+  if c.hoisted.len > 0:
+    # after the imports, in front of the module's own statements
+    pass.dest.insert c.hoisted, (if globalsPos < 0: pass.dest.len else: globalsPos)
   pass.dest.addParRi()
   c.typeCache.closeScope()
   pass.nextTemp = c.counter
