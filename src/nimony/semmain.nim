@@ -26,7 +26,7 @@ import ".." / models / nifindex_tags
 import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptcache,
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
-  contracts_fir, exprexec, semimport, module_plugins, sem, templates
+  contracts_fir, exprexec, semimport, module_plugins, sem, templates, hoistglobals
 import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
@@ -531,7 +531,10 @@ proc runPhases(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
 
 proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
   ## `injectDerefs` over the checked module. `afterSem` is released on return:
-  ## nothing after derefs reads it.
+  ## nothing after derefs reads it. A routine's `.global`s move to module
+  ## scope first (`hoistRoutineGlobals`).
+  var afterSem = afterSem
+  hoistRoutineGlobals afterSem
   when defined(dumpPhases):
     block:
       var r = beginRead(afterSem)

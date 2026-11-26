@@ -5275,6 +5275,22 @@ objects that inherit from an existing object (via the `object of SuperType`
 syntax) or that have been marked as `inheritable`.
 
 
+### global pragma
+A `var` or `let` with the `global` pragma inside a routine is a global
+variable whose scope is the routine: every call of the routine sees the same
+location. Its initializer runs once, before the module's toplevel statements,
+so it cannot refer to the routine's parameters or locals. Each instance of a
+generic routine has a global of its own.
+
+```nim
+proc counter(): int =
+  var calls {.global.}: int
+  inc calls
+  result = calls
+
+echo counter(), counter() # 12
+```
+
 
 ### error pragma
 
