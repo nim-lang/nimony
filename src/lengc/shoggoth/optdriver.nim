@@ -159,7 +159,7 @@ proc runPipelineRound(buf: var TokenBuf; f: var Fixpoint; st: var Stats;
   f.changed = false
   let rw = eng != nil and passOn("rewrite")
   stage(f, stRewrite, rw): runRewritesFix(eng, buf) > 0
-  stage(f, stCtorProj, passOn("ctorproj")): runConstructorProjection(buf)
+  stage(f, stCtorProj, passOn("ctorproj")): runConstructorProjection(buf, m)
   stage(f, stScalarize, passOn("scalarize")): runScalarize(buf, m, f.sroa)
   stage(f, stCopyProp, passOn("copyprop")): runCopyProp(buf, params, summaries, m)
   stage(f, stUnswitch, passOn("unswitch")): runUnswitch(buf, f.us) > 0
