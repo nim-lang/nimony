@@ -4152,7 +4152,8 @@ proc semShift(c: var SemContext; dest: var TokenBuf; it: var Item) =
     let beforeShift = dest.len
     semExpr c, dest, shift
     it.n = shift.n
-    if dest[beforeShift].exprKind != ErrX and shift.typ.typeKind notin {IntT, UIntT}:
+    if dest[beforeShift].exprKind != ErrX and
+        skipRangeBase(shift.typ).typeKind notin {IntT, UIntT}:
       c.buildErr dest, shiftInfo, "expected integer for shift operand"
   commonType c, dest, it, beforeExpr, typ
 
