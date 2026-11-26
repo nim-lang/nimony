@@ -6454,8 +6454,10 @@ proc traverseProc(c: var FirContext; n: var Cursor; nested: bool) =
   # `runnableExamples` body still ends in an implicit `(ret result)` that reads
   # the never-initialized `result`, so we must skip the *traversal*, not merely
   # the final init check. An `{.assembler.}` body is machine code, kept
-  # verbatim by `finalir` for the backend; there is nothing to analyse.
-  if not isGeneric and not isExternProc and not isAsm:
+  # verbatim by `finalir` for the backend; there is nothing to analyse. A
+  # forward declaration has no body (`.`): its implementation is checked where
+  # it is defined.
+  if not isGeneric and not isExternProc and not isAsm and not n.isDotToken:
     block:
       var scan = n
       collectAliased(c.typeCache, scan, c.p.aliasInits, c.p.aliased)
