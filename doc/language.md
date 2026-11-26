@@ -1341,7 +1341,8 @@ Let `f` be the formal parameter's type and `a` the type of the argument.
    instance `a` is `int` and `f` is a generic (constrained) parameter
    type (like in `[T]` or `[T: int|char]`).
 4. Subrange or subtype match: `a` is a `range[T]` and `T`
-   matches `f` exactly. Or: `a` is a subtype of `f`.
+   matches `f` exactly. Or: `f` is a constrained generic parameter whose
+   constraint `range[T]` does not satisfy but `T` does. Or: `a` is a subtype of `f`.
 5. Integral conversion match: `a` is convertible to `f` and `f` and `a`
    is some integer or floating-point type.
 6. Conversion match: `a` is convertible to `f`, possibly via a user

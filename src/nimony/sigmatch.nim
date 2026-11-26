@@ -88,6 +88,7 @@ type
                             ## specificity ("concrete beats typevar") is decided
                             ## structurally from the two signatures
     hasError: bool # mark that error message was set
+    rangeAsBase: bool ## a constraint leaf also tries a subrange's base type
     skippedMod: TypeKind
     argInfo: NifLineInfo
     procArg: Cursor ## the argument `procTypeMatch` is matching, if it is one:
@@ -517,11 +518,18 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     result = tryLinearMatch(m, f, a2, ConstraintMatchFlags) or
       matchInheritedConstraint(m, fOrig, a)
 
-proc matchSingleConstraint(m: var Match; f: var Cursor; a: Cursor): bool {.inline.} =
+proc matchSingleConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
+  let f0 = f
   if f.isSymbol:
     result = matchSymbolConstraint(m, f, a)
   else:
     result = matchTypeConstraint(m, f, a)
+  if not result and m.rangeAsBase and a.typeKind == RangetypeT:
+    # `range[T]` satisfies what `T` satisfies
+    f = f0
+    var base = a
+    inc base
+    result = matchSingleConstraint(m, f, base)
 
 proc matchConstraintSplitAnd(m: var Match; f: var Cursor; a: Cursor): bool =
   if a.typeKind == AndT:
@@ -637,7 +645,17 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
       # for a value parameter its element type stands in for its "type"
       var typevar = asTypevar(res.decl)
       return matchesConstraint(m, f, typevar.typ)
+  let f0 = f
   result = matchesConstraintAux(m, f, a)
+  if a.typeKind == RangetypeT and not m.rangeAsBase:
+    # a subrange satisfies a constraint when its base type does; when only
+    # the base type does, it is a subrange match (category 4)
+    f = f0
+    m.rangeAsBase = true
+    let viaBase = matchesConstraintAux(m, f, a)
+    m.rangeAsBase = false
+    if viaBase and not result: inc m.inheritanceCosts
+    result = viaBase
 
 proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
   ## The tiny fixed-opcode evaluator for compile-time *values* in type
