@@ -4,17 +4,17 @@
 import std/[assertions, syncio, colors]
 
 proc main() =
-  assert rgb(0, 255, 128) == Color(0x00_ff_80)
-  let gold = extractRGB(colGold)
-  assert gold.r == 255 and gold.g == 215 and gold.b == 0
+  assert rgba(0, 255, 128, 255) == Color(0x00_ff_80_ff)
+  let gold = extractRgba(colGold)
+  assert gold.r == 255 and gold.g == 215 and gold.b == 0 and gold.a == 255
   echo $colFuchsia, " ", $rgb(1, 2, 3), " ", $colBlack
 
-  assert Color(0xaa_00_ff) + Color(0x11_cc_cc) == Color(0xbb_cc_ff)
-  assert Color(0xff_33_ff) - Color(0x11_ff_cc) == Color(0xee_00_33)
-  assert Color(0xff_00_ff).intensity(0.5) == Color(0x80_00_80)
-  assert Color(0x00_42_cc).intensity(0.5) == Color(0x00_21_66)
+  assert Color(0xaa_00_ff_ff) + Color(0x11_cc_cc_ff) == Color(0xbb_cc_ff_ff)
+  assert Color(0xff_33_ff_ff) - Color(0x11_ff_cc_ff) == Color(0xee_00_33_00)
+  assert Color(0xff_00_ff_ff).intensity(0.5) == Color(0x80_00_80_ff)
+  assert Color(0x00_42_cc_ff).intensity(0.5) == Color(0x00_21_66_ff)
   proc myMix(x, y: int): int = 2 * x - 3 * y
-  assert mix(Color(0x0a2814), Color(0x050a03), myMix) == Color(0x05_32_1f)
+  assert mix(Color(0x0a2814ff), Color(0x050a03ff), myMix) == Color(0x05_32_1f_00)
 
   assert isColor("silver") and isColor("SILVER") and isColor("aliceblue")
   assert isColor("yellowgreen") and isColor("#0179fc")
@@ -23,7 +23,7 @@ proc main() =
   try:
     assert parseColor("silver") == colSilver
     assert parseColor("RebeccaPurple") == colRebeccaPurple
-    assert parseColor("#0179fc") == Color(0x01_79_fc)
+    assert parseColor("#0179fc") == Color(0x01_79_fc_ff)
   except:
     assert false
   var raised = 0
