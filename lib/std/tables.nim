@@ -345,13 +345,13 @@ func `==`*[K: Keyable, V: Equatable](s, t: Table[K, V]): bool =
 
 proc newTable*[K, V](initialSize = defaultInitialSize): TableRef[K, V] =
   ## Creates a new empty ref table.
-  new(result)
-  result[] = initTable[K, V](initialSize)
+  let t = initTable[K, V](initialSize)
+  result = TableRef[K, V](data: t.data, hashes: t.hashes)
 
 proc newTable*[K: Keyable, V](pairs: openArray[(K, V)]): TableRef[K, V] =
   ## Creates a new ref table containing `pairs`.
-  new(result)
-  result[] = toTable(pairs)
+  let t = toTable(pairs)
+  result = TableRef[K, V](data: t.data, hashes: t.hashes)
 
 proc `[]`*[K: Keyable, V](t: TableRef[K, V]; key: K): var V {.raises.} =
   ## Retrieves `key`'s value or raises `KeyError` when absent.
@@ -601,14 +601,14 @@ func `==`*[K: Keyable, V: Equatable](s, t: OrderedTable[K, V]): bool =
 proc newOrderedTable*[K, V](
     initialSize = defaultInitialSize): OrderedTableRef[K, V] =
   ## Creates a new empty ordered ref table.
-  new(result)
-  result[] = initOrderedTable[K, V](initialSize)
+  let t = initOrderedTable[K, V](initialSize)
+  result = OrderedTableRef[K, V](inner: t.inner)
 
 proc newOrderedTable*[K: Keyable, V](
     pairs: openArray[(K, V)]): OrderedTableRef[K, V] =
   ## Creates a new ordered ref table containing `pairs`.
-  new(result)
-  result[] = toOrderedTable(pairs)
+  let t = toOrderedTable(pairs)
+  result = OrderedTableRef[K, V](inner: t.inner)
 
 proc `[]`*[K: Keyable, V](t: OrderedTableRef[K, V]; key: K): var V {.raises.} =
   ## Retrieves `key`'s value or raises `KeyError` when absent.
@@ -1037,8 +1037,8 @@ proc inc*[K: Keyable and HasDefault](t: CountTableRef[K]; key: K; val = 1)
 
 proc newCountTable*[K](initialSize = defaultInitialSize): CountTableRef[K] =
   ## Creates a new empty ref count table.
-  new(result)
-  result[] = initCountTable[K](initialSize)
+  let t = initCountTable[K](initialSize)
+  result = CountTableRef[K](data: t.data, counter: t.counter, isSorted: t.isSorted)
 
 proc newCountTable*[K: Keyable and HasDefault](
     keys: openArray[K]): CountTableRef[K] =
