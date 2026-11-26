@@ -709,10 +709,11 @@ proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; inf
     result.addSubtree elementTyp
 
   var start = -1
-  for i in 0 ..< x.len:
+  # Scan a zero byte after the data to flush a run ending at the last bit
+  for i in 0 .. x.len:
     for j in 0..7:
       let val = i * 8 + j
-      if (x[i] and (1'u8 shl j)) == 0:
+      if i == x.len or (x[i] and (1'u8 shl j)) == 0:
         if start != -1:
           if val - start < 5:
             for k in start ..< val:
