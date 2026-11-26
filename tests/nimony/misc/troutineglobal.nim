@@ -61,6 +61,16 @@ proc ifInit(): int =
   inc v
   result = v
 
+# the initializer runs at module scope: a `try` inside it catches what it raises
+proc mayFail(s: string): int {.raises.} =
+  if s == "bad": raise Failure
+  result = 5
+
+proc catchingInit(): int =
+  var v {.global.} = (try: mayFail("bad") except: 40)
+  inc v
+  result = v
+
 proc main() =
   echo counter(), " ", counter(), " ", counter()
   echo counterDirect(), " ", counterDirect(), " ", counterDirect()
@@ -73,5 +83,6 @@ proc main() =
   for i in 1 .. 3:
     echo remember(i), " ", rememberInit(i), " ", rememberThread(i)
   echo ifInit(), " ", ifInit()
+  echo catchingInit(), " ", catchingInit()
 
 main()
