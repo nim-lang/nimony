@@ -1082,12 +1082,12 @@ proc hookToKind(name: string): HookKind =
   else: NoHook
 
 proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
-                     declStart, beforeExportMarker, beforeGenericParams: int; info: NifLineInfo) =
+                     beforeExportMarker, beforeGenericParams: int): string =
+  ## Returns the error, to be reported after the routine.
+  result = ""
   let root = nominalRoot(c.routine.returnType)
   if root == SymId(0) and LenientConvertersFeature notin c.features:
-    var errBuf = createTokenBuf(16)
-    buildErr c, errBuf, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
-    dest.insert errBuf, declStart
+    result = "cannot attach converter to type " & typeToString(c.routine.returnType)
   else:
     c.converters.mgetOrPut(root, @[]).add(symId)
     if dest[beforeExportMarker].kind != DotToken:
@@ -1239,12 +1239,12 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
 
 proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
                        symId: SymId; declStart, beforeExportMarker, beforeGenericParams, beforeParams: int;
-                       hk: HookKind; info: NifLineInfo; isMagic: bool): string =
-  ## Attach converters, methods, or hooks that should become methods. A
-  ## method's error is returned, to be reported after the routine.
+                       hk: HookKind; isMagic: bool): string =
+  ## Attach converters, methods, or hooks that should become methods. The
+  ## error is returned, to be reported after the routine.
   result = ""
   if kind == ConverterY:
-    attachConverter c, dest, symId, declStart, beforeExportMarker, beforeGenericParams, info
+    result = attachConverter(c, dest, symId, beforeExportMarker, beforeGenericParams)
   elif kind == MethodY:
     result = attachMethod(c, dest, symId, beforeParams, beforeGenericParams)
   elif isMagic:
@@ -1571,7 +1571,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       var attachErr = ""
       if status in {OkNew, OkExistingFresh}:
         attachErr = attachSpecialProc(c, dest, kind, symId, declStart, beforeExportMarker,
-                          beforeGenericParams, beforeParams, hk, info,
+                          beforeGenericParams, beforeParams, hk,
                           isMagic = crucial.magic.len > 0)
       let beforeBody = dest.len
       if not it.n.isDotToken:
