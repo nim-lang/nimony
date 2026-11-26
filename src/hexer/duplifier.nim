@@ -1196,10 +1196,17 @@ proc trConvExprImpl(c: var Context; n: var Cursor; e: Expects) =
       takeTree c.dest, n # type
       trLocation c, n, WantOwner, unowned = true
     return
+  # A conversion to a type without a destructor (`cast[pointer](x)` of a `ref`) does not take ownership of
+  # its operand: asking the operand for `WantOwner` moved or copied the `ref` into a value nothing destroys.
+  let convType = getType(c.typeCache, n)
+  let operand = if e in {WantOwner, WillBeOwned} and not cursorIsNil(convType) and not hasDestructor(c, convType):
+                  WantNonOwner
+                else:
+                  e
   copyInto c.dest, n:
     takeTree c.dest, n # type
     while n.hasMore:
-      tr c, n, e
+      tr c, n, operand
 
 proc isCursorField(c: var Context; objType, fieldKey: Cursor): bool =
   ## Whether the field `fieldKey` of a constructor for `objType` is
