@@ -104,7 +104,7 @@ func handleHexChar(c: char; x: var int): bool {.inline.} =
   else:
     result = false
 
-proc rawGetTok(c: var CfgParser) {.gcsafe.}
+proc rawGetTok(c: var CfgParser)
 
 proc open*(c: var CfgParser; input: Stream; filename: string;
            lineOffset = 0) =
@@ -134,12 +134,12 @@ func getFilename*(c: CfgParser): string =
   ## Gets the filename of the file that the parser processes.
   c.filename
 
-proc handleDecChars(c: var CfgParser; xi: var int) =
+func handleDecChars(c: var CfgParser; xi: var int) =
   while charAt(c.buf, c.bufpos) in {'0'..'9'}:
     xi = (xi * 10) + (ord(charAt(c.buf, c.bufpos)) - ord('0'))
     inc(c.bufpos)
 
-proc getEscapedChar(c: var CfgParser) =
+func getEscapedChar(c: var CfgParser) =
   inc(c.bufpos) # skip '\'
   case charAt(c.buf, c.bufpos)
   of 'n', 'N':
@@ -246,7 +246,7 @@ proc getString(c: var CfgParser; rawMode: bool) =
         inc(pos)
     c.bufpos = pos
 
-proc getSymbol(c: var CfgParser) =
+func getSymbol(c: var CfgParser) =
   var pos = c.bufpos
   while true:
     add(c.tok.literal, charAt(c.buf, pos))
