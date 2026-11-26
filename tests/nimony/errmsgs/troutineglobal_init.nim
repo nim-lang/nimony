@@ -5,7 +5,8 @@ proc f(a: int): int =
   let b = a + 1
   var g {.global.} = b
   var h {.global.} = a
-  result = g + h
+  var k {.global.} = a + 1
+  result = g + h + k
 
 discard f(1)
 
@@ -19,8 +20,12 @@ template counted(start: int): int =
 proc fromLocal(a: int): int =
   result = counted(a)
 
+proc fromLocalExpr(a: int): int =
+  result = counted(a + 1)
+
 proc fromLiteral(): int =
   result = counted(3)
 
 discard fromLocal(1)
+discard fromLocalExpr(1)
 discard fromLiteral()

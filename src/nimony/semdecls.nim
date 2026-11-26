@@ -368,6 +368,22 @@ proc isRoutineGlobal(c: var SemContext; kind: SymKind; crucial: CrucialPragma): 
   kind in LocalSigKinds and {GlobalP, ThreadvarP} * crucial.flags != {} and
     c.currentScope.kind != ToplevelScope
 
+proc firstLocalUse(n: Cursor; defined: var HashSet[SymId]): Cursor =
+  ## The first use in `n` of a local that `n` does not declare itself, or nil.
+  result = default(Cursor)
+  case n.kind
+  of SymbolDef:
+    defined.incl n.symId
+  of Symbol:
+    if pool.symIsLocal(n.symId) and not defined.contains(n.symId):
+      result = n
+  of TagLit:
+    var child = sub(n)
+    while child.hasMore and cursorIsNil(result):
+      result = firstLocalUse(child, defined)
+      skip child
+  else: discard
+
 proc checkRoutineGlobalInit(c: var SemContext; dest: var TokenBuf; typePos: int) =
   ## The initializer runs once at module scope, where the routine's locals and
   ## parameters do not exist.
@@ -375,26 +391,12 @@ proc checkRoutineGlobalInit(c: var SemContext; dest: var TokenBuf; typePos: int)
   skip n # the type
   let valuePos = cursorToPosition(dest, n)
   var defined = initHashSet[SymId]()
+  let use = firstLocalUse(n, defined)
   var culprit = NoSymId
   var info = NoLineInfo
-  var nested = 0
-  var done = false
-  while not done:
-    case n.kind
-    of SymbolDef:
-      defined.incl n.symId
-    of Symbol:
-      if pool.symIsLocal(n.symId) and not defined.contains(n.symId):
-        culprit = n.symId
-        info = n.info
-        done = true
-    of ParLe:
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    if nested == 0 and n.kind != ParLe: done = true
-    inc n
+  if not cursorIsNil(use):
+    culprit = use.symId
+    info = use.info
   endRead n
   if culprit != NoSymId:
     # the error replaces the value so the declaration keeps its arity
