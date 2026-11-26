@@ -261,7 +261,7 @@ when defined(allocStats):
   var gStatBytes*: array[StatBuckets, int]
   var gStatCount*: array[StatBuckets, int]
 
-  proc statBucket(n: int): int =
+  func statBucket(n: int): int =
     if n >= 8 * 1024: return StatBuckets - 1
     result = n div 64
 
@@ -283,23 +283,23 @@ const
     7, 7, 7, 7, 7, 7, 7, 7
   ]
 
-proc msbit(x: uint32): int {.inline.} =
+func msbit(x: uint32): int {.inline.} =
   let a = if x <= 0xff_ff'u32:
             (if x <= 0xff: 0 else: 8)
           else:
             (if x <= 0xff_ff_ff'u32: 16 else: 24)
   result = int(fsLookupTable[byte(x shr a)]) + a
 
-proc lsbit(x: uint32): int {.inline.} =
+func lsbit(x: uint32): int {.inline.} =
   msbit(x and ((not x) + 1))
 
-proc setBit(nr: int; dest: var uint32) {.inline.} =
+func setBit(nr: int; dest: var uint32) {.inline.} =
   dest = dest or (1u32 shl (nr and 0x1f))
 
-proc clearBit(nr: int; dest: var uint32) {.inline.} =
+func clearBit(nr: int; dest: var uint32) {.inline.} =
   dest = dest and not (1u32 shl (nr and 0x1f))
 
-proc mappingSearch(r: var int; fl: var FlIndex; sl: var SlIndex) {.inline.} =
+func mappingSearch(r: var int; fl: var FlIndex; sl: var SlIndex) {.inline.} =
   #let t = (1 shl (msbit(uint32 r) - MaxLog2Sli)) - 1
   # This diverges from the standard TLSF algorithm because we need to ensure
   # PageSize alignment:
@@ -320,7 +320,7 @@ proc mappingSearch(r: var int; fl: var FlIndex; sl: var SlIndex) {.inline.} =
 # See http://www.gii.upv.es/tlsf/files/papers/tlsf_desc.pdf for details of
 # this algorithm.
 
-proc mappingInsert(r: int): tuple[fl: FlIndex, sl: SlIndex] {.inline.} =
+func mappingInsert(r: int): tuple[fl: FlIndex, sl: SlIndex] {.inline.} =
   sysAssert((r and PageMask) == 0, "mappingInsert: still not aligned")
   let f = msbit(uint32 r)
   let s = (r shr (f - MaxLog2Sli)) - MaxSli
@@ -330,7 +330,7 @@ proc mappingInsert(r: int): tuple[fl: FlIndex, sl: SlIndex] {.inline.} =
 
 template mat(): untyped {.untyped.} = a.matrix[fl][sl]
 
-proc findSuitableBlock(a: MemRegion; fl: var FlIndex; sl: var SlIndex): PBigChunk {.inline.} =
+func findSuitableBlock(a: MemRegion; fl: var FlIndex; sl: var SlIndex): PBigChunk {.inline.} =
   let tmp = a.slBitmap[fl] and (not 0u32 shl int(sl))
   result = nil
   if tmp != 0:
@@ -395,7 +395,7 @@ proc decCurrMem(a: var MemRegion, bytes: int) {.inline.} =
   a.maxMem = max(a.maxMem, a.currMem)
   atomicStatDec(a.currMem, bytes)
 
-proc getMaxMem(a: var MemRegion): int =
+func getMaxMem(a: var MemRegion): int =
   # Since we update maxPagesCount only when freeing pages,
   # maxPagesCount may not be up to date. Thus we use the
   # maximum of these both values here:
@@ -509,7 +509,7 @@ proc llDeallocAll(a: var MemRegion) =
     it = next
   a.llmem = nil
 
-proc intSetGet(t: IntSet, key: int): PTrunk =
+func intSetGet(t: IntSet, key: int): PTrunk =
   var it = t.data[key and high(t.data)]
   while it != nil:
     if it.key == key: return it
@@ -527,7 +527,7 @@ proc intSetPut(a: var MemRegion, key: int): PTrunk =
     a.chunkStarts.data[key and high(a.chunkStarts.data)] = result
     result.key = key
 
-proc contains(s: IntSet, key: int): bool =
+func contains(s: IntSet, key: int): bool =
   var t = intSetGet(s, key shr TrunkShift)
   if t != nil:
     var u = key and TrunkMask
@@ -565,26 +565,26 @@ iterator elements(t: IntSet): int {.inline.} =
         inc(i)
       r = r.next
 
-proc isSmallChunk(c: PChunk): bool {.inline.} =
+func isSmallChunk(c: PChunk): bool {.inline.} =
   result = c.size <= SmallChunkSize-smallChunkOverhead()
 
-proc chunkUnused(c: PChunk): bool {.inline.} =
+func chunkUnused(c: PChunk): bool {.inline.} =
   result = (c.prevSize and 1) == 0
 
 # allObjects / iterToProc removed: dead code (GC object traversal, unused here).
 
 when not UseDestructors:
-  proc isCell(p: pointer): bool {.inline.} =
+  func isCell(p: pointer): bool {.inline.} =
     result = cast[ptr FreeCell](p).zeroField >% 1
 
 # ------------- chunk management ----------------------------------------------
-proc pageIndex(c: PChunk): int {.inline.} =
+func pageIndex(c: PChunk): int {.inline.} =
   result = cast[int](c) shr PageShift
 
-proc pageIndex(p: pointer): int {.inline.} =
+func pageIndex(p: pointer): int {.inline.} =
   result = cast[int](p) shr PageShift
 
-proc pageAddr(p: pointer): PChunk {.inline.} =
+func pageAddr(p: pointer): PChunk {.inline.} =
   result = cast[PChunk](cast[int](p) and not PageMask)
   #sysAssert(Contains(allocator.chunkStarts, pageIndex(result)))
 
@@ -725,10 +725,10 @@ proc requestOsChunks(a: var MemRegion, size: int): PBigChunk =
   a.lastSize = size # for next request
   sysAssert((cast[int](result) and PageMask) == 0, "requestOschunks: unaligned chunk")
 
-proc isAccessible(a: MemRegion, p: pointer): bool {.inline.} =
+func isAccessible(a: MemRegion, p: pointer): bool {.inline.} =
   result = contains(a.chunkStarts, pageIndex(p))
 
-proc contains[T](list, x: T): bool {.untyped.} =
+func contains[T](list, x: T): bool {.untyped.} =
   result = false
   var it = list
   while it != nil:
@@ -885,7 +885,7 @@ proc getSmallChunk(a: var MemRegion): PSmallChunk =
 
 # -----------------------------------------------------------------------------
 when not UseDestructors:
-  proc isAllocatedPtr(a: MemRegion, p: pointer): bool {.gcsafe.}
+  func isAllocatedPtr(a: MemRegion, p: pointer): bool {.gcsafe.}
 
 when true:
   template allocInv(a: MemRegion): bool = true
@@ -1039,7 +1039,7 @@ when defined(heaptrack):
   proc heaptrack_malloc(a: pointer, size: int) {.cdecl, importc, dynlib: heaptrackLib.}
   proc heaptrack_free(a: pointer) {.cdecl, importc, dynlib: heaptrackLib.}
 
-proc smallChunkAlignOffset(alignment: int): int {.inline.} =
+func smallChunkAlignOffset(alignment: int): int {.inline.} =
   ## Compute the initial data offset so that data + result + sizeof(FreeCell)
   ## is alignment-aligned within a page-aligned small chunk.
   if alignment <= MemAlign:
@@ -1048,7 +1048,7 @@ proc smallChunkAlignOffset(alignment: int): int {.inline.} =
     result = align(smallChunkOverhead() + sizeof(FreeCell), alignment) -
              smallChunkOverhead() - sizeof(FreeCell)
 
-proc bigChunkAlignOffset(alignment: int): int {.inline.} =
+func bigChunkAlignOffset(alignment: int): int {.inline.} =
   ## Compute the alignment offset for big chunk data.
   if alignment == 0:
     result = 0
@@ -1385,7 +1385,7 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
   #when logAlloc: cprintf("dealloc(pointer_%p)\n", p)
 
 when not UseDestructors:
-  proc isAllocatedPtr(a: MemRegion, p: pointer): bool =
+  func isAllocatedPtr(a: MemRegion, p: pointer): bool =
     if isAccessible(a, p):
       var c = pageAddr(p)
       if not chunkUnused(c):
@@ -1408,7 +1408,7 @@ when not UseDestructors:
     a.minLargeObj = lowGauge(a.root)
     a.maxLargeObj = highGauge(a.root)
 
-  proc interiorAllocatedPtr(a: MemRegion, p: pointer): pointer =
+  func interiorAllocatedPtr(a: MemRegion, p: pointer): pointer =
     if isAccessible(a, p):
       var c = pageAddr(p)
       if not chunkUnused(c):
@@ -1447,7 +1447,7 @@ when not UseDestructors:
             result = k
             sysAssert isAllocatedPtr(a, result), " result wrong pointer!"
 
-proc ptrSize(p: pointer): int =
+func ptrSize(p: pointer): int =
   when not UseDestructors:
     var x = cast[pointer](cast[int](p) -% sizeof(FreeCell))
     var c = pageAddr(p)
@@ -1525,14 +1525,14 @@ proc deallocOsPages(a: var MemRegion) =
   # And then we free the pages that are in use for the page bits:
   llDeallocAll(a)
 
-proc getFreeMem(a: MemRegion): int {.inline.} = result = a.freeMem
-proc getTotalMem(a: MemRegion): int {.inline.} = result = a.currMem
-proc getOccupiedMem(a: MemRegion): int {.inline.} =
+func getFreeMem(a: MemRegion): int {.inline.} = result = a.freeMem
+func getTotalMem(a: MemRegion): int {.inline.} = result = a.currMem
+func getOccupiedMem(a: MemRegion): int {.inline.} =
   result = a.occ
   # a.currMem - a.freeMem
 
 when defined(nimTypeNames):
-  proc getMemCounters(a: MemRegion): (int, int) {.inline.} =
+  func getMemCounters(a: MemRegion): (int, int) {.inline.} =
     (a.allocCounter, a.deallocCounter)
 
 # ---------------------- thread memory region -------------------------------

@@ -9,7 +9,7 @@
 
 {.push raises: [], gcsafe.}
 
-proc roundup(x, v: int): int {.inline.} =
+func roundup(x, v: int): int {.inline.} =
   result = (x + (v-1)) and not (v-1)
   sysAssert(result >= x, "roundup: result < x")
   #return ((-x) and (v-1)) +% x
@@ -210,7 +210,7 @@ elif defined(wasm32) and defined(standalone):
     wasmBump: int = 0        # next free byte; 64 KiB-aligned start (> PageSize)
     heapCeiling: int = 0     # 0 = uncapped (the host's tab limit rules)
 
-  proc wasmMemorySize(): int32 {.importc: "__builtin_wasm_memory_size".}
+  func wasmMemorySize(): int32 {.importc: "__builtin_wasm_memory_size".}
   proc wasmMemoryGrow(delta: int32): int32 {.importc: "__builtin_wasm_memory_grow".}
 
   proc setWasmHeapCeiling*(bytes: int) =
@@ -264,12 +264,12 @@ elif defined(embedded) or defined(StandaloneHeapSize):
   # globals are sized too, so the three cannot silently add up to more than the
   # part has. `heapStart`/`heapSize` are link-time constants the image writer
   # patches in (`nifasm`'s `(heapstart)`/`(heapsize)`).
-  proc heapStart(): pointer {.intrinsic: "HeapStart".}
-  proc heapSize(): uint {.intrinsic: "HeapSize".}
+  func heapStart(): pointer {.intrinsic: "HeapStart".}
+  func heapSize(): uint {.intrinsic: "HeapSize".}
 
   var bumpPointer = 0
 
-  proc heapLimit(): int {.inline.} =
+  func heapLimit(): int {.inline.} =
     cast[int](heapStart()) + int(heapSize())
 
   proc bumpFrom(size: int): pointer {.inline.} =

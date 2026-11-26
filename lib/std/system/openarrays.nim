@@ -113,7 +113,7 @@ func toOpenArray*[T](x: ptr UncheckedArray[T]; first, last: int): openArray[T] =
 func toOpenArray*[T](x: openArray[T]; first, last: int): openArray[T] {.establishesBorrow.} =
   openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x.a) + uint(first * sizeof(T))), len: viewLen(first, last))
 
-proc `@`*[T](a: openArray[T]): seq[T] {.nodestroy.} =
+func `@`*[T](a: openArray[T]): seq[T] {.nodestroy.} =
   ## Turns an *openArray* into a sequence.
   ##
   ## This is not as efficient as turning a fixed length array into a sequence
@@ -121,4 +121,5 @@ proc `@`*[T](a: openArray[T]): seq[T] {.nodestroy.} =
   result = newSeqUninit[T](a.len)
   if result.data != nil:
     for i in 0 .. a.high:
-      (result.data[i]) = `=dup`(a[i])
+      {.cast(noSideEffect).}:
+        (result.data[i]) = `=dup`(a[i])
