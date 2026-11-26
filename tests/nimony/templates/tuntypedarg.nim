@@ -31,3 +31,14 @@ proc bar(x: string) =
   foo(bar)
 
 bar("123")
+
+# `x.each` is `each(x)`: the `untyped` parameter gets `x` unchecked
+iterator split(s: string): string = yield "iter"
+proc split(s: string): seq[string] = @["proc"]
+template each(x: untyped) =
+  for y in x: echo y
+each("a b".split)
+"a b".split.each
+template `each=`(x: untyped; v: int) =
+  for y in x: echo y, v
+"a b".split.each = 1

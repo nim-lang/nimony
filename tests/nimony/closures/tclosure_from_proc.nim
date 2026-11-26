@@ -35,3 +35,16 @@ proc twice(): int =
   v1(result)
   v2(result)
 echo twice()
+
+# a routine converts as an element of a tuple constructor too, also where the
+# constructor is a routine's result
+type Setup = proc (n: int): int {.closure.}
+let u: (Setup, int) = (named, 3)
+let un: tuple[a: Setup] = (a: named)
+proc mkReturn(): (Setup, int) =
+  return (named, 4)
+proc mkResult(): (Setup, int) =
+  result = (named, 5)
+let r1 = mkReturn()
+let r2 = mkResult()
+echo u[0](u[1]), " ", un.a(1), " ", r1[0](r1[1]), " ", r2[0](r2[1])

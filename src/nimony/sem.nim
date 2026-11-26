@@ -217,7 +217,8 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool
 
 proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; firstPhase: SemPhase)
 
-proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
+proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall;
+              lhsOrig: Cursor = default(Cursor))
 
 proc semStaticExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   ## `(static x)`, the `static` magic: explicit general CTFE. Evaluate the
@@ -1396,6 +1397,7 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   # read through the dot expression first:
   let dotStart = it.n
   it.n = sub(it.n) # skip tag
+  let lhsOrig = it.n
   var lhsBuf = createTokenBuf(4)
   var lhs = Item(n: it.n, typ: c.types.autoType)
   semExpr c, lhsBuf, lhs, {AllowModuleSym}
@@ -1431,7 +1433,7 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
     callBuf.addSubtree lhs.n # add lhs as first argument
     callBuf.addParRi()
     var call = Item(n: cursorAt(callBuf, 0), typ: expected)
-    semCall c, dest, call, flags, DotCall
+    semCall c, dest, call, flags, DotCall, lhsOrig
     it.typ = call.typ
 
 proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -2314,6 +2316,7 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: NifLi
   var dot = Item(n: it.n, typ: c.types.autoType)
   let dotStart = dot.n
   dot.n = sub(dot.n) # tag
+  let dotLhsOrig = dot.n
   var dotLhsBuf = createTokenBuf(4)
   var dotLhs = Item(n: dot.n, typ: c.types.autoType)
   semExpr c, dotLhsBuf, dotLhs, {KeepMagics}
@@ -2354,7 +2357,7 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: NifLi
     callBuf.addParRi()
     it.n = asgnStart; skip it.n
     var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
-    semCall c, dest, call, {}, DotAsgnCall
+    semCall c, dest, call, {}, DotAsgnCall, dotLhsOrig
     # XXX original compiler also checks if the call fails and tries a dotcall for the LHS
     it.typ = call.typ
 

@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tqualified_ambiguous_call.nim(5, 36) Error: ambiguous call: 'f'
+proc (a: int32, b: int64): int64 (declared in tests/nimony/errmsgs/tqualified_ambiguous_call.nim(2, 1))
+proc (a: int64, b: int32): int64 (declared in tests/nimony/errmsgs/tqualified_ambiguous_call.nim(3, 1))
