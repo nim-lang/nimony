@@ -4,12 +4,16 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-## A `var x {.global.}` inside a routine is one location for the whole
-## program. Sem gives it a module-unique name (`semLocal`); this pass moves its
-## declaration out of the routine to module scope, so no later pass sees a
-## global inside a routine body: the inliner copied it per inlined call
-## (#3167) and the duplifier reset it per call (#3159). The `global` pragma is
-## dropped, it has done its job.
+## A `var x {.global.}` (or `{.threadvar.}`) inside a routine is one location
+## for the whole program (or thread). Sem gives it a module-unique name
+## (`semLocal`); this pass moves its declaration out of the routine to module
+## scope, so no later pass sees a global inside a routine body: the inliner
+## copied it per inlined call (#3167) and the duplifier reset it per call
+## (#3159). The `global` pragma is dropped, it has done its job.
+##
+## It is the first step of the Final-IR lowering (`lowerToFinalIr`) and runs
+## before xelim, which would otherwise split a complex initializer into
+## temporaries of the routine.
 ##
 ## The hoisted declarations go in front of the module's own statements, after
 ## its imports: like Nim 2, a routine's global is initialized once, before the
@@ -18,13 +22,14 @@
 
 import std / assertions
 include ".." / lib / nifprelude
-import nimony_model, decls
+import ".." / nimony / [nimony_model, decls]
 
-proc hasGlobalPragma(buf: TokenBuf): bool =
+proc mayHaveRoutineGlobals(buf: TokenBuf): bool =
+  ## Every routine-level global carries `global` or `threadvar` until this pass.
   result = false
   for i in 0 ..< buf.len:
     let n = readonlyCursorAt(buf, i)
-    if n.isTagLit and n.pragmaKind == GlobalP:
+    if n.isTagLit and n.pragmaKind in {GlobalP, ThreadvarP}:
       return true
 
 proc isGenericRoutine(n: Cursor): bool =
@@ -60,7 +65,7 @@ proc copyHoisting(dest, hoisted: var TokenBuf; n: var Cursor; inRoutine: bool) =
     dest.takeTree n
   else:
     case n.stmtKind
-    of GvarS, GletS:
+    of GvarS, GletS, TvarS, TletS:
       if inRoutine: copyGlobalDecl hoisted, n
       else: copyGlobalDecl dest, n
     of ProcS, FuncS, IteratorS, ConverterS, MethodS:
@@ -76,7 +81,7 @@ proc copyHoisting(dest, hoisted: var TokenBuf; n: var Cursor; inRoutine: bool) =
         while n.hasMore: copyHoisting dest, hoisted, n, inRoutine
 
 proc hoistRoutineGlobals*(buf: var TokenBuf) =
-  if hasGlobalPragma(buf):
+  if mayHaveRoutineGlobals(buf):
     var n = beginRead(buf)
     assert n.stmtKind == StmtsS
     var imports = createTokenBuf(64)

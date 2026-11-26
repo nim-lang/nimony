@@ -361,10 +361,11 @@ proc isTypeclassParamType(typ: Cursor; routine: SymKind): bool =
     result = false
 
 proc isRoutineGlobal(c: var SemContext; kind: SymKind; crucial: CrucialPragma): bool =
-  ## A `var x {.global.}` inside a routine: one location for the whole program,
-  ## which `hoistRoutineGlobals` moves to module scope.
-  kind in {LetY, VarY} and GlobalP in crucial.flags and
-    ThreadvarP notin crucial.flags and c.currentScope.kind != ToplevelScope
+  ## A `var x {.global.}` or `{.threadvar.}` inside a routine: one location for
+  ## the whole program (or thread), which `hoistRoutineGlobals` moves to module
+  ## scope.
+  kind in {LetY, VarY} and {GlobalP, ThreadvarP} * crucial.flags != {} and
+    c.currentScope.kind != ToplevelScope
 
 proc checkRoutineGlobalInit(c: var SemContext; dest: var TokenBuf; typePos: int) =
   ## The initializer runs once at module scope, where the routine's locals and
