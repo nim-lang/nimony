@@ -51,7 +51,7 @@ when not declared(`+%`): # `system/memory` has them with its own allocator
   template `-%`(x, y: int): int = cast[int](cast[uint](x) - cast[uint](y))
   template `*%`(x, y: int): int = cast[int](cast[uint](x) * cast[uint](y))
 
-proc head(p: pointer): Cell {.inline.} = cast[Cell](p) # a `ref` points at its header
+func head(p: pointer): Cell {.inline.} = cast[Cell](p) # a `ref` points at its header
 
 template compileOption(option: string): bool = false
   # there is no separate shared heap: `alloc` serves every thread

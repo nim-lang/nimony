@@ -347,7 +347,7 @@ proc setPassiveWaitHook*(hook: proc () {.nimcall.}) {.inline.} =
   ## cannot starve the pool of the very worker that would resume it.
   passiveWaitHook = hook
 
-proc builtinCpuRelax() {.intrinsic: "CpuRelax".}
+func builtinCpuRelax() {.intrinsic: "CpuRelax".}
 
 proc run(j: ptr Join) =
   ## Runs `j.resume` until the coroutine has run `j`: trampoline on this
@@ -384,7 +384,7 @@ proc iterNext(j: ptr Join): bool =
   run(j)
   result = j.resume.fn != nil
 
-proc iterAdvance(j: ptr Join) {.passive.} =
+func iterAdvance(j: ptr Join) {.passive.} =
   ## Used by the compiler: one step of a `for` loop in a `.passive` routine. A
   ## suspension point the CPS transform lowers itself (`iterSwitch`), so this
   ## body never runs.
@@ -397,11 +397,11 @@ proc iterSwitch(j: ptr Join; next: Continuation): Continuation =
   result = j.resume
   j.resume = Continuation(fn: nil, env: nil)
 
-proc iterFinished(j: ptr Join): bool {.inline.} =
+func iterFinished(j: ptr Join): bool {.inline.} =
   ## Used by the compiler: did the step just taken end the iterator?
   result = j.resume.fn == nil
 
-proc iterCancelled(coro: ptr CoroutineBase): bool {.inline.} =
+func iterCancelled(coro: ptr CoroutineBase): bool {.inline.} =
   ## Used by the compiler: right after a `.passive` iterator's `yield`, is the
   ## loop gone? The iterator's `caller` is its loop's `Join` (`attach`).
   result = cast[ptr Join](coro.caller.env).done == -1
@@ -419,22 +419,22 @@ proc `=destroy`(j: Join) =
       jp.done = -1 # `joined` set it to 1 at that `yield`
       run(jp)
 
-proc `=wasMoved`(j: var Join) {.nodestroy, inline.} =
+func `=wasMoved`(j: var Join) {.nodestroy, inline.} =
   ## No parked iterator to finish: `=destroy` has nothing to resume.
   j.resume = Continuation(fn: nil, env: nil)
 
 proc `=copy`(dest: var Join; src: Join) {.error.}
 
-proc parked*(c: Continuation): bool {.inline.} =
+func parked*(c: Continuation): bool {.inline.} =
   ## True when a coroutine has parked via `suspend()` and not yet been
   ## resumed. The `env` field identifies the coroutine frame.
   c.fn == nil and c.env != nil
 
-proc stopping*(c: Continuation): bool {.inline.} =
+func stopping*(c: Continuation): bool {.inline.} =
   ## True when a coroutine has no next step: either finished or parked.
   c.fn == nil
 
-proc finished*(c: Continuation): bool {.inline.} =
+func finished*(c: Continuation): bool {.inline.} =
   ## True once a coroutine has run to completion. Compatible with
   ## Nim's `finished` builtin: returns `true` when there are no more values
   ## to produce. Used by the closure-iterator trampoline that the compiler
@@ -685,10 +685,10 @@ type
     typeOfProc,      ## Prefer the interpretation that means `x` is a proc call.
     typeOfIter       ## Prefer the interpretation that means `x` is an iterator call.
 
-proc typeof*(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
+func typeof*(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
   ## Builtin `typeof` operation for accessing the type of an expression.
 
-proc allocFrame*(size: int): ptr CoroutineBase =
+func allocFrame*(size: int): ptr CoroutineBase =
   ## Allocates a new coroutine frame of the given size on the heap.
   ##
   ## ZEROED, and that is load-bearing rather than tidy. A frame holds the
@@ -710,7 +710,7 @@ proc allocFrame*(size: int): ptr CoroutineBase =
   ## for this being correct: it would make the memset redundant, not necessary.
   result = cast[ptr CoroutineBase](alloc0(size))
 
-proc deallocFrame*(frame: ptr CoroutineBase) =
+func deallocFrame*(frame: ptr CoroutineBase) =
   ## Frees a coroutine frame previously allocated by `allocFrame`.
   if frame.callee != nil:
     dealloc(frame)
@@ -727,7 +727,7 @@ proc newException*[T](exceptn: typedesc[T]; message: string): ref T {.inline, un
   new(result)
   result.msg = message
 
-proc instantiationInfo*(): tuple[filename: string, line: int, column: int] {.magic: "InstantiationInfo".}
+func instantiationInfo*(): tuple[filename: string, line: int, column: int] {.magic: "InstantiationInfo".}
   ## The source position of the call. Inside a template body it is the
   ## position of the template's call site, so a template can report where it
   ## was invoked. `filename` is the file name without directories.

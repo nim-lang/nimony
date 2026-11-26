@@ -45,3 +45,9 @@ iterator foo(x: int): char = discard
 
 assert typeof(foo(0), typeOfProc) is string
 assert typeof(foo(0), typeOfIter) is char
+
+# `x.foo.typeof` is `typeof(x.foo)`: the iterator is preferred, as in the call form
+assert 0.foo.typeof is char
+assert 0.foo.typeof(typeOfProc) is string
+assert foo(0).typeof is char
+assert 0.foo().typeof is char
