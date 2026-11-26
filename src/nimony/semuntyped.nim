@@ -493,6 +493,36 @@ proc semTemplRoutineDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k
     if isGeneric:
       closeScope c
 
+proc namesSumTypeBranch(n: Cursor): bool =
+  ## `n` is a bound label head naming a sum type's branch, or a choice or `{A, B}` holding one.
+  result = n.isSymbol and isAnumEfld(n.symId)
+  if n.exprKind in {CchoiceX, OchoiceX, CurlyX}:
+    var it = n
+    it.into:
+      while it.hasMore:
+        result = result or namesSumTypeBranch(it)
+        skip it
+
+proc semTemplOfLabels(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
+  ## The identifiers of a sum type pattern `of Br(a, b)` declare its bindings.
+  copyInto dest, n:
+    while n.hasMore:
+      if n.exprKind in CallKinds:
+        copyInto dest, n:
+          let headStart = dest.len
+          semTemplBody c, dest, n
+          var head = cursorAt(dest, headStart)
+          let isPattern = namesSumTypeBranch(head)
+          endRead head
+          while n.hasMore:
+            if isPattern and n.isIdent:
+              inject c, n.strId
+              takeTree dest, n
+            else:
+              semTemplBody c, dest, n
+      else:
+        semTemplBody c, dest, n
+
 proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Ident:
@@ -607,8 +637,8 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
             of OfU:
               dest.addParLe(n.cursorTagId, n.info)
               n.into OfU:
-                semTemplBody c, dest, n
                 openScope c
+                semTemplOfLabels c, dest, n
                 semTemplBody c, dest, n
                 closeScope c
               dest.addParRi()

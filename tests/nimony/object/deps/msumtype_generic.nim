@@ -31,6 +31,4 @@ proc getOrDefault*[T](opt: Option[T]; default: T): T =
   of None():
     result = default
 
-# A direct `Err(msg: ...)` at the use site still takes the first `Err` in scope
-# (the constructor lookup does not use the expected type yet).
 proc flipErr*(msg: string): Flip = Err(msg: msg)

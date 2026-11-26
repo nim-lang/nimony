@@ -162,4 +162,18 @@ proc flipMsg(f: Flip): string =
 
 assert flipMsg(flipErr("flip")) == "flip"
 
+# A constructor names a branch of the expected type, not the first branch
+# of that name in scope (`Res`'s):
+let flipped: Flip = Err(msg: "flop")
+assert flipMsg(flipped) == "flop"
+proc flipOk(n: int): Flip = Ok(n: n)
+assert flipMsg(flipOk(3)) == "3"
+type LocalFlip = object # declared after `Res`
+  case
+  of Err: lmsg: string
+  of Ok: ln: int
+let localOk: LocalFlip = Ok(ln: 4)
+{.cast(uncheckedAccess).}:
+  assert localOk.ln == 4
+
 echo "tsumtype_generic: OK"

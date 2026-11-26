@@ -3227,8 +3227,8 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
       if it.n.exprKind in CallKinds:
         let callStart = it.n
         it.n = sub(it.n)
-        if it.n.isIdent:
-          let branchName = it.n.strId
+        let branchName = getIdent(it.n)
+        if branchName != StrId(0):
           let efldSym = findOneofEfld(c, branchName, anum)
           if efldSym == SymId(0):
             buildErr c, dest, info, "undeclared sum type branch: " & pool.strings[branchName]
@@ -3236,7 +3236,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
             it.n = callStart; skip it.n
             continue
           dest.addSymUse(efldSym, info)
-          inc it.n
+          skip it.n
           let ordVal = getEfldOrdinal(efldSym)
           if not ordVal.isNaN:
             if seen.containsOrIncl(ordVal):
@@ -3260,8 +3260,8 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
           var firstBranchFields: seq[SumTypeBranchField] = @[]
           it.n.into: # curly
             while it.n.hasMore:
-              if it.n.isIdent:
-                let branchName = it.n.strId
+              let branchName = getIdent(it.n)
+              if branchName != StrId(0):
                 let efldSym = findOneofEfld(c, branchName, anum)
                 if efldSym == SymId(0):
                   buildErr c, dest, it.n.info, "undeclared sum type branch: " & pool.strings[branchName]
@@ -3280,7 +3280,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
                         (otherFields.len > 0 and otherFields[0].sym != firstBranchFields[0].sym):
                       buildErr c, dest, it.n.info,
                         "branches in set pattern must come from the same `of` declaration"
-              inc it.n
+              skip it.n
           if firstEfld != SymId(0):
             var fieldIdx = 0
             while it.n.hasMore:
@@ -4347,6 +4347,15 @@ proc semSuspend(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.voidType
   commonType c, dest, it, beforeExpr, expected
 
+proc keepUntypedConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
+                       exprStart: int; kind: ExprKind) =
+  ## An element typed by a template parameter (`untyped`, `typed`) has its type
+  ## only at expansion: the constructor stays untyped and is checked there.
+  let expected = it.typ
+  dest.retagAt(exprStart, kind)
+  it.typ = c.types.untypedType
+  commonType c, dest, it, exprStart, expected
+
 type ArrayConstrContext = object
   firstKeyType: TypeCursor
   currentIndex: xint
@@ -4459,6 +4468,9 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   it.n = elem.n
   dest.addParRi(it.n.endInfo)
   it.n = bracketStart; skip it.n
+  if elem.typ.typeKind in {UntypedT, TypedT} and ctx.firstKeyType.typeKind == AutoT:
+    keepUntypedConstr c, dest, it, exprStart, BracketX
+    return
   let typeStart = dest.len
   dest.buildTree ArrayT, info:
     dest.addSubtree elem.typ
@@ -4577,7 +4589,8 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
         # also do not expect it from subsequent elements
         removeModifier(elem.typ)
         freshElemType = false
-  if containsGenericParams(elem.typ):
+  let hasMeta = elem.typ.typeKind in {UntypedT, TypedT}
+  if hasMeta or containsGenericParams(elem.typ):
     discard
   elif not isOrdinalType(elem.typ, allowEnumWithHoles = true):
     c.buildErr dest, elemInfo, "set element type must be ordinal"
@@ -4590,6 +4603,9 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
   it.n = elem.n
   dest.addParRi(it.n.endInfo)
   it.n = curlyStart; skip it.n
+  if hasMeta:
+    keepUntypedConstr c, dest, it, exprStart, CurlyX
+    return
   let typeStart = dest.len
   dest.buildTree SetT, info:
     dest.addSubtree elem.typ
@@ -4707,6 +4723,7 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
   if doExpected:
     expected = sub(expected) # skip tag, now at fields
   let named = it.n.substructureKind == KvU
+  var hasMeta = false
   var typ = createTokenBuf(32)
   typ.addParLe(TupleT, it.n.info)
   while it.n.hasMore:
@@ -4742,6 +4759,7 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
     if freshElemType:
       # do not save modifier in tuple type unless it was annotated as such
       removeModifier(elem.typ)
+    hasMeta = hasMeta or elem.typ.typeKind in {UntypedT, TypedT}
     typ.addSubtree elem.typ # type
     if named:
       # should be KvX
@@ -4754,6 +4772,9 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
   dest.addParRi(it.n.endInfo)
   it.n = tupStart; skip it.n
   typ.addParRi()
+  if hasMeta:
+    keepUntypedConstr c, dest, it, exprStart, TupX
+    return
   let typeStart = dest.len
   var t = typ.cursorAt(0)
   semTupleType c, dest, t
@@ -5538,8 +5559,14 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   it.n = sub(it.n)
   if it.n.isIdent:
     block sumTypeCheck:
-      let efldSym = findOneofEfld(c, it.n.strId)
+      var efldSym = findOneofEfld(c, it.n.strId)
       if efldSym != SymId(0):
+        # where a sum type is expected, `Ok(...)` names that type's `Ok` if it
+        # is in scope, not the first `Ok` in scope:
+        let st = findSumTypeInfo(expected)
+        if st.valid:
+          let own = findOneofEfld(c, it.n.strId, st.discrimType.symId)
+          if own != SymId(0): efldSym = own
         var inferredExpected = expected
         if expected.typeKind == AutoT:
           # Try to infer generic type parameters from field values:

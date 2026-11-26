@@ -598,18 +598,6 @@ proc semObjConstrFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; c
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
-proc isAnumEfld(sym: SymId): bool =
-  result = false
-  let res = tryLoadSym(sym)
-  if res.status == LacksNothing and res.decl.substructureKind == EfldU:
-    var n = res.decl
-    skipToLocalType n
-    if n.isSymbol:
-      let typeRes = tryLoadSym(n.symId)
-      if typeRes.status == LacksNothing:
-        let typeDecl = asTypeDecl(typeRes.decl)
-        result = typeDecl.body.typeKind == AnumT
-
 proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
                                it: var Item; cs: var CallState) =
   it.n = cs.scope; skip it.n
