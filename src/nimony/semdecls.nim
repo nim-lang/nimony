@@ -1268,6 +1268,15 @@ proc hookThatShouldBeMethod(c: var SemContext; dest: var TokenBuf; hk: HookKind;
   else:
     result = false
 
+const ImplementedElsewhere = {ImportcP, ImportcppP, ImportjsP, HeaderP,
+                              InstructionP, IntrinsicP, ErrorP, BorrowP, PluginP,
+                              PragmaP}
+  ## A routine without a body that carries one of these (or a `magic`) is
+  ## complete as declared: the C side, the compiler or a plugin implements it,
+  ## `.error` forbids calling it, `.borrow` gets its body from sem and
+  ## `template X() {.pragma.}` declares a custom pragma. Any other routine
+  ## without a body is a forward declaration.
+
 proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart: int;
                                symId: SymId; crucial: CrucialPragma; hasBody: bool) =
   ## Handle forward declaration registration and matching during signature checking.
@@ -1292,8 +1301,10 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
       # we cannot splice now without invalidating positions other callers
       # are still holding (e.g. the impl's own `declStart`).
       c.matchedForwardDecls.incl fwdDecl
-  elif {ImportcP, ImportcppP, ImportjsP} * crucial.flags == {}:
-    # This is a forward declaration - register it as a candidate
+  elif crucial.flags * ImplementedElsewhere == {} and crucial.magic.len == 0:
+    # A forward declaration: a later body must implement it, and
+    # `checkForwardDeclsImplemented` reports it at the end of the module if
+    # none does.
     addForwardDecl(c, symId)
 
 proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;

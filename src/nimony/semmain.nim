@@ -574,6 +574,24 @@ proc checkDestroysHaveWasMoved(c: var SemContext; dest: var TokenBuf) =
     buildErr c, dest, info, "type '" & pool.symBasename(obj) &
       "' has a '=destroy' but no '=wasMoved'"
 
+proc cmpByLine(a, b: (NifLineInfo, SymId)): int =
+  result = cmp(a[0].line, b[0].line)
+  if result == 0: result = cmp(a[0].col, b[0].col)
+
+proc checkForwardDeclsImplemented(c: var SemContext; dest: var TokenBuf) =
+  ## Every forward declaration needs an implementation later in the module.
+  ## Without one, the routine would be compiled with an empty body.
+  var missing: seq[(NifLineInfo, SymId)] = @[]
+  for _, syms in c.forwardDecls:
+    for s in syms:
+      if s notin c.matchedForwardDecls:
+        let res = tryLoadSym(s)
+        if res.status == LacksNothing:
+          missing.add (asRoutine(res.decl).name.info, s)
+  sort missing, cmpByLine
+  for (info, s) in missing:
+    buildErr c, dest, info, "implementation of '" & pool.symBasename(s) & "' expected"
+
 proc instantiateRequests(c: var SemContext; dest: var TokenBuf) =
   ## A routine instance can use a type instance first, and a type instance
   ## requests the instances of its hooks and methods: repeat until no
@@ -626,6 +644,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   if not c.hasPendingPlugins:
     instantiateRequests c, dest
     checkDestroysHaveWasMoved c, dest
+    checkForwardDeclsImplemented c, dest
   dest.addParRi()
   dbgCheckSeals(dest, "phase3")
   when defined(dumpPhases):
@@ -717,6 +736,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
 
   instantiateRequests c, dest
   checkDestroysHaveWasMoved c, dest
+  checkForwardDeclsImplemented c, dest
   dest.addParRi()
 
   if reportErrors(dest) == 0:
