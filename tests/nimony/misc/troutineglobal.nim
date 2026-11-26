@@ -1,11 +1,15 @@
 # A `var x {.global.}` in a routine is one location for the whole program:
-# sem moves it to module scope. Inlining `counter` used to give every inlined
-# call its own copy (#3167); with `result = calls` the inliner also folded the
-# global into a temporary of the caller.
+# sem moves it to module scope under a module-unique name.
+# - #3167: inlining `counter` gave every inlined call its own copy; with
+#   `result = calls` the inliner also folded the global into a temporary.
+# - #3158: same-named globals of two modules (and of a template's expansions
+#   in two modules) were one C symbol.
+# - #3159: a global without an initializer was reset on every call.
 
 when defined(nimony):
   {.feature: "assumeSync".}
 import std/syncio
+import deps / [mroutineglobala, mroutineglobalb]
 
 proc counter(): int =
   var calls {.global.}: int
@@ -34,10 +38,26 @@ proc withInit(): int =
   inc v
   result = v
 
+proc remember(x: int): int {.noinline.} =
+  var seen {.global.}: seq[int]
+  seen.add x
+  result = seen.len
+
+proc rememberInit(x: int): int {.noinline.} =
+  var seen {.global.} = newSeqOfCap[int](4)
+  seen.add x
+  result = seen.len
+
 proc main() =
   echo counter(), " ", counter(), " ", counter()
   echo counterDirect(), " ", counterDirect(), " ", counterDirect()
   echo gen(1), " ", gen(2), " ", gen("a"), " ", gen("b")
   echo withInit(), " ", withInit(), " inits=", inits
+  discard fromA()
+  discard fromA()
+  echo fromB()
+  echo a1(), " ", a1(), " ", a1(), "  b: ", b1(), " ", b1(), " ", b1()
+  for i in 1 .. 3:
+    echo remember(i), " ", rememberInit(i)
 
 main()

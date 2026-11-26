@@ -588,7 +588,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
             patchType c, dest, it.typ, beforeType
       if kind == ParamY:
         compatAnnotateVarargsParam c, dest, beforeType
-      if routineGlobal:
+      if routineGlobal and c.routine.kind notin {TemplateY, MacroY}:
+        # a template's parameters are substituted at its expansion
         checkRoutineGlobalInit c, dest, beforeType
     else:
       bug "semLocal"
