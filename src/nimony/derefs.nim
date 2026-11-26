@@ -372,6 +372,9 @@ proc skipToRoot(c: var Context; n: Cursor): Cursor =
       inc n
       skip n # skip intlit
       skip n # skip type
+    of ExprX:
+      n = sub(n)
+      while not isLastSon(n): skip n
     of CallKinds:
       if not callReturnsLocation(c, n): break
       n = sub(n)

@@ -33,3 +33,35 @@ proc main() =
   pair(i).x = 3
 
 main()
+
+# A template is a substitution: one expanding to a call that returns a
+# temporary writes to that temporary, with or without statements before it.
+# One expanding to a location does not.
+template viaCall(b: Box): untyped = get(b)
+template viaStmts(b: Box): untyped =
+  discard 0
+  get(b)
+template viaLocation(b: var Box): untyped =
+  discard 0
+  getVar(b)
+
+proc templates() =
+  var b = Box(c: Counter(n: 1))
+  viaCall(b).n = 1
+  viaStmts(b).n = 1
+  bump viaStmts(b).n
+  viaLocation(b).n = 1
+  bump viaLocation(b).n
+
+templates()
+
+# A template expanding to a module `let` is the `let` itself.
+let fixed = Counter(n: 1)
+template viaLet(): untyped =
+  discard 0
+  fixed
+
+proc letThroughTemplate() =
+  viaLet().n = 5
+
+letThroughTemplate()
