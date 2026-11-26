@@ -55,7 +55,7 @@ include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / lib / symparser
-import ".." / finalir / [finalir_model, finalir, hoistglobals]
+import ".." / finalir / [finalir_model, finalir]
 import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
@@ -6902,9 +6902,7 @@ proc applyVerdicts(buf: var TokenBuf; dischargedIndexes, provenCalls: HashSet[in
   swap buf, res
 
 proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
-  ## Run the Final-IR lowering: a routine's globals move to module scope
-  ## (`hoistglobals.nim`), then `finalir.nim`, which itself runs xelim first.
-  hoistRoutineGlobals input
+  ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
   var n = beginRead(input)
   # this storage is reused for the Final IR, which is up to 1.5x its input
   var buf = createTokenBuf(input.len + input.len div 2)

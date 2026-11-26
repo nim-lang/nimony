@@ -987,7 +987,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
              EnableTraceP:
             bug "unreachable"
           of GlobalP:
-            bug "`.global` reached lengcgen; sem moves such a variable to module scope (hoistglobals)"
+            bug "`.global` reached lengcgen; xelim moves such a variable to module scope and drops the pragma"
         else:
           error c, "unknown pragma: ", n
   else:

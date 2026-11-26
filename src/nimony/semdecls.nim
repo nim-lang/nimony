@@ -362,8 +362,8 @@ proc isTypeclassParamType(typ: Cursor; routine: SymKind): bool =
 
 proc isRoutineGlobal(c: var SemContext; kind: SymKind; crucial: CrucialPragma): bool =
   ## A `var x {.global.}` or `{.threadvar.}` inside a routine: one location for
-  ## the whole program (or thread), which `hoistRoutineGlobals` moves to module
-  ## scope.
+  ## the whole program (or thread), which xelim moves to module scope
+  ## (`xelim.trLocal`).
   kind in {LetY, VarY} and {GlobalP, ThreadvarP} * crucial.flags != {} and
     c.currentScope.kind != ToplevelScope
 
@@ -440,8 +440,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       exportMarkerBecomesNifTag c, dest, beforeExportMarker, crucial
     let routineGlobal = isRoutineGlobal(c, kind, crucial)
     if routineGlobal and delayed.status == OkNew and pool.symIsLocal(delayed.s.name):
-      # `hoistRoutineGlobals` moves it to module scope after sem, where it
-      # needs a module-unique name like any global (#3158, #3167).
+      # xelim moves it to module scope (`xelim.trLocal`), where it needs a
+      # module-unique name like any global (#3158, #3167).
       delayed.s.name = newSymId(c, delayed.s.name, forceGlobal = true)
       setSymIdAt(dest, delayed.s.pos, delayed.s.name)
     if delayed.status == OkExistingFresh and InjectP in crucial.flags:
