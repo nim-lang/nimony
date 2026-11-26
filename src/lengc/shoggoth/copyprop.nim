@@ -106,7 +106,7 @@ proc addrRootOf(c: Cursor): SymId =
 const LeafKinds = {Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit}
   ## Side-effect-free initializers a dead local binding may be deleted with.
 
-proc isLeafLit(n: Cursor): bool {.inline.} =
+proc isLeafLit*(n: Cursor): bool {.inline.} =
   ## A side-effect-free literal we can snapshot: atoms and `(true)`/`(false)`.
   ## `(suf 7 "i64")` is how hexer writes a typed integer literal after inlining;
   ## treating it as a non-leaf left `var size = 7i64; memcpy(..., size)` as a

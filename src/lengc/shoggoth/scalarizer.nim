@@ -93,6 +93,7 @@ import patchsets
 import accesspaths                            # indexesVariably
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import ".." / typenav                         # lookupField — the scalar's declared type
+import copyprop                               # isLeafLit: what a `const` read may become
 
 include ".." / ".." / "lib" / compat2         # getOrQuit (host Nim)
 
@@ -112,6 +113,11 @@ proc child0(c: Cursor): Cursor {.inline.} =
 # is a call (`isComplex`, xelim.nim) — so every dropped value is pure and dead.
 # A constructor with an inheritance/base part is left alone, mirroring the
 # var-based pass.
+#
+# A `const` is such a constructor under a name nobody writes, so `C.f` and
+# `C[k]` (`k` a literal) project out of its value too, where they are read: a
+# location (`addr` operand, a memory row's operand) is left alone. Only a
+# literal result is copied into the code, never an aggregate, a string or `nil`.
 
 proc projectField(oconstr: Cursor; field: SymId; val: var Cursor): bool =
   ## True (and sets `val` to a cursor at the value) iff `oconstr` is
@@ -146,12 +152,47 @@ proc projectField(oconstr: Cursor; field: SymId; val: var Cursor): bool =
         skip oc                                     # consume the rest (rem == 0)
   result = found and not bail
 
-proc collectProjections(orig: ptr TokenBuf; ps: var Patchset; n: Cursor): int =
-  ## Record a subst for each `(dot (oconstr …) field)` whose field is present.
-  ## Does not recurse into a folded node, so nested/chained `a.f.g` collapse one
+proc constValue(m: var MainModule; n: Cursor; val: var Cursor): bool =
+  ## `n` is `C`, `C.f` or `C[k]` of a `const C`, `k` a literal: `val` is that
+  ## part of `C`'s value.
+  result = false
+  if n.kind == Symbol:
+    let d = if canLoadForeign(m, n.symId): getDeclOrNil(m, n.symId) else: nil
+    if d != nil and d.kind == ConstY and not d.isImport:
+      var decl = d.pos
+      val = takeVarDecl(decl).value
+      result = val.kind != DotToken
+  elif n.exprKind in {DotC, AtC}:
+    var base = default(Cursor)
+    var c = n.childCursor
+    if constValue(m, c, base):
+      skip c
+      if n.exprKind == DotC:
+        result = c.kind == Symbol and base.exprKind == OconstrC and
+          projectField(base, symId(c), val)
+      elif c.kind == IntLit and base.exprKind == AconstrC:
+        var k = intVal(c)
+        val = base.childCursor
+        skip val                                    # the array type
+        while k > 0 and val.hasMore:
+          skip val
+          dec k
+        result = k == 0 and val.hasMore
+
+proc collectProjections(orig: ptr TokenBuf; ps: var Patchset; n: Cursor;
+                        module: ptr MainModule): int =
+  ## Record a subst for each `(dot (oconstr …) field)` whose field is present,
+  ## and for each read of a `const` (`constValue`) that is a literal. Does not
+  ## recurse into a folded node, so nested/chained `a.f.g` collapse one
   ## layer per `runConstructorProjection` round (fixpoint handles the rest).
   result = 0
-  if n.kind != TagLit: return
+  if n.kind != TagLit or n.exprKind in AddrKinds or n.stmtKind == InstrS: return
+  if module != nil and n.exprKind in {DotC, AtC}:
+    var val = default(Cursor)
+    if constValue(module[], n, val) and isLeafLit(val) and
+        (if val.exprKind == SufC: val.childCursor else: val).kind != StrLit:
+      ps.addSubst(cursorToPosition(orig[], n), val)
+      return 1
   if n.exprKind == DotC:
     let base = child0(n)
     if base.kind == TagLit and base.exprKind == OconstrC:
@@ -164,13 +205,14 @@ proc collectProjections(orig: ptr TokenBuf; ps: var Patchset; n: Cursor): int =
           return 1                                  # whole dot replaced
   var m = n
   m.loopInto:
-    result += collectProjections(orig, ps, m)
+    result += collectProjections(orig, ps, m, module)
     skip m
 
-proc runConstructorProjection*(buf: var TokenBuf): bool {.discardable.} =
-  ## Fold field projections off inline (never-bound) object constructors.
+proc runConstructorProjection*(buf: var TokenBuf; m: ptr MainModule = nil): bool {.discardable.} =
+  ## Fold field projections off inline (never-bound) object constructors and
+  ## `const` values.
   ## Iterated to a fixpoint so chains (`T(a: U(x: 1)).a.x`) collapse fully;
-  ## each round removes at least one `oconstr`, so it terminates. Mints no new
+  ## each round removes at least one projection, so it terminates. Mints no new
   ## symbols. Returns whether it folded anything.
   result = false
   var rounds = 0
@@ -179,7 +221,7 @@ proc runConstructorProjection*(buf: var TokenBuf): bool {.discardable.} =
     var ps = initPatchset(addr buf)
     let folded = block:
       let n = beginRead(buf)
-      collectProjections(addr buf, ps, n)
+      collectProjections(addr buf, ps, n, m)
     if folded == 0: break
     var nb = ps.apply()
     buf = ensureMove(nb)
