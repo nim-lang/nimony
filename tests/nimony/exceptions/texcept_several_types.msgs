@@ -1,0 +1,4 @@
+tests/nimony/exceptions/texcept_several_types.nim(14, 3) Error: an `except` arm takes one type; write one arm per type
+tests/nimony/exceptions/texcept_several_types.nim(18, 3) Error: an `except` arm takes one type; write one arm per type
+tests/nimony/exceptions/texcept_several_types.nim(22, 3) Error: an `except` arm takes one type; write one arm per type
+tests/nimony/exceptions/texcept_several_types.nim(28, 3) Error: an `except` arm takes one type; write one arm per type
