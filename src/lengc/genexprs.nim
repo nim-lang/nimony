@@ -299,6 +299,16 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
       c.add Dot
       genField c, fld, objBody, c.m.isImportC(objType)
       while n.hasMore: skip n
+  of BaseobjC:
+    n.into:
+      skip n # type not interesting for us
+      var counter = intVal(n)
+      skip n
+      c.genx n
+      while counter > 0:
+        c.add ".Q"
+        dec counter
+      while n.hasMore: skip n
   of ErrvC:
     if {gfMainModule, gfHasError} * c.flags == {}:
       moveToDataSection:
@@ -538,16 +548,6 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
           c.genx n
         inc i
       c.add CurlyRi
-  of BaseobjC:
-    n.into:
-      skip n # type not interesting for us
-      var counter = intVal(n)
-      skip n
-      c.genx n
-      while counter > 0:
-        c.add ".Q"
-        dec counter
-      while n.hasMore: skip n
   of ParC:
     c.add ParLe
     n.into:
@@ -620,5 +620,5 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       genx c, value
     else:
       suffixConv c, value, suffix
-  of ErrvC, AtC, DerefC, DotC, PatC, OvfC:
+  of ErrvC, AtC, DerefC, DotC, PatC, OvfC, BaseobjC:
     genLvalue c, n

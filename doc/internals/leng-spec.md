@@ -93,6 +93,7 @@ IntBits ::= ('+' | '-') [0-9]+
 Lvalue ::= Symbol | (deref Expr (cppref)?) |
              (at Expr Expr) | # array indexing
              (dot Expr Symbol Number) | # field access
+             (baseobj Type Number Expr) | # the parent's part, `Number` levels up
              (pat Expr Expr) | # pointer indexing
              (errv) | (ovf)
 
