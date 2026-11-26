@@ -3033,8 +3033,8 @@ that declared it, so its lifetime is the lifetime of the closure. The
 environment is a traced `ref` and is destroyed by the ordinary memory
 management once the last closure referring to it is gone.
 
-A proc that is not a closure converts implicitly to a `.closure.` proc type; it
-is then paired with an empty environment:
+A routine that is not a closure converts implicitly to a `.closure.` proc type;
+it is then paired with an empty environment:
 
 ```nim
 proc double(x: int): int = x * 2
@@ -3042,6 +3042,16 @@ proc double(x: int): int = x * 2
 proc apply(f: proc(x: int): int {.closure.}; v: int): int = f(v)
 
 echo apply(double, 21) # 42
+```
+
+Only a routine (a proc literal included) converts implicitly. A proc *value* of
+a non-closure type, such as a variable, a parameter or a field, does not; wrap
+it in a proc literal that calls it:
+
+```nim
+let p: proc(x: int): int = double
+echo apply(p, 21)                              # Error
+echo apply(proc (x: int): int = p(x), 21)      # 42
 ```
 
 ### The autoclosures feature
