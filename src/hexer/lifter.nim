@@ -629,7 +629,11 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceSta
           copyTree c.dest, paramA
       copyTree c.dest, paramB
     of attachedCopy, attachedSink:
-      copyTree c.dest, paramA
+      if paramA[0].kind == Symbol:
+        copyTree c.dest, paramA
+      else:
+        copyIntoKind c.dest, HaddrX, c.info:
+          copyTree c.dest, paramA
       copyTree c.dest, paramB
 
 proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
@@ -1227,17 +1231,18 @@ proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; ownedEdg
       copyTree c.dest, paramA
       copyTree c.dest, paramB
   of attachedCopy, attachedSink:
-    # if src != nil: inc src.rc
-    # destroy dest[]
-    # dest[] = src
-    emitIncRef c, paramB
+    if c.op == attachedCopy:
+      emitIncRef c, paramB
+    var destValue = createTokenBuf(paramA.len + 2)
+    copyIntoKind destValue, HderefX, c.info:
+      copyTree destValue, paramA
     let oldOp = c.op
     c.op = attachedDestroy
     let fn = lift(c, n)
-    maybeCallHook c, fn, paramA, paramA
+    maybeCallHook c, fn, destValue, destValue
     c.op = oldOp
     copyIntoKind c.dest, AsgnS, c.info:
-      copyTree c.dest, paramA
+      copyTree c.dest, destValue
       copyTree c.dest, paramB
 
 proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
