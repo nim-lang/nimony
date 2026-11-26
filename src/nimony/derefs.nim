@@ -324,7 +324,42 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   else:
     result = false
 
-proc skipToRoot(n: Cursor): Cursor =
+proc tupleHasBorrowedField(t: Cursor): bool =
+  ## `tuple[x: var int]`, or the `(lent K, var V)` an `mpairs` yields.
+  result = false
+  var f = t
+  f = sub(f)
+  while f.hasMore and not result:
+    var ft = f
+    if f.substructureKind == KvU:
+      ft = sub(ft)
+      skip ft # the field name
+    result = ft.typeKind in {MutT, LentT}
+    skip f
+
+proc callReturnsLocation(c: var Context; call: Cursor): bool =
+  ## Whether the result of `call` is a location rather than a temporary that
+  ## a write would be lost in (#3161). A `var T`, `lent T` or view result, and
+  ## an iterator's yield, borrow from the first argument (`s[i]` for a `seq`,
+  ## `toOpenArray(s, a, b)`, `mpairs(t)`); a `ref`/`ptr` result points to the
+  ## location.
+  var callee = call
+  callee = sub(callee)
+  if callee.isSymbol and c.typeCache.fetchSymKind(callee.symId) == IteratorY:
+    result = true
+  else:
+    let t = getType(c.typeCache, call, {SkipAliases})
+    case t.typeKind
+    of MutT, LentT, RefT, PtrT, PointerT:
+      result = true
+    of TupleT:
+      result = tupleHasBorrowedField(t)
+    else:
+      result = isViewType(t)
+
+proc skipToRoot(c: var Context; n: Cursor): Cursor =
+  ## The location a path is rooted in. A call that returns a temporary is the
+  ## root itself: what is written through it is lost (#3161).
   var n = n
   while true:
     case n.exprKind
@@ -338,6 +373,7 @@ proc skipToRoot(n: Cursor): Cursor =
       skip n # skip intlit
       skip n # skip type
     of CallKinds:
+      if not callReturnsLocation(c, n): break
       n = sub(n)
       skip n # skip the `fn`
       if n.hasMore:
@@ -403,7 +439,7 @@ proc varResultErr(c: var Context; n: Cursor) =
 
 proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   result = false
-  let n = skipToRoot(n)
+  let n = skipToRoot(c, n)
   if n.isSymbol:
     # Use the type cache rather than `tryLoadSym` so that local symbols
     # (anonymous ones like `n.2` lack a module suffix) cannot collide
@@ -437,7 +473,8 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
     else:
       result = false
   elif n.hasMore and (n.kind in {StrLit, IntLit, UIntLit, FloatLit, CharLit} or
-       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}):
+       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX} or
+       (n.exprKind in CallKinds and not callReturnsLocation(c, n))):
     result = true
   else:
     result = false
@@ -1632,7 +1669,7 @@ proc loopContainerIsReadonly(c: var Context; n: Cursor): bool =
   ## covers both kinds of `let`, and the helper cannot simply count a `lent`
   ## binding as read-only: `trLocation` asks it too when a `lent` result
   ## forwards a borrow (`yield k` in `sets.items`).
-  let root = skipToRoot(n)
+  let root = skipToRoot(c, n)
   result = borrowsFromReadonly(c, n) or borrowsFromReadonly(c, n, allowLet=true) or
     (root.isSymbol and c.r.dangerousLocations.hasKey(root.symId))
 
