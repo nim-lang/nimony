@@ -168,7 +168,7 @@ else:
   template `+!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) + x)
   template `-!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) - x)
 
-  proc align(address, alignment: int): int {.inline.} =
+  func align(address, alignment: int): int {.inline.} =
     result = (address + (alignment - 1)) and not (alignment - 1)
 
   # unsigned-wraparound operators the allocator relies on
@@ -239,17 +239,20 @@ else:
     {.cast(noSideEffect).}:
       result = ptrSize(p)
 
-  proc getOccupiedMem*(): int =
+  func getOccupiedMem*(): int =
     ## Bytes owned by the current thread's heap that currently hold data.
-    result = getOccupiedMem(allocator)
+    {.cast(noSideEffect).}:
+      result = getOccupiedMem(allocator)
 
-  proc getFreeMem*(): int =
+  func getFreeMem*(): int =
     ## Bytes owned by the current thread's heap that are free for reuse.
-    result = getFreeMem(allocator)
+    {.cast(noSideEffect).}:
+      result = getFreeMem(allocator)
 
-  proc getTotalMem*(): int =
+  func getTotalMem*(): int =
     ## Total bytes the current thread's heap has obtained from the OS.
-    result = getTotalMem(allocator)
+    {.cast(noSideEffect).}:
+      result = getTotalMem(allocator)
 
 # --- fixed-size allocation (emitted by the compiler for `ref` objects) -----
 func allocFixed*(size: int): pointer =
@@ -272,9 +275,10 @@ proc continueAfterOutOfMem*(size: int) {.nimcall.} =
   else:
     missingBytes = high(int)
 
-proc threadOutOfMem*(): bool =
+func threadOutOfMem*(): bool =
   ## True if the current thread previously ran out of memory (recorded by the OOM handler).
-  missingBytes > 0
+  {.cast(noSideEffect).}:
+    result = missingBytes > 0
 
 var oomHandler: proc (size: int) {.nimcall.} = continueAfterOutOfMem
 

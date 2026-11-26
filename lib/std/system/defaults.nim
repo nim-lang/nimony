@@ -1,5 +1,5 @@
 type HasDefault* = concept
-  proc default(_: typedesc[Self]): Self
+  func default(_: typedesc[Self]): Self
 
 template default*(x: typedesc[bool]): bool = false
 template default*(x: typedesc[char]): char = '\0'

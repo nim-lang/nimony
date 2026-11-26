@@ -11,7 +11,7 @@
 ## symbols *and* real Linux syscalls, so they link on the C backend and lower
 ## to bare `syscall` instructions on arkham.
 
-proc nimNoopFlush() {.nimcall.} = discard
+func nimNoopFlush() {.nimcall.} = discard
 
 var gExitFlush: proc () {.nimcall.} = nimNoopFlush
   ## Flushes the buffered standard streams on process exit. A no-op until
