@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tunderspecifieddefault.nim(10, 10) Error: could not infer type for V.0.tunyhlh1d1
+tests/nimony/errmsgs/tunderspecifieddefault.nim(11, 12) Error: could not infer type for V.1.tunyhlh1d1
+tests/nimony/errmsgs/tunderspecifieddefault.nim(12, 12) Error: could not infer type for V.2.tunyhlh1d1
+tests/nimony/errmsgs/tunderspecifieddefault.nim(13, 14) Trace: instantiation from here
+tests/nimony/errmsgs/tunderspecifieddefault.nim(7, 36) Error: could not infer type for V.0.tunyhlh1d1
