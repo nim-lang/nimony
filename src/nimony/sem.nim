@@ -2429,6 +2429,17 @@ proc semDiscard(c: var SemContext; dest: var TokenBuf; it: var Item) =
         buildErr c, dest, exInfo, "expression of type `" & typeToString(a.typ) & "` must not be discarded"
   producesVoid c, dest, info, it.typ
 
+proc isNilMarkedPtr(t: Cursor): bool =
+  ## `nil ref T`, `nil ptr T`, `nil proc ...`: a type explicitly marked nilable.
+  var t = skipModifier(t)
+  result = false
+  if t.typeKind in {RefT, PtrT}:
+    var e = t.childCursor
+    skip e # base type
+    result = e.hasMore and e.substructureKind == NilU
+  elif t.typeKind == ProctypeT:
+    result = t.childCursor.substructureKind == NilU # slot 0: nilability
+
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool) =
   # handle statements that could be expressions
   var list = createTokenBuf(0)
@@ -2456,6 +2467,20 @@ proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewSco
     let start = dest.len
     semExpr c, dest, ex
     commonType(c, dest, ex, start, it.typ)
+    # The IR has no type for an `if`/`case`/`try` value: later passes take it
+    # from the first branch. Into a `nil T` every branch carries `nil T`, a
+    # `T not nil` one too, as a `nil` branch does (`(nil T)`). A branch that
+    # yields no value (`return`/`raise`/`break`/...) stays as it is.
+    let head = if dest.len > start: cursorAt(dest, start).exprKind else: NoExpr
+    if isNilMarkedPtr(it.typ) and head notin {NoExpr, ErrX, NilX, HconvX} and
+        not isNoReturn(cursorAt(dest, start)):
+      var conv = createTokenBuf(16)
+      conv.addParLe(HconvX, dest[start].info)
+      conv.addSubtree it.typ
+      for i in start ..< dest.len: conv.add dest[i]
+      conv.addParRi()
+      dest.shrink start
+      dest.add conv
   it.n = orig
   skip it.n
 
