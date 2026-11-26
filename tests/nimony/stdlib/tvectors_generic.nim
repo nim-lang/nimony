@@ -46,3 +46,12 @@ assert vec4(vec2(1, 2), 3, 4) == vec4(1, 2, 3, 4)
 
 func pureDot(a, b: Vec3[float32]): float32 = dot(a, b)
 assert pureDot(vec3(1.0'f32, 2.0'f32, 3.0'f32), vec3(1.0'f32, 1.0'f32, 1.0'f32)) == 6.0'f32
+
+# unsigned components: min/max and their reductions are callable from a func
+let u8a = vec3(1u8, 5u8, 3u8)
+let u8b = vec3(4u8, 2u8, 6u8)
+assert min(u8a, u8b) == vec3(1u8, 2u8, 3u8)
+assert max(u8a, u8b) == vec3(4u8, 5u8, 6u8)
+assert minComponent(u8b) == 2u8 and maxComponent(u8b) == 6u8
+assert min(vec2(70000u32, 3u32), vec2(5u32, 80000u32)) == vec2(5u32, 3u32)
+assert max(vec2(high(uint64), 1u64), vec2(2u64, 9u64)) == vec2(high(uint64), 9u64)

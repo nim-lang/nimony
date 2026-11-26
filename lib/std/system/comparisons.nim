@@ -212,3 +212,40 @@ proc `==`*[T: proc](x, y: T): bool {.magic: "EqProc", noSideEffect.}
 proc `==`*[T: iterator](x, y: T): bool {.magic: "EqProc", noSideEffect.}
   ## As above for iterator values: a `.closure` iterator is the same (fn, env)
   ## pair. A `.passive` one is a bare function pointer and compares directly.
+
+# Unsigned `min`/`max`: at the end, like the `==` above, so the candidate
+# lines that tests/nimony/errmsgs cite from this file do not shift.
+proc min*(x, y: uint8): uint8 {.noSideEffect, inline,
+    ensures: result <= x and result <= y.} =
+  if x <= y: return x
+  result = y
+proc min*(x, y: uint16): uint16 {.noSideEffect, inline,
+    ensures: result <= x and result <= y.} =
+  if x <= y: return x
+  result = y
+proc min*(x, y: uint32): uint32 {.noSideEffect, inline,
+    ensures: result <= x and result <= y.} =
+  if x <= y: return x
+  result = y
+proc min*(x, y: uint64): uint64 {.noSideEffect, inline,
+    ensures: result <= x and result <= y.} =
+  ## The minimum value of two unsigned integers.
+  if x <= y: return x
+  result = y
+proc max*(x, y: uint8): uint8 {.noSideEffect, inline,
+    ensures: x <= result and y <= result.} =
+  if y <= x: return x
+  result = y
+proc max*(x, y: uint16): uint16 {.noSideEffect, inline,
+    ensures: x <= result and y <= result.} =
+  if y <= x: return x
+  result = y
+proc max*(x, y: uint32): uint32 {.noSideEffect, inline,
+    ensures: x <= result and y <= result.} =
+  if y <= x: return x
+  result = y
+proc max*(x, y: uint64): uint64 {.noSideEffect, inline,
+    ensures: x <= result and y <= result.} =
+  ## The maximum value of two unsigned integers.
+  if y <= x: return x
+  result = y
