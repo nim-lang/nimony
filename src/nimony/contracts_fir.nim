@@ -6627,14 +6627,14 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       traverseRaise c, n, call
     of LocalDecls:
       traverseLocal c, n, call
-    of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS:
+    of ProcS, FuncS, IteratorS, ConverterS, MethodS:
       # Nested routine - analyze and advance past it
       c.typeCache.openScope()
       inc c.nestedProcs
       traverseProc c, n, true
       dec c.nestedProcs
       c.typeCache.closeScope()
-    of TemplateS, TypeS, CommentS, PragmasS:
+    of MacroS, TemplateS, TypeS, CommentS, PragmasS:
       skip n
     of CallKindsS:
       analyseCall c, n, call
