@@ -46,7 +46,7 @@ type
                           ## library rather than something to load at runtime.
 
     instId*: int # per forStmt
-    tmpId*: int # per proc
+    tmpId*: int # per module
     resultSym*: SymId
 
     localDeclCounters*: int
