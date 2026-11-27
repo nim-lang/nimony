@@ -4680,8 +4680,9 @@ proc semSuf(c: var SemContext; dest: var TokenBuf, it: var Item) =
   semExpr c, dest, num
   it.n = num.n
   if it.n.kind != StrLit:
+    dest.shrink exprStart
     c.buildErr dest, it.n.info, "string literal expected for suf"
-    skip it.n
+    it.n = sufStart; skip it.n
     return
   let expected = it.typ
   case pool.strings[it.n.strId]
@@ -4701,7 +4702,12 @@ proc semSuf(c: var SemContext; dest: var TokenBuf, it: var Item) =
   of "R", "T": it.typ = c.types.stringType
   of "C": it.typ = c.types.cstringType
   else:
+    # the whole `suf` node becomes the error: a `suf` whose suffix is an
+    # `err` node is read back (e.g. by overload resolution) and crashes
+    dest.shrink exprStart
     c.buildErr dest, it.n.info, "unknown suffix: " & pool.strings[it.n.strId]
+    it.n = sufStart; skip it.n
+    return
   takeTree dest, it.n # suffix
   dest.addParRi(it.n.endInfo) # right paren
   it.n = sufStart; skip it.n
