@@ -1,2 +1,7 @@
 tests/nimony/errmsgs/troutineglobal_init.nim(6, 22) Error: the initializer of a `.global` variable cannot refer to the local `b`
 tests/nimony/errmsgs/troutineglobal_init.nim(7, 22) Error: the initializer of a `.global` variable cannot refer to the local `a`
+tests/nimony/errmsgs/troutineglobal_init.nim(8, 22) Error: the initializer of a `.global` variable cannot refer to the local `a`
+tests/nimony/errmsgs/troutineglobal_init.nim(21, 19) Trace: instantiation from here
+tests/nimony/errmsgs/troutineglobal_init.nim(21, 20) Error: the initializer of a `.global` variable cannot refer to the local `a`
+tests/nimony/errmsgs/troutineglobal_init.nim(24, 19) Trace: instantiation from here
+tests/nimony/errmsgs/troutineglobal_init.nim(24, 20) Error: the initializer of a `.global` variable cannot refer to the local `a`

@@ -85,6 +85,7 @@ type
     tries: seq[TryFrame] # the `try` bodies being translated, innermost last
     armRaises: seq[seq[RaisedType]] # what a bare `raise` re-raises in each
                                     # `except` arm being translated
+    inRoutine: bool # false for the module's toplevel statements
 
   Context = object
     dest: TokenBuf
@@ -720,7 +721,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   let decl = n
   c.typeCache.openScope(ProcScope)
   let props = if decl.stmtKind in {FuncS, IteratorS, ConverterS}: {IsNoSideEffect} else: {}
-  var r = CurrentRoutine(returnExpects: WantT, props: props)
+  var r = CurrentRoutine(returnExpects: WantT, props: props, inRoutine: true)
   swap c.r, r
   let outerOwner = c.inferredOwner
   takeInto c.dest, n:
@@ -1145,6 +1146,23 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   else:
     trSonsLocation c, n, WantT
 
+proc trRoutineGlobalInit(c: var Context; le: Cursor; ri: var Cursor; e: Expects;
+                         typ: Cursor) =
+  ## A routine's `.global`/`.threadvar` is initialized once, before the
+  ## module's toplevel statements (`xelim.trLocal`): its initializer is module
+  ## level code, which no `try` of the routine encloses and no error can leave
+  ## through the routine.
+  var tries: seq[TryFrame] = @[]
+  var armRaises: seq[seq[RaisedType]] = @[]
+  var raisesType = default(Cursor)
+  swap c.r.tries, tries
+  swap c.r.armRaises, armRaises
+  swap c.r.raisesType, raisesType
+  trAsgnRhs c, le, ri, e, typ
+  swap c.r.tries, tries
+  swap c.r.armRaises, armRaises
+  swap c.r.raisesType, raisesType
+
 proc trLocal(c: var Context; n: var Cursor) =
   let kind = n.symKind
   takeInto c.dest, n:
@@ -1162,7 +1180,10 @@ proc trLocal(c: var Context; n: var Cursor) =
       c.dest.addParRi()
     else:
       let e = if typ.typeKind in {OutT, MutT, LentT}: WantVarT else: WantT
-      trAsgnRhs c, name, n, e, typ
+      if c.r.inRoutine and kind in {GvarY, GletY, TvarY, TletY}:
+        trRoutineGlobalInit c, name, n, e, typ
+      else:
+        trAsgnRhs c, name, n, e, typ
     when defined(debugSigmatch):
       if n.hasMore:
         let u = n.info

@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/troutineglobal_raises.nim(12, 29) Error: cannot call a routine marked as `.raises` outside of a `try`..`except` block
+tests/nimony/errmsgs/troutineglobal_raises.nim(17, 31) Error: cannot call a routine marked as `.raises` outside of a `try`..`except` block
