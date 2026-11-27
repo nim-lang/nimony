@@ -13,6 +13,14 @@ proc main() =
   assert Color(0xff_33_ff_ff) - Color(0x11_ff_cc_ff) == Color(0xee_00_33_00)
   assert Color(0xff_00_ff_ff).intensity(0.5) == Color(0x80_00_80_ff)
   assert Color(0x00_42_cc_ff).intensity(0.5) == Color(0x00_21_66_ff)
+  try:
+    assert Color(0x00_42_cc_ff).opacity(0.5) == Color(0x00_42_cc_80)
+    var color = parseColor("#3eeeef")
+    color.a = 100
+    assert color.a == 100
+  except:
+    assert false
+  assert rgb(255, 255, 255) == rgba(255, 255, 255, 255)
   proc myMix(x, y: int): int = 2 * x - 3 * y
   assert mix(Color(0x0a2814ff), Color(0x050a03ff), myMix) == Color(0x05_32_1f_00)
 
@@ -27,10 +35,10 @@ proc main() =
   except:
     assert false
   var raised = 0
-  for bad in ["#zzmmtt", "nosuchcolor", ""]:
+  for bad in ["#zzmmtt", "nosuchcolor", "", "#fffff"]:
     try: discard parseColor(bad)
     except: inc raised
-  assert raised == 3
+  assert raised == 4
   echo "colors ok"
 
 main()
