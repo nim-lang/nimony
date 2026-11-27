@@ -90,13 +90,24 @@ proc cloneNativenif(): bool =
 
 var nativenifChecked = false
 
+proc pinFailure(pin, head, why, remedy: string) {.noreturn.} =
+  quit "hastur: " & NativenifDir & " is at " & head & ", but " &
+       NativenifCommitFile & " pins " & pin & ":\n" & why & "\n" & remedy &
+       "\n(or `hastur update deps` to re-pin to " & head & ")"
+
 proc syncNativenif*() =
-  ## Put `../nativenif` on the pinned commit before anything is built from it.
+  ## Put `../nativenif` on the pinned commit before anything is built from it,
+  ## and FAIL the build when that cannot be done. arkham and nifasm built from
+  ## some other commit is a build whose test results mean nothing, so every
+  ## way of not being on the pin — a malformed pin, a tree that is not a git
+  ## checkout, uncommitted work, a branch someone is working on, a commit that
+  ## cannot be fetched — is an error, never a warning.
   ##
-  ## Never at the cost of uncommitted work: a dirty tree is left alone with a
-  ## warning, because the person who dirtied it is precisely the person who
-  ## wants arkham built from their edits. A clean tree gets detached onto the
-  ## pin (the branch that was there is still a `git switch -` away).
+  ## A clean, detached tree (CI, an auto-clone, a previous run of this proc) is
+  ## moved onto the pin. A tree with uncommitted changes or on a branch is
+  ## someone's work and is NOT moved: the build stops and says how to proceed.
+  ## The pin's own escape hatch stays: an empty or absent pin file builds
+  ## whatever is checked out (for bisecting nativenif itself).
   if nativenifChecked: return
   nativenifChecked = true
   # The clone comes first and is not conditional on the pin: whether the
@@ -105,39 +116,32 @@ proc syncNativenif*() =
   let justCloned = cloneNativenif()
   let pin = pinnedNativenifCommit()
   if pin.len == 0: return
+  if pin.len != 40 or not pin.allCharsInSet(HexDigits):
+    quit "hastur: " & NativenifCommitFile & " does not hold a commit hash: '" & pin &
+         "'\nExpected a full 40-digit SHA-1 (`hastur update deps` writes one)."
   let (headOut, headCode) = gitIn(NativenifDir, "rev-parse HEAD")
   if headCode != 0:
-    echo "[deps] ", NativenifDir, " is not a git checkout; building it as it is"
-    return
+    quit "hastur: " & NativenifDir & " is not a git checkout, so it cannot be verified to be at " &
+         pin & " (pinned by " & NativenifCommitFile & "):\n" & headOut
   let head = headOut.strip
-  if head == pin: return
+  if cmpIgnoreCase(head, pin) == 0: return
 
   let (dirty, dirtyCode) = gitIn(NativenifDir, "status --porcelain --untracked-files=no")
   if dirtyCode != 0 or dirty.strip.len > 0:
-    echo "[deps] WARNING: ", NativenifDir, " has uncommitted changes — leaving it at ",
-         head
-    echo "[deps] WARNING: arkham/nifasm are built from YOUR tree, not from the ",
-         NativenifCommitFile, " pin (", pin, ")"
-    return
+    pinFailure(pin, head, "it has uncommitted changes, which are not moved for you.",
+               "Commit or stash them, then `git -C " & NativenifDir &
+               " checkout --detach " & pin & "`")
 
   # A checkout sitting on a branch is someone's working tree, and committing a
-  # fix there is exactly what makes it stop being dirty — so the guard above
-  # would hand it straight to the `git checkout` below and build the arkham that
-  # fix was replacing. Leave it be and say so. CI is the one place that must
-  # enforce the pin regardless: its checkout is on the default branch too, and a
-  # pin deliberately behind that branch is the whole point of pinning.
-  # `justCloned` is the third exemption alongside CI: a clone made two
-  # statements ago is on its default branch by construction, not because
-  # someone is working in it, so leaving it there would mean the very first
-  # build after an auto-clone quietly ignored the pin.
+  # fix there is exactly what makes it stop being dirty — so silently detaching
+  # it would build the arkham that fix was replacing. Stop instead. CI and a
+  # fresh auto-clone are on their default branch by construction, not because
+  # someone is working in them, so those are moved like a detached tree.
   let (branch, branchCode) = gitIn(NativenifDir, "symbolic-ref --quiet --short HEAD")
   if branchCode == 0 and branch.strip.len > 0 and getEnv("CI").len == 0 and
      not justCloned:
-    echo "[deps] WARNING: ", NativenifDir, " is on branch '", branch.strip, "' at ", head
-    echo "[deps] WARNING: leaving it there; ", NativenifCommitFile, " pins ", pin
-    echo "[deps] to build the pin instead: git -C ", NativenifDir,
-         " checkout --detach ", pin
-    return
+    pinFailure(pin, head, "it is on branch '" & branch.strip & "', which is not moved for you.",
+               "To build the pin: `git -C " & NativenifDir & " checkout --detach " & pin & "`")
 
   # A checkout that never had the pin — a shallow CI clone of the default
   # branch, or a tree that has not fetched in a while. Ask for the commit by
@@ -164,6 +168,9 @@ proc syncNativenif*() =
   let (coOut, coCode) = gitIn(NativenifDir, "checkout --detach --quiet " & pin)
   if coCode != 0:
     quit "hastur: cannot check out " & pin & " in " & NativenifDir & ":\n" & coOut
+  let after = gitIn(NativenifDir, "rev-parse HEAD")[0].strip
+  if cmpIgnoreCase(after, pin) != 0:
+    quit "hastur: " & NativenifDir & " is at " & after & " after checking out " & pin
 
 # ---- Nim's own parser, checked out for nifler ------------------------------
 # Nifler parses `.nim` source with the host compiler's parser: `src/nifler/nim.cfg`

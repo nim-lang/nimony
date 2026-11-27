@@ -105,8 +105,9 @@ Commands:
                        commit arkham and nifasm are built from — to whatever
                        `../nativenif` currently has checked out. Every other
                        command PUTS nativenif on that commit before building
-                       it (a dirty nativenif tree is left alone, with a
-                       warning). The file is read at run time; an empty or
+                       it, and FAILS when it cannot (uncommitted changes,
+                       a branch checked out, an unfetchable or malformed
+                       pin). The file is read at run time; an empty or
                        absent one means "build whatever is checked out".
   update parser        re-pin `src/nifler/nimparser/upstream.commit` — Nim's
                        own `compiler/parser.nim`, which nifler parses `.nim`
