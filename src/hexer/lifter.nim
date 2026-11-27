@@ -823,7 +823,11 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf;
     else:
       unravel c, fieldType, a, b
 
-proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
+proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int;
+                             onlyFirst = false) =
+  ## Processes the fields from `n` on. With `onlyFirst` it stops after the first
+  ## field or `case` section, so that a caller which handles the fields in an
+  ## order of its own does not process the siblings behind it a second time.
   while n.hasMore:
     case n.substructureKind
     of CaseU:
@@ -833,7 +837,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
         var nCopy = n
         let prevOp = c.op
         c.op = attachedDestroy
-        unravelObjFieldsForward(c, nCopy, paramA, paramB, depth)
+        unravelObjFieldsForward(c, nCopy, paramA, paramB, depth, onlyFirst = true)
         c.op = prevOp
       let info = n.info
       let caseStart = n
@@ -904,6 +908,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
       skip n
     else:
       error "illformed AST inside object: ", n
+    if onlyFirst: break
 
 proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   if c.op != attachedDestroy:
@@ -926,7 +931,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
       var cur = fieldPositions[i]
       case cur.substructureKind
       of CaseU:
-        unravelObjFieldsForward c, cur, paramA, paramB, depth
+        unravelObjFieldsForward c, cur, paramA, paramB, depth, onlyFirst = true
       of FldU, GfldU:
         unravelObjField c, cur, paramA, paramB, depth
       else:
