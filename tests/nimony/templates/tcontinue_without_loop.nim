@@ -1,0 +1,4 @@
+proc invalid() =
+  continue
+
+invalid()
