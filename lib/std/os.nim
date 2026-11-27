@@ -401,162 +401,62 @@ func charsEqual(a, b: char): bool {.inline.} =
   else:
     a == b
 
-func charInRange(c, lo, hi: char): bool {.inline.} =
-  when defined(windows):
-    let lc = c.toLowerAscii
-    lc >= lo.toLowerAscii and lc <= hi.toLowerAscii
-  else:
-    c >= lo and c <= hi
-
-func globMatch(pattern, name: string; pi, ni: int): bool =
-  ## Matches one path component against a shell-style glob. `*` and `?` are
-  ## supported, as are `[...]` classes and POSIX backslash escapes.
-  if pi >= pattern.len:
-    return ni >= name.len
-  case pattern[pi]
-  of '*':
-    var p = pi
-    while p < pattern.len and pattern[p] == '*':
+func match(pattern, name: string): bool =
+  ## Matches `name` against `pattern`; `*` matches any run of characters and
+  ## `?` matches exactly one character.
+  var p = 0
+  var n = 0
+  var star = -1
+  var mark = 0
+  while n < name.len:
+    if p < pattern.len and
+        (pattern[p] == '?' or charsEqual(pattern[p], name[n])):
       inc p
-    if p >= pattern.len:
-      return true
-    for i in ni .. name.len:
-      if globMatch(pattern, name, p, i):
-        return true
-    result = false
-  of '?':
-    if ni >= name.len:
-      result = false
+      inc n
+    elif p < pattern.len and pattern[p] == '*':
+      star = p
+      mark = n
+      inc p
+    elif star >= 0:
+      p = star + 1
+      inc mark
+      n = mark
     else:
-      result = globMatch(pattern, name, pi + 1, ni + 1)
-  of '[':
-    if ni >= name.len:
       return false
-    var p = pi + 1
-    var neg = false
-    if p < pattern.len and pattern[p] in {'!', '^'}:
-      neg = true
-      inc p
-    var matched = false
-    var first = true
-    while p < pattern.len and (pattern[p] != ']' or first):
-      first = false
-      if p + 2 < pattern.len and pattern[p + 1] == '-' and pattern[p + 2] != ']':
-        if charInRange(name[ni], pattern[p], pattern[p + 2]):
-          matched = true
-        p += 3
-      else:
-        if charsEqual(pattern[p], name[ni]):
-          matched = true
-        inc p
-    if p >= pattern.len:
-      result = charsEqual('[', name[ni]) and
-               globMatch(pattern, name, pi + 1, ni + 1)
-    elif matched == neg:
-      result = false
-    else:
-      result = globMatch(pattern, name, p + 1, ni + 1)
-  of '\\':
-    when not defined(windows):
-      if pi + 1 < pattern.len:
-        if ni >= name.len:
-          return false
-        if not charsEqual(pattern[pi + 1], name[ni]):
-          return false
-        return globMatch(pattern, name, pi + 2, ni + 1)
-    if ni >= name.len:
-      result = false
-    elif not charsEqual(pattern[pi], name[ni]):
-      result = false
-    else:
-      result = globMatch(pattern, name, pi + 1, ni + 1)
-  else:
-    if ni >= name.len:
-      result = false
-    elif not charsEqual(pattern[pi], name[ni]):
-      result = false
-    else:
-      result = globMatch(pattern, name, pi + 1, ni + 1)
-
-func hasWildcard(s: string): bool =
-  for c in s:
-    if c in {'*', '?', '['}:
-      return true
-  result = false
-
-proc splitPattern(pattern: string): tuple[base: string, parts: seq[string]] =
-  ## Splits a glob into the literal directory prefix and its remaining
-  ## components. The prefix is a root such as `/` or `C:\`, or `""` for a
-  ## relative pattern.
-  result = (base: "", parts: @[])
-  var p = pattern
-  var rev: seq[string] = @[]
-  while true:
-    let (head, tail) = splitPath(p)
-    if tail.len == 0:
-      if (p.len > 0 and p[^1] in {DirSep, AltSep}) or
-          (head.len > 0 and (head == p or isAbsolute(p))):
-        result.base = p
-      break
-    rev.add tail
-    if head.len == 0:
-      break
-    if head == p:
-      result.base = head
-      break
-    p = head
-  if rev.len > 0:
-    for i in countdown(rev.high, 0):
-      result.parts.add rev[i]
+  while p < pattern.len and pattern[p] == '*':
+    inc p
+  result = p == pattern.len
 
 iterator walkFiles*(pattern: string): string {.sideEffect.} =
   ## Iterates over the regular files matching `pattern`.
   ##
-  ## `*` matches any number of characters, `?` matches one character, and
-  ## `[...]` matches a character class. Wildcards may appear in any path
-  ## component. On POSIX, a leading `.` in a name must be matched explicitly,
+  ## `pattern` is split into a directory and a file pattern. In the file
+  ## pattern, `*` matches any number of characters and `?` matches one
+  ## character. On POSIX, a leading `.` in a name must be matched explicitly,
   ## as with the shell.
   ##
   ## A missing or unreadable directory produces no matches instead of raising.
-  let (base, parts) = splitPattern(pattern)
-  if parts.len == 0:
+  let (dir, filePattern) = splitPath(pattern)
+  if filePattern.len == 0:
     return
-  var stack: seq[(string, int)] = @[(base, 0)]
-  while stack.len > 0:
-    let (dir, i) = stack.pop()
-    let comp = parts[i]
-    let last = i == parts.high
-    if not hasWildcard(comp):
-      let full = if dir.len == 0: comp else: joinPath(dir, comp)
-      if last:
+  var start = if dir.len == 0: "." else: dir
+  while start.len > 1 and start[^1] in {DirSep, AltSep} and
+      not (start.len == 3 and start[1] == ':'):
+    start.setLen(start.len - 1)
+  var w = tryOpenDir(path(start))
+  try:
+    var e = default DirEntry
+    while tryNextDir(w, e, skipSpecial = true):
+      let name = $e.path
+      when not defined(windows):
+        if name.len > 0 and name[0] == '.' and filePattern[0] != '.':
+          continue
+      if e.kind in {pcFile, pcLinkToFile} and match(filePattern, name):
+        let full = if dir.len == 0: name else: joinPath(dir, name)
         if fileExists(full):
           yield full
-      elif dirExists(full):
-        stack.add((full, i + 1))
-    else:
-      var start = if dir.len == 0: "." else: dir
-      while start.len > 1 and start[^1] in {DirSep, AltSep} and
-          not (start.len == 3 and start[1] == ':'):
-        start.setLen(start.len - 1)
-      var w = tryOpenDir(path(start))
-      try:
-        var e = default DirEntry
-        while tryNextDir(w, e, skipSpecial = true):
-          let name = $e.path
-          when not defined(windows):
-            if name.len > 0 and name[0] == '.' and
-                (comp.len == 0 or comp[0] != '.'):
-              continue
-          if not globMatch(comp, name, 0, 0):
-            continue
-          let full = if dir.len == 0: name else: joinPath(dir, name)
-          if last:
-            if e.kind in {pcFile, pcLinkToFile} and fileExists(full):
-              yield full
-          elif e.kind in {pcDir, pcLinkToDir}:
-            stack.add((full, i + 1))
-      finally:
-        discard tryCloseDir(w)
+  finally:
+    discard tryCloseDir(w)
 
 proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ## Executes a `shell command`:idx:.

@@ -30,11 +30,7 @@ proc main {.raises.} =
   assert sorted(collect(baseStr / "*.nim")) == @[baseStr / "c.nim"]
   assert sorted(collect(baseStr / "?.txt")) ==
     sorted(@[baseStr / "a.txt", baseStr / "b.txt"])
-  assert sorted(collect(baseStr / "[ab].txt")) ==
-    sorted(@[baseStr / "a.txt", baseStr / "b.txt"])
   assert sorted(collect(baseStr / "sub" / "*.nim")) ==
-    @[baseStr / "sub" / "d.nim"]
-  assert sorted(collect(baseStr / "*" / "*.nim")) ==
     @[baseStr / "sub" / "d.nim"]
   assert sorted(collect(baseStr / ".*.txt")) == @[baseStr / ".hidden.txt"]
   assert sorted(collect(baseStr / "a.txt")) == @[baseStr / "a.txt"]
