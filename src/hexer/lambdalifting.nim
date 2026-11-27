@@ -229,7 +229,13 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let typ = n
     tr(c, dest, n)
     c.typeCache.registerLocal(name, kind, typ, n)
-    tr(c, dest, n)  # value
+    if kind == ParamY:
+      # sem copied the default to every call site: it is dead here and
+      # must not count as a capture, so drop it
+      dest.addDotToken()
+      skip n
+    else:
+      tr(c, dest, n)  # value
 
 proc envTypeForProc(c: var Context; procId: SymId): SymId =
   let s = pool.symVersionedBasename(procId)
