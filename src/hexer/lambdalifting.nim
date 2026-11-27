@@ -289,8 +289,7 @@ proc propagateEnvNeed(c: var Context; root: SymId) =
           x = c.parentOf.getOrDefault(x)
   c.nestedRefs.shrink 0
   let heap = c.escapes.contains(root)
-  var nested: seq[SymId] = @[]
-  for q in c.nestedProcs: nested.add q
+  let nested = move c.nestedProcs # move out: the loop below mutates `c`
   for q in nested:
     if q in c.closureProcs:
       let creator = creatorOf(c, c.parentOf.getOrDefault(q))
@@ -300,7 +299,6 @@ proc propagateEnvNeed(c: var Context; root: SymId) =
         inc c.counter
         c.upLinks[c.envTypeForProc(q)] = UpLink(field: field,
           parent: c.envTypeForProc(creator), heap: heap)
-  c.nestedProcs = initHashSet[SymId]()
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   #c.typeCache.openScope(ProcScope)
