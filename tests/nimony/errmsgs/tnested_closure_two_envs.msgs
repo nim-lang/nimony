@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tnested_closure_two_envs.nim(8, 29) Error: 'visit' cannot use the locals of 'recursive': closures capture its own locals and a routine has a single environment; declare it at module level and pass what it uses as parameters
+tests/nimony/errmsgs/tnested_closure_two_envs.nim(19, 41) Error: 'inner' cannot use the locals of both 'twoLevels' and 'mid': a routine has a single environment; declare it at module level and pass what it uses as parameters
+tests/nimony/errmsgs/tnested_closure_two_envs.nim(19, 37) Error: 'mid' cannot use the locals of 'twoLevels': closures capture its own locals and a routine has a single environment; declare it at module level and pass what it uses as parameters
+tests/nimony/errmsgs/tnested_closure_two_envs.nim(28, 13) Error: 'make' cannot use the locals of 'forwarded': closures capture its own locals and a routine has a single environment; declare it at module level and pass what it uses as parameters

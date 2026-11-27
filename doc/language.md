@@ -3051,6 +3051,25 @@ that declared it, so its lifetime is the lifetime of the closure. The
 environment is a traced `ref` and is destroyed by the ordinary memory
 management once the last closure referring to it is gone.
 
+Every call of a routine gets an environment of its own for the variables that
+its closures capture. A routine has a single environment, so a closure can use
+the variables of one routine only: a routine whose own variables are captured
+cannot also use the variables of an enclosing routine, and neither can a
+routine use the variables of two different routines:
+
+```nim
+proc outer =
+  var a = 0
+  proc make(x: int): (proc(): int {.closure.}) =
+    result = proc(): int {.closure.} = x       # ok: uses `make`'s `x` only
+  proc visit(x: int) {.closure.} =
+    inc a                                      # Error: `visit` cannot use the
+    let f = proc(): int {.closure.} = x        # locals of `outer`, its own are
+    discard f()                                # captured
+```
+
+Declare such a routine at module level and pass what it uses as parameters.
+
 A routine that is not a closure converts implicitly to a `.closure.` proc type;
 it is then paired with an empty environment:
 
