@@ -2468,6 +2468,23 @@ In other words, the lifetime of what `result` points to is attached to the
 lifetime of the first parameter and that is enough knowledge to verify
 memory safety at the call site.
 
+A `var T` or `lent T` return type of a proc or converter implicitly makes
+the first parameter pass-by-reference, so the location the routine returns
+is the caller's storage even when that parameter is not a `var` parameter:
+
+  ```nim
+  proc first(a: array[1, int]): var int = a[0] # ok, `a` is the caller's array
+
+  var x = [0]
+  first(x) = 5
+  assert x[0] == 5
+  ```
+
+A first parameter of a view type is the exception: it stays the classical
+pass-by-object-size that is used for all value parameters (by value or by
+reference depending on the object's size). The existing view-result
+exemptions for `sink`, `ptr`, `ref` and `varargs` first parameters are kept.
+
 
 ### Future directions
 
@@ -2626,8 +2643,9 @@ parameter — is rejected when the source is a local:
 
 A view the routine *returns* follows the rule `var T` results follow: it may
 borrow from the routine's **first parameter**, and from nothing else. The first
-parameter of a routine that returns a view is passed by reference, so the view
-points into the caller's storage; any other parameter may be the callee's own
+parameter of a routine that returns a view is passed by reference (unless it
+is a view itself, see "Var return type"), so the view points into the caller's
+storage; any other parameter may be the callee's own
 copy (a short `string` keeps its characters inline), and a view of it would
 dangle:
 
