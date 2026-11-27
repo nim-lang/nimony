@@ -4382,7 +4382,13 @@ proc semArrayConstrElem(c: var SemContext, dest: var TokenBuf, elem: var Item, i
       semExpr c, keyBuf, key
       if arrCtx.firstKeyType.typeKind == AutoT:
         arrCtx.firstKeyType = key.typ
-      let val = evalOrdinal(c, cursorAt(keyBuf, 0))
+      # with the expected type the evaluator can run a `block` key
+      var keyExpr = cursorAt(keyBuf, 0)
+      var valBuf = evalExpr(c, keyExpr, key.typ)
+      var v = cursorAt(valBuf, 0)
+      if v.exprKind == ConvX: # a value of a range type: `(conv T x)`
+        inc v; skip v
+      let val = getConstOrdinalValue(v)
       if not isNaN(val):
         if not arrCtx.hasFirstIdx:
           arrCtx.firstIdx = val
