@@ -183,7 +183,7 @@
 | `(callargs X*)` | NimonyOther | grouped call arguments in a for-loop plugin input |
 | `(forcall <name> (callargs X*) (unpackflat ...) S)` | NimonyOther | for-loop plugin input: the iterator name, grouped call arguments, loop variables, and the loop body |
 | `(unpackdecl S+)` | NimonyStmt, NiflerKind | unpack var/let/const declaration |
-| `(except .Y X)` | NimonyOther, NiflerKind | except subsection |
+| `(except .X X)` | NimonyOther, NiflerKind | except subsection |
 | `(fin S)` | NimonyOther, NiflerKind | finally subsection |
 | `(tuple (fld ...)* <or> T*)` | NimonyType, NiflerKind | `tuple` type |
 | `(closureTuple T T)` | NimonyType | internal lifted-closure tuple type: `(closureTuple <proctype> (ref RootObj))`. Structurally a two-element tuple — a function pointer plus its environment — but tagged distinctly so lambda lifting and the coroutine transform can recognize an *already lifted* closure/iterator value by its tag instead of by probing a plain `(tuple ...)`. Produced by `hexer`'s `lambdalifting`/`coro_transform`/`cps` only; `lengcgen` lowers it to an ordinary Leng `(tuple ...)` |
