@@ -757,6 +757,14 @@ proc emitUsedDecls(c: var SynthesizeSerializerCtx; s: var SemContext; stack: var
     let sym = stack.pop()
     if sym in inlineDefs: continue
     if not handledSyms.containsOrIncl(sym):
+      let typevars = instantiationTypevars(sym)
+      if not cursorIsNil(typevars):
+        # Re-instantiation needs the generic origin and its type arguments
+        var deps = newSeq[SymId]()
+        var tv = typevars
+        collectSyms(tv, deps)
+        emitUsedDecls(c, s, deps, handledSyms, inlineDefs)
+        continue
       if pool.symIsInstantiation(sym):
         # Instantiated generic procs/types don't cross sub-compile
         # boundaries — they're stored header-only here. After
@@ -773,6 +781,7 @@ proc emitUsedDecls(c: var SynthesizeSerializerCtx; s: var SemContext; stack: var
         # is a part of the type's, which travels with the type.
         if res.status == LacksNothing and res.decl.symKind notin {FldY, EfldY}:
           var deps = newSeq[SymId]()
+          collectSymDefs(res.decl, inlineDefs)
           var d = res.decl
           collectSyms(d, deps)
           d = res.decl
