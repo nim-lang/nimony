@@ -1,0 +1,9 @@
+tests/nimony/errmsgs/tvarargs_openarray_mixed.nim(7, 16) Error: Type mismatch at [position]
+total(items, 4)
+[2] expected: varargs[int64] but got: int64 (declared in tests/nimony/errmsgs/tvarargs_openarray_mixed.nim(1, 1))
+tests/nimony/errmsgs/tvarargs_openarray_mixed.nim(8, 16) Error: Type mismatch at [position]
+total(4, items)
+[2] expected: varargs[int64] but got: openArray[int64] (declared in tests/nimony/errmsgs/tvarargs_openarray_mixed.nim(1, 1))
+tests/nimony/errmsgs/tvarargs_openarray_mixed.nim(9, 16) Error: Type mismatch at [position]
+total(items, items)
+[2] expected: varargs[int64] but got: openArray[int64] (declared in tests/nimony/errmsgs/tvarargs_openarray_mixed.nim(1, 1))

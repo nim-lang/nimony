@@ -175,33 +175,21 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       # bare `(varargs)` — nothing to instantiate
       discard
 
-proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
-  ## True if the tail at `start` starts with an
-  ## `(hcall <toOpenArray.0…instance> …)` subtree — sigmatch accepted a
-  ## pre-bundled `openArray[T]` arg verbatim. Bundling again would
-  ## double-wrap.
-  result = false
-  if start < m.args.len:
-    if m.args[start].exprKind == HcallX:
-      let callee = childCursor(readonlyCursorAt(m.args, start))
-      if callee.hasMore and callee.kind == Symbol:
-        result = pool.symString(callee.symId).startsWith("toOpenArray.")
-
 proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
                                  elemType: Cursor; info: NifLineInfo) =
   ## Replace the flat varargs args at the tail of `m.args` (from
   ## `m.firstVarargPosition`) with the openArray bundle. Called from
   ## `resolveOverloads` after the best candidate is picked, so
   ## `addArgsInstConverters` writes the bundled form into `dest`. No-ops
-  ## when no varargs slot was matched, or the slot already holds a
-  ## previous `toOpenArray.0` bundle (template body re-sem).
+  ## when no varargs slot was matched, or sigmatch accepted a whole
+  ## openArray argument for the slot
   ##
   ## When the varargs param has trailing non-varargs params after it
   ## (non-tail varargs), `m.varargsEndPosition` marks where the varargs
   ## slot ends; tokens after that belong to the trailing params and are
-  ## preserved verbatim.
+  ## preserved verbatim
   let start = m.firstVarargPosition
-  if start >= 0 and not compatVarargsSlotIsBundled(m, start):
+  if start >= 0 and not m.bundledVarargs:
     let endPos =
       if m.varargsEndPosition >= 0: m.varargsEndPosition else: m.args.len
     # Save trailing args (for non-tail varargs) — these belong to params

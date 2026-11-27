@@ -109,6 +109,7 @@ type
     error: MatchError
     firstVarargPosition*: int
     varargsEndPosition*: int
+    bundledVarargs*: bool
     genericConverter*, refineArgType*, insertedParam*: bool
     resolvedChoice: SymId  ## the formal parameter narrowed this argument's
                            ## symbol choice down to this symbol; `useArg`
@@ -2761,14 +2762,14 @@ proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
   #   * `varargs[typed]`
   #   * `varargs[untyped]` — additionally `useArg` picks `arg.orig` here,
   #     preserving the raw pre-sem AST for template bodies.
-  #   * the arg is already an `openArray[T]` — a previously bundled
-  #     varargs call coming back through re-sem (template expansion).
-  #     We deliberately leave `firstVarargPosition` unset so
-  #     `compatBundleVarargsInMatch` recognises "already bundled" by the
-  #     absence of a varargs span to wrap.
+  #   * the arg is already an `openArray[T]` — it occupies the whole
+  #     varargs slot, including when forwarded from another routine
   # The `varargs[T, conv]` converter form is still handled by the
   # converter-retry path in `resolveOverloads` — it kicks in only when
-  # the direct element match below has set `m.err`.
+  # the direct element match below has set `m.err`
+  if m.bundledVarargs:
+    m.error(InvalidMatch, f, arg.typ)
+    return
   var elem = f
   elem = sub(elem) # bounded: nothing remains at a bare `(varargs)`
   if not elem.hasMore or elem.typeKind in {UntypedT, TypedT}:
@@ -2780,16 +2781,17 @@ proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
     var aElem = default(Cursor)
     if isSomeOpenArrayType(argTyp, aElem):
       # `openArray[T']` (`Symbol` or `(invoke openArray T')`) — accept
-      # when T' matches `elem`. Mark the slot start so
-      # `compatBundleVarargsInMatch` sees the pre-bundled subtree at
-      # `firstVarargPosition` and skips re-wrapping it.
+      # when T' matches `elem`, provided no individual elements preceded it
       var fElem = elem
       let argsSave = m.args.len
       let errSave = m.err
       linearMatch m, fElem, aElem
       if not m.err:
-        if m.firstVarargPosition < 0:
-          m.firstVarargPosition = m.args.len
+        if m.firstVarargPosition >= 0:
+          m.error(InvalidMatch, f, arg.typ)
+          return
+        m.firstVarargPosition = m.args.len
+        m.bundledVarargs = true
         m.useArg arg, argTyp
         return
       # element type didn't match — undo and fall through to per-element
