@@ -1,15 +1,15 @@
-# a routine's PARAMETER captured by a nested closure: the prologue copies it
-# into the routine's environment. A nested routine can own such an environment
-# only when it captures nothing itself (one environment per routine, #3160).
+# a closure's PARAMETER captured by a nested closure, where the outer
+# closure itself receives an env (nested closure-of-closure shape)
 import std/syncio
 
 proc outer() =
-  proc mid(x: int): int =
-    var acc = 0
+  var total = 0
+  proc mid(x: int) {.closure.} =
     proc inner() {.closure.} =
-      acc = acc + x
+      total = total + x
     inner()
-    result = acc
-  echo mid(7) + mid(35)
+  mid(7)
+  mid(35)
+  echo total
 
 outer()

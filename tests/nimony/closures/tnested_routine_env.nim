@@ -10,23 +10,39 @@ proc outer() =
   echo a(), " ", b()
 outer()
 
-proc counters() =
-  proc counter(start: int): proc (): int {.closure.} =
-    var n = start
-    result = proc (): int {.closure.} =
-      inc n
-      result = n
-  let a = counter(0)
-  let b = counter(10)
-  discard a()
-  echo a(), " ", b()
-counters()
-
-proc sequential() =
+proc recursive(base: int) =
   var fns: seq[proc (): int {.closure.}] = @[]
-  proc visit(depth: int): proc (): int {.closure.} =
-    let mine = depth * 10
-    result = proc (): int {.closure.} = mine
-  for i in 0..2: fns.add visit(i)
+  proc visit(depth: int) {.closure.} =
+    let mine = depth * 10 + base
+    fns.add(proc (): int {.closure.} = mine)
+    if depth < 2: visit(depth + 1)
+  visit(0)
   for f in fns: echo f()
-sequential()
+recursive(1)
+
+proc twoLevels() =
+  var a = 5
+  proc mid(y: int): proc (): int {.closure.} =
+    var b = y
+    proc inner(): int {.closure.} = a + b
+    proc sib(): int {.closure.} = inner() * 2
+    result = sib
+  let p = mid(1)
+  let q = mid(2)
+  a = 100
+  echo p(), " ", q()
+twoLevels()
+
+proc stackEnvs(): int =
+  var total = 0
+  proc step(k: int) {.closure.} =
+    var local = k
+    proc bump() {.closure.} =
+      total += local
+      inc local
+    bump()
+    bump()
+  step(1)
+  step(10)
+  result = total
+echo stackEnvs()
