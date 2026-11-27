@@ -6,7 +6,16 @@ func sectionNames(dict: Config): seq[string] =
   for section in dict.sections:
     result.add(section)
 
+proc parseOnly() =
+  ## Stream parsing and string rendering do not raise for parser errors.
+  let partial = loadConfig(newStringStream("key=value\n=bad\nother=value"))
+  assert partial.getSectionValue("", "key") == "value"
+  assert partial.getSectionValue("", "other") == ""
+  assert $partial == "key=value\n"
+
 proc main() {.raises.} =
+  parseOnly()
+
   block: # creating, writing and reading a configuration
     var dict = newConfig()
     dict.setSectionKey("", "charset", "utf-8")

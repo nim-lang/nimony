@@ -403,9 +403,12 @@ func newConfig*(): Config =
   ## Creates a new configuration table.
   Config(data: initOrderedTable[string, ConfigSection]())
 
-proc loadConfig*(stream: Stream; filename: string = "[stream]"): Config {.raises.} =
+proc loadConfig*(stream: Stream; filename: string = "[stream]"): Config =
   ## Loads the specified configuration from stream into a new Config instance.
   ## `filename` is only used for nicer error messages.
+  ##
+  ## Malformed input is reported as a `cfgError` event, so this overload does
+  ## not raise for parse errors; parsing stops at the first error.
   result = newConfig()
   var curSection = "" ## Current section; "" is the common section.
   var p = CfgParser()
@@ -419,13 +422,11 @@ proc loadConfig*(stream: Stream; filename: string = "[stream]"): Config {.raises
       of cfgSectionStart:
         curSection = e.section
       of cfgKeyValuePair:
-        if not result.data.hasKey(curSection):
-          result.data[curSection] = initOrderedTable[string, string]()
-        result.data[curSection][e.key] = e.value
+        result.data.mgetOrPut(curSection,
+          initOrderedTable[string, string]())[e.key] = e.value
       of cfgOption:
-        if not result.data.hasKey(curSection):
-          result.data[curSection] = initOrderedTable[string, string]()
-        result.data[curSection]["--" & e.key] = e.value
+        result.data.mgetOrPut(curSection,
+          initOrderedTable[string, string]())["--" & e.key] = e.value
       of cfgError:
         break
   finally:
@@ -433,7 +434,7 @@ proc loadConfig*(stream: Stream; filename: string = "[stream]"): Config {.raises
 
 proc loadConfig*(filename: string): Config {.raises.} =
   ## Loads the specified configuration file into a new Config instance.
-  ## Raises `IOError` if the file cannot be opened.
+  ## Raises `IOError` if the file cannot be opened or closed.
   let stream = openFileStream(filename, fmRead)
   try:
     result = loadConfig(stream, filename)
@@ -458,16 +459,14 @@ func replace(s: string): string =
     inc(i)
   result = d
 
-proc writeConfig*(dict: Config; stream: Stream) {.raises.} =
-  ## Writes the contents of the table to the specified stream.
-  ##
-  ## Comment statements are ignored.
+func renderConfig(dict: Config): string =
+  result = ""
   for section, sectionData in uncheckedBorrow(dict.data).pairs:
     if section != "":
       if not allCharsInSet(section, SymChars):
-        stream.writeLine("[\"" & section & "\"]")
+        result.add("[\"" & section & "\"]\n")
       else:
-        stream.writeLine("[" & section & "]")
+        result.add("[" & section & "]\n")
     for key, value in sectionData.pairs:
       var kv = ""
       var segmentChar = ""
@@ -497,21 +496,25 @@ proc writeConfig*(dict: Config; stream: Stream) {.raises.} =
         else:
           kv.add(segmentChar)
           kv.add(value)
-      stream.writeLine(kv)
+      result.add(kv)
+      result.add('\n')
 
-proc `$`*(dict: Config): string {.raises.} =
+proc writeConfig*(dict: Config; stream: Stream) {.raises.} =
+  ## Writes the contents of the table to the specified stream.
+  ## Raises `IOError` if writing to the stream fails.
+  ##
+  ## Comment statements are ignored.
+  stream.write(renderConfig(dict))
+
+proc `$`*(dict: Config): string =
   ## Writes the contents of the table to a string.
   ##
   ## Comment statements are ignored.
-  let stream = newStringStream()
-  try:
-    dict.writeConfig(stream)
-    result = stream.data
-  finally:
-    stream.close()
+  renderConfig(dict)
 
 proc writeConfig*(dict: Config; filename: string) {.raises.} =
   ## Writes the contents of the table to the specified configuration file.
+  ## Raises `IOError` if the file cannot be opened, written, or closed.
   ##
   ## Comment statements are ignored.
   let stream = openFileStream(filename, fmWrite)
