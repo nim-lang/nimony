@@ -289,7 +289,9 @@ proc propagateEnvNeed(c: var Context; root: SymId) =
           x = c.parentOf.getOrDefault(x)
   c.nestedRefs.shrink 0
   let heap = c.escapes.contains(root)
-  for q in c.nestedProcs:
+  var nested: seq[SymId] = @[]
+  for q in c.nestedProcs: nested.add q
+  for q in nested:
     if q in c.closureProcs:
       let creator = creatorOf(c, c.parentOf.getOrDefault(q))
       c.envCreatorOf[q] = creator
