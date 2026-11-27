@@ -26,14 +26,18 @@ when defined(windows):
   import std/windows/winlean
   from std/widestrs import newWideCString, toWideCString
   type OsFileHandle = Handle  ## Win32 `HANDLE` (pointer-sized).
+  const ClosedHandle = Handle(-1)  ## `INVALID_HANDLE_VALUE`
 else:
   type OsFileHandle = cint    ## POSIX file descriptor.
+  const ClosedHandle = OsFileHandle(-1)  ## no file (not 0: that is stdin)
 type
   FileFlag = enum
     ffReadable, ffWritable, ffEof, ffError
     ffUnbuf     ## flush after every write (stderr)
   FileObj = object
-    fd: OsFileHandle
+    fd: OsFileHandle = ClosedHandle
+      ## `ClosedHandle` after `close`: the OS reuses descriptor numbers, so
+      ## closing this one again could close another file
     flags: set[FileFlag]
     wbuf: seq[char]      ## write buffer (grows on demand; empty for read-only streams)
     rbuf: seq[char]      ## read buffer
@@ -195,6 +199,27 @@ proc flushImpl(fo: var FileObj) =
 
 proc flushImpl(f: File) {.inline.} = flushImpl(f[])
 
+# A `File` owns its handle: when the last reference goes, the destructor
+# writes out the buffer and closes the handle.
+
+proc `=destroy`(fo: var FileObj) {.sideEffect.} =
+  if fo.fd != ClosedHandle:
+    flushImpl fo
+    discard sysClose(fo.fd)
+  `=destroy`(fo.wbuf)
+  `=destroy`(fo.rbuf)
+
+proc `=wasMoved`(fo: var FileObj) {.nodestroy, inline.} =
+  ## The handle went with the destination: this one must not close it.
+  fo.fd = ClosedHandle
+  `=wasMoved`(fo.wbuf)
+  `=wasMoved`(fo.rbuf)
+
+proc `=copy`(dest: var FileObj; src: FileObj) {.error.}
+  ## Two objects over one handle: whichever died first would close it.
+
+proc `=dup`(src: FileObj): FileObj {.error.}
+
 proc writeBytes(fo: var FileObj; p: pointer; n: int) =
   if n <= 0: return
   let oldLen = fo.wbuf.len
@@ -276,7 +301,9 @@ setExitFlush flushStdStreams
 proc open*(f: var File; fd: OsFileHandle; mode: FileMode = fmRead): bool =
   ## Wraps an already-open OS file handle in a buffered `File` — the native
   ## replacement for libc `fdopen`. Used by `osproc` to turn a pipe end into a
-  ## stream. Returns false for an invalid handle.
+  ## stream. Returns false for an invalid handle. Like `fdopen`, the `File`
+  ## takes the handle over: closing it, or dropping its last reference,
+  ## closes the handle.
   when defined(windows):
     if fd == INVALID_HANDLE_VALUE or fd.isNil: return false
   else:
@@ -324,17 +351,19 @@ proc write*(f: File; x: float) =
   s.addFloat x
   write f, s
 
-proc close*(f: File) =
-  ## Closes a file handle.
-  if f != nil:
-    flushImpl f
-    discard sysClose(f.fd)
-
 proc fclose(f: File): int32 =
+  ## `close`, returning what the OS said.
   result = 0'i32
-  if f != nil:
+  if f != nil and f.fd != ClosedHandle:
     flushImpl f
     result = sysClose(f.fd)
+    f.fd = ClosedHandle
+
+proc close*(f: File) =
+  ## Closes a file handle, writing out what is buffered first. A `File` also
+  ## closes when the last reference to it goes; `close` can be used to close
+  ## it explicitly. Calling it again does nothing.
+  discard fclose(f)
 
 proc writeBuffer*(f: File; buffer: pointer; size: int): int =
   ## Writes raw bytes to a file.
@@ -447,7 +476,6 @@ iterator lines*(filename: string): string {.sideEffect.} =
     var line = ""
     while readLine(f, line):
       yield line
-    discard fclose(f)
 
 iterator lines*(f: File): string {.sideEffect.} =
   ## Iterates over every remaining line of an already opened file.
