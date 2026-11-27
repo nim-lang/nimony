@@ -388,17 +388,11 @@ proc isDefaultValue(c: Context; n: Cursor): bool =
   else:
     result = false
 
-proc isFirstAsgn(c: Context; n: Cursor): bool =
-  ## Whether the `(asgn x v)` at `n` is the first store into the local `x`.
+proc isFirstAsgn(c: Context; le, ri: Cursor): bool =
+  ## Whether `le = ri` is the first store into the local `le`.
   ## `x = f(x)` is not: it reads the old value.
-  var n = n
-  inc n # AsgnS
-  if n.kind == Symbol and n.symId in c.unassigned:
-    let x = n.symId
-    skip n
-    result = not containsSym(n, x)
-  else:
-    result = false
+  result = le.kind == Symbol and le.symId in c.unassigned and
+    not containsSym(ri, le.symId)
 
 proc isSimpleExpression(n: var Cursor): bool =
   ## expressions that can be returned safely
@@ -449,23 +443,28 @@ proc isSimpleExpression(n: var Cursor): bool =
     result = false
     inc n
 
+proc trAsgn(c: var Context; le: Cursor; n: var Cursor; info: NifLineInfo;
+            isFirstAsgn: bool)
+
 proc trReturn(c: var Context; n: var Cursor) =
   let retVal = n.childCursor
   var exp = retVal
-  if isResultUsage(c, retVal):
+  if isResultUsage(c, retVal) or retVal.kind == DotToken:
     takeTree c.dest, n
-  elif isSimpleExpression(exp) or c.resultSym == NoSymId:
-    # simple enough:
+  elif c.resultSym == NoSymId or
+      (c.resultSym in c.unassigned and isSimpleExpression(exp)):
+    # no old `result` to destroy:
     copyInto(c.dest, n):
       tr c, n, WantOwner
   else:
+    # `return expr` is `result = expr; return result` (language.md):
     let info = n.info
+    var res = createTokenBuf(1)
+    res.addSymUse(c.resultSym, info)
+    let le = beginRead(res)
     n.into:
       c.dest.addParLe StmtsS, info
-      c.dest.addParLe AsgnS, info
-      c.dest.addSymUse(c.resultSym, info)
-      tr c, n, WantOwner
-      c.dest.addParRi() # end of AsgnS
+      trAsgn c, le, n, info, isFirstAsgn(c, le, n)
       c.dest.addParLe(RetS, info)
       c.dest.addSymUse(c.resultSym, info)
       c.dest.addParRi() # end of RetS
@@ -671,7 +670,9 @@ proc writesThroughCursorField(c: var Context; le: Cursor): bool =
   let decl = lookupFieldDecl(c.typeCache, objTyp, f.symId)
   result = not cursorIsNil(decl.typ) and hasPragma(decl.pragmas, CursorP)
 
-proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
+proc trAsgn(c: var Context; le: Cursor; n: var Cursor; info: NifLineInfo;
+            isFirstAsgn: bool) =
+  ## `le = n`, emitted as `(asgn ...)` plus its hooks; `n` is consumed.
   #[
   `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp` #`f()` can read `x`
   `x = lastUse y` is turned into either
@@ -692,15 +693,11 @@ proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
 
   But we should really prefer to call `=copy(x, y)` here for some of these cases.
   ]#
-  var n2 = n
-  inc n2 # AsgnS
-  let le = n2
-  skip n2
-  let ri = n2
+  let ri = n
   let leType = getType(c.typeCache, le)
   assert leType.typeKind != AutoT, "could not compute type of: " & toString(le, false)
 
-  let destructor = getDestructor(c.lifter[], leType, n.info)
+  let destructor = getDestructor(c.lifter[], leType, info)
   # A `{.cursor.}` variable is non-owning: trLocal already skipped the `=dup`
   # at its declaration, so per-asgn `=destroy(old) … =dup(rhs)` would
   # over-decrement the rc on a value the cursor never claimed ownership of
@@ -711,7 +708,11 @@ proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
                     writesThroughCursorField(c, le)
   if destructor == NoSymId or lhsIsCursor:
     # the type has no destructor, there is nothing interesting to do:
-    trSons c, n, DontCare
+    c.dest.addParLe AsgnS, info
+    var le = le
+    tr c, le, DontCare
+    tr c, n, DontCare
+    c.dest.addParRi()
 
   else:
     let isNotFirstAsgn = not isFirstAsgn
@@ -732,20 +733,17 @@ proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
         # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs, leType)
-        copyInto c.dest, n:
+        copyIntoKind c.dest, AsgnS, info:
           copyTree c.dest, lhs
-          skip n # over `le`; advance `n` itself so the scope's rem
-                 # bookkeeping stays intact under -d:virtualParRi
           tr c, n, WillBeOwned
       else:
         # `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp`.
         let tmp = tempOfTrArg(c, ri, leType)
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs, leType)
-        copyInto c.dest, n:
+        copyIntoKind c.dest, AsgnS, info:
           copyTree c.dest, lhs
           copyIntoSymUse c.dest, tmp, ri.info
-          skip n # le
           skip n # ri
     elif isLastRead(c, ri):
       if isNotFirstAsgn and (potentialSelfAsgn(aliasLe, aliasRi) or
@@ -754,18 +752,16 @@ proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
         let tmp = tempOfTrArg(c, ri, leType)
         callWasMoved c, ri, leType
         callDestroy(c, destructor, lhs, leType)
-        copyInto c.dest, n:
+        copyIntoKind c.dest, AsgnS, info:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
           copyIntoSymUse c.dest, tmp, ri.info
-          skip n # le
           skip n # ri
       else:
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs, leType)
-        copyInto c.dest, n:
+        copyIntoKind c.dest, AsgnS, info:
           copyTree c.dest, lhs
-          skip n # over `le`
           tr c, n, WillBeOwned
         callWasMoved c, ri, leType
     else:
@@ -774,20 +770,25 @@ proc trAsgn(c: var Context; n: var Cursor; isFirstAsgn = false) =
                              potentialAliasing(aliasLe, aliasRi)):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
         let tmp = tempOfTrArg(c, le, leType)
-        copyInto c.dest, n:
+        copyIntoKind c.dest, AsgnS, info:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
-          skip n # over `le`
           callDup c, n, leType
         callDestroy(c, destructor, tmp, le.info, leType)
       else:
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs, leType)
-        copyInto c.dest, n:
+        copyIntoKind c.dest, AsgnS, info:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
-          skip n # over `le`
           callDup c, n, leType
+
+proc trAsgn(c: var Context; n: var Cursor; mayBeFirst = false) =
+  let info = n.info
+  n.into:
+    let le = n
+    skip n
+    trAsgn c, le, n, info, mayBeFirst and isFirstAsgn(c, le, n)
 
 proc getHookType(c: var Context; n: Cursor): Cursor =
   var n = n
@@ -1679,7 +1680,7 @@ proc trStmts(c: var Context; n: var Cursor) {.ensuresNif: addedAny(c.dest).} =
       let stmtStart = c.dest.len
       let stmt = n
       if n.stmtKind == AsgnS:
-        trAsgn c, n, isFirstAsgn(c, n)
+        trAsgn c, n, mayBeFirst = true
       else:
         tr c, n, WantNonOwner
       forgetMentions c, stmt
