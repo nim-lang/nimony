@@ -192,6 +192,15 @@ proc addDecls(dest: var string; values: string) =
         dest.add v
         dest.add "\", header: \"<errno.h>\".}: int32\n"
 
+proc osCondition(osName: string): string =
+  ## The `when` condition guarding an OS's baked table. `--os:standalone`
+  ## (`nimony w`, wasm32) has no libc and so no `<errno.h>` to resolve the
+  ## fallback's `importc` vars against (they are also unsynchronized globals,
+  ## #2609). It borrows the Linux table: a deterministic choice, since no
+  ## runtime on that target reports an errno at all.
+  result = "defined(" & osName & ")"
+  if osName == "linux": result.add " or defined(standalone)"
+
 proc buildPosixProcs(rows: seq[seq[string]]; values: OrderedTable[string, string]): string =
   ## The two POSIX maps for a single baked OS, using its cached errno literals.
   var fwd = "proc posixToErrorCode*(err: int32): ErrorCode =\n"
@@ -346,7 +355,7 @@ type
     var body = ""
     for idx, osName in bakedOSes:
       let kw = if idx == 0: "when" else: "elif"
-      body.add kw & " defined(" & osName & "):\n"
+      body.add kw & " " & osCondition(osName) & ":\n"
       body.add indent(buildPosixProcs(rows, errnoCache[osName]), 2)
       body.add "\n"
     body.add "else:\n"
