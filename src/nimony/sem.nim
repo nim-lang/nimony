@@ -4713,7 +4713,11 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
     var kvStart = default(Cursor)
     if named:
       if it.n.substructureKind != KvU:
+        dest.shrink exprStart
         c.buildErr dest, it.n.info, "expected field name for named tuple constructor"
+        it.n = tupStart; skip it.n
+        it.typ = c.types.autoType
+        return
       else:
         typ.addParLe(it.n.cursorTagId, it.n.info)
         dest.addParLe(it.n.cursorTagId, it.n.info)
@@ -4723,7 +4727,11 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
         let name = takeIdent(it.n)
         let nameStart = dest.len
         if name == StrId(0):
+          dest.shrink exprStart
           c.buildErr dest, nameCursor.info, "invalid tuple field name", nameCursor
+          it.n = tupStart; skip it.n
+          it.typ = c.types.autoType
+          return
         else:
           dest.addIdent(name, nameCursor.info)
         for tok in nameStart ..< dest.len:
@@ -4746,10 +4754,7 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
     if named:
       # should be KvX
       dest.addParRi(it.n.endInfo)
-      # kvStart stays nil on the malformed (named but not KvU) path, where the
-      # classic code's `leaveScope(it.n, default)` was a benign no-op:
-      if not cursorIsNil(kvStart):
-        it.n = kvStart; skip it.n
+      it.n = kvStart; skip it.n
       typ.addParRi()
   dest.addParRi(it.n.endInfo)
   it.n = tupStart; skip it.n
