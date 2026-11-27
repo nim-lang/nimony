@@ -224,6 +224,11 @@ proc writeNifler*(first: Node; pool: Pool; tags: TagPool; sizeHint: int;
 #   -- so the dependency scanner can skip what is statically dead.
 # * `{.plugin: "name".}` is `(plugin (when...)? "name")`: a program the build
 #   has to produce before the module can be checked.
+# * A module-level `const x {.strdefine: "name".} = "a"` (also `booldefine`,
+#   `intdefine`, and `define` typed `bool`/`int`/`string`) is
+#   `(define (when...)? x (strdefine "name") "a")` -- the define name only when
+#   the pragma gives one, the default `.` unless it is a literal -- so the
+#   scanner can decide `when x == "b": import y`.
 # * Nothing inside `runnableExamples` counts.
 
 proc isDep(k: NiflerKind): bool =
@@ -253,27 +258,87 @@ proc whenMarker(d: var DepsWalker) =
       emit(d.w, entry.cond, NoLineInfo, NiflerKind.None, false, false)
   d.w.b.endTree()
 
+proc str(d: DepsWalker; n: Node): string {.inline.} = d.w.pool.strings[strId(n)]
+
+proc strLit(v: Node): Node =
+  ## A string literal, raw or triple-quoted ones included; nil otherwise.
+  result = nil
+  if v != nil:
+    if kind(v) == StrLit:
+      result = v
+    elif kind(v) == TagLit and tagKind(v) == SufL and v.down != nil and
+        kind(v.down) == StrLit:
+      result = v.down
+
 proc isPlugin(d: DepsWalker; kv: Node; name: var string): bool =
   ## `plugin: "name"`; a raw or triple-quoted string is written plain.
-  if kind(kv) != TagLit or tagKind(kv) != KvL: return false
-  let k = kv.down
-  if k == nil or kind(k) != Ident or d.w.pool.strings[strId(k)] != "plugin":
-    return false
-  let v = k.next
-  if v == nil: return false
-  if kind(v) == StrLit:
-    name = d.w.pool.strings[strId(v)]
-    return true
-  if kind(v) == TagLit and tagKind(v) == SufL:
-    let s = v.down
-    if s != nil and kind(s) == StrLit:
-      name = d.w.pool.strings[strId(s)]
-      return true
-  false
+  result = false
+  if kind(kv) == TagLit and tagKind(kv) == KvL:
+    let k = kv.down
+    if k != nil and kind(k) == Ident and d.str(k) == "plugin":
+      let v = strLit(k.next)
+      if v != nil:
+        name = d.str(v)
+        result = true
 
-proc walkDeps(d: var DepsWalker; n: Node; inObject: bool) =
+proc defineKind(d: DepsWalker; key, typ: Node): string =
+  ## bridge.nim's `defineKind`.
+  result = ""
+  if kind(key) == Ident:
+    case d.str(key)
+    of "booldefine", "intdefine", "strdefine": result = d.str(key)
+    of "define":
+      if kind(typ) == Ident:
+        case d.str(typ)
+        of "bool": result = "booldefine"
+        of "int": result = "intdefine"
+        of "string": result = "strdefine"
+        else: discard
+    else: discard
+
+proc pragmaKey(it: Node): Node =
+  if kind(it) == TagLit and tagKind(it) == KvL: it.down else: it
+
+proc addDefineDefault(d: var DepsWalker; value: Node) =
+  ## bridge.nim's `addDefineDefault`.
+  let v = strLit(value)
+  if v != nil: d.w.b.addStrLit d.str(v)
+  elif kind(value) == IntLit: d.w.b.addIntLit intVal(value)
+  elif kind(value) == Ident and d.str(value) in ["true", "false"]:
+    d.w.b.addIdent d.str(value)
+  else: d.w.b.addEmpty
+
+proc defineConst(d: var DepsWalker; n: Node) =
+  ## bridge.nim's `emitDefineConst`: `n` is `(const name x? pragmas type value)`.
+  let name = n.down
+  if kind(name) == Ident:
+    let pragmas = name.next.next
+    if kind(pragmas) == TagLit and tagKind(pragmas) == PragmasL:
+      let typ = pragmas.next
+      var it = pragmas.down
+      while it != nil and d.defineKind(pragmaKey(it), typ).len == 0:
+        it = it.next
+      if it != nil:
+        let key = pragmaKey(it)
+        let isKv = key != it
+        let defineName = if isKv: strLit(key.next) else: nil
+        if not isKv or (defineName != nil and key.next.next == nil):
+          d.w.b.addTree "define"
+          d.whenMarker()
+          d.w.b.addIdent d.str(name)
+          d.w.b.addTree d.defineKind(key, typ)
+          if defineName != nil: d.w.b.addStrLit d.str(defineName)
+          d.w.b.endTree()
+          d.addDefineDefault(typ.next)
+          d.w.b.endTree()
+
+proc walkDeps(d: var DepsWalker; n: Node; inObject, topLevel: bool) =
+  ## `topLevel`: not inside a routine or a block, where a `{.*define.}` const
+  ## is no guard input of the scanner.
   if kind(n) != TagLit: return
   let tg = tagKind(n)
+  if tg == ConstL and topLevel:
+    d.defineConst(n)
   if isDep(tg):
     d.w.b.addTree tagName(d.w, n)
     d.whenMarker()
@@ -312,24 +377,26 @@ proc walkDeps(d: var DepsWalker; n: Node; inObject: bool) =
       if kind(br) == TagLit and tagKind(br) == ElifL:
         let cond = br.down
         if cond != nil:
-          walkDeps(d, cond, inObject)
+          walkDeps(d, cond, inObject, topLevel)
           d.conds.add WhenCond(cond: cond, negated: false)
           var k = cond.next
           while k != nil:
-            walkDeps(d, k, inObject)
+            walkDeps(d, k, inObject, topLevel)
             k = k.next
           d.conds.setLen d.conds.len - 1
           prior.add cond
       else:
         for cond in prior: d.conds.add WhenCond(cond: cond, negated: true)
-        walkDeps(d, br, inObject)
+        walkDeps(d, br, inObject, topLevel)
         d.conds.setLen d.conds.len - prior.len
       br = br.next
     return
   let nowInObject = inObject or tg == ObjectL
+  let nowTopLevel = topLevel and tg notin {ProcL, FuncL, IteratorL, MethodL,
+    MacroL, TemplateL, ConverterL, DoL, BlockL}
   var k = n.down
   while k != nil:
-    walkDeps(d, k, nowInObject)
+    walkDeps(d, k, nowInObject, nowTopLevel)
     k = k.next
 
 proc writeDeps*(first: Node; pool: Pool; tags: TagPool;
@@ -341,7 +408,7 @@ proc writeDeps*(first: Node; pool: Pool; tags: TagPool;
   d.w.b.addTree "stmts"
   var n = first
   while n != nil:
-    walkDeps(d, n, false)
+    walkDeps(d, n, false, true)
     n = n.next
   d.w.b.endTree()
   writeFile(outfile, d.w.b.extract())
