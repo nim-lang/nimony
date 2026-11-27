@@ -46,3 +46,26 @@ proc stackEnvs(): int =
   step(10)
   result = total
 echo stackEnvs()
+
+proc counters() =
+  proc counter(start: int): proc (): int {.closure.} =
+    var n = start
+    result = proc (): int {.closure.} =
+      inc n
+      result = n
+  let a = counter(0)
+  let b = counter(10)
+  discard a()
+  echo a(), " ", b()
+counters()
+
+proc ownAndOuter() =
+  var a = 0
+  proc visit(x: int) {.closure.} =
+    inc a
+    let f = proc (): int {.closure.} = x
+    a += f()
+  visit(5)
+  visit(7)
+  echo a
+ownAndOuter()
