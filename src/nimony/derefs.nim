@@ -122,18 +122,12 @@ proc endsWithOpenHderef(dest: TokenBuf): bool =
     let t = dest[lastValueStart(dest)]
     result = t.kind == TagLit and t.tagId == TagId(HderefTagId)
 
-proc rootOf(n: Cursor; allowIndirection = false): SymId =
+proc rootOf(n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind
     of DotX, AtX, ArratX, TupatX, ParX:
       inc n
-    of PatX, DdotX:
-      # not protected from mutation
-      if allowIndirection:
-        inc n
-      else:
-        break
     of DconvX:
       inc n
       skip n # skip the type
@@ -166,7 +160,7 @@ proc callReturnsVarOrLent(n: Cursor): bool =
 proc isAddressable*(n: Cursor): bool =
   ## Addressable means that we can take the address of the expression.
   result = false
-  let s = rootOf(n, allowIndirection = true)
+  let s = rootOf(n)
   if s != NoSymId:
     let res = tryLoadSym(s)
     assert res.status == LacksNothing
@@ -174,6 +168,8 @@ proc isAddressable*(n: Cursor): bool =
     result = local.kind in {ParamY, StaticParamY, LetY, ResultY, VarY, CursorY, PatternvarY, ConstY, GletY, TletY, GvarY, TvarY}
     # Assignments to `ConstY` are prevented later.
   else:
+    # A path through a dereference (`p[]`, `n.x`, `p[i]`) names the location
+    # the pointer points to, an l-value whatever produced the pointer.
     # A path rooted at a call returning `var T` / `lent T` is addressable,
     # because field- and element-accesses through such a result preserve
     # the mutable-location property even after the type's MutT/LentT modifier
@@ -181,8 +177,11 @@ proc isAddressable*(n: Cursor): bool =
     var cur = n
     while true:
       case cur.exprKind
-      of DotX, AtX, ArratX, TupatX, ParX, PatX, DdotX:
+      of DotX, AtX, ArratX, TupatX, ParX:
         inc cur
+      of PatX, DdotX, DerefX, HderefX:
+        result = true
+        break
       of DconvX:
         inc cur
         skip cur # skip type
