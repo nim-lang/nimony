@@ -18,8 +18,11 @@ proc `==`*(a, b: Color): bool {.borrow.}
   ## Compares two colors.
 
 proc r*(a: Color): uint8 {.inline.} = (uint32(a) shr 24).uint8
+
 proc g*(a: Color): uint8 {.inline.} = (uint32(a) shr 16).uint8
+
 proc b*(a: Color): uint8 {.inline.} = (uint32(a) shr 8).uint8
+
 proc a*(a: Color): uint8 {.inline.} = a.uint8
 
 proc `r=`*(a: var Color, value: uint8) {.inline.} =
