@@ -540,7 +540,9 @@ proc semEnumToStr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       # If we don't have a nominal symbol (e.g. the operand is a type class like
       # `ExprKind|StmtKind|TypeKind`), there is no single `$` to call — report
       # instead of dereferencing a non-symbol token.
-      let typ = x.typ.skipModifier
+      var typ = x.typ.skipModifier
+      if typ.typeKind == RangetypeT:
+        inc typ # a subrange is rendered by its base enum's `$`
       if typ.kind != Symbol:
         shrink dest, beforeExpr
         c.buildErr dest, info,
