@@ -122,6 +122,9 @@ type
       ## so the dep analyzer can evaluate them and skip dead branches.
       ## `negated` entries (an `else` branch carries the negation of every
       ## prior elif condition) are wrapped in `(prefix not ...)` at emission.
+    nested: bool
+      ## Inside a routine or a block: a `{.*define.}` const is a guard input of
+      ## the dependency scanner only at module level.
 
 proc lineInfoPath(i: TLineInfo; c: TranslationContext): string =
   ## Relative to the current directory with `--portablePaths`, else absolute;
@@ -293,6 +296,65 @@ proc handleCaseIdentDefs(n, parent: PNode; c: var TranslationContext) =
   else:
     toNif(n, parent, c)
 
+proc defineKind(key, typ: PNode): string =
+  ## `booldefine`, `intdefine` or `strdefine` for such a pragma, the generic
+  ## `define` taking its kind from the declared type; "" otherwise.
+  result = ""
+  if key.kind == nkIdent:
+    case key.ident.s
+    of "booldefine", "intdefine", "strdefine": result = key.ident.s
+    of "define":
+      if typ.kind == nkIdent:
+        case typ.ident.s
+        of "bool": result = "booldefine"
+        of "int": result = "intdefine"
+        of "string": result = "strdefine"
+        else: discard
+    else: discard
+
+proc pragmaKey(it: PNode): PNode =
+  if it.kind in nkPragmaCallKinds and it.len > 0: it[0] else: it
+
+proc addDefineDefault(c: var TranslationContext; value: PNode) =
+  ## The default only when it is a literal.
+  case value.kind
+  of nkStrLit..nkTripleStrLit: c.b.addStrLit value.strVal
+  of nkIntLit: c.b.addIntLit value.intVal
+  of nkIdent:
+    if value.ident.s in ["true", "false"]: c.b.addIdent value.ident.s
+    else: c.b.addEmpty
+  else: c.b.addEmpty
+
+proc emitDefineConst(c: var TranslationContext; name, pragma, typ, value: PNode) =
+  ## `const x {.strdefine.} = "a"` at module level decides `when x == "b":
+  ## import y` before sem. Record such consts in the deps file as
+  ## `(define (when ...)? x (strdefine "defineName"?) default)`: the define
+  ## name only when the pragma gives one, the default only when it is a
+  ## literal. Ordinary consts would bloat every deps file and need sem anyway.
+  if not c.nested and name.kind == nkIdent:
+    var i = 0
+    while i < pragma.len and defineKind(pragmaKey(pragma[i]), typ).len == 0:
+      inc i
+    if i < pragma.len:
+      let it = pragma[i]
+      let isCall = pragmaKey(it) != it
+      if not isCall or (it.len == 2 and it[1].kind in {nkStrLit..nkTripleStrLit}):
+        withDepsStream c:
+          c.b.addTree "define"
+          emitWhenMarker c
+          c.b.addIdent name.ident.s
+          c.b.addTree defineKind(pragmaKey(it), typ)
+          if isCall: c.b.addStrLit it[1].strVal
+          c.b.endTree()
+          addDefineDefault c, value
+          c.b.endTree()
+
+template nestedScope(c: var TranslationContext; body: untyped) =
+  let oldNested = c.nested
+  c.nested = true
+  body
+  c.nested = oldNested
+
 proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   case n.kind
   of nkNone:
@@ -442,6 +504,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
       if split.pragma != nil:
         toNif(split.pragma, n[i], c)
+        if c.depsEnabled and n.kind == nkConstDef:
+          emitDefineConst(c, split.name, split.pragma, n[last-1], n[last])
       else:
         c.b.addEmpty
 
@@ -452,15 +516,17 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkDo:
     c.b.addTree(DoL)
     relLineInfo(n, parent, c)
-    toNif(n[paramsPos], n, c, allowEmpty = true)
-    toNif(n[bodyPos], n, c)
+    nestedScope c:
+      toNif(n[paramsPos], n, c, allowEmpty = true)
+      toNif(n[bodyPos], n, c)
     c.b.endTree()
   of nkLambda:
     c.b.addTree(ProcL)
     c.b.addEmpty # adds name placeholder
     relLineInfo(n, parent, c)
-    for i in 0..<n.len:
-      toNif(n[i], n, c, allowEmpty = true)
+    nestedScope c:
+      for i in 0..<n.len:
+        toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
   of nkOfInherit:
     if n.len == 1:
@@ -603,8 +669,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       # nkFuncDef with an empty name (unlike `proc` lambdas -> nkLambda);
       # same for anonymous iterators
       c.b.addEmpty # name placeholder
-      for i in 0..<n.len:
-        toNif(n[i], n, c, allowEmpty = true)
+      nestedScope c:
+        for i in 0..<n.len:
+          toNif(n[i], n, c, allowEmpty = true)
       c.b.endTree()
     else:
       var name: PNode
@@ -621,8 +688,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       else:
         c.b.addEmpty
 
-      for i in 1..<n.len:
-        toNif(n[i], n, c, allowEmpty = true)
+      nestedScope c:
+        for i in 1..<n.len:
+          toNif(n[i], n, c, allowEmpty = true)
       c.b.endTree()
 
   of nkVarTuple:
@@ -807,8 +875,15 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
     c.depsEnabled = oldDepsEnabled
+  of nkBlockStmt, nkBlockExpr:
+    c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
+    nestedScope c:
+      for i in 0..<n.len:
+        toNif(n[i], n, c, allowEmpty = true)
+    c.b.endTree()
   of nkDiscardStmt, nkBreakStmt, nkContinueStmt, nkReturnStmt, nkRaiseStmt,
-      nkYieldStmt, nkBlockStmt, nkBlockExpr, nkBlockType, nkAsmStmt:
+      nkYieldStmt, nkBlockType, nkAsmStmt:
     c.b.addTree(nodeKindTranslation(n.kind))
     relLineInfo(n, parent, c)
     for i in 0..<n.len:

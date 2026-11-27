@@ -217,7 +217,8 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool
 
 proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; firstPhase: SemPhase)
 
-proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
+proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall;
+              lhsOrig: Cursor = default(Cursor))
 
 proc semStaticExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   ## `(static x)`, the `static` magic: explicit general CTFE. Evaluate the
@@ -295,8 +296,10 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
       endRead convArg.n
       expectUnique dest
       shrink dest, argBegin
-      #buildErr c, dest, info, getErrorMsg(m)
-      c.typeMismatch dest, info, it.typ, expected
+      if rejectsProcValueToClosure(m):
+        buildErr c, dest, info, getErrorMsg(m)
+      else:
+        c.typeMismatch dest, info, it.typ, expected
   else:
     endRead arg.n
     expectUnique dest
@@ -1394,6 +1397,7 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   # read through the dot expression first:
   let dotStart = it.n
   it.n = sub(it.n) # skip tag
+  let lhsOrig = it.n
   var lhsBuf = createTokenBuf(4)
   var lhs = Item(n: it.n, typ: c.types.autoType)
   semExpr c, lhsBuf, lhs, {AllowModuleSym}
@@ -1429,7 +1433,7 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
     callBuf.addSubtree lhs.n # add lhs as first argument
     callBuf.addParRi()
     var call = Item(n: cursorAt(callBuf, 0), typ: expected)
-    semCall c, dest, call, flags, DotCall
+    semCall c, dest, call, flags, DotCall, lhsOrig
     it.typ = call.typ
 
 proc semWhile(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -2074,6 +2078,11 @@ proc isParameterlessRoutine(s: SymId): bool =
                        # so a raw `inc` would read past an empty (params)
   result = not params.hasMore
 
+proc isDeclaredIn(scope: Scope; s: SymId): bool =
+  result = false
+  for sym in scope.tab.getOrDefault(symToIdent(s)):
+    if sym.name == s: return true
+
 proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int;
                 flags: set[SemFlag]; nearestIsUnique = false) =
   it.kind = s.kind
@@ -2185,6 +2194,17 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
       var n = res.decl
       if s.kind.isLocal or s.kind == EfldY:
         skipToLocalType n
+        if s.kind in {ParamY, StaticParamY} and c.paramDefaultScope != nil and
+            (AllowOverloads notin flags or skipModifierAndOwned(n).typeKind in RoutineTypes) and
+            isDeclaredIn(c.paramDefaultScope, s.name):
+          # Default values cannot refer to other parameters. (A callee that is
+          # not callable is looked up among the routines: `path("")` beside a
+          # parameter `path`.)
+          let info = readonlyCursorAt(dest, start).info
+          dest.shrink start
+          c.buildErr dest, info, "a default value cannot refer to parameter '" & pool.symBasename(s.name) & "'"
+          it.typ = c.types.autoType
+          return
       elif s.kind.isRoutine:
         var thisProc = asRoutine(n)
         # Closure iterators surface as a first-class `itertype` value. Same
@@ -2296,6 +2316,7 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: NifLi
   var dot = Item(n: it.n, typ: c.types.autoType)
   let dotStart = dot.n
   dot.n = sub(dot.n) # tag
+  let dotLhsOrig = dot.n
   var dotLhsBuf = createTokenBuf(4)
   var dotLhs = Item(n: dot.n, typ: c.types.autoType)
   semExpr c, dotLhsBuf, dotLhs, {KeepMagics}
@@ -2336,7 +2357,7 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: NifLi
     callBuf.addParRi()
     it.n = asgnStart; skip it.n
     var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
-    semCall c, dest, call, {}, DotAsgnCall
+    semCall c, dest, call, {}, DotAsgnCall, dotLhsOrig
     # XXX original compiler also checks if the call fails and tries a dotcall for the LHS
     it.typ = call.typ
 
@@ -2411,6 +2432,17 @@ proc semDiscard(c: var SemContext; dest: var TokenBuf; it: var Item) =
         buildErr c, dest, exInfo, "expression of type `" & typeToString(a.typ) & "` must not be discarded"
   producesVoid c, dest, info, it.typ
 
+proc isNilMarkedPtr(t: Cursor): bool =
+  ## `nil ref T`, `nil ptr T`, `nil proc ...`: a type explicitly marked nilable.
+  var t = skipModifier(t)
+  result = false
+  if t.typeKind in {RefT, PtrT}:
+    var e = t.childCursor
+    skip e # base type
+    result = e.hasMore and e.substructureKind == NilU
+  elif t.typeKind == ProctypeT:
+    result = t.childCursor.substructureKind == NilU # slot 0: nilability
+
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool) =
   # handle statements that could be expressions
   var list = createTokenBuf(0)
@@ -2438,6 +2470,20 @@ proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewSco
     let start = dest.len
     semExpr c, dest, ex
     commonType(c, dest, ex, start, it.typ)
+    # The IR has no type for an `if`/`case`/`try` value: later passes take it
+    # from the first branch. Into a `nil T` every branch carries `nil T`, a
+    # `T not nil` one too, as a `nil` branch does (`(nil T)`). A branch that
+    # yields no value (`return`/`raise`/`break`/...) stays as it is.
+    let head = if dest.len > start: cursorAt(dest, start).exprKind else: NoExpr
+    if isNilMarkedPtr(it.typ) and head notin {NoExpr, ErrX, NilX, HconvX} and
+        not isNoReturn(cursorAt(dest, start)):
+      var conv = createTokenBuf(16)
+      conv.addParLe(HconvX, dest[start].info)
+      conv.addSubtree it.typ
+      for i in start ..< dest.len: conv.add dest[i]
+      conv.addParRi()
+      dest.shrink start
+      dest.add conv
   it.n = orig
   skip it.n
 

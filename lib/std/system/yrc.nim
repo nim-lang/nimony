@@ -92,8 +92,8 @@ type
   Cond = object
     seq: int ## bumped by every broadcast
 
-proc initLock(L: var Lock) {.inline.} = L.v = 0
-proc initCond(c: var Cond) {.inline.} = c.seq = 0
+func initLock(L: var Lock) {.inline.} = L.v = 0
+func initCond(c: var Cond) {.inline.} = c.seq = 0
 
 proc acquire(L: var Lock) {.inline.} =
   while atomicExchangeN(addr L.v, 1, ATOMIC_ACQUIRE) != 0:

@@ -1,0 +1,8 @@
+tests/nimony/errmsgs/tdefault_reads_param.nim(4, 20) Error: a default value cannot refer to parameter 'a'
+tests/nimony/errmsgs/tdefault_reads_param.nim(5, 29) Error: a default value cannot refer to parameter 'a'
+tests/nimony/errmsgs/tdefault_reads_param.nim(6, 30) Error: a default value cannot refer to parameter 'a'
+tests/nimony/errmsgs/tdefault_reads_param.nim(7, 28) Error: a default value cannot refer to parameter 'cb'
+tests/nimony/errmsgs/tdefault_reads_param.nim(8, 39) Error: a default value cannot refer to parameter 'a'
+tests/nimony/errmsgs/tdefault_reads_param.nim(9, 23) Error: a default value cannot refer to parameter 'a'
+tests/nimony/errmsgs/tdefault_reads_param.nim(10, 24) Error: a default value cannot refer to parameter 'a'
+tests/nimony/errmsgs/tdefault_reads_param.nim(11, 28) Error: a default value cannot refer to parameter 'a'

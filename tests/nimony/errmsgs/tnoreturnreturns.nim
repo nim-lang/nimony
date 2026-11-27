@@ -21,5 +21,8 @@ proc loops() {.noreturn.} =
 proc allBranchesEnd(x: int) {.noreturn.} =
   if x > 0: quit 1
   else: quits()
+# A forward declaration has no body; its implementation is what is checked.
+proc forwarded() {.noreturn.}
+proc forwarded() {.noreturn.} = quit 1
 
 quits()

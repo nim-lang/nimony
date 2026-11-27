@@ -34,6 +34,7 @@ import std/complex
 import std/compress/checksums
 import std/compress/deflate
 import std/compress/gzip
+import std/cookies
 import std/cpuinfo
 import std/critbits
 import std/crypto/bignum

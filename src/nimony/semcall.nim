@@ -1102,6 +1102,10 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   else:
     buildErr c, dest, cs.callNodeInfo, "macro '" & pool.symString(finalFn) & "' not compiled"
 
+proc calleeName(cs: CallState; sym: SymId): string =
+  ## A qualified callee (`m.f`, `E.a`) leaves `fnName` unset (no attached-routine lookup); `sym` names it.
+  pool.strings[if cs.fnName != StrId(0): cs.fnName else: symToIdent(sym)]
+
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   # Everything the candidate collection below writes to `dest` is a
   # diagnostic ("attempt to call routine", a symchoice element that cannot be
@@ -1136,8 +1140,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs, it.typ)
     if m.len == 0:
       # symchoice contained no callable symbols and no typebound ops
-      assert cs.fnName != StrId(0)
-      buildErr c, dest, cs.fn.n.info, "attempt to call routine: '" & pool.strings[cs.fnName] & "'"
+      buildErr c, dest, cs.fn.n.info, "attempt to call routine: '" & calleeName(cs, sub(cs.fn.n).symId) & "'"
   elif cs.fn.n.isIdent:
     # Callee stayed as an `Ident` because `AllowUndeclared` was set (typical
     # for dot-call desugaring and generic bodies). Still run ADL / concept
@@ -1166,9 +1169,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       m.add createMatch(addr c, it.typ)
       sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
       considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs, it.typ)
+    elif sym != SymId(0) and cs.fnName == StrId(0):
+      # a qualified callee has no overloads to look up
+      buildErr c, dest, cs.fn.n.info, "attempt to call routine: '" & calleeName(cs, sym) & "'"
     elif sym != SymId(0):
       # non-callable symbol, look up all overloads
-      assert cs.fnName != StrId(0)
       var choiceBuf = createTokenBuf(16)
       discard buildSymChoice(c, choiceBuf, cs.fnName, cs.fn.n.info, FindAll)
       # could store choiceBuf in CallState but cs.fn should not outlive it
@@ -1218,7 +1223,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       assert param.isParamsTag
       param = sub(param) # throwaway copy; bounds the walk under vpr
       var ai = 0
-      var anyConverters = false
+      var converted = 0 # arguments this retry wraps in a converter call
       while param.hasMore:
         # varargs not handled yet
         if ai >= cs.args.len: break
@@ -1229,7 +1234,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         var arg = cs.args[ai]
         var convMatch = createMatch(addr c)
         if isVarargs and varargsHasConverter(f) and tryVarargsConverter(c, convMatch, f, arg):
-          anyConverters = true
+          inc converted
           # match already built call, just use it
           let bufPos = newArgBufs.len
           newArgBufs.add ensureMove(convMatch.args)
@@ -1240,7 +1245,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
             baseType = instantiateType(c, baseType, convMatch.inferred)
           newArgs.add CallArg(n: beginRead(newArgBufs[bufPos]), typ: baseType)
         elif tryConverterMatch(c, convMatch, f, arg):
-          anyConverters = true
+          inc converted
           var argBuf = createTokenBuf(16)
           argBuf.addParLe(HcallX, arg.n.info)
           argBuf.addSymUse(convMatch.fn.sym, arg.n.info)
@@ -1263,8 +1268,9 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       while ai < cs.args.len:
         newArgs.add cs.args[ai]
         inc ai
-      if anyConverters:
+      if converted > 0:
         sigmatch(newMatch, m[mi].fn, newArgs, genericArgs)
+        newMatch.convertedArgs = converted
         m.add newMatch
         matchAdded = true
     if matchAdded: # m.len != L
@@ -1402,11 +1408,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     var errorMsg: string
     if idx == -2:
       errorMsg = "ambiguous call: '"
-      if cs.fnName != StrId(0):
-        errorMsg.add pool.strings[cs.fnName]
+      errorMsg.add calleeName(cs, m[0].fn.sym)
       errorMsg.add "'"
       # Add proc signatures and location for each match
       for i in 0..<m.len:
+        if m[i].err: continue # failed to match: not a candidate here
         errorMsg.add "\n"
         errorMsg.add typeToString(m[i].fn.typ, {renderNoBody})
         if m[i].fn.sym != NoSymId:
@@ -1507,7 +1513,8 @@ proc hasGenericRoutine(n: Cursor): bool =
           result = true
         skip n
 
-proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
+proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall;
+              lhsOrig: Cursor = default(Cursor)) =
   if source == RegularCall and semQualifiedSumTypeConstr(c, dest, it): return
   var cs = CallState(
     beforeCall: dest.len,
@@ -1625,7 +1632,8 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
   while it.n.hasMore:
-    let argOrig = it.n
+    # `a.b` hands over its already checked `a`; an `untyped` formal still gets `a` as written:
+    let argOrig = if cs.args.len == 0 and not cursorIsNil(lhsOrig): lhsOrig else: it.n
     var arg = Item(n: it.n, typ: c.types.autoType)
     argIndexes.add dest.len
     let named = arg.n.substructureKind == VvU

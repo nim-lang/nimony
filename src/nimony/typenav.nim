@@ -715,11 +715,13 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of EnvpX:
     result = c.builtins.autoType
   of ToClosureX:
-    # `sigmatch.procTypeMatch` wraps *any* nimcall source in `(toClosure X)`,
-    # not only a routine symbol: a variable, field or parameter of nimcall proc
-    # type lands here too (nim-lang/nimony#2404). Whatever the source is, the
-    # type of the wrapper is a proctype/itertype carrying `(closure)` -- the
-    # same shape `sigmatch.procTypeOfRoutineSym` builds for the matching side.
+    # `sigmatch.procTypeMatch` wraps an argument in `(toClosure X)` only when
+    # the argument's own type is a nimcall proc type matched against a
+    # `.closure` one and the argument is a routine (a proc literal included);
+    # a proc value, or a proc type nested in the argument's type, never gets
+    # it. The type of the wrapper is a proctype/itertype carrying `(closure)`
+    # -- the same shape `sigmatch.procTypeOfRoutineSym` builds for the
+    # matching side.
     var t = skipTypeAliases(getTypeImpl(c, n.childCursor, flags))
     let kind = t.typeKind
     if kind notin RoutineTypes:

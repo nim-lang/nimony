@@ -185,10 +185,16 @@ proc exportMarkerBecomesNifTag(c: var SemContext; dest: var TokenBuf; insertPos:
   nifTag.addParRi(info)
   dest.replace cursorAt(nifTag, 0), insertPos
 
-proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial: CrucialPragma) =
+proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial: CrucialPragma;
+                   kind: SymKind) =
   if ThreadvarP in crucial.flags:
     c.buildErr dest, it.n.info, "a `threadvar` cannot have an init value"
     skip it.n
+  elif kind in {ParamY, StaticParamY}:
+    let outer = c.paramDefaultScope
+    c.paramDefaultScope = c.currentScope
+    semExpr c, dest, it
+    c.paramDefaultScope = outer
   else:
     semExpr c, dest, it
 
@@ -354,6 +360,47 @@ proc isTypeclassParamType(typ: Cursor; routine: SymKind): bool =
   else:
     result = false
 
+proc isRoutineGlobal(c: var SemContext; kind: SymKind; crucial: CrucialPragma): bool =
+  ## A `var x {.global.}` or `{.threadvar.}` inside a routine: one location for
+  ## the whole program (or thread), which xelim moves to module scope
+  ## (`xelim.trLocal`).
+  kind in {LetY, VarY} and {GlobalP, ThreadvarP} * crucial.flags != {} and
+    c.currentScope.kind != ToplevelScope
+
+proc checkRoutineGlobalInit(c: var SemContext; dest: var TokenBuf; typePos: int) =
+  ## The initializer runs once at module scope, where the routine's locals and
+  ## parameters do not exist.
+  var n = cursorAt(dest, typePos)
+  skip n # the type
+  let valuePos = cursorToPosition(dest, n)
+  var defined = initHashSet[SymId]()
+  var culprit = NoSymId
+  var info = NoLineInfo
+  var nested = 0
+  var done = false
+  while not done:
+    case n.kind
+    of SymbolDef:
+      defined.incl n.symId
+    of Symbol:
+      if pool.symIsLocal(n.symId) and not defined.contains(n.symId):
+        culprit = n.symId
+        info = n.info
+        done = true
+    of ParLe:
+      inc nested
+    of ParRi:
+      dec nested
+    else: discard
+    if nested == 0 and n.kind != ParLe: done = true
+    inc n
+  endRead n
+  if culprit != NoSymId:
+    # the error replaces the value so the declaration keeps its arity
+    dest.shrink valuePos
+    c.buildErr dest, info, "the initializer of a `.global` variable cannot refer to the local `" &
+      pool.symBasename(culprit) & "`"
+
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var kind = kind
   if kind == TypevarY:
@@ -391,6 +438,12 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
     semPragmas c, dest, n, crucial, kind # 2
     if crucial.magic.len > 0:
       exportMarkerBecomesNifTag c, dest, beforeExportMarker, crucial
+    let routineGlobal = isRoutineGlobal(c, kind, crucial)
+    if routineGlobal and delayed.status == OkNew and pool.symIsLocal(delayed.s.name):
+      # xelim moves it to module scope (`xelim.trLocal`), where it needs a
+      # module-unique name like any global (#3158, #3167).
+      delayed.s.name = newSymId(c, delayed.s.name, forceGlobal = true)
+      setSymIdAt(dest, delayed.s.pos, delayed.s.name)
     if delayed.status == OkExistingFresh and InjectP in crucial.flags:
       # symbol is injected, add it to scope
       delayed.status = OkNew
@@ -414,7 +467,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         # satisfy the same constant-argument restriction as an explicit one
         var it = Item(n: n, typ: typeToCursor(c, dest, beforeType))
         let valueStart = dest.len
-        semLocalValue c, dest, it, crucial
+        semLocalValue c, dest, it, crucial, kind
         n = it.n
         if not isConstantArg(readonlyCursorAt(dest, valueStart)):
           dest.shrink valueStart
@@ -458,7 +511,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
             "' with a default value needs a type"
           it.typ = typeToCursor(c, errBuf, 0)
         else:
-          semLocalValue c, dest, it, crucial # 4
+          semLocalValue c, dest, it, crucial, kind # 4
         n = it.n
         let typ = skipModifier(it.typ)
         if classifyType(c, typ) == VoidT:
@@ -528,7 +581,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
               withNewScope c:
                 semConstExpr c, dest, it # 4
           else:
-            semLocalValue c, dest, it, crucial # 4
+            semLocalValue c, dest, it, crucial, kind # 4
           n = it.n
           # an erroneous declared type stays: patching it with the value's
           # type would drop the error and leave only its follow-up mismatch
@@ -536,6 +589,9 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
             patchType c, dest, it.typ, beforeType
       if kind == ParamY:
         compatAnnotateVarargsParam c, dest, beforeType
+      if routineGlobal and c.routine.kind notin {TemplateY, MacroY}:
+        # a template's parameters are substituted at its expansion
+        checkRoutineGlobalInit c, dest, beforeType
     else:
       bug "semLocal"
 

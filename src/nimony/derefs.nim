@@ -74,7 +74,9 @@ type
   CurrentRoutine = object
     returnExpects: Expects
     returnType: Cursor  # so `(ret (nil))` knows what the `nil` is
-    firstParamKind: TypeKind
+    firstParamIsCallers: bool ## the first parameter is the caller's storage:
+                              ## `var`/`out`/`lent`, or passed by reference
+                              ## (`firstParamPassedByRef`)
     props: set[RoutineProp]
     firstParam: SymId
     resultSym: SymId
@@ -204,12 +206,9 @@ proc trSons(c: var Context; n: var Cursor; e: Expects; expected: Cursor = defaul
         tr c, n, e, expected
 
 const
-  NilableTypes = {PtrT, RefT, PointerT, CstringT}
-    ## Data pointers only. A `nil` of a proc/iterator type is deliberately left
-    ## bare: the CPS transform rewrites a passive proc's type *after* the
-    ## frontend is done, so a type stamped here would name the pre-transform
-    ## signature and disagree with the local it initializes. `sigmatch` already
-    ## writes `(nil <proctype> (nil))` where a closure needs its environment.
+  NilableTypes = {PtrT, RefT, PointerT, CstringT, ProctypeT}
+    ## Pointer and proc types: a bare `nil` in a slot of one of them gets the
+    ## slot's type (`trNil`). A `nil` of an iterator type stays bare.
 
 proc resolvedTypeKind(typ: Cursor): TypeKind =
   ## `typ.typeKind`, but a type alias (`type PNode = ptr Node`) is followed to
@@ -260,6 +259,15 @@ proc trNil(c: var Context; n: var Cursor; expected: Cursor) =
       c.dest.addParRi()
       skip n
 
+proc firstParamIsCallers(params: Cursor): bool =
+  ## Is the first parameter of a routine with these `(params …)` the caller's
+  ## storage? It is when it is an address (`var`, `out`, `lent`) or passed by
+  ## reference (`firstParamPassedByRef`).
+  var p = params
+  inc p
+  let t = asLocal(p).typ
+  result = t.typeKind in {MutT, OutT, LentT} or firstParamPassedByRef(params)
+
 proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   # --------------------------------------------------------------------------
   # We need to borrow from a location that is derived from the proc's
@@ -302,12 +310,11 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       if n.hasMore:
         var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
         assert fnType.isParamsTag
+        let params = fnType
         inc fnType
         let firstParam = asLocal(fnType)
-        if isParamLike(firstParam.kind):
-          let mightForward = firstParam.typ.typeKind in {MutT, OutT, LentT}
-          if not mightForward:
-            someIndirection = true
+        if isParamLike(firstParam.kind) and not firstParamIsCallers(params):
+          someIndirection = true
         # borrowing only work from first parameters:
         discard "n already at the correct position"
       else:
@@ -321,13 +328,48 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       # and
       # proc access(x: Table): var int = x[].field[0]
       # and we do not try to hide it!
-      result = c.r.firstParamKind in {MutT, OutT, LentT} or someIndirection
+      result = c.r.firstParamIsCallers or someIndirection
     else:
       result = false
   else:
     result = false
 
-proc skipToRoot(n: Cursor): Cursor =
+proc tupleHasBorrowedField(t: Cursor): bool =
+  ## `tuple[x: var int]`, or the `(lent K, var V)` an `mpairs` yields.
+  result = false
+  var f = t
+  f = sub(f)
+  while f.hasMore and not result:
+    var ft = f
+    if f.substructureKind == KvU:
+      ft = sub(ft)
+      skip ft # the field name
+    result = ft.typeKind in {MutT, LentT}
+    skip f
+
+proc callReturnsLocation(c: var Context; call: Cursor): bool =
+  ## Whether the result of `call` is a location rather than a temporary that
+  ## a write would be lost in (#3161). A `var T`, `lent T` or view result, and
+  ## an iterator's yield, borrow from the first argument (`s[i]` for a `seq`,
+  ## `toOpenArray(s, a, b)`, `mpairs(t)`); a `ref`/`ptr` result points to the
+  ## location.
+  var callee = call
+  callee = sub(callee)
+  if callee.isSymbol and c.typeCache.fetchSymKind(callee.symId) == IteratorY:
+    result = true
+  else:
+    let t = getType(c.typeCache, call, {SkipAliases})
+    case t.typeKind
+    of MutT, LentT, RefT, PtrT, PointerT:
+      result = true
+    of TupleT:
+      result = tupleHasBorrowedField(t)
+    else:
+      result = isViewType(t)
+
+proc skipToRoot(c: var Context; n: Cursor): Cursor =
+  ## The location a path is rooted in. A call that returns a temporary is the
+  ## root itself: what is written through it is lost (#3161).
   var n = n
   while true:
     case n.exprKind
@@ -341,6 +383,7 @@ proc skipToRoot(n: Cursor): Cursor =
       skip n # skip intlit
       skip n # skip type
     of CallKinds:
+      if not callReturnsLocation(c, n): break
       n = sub(n)
       skip n # skip the `fn`
       if n.hasMore:
@@ -406,7 +449,7 @@ proc varResultErr(c: var Context; n: Cursor) =
 
 proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   result = false
-  let n = skipToRoot(n)
+  let n = skipToRoot(c, n)
   if n.isSymbol:
     # Use the type cache rather than `tryLoadSym` so that local symbols
     # (anonymous ones like `n.2` lack a module suffix) cannot collide
@@ -440,7 +483,8 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
     else:
       result = false
   elif n.hasMore and (n.kind in {StrLit, IntLit, UIntLit, FloatLit, CharLit} or
-       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}):
+       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX} or
+       (n.exprKind in CallKinds and not callReturnsLocation(c, n))):
     result = true
   else:
     result = false
@@ -697,7 +741,8 @@ proc trProcDecl(c: var Context; n: var Cursor) =
           c.inferredOwnerParam = firstParam.typ
         if isParamLike(firstParam.kind):
           c.r.firstParam = firstParam.name.symId
-          c.r.firstParamKind = firstParam.typ.typeKind
+          # A generic body's borrows are checked in its instances.
+          c.r.firstParamIsCallers = not isGeneric and firstParamIsCallers(n)
         takeTree c.dest, n
       elif i == ProcPragmasPos:
         if isGeneric:
@@ -1635,7 +1680,7 @@ proc loopContainerIsReadonly(c: var Context; n: Cursor): bool =
   ## covers both kinds of `let`, and the helper cannot simply count a `lent`
   ## binding as read-only: `trLocation` asks it too when a `lent` result
   ## forwards a borrow (`yield k` in `sets.items`).
-  let root = skipToRoot(n)
+  let root = skipToRoot(c, n)
   result = borrowsFromReadonly(c, n) or borrowsFromReadonly(c, n, allowLet=true) or
     (root.isSymbol and c.r.dangerousLocations.hasKey(root.symId))
 

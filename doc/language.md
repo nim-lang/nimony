@@ -2468,6 +2468,23 @@ In other words, the lifetime of what `result` points to is attached to the
 lifetime of the first parameter and that is enough knowledge to verify
 memory safety at the call site.
 
+A `var T` or `lent T` return type of a proc or converter implicitly makes
+the first parameter pass-by-reference, so the location the routine returns
+is the caller's storage even when that parameter is not a `var` parameter:
+
+  ```nim
+  proc first(a: array[1, int]): var int = a[0] # ok, `a` is the caller's array
+
+  var x = [0]
+  first(x) = 5
+  assert x[0] == 5
+  ```
+
+A first parameter of a view type is the exception: it stays the classical
+pass-by-object-size that is used for all value parameters (by value or by
+reference depending on the object's size). The existing view-result
+exemptions for `sink`, `ptr`, `ref` and `varargs` first parameters are kept.
+
 
 ### Future directions
 
@@ -2626,8 +2643,9 @@ parameter — is rejected when the source is a local:
 
 A view the routine *returns* follows the rule `var T` results follow: it may
 borrow from the routine's **first parameter**, and from nothing else. The first
-parameter of a routine that returns a view is passed by reference, so the view
-points into the caller's storage; any other parameter may be the callee's own
+parameter of a routine that returns a view is passed by reference (unless it
+is a view itself, see "Var return type"), so the view points into the caller's
+storage; any other parameter may be the callee's own
 copy (a short `string` keeps its characters inline), and a view of it would
 dangle:
 
@@ -3033,8 +3051,8 @@ that declared it, so its lifetime is the lifetime of the closure. The
 environment is a traced `ref` and is destroyed by the ordinary memory
 management once the last closure referring to it is gone.
 
-A proc that is not a closure converts implicitly to a `.closure.` proc type; it
-is then paired with an empty environment:
+A routine that is not a closure converts implicitly to a `.closure.` proc type;
+it is then paired with an empty environment:
 
 ```nim
 proc double(x: int): int = x * 2
@@ -3042,6 +3060,16 @@ proc double(x: int): int = x * 2
 proc apply(f: proc(x: int): int {.closure.}; v: int): int = f(v)
 
 echo apply(double, 21) # 42
+```
+
+Only a routine (a proc literal included) converts implicitly. A proc *value* of
+a non-closure type, such as a variable, a parameter or a field, does not; wrap
+it in a proc literal that calls it:
+
+```nim
+let p: proc(x: int): int = double
+echo apply(p, 21)                              # Error
+echo apply(proc (x: int): int = p(x), 21)      # 42
 ```
 
 ### The autoclosures feature
@@ -5264,6 +5292,22 @@ cannot be inherited from. Note that inheritance is only available for
 objects that inherit from an existing object (via the `object of SuperType`
 syntax) or that have been marked as `inheritable`.
 
+
+### global pragma
+A `var` or `let` with the `global` pragma inside a routine is a global
+variable whose scope is the routine: every call of the routine sees the same
+location. Its initializer runs once, before the module's toplevel statements,
+so it cannot refer to the routine's parameters or locals. Each instance of a
+generic routine has a global of its own.
+
+```nim
+proc counter(): int =
+  var calls {.global.}: int
+  inc calls
+  result = calls
+
+echo counter(), counter() # 12
+```
 
 
 ### error pragma

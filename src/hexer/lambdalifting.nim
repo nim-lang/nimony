@@ -140,8 +140,13 @@ type
       ## iters in the module and get flushed in `elimLambdas`.
     hoisted: TokenBuf
       ## Statements `genCall` and `emitIterValue` put in front of the current
-      ## statement (callee temp, env==nil dispatch, iterator frame); the Final
+      ## statement (callee temp, iterator frame); the Final
       ## IR has no `(expr …)`. `treStmt` splices them in.
+    thunks: Table[SymId, SymId]
+      ## routine -> its `cthunk`, see `nonClosureToClosure`
+    thunkDecls: TokenBuf
+      ## the thunks generated
+      ## while walking the module; emitted in front of the module's statements
     raisingIterTypes: HashSet[SymId]
       ## `itertype` aliases of `.raises` iterators. Pass 1 rewrites an alias to
       ## its `(closureTuple ...)` shape, and that shape no longer says whether
@@ -1622,79 +1627,14 @@ proc capturedBaseType(c: var Context; o: Cursor): Cursor =
   else:
     result = c.typeCache.getType(o, {SkipAliases})
 
-proc toNonClosureProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
-  # just remove closure pragma from proctype
-  var n = n
-  # ItertypeT: genCall runs before cps rewrites itertypes to wrapper
-  # proctypes, so a first-class closure-iter value lands here too.
-  assert n.typeKind in {ProctypeT, ProcT, ItertypeT}
-  takeInto dest, n:
-    while n.hasMore:
-      if n.substructureKind == PragmasU:
-        takeInto dest, n:
-          while n.hasMore:
-            if n.pragmaKind == ClosureP:
-              skip n
-            else:
-              takeTree dest, n
-      else:
-        takeTree dest, n
-
-proc calleeHasClosureParam(typ: Cursor): bool =
-  ## True if a callee proctype has any closure/lifted-closure-tuple parameter.
-  ## The env==nil else-branch de-closures the callee via `toNonClosureProcType`
-  ## and calls it bare; that reconstruction is only ABI/type-sound for simple
-  ## parameter types. A parameter that is itself a closure
-  ## (`proc(fn: proc() {.closure.})`) lowers to a `{fn,env}` tuple whose element
-  ## shape the bare cast cannot match, so the (for a genuine closure, dead)
-  ## else-branch emits a type-invalid call. Such a callee is never a plausible
-  ## ToClosureX target anyway — nothing passes a bare non-closure proc to a
-  ## closure-of-closure parameter — so skip the nil-check and use the plain
-  ## tuple-unpack call, exactly as before upstream #2074.
-  var t = typ
-  if t.typeKind != ProctypeT: return false
-  skipToParams t
-  if t.substructureKind != ParamsU: return false
-  inc t # into (params …), at the first param
-  while t.hasMore:
-    if isParamLike(t.substructureKind):
-      var pt = t
-      inc pt   # (param -> name
-      skip pt  # name -> export
-      skip pt  # export -> pragmas
-      skip pt  # pragmas -> type
-      if isClosure(pt) or isLiftedClosureTuple(pt):
-        return true
-    skip t
-  result = false
-
 proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
                          callNode, typ: Cursor) =
   ## A call through a closure value, `n` at the callee: `(fn, env)` is called as
-  ## `fn(args, env)`. The Final IR has no expression-level control flow, so
-  ## whatever the call needs first — the tuple bound to a temp, the `env == nil`
-  ## dispatch — goes in front of the current statement (`hoisted`), in the
-  ## order it runs.
+  ## `fn(args, env)`, always: the fn slot holds an env-taking routine even for a
+  ## plain proc converted to a closure (see `nonClosureToClosure`). The Final
+  ## IR has no expression-level control flow, so an expression callee is bound
+  ## to a temp in front of the current statement (`hoisted`).
   let info = callNode.info
-  # The env==nil runtime dispatch (upstream d4435b37) exists for a raw
-  # `.closure` proctype callee — a param or proctype-typed var that may hold
-  # a non-closure proc converted via ToClosureX: when its env slot is nil we
-  # must call the bare fn without an env arg. Gate strictly on `ProctypeT`:
-  #  - A *lifted closure tuple* callee (house's cross-module canonicalized
-  #    closure vars/values, canonForeignDecl 86774db7) is never such a
-  #    conversion — its fn slot is an env-taking lifted proc — and a tuple
-  #    would also assert in toNonClosureProcType.
-  #  - A `ProcT` callee — a local closure var whose type resolved to the
-  #    concrete lifted lambda decl (`let enqueue = proc() {.closure.} = …`) —
-  #    is likewise always a genuine closure with a live env, never a
-  #    ToClosureX bare proc. Letting the nil-check fire there fed the lambda's
-  #    whole decl (body and all) to toNonClosureProcType, which copied the
-  #    still-`ddot` field accesses in that body verbatim into the cast type;
-  #    those raw ddots then reached the duplifier as an eliminated-in-desugar
-  #    node. Both defects only surface on real closure code, never the tiny
-  #    upstream tests.
-  let needNilCheck = typ.typeKind == ProctypeT and isClosure(typ) and
-                     not calleeHasClosureParam(typ)
   # `callee` is the (fn, env) tuple, read once per slot. A symbol callee is
   # translated like any other read of it (`tre`'s Symbol case: a local moved
   # into the env becomes its env field, #343; a raising closure iterator's
@@ -1720,7 +1660,6 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
       decl.add value
     c.hoisted.add decl
     callee.addSymUse tmp, info
-  # The arguments are translated once; both arms of the dispatch use them.
   var args = createTokenBuf(16)
   while n.hasMore:
     tre(c, args, n)
@@ -1734,65 +1673,7 @@ proc genClosureValueCall(c: var Context; dest: var TokenBuf; n: var Cursor;
     call.add callee
     call.addIntLit 1, info
   call.addParRi()
-  if not needNilCheck:
-    dest.add call
-    return
-  # `env == nil`: a plain proc converted to a closure, called without an env.
-  var plain = createTokenBuf(16)
-  plain.addParLe(callNode.cursorTagId, info)
-  plain.copyIntoKind CastX, info:
-    c.toNonClosureProcType plain, typ
-    plain.copyIntoKind TupatX, info:
-      plain.add callee
-      plain.addIntLit 0, info
-  plain.add args
-  plain.addParRi()
-  var rt = typ
-  skipToParams rt
-  skip rt # params -> return type
-  let voidCall = isVoidType(rt)
-  var res = SymId(0)
-  if not voidCall:
-    res = pool.symId("`llRes." & $c.counter)
-    inc c.counter
-    var decl = createTokenBuf(8)
-    decl.copyIntoKind VarS, info:
-      decl.addSymDef res, info
-      decl.addDotToken() # no export marker
-      decl.addDotToken() # no pragmas
-      treType c, decl, rt
-      decl.addDotToken() # assigned by the dispatch
-    c.hoisted.add decl
-  var disp = createTokenBuf(32)
-  disp.copyIntoKind IteV, info:
-    disp.copyIntoKind NeqX, info:
-      if c.currentProc.env.needsHeap:
-        disp.addRootRef info
-      else:
-        disp.copyIntoKind PointerT, info: discard
-      disp.copyIntoKind TupatX, info:
-        disp.add callee
-        disp.addIntLit 1, info
-      disp.addParPair NilX, info
-    disp.copyIntoKind StmtsS, info:
-      if voidCall:
-        disp.add call
-      else:
-        disp.copyIntoKind AsgnS, info:
-          disp.addSymUse res, info
-          disp.add call
-    disp.copyIntoKind StmtsS, info:
-      if voidCall:
-        disp.add plain
-      else:
-        disp.copyIntoKind AsgnS, info:
-          disp.addSymUse res, info
-          disp.add plain
-  if voidCall:
-    dest.add disp            # a void call is a statement of its own
-  else:
-    c.hoisted.add disp
-    dest.addSymUse res, info
+  dest.add call
 
 proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -1910,17 +1791,118 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
+proc thunkHead(c: var Context; dest: var TokenBuf; sym: SymId; origTyp: Cursor;
+               info: NifLineInfo): (seq[SymId], Cursor) =
+  ## Opens the routine `sym` with `origTyp`'s parameters plus the env
+  ## parameter, its return type and, of its pragmas, the calling convention,
+  ## `.raises` and `.passive` (cps lowers the thunk along
+  ## with the callee). Returns the parameter names and the (untranslated) return
+  ## type; `thunkBody` adds the body.
+  result = (newSeq[SymId](), default(Cursor))
+  dest.addParLe ProcS, info
+  dest.addSymDef sym, info
+  dest.addDotToken() # no export marker
+  dest.addDotToken() # no pattern
+  dest.addDotToken() # no generic params
+  var n = origTyp
+  let k = n.typeKind
+  n.into:
+    if k in {ProctypeT, ItertypeT}:
+      skip n # nilability tag
+    elif k in RoutineTypes:
+      skipRoutineDeclPrefix(n, k)
+    dest.copyIntoKind ParamsU, info:
+      if n.kind == DotToken:
+        inc n
+      else:
+        n.into:
+          while n.hasMore:
+            result[0].add asLocal(n).name.symId
+            tre c, dest, n
+      addClosureEnvParam dest, info, SymId(0)
+    result[1] = n
+    treType c, dest, n # return type
+    # `importc`, `exportc` and the like belong to `origTyp` alone
+    var kept = createTokenBuf(4)
+    if n.substructureKind == PragmasU:
+      n.into:
+        while n.hasMore:
+          if n.pragmaKind in {RaisesP, PassiveP} or n.callConvKind != NoCallConv:
+            kept.takeTree n
+          else:
+            skip n
+    else:
+      skip n
+    if kept.len > 0:
+      dest.copyIntoKind PragmasU, info:
+        dest.add kept
+    else:
+      dest.addDotToken()
+    while n.hasMore: skip n
+  dest.addDotToken() # no effects
+
+proc thunkBody(c: var Context; dest: var TokenBuf; callee: TokenBuf;
+               params: seq[SymId]; retType: Cursor; info: NifLineInfo) =
+  ## `callee(params)`, its result returned; closes the routine `thunkHead`
+  ## opened.
+  var call = createTokenBuf(16)
+  call.copyIntoKind CallX, info:
+    call.add callee
+    for p in params: call.addSymUse p, info
+  dest.copyIntoKind StmtsS, info:
+    if isVoidType(retType):
+      dest.add call
+    else:
+      let res = pool.symId("`ctRes.0")
+      dest.copyIntoKind ResultS, info:
+        dest.addSymDef res, info
+        dest.addDotToken() # no export marker
+        dest.addDotToken() # no pragmas
+        var rt = retType
+        treType c, dest, rt
+        dest.addDotToken() # no value
+      dest.copyIntoKind AsgnS, info:
+        dest.addSymUse res, info
+        dest.add call
+      dest.copyIntoKind RetS, info:
+        dest.addSymUse res, info
+  dest.addParRi() # close the routine
+
+proc thunkFor(c: var Context; p: SymId; origTyp: Cursor; info: NifLineInfo): SymId =
+  ## The `cthunk` of the routine `p`: `p`'s signature plus the env parameter,
+  ## forwarding to `p`. One per routine and module.
+  result = c.thunks.getOrDefault(p)
+  if result == SymId(0):
+    result = pool.symId("`cthunk." & $c.counter & "." & c.thisModuleSuffix)
+    inc c.counter
+    c.thunks[p] = result
+    var decl = createTokenBuf(32)
+    let (params, retType) = thunkHead(c, decl, result, origTyp, info)
+    var callee = createTokenBuf(1)
+    callee.addSymUse p, info
+    thunkBody(c, decl, callee, params, retType, info)
+    programs.publish(result, decl, 0)
+    c.thunkDecls.add decl
+
 proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: NifLineInfo) =
+  ## A routine as a closure value. A closure is always called with its env
+  ## (`genClosureValueCall`), so the fn slot gets the routine's `cthunk`, an
+  ## env-taking routine, and the env is nil. Storing the bare routine and
+  ## calling it without an env when the env is nil had the caller pick a
+  ## signature the stored routine may not have; wasm's `call_indirect` traps
+  ## on that (#2755). Only a routine converts implicitly: sigmatch rejects a
+  ## proc value, which has no static routine to forward to.
+  if not (n.kind == Symbol and c.typeCache.fetchSymKind(n.symId) in RoutineKinds):
+    bug "toClosure of a proc value; sigmatch accepts only a routine"
+  let fn = thunkFor(c, n.symId, origTyp, info)
+  inc n
   dest.copyIntoKind TupconstrX, info:
     dest.copyIntoKind ClosureTupleT, info:
       c.toProcType(dest, origTyp)
       dest.addRootRef info
     dest.copyIntoKind CastX, info:
       c.toProcType(dest, origTyp)
-      if n.isTagLit:
-        treSons c, dest, n
-      else:
-        dest.takeTree n
+      dest.addSymUse fn, info
     dest.addParPair NilX, info
 
 proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -2212,6 +2194,7 @@ proc elimLambdas*(pass: var Pass; raisesLowered: var HashSet[SymId]) =
     ptrSize: pass.bits div 8
   )
   c.hoisted = createTokenBuf(0)
+  c.thunkDecls = createTokenBuf(0)
   c.typeCache.openScope()
   tr c, pass.dest, n
   c.typeCache.closeScope()
@@ -2249,6 +2232,7 @@ proc elimLambdas*(pass: var Pass; raisesLowered: var HashSet[SymId]) =
       for (sym, sig) in c.pendingIterSigs.mitems:
         publishSignature sig, sym, 0
       pass.dest.add c.coroCtx.coroTypes
+      pass.dest.add c.thunkDecls
       pass.dest.add stmtsBuf
       pass.dest.addParRi(n2.endInfo)
     pass.nextTemp = c.coroCtx.nextTemp

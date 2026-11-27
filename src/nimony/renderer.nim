@@ -66,7 +66,7 @@ type
   RenderFlags* = set[RenderFlag]
   RenderTok* = object
     kind*: TokType
-    length*: int16
+    length*: int32
     sym*: SymId
     isDef*: bool
 
@@ -150,7 +150,7 @@ proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string
 
 proc addTok(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0);
             isDef = false) =
-  g.tokens.add RenderTok(kind: kind, length: int16(s.len), sym: sym, isDef: isDef)
+  g.tokens.add RenderTok(kind: kind, length: int32(s.len), sym: sym, isDef: isDef)
   g.buf.add(s)
   if kind != tkSpaces:
     inc g.col, s.len

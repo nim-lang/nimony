@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tprocvar_toclosure.nim(14, 57) Error: only a routine converts implicitly to proc (): bool {.closure.}; wrap the value in a proc literal that calls it
+tests/nimony/errmsgs/tprocvar_toclosure.nim(18, 38) Error: only a routine converts implicitly to proc (): bool {.closure.}; wrap the value in a proc literal that calls it
+tests/nimony/errmsgs/tprocvar_toclosure.nim(20, 17) Error: Type mismatch at [position]
+takeIt(q)
+[1] only a routine converts implicitly to proc (): bool {.closure.}; wrap the value in a proc literal that calls it (declared in tests/nimony/errmsgs/tprocvar_toclosure.nim(13, 1))
+tests/nimony/errmsgs/tprocvar_toclosure.nim(22, 17) Error: only a routine converts implicitly to proc (): bool {.closure.}; wrap the value in a proc literal that calls it

@@ -34,6 +34,7 @@ type
     CallConvMismatch
     RaisesMismatch
     ClosureMismatch
+    NotARoutineToClosure
     PassiveMismatch
     UnavailableSubtypeRelation
     ImplicitConversionNotMutable
@@ -89,8 +90,12 @@ type
     hasError: bool # mark that error message was set
     skippedMod: TypeKind
     argInfo: NifLineInfo
+    procArg: Cursor ## the argument `procTypeMatch` is matching, if its type is
+                    ## the argument's own type: only then, and only for a
+                    ## routine symbol, does it add the implicit `toClosure`
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
+    convertedArgs*: int ## converter calls the retry inserted; last tiebreaker
     staticArgs: int ## how many arguments went to a `staticParam`; consulted
                     ## only by the `staticOverloads` tiebreaker in `cmpMatches`
     returnType*: Cursor
@@ -221,6 +226,11 @@ proc constraintToString(c: Cursor): string =
         return typeToString(tv.typ)
   typeToString(c)
 
+proc rejectsProcValueToClosure*(m: Match): bool =
+  ## The match failed only because a proc value, not a routine, would need the
+  ## implicit `toClosure`. `commonType` reports this instead of "type mismatch".
+  m.err and m.error.kind == NotARoutineToClosure
+
 proc getErrorMsg*(m: Match): string =
   case m.error.kind
   of InvalidMatch:
@@ -241,6 +251,9 @@ proc getErrorMsg*(m: Match): string =
     "`.raises` mismatch"
   of ClosureMismatch:
     "`.closure` mismatch"
+  of NotARoutineToClosure:
+    "only a routine converts implicitly to " & typeToString(m.error.expected) &
+      "; wrap the value in a proc literal that calls it"
   of PassiveMismatch:
     "`.passive` mismatch"
   of UnavailableSubtypeRelation:
@@ -1540,11 +1553,32 @@ proc skipRoutinePrefix*(n: var Cursor; kind: TypeKind) =
     skip n # pattern
     skip n # generics
 
+proc isRoutineValue(n: Cursor): bool =
+  ## A routine symbol, a proc literal included (sem turns it into one). A proc
+  ## *value* (a variable, a parameter, a field) has no static routine to give an
+  ## env-taking thunk, so it does not convert implicitly to a closure.
+  var n = n
+  while n.exprKind == ExprX:
+    n = sub(n)
+    while not isLastSon(n): skip n
+  if n.isSymbol:
+    let res = tryLoadSym(n.symId)
+    result = res.status == LacksNothing and res.decl.symKind in RoutineKinds
+  else:
+    result = false
+
 proc procTypeMatch(m: var Match; f, a: var Cursor) =
   ## Matches two routine types structurally. `f` ends up past its whole
   ## type tree (also on the error paths); `a` is left just past its pragmas
   ## slot, still inside its tree — every caller works on a copy of `a`.
+  ## `m.procArg` is set when `a` is the argument's own type, and is taken here
+  ## so that a proc type nested in `a` (a parameter's type) is matched without
+  ## it. Only an argument converts nimcall -> closure: the `(toClosure)` wraps
+  ## the whole argument, so a proc type inside a tuple, array, pointer or
+  ## another proc type is a `.closure` mismatch.
   assert f.typeKind in RoutineTypes
+  let arg = m.procArg
+  m.procArg = default(Cursor)
   let fKind = f.typeKind
   let fIsProctype = fKind in {ProctypeT, ItertypeT}
   let fStart = f
@@ -1612,10 +1646,14 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error CallConvMismatch, f, a
   elif fcc.usesRaises != acc.usesRaises:
     m.error RaisesMismatch, f, a
-  elif (fcc.usesClosure != acc.usesClosure) and (not fcc.usesClosure or acc.cc != Nimcall):
+  elif (fcc.usesClosure != acc.usesClosure) and
+      (not fcc.usesClosure or acc.cc != Nimcall or cursorIsNil(arg)):
     m.error ClosureMismatch, f, a
   elif fcc.usesPassive != acc.usesPassive:
     m.error PassiveMismatch, f, a
+  if not m.err and fcc.usesClosure and not acc.usesClosure and
+      not isRoutineValue(arg):
+    m.error NotARoutineToClosure, fStart, a
   if not m.err and fcc.usesClosure and not acc.usesClosure:
     m.args.addParLe ToClosureX, m.argInfo
     inc m.opened
@@ -1809,6 +1847,7 @@ proc tryMatchProcChoice*(context: ptr SemContext; choice, f: Cursor): SymId =
         if ac.typeKind in RoutineTypes:
           var trial = createMatch(context)
           var fc = f
+          trial.procArg = a
           procTypeMatch(trial, fc, ac)
           if not trial.err:
             result = a.symId
@@ -2515,6 +2554,7 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
           inc m.opened
         skip f
       of RoutineTypes:
+        m.procArg = arg.n
         procTypeMatch m, f, a
       else:
         let chosen =
@@ -3303,6 +3343,10 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
         result = FirstWins
       elif a.staticArgs < b.staticArgs:
         result = SecondWins
+    if result == NobodyWins:
+      # Fewer converted arguments win a tie (nimony-bugs-llms#331).
+      if a.convertedArgs < b.convertedArgs: result = FirstWins
+      elif a.convertedArgs > b.convertedArgs: result = SecondWins
 
 type
   ParamsInfo = object

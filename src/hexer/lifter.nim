@@ -982,8 +982,15 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
       unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
     else:
       let fn = lift(c, parent)
-      # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
-      maybeCallHook c, fn, baseobjOf(c, parent, paramA), parentParamB(c, parent, paramB), forceStatic = true
+      if fn == NoSymId and c.op == attachedDup:
+        # A parent without a hook is copied as a whole; the result's other
+        # parts are set below, its RTTI field last (`unravelDispatch`). Only
+        # `=dup` builds a new value: for `=copy` and `=sink` a whole copy would
+        # also overwrite the destination's RTTI field.
+        genTrivialOp c, baseobjOf(c, parent, paramA), parentParamB(c, parent, paramB)
+      else:
+        # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
+        maybeCallHook c, fn, baseobjOf(c, parent, paramA), parentParamB(c, parent, paramB), forceStatic = true
 
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB, depth
@@ -1255,10 +1262,13 @@ proc depth(s: SymId): int =
     root = r
     inc result
 
-proc setupVTableField(c: var LiftingCtx; param: TokenBuf; cls: SymId) =
+proc setupVTableField(c: var LiftingCtx; param: TokenBuf; cls: SymId; deref = true) =
   copyIntoKind c.dest, AsgnS, c.info:
     copyIntoKind c.dest, DotX, c.info:
-      copyIntoKind c.dest, DerefX, c.info:
+      if deref:
+        copyIntoKind c.dest, DerefX, c.info:
+          copyTree c.dest, param
+      else:
         copyTree c.dest, param
       copyIntoSymUse c.dest, pool.symId(VTableField), c.info
       c.dest.addIntLit(depth(cls), c.info)
@@ -1280,6 +1290,10 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
       elif c.op in {attachedDestroy, attachedTrace}:
         c.routineKind = MethodY
     unravelObj c, typ, paramA, paramB, 0
+    if orig.kind == Symbol and hasRtti(orig.symId) and c.op == attachedDup:
+      # The result's RTTI field is the class's vtable; nothing above leaves
+      # it there.
+      setupVTableField c, paramA, orig.symId, deref = false
   of DistinctT:
     # A `distinct T` shares `T`'s representation, so its hook is `T`'s hook.
     # Use `unravel` (not a recursive `unravelDispatch`) so that a base type
@@ -1458,6 +1472,10 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
               copyTree c.dest, paramTreeA
           copyIntoKind c.dest, SizeofX, c.info:
             c.addParamType typ
+        if (typ.isSymbol or typ.isSymbolDef) and hasRtti(typ.symId):
+          # `wasMoved` also sets the RTTI field, and the `=copy` may dispatch
+          # through it (`=destroy(dest)`):
+          setupVTableField c, paramTreeA, typ.symId, deref = false
         copyIntoKind c.dest, CallX, c.info:
           copyIntoSymUse c.dest, userCopy, c.info
           copyIntoKind c.dest, HaddrX, c.info: # `result` is no `var` parameter

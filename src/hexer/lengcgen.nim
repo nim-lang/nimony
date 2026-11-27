@@ -822,7 +822,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
 
 proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor;
                      forced: bool) =
-  ## `forced`: the routine returns a view of this parameter
+  ## `forced`: the routine returns a location in this parameter
   ## (`firstParamPassedByRef`).
   let param = asLocal(n)
   if param.typ.typeKind in {TypedescT, StaticT}:
@@ -943,7 +943,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.intrinsic = intrinsicOpByName(pool.strings[n.strId], cls)
               result.flags.incl pk
               inc n
-          of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP,
+          of NodeclP, SelectanyP, ThreadvarP, DiscardableP, NoreturnP,
              VarargsP, NoSideEffectP, NodestroyP, LiftedP, BycopyP, ByrefP,
              InlineP, NoinlineP, AlwaysInlineP, NoinitP, InjectP, GensymP, DirtyP,
              UntypedP, ViewP,
@@ -986,6 +986,8 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
           of BuildP, BundleP, CompileP, LinkP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP,
              EnableTraceP:
             bug "unreachable"
+          of GlobalP:
+            bug "`.global` reached lengcgen; xelim moves such a variable to module scope and drops the pragma"
         else:
           error c, "unknown pragma: ", n
   else:
@@ -2027,9 +2029,6 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
     if ThreadvarP in prag.flags:
       setTagAt(dest, toPatch, globalTags.registerTag("tvar"))
       symKind = TvarY
-    elif GlobalP in prag.flags:
-      setTagAt(dest, toPatch, globalTags.registerTag("gvar"))
-      symKind = GvarY
 
     if prag.align != 0:
       dest.addKeyVal genPragmas, "align", prag.align, pinfo
