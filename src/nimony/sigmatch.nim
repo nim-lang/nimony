@@ -95,6 +95,7 @@ type
                     ## routine symbol, does it add the implicit `toClosure`
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
+    convertedArgs*: int ## converter calls the retry inserted; last tiebreaker
     staticArgs: int ## how many arguments went to a `staticParam`; consulted
                     ## only by the `staticOverloads` tiebreaker in `cmpMatches`
     returnType*: Cursor
@@ -3342,6 +3343,10 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
         result = FirstWins
       elif a.staticArgs < b.staticArgs:
         result = SecondWins
+    if result == NobodyWins:
+      # Fewer converted arguments win a tie (nimony-bugs-llms#331).
+      if a.convertedArgs < b.convertedArgs: result = FirstWins
+      elif a.convertedArgs > b.convertedArgs: result = SecondWins
 
 type
   ParamsInfo = object
