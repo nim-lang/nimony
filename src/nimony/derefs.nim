@@ -74,7 +74,9 @@ type
   CurrentRoutine = object
     returnExpects: Expects
     returnType: Cursor  # so `(ret (nil))` knows what the `nil` is
-    firstParamKind: TypeKind
+    firstParamIsCallers: bool ## the first parameter is the caller's storage:
+                              ## `var`/`out`/`lent`, or passed by reference
+                              ## (`firstParamPassedByRef`)
     props: set[RoutineProp]
     firstParam: SymId
     resultSym: SymId
@@ -257,6 +259,15 @@ proc trNil(c: var Context; n: var Cursor; expected: Cursor) =
       c.dest.addParRi()
       skip n
 
+proc firstParamIsCallers(params: Cursor): bool =
+  ## Is the first parameter of a routine with these `(params …)` the caller's
+  ## storage? It is when it is an address (`var`, `out`, `lent`) or passed by
+  ## reference (`firstParamPassedByRef`).
+  var p = params
+  inc p
+  let t = asLocal(p).typ
+  result = t.typeKind in {MutT, OutT, LentT} or firstParamPassedByRef(params)
+
 proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   # --------------------------------------------------------------------------
   # We need to borrow from a location that is derived from the proc's
@@ -299,12 +310,11 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       if n.hasMore:
         var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
         assert fnType.isParamsTag
+        let params = fnType
         inc fnType
         let firstParam = asLocal(fnType)
-        if isParamLike(firstParam.kind):
-          let mightForward = firstParam.typ.typeKind in {MutT, OutT, LentT}
-          if not mightForward:
-            someIndirection = true
+        if isParamLike(firstParam.kind) and not firstParamIsCallers(params):
+          someIndirection = true
         # borrowing only work from first parameters:
         discard "n already at the correct position"
       else:
@@ -318,7 +328,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       # and
       # proc access(x: Table): var int = x[].field[0]
       # and we do not try to hide it!
-      result = c.r.firstParamKind in {MutT, OutT, LentT} or someIndirection
+      result = c.r.firstParamIsCallers or someIndirection
     else:
       result = false
   else:
@@ -731,7 +741,8 @@ proc trProcDecl(c: var Context; n: var Cursor) =
           c.inferredOwnerParam = firstParam.typ
         if isParamLike(firstParam.kind):
           c.r.firstParam = firstParam.name.symId
-          c.r.firstParamKind = firstParam.typ.typeKind
+          # A generic body's borrows are checked in its instances.
+          c.r.firstParamIsCallers = not isGeneric and firstParamIsCallers(n)
         takeTree c.dest, n
       elif i == ProcPragmasPos:
         if isGeneric:

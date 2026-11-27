@@ -822,7 +822,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
 
 proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor;
                      forced: bool) =
-  ## `forced`: the routine returns a view of this parameter
+  ## `forced`: the routine returns a location in this parameter
   ## (`firstParamPassedByRef`).
   let param = asLocal(n)
   if param.typ.typeKind in {TypedescT, StaticT}:

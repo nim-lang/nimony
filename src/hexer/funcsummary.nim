@@ -83,7 +83,10 @@ proc paramMayWrite*(s: FunctionSummary; idx: int): bool {.inline.} =
   ## handed — but a `(constref)` parameter stands for a by-value source
   ## parameter, and the only way to pass it onwards is another by-value
   ## parameter (again `(constref)`) or a copy. Nothing the body does, seen or
-  ## unseen, can turn it into a write. Note this says nothing about the
+  ## unseen, can turn it into a write. A `var T`/`lent T` result can hand a
+  ## location in it back (`firstParamPassedByRef`), but only the caller, which
+  ## owns that storage, writes through it, and that is the result's class
+  ## (`resultCls`), not this call's effect. Note this says nothing about the
   ## pointee: another argument may alias the same object and be written
   ## through, which is why every argument position is asked separately.
   if idx < 0 or idx >= s.params.len: return true

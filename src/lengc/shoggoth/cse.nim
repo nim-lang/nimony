@@ -161,7 +161,9 @@ proc paramMayWrite*(s: FunctionSummary; idx: int): bool {.inline.} =
   ## `constRef` survives `callsUnknown`: that blanket is there because an
   ## unseen callee might write through a pointer it was handed, but a by-value
   ## source parameter can only be passed onwards by value (again `(constref)`)
-  ## or copied. It says nothing about the pointee — another argument may alias
+  ## or copied; a location in it that a `var T`/`lent T` result hands back is
+  ## written by the caller, through the result, not by this call. It says
+  ## nothing about the pointee — another argument may alias
   ## the same object and be written through, which is why callers ask about
   ## every argument position separately. See `hexer/funcsummary`.
   if idx < 0 or idx >= s.params.len: return true

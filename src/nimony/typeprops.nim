@@ -383,26 +383,30 @@ proc isViewType*(n: Cursor): bool =
   typeHasPragma(n, ViewP)
 
 proc firstParamPassedByRef*(params: Cursor): bool =
-  ## A routine whose result is a view (`openArray`, a `.view` object) borrows
-  ## from its first parameter. When that parameter is passed by value the view
-  ## would point into the callee's copy — a short `string` keeps its characters
-  ## inline — and dangle once the callee returns (#2837). So such a parameter is
-  ## passed by reference, exactly as if it were `{.byref.}` (which
-  ## `system.toOpenArray` spells out by hand). `lent T` needs no such
-  ## rule: sem already refuses to borrow a `lent` from a by-value parameter's
-  ## own storage.
+  ## A routine whose result is a `var T`, a `lent T` or a view (`openArray`, a
+  ## `.view` object) hands out a location derived from its first parameter
+  ## ("Var return type" in the spec). When that parameter is passed by value
+  ## the location would be the callee's copy — a short `string` keeps its
+  ## characters inline — and dangle once the callee returns (#2837), and a
+  ## write through a `var T` would never reach the caller. So such a parameter
+  ## is passed by reference, exactly as if it were `{.byref.}` (which
+  ## `system.toOpenArray` spells out by hand). A first parameter of a view
+  ## type keeps the classical by-size passing all value parameters get (#3187);
+  ## so do the other exemptions below, which the view-result rule had first.
   ## `params` is the `(params …)` of a routine or proc type; its return type
-  ## follows it. Every pass that decides how a parameter is passed has to ask
-  ## this, or the callee and its callers disagree on the calling convention.
+  ## follows it. Every pass that decides how a parameter of a call is passed
+  ## has to ask this, or the callee and its callers disagree on the calling
+  ## convention. An inline iterator is no call: `iterinliner` binds its
+  ## parameters itself.
   var ret = params
   skip ret
   var p = params
   p = sub(p)
-  if isViewType(ret) and p.hasMore:
+  if (ret.typeKind in {MutT, LentT} or isViewType(ret)) and p.hasMore:
     let t = takeLocal(p, SkipFinalParRi).typ
     # Nothing to fix for a parameter that already is an address (`var`,
-    # `lent`, `ptr`, `ref`, a view), that the callee owns (`sink`), or that
-    # has no runtime existence.
+    # `lent`, `ptr`, `ref`), that the callee owns (`sink`), that has no
+    # runtime existence, or that is a view.
     result = t.typeKind notin {SinkT, MutT, OutT, LentT, PtrT, RefT, VarargsT,
                                TypekindT, UntypedT, TypedT, TypedescT, StaticT} and
              not isViewType(t)
