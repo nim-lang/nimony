@@ -433,7 +433,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       result = forwardToExecute(c, n, routine, args)
 
 proc signedWidth(c: EvalContext; t: Cursor): int =
-  ## The bit width of the signed integer type `t`: `(i 8)`, or `(i -1)` for
+  ## The bit width of the integer type `t`: `(i 8)`, or `(i -1)` for
   ## `int`, which is as wide as the target's pointer.
   var w = t
   inc w
@@ -453,25 +453,26 @@ template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   var width = 64
   n.into:
     isSigned = n.typeKind == IntT
-    if isSigned: width = signedWidth(c, n)
+    width = signedWidth(c, n)
     skip n, SkipType # type
     a = getConstOrdinalValue propagateError eval(c, n)
     b = getConstOrdinalValue propagateError eval(c, n)
   if not isNaN(a) and not isNaN(b):
-    let rx = opr(a, b)
     var err = false
     if isSigned:
-      let ri = asSigned(rx, err)
+      let ri = asSigned(opr(a, b), err)
       if err or not fitsSigned(ri, width):
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
         result = intValue(c, ri, orig.info)
     else:
-      let ru = asUnsigned(rx, err)
-      if err:
+      let ua = asUnsigned(a, err)
+      let ub = asUnsigned(b, err)
+      if err or (ub == 0'u64 and orig.exprKind in {DivX, ModX}):
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
-        result = uintValue(c, ru, orig.info)
+        # unsigned arithmetic wraps around, as at run time
+        result = uintValue(c, asUnsigned(mask(createXint(opr(ua, ub)), width), err), orig.info)
   else:
     cannotEval orig
 
@@ -511,6 +512,12 @@ template evalSuccPred(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
         result = intValue(c, ri, orig.info)
+    elif base.typeKind == UIntT:
+      let ru = opr(asUnsigned(a, err), asUnsigned(b, err))
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = uintValue(c, asUnsigned(mask(createXint(ru), signedWidth(c, base)), err), orig.info)
     else:
       let ru = asUnsigned(rx, err)
       if err:
