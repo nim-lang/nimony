@@ -1023,6 +1023,13 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   var operand = n
   result = evalImpl(c, operand)
   skip n
+  # `(inf)`, `(neginf)` and `(nan)` are how NIF spells a non-finite float
+  # literal, e.g. in a sub-compile's result; fold them as the float they are.
+  case result.exprKind
+  of InfX: result = floatValue(c, Inf, result.info)
+  of NeginfX: result = floatValue(c, -Inf, result.info)
+  of NanX: result = floatValue(c, NaN, result.info)
+  else: discard
 
 proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
   result = default(Cursor)
