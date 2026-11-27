@@ -174,6 +174,12 @@ proc fromTwos(bits: uint64; signed: bool): xint {.inline.} =
   else:
     xint(neg: false, val: bits)
 
+proc shlWrap*(a: xint, b: int): xint =
+  ## `a shl b` on the 64 bit two's complement pattern: the bits shifted out
+  ## are dropped, not an overflow. `mask` applies the type's width and sign.
+  if a.nan or b < 0 or b >= 64: xint(nan: true)
+  else: xint(nan: false, neg: false, val: toTwos(a) shl b)
+
 # the bitwise ops work on the two's complement pattern, not on sign+magnitude
 proc `and`*(a, b: xint): xint =
   if a.nan or b.nan: xint(nan: true)

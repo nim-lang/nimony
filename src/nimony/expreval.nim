@@ -641,7 +641,9 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
     var operand = asSigned(b, err)
     if err or operand > high(int).int64:
       error "expression overflow at compile time: " & asNimCode(orig), orig.info
-    let rx = mask(opr(a, operand.int), bits, isSigned)
+    # `shl` drops the bits shifted out of the type, as at run time
+    let rx = mask(if orig.exprKind == ShlX: shlWrap(a, operand.int) else: opr(a, operand.int),
+                  bits, isSigned)
     if isSigned:
       let ri = asSigned(rx, err)
       if err:
