@@ -4707,6 +4707,7 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
   if doExpected:
     expected = sub(expected) # skip tag, now at fields
   let named = it.n.substructureKind == KvU
+  var allTypes = not named
   var typ = createTokenBuf(32)
   typ.addParLe(TupleT, it.n.info)
   while it.n.hasMore:
@@ -4742,6 +4743,7 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
     if freshElemType:
       # do not save modifier in tuple type unless it was annotated as such
       removeModifier(elem.typ)
+    allTypes = allTypes and elem.typ.typeKind == TypedescT
     typ.addSubtree elem.typ # type
     if named:
       # should be KvX
@@ -4754,11 +4756,31 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
   dest.addParRi(it.n.endInfo)
   it.n = tupStart; skip it.n
   typ.addParRi()
+  if allTypes:
+    # An unnamed tuple of types denotes a tuple type, as in `(int, float)`
+    var tupleType = createTokenBuf(typ.len)
+    tupleType.addParLe(TupleT, tupStart.info)
+    var field = sub(cursorAt(typ, 0))
+    while field.hasMore:
+      tupleType.addSubtree sub(field)
+      skip field
+    tupleType.addParRi()
+    typ = move(tupleType)
   let typeStart = dest.len
   var t = typ.cursorAt(0)
   semTupleType c, dest, t
   it.typ = typeToCursor(c, dest, typeStart)
   dest.shrink typeStart
+  if allTypes:
+    let tupleType = it.typ
+    dest.shrink exprStart
+    dest.buildTree TypedescT, tupStart.info:
+      dest.addSubtree tupleType
+    it.typ = typeToCursor(c, dest, exprStart)
+    dest.shrink exprStart
+    dest.addSubtree tupleType
+    commonType c, dest, it, exprStart, origExpected
+    return
   dest.insert it.typ, typePos
   # the tupconstr was sealed above; the inserted type grew its contents:
   widenSealed dest, exprStart, subtreeWidth(it.typ)
