@@ -1233,6 +1233,11 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
     # (Araq on llms#175). An override fills a slot that already exists.
     result = "a base method must be declared in the module that declares its class: " &
       typeToString(params)
+  elif dest[beforeGenericParams].substructureKind == TypevarsU and
+      not isGeneric(asTypeDecl(tryLoadSym(root).decl)):
+    # A vtable slot needs code, and a generic method only gets code per
+    # instance of its class's typevars: a concrete class has none.
+    result = "a generic method needs a generic class: " & typeToString(params)
   else:
     let methodIsInstance = dest[beforeGenericParams].kind == TagLit and dest[beforeGenericParams].tagId == TagId(InvokeT)
     var symToRegister = symId

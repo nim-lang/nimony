@@ -2559,6 +2559,18 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
     withNewScope c:
       semStmtBranch c, dest, it, true
     while it.n.hasMore and it.n.substructureKind == ExceptU:
+      var arm = sub(it.n)
+      skip arm # the type
+      skip arm # the body
+      if arm.hasMore:
+        # `except A, B:`: `(except .X X)` has one type slot
+        let armInfo = it.n.info
+        takeInto dest, it.n:
+          buildErr c, dest, armInfo, "an `except` arm takes one type; write one arm per type"
+          while it.n.hasMore: skip it.n
+          dest.addParLe(StmtsS, armInfo)
+          dest.addParRi()
+        continue
       openScope(c)
       takeInto dest, it.n:
         if it.n.isDotToken:
