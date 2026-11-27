@@ -57,7 +57,7 @@ type
     ## Walks the formal parameters of a call's callee in step with its actuals.
     formals: Cursor   ## the formals not consumed yet
     byRefFirst: bool  ## the next formal is the first one and the routine
-                      ## returns a view of it (`firstParamPassedByRef`)
+                      ## returns a location in it (`firstParamPassedByRef`)
 
 proc initArgWalker*(params: Cursor): ArgWalker =
   ## `params` is the `(params …)` of the callee's type. It is only peeked
@@ -80,8 +80,9 @@ proc nextArgRole*(w: var ArgWalker; ptrSize: int; cache: var SizeofCache): ArgRo
   ## parameter from that point on. So the rules live here once: a `varargs`
   ## formal serves every remaining actual and must not be advanced past; a
   ## closure's environment actual has no formal at all; the first parameter of
-  ## a routine returning a view of it arrives by reference; and the const-ref
-  ## question is asked before the compile-time one. What the two walkers *do*
+  ## a routine returning a location in it (`var T`, `lent T`, a view) arrives
+  ## by reference; and the const-ref question is asked before the
+  ## compile-time one. What the two walkers *do*
   ## with a role is where they are allowed to differ.
   if w.formals.hasMore:
     assert w.formals.isTagLit

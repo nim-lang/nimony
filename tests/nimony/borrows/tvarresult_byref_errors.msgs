@@ -1,0 +1,5 @@
+tests/nimony/borrows/tvarresult_byref_errors.nim(8, 47) Error: cannot borrow from a[0]
+tests/nimony/borrows/tvarresult_byref_errors.nim(9, 43) Error: cannot borrow from s[0]
+tests/nimony/borrows/tvarresult_byref_errors.nim(10, 54) Error: cannot borrow from x
+tests/nimony/borrows/tvarresult_byref_errors.nim(12, 7) Error: cannot mutate expression direct(la)
+tests/nimony/borrows/tvarresult_byref_errors.nim(13, 7) Error: cannot mutate expression direct([2])
