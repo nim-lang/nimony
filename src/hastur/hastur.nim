@@ -123,6 +123,13 @@ Commands:
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
                        changes from remote. Optionally creates a new branch.
+  publish_release [version]
+                       tag `master` with the version in `doc/version.md` and
+                       push the tag. Bump and commit `doc/version.md` first;
+                       this only checks it: `major.minor.patch` with an even
+                       `patch` (odd = in development), `major + minor + 2020`
+                       is the current year, newer than every existing tag.
+                       `version`, if given, must match the file.
 
 Arguments are forwarded to the Nimony compiler.
 
@@ -565,6 +572,8 @@ proc handleCmdLine =
     pullpush("pull")
   of "push":
     pullpush("push")
+  of "publishrelease":
+    publishReleaseCmd(if args.len > 0: args[0] else: "")
   else:
     if dirExists(rawPrimary):
       walkCmd(rawPrimary, forward, overwrite)
