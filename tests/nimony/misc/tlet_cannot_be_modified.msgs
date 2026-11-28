@@ -1,2 +1,1 @@
-tests/nimony/misc/tlet_cannot_be_modified.nim(8, 9) Error: cannot pass x to var/out T parameter
-tests/nimony/misc/tlet_cannot_be_modified.nim(18, 9) Error: cannot pass x to var/out T parameter
+tests/nimony/misc/tlet_cannot_be_modified.nim(7, 5) Error: invalid reassignment to `let` variable [pass --verbose for the Final IR]

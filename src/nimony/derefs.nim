@@ -2035,7 +2035,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
     let localInfo = c.typeCache.getLocalInfo(n.symId)
     if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY} and
         IsClosure notin c.r.props:
-      buildLocalErr c.dest, n.info, "cannot access local variable `" & asNimCode(n) & "` from another routine; mark the proc with `.closure`"
+      # The symbol stays in the `(err …)`: the lowering still asks for its
+      # type (`b.f(a)` in a `yield` needs the call's type for a temporary).
+      buildLocalErr c.dest, n.info, "cannot access local variable `" & asNimCode(n) & "` from another routine; mark the proc with `.closure`", n
       skip n
       return
 
