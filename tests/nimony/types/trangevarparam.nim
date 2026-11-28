@@ -40,11 +40,3 @@ setIt(tmp, 7)
 if tmp >= 0: n = tmp
 echo n
 
-template bump(x: var int) = x = x + 1
-template bumpRange(x: var range[0..10]) = x = x + 1
-var t: R = 3
-bump(t)
-echo t
-var s: range[2..5] = 2
-bumpRange(s)
-echo s
