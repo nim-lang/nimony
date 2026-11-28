@@ -1,0 +1,3 @@
+tests/nimony/const/tconstcstringbad.nim(5, 1) Error: Type mismatch at [position]
+takesC s
+[1] expected: cstring not nil but got: string (declared in tests/nimony/const/tconstcstringbad.nim(2, 1))

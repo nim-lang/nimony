@@ -1,0 +1,1 @@
+const Imported* = "imported const"
