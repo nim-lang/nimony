@@ -836,13 +836,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
     case n.substructureKind
     of CaseU:
       # XXX for now counts each case object field as separate
-      if c.op in {attachedCopy, attachedSink}:
-        # TODO: `=copy` needs to be special cased like in Nim
-        var nCopy = n
-        let prevOp = c.op
-        c.op = attachedDestroy
-        unravelObjFieldsForward(c, nCopy, paramA, paramB, depth, onlyFirst = true)
-        c.op = prevOp
+      # (`=copy`/`=sink` of a case object: see `unravelDispatch`)
       let info = n.info
       let caseStart = n
       n = sub(n)
@@ -985,21 +979,14 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
       inc parent
 
   if hasParent and c.op != attachedDestroy:
-    if c.op == attachedWasMoved:
-      # this ensures we don't touch the RTTI field and overwrite it
-      # with the wrong v-table pointer!
+    let fn = if c.op == attachedWasMoved: NoSymId else: lift(c, parent)
+    if fn == NoSymId:
+      # field by field: this ensures we don't touch the RTTI field and overwrite it
+      # with the wrong v-table pointer! (`=dup` sets it last, `unravelDispatch`)
       unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
     else:
-      let fn = lift(c, parent)
-      if fn == NoSymId and c.op == attachedDup:
-        # A parent without a hook is copied as a whole; the result's other
-        # parts are set below, its RTTI field last (`unravelDispatch`). Only
-        # `=dup` builds a new value: for `=copy` and `=sink` a whole copy would
-        # also overwrite the destination's RTTI field.
-        genTrivialOp c, baseobjOf(c, parent, paramA), parentParamB(c, parent, paramB)
-      else:
-        # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
-        maybeCallHook c, fn, baseobjOf(c, parent, paramA), parentParamB(c, parent, paramB), forceStatic = true
+      # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
+      maybeCallHook c, fn, baseobjOf(c, parent, paramA), parentParamB(c, parent, paramB), forceStatic = true
 
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB, depth
@@ -1299,7 +1286,53 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
         setupVTableField c, paramA, orig.symId
       elif c.op in {attachedDestroy, attachedTrace}:
         c.routineKind = MethodY
-    unravelObj c, typ, paramA, paramB, 0
+    var hasCase = false # in the object or a base
+    var o = typ
+    while c.op in {attachedCopy, attachedSink} and not hasCase:
+      inc o # object
+      let parent = o
+      skip o
+      while o.hasMore:
+        hasCase = hasCase or o.substructureKind == CaseU
+        skip o
+      if parent.kind == DotToken: break
+      o = toTypeImpl(if parent.typeKind in {RefT, PtrT}: parent.childCursor else: parent)
+      if o.typeKind in {RefT, PtrT}: inc o
+    if hasCase:
+      # The branch can change, so the fields cannot be lifted one by one.
+      # `=copy` is `=dup` into the moved-from destination (`=wasMoved(dest);
+      # =copy(dest, src)`), `=sink` is `copyMem`; the old value is destroyed
+      # last, as the source may be (part of) it.
+      let old = pool.symId("old.0")
+      var oldTree = createTokenBuf(2)
+      copyIntoSymUse oldTree, old, c.info
+      var a = createTokenBuf(4)
+      copyIntoKind a, HderefX, c.info:
+        copyTree a, paramA
+      copyIntoKind c.dest, VarS, c.info:
+        addSymDef c.dest, old, c.info
+        c.dest.addEmpty2 c.info # not exported, no pragmas
+        copyTree c.dest, orig
+        copyTree c.dest, a
+      let op = c.op
+      c.op = attachedDup
+      if op == attachedCopy: maybeCallHook c, lift(c, orig), a, paramB
+      else: genTrivialOp c, a, paramB
+      if orig.kind == Symbol and hasRtti(orig.symId):
+        # the destination keeps its RTTI field
+        let vt = depth(orig.symId)
+        copyIntoKind c.dest, AsgnS, c.info:
+          for side in 0..1:
+            copyIntoKind c.dest, DotX, c.info:
+              if side == 0: copyTree c.dest, a
+              else: copyTree c.dest, oldTree
+              copyIntoSymUse c.dest, pool.symId(VTableField), c.info
+              c.dest.addIntLit(vt, c.info)
+      c.op = attachedDestroy
+      maybeCallHook c, lift(c, orig), oldTree, paramB, forceStatic = true
+      c.op = op
+    else:
+      unravelObj c, typ, paramA, paramB, 0
     if orig.kind == Symbol and hasRtti(orig.symId) and c.op == attachedDup:
       # The result's RTTI field is the class's vtable; nothing above leaves
       # it there.
