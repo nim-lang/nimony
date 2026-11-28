@@ -2806,7 +2806,13 @@ proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
   else:
     let argTyp = skipModifier(arg.typ)
     var aElem = default(Cursor)
-    if isSomeOpenArrayType(argTyp, aElem):
+    var wholeSlot = isSomeOpenArrayType(argTyp, aElem)
+    if argTyp.typeKind == VarargsT:
+      # a forwarded `varargs[T']` parameter is an `openArray[T']`
+      aElem = argTyp
+      inc aElem
+      wholeSlot = aElem.kind != ParRi
+    if wholeSlot:
       # `openArray[T']` (`Symbol` or `(invoke openArray T')`) — accept
       # when T' matches `elem`, provided no individual elements preceded it
       var fElem = elem
