@@ -93,6 +93,7 @@ import std/osproc
 import std/packedsets
 import std/parfor
 import std/parklocks
+import std/parsecfg
 import std/parsecsv
 import std/parsejson
 import std/parseopt
