@@ -134,6 +134,7 @@ import std/ticketlocks
 import std/times
 import std/tls
 import std/typetraits
+import std/unidecode
 import std/unicode
 import std/uri
 import std/varints
