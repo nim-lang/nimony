@@ -43,7 +43,7 @@ proc takeUnexpectedChild(dest: var TokenBuf; n: var Cursor) =
   dest.takeTree n
 
 proc wrapOneDefer(dest: var TokenBuf; startsAt: int; action: var TokenBuf;
-                  info: NifLineInfo) =
+                  info: NifLineInfo; isExpr: bool) =
   ## Collect-then-wrap: nifcore's sealed model can't insert unbalanced opens,
   ## so instead of splicing `(try (stmts` in at `startsAt` we take the finished
   ## tail `dest[startsAt..]`, drop it, and re-emit it wrapped.
@@ -58,12 +58,14 @@ proc wrapOneDefer(dest: var TokenBuf; startsAt: int; action: var TokenBuf;
   for i in startsAt ..< dest.len: bodyBuf.add dest[i]
   dest.shrink startsAt
   dest.addParLe(TryS, info)
-  dest.addParLe(StmtsS, info)
+  # in an `(expr …)` the tail ends in its value, which the `try` then yields
+  if isExpr: dest.addParLe(ExprX, info)
+  else: dest.addParLe(StmtsS, info)
   var bc = beginRead(bodyBuf)
   while bc.hasMore:
     dest.addSubtree bc
     skip bc
-  dest.addParRi()                     # close the try's stmts
+  dest.addParRi()                     # close the try's body
   dest.addParLe(FinU, info)
   var dc = beginRead(action)
   while dc.hasMore:
@@ -73,17 +75,32 @@ proc wrapOneDefer(dest: var TokenBuf; startsAt: int; action: var TokenBuf;
   dest.addParRi()                     # close (try …)
 
 proc wrapScopeDefers(c: var Context; dest: var TokenBuf; scopeId: int;
-                     info: NifLineInfo) =
+                     info: NifLineInfo; isExpr = false) =
   ## Wrap every `defer` this scope collected. Popping the stack hands them
   ## back last-declared first, which is also innermost first: the last
   ## `defer`'s `try` starts latest and so must be built before the earlier
   ## ones, which then wrap it along with the statements between them.
   while c.actionStack.len > 0 and c.actionStack[^1].id == scopeId:
     var popped = c.actionStack.pop
-    wrapOneDefer(dest, popped.pos, popped.action, info)
+    wrapOneDefer(dest, popped.pos, popped.action, info, isExpr)
+
+proc trScopeBody(c: var Context; dest: var TokenBuf; n: var Cursor; inParen = false) =
+  ## The statements of a scope. A `(;)` is no scope, so the `defer`s of one that
+  ## is the last son belong to this scope: its sons, and those of the `(stmts …)`
+  ## sem groups its statements into, are spliced into it.
+  while n.hasMore:
+    if (n.exprKind == ExprX and isLastSon(n)) or (inParen and n.stmtKind == StmtsS):
+      n.into:
+        trScopeBody c, dest, n, true
+    else:
+      trStmt c, dest, n
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if n.stmtKind notin {ScopeS, StmtsS}:
+  ## Also translates an `(expr …)` that is a scope: the branch of an `if`/`case`/
+  ## `try` expression or a `block` expression's body. A `defer` in it runs when
+  ## it ends, after its value is computed: the wrap turns `(expr a (defer d) b v)`
+  ## into `(expr a (try (expr b v) (fin d)))`, a `try` expression.
+  if n.stmtKind notin {ScopeS, StmtsS} and n.exprKind != ExprX:
     # Sem gives every statement body a `(stmts …)`, so this is the branch of an
     # `if`/`case` expression (`let x = if c: f() else: 2`): a value, not a
     # block. It used to be wrapped into a `(stmts …)` like a statement body,
@@ -94,12 +111,12 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc c.scopeCounter
   let scopeId = c.scopeCounter
   let blockInfo = n.info
+  let isExpr = n.exprKind == ExprX
   c.scopeStack.add scopeId
   dest.addParLe(n.cursorTagId, n.info)
   n.into:
-    while n.hasMore:
-      trStmt c, dest, n
-  wrapScopeDefers(c, dest, scopeId, blockInfo)
+    trScopeBody c, dest, n
+  wrapScopeDefers(c, dest, scopeId, blockInfo, isExpr)
   dest.addParRi()
   discard c.scopeStack.pop
 
