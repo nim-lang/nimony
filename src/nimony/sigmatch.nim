@@ -2460,7 +2460,7 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
         let fStart = f
         f = sub(f)
         expectPtrParRi m, f, fStart
-      elif isStringType(a) and skipExpr(arg.n).isStringLit:
+      elif isStringType(a) and skipConstString(skipExpr(arg.n)).isStringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened

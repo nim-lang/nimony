@@ -1527,6 +1527,7 @@ proc trConv(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   if destType.typeKind == CstringT and isStringType(srcType):
     var lit = n
     if lit.exprKind == SufX: inc lit
+    lit = skipConstString(lit)
     if lit.isStringLit:
       # evaluate the conversion at compile time:
       dest.shrink beforeConv

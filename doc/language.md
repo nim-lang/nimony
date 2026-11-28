@@ -339,6 +339,19 @@ it can be modified:
   s[0] = 'u' # This is ok
   ```
 
+A string literal or a `const` string converts to `cstring` implicitly. The
+conversion happens at compile time, so the `cstring` points to read-only
+memory that lives as long as the program does:
+
+  ```nim
+  const Greeting = "hello"
+  proc puts(s: cstring) {.importc, header: "<stdio.h>".}
+  puts "literal"
+  puts Greeting
+  ```
+
+A `string` held in a `var` or `let` does not convert implicitly.
+
 `cstring` values may also be used in case statements like strings.
 
 
@@ -1127,6 +1140,7 @@ algorithm returns true:
     of cstring, ptr:
       result = b == pointer
     of string:
+      # only for a string literal or a `const` string:
       result = b == cstring
     of proc:
       result = typeEquals(a, b) or compatibleParametersAndEffects(a, b)
