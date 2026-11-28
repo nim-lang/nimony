@@ -587,6 +587,8 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
   commonType c, dest, it, beforeExpr, expected
 
 proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item)
+proc semQualifiedSumTypeConstr(c: var SemContext; dest: var TokenBuf;
+                                it: var Item): bool
 
 proc semObjConstrFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: CallState) =
   it.n = cs.scope; skip it.n
@@ -1513,6 +1515,7 @@ proc hasGenericRoutine(n: Cursor): bool =
 
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall;
               lhsOrig: Cursor = default(Cursor)) =
+  if source == RegularCall and semQualifiedSumTypeConstr(c, dest, it): return
   var cs = CallState(
     beforeCall: dest.len,
     callNode: it.n.load(),

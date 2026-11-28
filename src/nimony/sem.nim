@@ -5384,10 +5384,26 @@ proc inferTypevarFromTypes(formal, actual: Cursor; inferred: var Table[SymId, Cu
       inferTypevarFromTypes(f, a, inferred)
       skip f; skip a
 
+type
+  FieldClash = object
+    ## The first field whose value contradicts a type argument `inferred`
+    ## already held, as the constructor wrote it.
+    found: bool
+    info: NifLineInfo
+    msg: string
+
+proc isNumericLiteral(n: Cursor): bool =
+  n.kind in {IntLit, UIntLit, FloatLit, CharLit}
+
 proc inferFieldTypes(c: var SemContext; args: Cursor;
                       fieldTypesByName: Table[StrId, TypeCursor];
-                      inferred: var Table[SymId, Cursor]) =
+                      inferred: var Table[SymId, Cursor];
+                      clash: var FieldClash) =
   ## Scan KV argument pairs, semcheck values with AutoT, and infer typevars.
+  ## A field typed by a typevar that `inferred` already binds must carry that
+  ## type; the first one that does not is recorded in `clash`. A numeric
+  ## literal takes the type its destination asks for, so it is left to the
+  ## constructor's own check.
   var scan = args
   while scan.hasMore:
     if scan.substructureKind == KvU:
@@ -5396,9 +5412,17 @@ proc inferFieldTypes(c: var SemContext; args: Cursor;
       let fieldName = takeIdent(scan)
       if fieldName != StrId(0) and fieldTypesByName.hasKey(fieldName):
         var valBuf = createTokenBuf(16)
+        let valInfo = scan.info
         var val = Item(n: scan, typ: c.types.autoType)
         semExpr c, valBuf, val
-        inferTypevarFromTypes(fieldTypesByName.getOrQuit(fieldName), val.typ, inferred)
+        let formal = fieldTypesByName.getOrQuit(fieldName)
+        if not clash.found and formal.isSymbol and inferred.hasKey(formal.symId) and
+            val.typ.typeKind != ErrT and val.typ.typeKind != AutoT and not isNumericLiteral(cursorAt(valBuf, 0)):
+          let held = inferred.getOrQuit(formal.symId)
+          if not sameTrees(held, val.typ):
+            clash = FieldClash(found: true, info: valInfo,
+              msg: "type mismatch: got: " & typeToString(val.typ) & " but wanted: " & typeToString(held))
+        inferTypevarFromTypes(formal, val.typ, inferred)
         scan = val.n
       else:
         skip scan
@@ -5452,8 +5476,14 @@ proc fieldTypesByNameFromObj(decl: TypeDecl): Table[StrId, TypeCursor] =
 
 proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
                              efldSym: SymId; args: Cursor;
-                             info: NifLineInfo): TypeCursor =
+                             info: NifLineInfo;
+                             inferred: var Table[SymId, Cursor];
+                             clash: var FieldClash): TypeCursor =
   ## Infer generic type for a sum type constructor like `Some(val: 4)`.
+  ## `inferred` is keyed by the typevars of the sum type's object. It starts
+  ## with the type arguments the constructor wrote (empty when it wrote none),
+  ## which the fields never override, and it ends with what the fields added,
+  ## so a caller can name the parameters that stay open.
   let ownerTypeSym = getAnumOwnerType(efldSym)
   if ownerTypeSym == SymId(0): return default(TypeCursor)
 
@@ -5475,8 +5505,7 @@ proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
   for bf in branchFields:
     fieldTypesByName[symToIdent(bf.sym)] = bf.typ
 
-  var inferred = initTable[SymId, Cursor]()
-  inferFieldTypes(c, args, fieldTypesByName, inferred)
+  inferFieldTypes(c, args, fieldTypesByName, inferred, clash)
   result = buildInferredInvoke(c, ownerTypeSym, objDecl.typevars, inferred, info)
 
 proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
@@ -5485,7 +5514,8 @@ proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
   ## Infer generic type for an object constructor like `Foo(x: 4)`.
   let fieldTypesByName = fieldTypesByNameFromObj(decl)
   var inferred = initTable[SymId, Cursor]()
-  inferFieldTypes(c, args, fieldTypesByName, inferred)
+  var clash = FieldClash()
+  inferFieldTypes(c, args, fieldTypesByName, inferred, clash)
   result = buildInferredInvoke(c, objTypeSym, decl.typevars, inferred, info)
 
 proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
@@ -5506,6 +5536,159 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
     skip it.n
   objBuf.addParRi()
   it.n = oconstrStart; skip it.n
+  var objConstr = Item(n: cursorAt(objBuf, 0), typ: expected)
+  semObjConstr c, dest, objConstr
+  it.typ = objConstr.typ
+
+proc semQualifiedSumTypeConstr(c: var SemContext; dest: var TokenBuf;
+                                it: var Item): bool =
+  ## `T.Branch(field: value, ...)`: a sum type constructor that names its
+  ## type. `T` is the sum type, an alias of it or an instance of it, and may
+  ## write `_` for a type argument the fields determine, as `Ok(v: 5)` does for
+  ## `T` of `Res[T, E]`. Answers false, leaving `it` alone, when the call is
+  ## not that shape, so `x.Ok(...)` stays a call of `Ok`.
+  result = false
+  let callStart = it.n
+  if callStart.exprKind notin {CallX, CmdX, OconstrX}: return
+  let info = callStart.info
+  var fn = sub(callStart)
+  if fn.exprKind != DotX: return
+  var dotParts = sub(fn)
+  let lhsStart = dotParts
+  skip dotParts
+  if not dotParts.isIdent: return
+  let branchName = dotParts.strId
+  if findOneofEfld(c, branchName) == SymId(0): return
+  var args = fn
+  skip args
+
+  var head = lhsStart
+  var typeArgs = default(Cursor)
+  var hasTypeArgs = false
+  if lhsStart.exprKind == AtX:
+    head = sub(lhsStart)
+    typeArgs = head
+    skip typeArgs
+    hasTypeArgs = true
+  var headBuf = createTokenBuf(4)
+  var headItem = Item(n: head, typ: c.types.autoType)
+  semExpr c, headBuf, headItem, {KeepMagics, AllowUndeclared, AllowOverloads, AllowModuleSym}
+  if headItem.kind != TypeY: return
+
+  result = true
+  it.n = callStart
+  skip it.n
+  it.typ = c.types.autoType
+
+  # `_` is only meaningful here, so the type arguments are read by hand:
+  var wildcards = false
+  if hasTypeArgs:
+    var scan = typeArgs
+    while scan.hasMore:
+      if scan.isIdent and pool.strings[scan.strId] == "_": wildcards = true
+      skip scan
+
+  var typeBuf = createTokenBuf(16)
+  var written = default(TypeCursor)
+  if wildcards:
+    let headType = cursorAt(headBuf, 0)
+    if not headType.isSymbol:
+      c.buildErr dest, info, "expected a sum type before `_` type arguments"
+      return
+    written = headType
+  else:
+    var whole = lhsStart
+    written = semLocalType(c, typeBuf, whole)
+    if written.typeKind == ErrT:
+      dest.addSubtree written
+      return
+  let sumInfo = findSumTypeInfo(written)
+  if not sumInfo.valid:
+    c.buildErr dest, info, "`" & pool.strings[branchName] & "` is a branch of a sum type, but the type before the dot is not one"
+    return
+  let efldSym = findOneofEfld(c, branchName, sumInfo.discrimType.symId)
+  if efldSym == SymId(0):
+    c.buildErr dest, info, "undeclared sum type branch: " & pool.strings[branchName]
+    return
+
+  var kvBuf = createTokenBuf(16)
+  kvBuf.addParLe(OconstrX, info)
+  kvBuf.addIdent(branchName, info)
+  while args.hasMore:
+    let orig = args
+    if orig.substructureKind notin {KvU, VvU}:
+      c.buildErr dest, orig.info, "sum type constructor requires named arguments"
+      return
+    var scan = orig
+    inc scan
+    kvBuf.addParLe(KvU, orig.info)
+    kvBuf.addSubtree scan
+    skip scan
+    kvBuf.addSubtree scan
+    kvBuf.addParRi()
+    skip args
+  kvBuf.addParRi()
+
+  var expected = written
+  if wildcards:
+    let objDecl = sumTypeObjDecl(sumInfo.objTypeSym)
+    if objDecl.kind != TypeY:
+      c.buildErr dest, info, "expected a generic sum type before `_` type arguments"
+      return
+    var inferred = initTable[SymId, Cursor]()
+    var tv = objDecl.typevars
+    tv = sub(tv)
+    var given = typeArgs
+    while tv.hasMore:
+      if not given.hasMore:
+        c.buildErr dest, info, "too few type arguments for the sum type of branch `" & pool.strings[branchName] & "`"
+        return
+      if given.isIdent and pool.strings[given.strId] == "_":
+        skip given
+      else:
+        var argBuf = createTokenBuf(8)
+        let argType = semLocalType(c, argBuf, given)
+        if argType.typeKind == ErrT:
+          dest.addSubtree argType
+          return
+        inferred[asLocal(tv).name.symId] = typeToCursor(c, argBuf, 0)
+      skip tv
+    if given.hasMore:
+      c.buildErr dest, info, "too many type arguments for the sum type of branch `" & pool.strings[branchName] & "`"
+      return
+    var fields = sub(cursorAt(kvBuf, 0))
+    skip fields # the branch name
+    var clash = FieldClash()
+    expected = inferSumTypeFromFields(c, dest, efldSym, fields, info, inferred, clash)
+    if expected == default(TypeCursor):
+      if clash.found:
+        c.buildErr dest, clash.info, clash.msg
+        return
+      var tv = objDecl.typevars
+      tv = sub(tv)
+      while tv.hasMore:
+        let tvSym = asLocal(tv).name.symId
+        if not inferred.hasKey(tvSym):
+          c.buildErr dest, info, "cannot infer type parameter '" & asNimSym(tvSym) &
+            "' of the sum type of branch `" & pool.strings[branchName] & "`; write it instead of `_`"
+          return
+        skip tv
+      c.buildErr dest, info, "cannot infer generic type for sum type constructor"
+      return
+
+  var objBuf = createTokenBuf(32)
+  objBuf.addParLe(OconstrX, info)
+  objBuf.addSubtree expected
+  objBuf.addParLe(KvU, info)
+  objBuf.addIdent(pool.strings.getOrIncl("`kind"), info)
+  objBuf.addSymUse(efldSym, info)
+  objBuf.addParRi()
+  var fields = sub(cursorAt(kvBuf, 0))
+  skip fields
+  while fields.hasMore:
+    objBuf.addSubtree fields
+    skip fields
+  objBuf.addParRi()
   var objConstr = Item(n: cursorAt(objBuf, 0), typ: expected)
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
@@ -5571,6 +5754,7 @@ proc ownedAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): Ty
   result = typeToCursor(c, buf, 0)
 
 proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
+  if semQualifiedSumTypeConstr(c, dest, it): return
   let exprStart = dest.len
   let expected = it.typ
   let info = it.n.info
@@ -5585,7 +5769,9 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
           # Try to infer generic type parameters from field values:
           let savedN = it.n
           inc it.n # skip constructor name ident
-          inferredExpected = inferSumTypeFromFields(c, dest, efldSym, it.n, info)
+          var written = initTable[SymId, Cursor]()
+          var clash = FieldClash()
+          inferredExpected = inferSumTypeFromFields(c, dest, efldSym, it.n, info, written, clash)
           it.n = savedN # restore cursor for semSumTypeObjConstr
           if inferredExpected == default(TypeCursor):
             c.buildErr dest, info, "cannot infer generic type for sum type constructor"
