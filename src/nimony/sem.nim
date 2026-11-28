@@ -1002,7 +1002,7 @@ proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # also skips to type body for symbols:
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
-  if dest[beforeArg].exprKind == ErrX:
+  if dest[beforeArg].exprKind == ErrX or destType.typeKind == ErrT:
     # already produced an error, continue with the destination type:
     it.typ = destType
   elif sameTrees(destBase, srcBase):
@@ -1779,7 +1779,12 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: NifLineInfo
           dest.addParRi()
     elif res.status == LacksNothing:
       let typ = asTypeDecl(res.decl)
-      if isGeneric(typ) or isNominal(typ.body.typeKind):
+      if isGeneric(typ) and context notin {InInvokeHead, InGenericConstraint, InTypeSection, InTypeValue}:
+        # `Base` for `Base[T]` is not a concrete type; a constraint (`[T: Base]`),
+        # an alias (`type B = Base`) or a `typedesc` value may name the generic
+        dest.shrink start
+        c.buildErr dest, info, "generic type '" & pool.symBasename(s.name) & "' needs type arguments"
+      elif isGeneric(typ) or isNominal(typ.body.typeKind):
         # types that should stay as symbols, see sigmatch.matchSymbol
         # but see if it triggers a module plugin:
         let p = extractPragma(typ.pragmas, PluginP)
@@ -2150,7 +2155,7 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
     dest.buildTree TypedescT, info:
       let symStart = dest.len
       dest.addSymUse(s.name, info)
-      semTypeSym c, dest, s, info, symStart, InLocalDecl
+      semTypeSym c, dest, s, info, symStart, InTypeValue
     it.typ = typeToCursor(c, dest, typeStart)
     dest.shrink typeStart
     commonType c, dest, it, start, expected
@@ -5594,7 +5599,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
             return
         semSumTypeObjConstr(c, dest, it, efldSym, inferredExpected, info, oconstrStart)
         return
-  it.typ = semLocalType(c, dest, it.n)
+  it.typ = semLocalType(c, dest, it.n, InInvokeHead) # `Pair(first: 1)` infers `Pair`'s arguments
   if it.typ.typeKind == ErrT:
     # the type's own error, already in `dest`, is the diagnostic
     while it.n.hasMore: skip it.n
