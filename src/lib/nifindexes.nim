@@ -174,10 +174,6 @@ proc createIndex*(infile: string; root: NifLineInfo; buildChecksum: bool; sectio
 proc createIndex*(infile: string; buildChecksum: bool; root: NifLineInfo) {.canRaise.} =
   createIndex(infile, root, buildChecksum, IndexSections())
 
-proc writeFileAndIndex*(outfile: string; content: TokenBuf) {.canRaise.} =
-  vfsWrite(outfile, toString(content, true))
-  var c = cursorAt(cast[ptr TokenBuf](unsafeAddr content)[], 0)
-  createIndex(outfile, true, c.info)
 type
   IndexVisibility* = enum
     Hidden, Exported

@@ -439,7 +439,8 @@ proc incrementalTests*() =
   # stdlib failed every evaluation ("cannot evaluate expression at compile
   # time") until the nimcache was wiped. The program now imports it, so it is
   # rebuilt when stale like every other module; a second evaluation with an
-  # edited bound must not be answered from the first one's memo.
+  # edited bound must not be answered from the first one's memo, nor an
+  # evaluation whose routine's body was edited from the old program's build.
   let evalSrc = "tests/incremental/evaldep.nim"
   let evalCache = "nimcache" / "incremental-eval"
   if fileExists(evalSrc):
@@ -457,11 +458,20 @@ proc incrementalTests*() =
         failures.add label & ": compile failed: " & output.strip.splitLines[^1]
     block:
       if runEval("eval-cold"):
-        expect evalOutput.contains("head-0123"), "eval-cold: expected 'head-0123'"
+        expect evalOutput.contains("head-0123") and evalOutput.contains("width-3"),
+               "eval-cold: expected 'head-0123' and 'width-3'"
+        # Only the body of `width` changes, not the text of `width()`, so
+        # only the program's content says it is a different program. Right
+        # after the cold build: the program's own build has just written its
+        # outputs, which an early index once made look newer than the edit.
+        writeFile(evalSrc, originalEval.replace("width(): int = 3", "width(): int = 4"))
+        if runEval("eval-body-edited"):
+          expect evalOutput.contains("width-4"),
+                 "eval-body-edited: kept the value of `width` before its edit"
         writeFile(evalSrc, originalEval.replace("0 ..< 4", "0 ..< 5"))
         if runEval("eval-edited"):
-          expect evalOutput.contains("head-01234"),
-                 "eval-edited: expected 'head-01234'"
+          expect evalOutput.contains("head-01234") and evalOutput.contains("width-3"),
+                 "eval-edited: expected 'head-01234' and 'width-3'"
     writeFile(evalSrc, originalEval)
 
   # Phase 13: `isMainModule` is folded by sem, so a module's `.s.nif` depends
