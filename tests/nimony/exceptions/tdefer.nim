@@ -95,3 +95,37 @@ proc deferInDefer() =
     echo "body"
 
 deferInDefer()
+
+# a `defer` in an expression's branch: the branch is a scope, its `defer` runs
+# when the branch ends, after the branch's value has been computed
+proc deferInExprBranch(v: int) =
+  var x = 1
+  let a = if v > 0:
+      defer:
+        x = 5
+        echo "leaving branch"
+      x
+    else:
+      0
+  echo a, " ", x
+
+deferInExprBranch(1)
+
+# `(;)` is no scope: its `defer` runs when the enclosing scope exits. Here that
+# scope is the branch or the block, which ends right after the `(;)`
+proc deferInStmtListExpr(v: int) =
+  let a = if v > 0:
+      (echo "s"; defer: echo "d"; v)
+    else:
+      0
+  echo "after ", a
+  let b = if v > 0:
+      (echo "p"; defer: echo "d"; echo "y"; v)
+    else:
+      0
+  echo "after ", b
+  let c = block:
+    (echo "p"; defer: echo "d"; echo "y"; v + 1)
+  echo "after ", c
+
+deferInStmtListExpr(2)

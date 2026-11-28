@@ -633,8 +633,11 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
      InternalFieldPairsX:
     discard "keep the error type"
   of ErrX:
-    # determining the type of `(err)` is not an error by itself:
-    result = n
+    # determining the type of `(err)` is not an error by itself. A symbol the
+    # error is about keeps its type, so passes after the error still type the
+    # expression around it (see derefs).
+    let orig = n.childCursor
+    result = if orig.kind == Symbol: getTypeImpl(c, orig, flags) else: n
   of AddrX, HaddrX:
     let elemType = getTypeImpl(c, n.childCursor, flags)
     var buf = createTokenBuf(4)

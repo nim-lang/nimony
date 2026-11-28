@@ -735,13 +735,10 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         let isGeneric = c.substructureKind == TypevarsU
         for i in 3..<BodyPos:
           takeTree(dest, c)
-        let oldTmpId = e.tmpId
-        e.tmpId = 0
         if isGeneric:
           takeTree(dest, c)
         else:
           transformStmt(e, dest, c)
-        e.tmpId = oldTmpId
     of VarS, LetS, CursorS, PatternvarS, ResultS:
       # We transform `var x {.cursor.} = y` into `cursor x = y` here because
       # this is the first step of the backend pipeline.

@@ -1255,17 +1255,26 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       if tryTypeClass(c, dest, n):
         return
       let tk = typeKind(n)
-      dest.addParLe(n.cursorTagId, n.info)
+      let isTypeForm = tk in {ProctypeT, ItertypeT}
+      # A routine declaration in a type slot (`seq[typeof(cl)]` for
+      # `let cl = proc ...`) stands for its type: write that type, as
+      # `semExprSym` does for a routine symbol, so checking it again is a no-op.
+      if isTypeForm: dest.addParLe(n.cursorTagId, n.info)
+      elif tk == IteratorT and hasPragma(asRoutine(n).pragmas, ClosureP):
+        dest.addParLe(ItertypeT, n.info)
+      else: dest.addParLe(ProctypeT, n.info)
       let routineStart = n
       n = sub(n)
       # Type-form routine literals: `(proctype <NilTag> (params...) T ...)` and
       # `(itertype <NilTag> (params...) T ...)`. Both have the same canonical
       # head — a nilability tag in slot 0 — so the canonicalisation logic
-      # below treats them uniformly. `(proc ...)`/`(iterator ...)` decls (kept
-      # as 4-leading-dot legacy headers) take the `else` branch.
-      let isTypeForm = tk in {ProctypeT, ItertypeT}
+      # below treats them uniformly. `(proc ...)`/`(iterator ...)` decls take
+      # the `else` branch: their name, header slots and body are dropped.
       let nilTagPos = dest.len
       var sourceIsNewLayout = false
+      let defaultMark =
+        if LenientNilsFeature notin c.features: NotnilU
+        else: UncheckedU
       if isTypeForm:
         # Detect input layout: nifler's source-form has 4 leading `.` slots
         # (name/export/pattern/generics) before `(params...)`. Sem may also
@@ -1280,9 +1289,6 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         # Slot 0 carries the nilability tag. Default to notnil (or unchecked
         # in lenientnils mode); patched to `nil` below if the source carries
         # a trailing nil suffix.
-        let defaultMark =
-          if LenientNilsFeature notin c.features: NotnilU
-          else: UncheckedU
         if sourceIsNewLayout:
           if n.isDotToken:
             dest.addParPair defaultMark, info
@@ -1294,16 +1300,8 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
           for _ in 0..3:
             if n.isDotToken: inc n
       else:
-        # ProcT/IteratorT decls from semProcImpl carry a SymbolDef for the name
-        # slot, not a DotToken. Skip it and emit a placeholder DotToken.
-        if n.isSymbolDef:
-          dest.addDotToken()
-          inc n
-        else:
-          wantDot c, dest, n # name
-        wantDot c, dest, n # export marker
-        wantDot c, dest, n # pattern
-        wantDot c, dest, n # generics
+        dest.addParPair defaultMark, info
+        for _ in 0..3: skip n # name, export marker, pattern, generics
       let beforeParams = dest.len
       c.openScope()
       semParams c, dest, n
@@ -1333,15 +1331,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         if n.isDotToken: inc n
         if n.isDotToken: inc n
       elif not isTypeForm:
-        var n2 = n
-        skip n2 # exceptions dot
-        if n2.hasMore: skip n2 # body dot
-        hasNilSuffix = n2.exprKind == NilX
-        wantDot c, dest, n # exceptions
-        if not n.hasMore:
-          dest.addDotToken()
-        else:
-          skip n # body
+        while n.hasMore: skip n # exceptions, body
       # close it here so that pragmas like `requires` can refer to the params:
       c.closeScope()
       if hasNilSuffix:

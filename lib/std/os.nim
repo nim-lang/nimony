@@ -409,14 +409,14 @@ func match(pattern, name: string): bool =
   var star = -1
   var mark = 0
   while n < name.len:
-    if p < pattern.len and
-        (pattern[p] == '?' or charsEqual(pattern[p], name[n])):
-      inc p
-      inc n
-    elif p < pattern.len and pattern[p] == '*':
+    if p < pattern.len and pattern[p] == '*':
       star = p
       mark = n
       inc p
+    elif p < pattern.len and
+        (pattern[p] == '?' or charsEqual(pattern[p], name[n])):
+      inc p
+      inc n
     elif star >= 0:
       p = star + 1
       inc mark
@@ -452,7 +452,12 @@ iterator walkFiles*(pattern: string): string {.sideEffect.} =
         if name.len > 0 and name[0] == '.' and filePattern[0] != '.':
           continue
       if e.kind in {pcFile, pcLinkToFile} and match(filePattern, name):
-        let full = if dir.len == 0: name else: joinPath(dir, name)
+        # On POSIX `..` follows symlinks, so keep the pattern's directory
+        # verbatim; Win32 folds `..` lexically itself.
+        when defined(windows):
+          let full = if dir.len == 0: name else: joinPath(dir, name)
+        else:
+          let full = pattern.substr(0, pattern.len - filePattern.len - 1) & name
         if fileExists(full):
           yield full
   finally:

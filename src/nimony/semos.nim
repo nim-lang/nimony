@@ -798,7 +798,7 @@ proc ensurePlugin(config: NifConfig; nf, exefile: string) =
   vfsRemoveTree scratch & "_d"
   vfsRemoveTree scratch & "_v"
 
-proc writeFileIfChanged(file, content: string) {.canRaise.} =
+proc writeFileIfChanged*(file, content: string) {.canRaise.} =
   if os.fileExists(file) and readFile(file) == content:
     # do not touch the timestamp
     discard "nothing to do here"
@@ -1130,7 +1130,11 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
   let progfile = evalCache / srcName.addFileExt(".p.nif")
   try:
     createDir(path(evalCache))
-    writeFileAndIndex(progfile, src)
+    # The program is the input of its build's nimsem node, and that node
+    # writes its `.s.idx.nif`; an index written here would be an output newer
+    # than this input, and the edited program would never be checked again.
+    # Unchanged, it keeps its mtime, so its build has nothing to redo.
+    writeFileIfChanged(progfile, toString(src, true))
 
     # Write the .p.deps.nif file so that `nimony s` can find the imports:
     # the module's own and `std/writenif`, which the program reports its

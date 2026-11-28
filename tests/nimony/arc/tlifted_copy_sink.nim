@@ -10,6 +10,10 @@ type
     value: int
   HookedBox = object
     inner: Hooked
+  Plain = object of RootObj
+    x: int
+  PlainDerived = object of Plain
+    s: string
 
 proc `=copy`(dest: var Hooked; src: Hooked) =
   dest.value = src.value + 1
@@ -59,7 +63,18 @@ proc checkCustomHooks() =
   `=wasMoved`(moved)
   assert dest.inner.value == 22
 
+proc checkPlainParent() =
+  let src = PlainDerived(x: 42, s: "a string long enough to require heap storage")
+  var dest = PlainDerived(x: 1, s: "old")
+  `=copy`(dest, src)
+  assert dest.x == 42 and dest.s == src.s
+  var moved = PlainDerived(x: 43, s: "moved")
+  `=sink`(dest, moved)
+  `=wasMoved`(moved)
+  assert dest.x == 43 and dest.s == "moved"
+
 checkObjects()
+checkPlainParent()
 checkArrays()
 checkTuples()
 checkCustomHooks()

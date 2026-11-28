@@ -21,3 +21,14 @@ let values = (17, 23)
 let named = (first: 17, second: 23)
 assert values[0] == 17 and values[1] == 23
 assert named.first == 17 and named.second == 23
+
+# a template's value may be a type expression
+template pairType(): untyped = (int, int)
+template arrayType(): untyped = array[2, int]
+template namedType(): untyped = tuple[a, b: int]
+template pairDesc(): typedesc = (int, int8)
+template unusedPair(): untyped = (int, float)
+assert sizeof(pairType()) == 2 * sizeof(int)
+assert sizeof(arrayType()) == 2 * sizeof(int)
+assert sizeof(namedType()) == 2 * sizeof(int)
+assert sizePair(pairDesc()) == sizeof(int) + 1

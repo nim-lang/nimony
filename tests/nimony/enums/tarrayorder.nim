@@ -15,3 +15,5 @@ let Lookuptable3 = [
   1: "1",
   5: "2"
 ]
+# a `block` key of a declared range index type is order-checked too
+let Lookuptable4: array[0..1, string] = [(block: 1): "1", 0: "2"]

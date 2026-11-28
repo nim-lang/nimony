@@ -69,3 +69,48 @@ proc ownAndOuter() =
   visit(7)
   echo a
 ownAndOuter()
+
+proc iterInstances() =
+  # each instance of a `.closure` iterator has its own environment
+  var fs: seq[proc (): int {.closure.}] = @[]
+  iterator gen(x: int): int {.closure.} =
+    var mine = x
+    fs.add(proc (): int {.closure.} = mine)
+    yield 0
+  let a = gen
+  for _ in a(1): discard
+  let b = gen
+  for _ in b(2): discard
+  echo fs[0](), " ", fs[1]()
+iterInstances()
+
+proc iterInterleaved() =
+  # the instances run interleaved, each closure keeps its own instance's local
+  var fs: seq[proc (): int {.closure.}] = @[]
+  iterator gen(x: int): int {.closure.} =
+    var mine = x
+    fs.add(proc (): int {.closure.} = mine)
+    yield mine
+    mine = mine * 10
+    yield mine
+  let a = gen
+  let b = gen
+  for v in a(1):
+    echo "a ", v
+    for w in b(2):
+      echo "b ", w, " / ", fs[0](), " ", fs[fs.len-1]()
+  echo fs.len
+  for f in fs: echo f()
+iterInterleaved()
+
+proc iterParamInstances() =
+  var fs: seq[proc (): int {.closure.}] = @[]
+  iterator gen(x: int): int {.closure.} =
+    fs.add(proc (): int {.closure.} = x)
+    yield 0
+  let a = gen
+  let b = gen
+  for _ in a(1): discard
+  for _ in b(2): discard
+  echo fs[0](), " ", fs[1]()
+iterParamInstances()

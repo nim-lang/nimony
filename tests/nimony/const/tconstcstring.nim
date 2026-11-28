@@ -23,3 +23,14 @@ let x: cstring = Greeting
 show x
 proc wrap(s: cstring): cstring = s
 show wrap(Imported)
+
+proc generic[T](x: T) =
+  const Local = "generic local"
+  show Greeting
+  show Local
+  show cstring(Alias)
+generic(1)
+
+proc withDefault(s: cstring = Combined) = show s
+withDefault()
+show cstring(Greeting)

@@ -35,3 +35,10 @@ var
   ]
 echo Lookuptable3[E3.value1]
 echo Lookuptable3[E3.value2]
+
+# a key that is a `block` expression gives the start index like a literal one
+const FromBlock = [(block: 1): "a", 2: "b"]
+echo FromBlock[1], FromBlock[2]
+
+template keyed(k: untyped): untyped = [k: "c", k+1: "d"]
+echo keyed(0)[1]

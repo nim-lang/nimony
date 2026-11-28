@@ -433,7 +433,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       result = forwardToExecute(c, n, routine, args)
 
 proc signedWidth(c: EvalContext; t: Cursor): int =
-  ## The bit width of the signed integer type `t`: `(i 8)`, or `(i -1)` for
+  ## The bit width of the integer type `t`: `(i 8)`, or `(i -1)` for
   ## `int`, which is as wide as the target's pointer.
   var w = t
   inc w
@@ -453,25 +453,26 @@ template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   var width = 64
   n.into:
     isSigned = n.typeKind == IntT
-    if isSigned: width = signedWidth(c, n)
+    width = signedWidth(c, n)
     skip n, SkipType # type
     a = getConstOrdinalValue propagateError eval(c, n)
     b = getConstOrdinalValue propagateError eval(c, n)
   if not isNaN(a) and not isNaN(b):
-    let rx = opr(a, b)
     var err = false
     if isSigned:
-      let ri = asSigned(rx, err)
+      let ri = asSigned(opr(a, b), err)
       if err or not fitsSigned(ri, width):
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
         result = intValue(c, ri, orig.info)
     else:
-      let ru = asUnsigned(rx, err)
-      if err:
+      let ua = asUnsigned(a, err)
+      let ub = asUnsigned(b, err)
+      if err or (ub == 0'u64 and orig.exprKind in {DivX, ModX}):
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
-        result = uintValue(c, ru, orig.info)
+        # unsigned arithmetic wraps around, as at run time
+        result = uintValue(c, asUnsigned(mask(createXint(opr(ua, ub)), width), err), orig.info)
   else:
     cannotEval orig
 
@@ -511,6 +512,12 @@ template evalSuccPred(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
         result = intValue(c, ri, orig.info)
+    elif base.typeKind == UIntT:
+      let ru = opr(asUnsigned(a, err), asUnsigned(b, err))
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = uintValue(c, asUnsigned(mask(createXint(ru), signedWidth(c, base)), err), orig.info)
     else:
       let ru = asUnsigned(rx, err)
       if err:
@@ -634,7 +641,9 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
     var operand = asSigned(b, err)
     if err or operand > high(int).int64:
       error "expression overflow at compile time: " & asNimCode(orig), orig.info
-    let rx = mask(opr(a, operand.int), bits, isSigned)
+    # `shl` drops the bits shifted out of the type, as at run time
+    let rx = mask(if orig.exprKind == ShlX: shlWrap(a, operand.int) else: opr(a, operand.int),
+                  bits, isSigned)
     if isSigned:
       let ri = asSigned(rx, err)
       if err:
@@ -1014,6 +1023,13 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   var operand = n
   result = evalImpl(c, operand)
   skip n
+  # `(inf)`, `(neginf)` and `(nan)` are how NIF spells a non-finite float
+  # literal, e.g. in a sub-compile's result; fold them as the float they are.
+  case result.exprKind
+  of InfX: result = floatValue(c, Inf, result.info)
+  of NeginfX: result = floatValue(c, -Inf, result.info)
+  of NanX: result = floatValue(c, NaN, result.info)
+  else: discard
 
 proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
   result = default(Cursor)

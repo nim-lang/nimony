@@ -89,6 +89,7 @@ type
     when defined(windows):
       wimpl: WIN32_FIND_DATA
       handle: Handle
+      pending: bool # `wimpl` holds FindFirstFileW's entry, not yet reported
     else:
       stream: DirStream
     dir: Path
@@ -104,6 +105,7 @@ proc tryOpenDir*(dir: sink Path): DirWalker =
       result.status = windowsToErrorCode getLastError()
     else:
       result.status = Success
+      result.pending = true
   else:
     var dirStr = $result.dir
     let r = openDirStream(result.stream, dirStr.toCString)
@@ -163,7 +165,8 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry; skipSpecial = false): bool =
   ## `pcFile`. Windows has none.
   when defined(windows):
     while w.status == Success:
-      if findNextFileW(w.handle, w.wimpl) != 0'i32:
+      if w.pending or findNextFileW(w.handle, w.wimpl) != 0'i32:
+        w.pending = false
         if skipFindData(w.wimpl):
           discard "skip entry"
         else:

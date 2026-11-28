@@ -17,7 +17,7 @@ import ".." / lib / nifreader
 from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
 import nimony_model, decls, programs
-from semos import shellArgs, nativeHostArgs
+from semos import shellArgs, nativeHostArgs, writeFileIfChanged
 from ".." / lengc / mangler import mangleToC
 
 type
@@ -321,7 +321,8 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
 
   var buf = buildPluginNif(macroDecl, macroSym, info)
   try:
-    writeFileAndIndex(progfile, buf)
+    # as in `semos.runEval`: no index, which is an output of the plugin's sem
+    writeFileIfChanged(progfile, toString(buf, true))
   except:
     echo "Macro plugin: failed to write ", progfile
     return ""

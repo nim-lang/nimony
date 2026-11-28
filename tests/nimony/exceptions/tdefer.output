@@ -16,3 +16,16 @@ outer defer
 body
 nested
 outer
+leaving branch
+1 5
+s
+d
+after 2
+p
+y
+d
+after 2
+p
+y
+d
+after 3

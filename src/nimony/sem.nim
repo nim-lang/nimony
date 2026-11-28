@@ -907,11 +907,11 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
   let srcBase = skipDistinct(srcType, isDistinct)
 
   if destBase.typeKind == CstringT and isStringType(srcBase):
-    if isStringLiteral(arg.n):
+    if isStringLiteral(skipConstString(arg.n)):
       discard "ok"
       dest.addSubtree arg.n
     else:
-      c.buildErr dest, info, "Only string literals can be converted to cstring. Use `toCString` for safe conversion."
+      c.buildErr dest, info, "Only string literals and const strings can be converted to cstring. Use `toCString` for safe conversion."
   elif (skipRangeBase(destBase).typeKind in IntegralTypes and
         skipRangeBase(srcBase).typeKind in IntegralTypes) or
      (destBase.isSomeStringType and srcBase.isSomeStringType) or
@@ -4387,7 +4387,13 @@ proc semArrayConstrElem(c: var SemContext, dest: var TokenBuf, elem: var Item, i
       semExpr c, keyBuf, key
       if arrCtx.firstKeyType.typeKind == AutoT:
         arrCtx.firstKeyType = key.typ
-      let val = evalOrdinal(c, cursorAt(keyBuf, 0))
+      # with the expected type the evaluator can run a `block` key
+      var keyExpr = cursorAt(keyBuf, 0)
+      var valBuf = evalExpr(c, keyExpr, key.typ)
+      var v = cursorAt(valBuf, 0)
+      if v.exprKind == ConvX: # a value of a range type: `(conv T x)`
+        inc v; skip v
+      let val = getConstOrdinalValue(v)
       if not isNaN(val):
         if not arrCtx.hasFirstIdx:
           arrCtx.firstIdx = val
@@ -4679,8 +4685,9 @@ proc semSuf(c: var SemContext; dest: var TokenBuf, it: var Item) =
   semExpr c, dest, num
   it.n = num.n
   if it.n.kind != StrLit:
+    dest.shrink exprStart
     c.buildErr dest, it.n.info, "string literal expected for suf"
-    skip it.n
+    it.n = sufStart; skip it.n
     return
   let expected = it.typ
   case pool.strings[it.n.strId]
@@ -4700,7 +4707,12 @@ proc semSuf(c: var SemContext; dest: var TokenBuf, it: var Item) =
   of "R", "T": it.typ = c.types.stringType
   of "C": it.typ = c.types.cstringType
   else:
+    # the whole `suf` node becomes the error: a `suf` whose suffix is an
+    # `err` node is read back (e.g. by overload resolution) and crashes
+    dest.shrink exprStart
     c.buildErr dest, it.n.info, "unknown suffix: " & pool.strings[it.n.strId]
+    it.n = sufStart; skip it.n
+    return
   takeTree dest, it.n # suffix
   dest.addParRi(it.n.endInfo) # right paren
   it.n = sufStart; skip it.n
