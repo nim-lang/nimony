@@ -143,5 +143,7 @@ import std/websocket
 import std/widestrs
 import std/wordwrap
 import std/writenif
+import std/xmlparser
+import std/xmltree
 
 echo "ok"
