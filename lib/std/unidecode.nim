@@ -1,0 +1,69 @@
+#
+#
+#            Nim's Runtime Library
+#        (c) Copyright 2012 Andreas Rumpf
+#
+#    See the file "copying.txt", included in this
+#    distribution, for details about the copyright.
+#
+
+## This module is based on Python's [Unidecode](https://pypi.org/project/Unidecode/)
+## module by Tomaz Solc, which in turn is based on the
+## [Text::Unidecode](https://metacpan.org/pod/Text::Unidecode)
+## Perl module by Sean M. Burke.
+##
+## It provides a `unidecode proc <#unidecode,string>`_ that does
+## Unicode to ASCII transliterations: It finds the sequence of ASCII characters
+## that is the closest approximation to the Unicode string.
+##
+## For example, the closest to string "Äußerst" in ASCII is "Ausserst". Some
+## information is lost in this transformation, of course, since several Unicode
+## strings can be transformed to the same ASCII representation. So this is a
+## strictly one-way transformation. However, a human reader will probably
+## still be able to guess from the context, what the original string was.
+##
+## This module needs the data file `unidecode.dat` to work: This file is
+## embedded as a resource into your application by default. You can also
+## define the symbol `--define:noUnidecodeTable` during compile time and
+## use the `loadUnidecodeTable proc <#loadUnidecodeTable>`_ to initialize
+## this module.
+
+import std/[assertions, syncio, unicode]
+
+when not defined(noUnidecodeTable):
+  import std/strutils
+
+  const unidecodeData = slurp("unidecode/unidecode.dat")
+  let translationTable = splitLines(unidecodeData)
+else:
+  # `loadUnidecodeTable` writes this once before any reader starts; the table
+  # is read-only afterwards, so the shared-global check is too strict here.
+  {.feature: "assumeSync".}
+  var translationTable: seq[string]
+
+proc loadUnidecodeTable*(datafile = "unidecode.dat") =
+  ## Loads the datafile that `unidecode <#unidecode,string>`_ needs to work.
+  ## This is only required if the module was compiled with the
+  ## `--define:noUnidecodeTable` switch. This needs to be called by the
+  ## main thread before any thread can make a call to `unidecode`.
+  when defined(noUnidecodeTable):
+    newSeq(translationTable, 0xffff)
+    var i = 0
+    for line in lines(datafile):
+      translationTable[i] = line
+      inc(i)
+
+proc unidecode*(s: string): string =
+  ## Finds the sequence of ASCII characters that is the closest approximation
+  ## to the UTF-8 string `s`.
+  runnableExamples:
+    assert unidecode("北京") == "Bei Jing "
+    assert unidecode("Äußerst") == "Ausserst"
+
+  result = ""
+  for r in runes(s):
+    let c = int(r)
+    if c <= 127:
+      result.add(chr(c and 0x7F))
+    elif c < translationTable.len:
+      result.add(translationTable[c - 128])
