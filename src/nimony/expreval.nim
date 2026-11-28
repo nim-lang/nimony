@@ -1494,18 +1494,24 @@ proc rangesContain*(ranges: Cursor; value: xint; bits: int): bool =
         result = not v.isNaN and v == value
       skip n
 
+const MaxConstChain = 64 ## hops `skipConstString` follows before it gives up
+
 proc skipConstString*(n: Cursor): Cursor =
   ## Follows `const` symbols, `const b = a` chains included, to the string
   ## literal they stand for. Anything else is returned unchanged. A `const`
   ## string is a compile-time string just like a literal, so it converts to
   ## `cstring` the same way (#3216).
+  ##
+  ## Sem rejects a cyclic `const`, but the chain is bounded anyway: a longer
+  ## one ends on a symbol, which is not a literal, so nothing converts.
   result = n
-  while result.kind == Symbol:
+  for _ in 0 ..< MaxConstChain:
+    if result.kind != Symbol: return
     let res = tryLoadSym(result.symId)
-    if res.status != LacksNothing: break
+    if res.status != LacksNothing: return
     let local = asLocal(res.decl)
     if local.kind != ConstY or not (local.val.isStringLit or local.val.kind == Symbol):
-      break
+      return
     result = local.val
 
 proc getConstStringValue*(val: Cursor): StrId =
