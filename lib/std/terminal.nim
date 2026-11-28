@@ -98,13 +98,13 @@ proc ansiBackgroundColorCode*(bg: BackgroundColor; bright = false): string =
 proc ansiForegroundColorCode*(color: Color): string =
   ## The escape sequence that sets the foreground to the true color `color`:
   ## `\e[38;2;R;G;Bm`.
-  let rgb = extractRGB(color)
+  let rgb = extractRgb(color)
   result = fgPrefix & $rgb.r & ";" & $rgb.g & ";" & $rgb.b & "m"
 
 proc ansiBackgroundColorCode*(color: Color): string =
   ## The escape sequence that sets the background to the true color `color`:
   ## `\e[48;2;R;G;Bm`.
-  let rgb = extractRGB(color)
+  let rgb = extractRgb(color)
   result = bgPrefix & $rgb.r & ";" & $rgb.g & ";" & $rgb.b & "m"
 
 proc resetAttributes*(f: File) =
