@@ -1,0 +1,5 @@
+libfoo.so
+libfoo.1.so
+libfoo.2.so
+missing symbol raised IOError
+dynlib ok

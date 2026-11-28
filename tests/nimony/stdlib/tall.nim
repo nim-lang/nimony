@@ -51,6 +51,7 @@ import std/cstrutils
 import std/deques
 import std/dirs
 import std/dns
+import std/dynlib
 import std/editdistance
 import std/encodings
 import std/endians
