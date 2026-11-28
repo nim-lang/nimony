@@ -1505,8 +1505,9 @@ proc skipConstString*(n: Cursor): Cursor =
   ## Sem rejects a cyclic `const`, but the chain is bounded anyway: a longer
   ## one ends on a symbol, which is not a literal, so nothing converts.
   result = n
-  for _ in 0 ..< MaxConstChain:
-    if result.kind != Symbol: return
+  var fuel = MaxConstChain
+  while fuel > 0 and result.kind == Symbol:
+    dec fuel
     let res = tryLoadSym(result.symId)
     if res.status != LacksNothing: return
     let local = asLocal(res.decl)
