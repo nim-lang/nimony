@@ -907,11 +907,11 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
   let srcBase = skipDistinct(srcType, isDistinct)
 
   if destBase.typeKind == CstringT and isStringType(srcBase):
-    if isStringLiteral(arg.n):
+    if isStringLiteral(skipConstString(arg.n)):
       discard "ok"
       dest.addSubtree arg.n
     else:
-      c.buildErr dest, info, "Only string literals can be converted to cstring. Use `toCString` for safe conversion."
+      c.buildErr dest, info, "Only string literals and const strings can be converted to cstring. Use `toCString` for safe conversion."
   elif (skipRangeBase(destBase).typeKind in IntegralTypes and
         skipRangeBase(srcBase).typeKind in IntegralTypes) or
      (destBase.isSomeStringType and srcBase.isSomeStringType) or
