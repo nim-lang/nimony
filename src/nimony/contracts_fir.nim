@@ -172,6 +172,8 @@ type
                                        # moved-from memory, so a `notnil` field
                                        # may legitimately be set to `nil` there.
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
+    lentTemps: seq[SymId]              # inline `lent` temps not read yet: their
+                                       # call still borrows its first argument
     aliased: HashSet[SymId]            # locals of the routine whose address is
                                        # taken or that a nested routine names:
                                        # shared (`collectAliased`)
@@ -658,13 +660,27 @@ proc overlaps(c: var FirContext; a: Cursor; followA: bool;
     x = nextSelector(c, x.childCursor, followA)
     y = nextSelector(c, y.childCursor, followB)
 
+proc readsInlineTemp(c: var FirContext; n: Cursor): bool =
+  ## Is the location `n` read through a hoisted call's temp? Sinking it copies.
+  result = false
+  var r = n
+  while not cursorIsNil(r):
+    if r.isSymbol and r.symId in c.p.inlineVars: return true
+    r = locInner(c, r, false)
+
 proc checkBorrowConflict(c: var FirContext; mut: Cursor; info: NifLineInfo;
-                         action = "mutated") =
+                         action = "mutated"; lentTemps: openArray[SymId] = []) =
   var conflict = false
   for b in c.p.flow.borrows:
     if overlaps(c, mut, true, b.loc, true):
       conflict = true
       break
+  if not readsInlineTemp(c, mut):
+    for t in lentTemps:
+      let init = c.p.inlineVars.getOrQuit(t)
+      if overlaps(c, mut, true, init, true):
+        conflict = true
+        break
   if conflict:
     buildErr c, info, "'" & asNimCode(locRootSym(c, mut)) & "' is borrowed and cannot be " & action
 
@@ -4275,7 +4291,20 @@ proc hasCastAssumeSync(pragmas: Cursor): bool =
           skip inner
     skip n
 
+proc readTemps(c: var FirContext; n: Cursor) =
+  ## `n` was analysed: the `lent` temps it names have been read, also where the
+  ## analysis skips a subtree (constructor elements, `incl`).
+  if n.isSymbol:
+    let i = c.p.lentTemps.find(n.symId)
+    if i >= 0: c.p.lentTemps.del i
+  elif n.isTagLit:
+    var r = sub(n)
+    while r.hasMore:
+      readTemps c, r
+      skip r
+
 proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
+  let start = pc
   case pc.kind
   of Symbol:
     checkSharedAccess c, pc
@@ -4353,6 +4382,7 @@ proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
         traverseExpr c, pc, call
   else:
     inc pc  # ParRi/close (classic) or stray suffix (nifcore)
+  if c.p.lentTemps.len > 0: readTemps c, start
 
 type
   ArgMode = enum
@@ -4500,6 +4530,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   var mutatedRoots: seq[SymId] = @[]
   var viewRoots: seq[SymId] = @[]
   var mutatesUnknown = false
+  var heldTemps: seq[SymId] = @[] # `lent` temps an earlier argument passes on
   while n.hasMore:
     if not fnType.hasMore:
       # All formal params consumed but args remain (e.g. varargs that were
@@ -4518,6 +4549,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
     modes.add(if passedByPointer(c, param, byRefFirst): amByPointer else: amByValue)
     byRefFirst = false
     let pk = param.typ.typeKind
+    # A copy (a `sink` or plain-data parameter) does not keep the borrow.
+    if modes[^1] == amByPointer and extractSymId(n) in c.p.lentTemps:
+      heldTemps.add extractSymId(n)
     # Save arg info before traverseExpr advances n
     let isMut = n.exprKind == HaddrX
     # Validate borrowable path for haddr arguments (call-scoped borrows)
@@ -4574,8 +4608,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
       else:
         mutatesUnknown = true
     elif pk == SinkT and borrowMode(c, n).isTracked:
-      # The callee may free what it is given, like an assignment to `n` would.
-      checkBorrowConflict(c, n, n.info, "passed to a 'sink' parameter")
+      # The callee may free what it is given, like an assignment to `n` would,
+      # under a borrow or a `lent` temp not read yet or passed on before.
+      checkBorrowConflict(c, n, n.info, "passed to a 'sink' parameter", heldTemps & c.p.lentTemps)
     checkNilMatch c, n, param.typ
     # Binding an argument to a `range[lo..hi]` parameter is the same narrowing
     # as an assignment to one; the callee is proven from the declared type, so
@@ -6236,6 +6271,10 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     c.p.resultSym = name
   if isInline:
     c.p.inlineVars[name] = n
+    # `comb(takeLent(x), keep(x))`: the hoisted `lent` call borrows `x` until
+    # its temp is read, after `keep` took `x`.
+    if localType.typeKind == LentT and borrowMode(c, n).isTracked:
+      c.p.lentTemps.add name
   # Detect borrow: (haddr X) as init expression starts a borrow.
   # Validate that the path is borrowable (no deref in the middle, no calls).
   # Explicit `addr` in the path is an escape hatch ("unchecked").
@@ -6505,6 +6544,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## statement starts it afresh.
   if n.finalIrKind != UnknownV:
     call = freshCall()
+  let start = n
   # See `stmtContext`: a statement from another file is expanded code, and
   # naming it would send the reader to a template body in the stdlib.
   if n.info.isValid and (cursorIsNil(c.p.currentProcStart) or
@@ -6667,6 +6707,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     else:
       # Unknown statement - skip it wholesale
       skip n
+  if c.p.lentTemps.len > 0: readTemps c, start
 
 proc traverseToplevel(c: var FirContext; n: var Cursor) =
   var call = freshCall()

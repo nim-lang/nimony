@@ -12,6 +12,8 @@ type
   Lexer = object
     pos: int
     errors: seq[string]
+  R = object
+    id: int
 
 proc take(a: var int, b: int) =
   a = b
@@ -29,6 +31,25 @@ proc forwarded(L: var Lexer) =
   # `L` is forwarded as is (#2766); `L.pos` is an `int` copy
   error L, L.pos, "x"
 
+proc `=destroy`(x: R) = discard
+proc `=wasMoved`(x: var R) = x.id = 0
+proc takeLent(x: var R): lent R = x
+proc keep(x: sink R): R = x
+proc eat2(a: sink R; b: sink R): int = a.id + b.id
+proc lentId(x: var R): lent int = x.id
+proc fi(a: int; b: sink R): int = a + b.id
+
+proc copiedOut =
+  # The `lent` result is copied into the seq: `x` may be sunk afterwards.
+  var x = R(id: 1)
+  let s = @[takeLent(x)]
+  assert keep(x).id + s[0].id == 2
+  # A `sink` or plain-data parameter gets a copy of the borrow, not the borrow.
+  var y = R(id: 2)
+  assert eat2(takeLent(y), y) == 4
+  var z = R(id: 3)
+  assert fi(lentId(z), z) == 6
+
 proc run =
   var a = 5
   take(a, a)
@@ -41,3 +62,4 @@ proc run =
   assert a == 5 and o.x == 3 and s.len == 4 and L.errors.len == 1
 
 run()
+copiedOut()
