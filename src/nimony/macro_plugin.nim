@@ -18,6 +18,7 @@ from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
 import nimony_model, decls, programs
 from semos import shellArgs, nativeHostArgs, writeFileIfChanged
+from ".." / lengc / mangler import mangleToC
 
 type
   MacroPlugin* = object
@@ -263,18 +264,13 @@ proc buildPluginNif*(macroDecl: Cursor; macroSym: SymId;
 
 proc macroFileStem(macroSym: SymId): string =
   ## `macro_<sym>` with the symbol's full NIF name (module suffix included),
-  ## made file-name safe. The name, not the `SymId` number: that is an index
-  ## into one process's pool, so two nimsem processes of the same build (one
-  ## per module, run side by side by `nifmake -j`) hand out the same numbers,
-  ## and every file named after one was shared between unrelated macros —
-  ## their plugin builds clobbered each other's host caches.
-  let symName = pool.symString(macroSym)
-  result = "macro_"
-  for ch in symName:
-    if ch in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
-      result.add ch
-    else:
-      result.add '_'
+  ## mangled like a C identifier. The name, not the `SymId` number: that is an
+  ## index into one process's pool, so two nimsem processes of the same build
+  ## (one per module, run side by side by `nifmake -j`) hand out the same
+  ## numbers, and every file named after one was shared between unrelated
+  ## macros — their plugin builds clobbered each other's host caches. The
+  ## mangling must be injective: `->` and `=>` must not share a stem (#3232).
+  result = "macro_" & mangleToC(pool.symString(macroSym))
 
 proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
   result = nifcachePath / macroFileStem(macroSym)

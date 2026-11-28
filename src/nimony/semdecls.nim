@@ -4,43 +4,36 @@ const LocalSigKinds = {LetY, VarY, GletY, GvarY, TletY, TvarY}
   ## let/var-family locals that get a signature-phase pass at toplevel
   ## (explicit-type only). See `localSigGuard` / nim-lang/nimony#1974.
 
-proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
-  ## Check if two routine declarations have compatible signatures.
-  ## Compares NIF tokens directly, mapping symbols back to identifiers.
-  if not forwardDecl.isTagLit or not implDecl.isTagLit:
-    return false
-  let fwd = asRoutine(forwardDecl)
-  let impl = asRoutine(implDecl)
-  # Compare generic params (typevars)
-  if not sameTreesButIgnoreSymIds(fwd.typevars, impl.typevars):
-    return false
-  # Compare params
-  if not sameTreesButIgnoreSymIds(fwd.params, impl.params):
-    return false
-  # Compare return type
-  if not sameTreesButIgnoreSymIds(fwd.retType, impl.retType):
-    return false
-  return true
+proc writtenSignature(n: Cursor): TokenBuf =
+  ## The generic params, params and return type of a routine as written in
+  ## the source. `n` is the routine's input positioned at its generic params.
+  ## Forward declarations are matched with their implementations by these
+  ## tokens, not by the types they denote: `MyInt` and `int` differ even
+  ## when `MyInt = int`. See doc/language.md, "Forward declarations".
+  result = createTokenBuf(32)
+  var n = n
+  result.addParLe(StmtsS, n.info)
+  for i in 0..2:
+    result.takeTree n
+  result.addParRi()
 
-proc addForwardDecl*(c: var SemContext; symId: SymId) =
+proc addForwardDecl(c: var SemContext; symId: SymId; info: NifLineInfo; signature: sink TokenBuf) =
   ## Register a forward declaration candidate.
-  let lit = symToIdent(symId)
-  c.forwardDecls.mgetOrPut(lit, @[]).add symId
+  c.forwardDeclsByName.mgetOrPut(symToIdent(symId), @[]).add c.forwardDecls.len
+  # `currentScope` is the routine's parameter scope here
+  c.forwardDecls.add ForwardDecl(sym: symId, info: info, scope: c.currentScope.up,
+                                 signature: signature)
 
-proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor): SymId =
-  ## Find a forward declaration with matching signature.
-  ## Only checks the forwardDecls set, not the full scope.
+proc findMatchingForwardDecl(c: var SemContext; symId: SymId; signature: Cursor): SymId =
+  ## Find the forward declaration of `symId` in the same scope written with
+  ## the same tokens.
   result = NoSymId
-  let lit = symToIdent(symId)
-  let candidates = c.forwardDecls.getOrDefault(lit)
-  for fwdSym in candidates:
-    if fwdSym == symId:
-      continue  # skip self
-    let res = tryLoadSym(fwdSym)
-    if res.status == LacksNothing:
-      if signaturesMatch(res.decl, implDecl):
-        result = fwdSym
-        return
+  for i in c.forwardDeclsByName.getOrDefault(symToIdent(symId)):
+    let fwd = c.forwardDecls[i].sym
+    if fwd != symId and fwd notin c.matchedForwardDecls and
+        c.forwardDecls[i].scope == c.currentScope.up and
+        sameTreesButIgnoreSymIds(readonlyCursorAt(c.forwardDecls[i].signature, 0), signature):
+      return fwd
 
 proc nextSibling(n: Cursor): Cursor {.inline.} =
   result = n
@@ -1267,16 +1260,30 @@ proc hookThatShouldBeMethod(c: var SemContext; dest: var TokenBuf; hk: HookKind;
   else:
     result = false
 
-proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart: int;
-                               symId: SymId; crucial: CrucialPragma; hasBody: bool) =
+proc needsImplementation(kind: SymKind; crucial: CrucialPragma): bool =
+  ## Is a routine without a body a forward declaration, whose implementation
+  ## must follow in the same module? Not when it is provided elsewhere
+  ## (foreign code, a magic, an intrinsic, a plugin) or there is none by
+  ## design (`.error`, `.borrow`).
+  kind in {ProcY, FuncY, IteratorY, ConverterY, MethodY} and
+    crucial.magic.len == 0 and
+    {ImportcP, ImportcppP, ImportjsP, ErrorP, BorrowP, PluginP,
+     IntrinsicP, InstructionP} * crucial.flags == {}
+
+proc handleForwardDeclarations(c: var SemContext; inputSignature: Cursor; info: NifLineInfo;
+                               symId: SymId; kind: SymKind; crucial: CrucialPragma; hasBody: bool) =
   ## Handle forward declaration registration and matching during signature checking.
   ## On a successful match, the forward decl's `SymId` is added to
   ## `c.matchedForwardDecls`; `writeOutput` later strips its `(proc ...)`
   ## subtree from `dest` so it does not leak into the module's export index.
+  ## A forward decl that is never matched is reported by
+  ## `checkForwardDeclsImplemented`.
   if hasBody:
     # This is an implementation - look for matching forward declaration
-    let implCursor = cursorAt(dest, declStart)
-    let fwdDecl = findMatchingForwardDecl(c, symId, implCursor)
+    var fwdDecl = NoSymId
+    if c.forwardDeclsByName.hasKey(symToIdent(symId)):
+      var signature = writtenSignature(inputSignature)
+      fwdDecl = findMatchingForwardDecl(c, symId, beginRead(signature))
     if fwdDecl != NoSymId:
       # Remove the forward declaration from prog.mem and scope
       if prog.mem.hasKey(fwdDecl):
@@ -1291,9 +1298,9 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
       # we cannot splice now without invalidating positions other callers
       # are still holding (e.g. the impl's own `declStart`).
       c.matchedForwardDecls.incl fwdDecl
-  elif {ImportcP, ImportcppP, ImportjsP} * crucial.flags == {}:
+  elif needsImplementation(kind, crucial):
     # This is a forward declaration - register it as a candidate
-    addForwardDecl(c, symId)
+    addForwardDecl(c, symId, info, writtenSignature(inputSignature))
 
 proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
                        symId: SymId; declStart, beforeExportMarker, beforeGenericParams, beforeParams: int;
@@ -1535,6 +1542,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     try:
       c.openScope() # open parameter scope
       let beforeGenericParams = dest.len
+      let inputSignature = it.n
       semGenericParams c, dest, it.n
       if c.visOwner.len == outerVisOwner:
         # Not a generic instantiation (`semGenericParams` pushes ORIGIN's module
@@ -1617,9 +1625,11 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         buildErr c, dest, it.n.info, "`effects` must be empty"
         skip it.n
 
-      # Forward declaration handling in signature checking phase:
-      if pass == checkSignatures:
-        handleForwardDeclarations(c, dest, declStart, symId, crucial, hasBody = not it.n.isDotToken)
+      # Forward declarations: a toplevel routine is declared in the signature
+      # phase, a nested one in the body phase. `OkNew` is its first sem.
+      if status == OkNew and pass in {checkSignatures, checkBody}:
+        handleForwardDeclarations(c, inputSignature, info, symId, kind, crucial,
+                                  hasBody = not it.n.isDotToken)
 
       publishSignature dest, symId, declStart
       if c.routine.inGeneric > 0:

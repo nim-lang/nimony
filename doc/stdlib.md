@@ -233,6 +233,9 @@ available.
 
 - `open` returns bool**, not a File — check it. The `File` is an
   out-parameter.
+- A `File` closes itself when the last reference to it goes, writing out
+  what is buffered first. `close` can be used to close it explicitly, and
+  calling it again does nothing.
 - `readLine(f, s)` returns `false` at EOF. Use it in a `while` loop.
 - `readLine(f)` returns the line without its line ending and raises
   `EndOfStreamError` at EOF.

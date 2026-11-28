@@ -1170,9 +1170,9 @@ proc semIs*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
     if it.n.exprKind == TupconstrX:
       it.n.peekInto:
-        rhs = semLocalType(c, dest, it.n)
+        rhs = semLocalType(c, dest, it.n, InGenericConstraint)
     else:
-      rhs = semLocalType(c, dest, it.n)
+      rhs = semLocalType(c, dest, it.n, InGenericConstraint) # a type class, as a constraint
   dest.shrink beforeExpr # delete LHS and RHS
   if containsGenericParams(lhs.typ) or containsGenericParams(rhs):
     # Keep the unpreprocessed operand expressions so template/generic

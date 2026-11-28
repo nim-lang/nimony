@@ -2289,6 +2289,38 @@ Calling a proc can be done in many ways:
 A proc may call itself recursively.
 
 
+### Forward declarations
+
+A routine can be used before the point where it is declared, so mutually
+recursive routines need no extra declaration. Forward declarations, a
+routine declared without a body (`proc p(x: int): int`) and implemented later
+in the same module, are supported **only for backwards compatibility** with
+existing Nim code. New code should not use them.
+
+A forward declaration must eventually be implemented: a forward declaration
+that has no implementation in the same module is a compile-time error.
+This does not apply to routines that have no body by design, such as
+`importc`, `importcpp`, `importjs`, `magic`, `error`, `borrow` or `plugin`
+routines.
+
+A forward declaration and its implementation are matched by **tokens**, not
+by types: the generic parameters, the parameters (including their names and
+default values) and the return type must be written with the same tokens.
+Pragmas need not be repeated. It is not possible to obfuscate a forward
+declaration by spelling a type through an alias in one place and not in the
+other:
+
+  ```nim
+  type MyInt = int
+
+  proc p(x: MyInt): int
+  proc p(x: int): int = x + 1  # not the implementation of the forward
+                               # declaration above, but a new overload
+
+  # Error: forward declaration of 'p' has no implementation
+  ```
+
+
 ## Operators
 
 Operators are routines with a special operator symbol as identifier:

@@ -546,6 +546,19 @@ proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
       endRead(r)
 
+proc checkForwardDeclsImplemented(c: var SemContext; dest: var TokenBuf) =
+  ## Every forward declaration needs an implementation in the same module.
+  ## Matching is by tokens (see `writtenSignature`), so a forward decl that
+  ## spells a type differently from its implementation ends up here too.
+  var missing: seq[(SymId, NifLineInfo)] = @[]
+  for fwd in c.forwardDecls:
+    if fwd.sym notin c.matchedForwardDecls:
+      missing.add (fwd.sym, fwd.info)
+  for (sym, info) in missing:
+    c.buildErr dest, info, "forward declaration of '" & pool.symBasename(sym) &
+      "' has no implementation; an implementation matches only if it spells " &
+      "the generic parameters, parameters and return type with the same tokens"
+
 proc checkDestroysHaveWasMoved(c: var SemContext; dest: var TokenBuf) =
   ## A written `=destroy` frees what `=wasMoved` must then forget, and the
   ## field-wise zeroing cannot know what `=destroy` checks. Only hooks written
@@ -635,6 +648,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor; firstRound:
   # the next round check them as written code (nim-lang/nimony#3105).
   if not c.hasPendingPlugins:
     instantiateRequests c, dest
+    checkForwardDeclsImplemented c, dest
     checkDestroysHaveWasMoved c, dest
   dest.addParRi()
   dbgCheckSeals(dest, "phase3")
@@ -726,6 +740,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     dest.addParRi()
 
   instantiateRequests c, dest
+  checkForwardDeclsImplemented c, dest
   checkDestroysHaveWasMoved c, dest
   dest.addParRi()
 

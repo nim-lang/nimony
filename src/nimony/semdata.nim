@@ -82,7 +82,8 @@ type
 
   TypeDeclContext* = enum
     InLocalDecl, InTypeSection, InReturnTypeDecl, AllowValues,
-    InGenericConstraint, InInvokeHead
+    InGenericConstraint, InInvokeHead,
+    InTypeValue ## a type name used as an expression: a `typedesc` value
 
   CrucialPragma* = object
     ## Pragma summary collected while sem-checking a routine/type's pragmas.
@@ -103,6 +104,15 @@ type
     defineKey*: string  ## `{.intdefine: "custom.key".}`: the command-line key to
                         ## read the constant's value from. Empty means the
                         ## constant's own name, which is the common case.
+
+  ForwardDecl* = object
+    ## A routine declared without a body, waiting for its implementation.
+    sym*: SymId
+    info*: NifLineInfo
+    scope*: Scope ## where it is declared; only an implementation in the
+      ## same scope matches it
+    signature*: TokenBuf ## generic params, params and return type as written
+      ## in the source, before sem: forward decls are matched by tokens
 
   ImportedModule* = object
     path*: string
@@ -329,7 +339,8 @@ type
     importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
-    forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
+    forwardDecls*: seq[ForwardDecl] ## forward declaration candidates, in source order
+    forwardDeclsByName*: Table[StrId, seq[int]] ## indexes into `forwardDecls`
     compiledMacros*: Table[SymId, string] # mapping macro SymId to compiled plugin path
     matchedForwardDecls*: HashSet[SymId] ## Forward decls whose matching
       ## implementation has been seen. The proc-decl tokens are still in

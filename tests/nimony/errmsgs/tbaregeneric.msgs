@@ -1,0 +1,13 @@
+tests/nimony/errmsgs/tbaregeneric.nim(5, 17) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(6, 21) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(10, 15) Error: generic type 'N' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(12, 8) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(14, 8) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(16, 11) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(17, 5) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(18, 21) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(19, 15) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(22, 14) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(23, 16) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(23, 26) Error: generic type 'Base' needs type arguments
+tests/nimony/errmsgs/tbaregeneric.nim(15, 13) Error: generic type 'Base' needs type arguments
