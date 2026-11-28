@@ -1,0 +1,3 @@
+tests/nimony/borrows/tlent_call_sink_errors.nim(20, 34) Error: 'x' is borrowed and cannot be passed to a 'sink' parameter [pass --verbose for the Final IR]
+tests/nimony/borrows/tlent_call_sink_errors.nim(21, 33) Error: 'x' is borrowed and cannot be passed to a 'sink' parameter [pass --verbose for the Final IR]
+tests/nimony/borrows/tlent_call_sink_errors.nim(22, 21) Error: 'x' is borrowed and cannot be passed to a 'sink' parameter [pass --verbose for the Final IR]
