@@ -41,6 +41,18 @@ proc main {.raises.} =
   assert collect(baseStr / "sub").len == 0
   assert collect(baseStr / "missing" / "*.txt").len == 0
 
+  when not defined(windows):
+    # a `*` in a file name is matched by a `*` in the pattern
+    let star = baseStr / "star"
+    createDir(path(star))
+    writeFile(star / "*x.txt", "")
+    writeFile(star / "a*b.txt", "")
+    writeFile(star / "a.txt", "")
+    assert sorted(collect(star / "*.txt")) ==
+      @[star / "*x.txt", star / "a*b.txt", star / "a.txt"]
+    assert sorted(collect(star / "a*.txt")) ==
+      @[star / "a*b.txt", star / "a.txt"]
+
   removeDir(base)
   echo "walkFiles: ok"
 

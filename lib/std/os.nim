@@ -409,14 +409,14 @@ func match(pattern, name: string): bool =
   var star = -1
   var mark = 0
   while n < name.len:
-    if p < pattern.len and
-        (pattern[p] == '?' or charsEqual(pattern[p], name[n])):
-      inc p
-      inc n
-    elif p < pattern.len and pattern[p] == '*':
+    if p < pattern.len and pattern[p] == '*':
       star = p
       mark = n
       inc p
+    elif p < pattern.len and
+        (pattern[p] == '?' or charsEqual(pattern[p], name[n])):
+      inc p
+      inc n
     elif star >= 0:
       p = star + 1
       inc mark
