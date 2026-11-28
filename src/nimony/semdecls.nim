@@ -4,23 +4,82 @@ const LocalSigKinds = {LetY, VarY, GletY, GvarY, TletY, TvarY}
   ## let/var-family locals that get a signature-phase pass at toplevel
   ## (explicit-type only). See `localSigGuard` / nim-lang/nimony#1974.
 
+proc isTypeAttribute(n: Cursor): bool {.inline.} =
+  ## The importc/header attributes an inlined alias such as `cint` carries in
+  ## its type body: bookkeeping, not part of the type's identity (as in
+  ## `sigmatch`).
+  n.isTagLit and n.pragmaKind in {ImportcP, ImportcppP, HeaderP}
+
+proc sameSignatureSym(a, b: SymId; typevars: seq[(SymId, SymId)]): bool =
+  ## The forward declaration's typevars correspond to the implementation's by
+  ## position; locals (parameter names) by name; everything else is itself.
+  if a == b: return true
+  for (fwdTv, implTv) in typevars:
+    if fwdTv == a: return implTv == b
+  result = isLocalName(pool.symString(a)) and isLocalName(pool.symString(b)) and
+    pool.symNameId(a) == pool.symNameId(b)
+
+proc sameSignatureTrees(a, b: Cursor; typevars: seq[(SymId, SymId)];
+                        inProcType = false): bool =
+  ## `inProcType`: a parameter's name is not part of a proc type, as in
+  ## `typekeys`; the routine's own parameter names are compared.
+  if a.kind != b.kind: return false
+  case a.kind
+  of TagLit:
+    if a.cursorTagId != b.cursorTagId: return false
+    let inProcType = inProcType or a.typeKind in RoutineTypes
+    var ca = childCursor(a)
+    var cb = childCursor(b)
+    if inProcType and a.substructureKind == ParamU:
+      skip ca # name
+      skip cb
+    while true:
+      while ca.hasMore and isTypeAttribute(ca): skip ca
+      while cb.hasMore and isTypeAttribute(cb): skip cb
+      if not (ca.hasMore and cb.hasMore): break
+      if not sameSignatureTrees(ca, cb, typevars, inProcType): return false
+      skip ca
+      skip cb
+    result = ca.hasMore == cb.hasMore
+  of Symbol, SymbolDef:
+    result = sameSignatureSym(a.symId, b.symId, typevars)
+  of Ident, StrLit:
+    result = a.strId == b.strId
+  of IntLit:
+    result = a.intVal == b.intVal
+  of UIntLit:
+    result = a.uintVal == b.uintVal
+  of FloatLit:
+    result = a.floatVal == b.floatVal
+  of CharLit:
+    result = a.uoperand == b.uoperand
+  else:
+    result = true
+
+proc isVoidType(n: Cursor): bool {.inline.} =
+  n.isDotToken or n.typeKind == VoidT
+
 proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
-  ## Check if two routine declarations have compatible signatures.
-  ## Compares NIF tokens directly, mapping symbols back to identifiers.
+  ## Whether `implDecl` implements `forwardDecl`: the same typevars, matched
+  ## by position, the same parameter names and types and the same return
+  ## type, compared after sem resolved aliases (`: void` is no return type).
   if not forwardDecl.isTagLit or not implDecl.isTagLit:
     return false
   let fwd = asRoutine(forwardDecl)
   let impl = asRoutine(implDecl)
-  # Compare generic params (typevars)
-  if not sameTreesButIgnoreSymIds(fwd.typevars, impl.typevars):
-    return false
-  # Compare params
-  if not sameTreesButIgnoreSymIds(fwd.params, impl.params):
-    return false
-  # Compare return type
-  if not sameTreesButIgnoreSymIds(fwd.retType, impl.retType):
-    return false
-  return true
+  var typevars: seq[(SymId, SymId)] = @[]
+  if fwd.typevars.substructureKind == TypevarsU and
+      impl.typevars.substructureKind == TypevarsU:
+    var f = childCursor(fwd.typevars)
+    var i = childCursor(impl.typevars)
+    while f.hasMore and i.hasMore:
+      typevars.add (asTypevar(f).name.symId, asTypevar(i).name.symId)
+      skip f
+      skip i
+  result = sameSignatureTrees(fwd.typevars, impl.typevars, typevars) and
+    sameSignatureTrees(fwd.params, impl.params, typevars) and
+    ((isVoidType(fwd.retType) and isVoidType(impl.retType)) or
+      sameSignatureTrees(fwd.retType, impl.retType, typevars))
 
 proc addForwardDecl*(c: var SemContext; symId: SymId) =
   ## Register a forward declaration candidate.
@@ -1135,12 +1194,12 @@ proc hookToKind(name: string): HookKind =
   else: NoHook
 
 proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
-                     declStart, beforeExportMarker, beforeGenericParams: int; info: NifLineInfo) =
+                     beforeExportMarker, beforeGenericParams: int): string =
+  ## Returns the error, to be reported after the routine.
+  result = ""
   let root = nominalRoot(c.routine.returnType)
   if root == SymId(0) and LenientConvertersFeature notin c.features:
-    var errBuf = createTokenBuf(16)
-    buildErr c, errBuf, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
-    dest.insert errBuf, declStart
+    result = "cannot attach converter to type " & typeToString(c.routine.returnType)
   else:
     c.converters.mgetOrPut(root, @[]).add(symId)
     if dest[beforeExportMarker].kind != DotToken:
@@ -1267,6 +1326,15 @@ proc hookThatShouldBeMethod(c: var SemContext; dest: var TokenBuf; hk: HookKind;
   else:
     result = false
 
+const ImplementedElsewhere = {ImportcP, ImportcppP, ImportjsP, HeaderP,
+                              InstructionP, IntrinsicP, ErrorP, BorrowP, PluginP,
+                              PragmaP}
+  ## A routine without a body that carries one of these (or a `magic`) is
+  ## complete as declared: the C side, the compiler or a plugin implements it,
+  ## `.error` forbids calling it, `.borrow` gets its body from sem and
+  ## `template X() {.pragma.}` declares a custom pragma. Any other routine
+  ## without a body is a forward declaration.
+
 proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart: int;
                                symId: SymId; crucial: CrucialPragma; hasBody: bool) =
   ## Handle forward declaration registration and matching during signature checking.
@@ -1291,18 +1359,20 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
       # we cannot splice now without invalidating positions other callers
       # are still holding (e.g. the impl's own `declStart`).
       c.matchedForwardDecls.incl fwdDecl
-  elif {ImportcP, ImportcppP, ImportjsP} * crucial.flags == {}:
-    # This is a forward declaration - register it as a candidate
+  elif crucial.flags * ImplementedElsewhere == {} and crucial.magic.len == 0:
+    # A forward declaration: a later body must implement it, and
+    # `checkForwardDeclsImplemented` reports it at the end of the module if
+    # none does.
     addForwardDecl(c, symId)
 
 proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
                        symId: SymId; declStart, beforeExportMarker, beforeGenericParams, beforeParams: int;
-                       hk: HookKind; info: NifLineInfo; isMagic: bool): string =
-  ## Attach converters, methods, or hooks that should become methods. A
-  ## method's error is returned, to be reported after the routine.
+                       hk: HookKind; isMagic: bool): string =
+  ## Attach converters, methods, or hooks that should become methods. The
+  ## error is returned, to be reported after the routine.
   result = ""
   if kind == ConverterY:
-    attachConverter c, dest, symId, declStart, beforeExportMarker, beforeGenericParams, info
+    result = attachConverter(c, dest, symId, beforeExportMarker, beforeGenericParams)
   elif kind == MethodY:
     result = attachMethod(c, dest, symId, beforeParams, beforeGenericParams)
   elif isMagic:
@@ -1629,7 +1699,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       var attachErr = ""
       if status in {OkNew, OkExistingFresh}:
         attachErr = attachSpecialProc(c, dest, kind, symId, declStart, beforeExportMarker,
-                          beforeGenericParams, beforeParams, hk, info,
+                          beforeGenericParams, beforeParams, hk,
                           isMagic = crucial.magic.len > 0)
       let beforeBody = dest.len
       if not it.n.isDotToken:

@@ -622,6 +622,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       else:
         var basename = pool.symBasename(crucial.sym)
         c.customPragmaTemplates.incl pool.strings.getOrIncl(basename)
+        crucial.flags.incl PragmaP
         dest.addParLe(PragmaP, info)
         dest.addParRi()
     elif pk == PragmaP and isPreservedCustomPragma(n):

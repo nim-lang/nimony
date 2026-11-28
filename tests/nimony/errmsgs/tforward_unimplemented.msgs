@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tforward_unimplemented.nim(3, 6) Error: implementation of 'plain' expected
+tests/nimony/errmsgs/tforward_unimplemented.nim(4, 6) Error: implementation of 'stop' expected
+tests/nimony/errmsgs/tforward_unimplemented.nim(5, 6) Error: implementation of 'clamp' expected
+tests/nimony/errmsgs/tforward_unimplemented.nim(6, 6) Error: implementation of 'setOut' expected
+tests/nimony/errmsgs/tforward_unimplemented.nim(7, 6) Error: implementation of 'gen' expected
+tests/nimony/errmsgs/tforward_unimplemented.nim(8, 6) Error: implementation of 'noDecl' expected
