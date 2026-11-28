@@ -571,14 +571,14 @@ template `$`*[T: Stringable](v: Vec4[T]): string =
 # ################################################# CONSTRUCTORS ####################################################
 # ###################################################################################################################
 
-proc vec1*[T](x: sink T): Vec1[T] =
+func vec1*[T](x: sink T): Vec1[T] =
   Vec1[T](components: [x])
 
-proc vec2*[T](x, y: sink T): Vec2[T] =
+func vec2*[T](x, y: sink T): Vec2[T] =
   Vec2[T](components: [x, y])
 
-proc vec3*[T](x, y, z: sink T): Vec3[T] =
+func vec3*[T](x, y, z: sink T): Vec3[T] =
   Vec3[T](components: [x, y, z])
 
-proc vec4*[T](x, y, z, w: sink T): Vec4[T] =
+func vec4*[T](x, y, z, w: sink T): Vec4[T] =
   Vec4[T](components: [x, y, z, w])
