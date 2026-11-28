@@ -1,2 +1,0 @@
-template keepModule*() =
-  {.plugin: "midentitymodule".}
