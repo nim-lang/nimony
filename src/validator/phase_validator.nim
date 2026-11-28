@@ -364,6 +364,10 @@ proc checkParLe(ctx: var ValidatorCtx; c: var Cursor;
   # grammar), with per-slot type-context awareness.
   var kinds: seq[ChildKind] = @[]
   collectChildKinds(c, isStmtContext(tag), typeSlots, kidsTypeByThisTag, kinds)
+  if tag == "stmts" and parentTag == "template" and kinds.len > 0 and
+      kinds[^1] == ckT:
+    # a template's value may be a type, as in `template t(): untyped = (int, int)`
+    kinds[^1] = ckX
 
   # Kind-marker slot: the tag standing in for the export marker may be a
   # nullary or underspecified kind marker (e.g. `(typedesc)`, `(add -3)`).
