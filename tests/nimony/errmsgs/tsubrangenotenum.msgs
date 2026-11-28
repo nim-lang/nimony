@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tsubrangenotenum.nim(9, 2) Error: Type mismatch at [position]
+g(x)
+[1] 0..1 does not match constraint T (declared in tests/nimony/errmsgs/tsubrangenotenum.nim(6, 1))
