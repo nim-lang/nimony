@@ -2027,7 +2027,11 @@ proc skipExpr*(n: Cursor): Cursor =
 
 proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   var a = skipModifier(arg.typ)
-  if a.typeKind == RangetypeT:
+  # A range value matches its base type, but a `var`/`out` formal also
+  # writes back, so it needs the exact type: the callee could store a
+  # value outside the range.
+  let fromRange = a.typeKind == RangetypeT
+  if fromRange:
     inc a # skip to base type
   let ex = skipExpr(arg.n)
   let isIntLit = f.typeKind != CharT and
@@ -2052,7 +2056,8 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   let lenientFloat = sameKind and forig.typeKind == FloatT and cmp < 0 and
     m.context != nil and LenientFloatsFeature in m.context.features
   if cmp == 0 and sameKind:
-    discard "same types"
+    if fromRange and m.skippedMod in {MutT, OutT}:
+      m.error InvalidMatch, forig, skipModifier(arg.typ)
   elif cmp > 0 or lenientFloat or
       (isIntLit and checkIntLitRange(m.context, forig, ex)) or
       (isFloatLit and checkFloatLitRange(m.context, forig, ex)):
@@ -2359,10 +2364,10 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
       expectParRi m, f, fStart
     of MutT, OutT, SinkT, LentT:
       var a = arg.typ
+      m.skippedMod = f.typeKind
       if a.typeKind in {MutT, OutT, SinkT, LentT}:
         inc a
       else:
-        m.skippedMod = f.typeKind
         if fk in {MutT, OutT} and m.context != nil and
             VarToverloadsFeature in m.context.features and
             not isMutableLvalue(arg.n):
@@ -2421,7 +2426,11 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
       # here. This deliberately accepts legal narrowings such as
       # `range[2..5]` -> `range[0..10]` that an exact-tree match would reject.
       var a = skipModifier(arg.typ)
-      if a.typeKind == RangetypeT:
+      if m.skippedMod in {MutT, OutT}:
+        # a `var`/`out` formal writes back: the argument must have
+        # the same range, not only the same base type
+        linearMatch m, f, a
+      elif a.typeKind == RangetypeT:
         var fb = f
         var ab = a
         inc fb # -> formal base type

@@ -1966,7 +1966,7 @@ func matchOnly(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
                endPos: var int): int {.inline.} =
   ## `run` for code without capture groups: no capture bookkeeping, and
   ## `caps` is left alone.
-  var reach = start
+  var reach: int = start
   result = run[false](code, data, startAt, s, caps, start, endPos, reach)
 
 func matchWithCaptures(code: seq[RegexInstr]; data: seq[set[char]];
@@ -1974,7 +1974,7 @@ func matchWithCaptures(code: seq[RegexInstr]; data: seq[set[char]];
                        start: Natural; endPos: var int): int {.inline.} =
   ## `run` for code that keeps its groups; a failed longer match rewinds
   ## `caps` to the last accepting state.
-  var reach = start
+  var reach: int = start
   result = run[true](code, data, startAt, s, caps, start, endPos, reach)
 
 func captureWalk(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
@@ -2186,7 +2186,7 @@ func attempt*(r: Regex; s: string; start: Natural; reach: var int): int =
   ## `matchLen` for a pattern without back references, also reporting the
   ## last position the automaton looked at in `reach`.
   var caps: seq[Capture] = @[]
-  var endPos = start
+  var endPos: int = start
   let rule = run[false](r.code, r.data, r.startAt, s, caps, start, endPos,
                         reach)
   result = if rule <= 0: -1 else: endPos - start
