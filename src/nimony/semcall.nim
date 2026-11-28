@@ -257,7 +257,11 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
         m.returnType
       else:
         instantiateType(c, m.returnType, m.inferred)
-    if returnType.typeKind == VoidT:
+    if returnType.typeKind == UntypedT:
+      # An `untyped` expansion stands where the call was written, so it is
+      # checked against what the call site expects, as written code would be.
+      a.typ = it.typ
+    elif returnType.typeKind == VoidT:
       # The expansion of a template that returns nothing is a statement, as the
       # body of such a proc is (`processBodyStatements`).
       a.typ = c.types.voidType

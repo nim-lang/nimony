@@ -882,7 +882,11 @@ proc semAddr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       dest.shrink beforeArg
       c.buildErr dest, info, "invalid expression for `addr` operation: " & asStr
 
-  it.typ = ptrTypeOf(c, dest, skipModifier(arg.typ))
+  var base = skipModifier(arg.typ)
+  if base.typeKind in RoutineTypes - {ProctypeT, ItertypeT}:
+    var buf = createTokenBuf(16) # a proc literal's declaration: its proc type
+    base = semLocalType(c, buf, base)
+  it.typ = ptrTypeOf(c, dest, base)
   commonType c, dest, it, beforeExpr, expected
 
 proc semSizeof*(c: var SemContext; dest: var TokenBuf; it: var Item) =

@@ -3232,7 +3232,10 @@ proc buildTypeArgs*(m: var Match) =
   if not m.err and m.fn.kind in RoutineKinds:
     for v in typeVars(m.fn.sym):
       let inf = m.inferred.getOrDefault(v)
-      if inf == default(Cursor):
+      # Outside a generic definition a typevar bound to itself was bound by
+      # nothing but its own mention, e.g. an omitted `step: V = V(1)`.
+      if inf == default(Cursor) or (inf.isSymbol and inf.symId == v and
+          m.context.inGenericDefinition == 0 and m.fn.kind notin {TemplateY, MacroY}):
         m.error0Typevar CouldNotInferTypeVar, v
         break
       m.typeArgs.addSubtree inf

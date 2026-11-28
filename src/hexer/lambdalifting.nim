@@ -972,13 +972,14 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId;
         if captures:
           c.typeCache.registerLocal(c.currentProc.env.s, VarY, default(Cursor))
         if n.substructureKind == ParamsU:
-          # Parameter types are copied verbatim on purpose: the iter-value
-          # tuple emitters (`emitIterTupleType*`) build the wrapper's
-          # proctype from the unmodified decl, so lowering a closure-typed
-          # param here would make the two disagree. What we do have to do
-          # is register them for the type navigator and — for a param that
-          # a nested closure captures — write it into the environment,
-          # exactly as `treParams` does for a proc.
+          # A `.closure` proctype in a parameter or the return type becomes
+          # its (fn, env) tuple, as `treParams` / `treType` do for a proc;
+          # `loweredClosureType`, because the iter-value tuple emitters
+          # (`emitIterTupleType*`) rebuild the wrapper's proctype from the
+          # nimsem decl with it and must agree token for token. The type
+          # navigator gets the unlowered type, and a param that a nested
+          # closure captures is written into the environment, as
+          # `treParams` does for a proc.
           copyInto result, n:
             while n.hasMore:
               assert isParamLike(n.substructureKind)
@@ -989,7 +990,8 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId;
                 takeTree result, n # export marker
                 takeTree result, n # pragmas
                 c.typeCache.registerLocal(name, ParamY, n)
-                takeTree result, n # type
+                result.add loweredClosureType(n)
+                skip n # type
                 takeTree result, n # default value
                 let fld = c.currentProc.localToEnv.getOrDefault((c.currentProc.env.typ, name))
                 if fld.field != SymId(0):
@@ -1004,7 +1006,11 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId;
       else:
         if i == TypevarsPos:
           isConcrete = n.substructureKind != TypevarsU
-        takeTree result, n
+        if i == ReturnTypePos:
+          result.add loweredClosureType(n)
+          skip n
+        else:
+          takeTree result, n
     if isConcrete and n.stmtKind == StmtsS:
       copyInto result, n:
         result.add init
@@ -1403,7 +1409,7 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor)
   {.ensuresNif: addedType(dest).}
 
 proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if itertypeNeedsTuple(n):
+  if itertypeNeedsTuple(n) or (n.typeKind == IteratorT and isClosure(n)): # a literal's type
     # Closure / passive iterators get the wrapper-signature tuple shape
     # rather than the closure-proc shape. The wrapper signature lives in cps;
     # we mirror it here so the lifter sees the final tuple shape at

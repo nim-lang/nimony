@@ -326,7 +326,8 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
           buf.takeTree p # name
           buf.takeTree p # exported
           buf.takeTree p # pragmas
-          buf.takeTree p # type
+          buf.add loweredClosureType(p) # type, as `preLowerIter` has it
+          skip p
           buf.takeTree p # default value
     # `fn` is the nimsem declaration, as every signature is; the mapping is
     # applied here as in `generateCoroutineHelpers`.
@@ -338,7 +339,8 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
         buf.addDotToken() # export
         buf.addDotToken() # pragmas
         buf.copyIntoKind PtrT, info:
-          addLengReturnType(buf, ret, fn.pragmas, info)
+          var lowered = loweredClosureType(ret)
+          addLengReturnType(buf, beginRead(lowered), fn.pragmas, info)
         buf.addDotToken() # default value
     buf.copyIntoKind ParamU, info:
       buf.addSymDef pool.symId(CallerParamName), info
@@ -377,10 +379,9 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
   ## iterator's slot is its success tuple, the very mapping its init wrapper's
   ## signature gets from `patchParamList`.
   ##
-  ## Note: parameter types are copied verbatim (`takeTree`) on the
-  ## assumption that iter param types are scalar. If we ever support
-  ## nested itertypes in param positions we'll need to recurse via a
-  ## proctype-walker here.
+  ## Note: parameter types only get their `.closure` proctypes lowered,
+  ## as in `preLowerIter`; a nested itertype in a param position stays
+  ## as written.
   dest.copyIntoKind ClosureTupleT, info:
     dest.copyIntoKind ProctypeT, info:
       dest.addDotToken() # nilability tag
@@ -394,7 +395,8 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
               dest.takeTree p       # name
               dest.takeTree p       # exported
               dest.takeTree p       # pragmas
-              dest.takeTree p       # type (assumed scalar)
+              dest.add loweredClosureType(p) # type, as `preLowerIter` has it
+              skip p
               dest.takeTree p       # default value
         # result becomes a ptr parameter (skipped when return type is void):
         if not isVoidType(retType):
@@ -403,10 +405,11 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
             dest.addDotToken() # export
             dest.addDotToken() # pragmas
             dest.copyIntoKind PtrT, info:
+              var ret = loweredClosureType(retType)
               if cursorIsNil(pragmas):
-                dest.addSubtree retType
+                dest.add ret
               else:
-                addLengReturnType(dest, retType, pragmas, info)
+                addLengReturnType(dest, beginRead(ret), pragmas, info)
             dest.addDotToken() # default value
         # caller parameter is always last:
         dest.copyIntoKind ParamU, info:
@@ -433,13 +436,14 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
 proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
   ## `emitIterTupleType` for the `(itertype ...)` tree at `n`, which is
   ## consumed: the cursor is left past its closing ParRi.
-  assert n.typeKind == ItertypeT
+  let leading = if n.typeKind == IteratorT: 4 else: 1 # a literal's declaration
+  assert n.typeKind in {ItertypeT, IteratorT}
   var params = default(Cursor)
   var retType = default(Cursor)
   var pragmas = default(Cursor)
   n.into: # past itertype tag
-    if n.hasMore:
-      skip n               # past nilability tag
+    for _ in 1..leading:
+      if n.hasMore: skip n # past nilability tag (name .. generics)
     assert n.hasMore, "itertype without params"
     params = n
     skip n

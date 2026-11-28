@@ -210,8 +210,11 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
       # a `cursor` declaration — the two share a tag — which would misread the
       # following `)` as the decl's name.
       dest.takeTree c
+    of MacroS:
+      # The plugin owns the macro body; it is not sem'd code.
+      dest.takeTree c
     of CallS, CmdS, GvarS, TvarS, ConstS, ResultS, GletS, TletS,
-        ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+        ProcS, FuncS, IteratorS, ConverterS, MethodS,
         TemplateS, TypeS, BlockS, EmitS, AsgnS, ScopeS, IfS,
         WhenS, BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS,
         RetS, YldS, StmtsS, AlwaysS, PragmaxS, InclS, ExclS, IncS, DecS,

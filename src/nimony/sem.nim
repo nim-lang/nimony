@@ -4465,6 +4465,9 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     # do not save modifier in array type unless it was annotated as such
     # also do not expect it from subsequent elements
     removeModifier(elem.typ)
+    if elem.typ.typeKind in RoutineTypes - {ProctypeT, ItertypeT}:
+      var buf = createTokenBuf(16) # a proc literal's declaration: its proc type
+      elem.typ = semLocalType(c, buf, elem.typ)
   var count = 1
   while elem.n.hasMore:
     semArrayConstrElem(c, dest, elem, it, ctx)
