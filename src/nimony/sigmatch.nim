@@ -78,11 +78,14 @@ type
     concreteMatch: bool
     inferable: HashSet[SymId] ## concept probing only: typevars on the argument
                               ## side that the candidate's formals may bind —
-                              ## a container concept's own parameter, or an
-                              ## enclosing generic's, following the "first use
-                              ## infers `T`" rule. Never a requirement's own
-                              ## generic parameter: that one is universally
-                              ## quantified and must be accepted as is.
+                              ## a container concept's own parameter, or the
+                              ## typevar of the generic being called that it
+                              ## stands for, following the "first use infers
+                              ## `T`" rule. Never a requirement's own generic
+                              ## parameter: that one is universally quantified
+                              ## and must be accepted as is. Never a typevar of
+                              ## the checked type either (`T` of `Box[T]` inside
+                              ## a checked generic): that one is a fixed type.
     ignoreConstraints: bool ## tie-breaking only: let a typevar formal bind any
                             ## arg regardless of its constraint, so relative
                             ## specificity ("concrete beats typevar") is decided
@@ -922,12 +925,25 @@ proc conceptReturnFits(m: var Match; reqRet, candRet: Cursor): bool =
       bindTypevar m, k, v
   true
 
-proc adoptInferred(m: var Match; probe: Match; adopted: var seq[SymId]) =
+proc namesOnlyFixedTypevars(v: Cursor; fixed: HashSet[SymId]): bool =
+  ## Is every typevar `v` names one of the checked type's own (`fixed`)? Such
+  ## a type is as determined as a concrete one: inside the checked generic it
+  ## means one specific type.
+  var open = initHashSet[SymId]()
+  collectOpenTypevars(v, open)
+  result = open.len > 0
+  for tv in open:
+    if tv notin fixed: return false
+
+proc adoptInferred(m: var Match; probe: Match; fixed: HashSet[SymId]; adopted: var seq[SymId]) =
   ## Carry the bindings the probe made for inferable typevars over to the
   ## enclosing match, remembering them so a failed candidate can undo them.
+  ## A binding to a candidate's own typevar means nothing outside the probe
+  ## and is dropped; one to a typevar of the checked type is kept.
   for k, v in probe.inferred:
     if k in probe.inferable and not m.inferred.hasKey(k) and
-        not (v.isSymbol and v.symId == k) and isCacheableConcreteType(v):
+        not (v.isSymbol and v.symId == k) and
+        (isCacheableConcreteType(v) or namesOnlyFixedTypevars(v, fixed)):
       bindTypevar m, k, v
       adopted.add k
 
@@ -943,6 +959,7 @@ type
     args: seq[CallArg]
     reqRet: Cursor
     inferable: HashSet[SymId]
+    fixed: HashSet[SymId] ## the checked type's own typevars, see `Match.inferable`
 
 proc conceptCandidateMatches(m: var Match; candSym: SymId; candDecl: Cursor;
                              req: ConceptProbe): bool =
@@ -960,7 +977,7 @@ proc conceptCandidateMatches(m: var Match; candSym: SymId; candDecl: Cursor;
   if probe.err:
     return false
   var adopted: seq[SymId] = @[]
-  adoptInferred(m, probe, adopted)
+  adoptInferred(m, probe, req.fixed, adopted)
   let candRet = cand.retType
   result = false
   if candDecl.symKind in {TemplateY, MacroY} and candRet.typeKind in {UntypedT, TypedT}:
@@ -1027,15 +1044,20 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
   var retBuf = createTokenBuf(16)
   substituteTypevars(retBuf, asRoutine(routine).retType, bindings)
   var req = ConceptProbe(args: conceptCallArgs(m, routine, bindings, argBuf),
-                         reqRet: cursorAt(retBuf, 0), inferable: initHashSet[SymId]())
-  # What is still open in the arguments after substitution is either the
-  # requirement's own generic parameter (kept open) or a typevar the
-  # candidate may bind: the concept's container parameter, or the enclosing
-  # generic's.
+                         reqRet: cursorAt(retBuf, 0), inferable: initHashSet[SymId](),
+                         fixed: initHashSet[SymId]())
+  # What is still open in the arguments after substitution is the
+  # requirement's own generic parameter (kept open), a typevar of the checked
+  # type (fixed: inside a checked generic `Box[T]`'s `T` is one specific type)
+  # or a typevar the candidate may bind: the concept's container parameter,
+  # or the called generic's typevar it stands for.
   for arg in req.args:
     collectOpenTypevars(arg.typ, req.inferable)
   for own in conceptRequirementOwnTypevars(routine):
     req.inferable.excl own
+  collectOpenTypevars(a, req.fixed)
+  for tv in req.fixed:
+    req.inferable.excl tv
   let basename = conceptRoutineBasename(routine)
   for cand in collectConceptRoutineCandidates(m.context, conceptSym, basename, a):
     let res = tryLoadSym(cand)
@@ -2252,12 +2274,14 @@ proc inferableArgTypevar(m: Match; f: Cursor; arg: CallArg): SymId =
   ## typevar or `f` is not yet the shape it can bind to: a modifier is peeled
   ## by `singleArgOnFormal` first, and a typevar formal binds the arg the usual
   ## way. An arg-side modifier is irrelevant to the binding and dropped.
+  ## Under `concreteMatch` a typevar formal is the type an earlier argument
+  ## bound it to, so it is a fixed type the arg can be bound to as well.
   result = NoSymId
   if m.inferable.len > 0:
     let a = skipModifier(arg.typ)
     if a.isSymbol and a.symId in m.inferable and
         f.typeKind notin {MutT, OutT, SinkT, LentT} and
-        not (f.isSymbol and isTypevar(f.symId)):
+        not (f.isSymbol and isTypevar(f.symId) and not m.concreteMatch):
       result = a.symId
 
 proc isFreshOwnable(n: Cursor): bool =

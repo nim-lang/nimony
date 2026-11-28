@@ -1,0 +1,3 @@
+tests/nimony/concepts/tconceptfixedtypevarbad.nim(18, 35) Error: Type mismatch at [position]
+use(a)
+[1] Box[T] does not match constraint C (declared in tests/nimony/concepts/tconceptfixedtypevarbad.nim(16, 1))
