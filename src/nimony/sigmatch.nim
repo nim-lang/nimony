@@ -2030,7 +2030,7 @@ proc writesBack(m: Match): bool {.inline.} =
   ## the argument's location, so a range argument needs the formal's exact
   ## type. A template's (or macro's) parameter is substituted instead, and the
   ## expansion's assignments are range-checked as written.
-  m.skippedMod in {MutT, OutT} and m.fn.kind notin {TemplateY, MacroY}
+  m.skippedMod in {MutT, OutT}
 
 proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   var a = skipModifier(arg.typ)
