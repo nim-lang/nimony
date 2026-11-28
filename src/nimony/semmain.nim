@@ -599,18 +599,28 @@ proc instantiateRequests(c: var SemContext; dest: var TokenBuf) =
     c.pendingObjInits = createTokenBuf()
     if c.procRequests.len == 0: break
 
-proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
-  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
+proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor; firstRound: bool) =
+  ## A plugin round (`firstRound == false`) semchecks what the plugin returned,
+  ## which `dest` holds. It keeps the toplevel scope of the round before: its
+  ## input declares the module's symbols as `SymbolDef`s, which are not
+  ## entered into a scope again, and the instances built in this round look
+  ## the module's routines up there (nim-lang/nimony#3206).
+  if firstRound:
+    c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
 
-  assert n0.stmtKind == StmtsS
-  let path = getFile(n0.info) # gets current module path, maybe there is a better way
-  addSelfModuleSym(c, path)
+    assert n0.stmtKind == StmtsS
+    let path = getFile(n0.info) # gets current module path, maybe there is a better way
+    addSelfModuleSym(c, path)
 
-  if {SkipSystem, IsSystem} * c.moduleFlags == {}:
-    let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
-    importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
+    if {SkipSystem, IsSystem} * c.moduleFlags == {}:
+      let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
+      importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
-  runPhases(c, dest, n0)
+    runPhases(c, dest, n0)
+  else:
+    var input = move dest
+    dest = createTokenBuf(input.len)
+    runPhases(c, dest, beginRead(input))
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, readonlyCursorAt(c.expanded, 0).info
@@ -863,10 +873,12 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
 
   var dest = createTokenBuf()
 
+  var firstRound = true
   while true:
-    semcheckCore c, dest, n0
+    semcheckCore c, dest, n0, firstRound
     if not c.hasPendingPlugins: break
     handleTypePlugins c, dest
+    firstRound = false
 
   if reportErrors(dest) == 0:
     maybeValidatePostSem dest, outfile

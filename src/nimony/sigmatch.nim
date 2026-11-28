@@ -1005,8 +1005,11 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
     # a container concept's parameter bound to a caller's typevar
     # (`Findable[T]`, see `matchConceptInvocation`) that an earlier
     # requirement has inferred by now
-    if v.isSymbol and v.symId != k and checkBindings.hasKey(v.symId):
-      bindings[k] = checkBindings.getOrDefault(v.symId)
+    if v.isSymbol and v.symId != k:
+      if m.inferred.hasKey(v.symId):
+        bindings[k] = m.inferred.getOrDefault(v.symId)
+      elif checkBindings.hasKey(v.symId):
+        bindings[k] = checkBindings.getOrDefault(v.symId)
   for selfSym in conceptSelfSyms(body, routine):
     bindings[selfSym] = a
   if not conceptRoutineUsesSelf(body, routine):
