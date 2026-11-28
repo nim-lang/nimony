@@ -703,29 +703,33 @@ proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
     if hasError:
       assert false, "Got unexpected type: " & toString(typ)
 
+proc runToTokens(result: var TokenBuf; first, last: int; elementTyp: Cursor) =
+  ## Emits the elements `first..last`: one by one for a short run, as a range otherwise.
+  if last - first < 4:
+    for k in first .. last:
+      result.intToToken k, elementTyp
+  else:
+    result.addParLe RangeU
+    result.intToToken first, elementTyp
+    result.intToToken last, elementTyp
+    result.addParRi
+
 proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: NifLineInfo) =
   result.addParLe SetconstrX, info
   result.copyInto(TagId(SetT), NoLineInfo):
     result.addSubtree elementTyp
 
-  var start = -1
-  for i in 0 ..< x.len:
-    for j in 0..7:
-      let val = i * 8 + j
-      if (x[i] and (1'u8 shl j)) == 0:
-        if start != -1:
-          if val - start < 5:
-            for k in start ..< val:
-              result.intToToken k, elementTyp
-          else:
-            result.addParLe RangeU
-            result.intToToken start, elementTyp
-            result.intToToken (val - 1), elementTyp
-            result.addParRi
-          start = -1
-      else:
-        if start == -1:
-          start = val
+  let bitCount = x.len * 8
+  var start = -1 # first element of the run being collected, -1 outside of a run
+  for val in 0 ..< bitCount:
+    if (x[val shr 3] and (1'u8 shl (val and 7))) != 0:
+      if start < 0: start = val
+    elif start >= 0:
+      runToTokens result, start, val - 1, elementTyp
+      start = -1
+  if start >= 0:
+    # the run reaches the last bit, so no zero bit ended it
+    runToTokens result, start, bitCount - 1, elementTyp
 
   result.addParRi
 
