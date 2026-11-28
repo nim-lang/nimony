@@ -1409,7 +1409,7 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor)
   {.ensuresNif: addedType(dest).}
 
 proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if itertypeNeedsTuple(n):
+  if itertypeNeedsTuple(n) or (n.typeKind == IteratorT and isClosure(n)): # a literal's type
     # Closure / passive iterators get the wrapper-signature tuple shape
     # rather than the closure-proc shape. The wrapper signature lives in cps;
     # we mirror it here so the lifter sees the final tuple shape at

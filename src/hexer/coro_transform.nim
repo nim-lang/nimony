@@ -436,13 +436,14 @@ proc emitIterTupleType(dest: var TokenBuf; params, retType, pragmas: Cursor;
 proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
   ## `emitIterTupleType` for the `(itertype ...)` tree at `n`, which is
   ## consumed: the cursor is left past its closing ParRi.
-  assert n.typeKind == ItertypeT
+  let leading = if n.typeKind == IteratorT: 4 else: 1 # a literal's declaration
+  assert n.typeKind in {ItertypeT, IteratorT}
   var params = default(Cursor)
   var retType = default(Cursor)
   var pragmas = default(Cursor)
   n.into: # past itertype tag
-    if n.hasMore:
-      skip n               # past nilability tag
+    for _ in 1..leading:
+      if n.hasMore: skip n # past nilability tag (name .. generics)
     assert n.hasMore, "itertype without params"
     params = n
     skip n
