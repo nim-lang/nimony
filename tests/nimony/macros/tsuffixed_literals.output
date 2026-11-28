@@ -1,0 +1,7 @@
+nnkRStrLit raw\n
+nnkTripleStrLit triple
+nnkInt8Lit -8
+nnkUInt16Lit 300
+nnkFloat32Lit 2.5
+nnkRStrLit x\y
+int8 2

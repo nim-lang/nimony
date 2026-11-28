@@ -20,3 +20,13 @@ proc p =
 
 echo a, " ", b, " ", e, " ", f, " ", h
 p()
+
+# Such an expression as an element of an array, tuple or set constructor is
+# evaluated with the element's type, not the type of the whole constant.
+type O = object
+  t: (int, int)
+const arr = [(block: 2), 3]
+const tup = (x: (block: "y"), z: [(block: 4'i8), 5])
+const st = {(block: 1'u8)..3'u8, 7'u8}
+const obj = O(t: ((block: 5), 6))
+echo arr[0], " ", arr[1], " ", tup.x, " ", tup.z[0], " ", card(st), " ", obj.t[0]
