@@ -4,6 +4,8 @@ import cmdline
 import envvars
 import oserrors
 import private/[ospaths2, osappdirs, oscommons, ossymlinks]
+from std/dirs import tryOpenDir, tryNextDir, tryCloseDir, DirEntry
+from std/paths import path, `$`
 
 export cmdline
 export ospaths2
@@ -392,6 +394,69 @@ proc findExe*(exe: string): string {.tags: [ReadDirEffect, ReadEnvEffect].} =
     let x = addFileExt(dir / exe, ExeExt)
     if fileExists(x): return x
   result = ""
+
+func charsEqual(a, b: char): bool {.inline.} =
+  when defined(windows):
+    a.toLowerAscii == b.toLowerAscii
+  else:
+    a == b
+
+func match(pattern, name: string): bool =
+  ## Matches `name` against `pattern`; `*` matches any run of characters and
+  ## `?` matches exactly one character.
+  var p = 0
+  var n = 0
+  var star = -1
+  var mark = 0
+  while n < name.len:
+    if p < pattern.len and
+        (pattern[p] == '?' or charsEqual(pattern[p], name[n])):
+      inc p
+      inc n
+    elif p < pattern.len and pattern[p] == '*':
+      star = p
+      mark = n
+      inc p
+    elif star >= 0:
+      p = star + 1
+      inc mark
+      n = mark
+    else:
+      return false
+  while p < pattern.len and pattern[p] == '*':
+    inc p
+  result = p == pattern.len
+
+iterator walkFiles*(pattern: string): string {.sideEffect.} =
+  ## Iterates over the regular files matching `pattern`.
+  ##
+  ## `pattern` is split into a directory and a file pattern. In the file
+  ## pattern, `*` matches any number of characters and `?` matches one
+  ## character. On POSIX, a leading `.` in a name must be matched explicitly,
+  ## as with the shell.
+  ##
+  ## A missing or unreadable directory produces no matches instead of raising.
+  let (dir, filePattern) = splitPath(pattern)
+  if filePattern.len == 0:
+    return
+  var start = if dir.len == 0: "." else: dir
+  while start.len > 1 and start[^1] in {DirSep, AltSep} and
+      not (start.len == 3 and start[1] == ':'):
+    start.setLen(start.len - 1)
+  var w = tryOpenDir(path(start))
+  try:
+    var e = default DirEntry
+    while tryNextDir(w, e, skipSpecial = true):
+      let name = $e.path
+      when not defined(windows):
+        if name.len > 0 and name[0] == '.' and filePattern[0] != '.':
+          continue
+      if e.kind in {pcFile, pcLinkToFile} and match(filePattern, name):
+        let full = if dir.len == 0: name else: joinPath(dir, name)
+        if fileExists(full):
+          yield full
+  finally:
+    discard tryCloseDir(w)
 
 proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ## Executes a `shell command`:idx:.
