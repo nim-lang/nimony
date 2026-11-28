@@ -1,0 +1,7 @@
+foo|:|bar:baz
+foo:bar|:|baz
+foobar||
+||foobar
+foo:bar|:|baz
+||foobar
+strmisc ok

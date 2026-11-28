@@ -121,6 +121,7 @@ import std/stats
 import std/streamio
 import std/streams
 import std/stripes
+import std/strmisc
 import std/strtabs
 import std/strutils
 import std/symlinks
