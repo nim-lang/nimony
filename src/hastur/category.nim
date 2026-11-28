@@ -9,6 +9,8 @@ type
     Basics, # basic tests: These are processed with --noSystem
     Tracked # tracked tests: These are processed and can contain "track info"
             # for line, col, filename extraction (useful for nimsuggest-like tests)
+    Check # `nimony check` tests: the .msgs file holds what `check` reports
+    CheckFull # `nimony check --fullCheck` tests: like Check, with hexer run too
     Compat # compatibility mode tests
     Valgrind # valgrind tests
     Optimized # tests compiled with --opt:speed (exercise the shoggoth passes)
@@ -22,7 +24,8 @@ type
 proc toCommand*(cat: Category): string =
   case cat
   of Basics: "m"
-  of Tracked: "check --silentMake"
+  of Tracked, Check: "check --silentMake"
+  of CheckFull: "check --fullCheck --silentMake"
   of Optimized: "c --silentMake --opt:speed"
   of Bench: "c --silentMake -d:benchSmoke"
   of Normal, Compat, Valgrind, Skip: "c --silentMake"
@@ -41,6 +44,8 @@ proc parseMode*(s, src: string): Category =
   of "normal", "": Normal
   of "nosystem", "basics": Basics
   of "track", "tracked": Tracked
+  of "check": Check
+  of "checkfull", "fullcheck": CheckFull
   of "compat": Compat
   of "valgrind": Valgrind
   of "opt", "optimized": Optimized

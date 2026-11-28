@@ -3249,7 +3249,7 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         swap dest, c.initBody
 
 proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows); crt = false;
-             cycles = false) =
+             cycles = false; checkOnly = false) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -3277,7 +3277,16 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
 
   var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", owningBuf, true)
   let cBits = c.bits
-  var dest = transform(c, c0, mp.name, cBits)
+  var dest = transform(c, c0, mp.name, cBits, checkOnly)
+  if checkOnly:
+    # nifmake needs the node's output to exist; `.x.nif` is the finished module
+    # and must not appear for a module that was only checked.
+    let stamp = c.dir / c.main & ".chk.nif"
+    try:
+      writeFile stamp, ""
+    except:
+      quit "could not write file: " & stamp
+    return
 
   var n = beginRead(dest)
   let rootInfo = n.info

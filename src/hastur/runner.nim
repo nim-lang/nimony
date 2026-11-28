@@ -92,7 +92,7 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
       let nimcacheC = generatedFile(file, ".c", backendTag)
       diffFiles c, file, cfile, nimcacheC, overwrite
 
-    if cat notin {Basics, Tracked}:
+    if cat notin {Basics, Tracked, Check, CheckFull}:
       let exe = file.generatedExeFile(backendTag)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       var output = file.changeFileExt(".output")

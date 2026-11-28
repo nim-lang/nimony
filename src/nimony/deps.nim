@@ -252,6 +252,7 @@ type
     Profile        ## ask nifmake to print its timing profile
     Report         ## ask nifmake to print machine-readable invocation counts
     Stats          ## after build, print total LOC + module count across the dep graph
+    FullCheck      ## `check --fullCheck`: also run hexer over the project's modules
 
   CFile = object
     name: string        ## the source, relative to the cwd
@@ -1264,12 +1265,22 @@ proc writeStdBuildFile(c: DepContext; content: string): string =
     vfsWrite(tmp, content)
     publishShared tmp, result
 
-proc emitHexerNode(c: DepContext; b: var Builder; v: Node; isMain: bool; backendDir: string) =
+proc checkStamp(x: string): string =
+  ## `check --fullCheck` writes this instead of the module's `.x.nif`, which `c` must
+  ## not mistake for a finished module.
+  assert x.endsWith(".x.nif")
+  result = x[0 ..< x.len - ".x.nif".len] & ".chk.nif"
+
+proc emitHexerNode(c: DepContext; b: var Builder; v: Node; isMain: bool; backendDir: string;
+                   check = false) =
   ## For the root module the output is main-specific so that its --isMain
   ## version does not overwrite the shared .x.nif that other compilations
   ## produce when this module is a non-main dependency.
   b.withTree "do":
     b.addIdent "hexer"
+    if check:
+      b.withTree "args":
+        b.addStrLit "--check"
     if isMain:
       b.withTree "args":
         b.addStrLit "--isMain"
@@ -1301,9 +1312,10 @@ proc emitHexerNode(c: DepContext; b: var Builder; v: Node; isMain: bool; backend
       if not seenImports.containsOrIncl(idxFile):
         b.withTree "input":
           b.addStrLit idxFile
+    let outFile = if isMain: backendDir / v.files[0].modname & ".x.nif"
+                  else: c.config.hexedFile(v.files[0])
     b.withTree "output":
-      b.addStrLit(if isMain: backendDir / v.files[0].modname & ".x.nif"
-                  else: c.config.hexedFile(v.files[0]))
+      b.addStrLit(if check: checkStamp(outFile) else: outFile)
 
 proc linuxLibc(c: DepContext): bool =
   ## On Linux `-d:useLibc` makes a native program a libc program (see
@@ -1330,6 +1342,23 @@ proc generateStdBackendBuildFile(c: DepContext): string =
       if v.files[0].std:
         emitHexerNode(c, b, v, false, "")
   result = writeStdBuildFile(c, b.extract())
+
+proc generateCheckBuildFile(c: DepContext): string =
+  ## What `nimony check --fullCheck` runs after the frontend: hexer over the project's own
+  ## modules, so that `check` reports what `c` reports before it calls a C
+  ## compiler. The stdlib's modules are not run: their errors are not the
+  ## project's, and they are built by `generateStdBackendBuildFile`.
+  result = c.config.nifcachePath / c.config.backendTag / c.rootNode.files[0].modname & ".check.build.nif"
+  var b = nifbuilder.open(result)
+  defer: b.close()
+  let backendDir = c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0])
+  b.addHeader()
+  b.withTree "stmts":
+    defineHexerCmds(c, b)
+    for i in 0 ..< c.nodes.len:
+      let v = c.nodes[i]
+      if i == 0 or not v.files[0].std:
+        emitHexerNode(c, b, v, i == 0, backendDir, check = true)
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.config.backendTag / c.rootNode.files[0].modname & ".final.build.nif"
@@ -2690,10 +2719,12 @@ proc buildGraph*(config: sink NifConfig; project: string;
     " --lock:" & quoteShell(config.stdcachePath / "lock") & jobsArg(config) & " run "
 
   # `nimony c` drives nifmake for the frontend (0..50%) and the backend or
-  # docs (51..100%); `DoCheck` stops after the frontend (0..100%). Within a
+  # docs (51..100%); `DoCheck` stops after the frontend (0..100%), or with
+  # `--fullCheck` runs hexer over the project's modules in the second half. Within a
   # phase the stdlib's run and the project's run share the range, and only
   # the project's run (`--done`) closes the line.
-  let frontHi = if cmd != DoCheck: 50 else: 100
+  let fullCheck = cmd == DoCheck and FullCheck in flags
+  let frontHi = if cmd != DoCheck or fullCheck: 50 else: 100
 
   if c.hasStdNodes:
     exec stdCommand & progArg(flags, 0, frontHi, closes = false) &
@@ -2750,6 +2781,16 @@ proc buildGraph*(config: sink NifConfig; project: string;
     execBackend nifmakeBase & (if backendChanged: " --rerun" else: "") &
         jobsArg(config) & " run " & progArg(flags, 51, 100) & quoteShell(buildFinalFilename),
       beMemoFile, beMemo, backendChanged
+
+  if fullCheck:
+    # `check --fullCheck` reports what `c` reports before it calls a C compiler, and some
+    # of that comes from hexer (e.g. a type without `=dup`/`=copy` that is
+    # copied). Hexer needs only the frontend's output; lengc, the C compiler
+    # and the linker are not run.
+    c = initDepContext(config, project, true, forceRebuild, moduleFlags, cmd)
+    onRaiseQuit createDir(path(c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0])))
+    let buildCheckFilename = generateCheckBuildFile(c)
+    exec nifmakeCommand & progArg(flags, 51, 100) & quoteShell(buildCheckFilename)
 
   if Stats in flags:
     # Walk every source module in the dep graph and sum line counts. Counting

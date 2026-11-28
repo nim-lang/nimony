@@ -1,0 +1,2 @@
+tests/nimony/check/tprover.nim(8, 7) Error: assertion violated: x < 3 [pass --verbose for the Final IR]
+tests/nimony/check/tprover.nim(11, 5) Error: cannot prove assertion: 0 <= i and i < len(s) [pass --verbose for the Final IR]
