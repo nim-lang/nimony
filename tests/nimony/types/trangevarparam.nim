@@ -1,8 +1,6 @@
 # A `var`/`out` parameter of a range type takes an argument of that same range
-# type, generic `var T` instantiates at the range type, a range value still
-# passes by value to its base type, and a template's `var int` parameter takes
-# a range argument (it is substituted, not written through: the expansion's
-# assignments are range-checked as written). The refused forms are in
+# type, generic `var T` instantiates at the range type, and a range value still
+# passes by value to its base type. The refused forms are in
 # `tests/nimony/errmsgs/trangevarargs.nim`.
 import std/syncio
 
@@ -39,4 +37,3 @@ var tmp = int(n)
 setIt(tmp, 7)
 if tmp >= 0: n = tmp
 echo n
-

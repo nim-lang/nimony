@@ -2025,17 +2025,10 @@ proc skipExpr*(n: Cursor): Cursor =
       result = next
       skip next
 
-proc writesBack(m: Match): bool {.inline.} =
-  ## The formal is a routine's `var`/`out` parameter: the callee stores through
-  ## the argument's location, so a range argument needs the formal's exact
-  ## type. A template's (or macro's) parameter is substituted instead, and the
-  ## expansion's assignments are range-checked as written.
-  m.skippedMod in {MutT, OutT}
-
 proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   var a = skipModifier(arg.typ)
-  # A range value matches its base type, but a routine's `var`/`out` formal
-  # also writes back, so it needs the exact type: the callee could store a
+  # A range value matches its base type, but a `var`/`out` formal also
+  # writes back, so it needs the exact type: the callee could store a
   # value outside the range.
   let fromRange = a.typeKind == RangetypeT
   if fromRange:
@@ -2063,7 +2056,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   let lenientFloat = sameKind and forig.typeKind == FloatT and cmp < 0 and
     m.context != nil and LenientFloatsFeature in m.context.features
   if cmp == 0 and sameKind:
-    if fromRange and writesBack(m):
+    if fromRange and m.skippedMod in {MutT, OutT}:
       m.error InvalidMatch, forig, skipModifier(arg.typ)
   elif cmp > 0 or lenientFloat or
       (isIntLit and checkIntLitRange(m.context, forig, ex)) or
@@ -2433,8 +2426,8 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
       # here. This deliberately accepts legal narrowings such as
       # `range[2..5]` -> `range[0..10]` that an exact-tree match would reject.
       var a = skipModifier(arg.typ)
-      if writesBack(m):
-        # a routine's `var`/`out` formal writes back: the argument must have
+      if m.skippedMod in {MutT, OutT}:
+        # a `var`/`out` formal writes back: the argument must have
         # the same range, not only the same base type
         linearMatch m, f, a
       elif a.typeKind == RangetypeT:

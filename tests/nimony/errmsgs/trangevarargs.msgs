@@ -31,3 +31,6 @@ setIt(x, 100)
 tests/nimony/errmsgs/trangevarargs.nim(47, 7) Error: Type mismatch at [position]
 outB(d)
 [1] subtype relation not available for `out` parameters (declared in tests/nimony/errmsgs/trangevarargs.nim(44, 1))
+tests/nimony/errmsgs/trangevarargs.nim(51, 5) Error: Type mismatch at [position]
+bump(r)
+[1] expected: int64 but got: 0..7 (declared in tests/nimony/errmsgs/trangevarargs.nim(50, 1))

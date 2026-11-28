@@ -45,3 +45,7 @@ proc outB(b: out B) = b = B(x: 5)
 proc viaVar(d: var D) =
   setB(d)
   outB(d)
+
+# a template's `var` parameter follows the same rule
+template bump(x: var int) = x = x + 1
+bump(r)
