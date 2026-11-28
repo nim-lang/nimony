@@ -114,9 +114,6 @@ type
     resolvedChoice: SymId  ## the formal parameter narrowed this argument's
                            ## symbol choice down to this symbol; `useArg`
                            ## emits it in place of the choice
-    constStrLit: StrId  ## the string literal a `const` argument converted to
-                        ## `cstring` stands for; `useArg` emits it in place
-                        ## of the symbol, see `constStringLit`
     missingConstraints*: OrderedTable[string, Cursor]
 
 proc createMatch*(context: ptr SemContext; expected: TypeCursor = default(Cursor)): Match =
@@ -1677,10 +1674,7 @@ proc commonType(f, a: Cursor): Cursor =
 
 
 proc useArg(m: var Match; arg: CallArg; f: Cursor) =
-  if m.constStrLit != StrId(0):
-    m.args.addStrLit pool.strings[m.constStrLit], m.argInfo
-    m.constStrLit = StrId(0)
-  elif m.resolvedChoice != SymId(0):
+  if m.resolvedChoice != SymId(0):
     m.args.addSymUse(m.resolvedChoice, m.argInfo)
     m.resolvedChoice = SymId(0)
   elif f.typeKind == UntypedT and not cursorIsNil(arg.orig):
@@ -2005,23 +1999,6 @@ proc skipExpr*(n: Cursor): Cursor =
     while next.hasMore:
       result = next
       skip next
-
-proc constStringLit(n: Cursor): StrId =
-  ## The string literal `n` names if it is a `const` symbol, following
-  ## `const b = a` chains. A string literal converts to `cstring` at compile
-  ## time; a `const` string is one too, so it converts the same way.
-  result = StrId(0)
-  var n = skipExpr(n)
-  var depth = 0
-  while n.kind == Symbol and depth < 64:
-    let res = tryLoadSym(n.symId)
-    if res.status != LacksNothing: return
-    let local = asLocal(res.decl)
-    if local.kind != ConstY: return
-    n = skipExpr(local.val)
-    inc depth
-  if depth > 0 and n.isStringLit:
-    result = n.strId
 
 proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   var a = skipModifier(arg.typ)
@@ -2456,10 +2433,7 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
         let fStart = f
         f = sub(f)
         expectPtrParRi m, f, fStart
-      elif isStringType(a) and (skipExpr(arg.n).isStringLit or
-          constStringLit(arg.n) != StrId(0)):
-        if not skipExpr(arg.n).isStringLit:
-          m.constStrLit = constStringLit(arg.n)
+      elif isStringType(a) and skipConstString(skipExpr(arg.n)).isStringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened

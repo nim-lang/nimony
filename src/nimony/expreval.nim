@@ -1494,6 +1494,20 @@ proc rangesContain*(ranges: Cursor; value: xint; bits: int): bool =
         result = not v.isNaN and v == value
       skip n
 
+proc skipConstString*(n: Cursor): Cursor =
+  ## Follows `const` symbols, `const b = a` chains included, to the string
+  ## literal they stand for. Anything else is returned unchanged. A `const`
+  ## string is a compile-time string just like a literal, so it converts to
+  ## `cstring` the same way (#3216).
+  result = n
+  while result.kind == Symbol:
+    let res = tryLoadSym(result.symId)
+    if res.status != LacksNothing: break
+    let local = asLocal(res.decl)
+    if local.kind != ConstY or not (local.val.isStringLit or local.val.kind == Symbol):
+      break
+    result = local.val
+
 proc getConstStringValue*(val: Cursor): StrId =
   if val.isStringLit:
     result = val.strId
