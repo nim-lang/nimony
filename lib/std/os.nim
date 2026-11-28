@@ -452,7 +452,12 @@ iterator walkFiles*(pattern: string): string {.sideEffect.} =
         if name.len > 0 and name[0] == '.' and filePattern[0] != '.':
           continue
       if e.kind in {pcFile, pcLinkToFile} and match(filePattern, name):
-        let full = if dir.len == 0: name else: joinPath(dir, name)
+        # On POSIX `..` follows symlinks, so keep the pattern's directory
+        # verbatim; Win32 folds `..` lexically itself.
+        when defined(windows):
+          let full = if dir.len == 0: name else: joinPath(dir, name)
+        else:
+          let full = pattern.substr(0, pattern.len - filePattern.len - 1) & name
         if fileExists(full):
           yield full
   finally:
