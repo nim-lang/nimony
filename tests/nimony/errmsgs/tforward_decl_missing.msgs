@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tforward_decl_missing.nim(6, 1) Error: forward declaration of 'noBody' has no implementation; an implementation matches only if it spells the generic parameters, parameters and return type with the same tokens
+tests/nimony/errmsgs/tforward_decl_missing.nim(8, 1) Error: forward declaration of 'aliased' has no implementation; an implementation matches only if it spells the generic parameters, parameters and return type with the same tokens
+tests/nimony/errmsgs/tforward_decl_missing.nim(12, 3) Error: forward declaration of 'inner' has no implementation; an implementation matches only if it spells the generic parameters, parameters and return type with the same tokens
