@@ -12,6 +12,7 @@ type
   Table*[K, V] = object ## Generic hash map storing key/value pairs (linear scan when tiny, open addressing otherwise).
     data: seq[(K, V)]
     hashes: seq[HashEntry]
+  TableRef*[K, V] = ref Table[K, V] ## Ref version of `Table`.
 
 func mustRehash(length, counter: int): bool {.inline.} =
   result = (length < counter div 2 + counter) or (length - counter < 4)
@@ -340,6 +341,115 @@ func `==`*[K: Keyable, V: Equatable](s, t: Table[K, V]): bool =
       return false
   true
 
+# ---------------------------- TableRef -----------------------------
+
+proc newTable*[K, V](initialSize = defaultInitialSize): TableRef[K, V] =
+  ## Creates a new empty ref table.
+  let t = initTable[K, V](initialSize)
+  result = TableRef[K, V](data: t.data, hashes: t.hashes)
+
+proc newTable*[K: Keyable, V](pairs: openArray[(K, V)]): TableRef[K, V] =
+  ## Creates a new ref table containing `pairs`.
+  let t = toTable(pairs)
+  result = TableRef[K, V](data: t.data, hashes: t.hashes)
+
+proc `[]`*[K: Keyable, V](t: TableRef[K, V]; key: K): var V {.raises.} =
+  ## Retrieves `key`'s value or raises `KeyError` when absent.
+  t[][key]
+
+proc `[]=`*[K: Keyable, V](t: TableRef[K, V]; key: sink K; val: sink V) =
+  ## Inserts or updates `key` with `val`.
+  t[][key] = val
+
+func hasKey*[K: Keyable, V](t: TableRef[K, V]; key: K): bool =
+  ## True if `key` is stored in `t`.
+  t[].hasKey(key)
+
+func contains*[K: Keyable, V](t: TableRef[K, V]; key: K): bool {.inline.} =
+  ## Alias for `hasKey`.
+  t[].contains(key)
+
+proc hasKeyOrPut*[K: Keyable, V](t: TableRef[K, V]; key: K; val: V): bool =
+  ## True when `key` is present; otherwise inserts it.
+  t[].hasKeyOrPut(key, val)
+
+func getOrDefault*[K: Keyable, V: HasDefault](t: TableRef[K, V]; key: K): V =
+  ## Returns `t[key]` or the default value when absent.
+  t[].getOrDefault(key)
+
+func getOrDefault*[K: Keyable, V](t: TableRef[K, V]; key: K; fallback: V): V =
+  ## Returns `t[key]` or `fallback` when absent.
+  t[].getOrDefault(key, fallback)
+
+proc mgetOrPut*[K: Keyable, V](t: TableRef[K, V]; key: sink K; val: sink V): var V =
+  ## Returns `t[key]`, inserting `val` when absent; result is mutable.
+  t[].mgetOrPut(key, val)
+
+proc mgetOrPut*[K: Keyable, V: HasDefault](t: TableRef[K, V]; key: sink K): var V =
+  ## Returns `t[key]`, inserting the default value when absent.
+  t[].mgetOrPut(key)
+
+func len*[K, V](t: TableRef[K, V]): int {.inline.} =
+  ## Number of key/value pairs in `t`.
+  t[].len
+
+proc del*[K: Keyable, V](t: TableRef[K, V]; key: K) =
+  ## Removes `key`; no-op when absent.
+  t[].del(key)
+
+proc pop*[K: Keyable, V: HasDefault](t: TableRef[K, V]; key: K; val: var V): bool =
+  ## Removes `key` and stores its value in `val`.
+  t[].pop(key, val)
+
+proc take*[K: Keyable, V: HasDefault](t: TableRef[K, V]; key: K;
+    val: var V): bool {.inline.} =
+  ## Alias for `pop`.
+  t[].take(key, val)
+
+proc clear*[K, V](t: TableRef[K, V]) =
+  ## Removes all entries from `t`.
+  t[].clear()
+
+func `$`*[K: Stringable, V: Stringable](t: TableRef[K, V]): string =
+  ## String representation of `t`.
+  $t[]
+
+func `==`*[K: Keyable, V: Equatable](s, t: TableRef[K, V]): bool =
+  ## Content equality; insertion order and index layout do not matter.
+  s[] == t[]
+
+iterator pairs*[K, V](t: TableRef[K, V]): (lent K, lent V) =
+  ## Yields every `(key, value)` stored in `t`.
+  for i in 0 ..< t[].data.len:
+    yield (t[].data[i][0], t[].data[i][1])
+
+iterator mpairs*[K, V](t: TableRef[K, V]): (lent K, var V) =
+  ## Mutable variant of `pairs`.
+  for i in 0 ..< t[].data.len:
+    yield (t[].data[i][0], t[].data[i][1])
+
+iterator keys*[K, V](t: TableRef[K, V]): lent K =
+  ## Yields every key stored in `t`.
+  for i in 0 ..< t[].data.len:
+    yield t[].data[i][0]
+
+iterator values*[K, V](t: TableRef[K, V]): lent V =
+  ## Yields every value stored in `t`.
+  for i in 0 ..< t[].data.len:
+    yield t[].data[i][1]
+
+iterator mvalues*[K, V](t: TableRef[K, V]): var V =
+  ## Mutable variant of `values`.
+  for i in 0 ..< t[].data.len:
+    yield t[].data[i][1]
+
+proc newTableFrom*[B, C: Keyable](collection: openArray[B];
+    index: proc (x: B): C): TableRef[C, B] =
+  ## Indexes `collection` by `index(item)`.
+  result = newTable[C, B]()
+  for item in collection:
+    result[index(item)] = item
+
 # --------------------------- OrderedTable --------------------------------
 
 func nextPowerOfTwo(x: int): int {.inline.} =
@@ -372,6 +482,7 @@ func genHash[K: Hashable](key: K): Hash {.inline.} =
 type
   OrderedTable*[K, V] = object ## Hash table that remembers insertion order.
     inner: Table[K, V]
+  OrderedTableRef*[K, V] = ref OrderedTable[K, V] ## Ref version of `OrderedTable`.
 
 func initOrderedTable*[K, V](
     initialSize = defaultInitialSize): OrderedTable[K, V] =
@@ -485,6 +596,117 @@ func `==`*[K: Keyable, V: Equatable](s, t: OrderedTable[K, V]): bool =
       return false
   true
 
+# --------------------------- OrderedTableRef ---------------------------
+
+proc newOrderedTable*[K, V](
+    initialSize = defaultInitialSize): OrderedTableRef[K, V] =
+  ## Creates a new empty ordered ref table.
+  let t = initOrderedTable[K, V](initialSize)
+  result = OrderedTableRef[K, V](inner: t.inner)
+
+proc newOrderedTable*[K: Keyable, V](
+    pairs: openArray[(K, V)]): OrderedTableRef[K, V] =
+  ## Creates a new ordered ref table containing `pairs`.
+  let t = toOrderedTable(pairs)
+  result = OrderedTableRef[K, V](inner: t.inner)
+
+proc `[]`*[K: Keyable, V](t: OrderedTableRef[K, V]; key: K): var V {.raises.} =
+  ## Retrieves `key`'s value or raises `KeyError` when absent.
+  t[][key]
+
+proc `[]=`*[K: Keyable, V](t: OrderedTableRef[K, V]; key: sink K;
+    val: sink V) =
+  ## Inserts or updates `key` with `val`.
+  t[][key] = val
+
+func hasKey*[K: Keyable, V](t: OrderedTableRef[K, V]; key: K): bool =
+  ## True if `key` is stored in `t`.
+  t[].hasKey(key)
+
+func contains*[K: Keyable, V](t: OrderedTableRef[K, V]; key: K): bool {.inline.} =
+  ## Alias for `hasKey`.
+  t[].contains(key)
+
+proc hasKeyOrPut*[K: Keyable, V](t: OrderedTableRef[K, V]; key: K;
+    val: V): bool =
+  ## True when `key` is present; otherwise inserts it.
+  t[].hasKeyOrPut(key, val)
+
+func getOrDefault*[K: Keyable, V: HasDefault](
+    t: OrderedTableRef[K, V]; key: K): V =
+  ## Returns `t[key]` or the default value when absent.
+  t[].getOrDefault(key)
+
+func getOrDefault*[K: Keyable, V](t: OrderedTableRef[K, V]; key: K;
+    fallback: V): V =
+  ## Returns `t[key]` or `fallback` when absent.
+  t[].getOrDefault(key, fallback)
+
+proc mgetOrPut*[K: Keyable, V](t: OrderedTableRef[K, V]; key: sink K;
+    val: sink V): var V =
+  ## Returns `t[key]`, inserting `val` when absent; result is mutable.
+  t[].mgetOrPut(key, val)
+
+proc mgetOrPut*[K: Keyable, V: HasDefault](t: OrderedTableRef[K, V];
+    key: sink K): var V =
+  ## Returns `t[key]`, inserting the default value when absent.
+  t[].mgetOrPut(key)
+
+func len*[K, V](t: OrderedTableRef[K, V]): int {.inline.} =
+  ## Number of key/value pairs in `t`.
+  t[].len
+
+proc del*[K: Keyable, V](t: OrderedTableRef[K, V]; key: K) =
+  ## Removes `key`; no-op when absent.
+  t[].del(key)
+
+proc pop*[K: Keyable, V: HasDefault](t: OrderedTableRef[K, V]; key: K;
+    val: var V): bool =
+  ## Removes `key` and stores its value in `val`.
+  t[].pop(key, val)
+
+proc clear*[K, V](t: OrderedTableRef[K, V]) =
+  ## Removes all entries from `t`.
+  t[].clear()
+
+proc sort*[K: Keyable, V](t: OrderedTableRef[K, V];
+    cmp: proc (x, y: (K, V)): int; order = SortOrder.Ascending) =
+  ## Sorts the insertion-order sequence.
+  t[].sort(cmp, order)
+
+func `$`*[K: Stringable, V: Stringable](t: OrderedTableRef[K, V]): string =
+  ## String representation of `t`.
+  $t[]
+
+func `==`*[K: Keyable, V: Equatable](s, t: OrderedTableRef[K, V]): bool =
+  ## Ordered equality: contents and order must match.
+  s[] == t[]
+
+iterator pairs*[K, V](t: OrderedTableRef[K, V]): (lent K, lent V) =
+  ## Yields every `(key, value)` in insertion order.
+  for i in 0 ..< t[].inner.data.len:
+    yield (t[].inner.data[i][0], t[].inner.data[i][1])
+
+iterator mpairs*[K, V](t: OrderedTableRef[K, V]): (lent K, var V) =
+  ## Mutable variant of `pairs`.
+  for i in 0 ..< t[].inner.data.len:
+    yield (t[].inner.data[i][0], t[].inner.data[i][1])
+
+iterator keys*[K, V](t: OrderedTableRef[K, V]): lent K =
+  ## Yields every key in insertion order.
+  for i in 0 ..< t[].inner.data.len:
+    yield t[].inner.data[i][0]
+
+iterator values*[K, V](t: OrderedTableRef[K, V]): lent V =
+  ## Yields every value in insertion order.
+  for i in 0 ..< t[].inner.data.len:
+    yield t[].inner.data[i][1]
+
+iterator mvalues*[K, V](t: OrderedTableRef[K, V]): var V =
+  ## Mutable variant of `values`.
+  for i in 0 ..< t[].inner.data.len:
+    yield t[].inner.data[i][1]
+
 # ----------------------------- CountTable --------------------------------
 
 type
@@ -494,6 +716,7 @@ type
     data: CountEntrySeq[K]
     counter: int
     isSorted: bool
+  CountTableRef*[K] = ref CountTable[K] ## Ref version of `CountTable`.
 
 func ctRawGet[K: Keyable](t: CountTable[K]; key: K): int =
   result = -1
@@ -807,6 +1030,118 @@ func `==`*[K: Keyable](s, t: CountTable[K]): bool =
       if not found:
         return false
   true
+
+# ---------------------------- CountTableRef -----------------------------
+
+proc inc*[K: Keyable and HasDefault](t: CountTableRef[K]; key: K; val = 1)
+
+proc newCountTable*[K](initialSize = defaultInitialSize): CountTableRef[K] =
+  ## Creates a new empty ref count table.
+  let t = initCountTable[K](initialSize)
+  result = CountTableRef[K](data: t.data, counter: t.counter, isSorted: t.isSorted)
+
+proc newCountTable*[K: Keyable and HasDefault](
+    keys: openArray[K]): CountTableRef[K] =
+  ## Counts how often each element of `keys` occurs.
+  result = newCountTable[K](keys.len)
+  for key in keys:
+    result.inc(key)
+
+func `[]`*[K: Keyable](t: CountTableRef[K]; key: K): int =
+  ## Returns the count of `key`, or zero when absent.
+  t[][key]
+
+proc `[]=`*[K: Keyable and HasDefault](t: CountTableRef[K]; key: K;
+    val: int) =
+  ## Sets the count of `key`.
+  t[][key] = val
+
+proc inc*[K: Keyable and HasDefault](t: CountTableRef[K]; key: K; val = 1) =
+  ## Increments `t[key]` by `val`.
+  t[].inc(key, val)
+
+func smallest*[K](t: CountTableRef[K]): CountEntry[K] =
+  ## Returns the pair with the smallest count.
+  t[].smallest
+
+func largest*[K](t: CountTableRef[K]): CountEntry[K] =
+  ## Returns the pair with the largest count.
+  t[].largest
+
+func hasKey*[K: Keyable](t: CountTableRef[K]; key: K): bool =
+  ## True if `key` is stored in `t`.
+  t[].hasKey(key)
+
+func contains*[K: Keyable](t: CountTableRef[K]; key: K): bool {.inline.} =
+  ## Alias for `hasKey`.
+  t[].contains(key)
+
+func getOrDefault*[K: Keyable](t: CountTableRef[K]; key: K; def = 0): int =
+  ## Returns the count of `key`, or `def` when absent.
+  t[].getOrDefault(key, def)
+
+func len*[K](t: CountTableRef[K]): int {.inline.} =
+  ## Number of keys in `t`.
+  t[].len
+
+proc del*[K: Keyable and HasDefault](t: CountTableRef[K]; key: K) =
+  ## Removes `key`; no-op when absent.
+  t[].del(key)
+
+proc pop*[K: Keyable and HasDefault](t: CountTableRef[K]; key: K;
+    val: var int): bool =
+  ## Removes `key` and stores its count in `val`.
+  t[].pop(key, val)
+
+proc clear*[K](t: CountTableRef[K]) =
+  ## Removes all entries from `t`.
+  t[].clear()
+
+proc sort*[K](t: CountTableRef[K]; order = SortOrder.Descending) =
+  ## Sorts by count; the table must not be modified afterwards.
+  t[].sort(order)
+
+proc merge*[K: Keyable and HasDefault](s, t: CountTableRef[K]) =
+  ## Merges `t` into `s`.
+  s[].merge(t[])
+
+func `$`*[K: Stringable](t: CountTableRef[K]): string =
+  ## String representation of `t`.
+  $t[]
+
+func `==`*[K: Keyable](s, t: CountTableRef[K]): bool =
+  ## Content equality; insertion order does not matter.
+  s[] == t[]
+
+iterator pairs*[K](t: CountTableRef[K]): (lent K, int) =
+  ## Yields every `(key, count)` pair.
+  for i in 0 ..< t[].data.len:
+    if t[].data[i].val != 0:
+      yield (t[].data[i].key, t[].data[i].val)
+
+iterator mpairs*[K](t: CountTableRef[K]): (lent K, var int) =
+  ## Mutable variant of `pairs`.
+  for i in 0 ..< t[].data.len:
+    if t[].data[i].val != 0:
+      yield (t[].data[i].key, t[].data[i].val)
+
+iterator keys*[K](t: CountTableRef[K]): lent K =
+  ## Yields every key stored in `t`.
+  for i in 0 ..< t[].data.len:
+    if t[].data[i].val != 0:
+      yield t[].data[i].key
+
+iterator values*[K](t: CountTableRef[K]): int =
+  ## Yields every count stored in `t`.
+  for i in 0 ..< t[].data.len:
+    if t[].data[i].val != 0:
+      yield t[].data[i].val
+
+iterator mvalues*[K](t: CountTableRef[K]): var int =
+  ## Mutable variant of `values`.
+  for i in 0 ..< t[].data.len:
+    if t[].data[i].val != 0:
+      yield t[].data[i].val
 
 when isMainModule:
   import std/syncio
