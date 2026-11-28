@@ -114,6 +114,8 @@ import std/setutils
 import std/sha1
 import std/smartcli
 import std/socket
+import std/ssl_certs
+import std/ssl_config
 import std/stacktraces
 import std/stats
 import std/streamio
